@@ -29,7 +29,6 @@ from src.youtube_display import YouTubeDisplay
 from src.calendar_manager import CalendarManager
 from src.text_display import TextDisplay
 from src.music_manager import MusicManager
-from src.youtube_manager import YouTubeManager
 
 # Get logger without configuring
 logger = logging.getLogger(__name__)
@@ -464,7 +463,7 @@ class DisplayController:
         if self.ncaa_mens_baseball_upcoming: self.ncaa_mens_baseball_upcoming.update()
 
         # Update YouTube manager
-        if self.youtube_manager: self.youtube_manager.update()
+        if self.youtube: self.youtube.update()
 
     def _check_live_games(self) -> tuple[bool, str]:
         """
@@ -950,8 +949,8 @@ class DisplayController:
                              manager_to_display.display_news() # Assumes internal clearing
                         elif self.current_display_mode == 'calendar':
                              manager_to_display.display(force_clear=self.force_clear)
-                        elif self.current_display_mode == 'youtube':
-                             manager_to_display.display(force_clear=self.force_clear)
+                        elif self.current_display_mode == 'youtube' and self.youtube:
+                             self.youtube.display(force_clear=self.force_clear)
                         elif self.current_display_mode == 'text_display':
                              manager_to_display.display() # Assumes internal clearing
                         elif self.current_display_mode == 'nfl_live' and self.nfl_live:
@@ -974,8 +973,6 @@ class DisplayController:
                             self.ncaa_mens_baseball_recent.display(force_clear=self.force_clear)
                         elif self.current_display_mode == 'ncaa_mens_baseball_upcoming' and self.ncaa_mens_baseball_upcoming:
                             self.ncaa_mens_baseball_upcoming.display(force_clear=self.force_clear)
-                        elif self.current_display_mode == 'youtube' and self.youtube_manager:
-                            self.youtube_manager.display(force_clear=self.force_clear)
                         elif hasattr(manager_to_display, 'display'): # General case for most managers
                             manager_to_display.display(force_clear=self.force_clear)
                         else:
