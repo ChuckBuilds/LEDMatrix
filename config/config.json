@@ -189,7 +189,7 @@
         "recent_update_interval": 3600,
         "upcoming_update_interval": 3600,
         "recent_game_hours": 72,
-        "favorite_teams": [],
+        "favorite_teams": ["UGA", "AUB"],
         "logo_dir": "assets/sports/ncaa_fbs_logos",
         "display_modes": {
             "ncaa_mens_baseball_live": true,
