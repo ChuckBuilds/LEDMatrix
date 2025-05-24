@@ -28,8 +28,9 @@ class MusicSource(Enum):
     YTM = auto()
 
 class MusicManager:
-    def __init__(self, display_manager, config, update_callback=None):
+    def __init__(self, display_manager, config, update_callback=None, display_controller_obj=None):
         self.display_manager = display_manager
+        self.display_controller_obj = display_controller_obj
         self.config = config
         self.spotify = None
         self.ytm = None
@@ -134,6 +135,11 @@ class MusicManager:
         if not self.enabled:
             return
 
+        # Only process updates if the music display is currently active
+        if self.display_controller_obj and hasattr(self.display_controller_obj, 'is_display_active') and not self.display_controller_obj.is_display_active("music"):
+            logger.debug("Music display is not active. Skipping YTM direct update processing.")
+            return
+
         # Only process if YTM is the preferred source, or if auto and Spotify isn't actively playing.
         # This check is to ensure we don't override an active Spotify session if preferred_source is 'auto'
         # and Spotify just happens to be paused but YTM starts playing something.
@@ -190,7 +196,15 @@ class MusicManager:
 
         if has_changed and self.update_callback:
             try:
-                self.update_callback(self.current_track_info) # This is the callback to DisplayController
+                # Also ensure music display is active before calling the update_callback if controller obj is available
+                if self.display_controller_obj and hasattr(self.display_controller_obj, 'is_display_active'):
+                    if self.display_controller_obj.is_display_active("music"):
+                        self.update_callback(self.current_track_info) # This is the callback to DisplayController
+                    else:
+                        logger.debug("Music display not active. Suppressing update_callback for YTM direct update.")
+                else:
+                    # Fallback if display_controller_obj is not available (e.g. testing or old instantiation)
+                    self.update_callback(self.current_track_info)
             except Exception as e:
                 logger.error(f"Error executing DisplayController update callback from YTM direct update: {e}")
 
@@ -246,7 +260,18 @@ class MusicManager:
 
             # Determine which sources to poll based on preference
             poll_spotify = self.preferred_source in ["auto", "spotify"] and self.spotify and self.spotify.is_authenticated()
-            poll_ytm = self.preferred_source in ["auto", "ytm"] and self.ytm # Check if ytm object exists
+            
+            # If YTM client is initialized, we rely on its event-driven updates (_handle_ytm_direct_update)
+            # So, we should not poll YTM in this loop.
+            poll_ytm_in_loop = False # Default to not polling YTM here
+            if self.preferred_source in ["auto", "ytm"] and self.ytm:
+                if not self.ytm.is_available(): # Or some other check if we want to poll if socket is down
+                    # Potentially enable polling YTM here if YTM client exists but is not connected/available
+                    # For now, if ytm client exists, we assume its event handler is primary.
+                    pass 
+            elif self.preferred_source == "ytm" and not self.ytm:
+                # YTM is preferred but client not initialized, maybe log a warning or attempt init again (outside scope of this change)
+                logger.debug("YTM is preferred source but YTM client is not initialized. No YTM polling.")
 
             # --- Try Spotify First (if allowed and available) ---
             if poll_spotify:
@@ -267,9 +292,11 @@ class MusicManager:
             # --- Try YTM if Spotify isn't playing OR if YTM is preferred ---
             # If YTM is preferred, poll it even if Spotify might be playing (config override)
             # If Auto, only poll YTM if Spotify wasn't found playing
-            should_poll_ytm_now = poll_ytm and (self.preferred_source == "ytm" or (self.preferred_source == "auto" and not is_playing))
+            
+            # MODIFIED: YTM is now primarily event-driven. We will not poll YTM in this loop if self.ytm exists.
+            should_poll_ytm_now = poll_ytm_in_loop and (self.preferred_source == "ytm" or (self.preferred_source == "auto" and not is_playing))
 
-            if should_poll_ytm_now:
+            if should_poll_ytm_now: # This block will effectively be skipped if self.ytm is active
                 # Re-check availability just before polling
                 if self.ytm.is_available():
                     try:

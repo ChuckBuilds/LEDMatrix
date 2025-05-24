@@ -67,7 +67,10 @@ class DisplayController:
                 try:
                     # Pass display_manager and config. The callback is now optional for MusicManager.
                     # DisplayController might not need a specific music update callback anymore if MusicManager handles all display.
-                    self.music_manager = MusicManager(display_manager=self.display_manager, config=self.config, update_callback=self._handle_music_update)
+                    self.music_manager = MusicManager(display_manager=self.display_manager, 
+                                                      config=self.config, 
+                                                      update_callback=self._handle_music_update,
+                                                      display_controller_obj=self)
                     if self.music_manager.enabled: 
                         logger.info("MusicManager initialized successfully.")
                         self.music_manager.start_polling()
@@ -318,6 +321,10 @@ class DisplayController:
         logger.info(f"Available display modes: {self.available_modes}")
         logger.info(f"Initial display mode: {self.current_display_mode}")
         logger.info("DisplayController initialized with display_manager: %s", id(self.display_manager))
+
+    def is_display_active(self, display_name: str) -> bool:
+        """Checks if the given display_name is the currently active display mode."""
+        return self.current_display_mode == display_name
 
     def _handle_music_update(self, track_info: Dict[str, Any]):
         """Callback for when music track info changes. (Simplified)"""
