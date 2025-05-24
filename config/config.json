@@ -202,7 +202,7 @@
         "update_interval": 3600
     },
     "mlb": {
-        "enabled": true,
+        "enabled": false,
         "test_mode": false,
         "update_interval_seconds": 300,
         "live_update_interval": 20,
