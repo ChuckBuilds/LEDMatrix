@@ -63,12 +63,12 @@
         }
     },
     "clock": {
-        "enabled": true,
+        "enabled": false,
         "format": "%H:%M:%S",
         "update_interval": 1
     },
     "weather": {
-        "enabled": true,
+        "enabled": false,
         "update_interval": 600,
         "units": "imperial",
         "display_format": "{temp}°F\n{condition}"
@@ -98,7 +98,7 @@
         "headlines_per_rotation": 2
     },
     "calendar": {
-        "enabled": true,
+        "enabled": false,
         "credentials_file": "credentials.json",
         "token_file": "token.pickle",
         "update_interval": 3600,
@@ -106,7 +106,7 @@
         "calendars": ["birthdays"]
     },
     "nhl_scoreboard": {
-        "enabled": true,
+        "enabled": false,
         "test_mode": false,
         "update_interval_seconds": 300,
         "live_update_interval": 15,
