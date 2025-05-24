@@ -168,7 +168,7 @@
         }
     },
     "ncaa_mens_basketball_scoreboard": {
-        "enabled": true,
+        "enabled": false,
         "test_mode": false,
         "update_interval_seconds": 3600,
         "live_update_interval": 15,
@@ -182,7 +182,7 @@
         }
     },
     "ncaa_mens_baseball_scoreboard": {
-        "enabled": true,
+        "enabled": false,
         "test_mode": false,
         "update_interval_seconds": 3600,
         "live_update_interval": 20,
