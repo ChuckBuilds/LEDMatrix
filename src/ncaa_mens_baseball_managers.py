@@ -18,26 +18,26 @@ logger = logging.getLogger(__name__)
 # Constants for NCAA Baseball API URL
 ESPN_NCAABB_SCOREBOARD_URL = "https://site.api.espn.com/apis/site/v2/sports/baseball/college-baseball/scoreboard"
 
-class BaseNCAABBMManager:
-    """Base class for NCAA BB managers with common functionality."""
+class BaseNCAAMensBaseballManager:
+    """Base class for NCAA Mens Baseball managers with common functionality."""
     def __init__(self, config: Dict[str, Any], display_manager):
         self.config = config
         self.display_manager = display_manager
-        self.ncaa_bb_config = config.get('ncaa_bb_scoreboard', {})
-        self.favorite_teams = self.ncaa_bb_config.get('favorite_teams', [])
+        self.ncaa_mens_baseball_config = config.get('ncaa_mens_baseball_scoreboard', {})
+        self.favorite_teams = self.ncaa_mens_baseball_config.get('favorite_teams', [])
         self.cache_manager = CacheManager()
         self.logger = logging.getLogger(__name__)
         self.logger.setLevel(logging.DEBUG)  # Set logger level to DEBUG
         
         # Logo handling
-        self.logo_dir = self.ncaa_bb_config.get('logo_dir', os.path.join('assets', 'sports', 'ncaa_fbs_logos'))
+        self.logo_dir = self.ncaa_mens_baseball_config.get('logo_dir', os.path.join('assets', 'sports', 'ncaa_fbs_logos'))
         if not os.path.exists(self.logo_dir):
-            self.logger.warning(f"NCAA BB logos directory not found: {self.logo_dir}")
+            self.logger.warning(f"NCAA Mens Baseball logos directory not found: {self.logo_dir}")
             try:
                 os.makedirs(self.logo_dir, exist_ok=True)
-                self.logger.info(f"Created NCAA BB logos directory: {self.logo_dir}")
+                self.logger.info(f"Created NCAA Mens Baseball logos directory: {self.logo_dir}")
             except Exception as e:
-                self.logger.error(f"Failed to create NCAA BB logos directory: {e}")
+                self.logger.error(f"Failed to create NCAA Mens Baseball logos directory: {e}")
         
         # Set up session with retry logic
         self.session = requests.Session()
@@ -60,10 +60,10 @@ class BaseNCAABBMManager:
             if os.path.exists(logo_path):
                 return Image.open(logo_path)
             else:
-                logger.warning(f"[NCAABB] Logo not found for team {team_abbr}")
+                logger.warning(f"[NCAAMensBaseball] Logo not found for team {team_abbr}")
                 return None
         except Exception as e:
-            logger.error(f"[NCAABB] Error loading logo for team {team_abbr}: {e}")
+            logger.error(f"[NCAAMensBaseball] Error loading logo for team {team_abbr}: {e}")
             return None
 
     def _draw_base_indicators(self, draw: ImageDraw.Draw, bases_occupied: List[bool], center_x: int, y: int) -> None:
@@ -88,7 +88,7 @@ class BaseNCAABBMManager:
                 draw.ellipse([x, y, x + base_size, y + base_size], outline=(255, 255, 255), width=1)
 
     def _create_game_display(self, game_data: Dict[str, Any]) -> Image.Image:
-        """Create a display image for an NCAA BB game with team logos, score, and game state."""
+        """Create a display image for an NCAA Mens Baseball game with team logos, score, and game state."""
         width = self.display_manager.matrix.width
         height = self.display_manager.matrix.height
         image = Image.new('RGB', (width, height), color=(0, 0, 0))
@@ -127,7 +127,7 @@ class BaseNCAABBMManager:
             try:
                 tz = pytz.timezone(timezone_str)
             except pytz.exceptions.UnknownTimeZoneError:
-                logger.warning(f"[NCAABB] Unknown timezone: {timezone_str}, falling back to UTC")
+                logger.warning(f"[NCAAMensBaseball] Unknown timezone: {timezone_str}, falling back to UTC")
                 tz = pytz.UTC
             if game_time.tzinfo is None:
                 game_time = game_time.replace(tzinfo=pytz.UTC)
@@ -177,7 +177,7 @@ class BaseNCAABBMManager:
             try:
                 tz = pytz.timezone(timezone_str)
             except pytz.exceptions.UnknownTimeZoneError:
-                logger.warning(f"[NCAABB] Unknown timezone: {timezone_str}, falling back to UTC")
+                logger.warning(f"[NCAAMensBaseball] Unknown timezone: {timezone_str}, falling back to UTC")
                 tz = pytz.UTC
             
             dt = datetime.fromisoformat(game_time.replace('Z', '+00:00'))
@@ -187,17 +187,17 @@ class BaseNCAABBMManager:
             
             return local_dt.strftime("%I:%M %p")
         except Exception as e:
-            logger.error(f"[NCAABB] Error formatting game time: {e}")
+            logger.error(f"[NCAAMensBaseball] Error formatting game time: {e}")
             return "TBD"
 
-    def _fetch_ncaa_bb_api_data(self) -> Dict[str, Any]:
-        """Fetch NCAA BB game data from the ESPN API."""
+    def _fetch_ncaa_mens_baseball_api_data(self) -> Dict[str, Any]:
+        """Fetch NCAA Mens Baseball game data from the ESPN API."""
         try:
             # Check if test mode is enabled
-            if self.ncaa_bb_config.get('test_mode', False):
-                self.logger.info("Using test mode data for NCAA BB")
+            if self.ncaa_mens_baseball_config.get('test_mode', False):
+                self.logger.info("Using test mode data for NCAA Mens Baseball")
                 return {
-                    'test_game_ncaabb_1': {
+                    'test_game_ncaambb_1': {
                         'away_team': 'LSU',
                         'home_team': 'FLA',
                         'away_score': 5,
@@ -230,7 +230,7 @@ class BaseNCAABBMManager:
                 # Use NCAA Baseball API URL
                 url = f"{ESPN_NCAABB_SCOREBOARD_URL}?dates={date}"
                 
-                self.logger.info(f"[NCAABB] Fetching games from ESPN API for date: {date}")
+                self.logger.info(f"[NCAAMensBaseball] Fetching games from ESPN API for date: {date}")
                 response = self.session.get(url, headers=self.headers, timeout=10)
                 response.raise_for_status()
                 
@@ -246,7 +246,7 @@ class BaseNCAABBMManager:
                     away_team = next((c for c in competitors if c['homeAway'] == 'away'), None)
 
                     if not home_team or not away_team:
-                        self.logger.warning(f"[NCAABB] Could not find home or away team for event {game_id}")
+                        self.logger.warning(f"[NCAAMensBaseball] Could not find home or away team for event {game_id}")
                         continue
 
                     home_abbr = home_team['team'].get('abbreviation', 'N/A')
@@ -255,11 +255,11 @@ class BaseNCAABBMManager:
                     is_favorite_game = (home_abbr in self.favorite_teams or away_abbr in self.favorite_teams)
                     
                     if is_favorite_game:
-                        self.logger.info(f"[NCAABB] Found favorite team game: {away_abbr} @ {home_abbr} (Status: {status}, State: {status_state})")
-                        self.logger.debug(f"[NCAABB] Full status data: {event['status']}")
-                        self.logger.debug(f"[NCAABB] Status type: {status}, State: {status_state}")
-                        self.logger.debug(f"[NCAABB] Status detail: {event['status'].get('detail', '')}")
-                        self.logger.debug(f"[NCAABB] Status shortDetail: {event['status'].get('shortDetail', '')}")
+                        self.logger.info(f"[NCAAMensBaseball] Found favorite team game: {away_abbr} @ {home_abbr} (Status: {status}, State: {status_state})")
+                        self.logger.debug(f"[NCAAMensBaseball] Full status data: {event['status']}")
+                        self.logger.debug(f"[NCAAMensBaseball] Status type: {status}, State: {status_state}")
+                        self.logger.debug(f"[NCAAMensBaseball] Status detail: {event['status'].get('detail', '')}")
+                        self.logger.debug(f"[NCAAMensBaseball] Status shortDetail: {event['status'].get('shortDetail', '')}")
                     
                     inning = 1
                     inning_half = 'top'
@@ -273,21 +273,21 @@ class BaseNCAABBMManager:
                         status_detail = event['status'].get('detail', '').lower()
                         status_short = event['status'].get('shortDetail', '').lower()
                         
-                        if is_favorite_game: self.logger.debug(f"[NCAABB] Raw status detail: {event['status'].get('detail')}")
-                        if is_favorite_game: self.logger.debug(f"[NCAABB] Raw status short: {event['status'].get('shortDetail')}")
+                        if is_favorite_game: self.logger.debug(f"[NCAAMensBaseball] Raw status detail: {event['status'].get('detail')}")
+                        if is_favorite_game: self.logger.debug(f"[NCAAMensBaseball] Raw status short: {event['status'].get('shortDetail')}")
                         
                         inning_half = 'top'
                         if 'bottom' in status_detail or 'bot' in status_detail or 'bottom' in status_short or 'bot' in status_short:
                             inning_half = 'bottom'
-                            if is_favorite_game: self.logger.debug("[NCAABB] Detected bottom of inning")
+                            if is_favorite_game: self.logger.debug("[NCAAMensBaseball] Detected bottom of inning")
                         elif 'top' in status_detail or 'mid' in status_detail or 'top' in status_short or 'mid' in status_short:
                             inning_half = 'top'
-                            if is_favorite_game: self.logger.debug("[NCAABB] Detected top of inning")
+                            if is_favorite_game: self.logger.debug("[NCAAMensBaseball] Detected top of inning")
                         
-                        if is_favorite_game: self.logger.debug(f"[NCAABB] Determined inning: {inning_half} {inning}")
+                        if is_favorite_game: self.logger.debug(f"[NCAAMensBaseball] Determined inning: {inning_half} {inning}")
                         
                         situation = event['competitions'][0].get('situation', {})
-                        if is_favorite_game: self.logger.debug(f"[NCAABB] Full situation data: {situation}")
+                        if is_favorite_game: self.logger.debug(f"[NCAAMensBaseball] Full situation data: {situation}")
                         
                         # --- Simplified Count Logic --- 
                         # Primarily rely on the direct count fields first
@@ -298,7 +298,7 @@ class BaseNCAABBMManager:
                         
                         # Basic logging
                         if is_favorite_game: 
-                            self.logger.debug(f"[NCAABB] Direct count: B={balls}, S={strikes}, O={outs}")
+                            self.logger.debug(f"[NCAAMensBaseball] Direct count: B={balls}, S={strikes}, O={outs}")
                         
                         # Keep base occupancy logic
                         bases_occupied = [
@@ -306,7 +306,7 @@ class BaseNCAABBMManager:
                             situation.get('onSecond', False),
                             situation.get('onThird', False)
                         ]
-                        if is_favorite_game: self.logger.debug(f"[NCAABB] Bases occupied: {bases_occupied}")
+                        if is_favorite_game: self.logger.debug(f"[NCAAMensBaseball] Bases occupied: {bases_occupied}")
                     
                     all_games[game_id] = {
                         'away_team': away_abbr,
@@ -328,35 +328,35 @@ class BaseNCAABBMManager:
                            if game['home_team'] in self.favorite_teams or 
                               game['away_team'] in self.favorite_teams]
             if favorite_games:
-                self.logger.info(f"[NCAABB] Found {len(favorite_games)} games for favorite teams: {self.favorite_teams}")
+                self.logger.info(f"[NCAAMensBaseball] Found {len(favorite_games)} games for favorite teams: {self.favorite_teams}")
                 for game in favorite_games:
-                    self.logger.info(f"[NCAABB] Favorite team game: {game['away_team']} @ {game['home_team']} (Status: {game['status']}, State: {game['status_state']})")
+                    self.logger.info(f"[NCAAMensBaseball] Favorite team game: {game['away_team']} @ {game['home_team']} (Status: {game['status']}, State: {game['status_state']})")
             
             return all_games
             
         except Exception as e:
-            self.logger.error(f"[NCAABB] Error fetching NCAA BB data from ESPN API: {e}", exc_info=True)
+            self.logger.error(f"[NCAAMensBaseball] Error fetching NCAA Mens Baseball data from ESPN API: {e}", exc_info=True)
             return {}
 
-class NCAABBLiveManager(BaseNCAABBMManager):
-    """Manager for displaying live NCAA BB games."""
+class NCAAMensBaseballLiveManager(BaseNCAAMensBaseballManager):
+    """Manager for displaying live NCAA Mens Baseball games."""
     def __init__(self, config: Dict[str, Any], display_manager):
         super().__init__(config, display_manager)
-        self.logger.info("Initialized NCAA BB Live Manager")
+        self.logger.info("Initialized NCAA Mens Baseball Live Manager")
         self.live_games = []
         self.current_game = None
         self.current_game_index = 0
         self.last_update = 0
-        self.update_interval = self.ncaa_bb_config.get('live_update_interval', 20)
+        self.update_interval = self.ncaa_mens_baseball_config.get('live_update_interval', 20)
         self.no_data_interval = 300
         self.last_game_switch = 0
-        self.game_display_duration = self.ncaa_bb_config.get('live_game_duration', 30)
+        self.game_display_duration = self.ncaa_mens_baseball_config.get('live_game_duration', 30)
         self.last_display_update = 0
         self.last_log_time = 0
         self.log_interval = 300
         self.last_count_log_time = 0
         self.count_log_interval = 5
-        self.test_mode = self.ncaa_bb_config.get('test_mode', False)
+        self.test_mode = self.ncaa_mens_baseball_config.get('test_mode', False)
 
         if self.test_mode:
             self.current_game = {
@@ -377,9 +377,9 @@ class NCAABBLiveManager(BaseNCAABBMManager):
                 "start_time": datetime.now(timezone.utc).isoformat(),
             }
             self.live_games = [self.current_game]
-            self.logger.info("Initialized NCAABBLiveManager with test game: LSU vs FLA")
+            self.logger.info("Initialized NCAAMensBaseballLiveManager with test game: LSU vs FLA")
         else:
-            self.logger.info("Initialized NCAABBLiveManager in live mode")
+            self.logger.info("Initialized NCAAMensBaseballLiveManager in live mode")
 
     def update(self):
         """Update live game data."""
@@ -400,7 +400,7 @@ class NCAABBLiveManager(BaseNCAABBMManager):
                     if self.current_game["inning"] % 2 == 0: self.current_game["home_score"] = str(int(self.current_game["home_score"]) + 1)
                     else: self.current_game["away_score"] = str(int(self.current_game["away_score"]) + 1)
             else:
-                games = self._fetch_ncaa_bb_api_data()
+                games = self._fetch_ncaa_mens_baseball_api_data()
                 if games:
                     new_live_games = []
                     for game in games.values():
@@ -411,7 +411,7 @@ class NCAABBLiveManager(BaseNCAABBMManager):
                                     game['away_score'] = int(game['away_score'])
                                     new_live_games.append(game)
                                 except (ValueError, TypeError):
-                                    self.logger.warning(f"[NCAABB] Invalid score format for game {game['away_team']} @ {game['home_team']}")
+                                    self.logger.warning(f"[NCAAMensBaseball] Invalid score format for game {game['away_team']} @ {game['home_team']}")
                     
                     should_log = (
                         current_time - self.last_log_time >= self.log_interval or
@@ -421,11 +421,11 @@ class NCAABBLiveManager(BaseNCAABBMManager):
                     
                     if should_log:
                         if new_live_games:
-                            logger.info(f"[NCAABB] Found {len(new_live_games)} live games")
+                            logger.info(f"[NCAAMensBaseball] Found {len(new_live_games)} live games")
                             for game in new_live_games:
-                                logger.info(f"[NCAABB] Live game: {game['away_team']} vs {game['home_team']} - {game['inning_half']}{game['inning']}, {game['balls']}-{game['strikes']}")
+                                logger.info(f"[NCAAMensBaseball] Live game: {game['away_team']} vs {game['home_team']} - {game['inning_half']}{game['inning']}, {game['balls']}-{game['strikes']}")
                         else:
-                            logger.info("[NCAABB] No live games found")
+                            logger.info("[NCAAMensBaseball] No live games found")
                         self.last_log_time = current_time
                     
                     if new_live_games:
@@ -463,7 +463,7 @@ class NCAABBLiveManager(BaseNCAABBMManager):
                 self.last_display_update = current_time # Track last successful update that *would* have displayed
 
     def _create_live_game_display(self, game_data: Dict[str, Any]) -> Image.Image:
-        """Create a display image for a live NCAA BB game."""
+        """Create a display image for a live NCAA Mens Baseball game."""
         width = self.display_manager.matrix.width
         height = self.display_manager.matrix.height
         image = Image.new('RGB', (width, height), color=(0, 0, 0))
@@ -543,8 +543,8 @@ class NCAABBLiveManager(BaseNCAABBMManager):
         strikes = game_data.get('strikes', 0)
         current_time = time.time()
         if (game_data['home_team'] in self.favorite_teams or game_data['away_team'] in self.favorite_teams) and current_time - self.last_count_log_time >= self.count_log_interval:
-            self.logger.debug(f"[NCAABB] Displaying count: {balls}-{strikes}")
-            self.logger.debug(f"[NCAABB] Raw count data: balls={game_data.get('balls')}, strikes={game_data.get('strikes')}")
+            self.logger.debug(f"[NCAAMensBaseball] Displaying count: {balls}-{strikes}")
+            self.logger.debug(f"[NCAAMensBaseball] Raw count data: balls={game_data.get('balls')}, strikes={game_data.get('strikes')}")
             self.last_count_log_time = current_time
         
         count_text = f"{balls}-{strikes}"
@@ -589,24 +589,24 @@ class NCAABBLiveManager(BaseNCAABBMManager):
             self.display_manager.draw = ImageDraw.Draw(self.display_manager.image)
             self.display_manager.update_display()
         except Exception as e:
-            logger.error(f"[NCAABB] Error displaying live game: {e}", exc_info=True)
+            logger.error(f"[NCAAMensBaseball] Error displaying live game: {e}", exc_info=True)
 
-class NCAABBRecentManager(BaseNCAABBMManager):
-    """Manager for displaying recent NCAA BB games."""
+class NCAAMensBaseballRecentManager(BaseNCAAMensBaseballManager):
+    """Manager for displaying recent NCAA Mens Baseball games."""
     def __init__(self, config: Dict[str, Any], display_manager):
         super().__init__(config, display_manager)
-        self.logger.info("Initialized NCAA BB Recent Manager")
+        self.logger.info("Initialized NCAA Mens Baseball Recent Manager")
         self.recent_games = []
         self.current_game = None
         self.current_game_index = 0
         self.last_update = 0
-        self.update_interval = self.ncaa_bb_config.get('recent_update_interval', 3600)
-        self.recent_hours = self.ncaa_bb_config.get('recent_game_hours', 72)
+        self.update_interval = self.ncaa_mens_baseball_config.get('recent_update_interval', 3600)
+        self.recent_hours = self.ncaa_mens_baseball_config.get('recent_game_hours', 72)
         self.last_game_switch = 0
         self.game_display_duration = 10
         self.last_warning_time = 0
         self.warning_cooldown = 300
-        logger.info(f"Initialized NCAABBRecentManager with {len(self.favorite_teams)} favorite teams")
+        logger.info(f"Initialized NCAAMensBaseballRecentManager with {len(self.favorite_teams)} favorite teams")
 
     def update(self):
         """Update recent games data."""
@@ -614,16 +614,16 @@ class NCAABBRecentManager(BaseNCAABBMManager):
         if current_time - self.last_update < self.update_interval:
             return
         try:
-            games = self._fetch_ncaa_bb_api_data()
+            games = self._fetch_ncaa_mens_baseball_api_data()
             if not games:
-                logger.warning("[NCAABB] No games returned from API")
+                logger.warning("[NCAAMensBaseball] No games returned from API")
                 return
             
             new_recent_games = []
             now = datetime.now(timezone.utc)
             recent_cutoff = now - timedelta(hours=self.recent_hours)
             
-            logger.info(f"[NCAABB] Time window: {recent_cutoff} to {now}")
+            logger.info(f"[NCAAMensBaseball] Time window: {recent_cutoff} to {now}")
             
             for game_id, game in games.items():
                 game_time_str = game['start_time'].replace('Z', '+00:00')
@@ -633,41 +633,41 @@ class NCAABBRecentManager(BaseNCAABBMManager):
                 is_favorite_game = (game['home_team'] in self.favorite_teams or game['away_team'] in self.favorite_teams)
                 if not is_favorite_game: continue
                 
-                logger.info(f"[NCAABB] Checking favorite recent game: {game['away_team']} @ {game['home_team']}")
-                logger.info(f"[NCAABB] Game time (UTC): {game_time}")
-                logger.info(f"[NCAABB] Game status: {game['status']}, State: {game['status_state']}")
+                logger.info(f"[NCAAMensBaseball] Checking favorite recent game: {game['away_team']} @ {game['home_team']}")
+                logger.info(f"[NCAAMensBaseball] Game time (UTC): {game_time}")
+                logger.info(f"[NCAAMensBaseball] Game status: {game['status']}, State: {game['status_state']}")
                 
                 is_final = game['status_state'] in ['post', 'final', 'completed']
                 is_within_time = recent_cutoff <= game_time <= now
                 
-                logger.info(f"[NCAABB] Is final: {is_final}")
-                logger.info(f"[NCAABB] Is within time window: {is_within_time}")
+                logger.info(f"[NCAAMensBaseball] Is final: {is_final}")
+                logger.info(f"[NCAAMensBaseball] Is within time window: {is_within_time}")
                 
                 if is_final and is_within_time:
                     new_recent_games.append(game)
-                    logger.info(f"[NCAABB] Added favorite team game to recent list: {game['away_team']} @ {game['home_team']}")
+                    logger.info(f"[NCAAMensBaseball] Added favorite team game to recent list: {game['away_team']} @ {game['home_team']}")
             
             if new_recent_games:
-                logger.info(f"[NCAABB] Found {len(new_recent_games)} recent games for favorite teams: {self.favorite_teams}")
+                logger.info(f"[NCAAMensBaseball] Found {len(new_recent_games)} recent games for favorite teams: {self.favorite_teams}")
                 self.recent_games = sorted(new_recent_games, key=lambda g: g.get('start_time'), reverse=True)
                 if not self.current_game or self.current_game.get('id') not in [g.get('id') for g in self.recent_games]:
                     self.current_game_index = 0
                     self.current_game = self.recent_games[0] if self.recent_games else None
             else:
-                logger.info("[NCAABB] No recent games found for favorite teams")
+                logger.info("[NCAAMensBaseball] No recent games found for favorite teams")
                 self.recent_games = []
                 self.current_game = None
             
             self.last_update = current_time
         except Exception as e:
-            logger.error(f"[NCAABB] Error updating recent games: {e}", exc_info=True)
+            logger.error(f"[NCAAMensBaseball] Error updating recent games: {e}", exc_info=True)
 
     def display(self, force_clear: bool = False):
         """Display recent games."""
         if not self.recent_games:
             current_time = time.time()
             if current_time - self.last_warning_time > self.warning_cooldown:
-                logger.info("[NCAABB] No recent games to display")
+                logger.info("[NCAAMensBaseball] No recent games to display")
                 self.last_warning_time = current_time
             return
         try:
@@ -684,26 +684,26 @@ class NCAABBRecentManager(BaseNCAABBMManager):
                 self.display_manager.draw = ImageDraw.Draw(self.display_manager.image)
                 self.display_manager.update_display()
             else:
-                 logger.warning("[NCAABB] Current game is None, cannot display recent game.")
+                 logger.warning("[NCAAMensBaseball] Current game is None, cannot display recent game.")
 
         except Exception as e:
-            logger.error(f"[NCAABB] Error displaying recent game: {e}", exc_info=True)
+            logger.error(f"[NCAAMensBaseball] Error displaying recent game: {e}", exc_info=True)
 
-class NCAABBUpcomingManager(BaseNCAABBMManager):
-    """Manager for displaying upcoming NCAA BB games."""
+class NCAAMensBaseballUpcomingManager(BaseNCAAMensBaseballManager):
+    """Manager for displaying upcoming NCAA Mens Baseball games."""
     def __init__(self, config: Dict[str, Any], display_manager):
         super().__init__(config, display_manager)
-        self.logger.info("Initialized NCAA BB Upcoming Manager")
+        self.logger.info("Initialized NCAA Mens Baseball Upcoming Manager")
         self.upcoming_games = []
         self.current_game = None
         self.current_game_index = 0
         self.last_update = 0
-        self.update_interval = self.ncaa_bb_config.get('upcoming_update_interval', 3600)
+        self.update_interval = self.ncaa_mens_baseball_config.get('upcoming_update_interval', 3600)
         self.last_warning_time = 0
         self.warning_cooldown = 300
         self.last_game_switch = 0
         self.game_display_duration = 10
-        logger.info(f"Initialized NCAABBUpcomingManager with {len(self.favorite_teams)} favorite teams")
+        logger.info(f"Initialized NCAAMensBaseballUpcomingManager with {len(self.favorite_teams)} favorite teams")
 
     def update(self):
         """Update upcoming games data."""
@@ -711,13 +711,13 @@ class NCAABBUpcomingManager(BaseNCAABBMManager):
         if current_time - self.last_update < self.update_interval:
             return
         try:
-            games = self._fetch_ncaa_bb_api_data()
+            games = self._fetch_ncaa_mens_baseball_api_data()
             if games:
                 new_upcoming_games = []
                 now = datetime.now(timezone.utc)
                 upcoming_cutoff = now + timedelta(hours=24)
                 
-                logger.info(f"[NCAABB] Looking for games between {now} and {upcoming_cutoff}")
+                logger.info(f"[NCAAMensBaseball] Looking for games between {now} and {upcoming_cutoff}")
                 
                 for game in games.values():
                     is_favorite_game = (game['home_team'] in self.favorite_teams or game['away_team'] in self.favorite_teams)
@@ -726,40 +726,40 @@ class NCAABBUpcomingManager(BaseNCAABBMManager):
                     game_time = datetime.fromisoformat(game['start_time'].replace('Z', '+00:00'))
                     if game_time.tzinfo is None: game_time = game_time.replace(tzinfo=timezone.utc)
                         
-                    logger.info(f"[NCAABB] Checking favorite upcoming game: {game['away_team']} @ {game['home_team']} at {game_time}")
-                    logger.info(f"[NCAABB] Game status: {game['status']}, State: {game['status_state']}")
+                    logger.info(f"[NCAAMensBaseball] Checking favorite upcoming game: {game['away_team']} @ {game['home_team']} at {game_time}")
+                    logger.info(f"[NCAAMensBaseball] Game status: {game['status']}, State: {game['status_state']}")
                     
                     is_within_time = now <= game_time <= upcoming_cutoff
                     is_upcoming_state = game['status_state'] not in ['post', 'final', 'completed'] and game['status'] == 'status_scheduled'
                     
-                    logger.info(f"[NCAABB] Within time: {is_within_time}")
-                    logger.info(f"[NCAABB] Is upcoming state: {is_upcoming_state}")
+                    logger.info(f"[NCAAMensBaseball] Within time: {is_within_time}")
+                    logger.info(f"[NCAAMensBaseball] Is upcoming state: {is_upcoming_state}")
                     
                     if is_within_time and is_upcoming_state:
                         new_upcoming_games.append(game)
-                        logger.info(f"[NCAABB] Added favorite team game to upcoming list: {game['away_team']} @ {game['home_team']}")
+                        logger.info(f"[NCAAMensBaseball] Added favorite team game to upcoming list: {game['away_team']} @ {game['home_team']}")
                 
                 if new_upcoming_games:
-                    logger.info(f"[NCAABB] Found {len(new_upcoming_games)} upcoming games for favorite teams")
+                    logger.info(f"[NCAAMensBaseball] Found {len(new_upcoming_games)} upcoming games for favorite teams")
                     self.upcoming_games = sorted(new_upcoming_games, key=lambda g: g.get('start_time'))
                     if not self.current_game or self.current_game.get('id') not in [g.get('id') for g in self.upcoming_games]:
                         self.current_game_index = 0
                         self.current_game = self.upcoming_games[0] if self.upcoming_games else None
                 else:
-                    logger.info("[NCAABB] No upcoming games found for favorite teams")
+                    logger.info("[NCAAMensBaseball] No upcoming games found for favorite teams")
                     self.upcoming_games = []
                     self.current_game = None
                 
                 self.last_update = current_time
         except Exception as e:
-            logger.error(f"[NCAABB] Error updating upcoming games: {e}", exc_info=True)
+            logger.error(f"[NCAAMensBaseball] Error updating upcoming games: {e}", exc_info=True)
 
     def display(self, force_clear: bool = False):
         """Display upcoming games."""
         if not self.upcoming_games:
             current_time = time.time()
             if current_time - self.last_warning_time > self.warning_cooldown:
-                logger.info("[NCAABB] No upcoming games to display")
+                logger.info("[NCAAMensBaseball] No upcoming games to display")
                 self.last_warning_time = current_time
             return
         try:
@@ -776,7 +776,7 @@ class NCAABBUpcomingManager(BaseNCAABBMManager):
                 self.display_manager.draw = ImageDraw.Draw(self.display_manager.image)
                 self.display_manager.update_display()
             else:
-                 logger.warning("[NCAABB] Current game is None, cannot display upcoming game.")
+                 logger.warning("[NCAAMensBaseball] Current game is None, cannot display upcoming game.")
 
         except Exception as e:
-            logger.error(f"[NCAABB] Error displaying upcoming game: {e}", exc_info=True) 
+            logger.error(f"[NCAAMensBaseball] Error displaying upcoming game: {e}", exc_info=True) 

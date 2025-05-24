@@ -44,9 +44,9 @@
             "ncaa_fb_live": 30,
             "ncaa_fb_recent": 15,
             "ncaa_fb_upcoming": 15,
-            "ncaa_bb_live": 30,
-            "ncaa_bb_recent": 10,
-            "ncaa_bb_upcoming": 10,
+            "ncaa_mens_baseball_live": 30,
+            "ncaa_mens_baseball_recent": 10,
+            "ncaa_mens_baseball_upcoming": 10,
             "calendar": 30,
             "youtube": 20,
             "mlb_live": 30,
@@ -56,9 +56,9 @@
             "soccer_live": 30,
             "soccer_recent": 20,
             "soccer_upcoming": 20,
-            "ncaam_live": 20,
-            "ncaam_recent": 15,
-            "ncaam_upcoming": 15,
+            "ncaa_mens_basketball_live": 20,
+            "ncaa_mens_basketball_recent": 15,
+            "ncaa_mens_basketball_upcoming": 15,
             "music": 30
         }
     },
@@ -167,7 +167,7 @@
             "ncaa_fb_upcoming": true
         }
     },
-    "ncaam_scoreboard": {
+    "ncaa_mens_basketball_scoreboard": {
         "enabled": true,
         "test_mode": false,
         "update_interval_seconds": 3600,
@@ -176,12 +176,12 @@
         "favorite_teams": ["UGA", "AUB"],
         "logo_dir": "assets/sports/ncaam_logos",
         "display_modes": {
-            "ncaam_live": true,
-            "ncaam_recent": true,
-            "ncaam_upcoming": true
+            "ncaa_mens_basketball_live": true,
+            "ncaa_mens_basketball_recent": true,
+            "ncaa_mens_basketball_upcoming": true
         }
     },
-    "ncaa_bb_scoreboard": {
+    "ncaa_mens_baseball_scoreboard": {
         "enabled": true,
         "test_mode": false,
         "update_interval_seconds": 3600,
@@ -192,9 +192,9 @@
         "favorite_teams": [],
         "logo_dir": "assets/sports/ncaa_fbs_logos",
         "display_modes": {
-            "ncaa_bb_live": true,
-            "ncaa_bb_recent": true,
-            "ncaa_bb_upcoming": true
+            "ncaa_mens_baseball_live": true,
+            "ncaa_mens_baseball_recent": true,
+            "ncaa_mens_baseball_upcoming": true
         }
     },
     "youtube": {

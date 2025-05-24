@@ -23,10 +23,13 @@ from src.mlb_manager import MLBLiveManager, MLBRecentManager, MLBUpcomingManager
 from src.soccer_managers import SoccerLiveManager, SoccerRecentManager, SoccerUpcomingManager
 from src.nfl_managers import NFLLiveManager, NFLRecentManager, NFLUpcomingManager
 from src.ncaa_fb_managers import NCAAFBLiveManager, NCAAFBRecentManager, NCAAFBUpcomingManager
+from src.ncaa_mens_basketball_managers import NCAAMensBasketballLiveManager, NCAAMensBasketballRecentManager, NCAAMensBasketballUpcomingManager
+from src.ncaa_mens_baseball_managers import NCAAMensBaseballLiveManager, NCAAMensBaseballRecentManager, NCAAMensBaseballUpcomingManager
 from src.youtube_display import YouTubeDisplay
 from src.calendar_manager import CalendarManager
 from src.text_display import TextDisplay
 from src.music_manager import MusicManager
+from src.youtube_manager import YouTubeManager
 
 # Get logger without configuring
 logger = logging.getLogger(__name__)
@@ -176,6 +179,36 @@ class DisplayController:
             self.ncaa_fb_upcoming = None
         logger.info("NCAA FB managers initialized in %.3f seconds", time.time() - ncaa_fb_time)
         
+        # Initialize NCAA Mens Basketball managers if enabled
+        ncaa_mens_basketball_time = time.time()
+        ncaa_mens_basketball_enabled = self.config.get('ncaa_mens_basketball_scoreboard', {}).get('enabled', False)
+        ncaa_mens_basketball_display_modes = self.config.get('ncaa_mens_basketball_scoreboard', {}).get('display_modes', {})
+        
+        if ncaa_mens_basketball_enabled:
+            self.ncaa_mens_basketball_live = NCAAMensBasketballLiveManager(self.config, self.display_manager) if ncaa_mens_basketball_display_modes.get('ncaa_mens_basketball_live', True) else None
+            self.ncaa_mens_basketball_recent = NCAAMensBasketballRecentManager(self.config, self.display_manager) if ncaa_mens_basketball_display_modes.get('ncaa_mens_basketball_recent', True) else None
+            self.ncaa_mens_basketball_upcoming = NCAAMensBasketballUpcomingManager(self.config, self.display_manager) if ncaa_mens_basketball_display_modes.get('ncaa_mens_basketball_upcoming', True) else None
+        else:
+            self.ncaa_mens_basketball_live = None
+            self.ncaa_mens_basketball_recent = None
+            self.ncaa_mens_basketball_upcoming = None
+        logger.info("NCAA Mens Basketball managers initialized in %.3f seconds", time.time() - ncaa_mens_basketball_time)
+
+        # Initialize NCAA Mens Baseball managers if enabled
+        ncaa_mens_baseball_time = time.time()
+        ncaa_mens_baseball_enabled = self.config.get('ncaa_mens_baseball_scoreboard', {}).get('enabled', False)
+        ncaa_mens_baseball_display_modes = self.config.get('ncaa_mens_baseball_scoreboard', {}).get('display_modes', {})
+
+        if ncaa_mens_baseball_enabled:
+            self.ncaa_mens_baseball_live = NCAAMensBaseballLiveManager(self.config, self.display_manager) if ncaa_mens_baseball_display_modes.get('ncaa_mens_baseball_live', True) else None
+            self.ncaa_mens_baseball_recent = NCAAMensBaseballRecentManager(self.config, self.display_manager) if ncaa_mens_baseball_display_modes.get('ncaa_mens_baseball_recent', True) else None
+            self.ncaa_mens_baseball_upcoming = NCAAMensBaseballUpcomingManager(self.config, self.display_manager) if ncaa_mens_baseball_display_modes.get('ncaa_mens_baseball_upcoming', True) else None
+        else:
+            self.ncaa_mens_baseball_live = None
+            self.ncaa_mens_baseball_recent = None
+            self.ncaa_mens_baseball_upcoming = None
+        logger.info("NCAA Mens Baseball managers initialized in %.3f seconds", time.time() - ncaa_mens_baseball_time)
+        
         # Track MLB rotation state
         self.mlb_current_team_index = 0
         self.mlb_showing_recent = True
@@ -232,6 +265,18 @@ class DisplayController:
             if self.ncaa_fb_upcoming: self.available_modes.append('ncaa_fb_upcoming')
             # ncaa_fb_live is handled separately
         
+        # Add NCAA Mens Basketball display modes if enabled
+        if ncaa_mens_basketball_enabled:
+            if self.ncaa_mens_basketball_recent: self.available_modes.append('ncaa_mens_basketball_recent')
+            if self.ncaa_mens_basketball_upcoming: self.available_modes.append('ncaa_mens_basketball_upcoming')
+            # ncaa_mens_basketball_live is handled separately
+
+        # Add NCAA Mens Baseball display modes if enabled
+        if ncaa_mens_baseball_enabled:
+            if self.ncaa_mens_baseball_recent: self.available_modes.append('ncaa_mens_baseball_recent')
+            if self.ncaa_mens_baseball_upcoming: self.available_modes.append('ncaa_mens_baseball_upcoming')
+            # ncaa_mens_baseball_live is handled separately
+        
         # Set initial display to first available mode (clock)
         self.current_mode_index = 0
         self.current_display_mode = self.available_modes[0] if self.available_modes else 'none'
@@ -266,6 +311,18 @@ class DisplayController:
         self.ncaa_fb_showing_recent = True
         self.ncaa_fb_favorite_teams = self.config.get('ncaa_fb_scoreboard', {}).get('favorite_teams', [])
         self.in_ncaa_fb_rotation = False
+        
+        # Add NCAA Mens Basketball rotation state
+        self.ncaa_mens_basketball_current_team_index = 0
+        self.ncaa_mens_basketball_showing_recent = True # Start with recent games
+        self.ncaa_mens_basketball_favorite_teams = self.config.get('ncaa_mens_basketball_scoreboard', {}).get('favorite_teams', [])
+        self.in_ncaa_mens_basketball_rotation = False
+
+        # Add NCAA Mens Baseball rotation state
+        self.ncaa_mens_baseball_current_team_index = 0
+        self.ncaa_mens_baseball_showing_recent = True # Start with recent games
+        self.ncaa_mens_baseball_favorite_teams = self.config.get('ncaa_mens_baseball_scoreboard', {}).get('favorite_teams', [])
+        self.in_ncaa_mens_baseball_rotation = False
         
         # Update display durations to include all modes
         self.display_durations = self.config['display'].get('display_durations', {})
@@ -396,6 +453,19 @@ class DisplayController:
         if self.ncaa_fb_recent: self.ncaa_fb_recent.update()
         if self.ncaa_fb_upcoming: self.ncaa_fb_upcoming.update()
 
+        # Update NCAA Mens Basketball managers
+        if self.ncaa_mens_basketball_live: self.ncaa_mens_basketball_live.update()
+        if self.ncaa_mens_basketball_recent: self.ncaa_mens_basketball_recent.update()
+        if self.ncaa_mens_basketball_upcoming: self.ncaa_mens_basketball_upcoming.update()
+
+        # Update NCAA Mens Baseball managers
+        if self.ncaa_mens_baseball_live: self.ncaa_mens_baseball_live.update()
+        if self.ncaa_mens_baseball_recent: self.ncaa_mens_baseball_recent.update()
+        if self.ncaa_mens_baseball_upcoming: self.ncaa_mens_baseball_upcoming.update()
+
+        # Update YouTube manager
+        if self.youtube_manager: self.youtube_manager.update()
+
     def _check_live_games(self) -> tuple[bool, str]:
         """
         Check if there are any live games available.
@@ -424,10 +494,16 @@ class DisplayController:
             if self.ncaa_fb_live and self.ncaa_fb_live.live_games:
                 logger.debug("NCAA FB live games available")
                 return True, 'ncaa_fb'
-        # Add more sports checks here (e.g., MLB, Soccer)
-        if 'mlb' in self.config and self.config['mlb'].get('enabled', False):
-            if self.mlb_live and self.mlb_live.live_games:
-                return True, 'mlb'
+
+        if 'ncaa_mens_basketball_scoreboard' in self.config and self.config['ncaa_mens_basketball_scoreboard'].get('enabled', False):
+            if self.ncaa_mens_basketball_live and self.ncaa_mens_basketball_live.live_games:
+                logger.debug("NCAA Mens Basketball live games available")
+                return True, 'ncaa_mens_basketball'
+
+        if 'ncaa_mens_baseball_scoreboard' in self.config and self.config['ncaa_mens_baseball_scoreboard'].get('enabled', False):
+            if self.ncaa_mens_baseball_live and self.ncaa_mens_baseball_live.live_games:
+                logger.debug("NCAA Mens Baseball live games available")
+                return True, 'ncaa_mens_baseball'
             
         return False, None
 
@@ -786,6 +862,67 @@ class DisplayController:
                         elif self.current_display_mode == 'ncaa_fb_upcoming' and self.ncaa_fb_upcoming:
                             manager_to_display = self.ncaa_fb_upcoming
 
+                # NCAA Mens Basketball rotation logic
+                elif self.current_display_mode == 'ncaa_mens_basketball_recent' or self.current_display_mode == 'ncaa_mens_basketball_upcoming':
+                    if self.ncaa_mens_basketball_favorite_teams and len(self.ncaa_mens_basketball_favorite_teams) > 0: # Only rotate if there are favorite teams
+                        if not self.in_ncaa_mens_basketball_rotation:
+                            logger.info("Entering NCAA Mens Basketball rotation")
+                            self.in_ncaa_mens_basketball_rotation = True
+                            self.ncaa_mens_basketball_current_team_index = 0
+                            self.ncaa_mens_basketball_showing_recent = True # Start with recent for the first team
+
+                        # Switch between recent and upcoming for the current team
+                        if self.ncaa_mens_basketball_showing_recent and self.ncaa_mens_basketball_upcoming:
+                            self.current_display_mode = 'ncaa_mens_basketball_upcoming'
+                            self.ncaa_mens_basketball_showing_recent = False
+                            logger.info(f"Switching to NCAA Mens Basketball upcoming for team {self.ncaa_mens_basketball_favorite_teams[self.ncaa_mens_basketball_current_team_index % len(self.ncaa_mens_basketball_favorite_teams)]}")
+                        elif not self.ncaa_mens_basketball_showing_recent and self.ncaa_mens_basketball_recent:
+                            self.current_display_mode = 'ncaa_mens_basketball_recent'
+                            self.ncaa_mens_basketball_showing_recent = True
+                            self.ncaa_mens_basketball_current_team_index = (self.ncaa_mens_basketball_current_team_index + 1) % len(self.ncaa_mens_basketball_favorite_teams)
+                            logger.info(f"Switching to NCAA Mens Basketball recent for team {self.ncaa_mens_basketball_favorite_teams[self.ncaa_mens_basketball_current_team_index % len(self.ncaa_mens_basketball_favorite_teams)]}")
+                        # If only one mode is available, stick to it and just cycle teams
+                        elif self.ncaa_mens_basketball_recent and not self.ncaa_mens_basketball_upcoming: # Only recent enabled
+                            self.current_display_mode = 'ncaa_mens_basketball_recent'
+                            self.ncaa_mens_basketball_current_team_index = (self.ncaa_mens_basketball_current_team_index + 1) % len(self.ncaa_mens_basketball_favorite_teams)
+                        elif self.ncaa_mens_basketball_upcoming and not self.ncaa_mens_basketball_recent: # Only upcoming enabled
+                            self.current_display_mode = 'ncaa_mens_basketball_upcoming'
+                            self.ncaa_mens_basketball_current_team_index = (self.ncaa_mens_basketball_current_team_index + 1) % len(self.ncaa_mens_basketball_favorite_teams)
+                        else: # No recent/upcoming enabled
+                            self._go_to_next_mode()
+                    else: # No favorite teams, just go to next mode
+                        self._go_to_next_mode()
+
+                # NCAA Mens Baseball rotation logic
+                elif self.current_display_mode == 'ncaa_mens_baseball_recent' or self.current_display_mode == 'ncaa_mens_baseball_upcoming':
+                    if self.ncaa_mens_baseball_favorite_teams and len(self.ncaa_mens_baseball_favorite_teams) > 0: # Only rotate if there are favorite teams
+                        if not self.in_ncaa_mens_baseball_rotation:
+                            logger.info("Entering NCAA Mens Baseball rotation")
+                            self.in_ncaa_mens_baseball_rotation = True
+                            self.ncaa_mens_baseball_current_team_index = 0
+                            self.ncaa_mens_baseball_showing_recent = True # Start with recent for the first team
+
+                        # Switch between recent and upcoming for the current team
+                        if self.ncaa_mens_baseball_showing_recent and self.ncaa_mens_baseball_upcoming:
+                            self.current_display_mode = 'ncaa_mens_baseball_upcoming'
+                            self.ncaa_mens_baseball_showing_recent = False
+                            logger.info(f"Switching to NCAA Mens Baseball upcoming for team {self.ncaa_mens_baseball_favorite_teams[self.ncaa_mens_baseball_current_team_index % len(self.ncaa_mens_baseball_favorite_teams)]}")
+                        elif not self.ncaa_mens_baseball_showing_recent and self.ncaa_mens_baseball_recent:
+                            self.current_display_mode = 'ncaa_mens_baseball_recent'
+                            self.ncaa_mens_baseball_showing_recent = True
+                            self.ncaa_mens_baseball_current_team_index = (self.ncaa_mens_baseball_current_team_index + 1) % len(self.ncaa_mens_baseball_favorite_teams)
+                            logger.info(f"Switching to NCAA Mens Baseball recent for team {self.ncaa_mens_baseball_favorite_teams[self.ncaa_mens_baseball_current_team_index % len(self.ncaa_mens_baseball_favorite_teams)]}")
+                        # If only one mode is available, stick to it and just cycle teams
+                        elif self.ncaa_mens_baseball_recent and not self.ncaa_mens_baseball_upcoming: # Only recent enabled
+                            self.current_display_mode = 'ncaa_mens_baseball_recent'
+                            self.ncaa_mens_baseball_current_team_index = (self.ncaa_mens_baseball_current_team_index + 1) % len(self.ncaa_mens_baseball_favorite_teams)
+                        elif self.ncaa_mens_baseball_upcoming and not self.ncaa_mens_baseball_recent: # Only upcoming enabled
+                            self.current_display_mode = 'ncaa_mens_baseball_upcoming'
+                            self.ncaa_mens_baseball_current_team_index = (self.ncaa_mens_baseball_current_team_index + 1) % len(self.ncaa_mens_baseball_favorite_teams)
+                        else: # No recent/upcoming enabled
+                            self._go_to_next_mode()
+                    else: # No favorite teams, just go to next mode
+                        self._go_to_next_mode()
 
                 # --- Perform Display Update ---
                 try:
@@ -817,6 +954,28 @@ class DisplayController:
                              manager_to_display.display(force_clear=self.force_clear)
                         elif self.current_display_mode == 'text_display':
                              manager_to_display.display() # Assumes internal clearing
+                        elif self.current_display_mode == 'nfl_live' and self.nfl_live:
+                            self.nfl_live.display(force_clear=self.force_clear)
+                        elif self.current_display_mode == 'ncaa_fb_live' and self.ncaa_fb_live:
+                            self.ncaa_fb_live.display(force_clear=self.force_clear)
+                        elif self.current_display_mode == 'ncaa_mens_basketball_live' and self.ncaa_mens_basketball_live:
+                            self.ncaa_mens_basketball_live.display(force_clear=self.force_clear)
+                        elif self.current_display_mode == 'ncaa_mens_baseball_live' and self.ncaa_mens_baseball_live:
+                            self.ncaa_mens_baseball_live.display(force_clear=self.force_clear)
+                        elif self.current_display_mode == 'mlb_live' and self.mlb_live:
+                            self.mlb_live.display(force_clear=self.force_clear)
+                        elif self.current_display_mode == 'ncaa_fb_upcoming' and self.ncaa_fb_upcoming:
+                            self.ncaa_fb_upcoming.display(force_clear=self.force_clear)
+                        elif self.current_display_mode == 'ncaa_mens_basketball_recent' and self.ncaa_mens_basketball_recent:
+                            self.ncaa_mens_basketball_recent.display(force_clear=self.force_clear)
+                        elif self.current_display_mode == 'ncaa_mens_basketball_upcoming' and self.ncaa_mens_basketball_upcoming:
+                            self.ncaa_mens_basketball_upcoming.display(force_clear=self.force_clear)
+                        elif self.current_display_mode == 'ncaa_mens_baseball_recent' and self.ncaa_mens_baseball_recent:
+                            self.ncaa_mens_baseball_recent.display(force_clear=self.force_clear)
+                        elif self.current_display_mode == 'ncaa_mens_baseball_upcoming' and self.ncaa_mens_baseball_upcoming:
+                            self.ncaa_mens_baseball_upcoming.display(force_clear=self.force_clear)
+                        elif self.current_display_mode == 'youtube' and self.youtube_manager:
+                            self.youtube_manager.display(force_clear=self.force_clear)
                         elif hasattr(manager_to_display, 'display'): # General case for most managers
                             manager_to_display.display(force_clear=self.force_clear)
                         else:
