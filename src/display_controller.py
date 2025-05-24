@@ -690,7 +690,7 @@ class DisplayController:
                             
                             active_live_sports = []
                             # Use the same priority order as _check_live_games
-                            priority_order = ['soccer', 'nfl', 'nhl', 'nba', 'mlb', 'ncaa_fb'] 
+                            priority_order = ['soccer', 'nfl', 'nhl', 'nba', 'mlb', 'ncaa_fb', 'ncaa_mens_basketball', 'ncaa_mens_baseball'] 
                             for sport in priority_order:
                                 live_attr = f"{sport}_live"
                                 if hasattr(self, live_attr) and getattr(self, live_attr) and getattr(self, live_attr).live_games:
@@ -860,6 +860,14 @@ class DisplayController:
                             manager_to_display = self.ncaa_fb_recent
                         elif self.current_display_mode == 'ncaa_fb_upcoming' and self.ncaa_fb_upcoming:
                             manager_to_display = self.ncaa_fb_upcoming
+                        elif self.current_display_mode == 'ncaa_mens_basketball_recent' and self.ncaa_mens_basketball_recent:
+                            manager_to_display = self.ncaa_mens_basketball_recent
+                        elif self.current_display_mode == 'ncaa_mens_basketball_upcoming' and self.ncaa_mens_basketball_upcoming:
+                            manager_to_display = self.ncaa_mens_basketball_upcoming
+                        elif self.current_display_mode == 'ncaa_mens_baseball_recent' and self.ncaa_mens_baseball_recent:
+                            manager_to_display = self.ncaa_mens_baseball_recent
+                        elif self.current_display_mode == 'ncaa_mens_baseball_upcoming' and self.ncaa_mens_baseball_upcoming:
+                            manager_to_display = self.ncaa_mens_baseball_upcoming
 
                 # NCAA Mens Basketball rotation logic
                 elif self.current_display_mode == 'ncaa_mens_basketball_recent' or self.current_display_mode == 'ncaa_mens_basketball_upcoming':
