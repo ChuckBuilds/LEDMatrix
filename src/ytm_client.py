@@ -25,7 +25,7 @@ YTM_AUTH_CONFIG_PATH = os.path.join(CONFIG_DIR, 'ytm_auth.json')
 YTM_AUTH_CONFIG_PATH = os.path.abspath(YTM_AUTH_CONFIG_PATH)
 
 class YTMClient:
-    def __init__(self, update_callback=None, display_controller_obj=None):
+    def __init__(self, update_callback=None):
         self.base_url = None
         self.ytm_token = None
         self.load_config() # Loads URL and token
@@ -35,7 +35,6 @@ class YTMClient:
         self._data_lock = threading.Lock()
         self._connection_event = threading.Event()
         self.external_update_callback = update_callback
-        self.display_controller_obj = display_controller_obj
 
         @self.sio.event(namespace='/api/v1/realtime')
         def connect():
@@ -64,12 +63,6 @@ class YTMClient:
                     new_data_received = True
             
             if new_data_received and self.external_update_callback:
-                if self.display_controller_obj and \
-                   hasattr(self.display_controller_obj, 'is_display_active') and \
-                   not self.display_controller_obj.is_display_active("music"):
-                    logging.debug("YTMClient: Music display not active. Suppressing external_update_callback.")
-                    return
-                
                 try:
                     self.external_update_callback(data)
                 except Exception as cb_ex:

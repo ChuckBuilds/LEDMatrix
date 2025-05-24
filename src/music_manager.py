@@ -115,8 +115,7 @@ class MusicManager:
         # Initialize YTM Client if needed
         if self.preferred_source in ["auto", "ytm"]:
             try:
-                self.ytm = YTMClient(update_callback=self._handle_ytm_direct_update, 
-                                     display_controller_obj=self.display_controller_obj)
+                self.ytm = YTMClient(update_callback=self._handle_ytm_direct_update)
                 if not self.ytm.is_available():
                     logging.warning(f"YTM Companion server not reachable at {self.ytm.base_url}. YTM features disabled.")
                     self.ytm = None
@@ -130,84 +129,19 @@ class MusicManager:
             self.ytm = None
 
     def _handle_ytm_direct_update(self, ytm_data):
-        """Handles a direct state update from YTMClient."""
-        logger.debug(f"MusicManager received direct YTM update: {ytm_data.get('track', {}).get('title') if ytm_data else 'No Data'}")
-
+        """Handles a direct state update from YTMClient. 
+        Now, this method will primarily log receipt of data. 
+        The main state update is handled by _poll_music_data.
+        """
         if not self.enabled:
             return
-
-        # Only process updates if the music display is currently active
-        if self.display_controller_obj and hasattr(self.display_controller_obj, 'is_display_active') and not self.display_controller_obj.is_display_active("music"):
-            logger.debug("Music display is not active. Skipping YTM direct update processing.")
-            return
-
-        # Only process if YTM is the preferred source, or if auto and Spotify isn't actively playing.
-        # This check is to ensure we don't override an active Spotify session if preferred_source is 'auto'
-        # and Spotify just happens to be paused but YTM starts playing something.
-        # The main polling loop has more robust logic for who 'wins' in auto mode.
-        # This direct callback should primarily act when YTM is the clear choice or nothing else is playing.
         
-        spotify_is_playing = False
-        if self.current_source == MusicSource.SPOTIFY and self.current_track_info and self.current_track_info.get('is_playing'):
-            spotify_is_playing = True
-
-        if not (self.preferred_source == "ytm" or (self.preferred_source == "auto" and not spotify_is_playing)):
-            logger.debug("Skipping YTM direct update due to preferred_source/Spotify state.")
-            return
-
-        # Check if player is actually playing (not paused, not an ad)
-        player_info = ytm_data.get('player', {})
-        video_info = ytm_data.get('video', {})
-        is_actually_playing_ytm = (player_info.get('trackState') == 1) and not player_info.get('adPlaying', False)
-
-        if not ytm_data or not is_actually_playing_ytm:
-            # If YTM is not playing or data is null, and we were on YTM, treat as a stop.
-            if self.current_source == MusicSource.YTM:
-                logger.info("YTM direct update indicates YTM stopped. Clearing YTM info.")
-                simplified_info = self.get_simplified_track_info(None, MusicSource.NONE)
-                polled_source = MusicSource.NONE # Effectively, nothing is playing from YTM's perspective
-            else:
-                # Not currently on YTM, and YTM is not playing, so no change to announce from YTM's side.
-                return
-        else:
-            simplified_info = self.get_simplified_track_info(ytm_data, MusicSource.YTM)
-            polled_source = MusicSource.YTM
-
-        has_changed = False
-        if simplified_info != self.current_track_info:
-            has_changed = True
-            
-            old_album_art_url = self.current_track_info.get('album_art_url') if self.current_track_info else None
-            new_album_art_url = simplified_info.get('album_art_url') if simplified_info else None
-
-            self.current_track_info = simplified_info
-            # Only set current_source to YTM if YTM is actually playing and preferred or auto
-            self.current_source = polled_source if is_actually_playing_ytm and polled_source == MusicSource.YTM else self.current_source
-            if not is_actually_playing_ytm and self.current_source == MusicSource.YTM:
-                 self.current_source = MusicSource.NONE # If YTM stopped, it's no longer the source
-
-            if new_album_art_url != old_album_art_url:
-                self.album_art_image = None
-                self.last_album_art_url = new_album_art_url
-            
-            display_title = self.current_track_info.get('title', 'None') if self.current_track_info else 'None'
-            logger.debug(f"YTM Direct Update: Track change detected. Source: {self.current_source.name}. Track: {display_title}")
-        else:
-            logger.debug("YTM Direct Update: No change in simplified track info.")
-
-        if has_changed and self.update_callback:
-            try:
-                # Also ensure music display is active before calling the update_callback if controller obj is available
-                if self.display_controller_obj and hasattr(self.display_controller_obj, 'is_display_active'):
-                    if self.display_controller_obj.is_display_active("music"):
-                        self.update_callback(self.current_track_info) # This is the callback to DisplayController
-                    else:
-                        logger.debug("Music display not active. Suppressing update_callback for YTM direct update.")
-                else:
-                    # Fallback if display_controller_obj is not available (e.g. testing or old instantiation)
-                    self.update_callback(self.current_track_info)
-            except Exception as e:
-                logger.error(f"Error executing DisplayController update callback from YTM direct update: {e}")
+        title = "No Data"
+        if ytm_data and isinstance(ytm_data, dict):
+            title = ytm_data.get('track', {}).get('title', 'Unknown Title')
+        logger.debug(f"MusicManager received direct YTM update (event): Title - {title}. Polling loop will process this.")
+        # Do NOT update self.current_track_info or call self.update_callback here anymore.
+        # This prevents race conditions with the polling loop.
 
     def _fetch_and_resize_image(self, url: str, target_size: tuple[int, int]) -> Image.Image | None:
         """Fetches an image from a URL, resizes it, and returns a PIL Image object."""
@@ -251,96 +185,106 @@ class MusicManager:
     def _poll_music_data(self):
         """Continuously polls music sources for updates, respecting preferences."""
         if not self.enabled:
-             logging.warning("Polling attempted while music manager is disabled. Stopping polling thread.")
-             return
+            logging.warning("Polling attempted while music manager is disabled. Stopping polling thread.")
+            return
 
         while not self.stop_event.is_set():
-            polled_track_info = None # Data from the current poll
-            polled_source = MusicSource.NONE # Source identified by the current poll
+            final_track_info_for_update = self.get_simplified_track_info(None, MusicSource.NONE) # Default to "Nothing Playing"
+            polled_source_for_update = MusicSource.NONE
 
-            is_playing_via_poll = False # Did this poll find an active source?
-
-            # Determine which sources to poll based on preference
-            poll_spotify = self.preferred_source in ["auto", "spotify"] and self.spotify and self.spotify.is_authenticated()
-            
-            # YTM is event-driven, so poll_ytm_in_loop is false here based on previous changes
-            poll_ytm_in_loop = False 
-
-            # --- Try Spotify First (if allowed and available) ---
-            if poll_spotify:
-                try:
-                    spotify_track_data = self.spotify.get_current_track()
-                    if spotify_track_data and spotify_track_data.get('is_playing'):
-                        polled_track_info = spotify_track_data
-                        polled_source = MusicSource.SPOTIFY
-                        is_playing_via_poll = True
-                        logging.debug(f"Polling Spotify: Active track - {spotify_track_data.get('item', {}).get('name')}")
-                    else:
-                        logging.debug("Polling Spotify: No active track or player paused.")
-                except Exception as e:
-                    logging.error(f"Error polling Spotify: {e}")
-                    if "token" in str(e).lower():
-                        logging.warning("Spotify auth token issue detected during polling.")
-            
-            # --- YTM Polling (currently disabled in loop by poll_ytm_in_loop = False) ---
-            # if poll_ytm_in_loop and (self.preferred_source == "ytm" or (self.preferred_source == "auto" and not is_playing_via_poll)):
-            # (Code for polling YTM would go here if re-enabled, updating polled_track_info, polled_source, is_playing_via_poll)
-            # For now, this section is skipped.
-
-            # --- Consolidate and Check for Changes ---
-            simplified_info_from_poll = self.get_simplified_track_info(polled_track_info, polled_source)
-
-            new_track_info_to_set = None # This will hold what current_track_info should become
-            new_source_to_set = self.current_source # Default to current source
-
-            if is_playing_via_poll:
-                # Case 1: Polling found an actively playing source (e.g., Spotify).
-                # This new info takes precedence or updates current info.
-                new_track_info_to_set = simplified_info_from_poll
-                new_source_to_set = polled_source
-            else:
-                # Case 2: Polling found no actively playing source.
-                # simplified_info_from_poll is now a "Nothing Playing" structure.
-                if self.current_source == MusicSource.YTM and \
-                   self.current_track_info and \
-                   self.current_track_info.get('is_playing'):
-                    # Subcase 2a: YTM is the current source and it's playing.
-                    # Don't let the poll (which found nothing) overwrite YTM's active state.
-                    # Keep existing YTM track info and source. YTM events will update its state.
-                    new_track_info_to_set = self.current_track_info 
-                    new_source_to_set = MusicSource.YTM 
-                    # No log here to avoid spam, change detection below will handle if no actual change
+            # 1. Determine which source to poll based on self.preferred_source
+            if self.preferred_source == "spotify":
+                if self.spotify and self.spotify.is_authenticated():
+                    try:
+                        spotify_track_data = self.spotify.get_current_track()
+                        if spotify_track_data and spotify_track_data.get('is_playing'):
+                            final_track_info_for_update = self.get_simplified_track_info(spotify_track_data, MusicSource.SPOTIFY)
+                            polled_source_for_update = MusicSource.SPOTIFY
+                            logging.debug(f"Polling Spotify (preferred): Active track - {spotify_track_data.get('item', {}).get('name')}")
+                        else:
+                            logging.debug("Polling Spotify (preferred): No active track or player paused.")
+                    except Exception as e:
+                        logging.error(f"Error polling Spotify (preferred): {e}")
                 else:
-                    # Subcase 2b: Current source isn't an actively playing YTM.
-                    # (e.g., source was Spotify and it stopped, or YTM itself reported it stopped, or source was NONE).
-                    # It's safe to reflect the poll's result (i.e., "Nothing Playing").
-                    new_track_info_to_set = simplified_info_from_poll # This is "Nothing Playing"
-                    new_source_to_set = MusicSource.NONE 
+                    logging.debug("Spotify is preferred source, but client not available/authenticated.")
+            
+            elif self.preferred_source == "ytm":
+                if self.ytm and self.ytm.is_available():
+                    try:
+                        ytm_track_data = self.ytm.get_current_track()
+                        if ytm_track_data:
+                            player_info = ytm_track_data.get('player', {})
+                            is_actually_playing_ytm = (player_info.get('trackState') == 1) and not player_info.get('adPlaying', False)
+                            if is_actually_playing_ytm:
+                                final_track_info_for_update = self.get_simplified_track_info(ytm_track_data, MusicSource.YTM)
+                                polled_source_for_update = MusicSource.YTM
+                                logging.debug(f"Polling YTM (preferred): Active track - {ytm_track_data.get('track', {}).get('title')}")
+                            else:
+                                logging.debug("Polling YTM (preferred): Track data present but player not in active playing state.")
+                        else:
+                            logging.debug("Polling YTM (preferred): No track data from YTM client.")
+                    except Exception as e:
+                        logging.error(f"Error polling YTM (preferred): {e}")
+                else:
+                    logging.debug("YTM is preferred source, but client not available.")
 
-            # Determine if there's an actual change to apply
-            has_changed = False
-            if new_track_info_to_set != self.current_track_info or new_source_to_set != self.current_source:
-                has_changed = True
+            elif self.preferred_source == "auto":
+                spotify_active = False
+                # Try Spotify first in "auto" mode
+                if self.spotify and self.spotify.is_authenticated():
+                    try:
+                        spotify_track_data = self.spotify.get_current_track()
+                        if spotify_track_data and spotify_track_data.get('is_playing'):
+                            final_track_info_for_update = self.get_simplified_track_info(spotify_track_data, MusicSource.SPOTIFY)
+                            polled_source_for_update = MusicSource.SPOTIFY
+                            spotify_active = True
+                            logging.debug(f"Polling (auto mode) Spotify: Active track - {spotify_track_data.get('item', {}).get('name')}")
+                        else:
+                            logging.debug("Polling (auto mode) Spotify: No active track or player paused.")
+                    except Exception as e:
+                        logging.error(f"Error polling Spotify (auto mode): {e}")
                 
+                # If Spotify not active, try YTM in "auto" mode
+                if not spotify_active and self.ytm and self.ytm.is_available():
+                    try:
+                        ytm_track_data = self.ytm.get_current_track()
+                        if ytm_track_data:
+                            player_info = ytm_track_data.get('player', {})
+                            is_actually_playing_ytm = (player_info.get('trackState') == 1) and not player_info.get('adPlaying', False)
+                            if is_actually_playing_ytm:
+                                final_track_info_for_update = self.get_simplified_track_info(ytm_track_data, MusicSource.YTM)
+                                polled_source_for_update = MusicSource.YTM
+                                logging.debug(f"Polling (auto mode) YTM: Active track - {ytm_track_data.get('track', {}).get('title')}")
+                            else:
+                                logging.debug("Polling (auto mode) YTM: Track data present but player not in active playing state.")
+                        else:
+                            logging.debug("Polling (auto mode) YTM: No track data from YTM client.")
+                    except Exception as e:
+                        logging.error(f"Error polling YTM (auto mode): {e}")
+            
+            # 2. Check for changes and update state
+            has_changed = False
+            if final_track_info_for_update != self.current_track_info or polled_source_for_update != self.current_source:
+                has_changed = True
                 old_album_art_url = self.current_track_info.get('album_art_url') if self.current_track_info else None
                 
-                self.current_track_info = new_track_info_to_set
-                self.current_source = new_source_to_set
+                self.current_track_info = final_track_info_for_update
+                self.current_source = polled_source_for_update
 
-                new_album_art_url = self.current_track_info.get('album_art_url') if self.current_track_info else None
+                new_album_art_url = self.current_track_info.get('album_art_url')
                 if new_album_art_url != old_album_art_url:
-                    self.album_art_image = None # Clear cached image if URL changed
+                    self.album_art_image = None
                     self.last_album_art_url = new_album_art_url
                 
                 display_title = self.current_track_info.get('title', 'None')
-                logger.debug(f"Poll Loop: Music state updated. Source: {self.current_source.name}. Track: {display_title}. Playing: {self.current_track_info.get('is_playing')}")
+                is_playing_status = self.current_track_info.get('is_playing', False)
+                logger.debug(f"Poll Loop: Music state updated. Source: {self.current_source.name}. Track: {display_title}. Playing: {is_playing_status}")
             else:
-                # Log less verbosely if no change from the poll's perspective
-                logger.debug(f"Poll Loop: No change from poll. Current source: {self.current_source.name}, Track: {self.current_track_info.get('title') if self.current_track_info else 'None'}")
+                logger.debug(f"Poll Loop: No change from poll. Current source: {self.current_source.name}, Track: {self.current_track_info.get('title', 'None') if self.current_track_info else 'None'}")
 
+            # 3. Callback if changed and display is active
             if has_changed and self.update_callback:
                 try:
-                    # Check active display only if display_controller_obj is available
                     should_callback = True
                     if self.display_controller_obj and hasattr(self.display_controller_obj, 'is_display_active'):
                         if not self.display_controller_obj.is_display_active("music"):
