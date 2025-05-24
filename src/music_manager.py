@@ -6,7 +6,7 @@ import json
 import os
 from io import BytesIO
 import requests
-from PIL import Image, ImageEnhance
+from PIL import Image, ImageEnhance, ImageFont
 
 # Use relative imports for clients within the same package (src)
 from .spotify_client import SpotifyClient
@@ -448,11 +448,54 @@ class MusicManager:
                 logger.info("Music Screen (MusicManager): Nothing playing or info unavailable.")
                 self._last_nothing_playing_log_time = time.time()
             
-            self.display_manager.clear() # Clear before drawing "Nothing Playing"
-            text_width = self.display_manager.get_text_width("Nothing Playing", self.display_manager.regular_font)
-            x_pos = (self.display_manager.matrix.width - text_width) // 2
-            y_pos = (self.display_manager.matrix.height // 2) - 4
-            self.display_manager.draw_text("Nothing Playing", x=x_pos, y=y_pos, font=self.display_manager.regular_font)
+            self.display_manager.clear() # Clear before drawing
+            
+            try:
+                font_to_use = self.display_manager.regular_font
+                # Basic check if font might be the default PIL font which is tiny.
+                # A more robust check would be to see if it's an instance of ImageFont.FreeTypeFont vs ImageFont.ImageFont
+                # or check its path/name if available. For now, rely on it being loaded.
+                if not font_to_use: # Should ideally not happen if DisplayManager guarantees a fallback.
+                    logger.warning("MusicManager: regular_font is None, attempting bdf_5x7_font for 'Nothing Playing'.")
+                    font_to_use = self.display_manager.bdf_5x7_font
+                if not font_to_use: # Ultimate fallback if bdf also fails
+                    logger.warning("MusicManager: bdf_5x7_font also None, using PIL default for 'Nothing Playing'.")
+                    font_to_use = ImageFont.load_default() # PIL's built-in tiny font
+
+                text_to_display = "Nothing Playing"
+                text_width = self.display_manager.get_text_width(text_to_display, font_to_use)
+                x_pos = (self.display_manager.matrix.width - text_width) // 2
+                
+                # Attempt to get font height for better vertical centering
+                try:
+                    if hasattr(font_to_use, 'getbbox'): # PIL TrueType/OpenType
+                        bbox = font_to_use.getbbox(text_to_display)
+                        text_height = bbox[3] - bbox[1]
+                    elif hasattr(font_to_use, 'size') and hasattr(font_to_use.size, 'height'): # freetype.Face
+                        text_height = font_to_use.size.height >> 6
+                    else: # Default BDF or unknown
+                        text_height = 7 # Estimate for 5x7 or default PIL
+                except:
+                    text_height = 7 # Fallback if height calculation fails
+                
+                y_pos = (self.display_manager.matrix.height - text_height) // 2
+                
+                self.display_manager.draw_text(text_to_display, x=x_pos, y=y_pos, font=font_to_use, color=(255,255,255)) # Changed to White
+                logger.debug(f"MusicManager: Drew '{text_to_display}' with font {font_to_use.font.family if hasattr(font_to_use, 'font') else 'Unknown Font'} at ({x_pos},{y_pos})")
+
+            except Exception as e_text_draw:
+                logger.error(f"MusicManager: Error drawing 'Nothing Playing' text: {e_text_draw}", exc_info=True)
+                try:
+                    # Fallback: draw a simple noticeable rectangle if text fails
+                    rect_coords = [
+                        self.display_manager.matrix.width // 4, self.display_manager.matrix.height // 3,
+                        self.display_manager.matrix.width * 3 // 4, self.display_manager.matrix.height * 2 // 3
+                    ]
+                    self.display_manager.draw.rectangle(rect_coords, outline=(255,0,0), fill=(50,0,0)) # Red outline, dark red fill
+                    logger.info(f"MusicManager: Drew fallback rectangle due to text error.")
+                except Exception as e_rect:
+                    logger.error(f"MusicManager: Critical error - cannot draw fallback rectangle: {e_rect}", exc_info=True)
+
             self.display_manager.update_display()
             self.scroll_position_title = 0
             self.scroll_position_artist = 0
