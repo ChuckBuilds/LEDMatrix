@@ -37,7 +37,7 @@ class MusicManager:
         self.current_track_info = None
         self.current_source = MusicSource.NONE
         self.update_callback = update_callback
-        self.polling_interval = 2 # Default
+        self.polling_interval = 1 # Default
         self.enabled = False # Default
         self.preferred_source = "auto" # Default
         self.stop_event = threading.Event()
@@ -55,7 +55,7 @@ class MusicManager:
         self.poll_thread = None
 
     def _load_config(self):
-        default_interval = 2
+        default_interval = 1 # Default polling interval set to 1 second
         default_preferred_source = "auto"
         self.enabled = False # Assume disabled until config proves otherwise
 
@@ -115,7 +115,7 @@ class MusicManager:
         # Initialize YTM Client if needed
         if self.preferred_source in ["auto", "ytm"]:
             try:
-                self.ytm = YTMClient(update_callback=self._handle_ytm_direct_update)
+                self.ytm = YTMClient()
                 if not self.ytm.is_available():
                     logging.warning(f"YTM Companion server not reachable at {self.ytm.base_url}. YTM features disabled.")
                     self.ytm = None
@@ -127,21 +127,6 @@ class MusicManager:
         else:
             logging.info("YTM client initialization skipped due to preferred_source setting.")
             self.ytm = None
-
-    def _handle_ytm_direct_update(self, ytm_data):
-        """Handles a direct state update from YTMClient. 
-        Now, this method will primarily log receipt of data. 
-        The main state update is handled by _poll_music_data.
-        """
-        if not self.enabled:
-            return
-        
-        title = "No Data"
-        if ytm_data and isinstance(ytm_data, dict):
-            title = ytm_data.get('track', {}).get('title', 'Unknown Title')
-        logger.debug(f"MusicManager received direct YTM update (event): Title - {title}. Polling loop will process this.")
-        # Do NOT update self.current_track_info or call self.update_callback here anymore.
-        # This prevents race conditions with the polling loop.
 
     def _fetch_and_resize_image(self, url: str, target_size: tuple[int, int]) -> Image.Image | None:
         """Fetches an image from a URL, resizes it, and returns a PIL Image object."""
