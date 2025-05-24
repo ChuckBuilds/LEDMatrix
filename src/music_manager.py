@@ -44,7 +44,7 @@ class MusicManager:
 
         # Display related attributes moved from DisplayController
         self.album_art_image = None
-        self.last_album_art_url = None
+        self.last_album_art_url = None # Tracks the URL for which an image fetch was last attempted/processed
         self.scroll_position_title = 0
         self.scroll_position_artist = 0
         self.title_scroll_tick = 0
@@ -277,19 +277,41 @@ class MusicManager:
             has_changed = False
             if final_track_info_for_update != self.current_track_info or polled_source_for_update != self.current_source:
                 has_changed = True
-                old_album_art_url = self.current_track_info.get('album_art_url') if self.current_track_info else None
+                # old_album_art_url = self.current_track_info.get('album_art_url') if self.current_track_info else None # No longer needed here like this
                 
                 self.current_track_info = final_track_info_for_update
                 self.current_source = polled_source_for_update
 
-                new_album_art_url = self.current_track_info.get('album_art_url')
-                if new_album_art_url != old_album_art_url:
-                    self.album_art_image = None
-                    self.last_album_art_url = new_album_art_url
+                # Handle album art processing based on the new current_track_info
+                new_art_url = self.current_track_info.get('album_art_url')
+
+                if new_art_url != self.last_album_art_url: # If the target URL has changed
+                    self.last_album_art_url = new_art_url # Update to the new target URL
+
+                    if new_art_url:
+                        logger.info(f"MusicManager Polling Thread: Album art URL changed/appeared. Fetching: {new_art_url}")
+                        # Ensure display_manager and matrix are available for sizing
+                        if self.display_manager and hasattr(self.display_manager, 'matrix') and self.display_manager.matrix:
+                            matrix_height = self.display_manager.matrix.height
+                            album_art_size = matrix_height - 2 
+                            album_art_target_size = (album_art_size, album_art_size)
+                            
+                            self.album_art_image = self._fetch_and_resize_image(new_art_url, album_art_target_size)
+                            
+                            if self.album_art_image:
+                                logger.info("MusicManager Polling Thread: Album art fetched and processed successfully.")
+                            else:
+                                logger.warning("MusicManager Polling Thread: Failed to fetch or process album art. Will use placeholder.")
+                        else:
+                            logger.warning("MusicManager Polling Thread: Display manager or matrix not available for album art sizing. Skipping fetch.")
+                            self.album_art_image = None 
+                    else:
+                        logger.info("MusicManager Polling Thread: Album art URL is None. Clearing image.")
+                        self.album_art_image = None # Clear image if new URL is None
                 
                 display_title = self.current_track_info.get('title', 'None')
                 is_playing_status = self.current_track_info.get('is_playing', False)
-                logger.debug(f"Poll Loop: Music state updated. Source: {self.current_source.name}. Track: {display_title}. Playing: {is_playing_status}")
+                logger.debug(f"Poll Loop: Music state updated. Source: {self.current_source.name}. Track: {display_title}. Playing: {is_playing_status}. Art available: {self.album_art_image is not None}")
             else:
                 logger.debug(f"Poll Loop: No change from poll. Current source: {self.current_source.name}, Track: {self.current_track_info.get('title', 'None') if self.current_track_info else 'None'}")
 
@@ -436,8 +458,8 @@ class MusicManager:
             self.scroll_position_artist = 0
             self.title_scroll_tick = 0 
             self.artist_scroll_tick = 0
-            self.album_art_image = None # Clear album art if nothing is playing
-            self.last_album_art_url = None # Also clear the URL
+            # self.album_art_image = None # Clear album art if nothing is playing - Handled by polling thread
+            # self.last_album_art_url = None # Also clear the URL - Handled by polling thread
             return
 
         # Ensure screen is cleared if not force_clear but needed (e.g. transition from "Nothing Playing")
@@ -456,13 +478,14 @@ class MusicManager:
         text_area_width = self.display_manager.matrix.width - text_area_x_start - 1 
 
         # Fetch and display album art using self.last_album_art_url and self.album_art_image
-        if self.last_album_art_url and not self.album_art_image:
-            logger.info(f"MusicManager: Fetching album art from: {self.last_album_art_url}")
-            self.album_art_image = self._fetch_and_resize_image(self.last_album_art_url, album_art_target_size)
-            if self.album_art_image:
-                 logger.info(f"MusicManager: Album art fetched and processed successfully.")
-            else:
-                logger.warning(f"MusicManager: Failed to fetch or process album art.")
+        # The image is now pre-fetched by the polling thread and stored in self.album_art_image
+        # if self.last_album_art_url and not self.album_art_image:
+        #     logger.info(f"MusicManager: Fetching album art from: {self.last_album_art_url}")
+        #     self.album_art_image = self._fetch_and_resize_image(self.last_album_art_url, album_art_target_size)
+        #     if self.album_art_image:
+        #          logger.info(f"MusicManager: Album art fetched and processed successfully.")
+        #     else:
+        #         logger.warning(f"MusicManager: Failed to fetch or process album art.")
 
         if self.album_art_image:
             self.display_manager.image.paste(self.album_art_image, (album_art_x, album_art_y))
