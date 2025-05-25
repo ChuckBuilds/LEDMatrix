@@ -126,11 +126,12 @@ class YTMClient:
             logger.info(f"Disconnected from YTM Companion Socket.IO server at {self.base_url} on namespace /api/v1/realtime")
             self.is_connected_event.clear()
         
-        # Handler for 'state' event from YTM Companion's Socket.IO server
-        @self.sio.on('state', namespace='/api/v1/realtime')
+        # Handler for event from YTM Companion's Socket.IO server
+        # Old version used 'state-update'. Current YTMDesktop v1 API docs say 'state'. Trying 'state-update'.
+        @self.sio.on('state-update', namespace='/api/v1/realtime')
         def _on_state_change(data):
             # This is where YTM Companion pushes player state updates.
-            # logger.debug(f"YTMClient received 'state' update (raw): {data}") # Very verbose
+            # logger.debug(f"YTMClient received 'state-update' (raw): {data}") # Very verbose
             if self.update_callback:
                 try:
                     self.update_callback(data) # Pass the raw data to MusicManager
@@ -261,16 +262,16 @@ class YTMClient:
                     logger.error("Failed to load YTM auth token. Cannot fetch track.")
                     return None
 
-            response = requests.get(f"{self.base_url}/api/v1/track", headers=self.headers, timeout=3)
+            # Use /api/v1/player instead of /api/v1/track
+            response = requests.get(f"{self.base_url}/api/v1/player", headers=self.headers, timeout=3)
             if response.status_code == 200:
                 track_data = response.json()
                 # logger.debug(f"YTMClient get_current_track (REST): {track_data}")
                 return track_data
             elif response.status_code == 401:
-                logger.warning(f"YTM Companion: Authentication failed (401) for /api/v1/track. Token may be invalid.")
-                # Potentially trigger re-authentication or notify user.
+                logger.warning(f"YTM Companion: Authentication failed (401) for /api/v1/player. Token may be invalid.")
             elif response.status_code == 204: # No content - often means nothing playing or YTM desktop not focused
-                 logger.debug("YTM Companion /api/v1/track returned 204 No Content (likely nothing playing or player not active).")
+                 logger.debug("YTM Companion /api/v1/player returned 204 No Content (likely nothing playing or player not active).")
                  return None # Treat as nothing playing
             else:
                 logger.error(f"Error getting current track from YTM Companion: {response.status_code} - {response.text}")
