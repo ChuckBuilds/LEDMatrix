@@ -50,6 +50,7 @@ class MusicManager:
         self.scroll_position_artist = 0
         self.title_scroll_tick = 0
         self.artist_scroll_tick = 0
+        self._logged_nothing_playing_for_current_state = False # New attribute
         
         self._load_config() # Load config first
         self._initialize_clients() # Initialize based on loaded config
@@ -625,7 +626,9 @@ class MusicManager:
                 y_pos = (self.display_manager.matrix.height - text_height) // 2
                 
                 self.display_manager.draw_text(text_to_display, x=x_pos, y=y_pos, font=font_to_use, color=(255,255,255)) # Changed to White
-                logger.debug(f"MusicManager: Drew '{text_to_display}' with font {font_to_use.font.family if hasattr(font_to_use, 'font') else 'Unknown Font'} at ({x_pos},{y_pos})")
+                if force_clear or not self._logged_nothing_playing_for_current_state:
+                    logger.debug(f"MusicManager: Drew '{text_to_display}' with font {font_to_use.font.family if hasattr(font_to_use, 'font') else 'Unknown Font'} at ({x_pos},{y_pos})")
+                    self._logged_nothing_playing_for_current_state = True
 
             except Exception as e_text_draw:
                 logger.error(f"MusicManager: Error drawing 'Nothing Playing' text: {e_text_draw}", exc_info=True)
@@ -648,6 +651,9 @@ class MusicManager:
             # self.album_art_image = None # Clear album art if nothing is playing - Handled by polling thread
             # self.last_album_art_url = None # Also clear the URL - Handled by polling thread
             return
+
+        # If we reach here, actual track info is expected, so reset the flag
+        self._logged_nothing_playing_for_current_state = False 
 
         # Ensure screen is cleared if not force_clear but needed (e.g. transition from "Nothing Playing")
         # This might be handled by DisplayController's force_clear logic, but can be an internal check too.
