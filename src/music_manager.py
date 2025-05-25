@@ -601,6 +601,7 @@ class MusicManager:
             
             self.display_manager.clear() # Clear before drawing
             
+            is_fresh_nothing_playing_draw = False # Local variable to track if this is a "fresh" draw
             try:
                 font_to_use = self.display_manager.regular_font
                 # Basic check if font might be the default PIL font which is tiny.
@@ -632,7 +633,9 @@ class MusicManager:
                 y_pos = (self.display_manager.matrix.height - text_height) // 2
                 
                 self.display_manager.draw_text(text_to_display, x=x_pos, y=y_pos, font=font_to_use, color=(255,255,255)) # Changed to White
+                
                 if force_clear or not self._logged_nothing_playing_for_current_state:
+                    is_fresh_nothing_playing_draw = True # Mark for logging after update_display
                     logger.debug(f"MusicManager: Drew '{text_to_display}' with font {font_to_use.font.family if hasattr(font_to_use, 'font') else 'Unknown Font'} at ({x_pos},{y_pos})")
                     self._logged_nothing_playing_for_current_state = True
 
@@ -646,11 +649,16 @@ class MusicManager:
                     ]
                     self.display_manager.draw.rectangle(rect_coords, outline=(255,0,0), fill=(50,0,0)) # Red outline, dark red fill
                     logger.info(f"MusicManager: Drew fallback rectangle due to text error.")
+                    if force_clear or not self._logged_nothing_playing_for_current_state: # Check before updating flag
+                        is_fresh_nothing_playing_draw = True
+                        self._logged_nothing_playing_for_current_state = True # Ensure flag is set
                 except Exception as e_rect:
                     logger.error(f"MusicManager: Critical error - cannot draw fallback rectangle: {e_rect}", exc_info=True)
 
             self.display_manager.update_display()
-            logger.debug("MusicManager: 'Nothing Playing' block executed and display updated.")
+            if is_fresh_nothing_playing_draw: # Log based on the local variable
+                logger.debug("MusicManager: 'Nothing Playing' block processed (fresh draw/force) and display updated.")
+            
             self.scroll_position_title = 0
             self.scroll_position_artist = 0
             self.title_scroll_tick = 0 
