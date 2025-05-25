@@ -134,12 +134,29 @@ class MusicManager:
             logger.info("MusicManager: Cannot activate, manager is disabled.")
             return
 
+        activated_successfully = False
         if self.ytm:
             logger.info("MusicManager: Telling YTMClient to start listening.")
             self.ytm.start_client_listening()
+            # Wait for a short period for YTM client to connect
+            for _ in range(5): # Try for up to 5 seconds (5 * 1s)
+                if self.ytm.is_available(): # is_available() should ideally check sio.connected for YTM
+                    logger.info("MusicManager: YTMClient appears to be available after starting.")
+                    activated_successfully = True
+                    break
+                logger.info("MusicManager: Waiting for YTMClient to become available...")
+                time.sleep(1)
+            if not activated_successfully:
+                logger.warning("MusicManager: YTMClient did not become available after starting listener.")
+        elif self.spotify and self.spotify.is_authenticated(): # Check if Spotify can be used
+            logger.info("MusicManager: Spotify is available.")
+            activated_successfully = True
         
-        self.start_polling() # Ensure MusicManager polling thread is running
-        self.trigger_immediate_poll_and_update() # Get current status
+        if activated_successfully:
+            self.start_polling() 
+            self.trigger_immediate_poll_and_update()
+        else:
+            logger.warning("MusicManager: No music clients became available. Polling not started effectively.")
 
     def deactivate_music_mode(self):
         logger.info("MusicManager: Deactivating music mode.")
@@ -415,9 +432,15 @@ class MusicManager:
             return
 
         if not self.poll_thread or not self.poll_thread.is_alive():
-            # Ensure at least one client is potentially available
-            if not self.spotify and not self.ytm:
-                 logging.warning("Cannot start polling: No music clients initialized or available.")
+            # Ensure at least one client is initialized and potentially usable
+            client_ready = False
+            if self.ytm and self.ytm.is_available(): # Check if YTM client object exists AND is available
+                client_ready = True
+            elif self.spotify and self.spotify.is_authenticated(): # Check if Spotify client object exists AND is authenticated
+                client_ready = True
+            
+            if not client_ready:
+                 logging.warning("Cannot start polling: No music clients are currently available/ready.")
                  return
 
             self.stop_event.clear()
