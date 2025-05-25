@@ -217,52 +217,27 @@ class YTMClient:
 
     def is_available(self):
         """
-        Checks basic connectivity to the YTM Companion server using a simple HTTP GET.
-        This is a quick check and doesn't guarantee full Socket.IO functionality or auth.
+        Checks if the YTM client believes it can communicate.
+        Primarily relies on the Socket.IO connection status.
         """
         if not self.base_url:
+            logger.debug("YTMClient.is_available: No base_url set.")
             return False
-        try:
-            # Use a different endpoint for a quick check, like /api/v1/player
-            # Requires authentication for /api/v1/player, /api/v1/track, etc.
-            # A simple health check endpoint on YTM Companion that doesn't require auth would be better.
-            # For now, let's try /api/v1/info which might not require auth.
-            # If YTM Companion requires auth for all /api/v1/*, this check needs self.headers.
-            # The original version used a specific check for connectivity.
-            # This method is mostly to see if the server *exists* at the URL.
-            
-            # Let's try to check if the socket is connected as a primary means of availability
-            if self.sio and self.sio.connected:
-                return True
+        
+        # Primary check: is the socket connected?
+        if self.sio and self.sio.connected:
+            logger.debug("YTMClient.is_available: Socket.IO is connected.")
+            return True
 
-            # Fallback to HTTP check if socket not connected (e.g. before first connection)
-            # This is tricky because most YTM Companion endpoints require auth.
-            # A dedicated unauthenticated health endpoint on YTM Companion is ideal.
-            # For now, we'll assume if base_url is set, we *could* connect.
-            # A more robust check might try to connect the socket if not connected.
-
-            # Let's use the /api/v1/info endpoint that YTM Desktop provides (unauthenticated)
-            # Or a specific health check if available on the companion.
-            # Assuming YTM Companion might have a similar info endpoint or a root page.
-            # For now, the socket connection status is the most reliable.
-            # This method can be enhanced if YTM companion has a specific health check.
-            
-            # Simplified: if base_url exists, assume it *could* be available.
-            # The connection loop handles actual connection attempts.
-            # MusicManager will use this, then attempt ytm.connect() or rely on auto-connect.
-            
-            # Connectivity check based on trying to get /api/v1/info (usually doesn't need token)
-            response = requests.get(f"{self.base_url}/api/v1/info", timeout=2)
-            if response.status_code == 200:
-                 logger.debug("YTM Companion server reachable via /api/v1/info.")
-                 return True
-            else:
-                 logger.warning(f"YTM Companion server check to /api/v1/info failed with status {response.status_code}.")
-                 return False
-        except requests.exceptions.RequestException as e:
-            logger.warning(f"YTM Companion server not reachable at {self.base_url} during HTTP check: {e}")
-            return False
-        return bool(self.base_url) # Minimal check if base_url is set
+        # If not connected, it doesn't necessarily mean it's unavailable, 
+        # as the connection_thread will attempt to connect.
+        # For the purpose of MusicManager deciding to *start* polling or try to connect,
+        # having a base_url might be sufficient, as start_client_listening() will handle the rest.
+        # However, for get_current_track, we might want a more stringent check.
+        # Let's keep it simple: if base_url exists, we assume it *could* become available.
+        # The actual connection status is managed by the connection loop.
+        logger.debug(f"YTMClient.is_available: Socket.IO not currently connected, but base_url \'{self.base_url}\' is set. Returning True (optimistic).")
+        return True # Optimistically true if base_url is set, connection loop handles actual connection.
 
 
     def get_current_track(self):
