@@ -29,7 +29,7 @@ class MusicSource(Enum):
     YTM = auto()
 
 class MusicManager:
-    def __init__(self, display_manager, config, update_callback=None):
+    def __init__(self, display_manager, config, update_callback=None, is_music_display_active_callback=None):
         self.display_manager = display_manager
         self.config = config
         self.spotify = None
@@ -37,6 +37,7 @@ class MusicManager:
         self.current_track_info = None
         self.current_source = MusicSource.NONE
         self.update_callback = update_callback
+        self.is_music_display_active_callback = is_music_display_active_callback
         self.polling_interval = 2 # Default
         self.enabled = False # Default
         self.preferred_source = "auto" # Default
@@ -115,7 +116,7 @@ class MusicManager:
         # Initialize YTM Client if needed
         if self.preferred_source in ["auto", "ytm"]:
             try:
-                self.ytm = YTMClient(update_callback=self._handle_ytm_direct_update)
+                self.ytm = YTMClient(update_callback=self._handle_ytm_update)
                 if not self.ytm.is_available():
                     logging.warning(f"YTM Companion server not reachable at {self.ytm.base_url}. YTM features disabled.")
                     self.ytm = None
@@ -128,72 +129,51 @@ class MusicManager:
             logging.info("YTM client initialization skipped due to preferred_source setting.")
             self.ytm = None
 
-    def _handle_ytm_direct_update(self, ytm_data):
-        """Handles a direct state update from YTMClient."""
-        logger.debug(f"MusicManager received direct YTM update: {ytm_data.get('track', {}).get('title') if ytm_data else 'No Data'}")
+    def _handle_ytm_update(self, data):
+        """Handles real-time track updates from YTMClient (Socket.IO)."""
+        logger.debug(f"MusicManager received direct YTM update: {data}")
+        # The 'data' from YTMClient via Socket.IO might be slightly different
+        # than what was expected from the old REST API version.
+        # We need to ensure it's processed correctly by get_simplified_track_info.
+        # Based on ytm_client.py, 'data' should be the track_info dictionary.
 
-        if not self.enabled:
-            return
+        simplified_info = self.get_simplified_track_info(data, MusicSource.YTM)
 
-        # Only process if YTM is the preferred source, or if auto and Spotify isn't actively playing.
-        # This check is to ensure we don't override an active Spotify session if preferred_source is 'auto'
-        # and Spotify just happens to be paused but YTM starts playing something.
-        # The main polling loop has more robust logic for who 'wins' in auto mode.
-        # This direct callback should primarily act when YTM is the clear choice or nothing else is playing.
-        
-        spotify_is_playing = False
-        if self.current_source == MusicSource.SPOTIFY and self.current_track_info and self.current_track_info.get('is_playing'):
-            spotify_is_playing = True
-
-        if not (self.preferred_source == "ytm" or (self.preferred_source == "auto" and not spotify_is_playing)):
-            logger.debug("Skipping YTM direct update due to preferred_source/Spotify state.")
-            return
-
-        # Check if player is actually playing (not paused, not an ad)
-        player_info = ytm_data.get('player', {})
-        video_info = ytm_data.get('video', {})
-        is_actually_playing_ytm = (player_info.get('trackState') == 1) and not player_info.get('adPlaying', False)
-
-        if not ytm_data or not is_actually_playing_ytm:
-            # If YTM is not playing or data is null, and we were on YTM, treat as a stop.
-            if self.current_source == MusicSource.YTM:
-                logger.info("YTM direct update indicates YTM stopped. Clearing YTM info.")
-                simplified_info = self.get_simplified_track_info(None, MusicSource.NONE)
-                polled_source = MusicSource.NONE # Effectively, nothing is playing from YTM's perspective
-            else:
-                # Not currently on YTM, and YTM is not playing, so no change to announce from YTM's side.
-                return
-        else:
-            simplified_info = self.get_simplified_track_info(ytm_data, MusicSource.YTM)
-            polled_source = MusicSource.YTM
-
-        has_changed = False
-        if simplified_info != self.current_track_info:
-            has_changed = True
-            
-            old_album_art_url = self.current_track_info.get('album_art_url') if self.current_track_info else None
-            new_album_art_url = simplified_info.get('album_art_url') if simplified_info else None
-
+        if self._is_new_track(simplified_info):
+            logger.debug(f"YTM Direct Update: Track change detected. Source: {simplified_info.get('source') if simplified_info else 'NONE'}. Track: {simplified_info.get('title') if simplified_info else 'Nothing Playing'}")
             self.current_track_info = simplified_info
-            # Only set current_source to YTM if YTM is actually playing and preferred or auto
-            self.current_source = polled_source if is_actually_playing_ytm and polled_source == MusicSource.YTM else self.current_source
-            if not is_actually_playing_ytm and self.current_source == MusicSource.YTM:
-                 self.current_source = MusicSource.NONE # If YTM stopped, it's no longer the source
-
-            if new_album_art_url != old_album_art_url:
-                self.album_art_image = None
-                self.last_album_art_url = new_album_art_url
+            self.current_source = MusicSource.YTM if simplified_info and simplified_info.get('is_playing') else MusicSource.NONE
             
-            display_title = self.current_track_info.get('title', 'None') if self.current_track_info else 'None'
-            logger.debug(f"YTM Direct Update: Track change detected. Source: {self.current_source.name}. Track: {display_title}")
+            # Only call update_callback if music display is active
+            if self.is_music_display_active_callback and self.is_music_display_active_callback():
+                logger.debug("Music display is active, calling update_callback for YTM.")
+                if self.update_callback:
+                    self.update_callback(self.current_track_info)
+                # If music display is active, also fetch album art immediately.
+                if self.current_track_info and self.current_track_info.get('album_art_url'):
+                    self._fetch_album_art(self.current_track_info['album_art_url'])
+                else:
+                    self.album_art_image = None # Clear album art if no URL
+                    self.last_album_art_url = None
+            else:
+                # Music display is not active. Update internal state silently.
+                # Album art will be fetched when the display becomes active via self.display()
+                logger.debug("Music display is NOT active. Updated YTM track info silently.")
+                if self.current_track_info and self.current_track_info.get('album_art_url'):
+                    # We still store the URL, but don't fetch the image yet
+                    self.last_album_art_url = self.current_track_info['album_art_url']
+                    self.album_art_image = None # Ensure image is cleared if it was previously set
+                else:
+                    self.album_art_image = None
+                    self.last_album_art_url = None
         else:
             logger.debug("YTM Direct Update: No change in simplified track info.")
-
-        if has_changed and self.update_callback:
-            try:
-                self.update_callback(self.current_track_info) # This is the callback to DisplayController
-            except Exception as e:
-                logger.error(f"Error executing DisplayController update callback from YTM direct update: {e}")
+            # If track hasn't changed, but music display became active, and we don't have art, fetch it.
+            if self.is_music_display_active_callback and self.is_music_display_active_callback():
+                if self.current_track_info and self.current_track_info.get('album_art_url') and not self.album_art_image:
+                     if self.last_album_art_url == self.current_track_info['album_art_url']: # check if URL is same
+                         logger.debug("Music display active, track unchanged, fetching missing album art.")
+                         self._fetch_album_art(self.current_track_info['album_art_url'])
 
     def _fetch_and_resize_image(self, url: str, target_size: tuple[int, int]) -> Image.Image | None:
         """Fetches an image from a URL, resizes it, and returns a PIL Image object."""
@@ -423,151 +403,223 @@ class MusicManager:
         self.poll_thread = None # Clear the thread object
 
     # Method moved from DisplayController and renamed
-    def display(self, force_clear: bool = False):
-        if force_clear: # Removed self.force_clear as it's passed directly
-            self.display_manager.clear()
-            # self.force_clear = False # Not needed here
+    def display(self, force_clear=False):
+        """Displays the current music info on the matrix."""
+        # This method is called by DisplayController when it's time to show the music screen.
+        # It should ensure all necessary data (like album art) is ready.
 
-        # Use self.current_track_info which is updated by _poll_music_data
-        display_info = self.current_track_info 
+        if not self.current_track_info or not self.current_track_info.get('is_playing'):
+            # If nothing is playing or no track info, display a "Nothing Playing" message
+            # This part is handled by the DisplayManager's draw_text_display method
+            # which is more flexible for different "nothing playing" scenarios.
+            # We can instruct DisplayManager what to show.
+            logger.debug("MusicManager.display: No track playing or no info. Requesting clear/default display.")
+            # Consider if MusicManager should have a method to explicitly tell DisplayManager
+            # to show "Nothing Playing - Music" or similar, or if DisplayController handles this.
+            # For now, assume DisplayController handles the "nothing playing" state for the music screen
+            # by perhaps showing a static image or text if current_track_info is None from the callback.
+            # However, if force_clear is true, we should clear.
+            if force_clear:
+                 self.display_manager.clear_display()
+                 # Optionally, draw a "Nothing Playing" message directly if that's desired behavior for music mode
+                 # self.display_manager.draw_text_display("Nothing Playing", font_name="merksam", text_color=(100,100,100))
 
-        if not display_info or not display_info.get('is_playing', False) or display_info.get('title') == 'Nothing Playing':
-            # Debounce "Nothing playing" log for this manager
-            if not hasattr(self, '_last_nothing_playing_log_time') or \
-               time.time() - getattr(self, '_last_nothing_playing_log_time', 0) > 30:
-                logger.info("Music Screen (MusicManager): Nothing playing or info unavailable.")
-                self._last_nothing_playing_log_time = time.time()
+            # Since display() is called when music mode is active, ensure album art is fetched if missing
+            elif self.current_track_info and self.current_track_info.get('album_art_url') and not self.album_art_image:
+                logger.debug("MusicManager.display: Music active, track info exists, but no album art image. Fetching.")
+                self._fetch_album_art(self.current_track_info['album_art_url'])
+            # Fall through to draw the actual content if it exists, even if art is still fetching.
+            # The draw_music_display should handle a missing album_art_image gracefully.
             
-            self.display_manager.clear() # Clear before drawing "Nothing Playing"
-            text_width = self.display_manager.get_text_width("Nothing Playing", self.display_manager.regular_font)
-            x_pos = (self.display_manager.matrix.width - text_width) // 2
-            y_pos = (self.display_manager.matrix.height // 2) - 4
-            self.display_manager.draw_text("Nothing Playing", x=x_pos, y=y_pos, font=self.display_manager.regular_font)
-            self.display_manager.update_display()
-            self.scroll_position_title = 0
-            self.scroll_position_artist = 0
-            self.title_scroll_tick = 0 
-            self.artist_scroll_tick = 0
-            self.album_art_image = None # Clear album art if nothing is playing
-            self.last_album_art_url = None # Also clear the URL
-            return
+            # Based on original logic, if nothing playing, the display method might not get called,
+            # or DisplayController shows something else. If it *is* called, we must ensure
+            # DisplayManager shows something sensible or clears.
+            # Let's ensure that if this method IS called and nothing is playing, we clear the music part.
+            # The DisplayManager.draw_music_display should ideally handle `None` for track components.
+            # For safety, if we are here and nothing playing, but force_clear wasn't set,
+            # we should probably clear the music-specific area if it was previously drawn.
+            # This is tricky because `force_clear` comes from DisplayController based on mode switches.
+            # The best place to handle "nothing playing" is within draw_music_display based on track_info.
 
-        # Ensure screen is cleared if not force_clear but needed (e.g. transition from "Nothing Playing")
-        # This might be handled by DisplayController's force_clear logic, but can be an internal check too.
-        # For now, assuming DisplayController manages the initial clear for a new mode.
-        self.display_manager.draw.rectangle([0, 0, self.display_manager.matrix.width, self.display_manager.matrix.height], fill=(0, 0, 0))
-
-
-        # Album Art Configuration
-        matrix_height = self.display_manager.matrix.height
-        album_art_size = matrix_height - 2 
-        album_art_target_size = (album_art_size, album_art_size)
-        album_art_x = 1
-        album_art_y = 1
-        text_area_x_start = album_art_x + album_art_size + 2 
-        text_area_width = self.display_manager.matrix.width - text_area_x_start - 1 
-
-        # Fetch and display album art using self.last_album_art_url and self.album_art_image
-        if self.last_album_art_url and not self.album_art_image:
-            logger.info(f"MusicManager: Fetching album art from: {self.last_album_art_url}")
-            self.album_art_image = self._fetch_and_resize_image(self.last_album_art_url, album_art_target_size)
-            if self.album_art_image:
-                 logger.info(f"MusicManager: Album art fetched and processed successfully.")
-            else:
-                logger.warning(f"MusicManager: Failed to fetch or process album art.")
-
-        if self.album_art_image:
-            self.display_manager.image.paste(self.album_art_image, (album_art_x, album_art_y))
-        else:
-            self.display_manager.draw.rectangle([album_art_x, album_art_y, 
-                                                 album_art_x + album_art_size -1, album_art_y + album_art_size -1],
-                                                 outline=(50,50,50), fill=(10,10,10))
-
-
-        title = display_info.get('title', ' ')
-        artist = display_info.get('artist', ' ')
-        album = display_info.get('album', ' ') 
-
-        font_title = self.display_manager.small_font
-        font_artist_album = self.display_manager.bdf_5x7_font
-        line_height_title = 8 
-        line_height_artist_album = 7 
-        padding_between_lines = 1 
-
-        TEXT_SCROLL_DIVISOR = 5 
-
-        # --- Title --- 
-        y_pos_title = 2 
-        title_width = self.display_manager.get_text_width(title, font_title)
-        current_title_display_text = title
-        if title_width > text_area_width:
-            # Ensure scroll_position_title is valid for the current title length
-            if self.scroll_position_title >= len(title):
-                self.scroll_position_title = 0
-            current_title_display_text = title[self.scroll_position_title:] + "   " + title[:self.scroll_position_title]
+            # Let's simplify: if no track, draw_music_display should handle it.
+            # If there IS a track, proceed to draw.
+            # Ensure album art is ready if we have a URL and no image.
+            if self.current_track_info and self.current_track_info.get('album_art_url') and not self.album_art_image:
+                logger.debug("MusicManager.display: Music active, track info exists, but no album art image. Fetching.")
+                self._fetch_album_art(self.current_track_info['album_art_url'])
+            # Fall through to the drawing logic.
         
-        self.display_manager.draw_text(current_title_display_text, 
-                                     x=text_area_x_start, y=y_pos_title, color=(255, 255, 255), font=font_title)
-        if title_width > text_area_width:
-            self.title_scroll_tick += 1
-            if self.title_scroll_tick % TEXT_SCROLL_DIVISOR == 0:
-                self.scroll_position_title = (self.scroll_position_title + 1) % len(title)
-                self.title_scroll_tick = 0 
-        else:
-            self.scroll_position_title = 0
+        # At this point, current_track_info might be None or populated.
+        # display_manager.draw_music_display should be robust to this.
+        
+        title = self.current_track_info.get('title', "Nothing Playing") if self.current_track_info else "Nothing Playing"
+        artist = self.current_track_info.get('artist', "") if self.current_track_info else ""
+        album = self.current_track_info.get('album', "") if self.current_track_info else ""
+        is_playing = self.current_track_info.get('is_playing', False) if self.current_track_info else False
+        
+        # Use the album art image fetched and stored in self.album_art_image
+        # The _fetch_album_art method now updates self.album_art_image directly.
+
+        logger.debug(f"MusicManager.display: Title='{title}', Artist='{artist}', Album='{album}', Playing={is_playing}, ForceClear={force_clear}, HasAlbumArtImage={self.album_art_image is not None}")
+
+        # Scrolling logic remains largely the same
+        # but now it's part of MusicManager
+
+        # Max text lengths from config (example values, should be in config.json ideally)
+        # These are character counts, not pixel widths, for simplicity here.
+        # Real pixel-based truncation/scrolling is better handled by DisplayManager drawing functions.
+        max_title_len = self.config.get('music', {}).get('display_max_title_length', 12) # e.g., 12 chars fit
+        max_artist_len = self.config.get('music', {}).get('display_max_artist_length', 15)
+
+        # Update scroll positions
+        tick_speed_title = 5  # Lower is faster scroll (ticks per character shift)
+        tick_speed_artist = 5
+
+        self.title_scroll_tick = (self.title_scroll_tick + 1)
+        if self.title_scroll_tick >= tick_speed_title:
             self.title_scroll_tick = 0
+            self.scroll_position_title = (self.scroll_position_title + 1) % (len(title) + max_title_len if len(title) > max_title_len else 1) # Loop scroll
 
-        # --- Artist --- 
-        y_pos_artist = y_pos_title + line_height_title + padding_between_lines
-        artist_width = self.display_manager.get_text_width(artist, font_artist_album)
-        current_artist_display_text = artist
-        if artist_width > text_area_width:
-            # Ensure scroll_position_artist is valid for the current artist length
-            if self.scroll_position_artist >= len(artist):
-                self.scroll_position_artist = 0
-            current_artist_display_text = artist[self.scroll_position_artist:] + "   " + artist[:self.scroll_position_artist]
-
-        self.display_manager.draw_text(current_artist_display_text, 
-                                      x=text_area_x_start, y=y_pos_artist, color=(180, 180, 180), font=font_artist_album)
-        if artist_width > text_area_width:
-            self.artist_scroll_tick += 1
-            if self.artist_scroll_tick % TEXT_SCROLL_DIVISOR == 0:
-                self.scroll_position_artist = (self.scroll_position_artist + 1) % len(artist)
-                self.artist_scroll_tick = 0
-        else:
-            self.scroll_position_artist = 0
+        self.artist_scroll_tick = (self.artist_scroll_tick + 1)
+        if self.artist_scroll_tick >= tick_speed_artist:
             self.artist_scroll_tick = 0
+            self.scroll_position_artist = (self.scroll_position_artist + 1) % (len(artist) + max_artist_len if len(artist) > max_artist_len else 1) # Loop scroll
+
+        # Let DisplayManager handle the actual drawing including text scrolling and image placement
+        self.display_manager.draw_music_display(
+            track_info=self.current_track_info, # Pass the whole dict
+            album_art_image=self.album_art_image,
+            scroll_position_title=self.scroll_position_title,
+            scroll_position_artist=self.scroll_position_artist,
+            force_clear=force_clear # Pass this through
+        )
+
+    def trigger_immediate_poll_and_update(self):
+        """
+        Manually triggers a poll, processes the result, and calls the update_callback
+        if the music display is active. This is primarily for when the display
+        switches TO music mode, to ensure fresh data is shown immediately.
+        """
+        logger.debug("MusicManager: trigger_immediate_poll_and_update called.")
+        # Perform a poll (this will internally use preferred_source logic)
+        # The poll_music_status method will call _is_new_track and handle updating
+        # self.current_track_info and self.current_source.
+
+        previous_track_info = self.current_track_info # Store before poll
+        
+        # Simplified: just call poll_music_status. It now has the logic
+        # to check if display is active before calling the main update_callback.
+        self.poll_music_status(manual_trigger=True) # Pass a flag if poll_music_status needs it (not currently)
+
+        # After polling, if the display is active and the track *did* change OR if there was no art,
+        # ensure the display gets updated.
+        # The poll_music_status itself will call the update_callback if active.
+        # Here, we just need to ensure art is fetched if needed for immediate display.
+        if self.is_music_display_active_callback and self.is_music_display_active_callback():
+            newly_updated_track_info = self.current_track_info # Get current state after poll
             
-        # --- Album ---
-        y_pos_album = y_pos_artist + line_height_artist_album + padding_between_lines
-        if (matrix_height - y_pos_album - 5) >= line_height_artist_album : 
-            album_width = self.display_manager.get_text_width(album, font_artist_album)
-            if album_width <= text_area_width: 
-                 self.display_manager.draw_text(album, x=text_area_x_start, y=y_pos_album, color=(150, 150, 150), font=font_artist_album)
+            # If track has changed, or if there's no album art yet for the current track
+            if self._is_new_track(newly_updated_track_info, old_track_info=previous_track_info) or \
+               (newly_updated_track_info and newly_updated_track_info.get('album_art_url') and not self.album_art_image):
+                
+                logger.debug("MusicManager (trigger_immediate_poll): Display active. Track changed or art missing. Ensuring display update.")
+                
+                if newly_updated_track_info and newly_updated_track_info.get('album_art_url') and \
+                   (not self.album_art_image or self.last_album_art_url != newly_updated_track_info['album_art_url']):
+                    logger.debug("MusicManager (trigger_immediate_poll): Fetching album art.")
+                    self._fetch_album_art(newly_updated_track_info['album_art_url'])
+                
+                # The main update_callback would have been called by poll_music_status if active and track changed.
+                # If only art was fetched for an existing track, DisplayController might not know.
+                # However, the next call to self.display() will use the new art.
+                # If an immediate redraw is desired even if track didn't change but art was just fetched,
+                # DisplayController might need another hint or self.display() needs to be called.
+                # For now, let's assume poll_music_status handles the callback correctly,
+                # and self.display() will pick up the new art on its next call.
 
-        # --- Progress Bar --- 
-        progress_bar_height = 3
-        progress_bar_y = matrix_height - progress_bar_height - 1 
-        duration_ms = display_info.get('duration_ms', 0)
-        progress_ms = display_info.get('progress_ms', 0)
+                # To be absolutely sure DisplayController gets the latest, even if only art changed:
+                # if self.update_callback:
+                #    self.update_callback(self.current_track_info) # Potentially redundant if poll_music_status did it
+                pass # Logic within poll_music_status and _handle_ytm_update should cover callbacks
 
-        if duration_ms > 0:
-            bar_total_width = text_area_width
-            filled_ratio = progress_ms / duration_ms
-            filled_width = int(filled_ratio * bar_total_width)
+    def _is_new_track(self, new_track_info, old_track_info=None):
+        """
+        Checks if a new track is different from an old track.
+        Returns True if the track is new, False if it's the same or no old track is provided.
+        """
+        if not old_track_info:
+            return True
+        return (
+            new_track_info.get('source') != old_track_info.get('source') or
+            new_track_info.get('title') != old_track_info.get('title') or
+            new_track_info.get('artist') != old_track_info.get('artist') or
+            new_track_info.get('album') != old_track_info.get('album') or
+            new_track_info.get('album_art_url') != old_track_info.get('album_art_url') or
+            new_track_info.get('duration_ms') != old_track_info.get('duration_ms') or
+            new_track_info.get('progress_ms') != old_track_info.get('progress_ms') or
+            new_track_info.get('is_playing') != old_track_info.get('is_playing')
+        )
 
-            self.display_manager.draw.rectangle([
-                text_area_x_start, progress_bar_y, 
-                text_area_x_start + bar_total_width -1, progress_bar_y + progress_bar_height -1
-            ], outline=(60, 60, 60), fill=(30,30,30)) 
+    def _fetch_album_art(self, url):
+        """Fetches and updates the album art image."""
+        if not url:
+            return
+        try:
+            self.album_art_image = self._fetch_and_resize_image(url, (self.display_manager.matrix.width, self.display_manager.matrix.height))
+            if self.album_art_image:
+                logger.info("MusicManager: Album art fetched and processed successfully.")
+            else:
+                logger.warning("MusicManager: Failed to fetch or process album art.")
+        except Exception as e:
+            logger.error(f"Error fetching album art: {e}")
+
+    def poll_music_status(self, manual_trigger=False):
+        """
+        Manually triggers a poll, processes the result, and calls the update_callback
+        if the music display is active. This is primarily for when the display
+        switches TO music mode, to ensure fresh data is shown immediately.
+        """
+        logger.debug("MusicManager: poll_music_status called.")
+        # Perform a poll (this will internally use preferred_source logic)
+        # The poll_music_data method will call _is_new_track and handle updating
+        # self.current_track_info and self.current_source.
+
+        previous_track_info = self.current_track_info # Store before poll
+        
+        # Simplified: just call poll_music_data. It now has the logic
+        # to check if display is active before calling the main update_callback.
+        self._poll_music_data() # Pass a flag if poll_music_data needs it (not currently)
+
+        # After polling, if the display is active and the track *did* change OR if there was no art,
+        # ensure the display gets updated.
+        # The poll_music_data itself will call the update_callback if active.
+        # Here, we just need to ensure art is fetched if needed for immediate display.
+        if self.is_music_display_active_callback and self.is_music_display_active_callback():
+            newly_updated_track_info = self.current_track_info # Get current state after poll
             
-            if filled_width > 0:
-                self.display_manager.draw.rectangle([
-                    text_area_x_start, progress_bar_y, 
-                    text_area_x_start + filled_width -1, progress_bar_y + progress_bar_height -1
-                ], fill=(200, 200, 200)) 
+            # If track has changed, or if there's no album art yet for the current track
+            if self._is_new_track(newly_updated_track_info, old_track_info=previous_track_info) or \
+               (newly_updated_track_info and newly_updated_track_info.get('album_art_url') and not self.album_art_image):
+                
+                logger.debug("MusicManager (poll_music_status): Display active. Track changed or art missing. Ensuring display update.")
+                
+                if newly_updated_track_info and newly_updated_track_info.get('album_art_url') and \
+                   (not self.album_art_image or self.last_album_art_url != newly_updated_track_info['album_art_url']):
+                    logger.debug("MusicManager (poll_music_status): Fetching album art.")
+                    self._fetch_album_art(newly_updated_track_info['album_art_url'])
+                
+                # The main update_callback would have been called by poll_music_data if active and track changed.
+                # If only art was fetched for an existing track, DisplayController might not know.
+                # However, the next call to self.display() will use the new art.
+                # If an immediate redraw is desired even if track didn't change but art was just fetched,
+                # DisplayController might need another hint or self.display() needs to be called.
+                # For now, let's assume poll_music_data handles the callback correctly,
+                # and self.display() will pick up the new art on its next call.
 
-        self.display_manager.update_display()
+                # To be absolutely sure DisplayController gets the latest, even if only art changed:
+                # if self.update_callback:
+                #    self.update_callback(self.current_track_info) # Potentially redundant if poll_music_data did it
+                pass # Logic within poll_music_data and _handle_ytm_update should cover callbacks
 
 
 # Example usage (for testing this module standalone, if needed)

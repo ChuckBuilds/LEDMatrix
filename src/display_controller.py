@@ -69,7 +69,8 @@ class DisplayController:
             try:
                 self.music_manager = MusicManager(display_manager=self.display_manager,
                                                 config=self.config, 
-                                                update_callback=self.handle_music_update)
+                                                update_callback=self.handle_music_update,
+                                                is_music_display_active_callback=lambda: self.is_display_active('music'))
                 logger.info("MusicManager initialized successfully.")
             except Exception as e:
                 logger.error(f"Failed to initialize MusicManager: {e}", exc_info=True)
