@@ -101,11 +101,8 @@ class MusicManager:
                 self.spotify = SpotifyClient()
                 if not self.spotify.is_authenticated():
                     logging.warning("Spotify client initialized but not authenticated. Please run src/authenticate_spotify.py if you want to use Spotify.")
-                    # The SpotifyClient will log more details if cache loading failed.
-                    # No need to attempt auth URL generation here.
                 else:
                     logging.info("Spotify client authenticated.")
-
             except Exception as e:
                 logging.error(f"Failed to initialize Spotify client: {e}")
                 self.spotify = None
@@ -116,18 +113,49 @@ class MusicManager:
         # Initialize YTM Client if needed
         if self.preferred_source in ["auto", "ytm"]:
             try:
-                self.ytm = YTMClient(update_callback=self._handle_ytm_update)
-                if not self.ytm.is_available():
-                    logging.warning(f"YTM Companion server not reachable at {self.ytm.base_url}. YTM features disabled.")
-                    self.ytm = None
+                # Initialize YTMClient but don't auto-start its connection listener
+                self.ytm = YTMClient(update_callback=self._handle_ytm_update, auto_start=False)
+                # Availability will be checked/connection started in activate_music_mode
+                if self.ytm.base_url:
+                    logging.info(f"YTMClient initialized with base URL: {self.ytm.base_url}. Will connect when music mode is active.")
                 else:
-                    logging.info(f"YTM Companion server connected at {self.ytm.base_url}.")
+                    logging.error("YTMClient initialized, but base_url is not set. YTM features will be unavailable.")
+                    self.ytm = None # Cannot function without a base URL
             except Exception as e:
                 logging.error(f"Failed to initialize YTM client: {e}")
                 self.ytm = None
         else:
             logging.info("YTM client initialization skipped due to preferred_source setting.")
             self.ytm = None
+
+    def activate_music_mode(self):
+        logger.info("MusicManager: Activating music mode.")
+        if not self.enabled:
+            logger.info("MusicManager: Cannot activate, manager is disabled.")
+            return
+
+        if self.ytm:
+            logger.info("MusicManager: Telling YTMClient to start listening.")
+            self.ytm.start_client_listening()
+        
+        self.start_polling() # Ensure MusicManager polling thread is running
+        self.trigger_immediate_poll_and_update() # Get current status
+
+    def deactivate_music_mode(self):
+        logger.info("MusicManager: Deactivating music mode.")
+        self.stop_polling() # Stop MusicManager polling thread
+        
+        if self.ytm:
+            logger.info("MusicManager: Telling YTMClient to stop listening.")
+            self.ytm.stop_client()
+        
+        # Clear current track info to ensure fresh state on next activation
+        logger.debug("MusicManager: Clearing current track info and album art on deactivation.")
+        self.current_track_info = self.get_simplified_track_info(None, MusicSource.NONE) # Reset to nothing playing
+        self.current_source = MusicSource.NONE
+        self.album_art_image = None
+        self.last_album_art_url = None
+        # No need to call update_callback here as DisplayController is switching away
 
     def _handle_ytm_update(self, data):
         """Handles real-time track updates from YTMClient (Socket.IO)."""
@@ -218,9 +246,16 @@ class MusicManager:
         """Continuously polls music sources for updates, respecting preferences."""
         if not self.enabled:
              logging.warning("Polling attempted while music manager is disabled. Stopping polling thread.")
-             return # Should not happen if start_polling checks enabled, but safety check
+             return
 
         while not self.stop_event.is_set():
+            # If music display is not active, sleep and skip polling cycle
+            if not (self.is_music_display_active_callback and self.is_music_display_active_callback()):
+                logger.debug("MusicManager (_poll_music_data): Music display is NOT active. Sleeping.")
+                time.sleep(self.polling_interval) # Still respect polling interval for sleep
+                continue
+
+            logger.debug("MusicManager (_poll_music_data): Music display IS active. Proceeding with poll.")
             polled_track_info = None
             polled_source = MusicSource.NONE
             is_playing = False

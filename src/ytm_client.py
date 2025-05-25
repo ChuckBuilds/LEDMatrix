@@ -4,6 +4,7 @@ import json
 import os
 import time
 import threading
+import requests # Added for get_current_track
 
 # Ensure application-level logging is configured (as it is)
 # logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -14,185 +15,316 @@ logging.getLogger('socketio.server').setLevel(logging.WARNING)
 logging.getLogger('engineio.client').setLevel(logging.WARNING)
 logging.getLogger('engineio.server').setLevel(logging.WARNING)
 
+logger = logging.getLogger(__name__) # Use module-specific logger
+
 # Define paths relative to this file's location
 CONFIG_DIR = os.path.join(os.path.dirname(__file__), '..', 'config')
 CONFIG_PATH = os.path.join(CONFIG_DIR, 'config.json')
 # Resolve to an absolute path
 CONFIG_PATH = os.path.abspath(CONFIG_PATH)
 
-# Path for the separate YTM authentication token file
-YTM_AUTH_CONFIG_PATH = os.path.join(CONFIG_DIR, 'ytm_auth.json')
-YTM_AUTH_CONFIG_PATH = os.path.abspath(YTM_AUTH_CONFIG_PATH)
+# Path for the separate YTM auth token
+YTM_AUTH_PATH = os.path.join(CONFIG_DIR, 'ytm_auth.json')
+YTM_AUTH_PATH = os.path.abspath(YTM_AUTH_PATH)
+
 
 class YTMClient:
-    def __init__(self, update_callback=None):
-        self.base_url = None
-        self.ytm_token = None
-        self.load_config() # Loads URL and token
-        self.sio = socketio.Client(logger=False, engineio_logger=False)
-        self.last_known_track_data = None
-        self.is_connected = False
-        self._data_lock = threading.Lock()
-        self._connection_event = threading.Event()
-        self.external_update_callback = update_callback
+    def __init__(self, base_url=None, token=None, update_callback=None, auto_start=True): # Added auto_start
+        self.base_url = base_url
+        self.token = token
+        self.sio = socketio.Client(reconnection_attempts=5, reconnection_delay=5)
+        self.update_callback = update_callback
+        self.is_connected_event = threading.Event()
+        self.stop_event = threading.Event()
+        self.connection_thread = None
+        self.headers = {}
 
-        @self.sio.event(namespace='/api/v1/realtime')
-        def connect():
-            logging.info(f"Successfully connected to YTM Companion Socket.IO server at {self.base_url} on namespace /api/v1/realtime")
-            self.is_connected = True
-            self._connection_event.set()
+        self._load_config_and_token() # Load URL and token
+        self._setup_event_handlers()
 
-        @self.sio.event(namespace='/api/v1/realtime')
-        def connect_error(data):
-            logging.error(f"YTM Companion Socket.IO connection failed for namespace /api/v1/realtime: {data}")
-            self.is_connected = False
-            self._connection_event.set()
+        if auto_start: # Conditionally start connection thread
+            self.start_client_listening()
 
-        @self.sio.event(namespace='/api/v1/realtime')
-        def disconnect():
-            logging.info(f"Disconnected from YTM Companion Socket.IO server at {self.base_url} on namespace /api/v1/realtime")
-            self.is_connected = False
-
-        @self.sio.on('state-update', namespace='/api/v1/realtime')
-        def on_state_update(data):
-            logging.debug(f"Received state update from YTM Companion on /api/v1/realtime: {data}")
-            new_data_received = False
-            with self._data_lock:
-                if self.last_known_track_data != data:
-                    self.last_known_track_data = data
-                    new_data_received = True
-            
-            if new_data_received and self.external_update_callback:
-                try:
-                    self.external_update_callback(data)
-                except Exception as cb_ex:
-                    logging.error(f"Error executing YTMClient external_update_callback: {cb_ex}")
-
-    def load_config(self):
-        default_url = "http://localhost:9863"
-        self.base_url = default_url # Start with default
-        
-        # Load base_url from main config.json
-        if not os.path.exists(CONFIG_PATH):
-            logging.warning(f"Main config file not found at {CONFIG_PATH}. Using default YTM URL: {self.base_url}")
-        else:
-            try:
+    def _load_config_and_token(self):
+        """Loads YTM Companion URL from config.json and token from ytm_auth.json."""
+        try:
+            if os.path.exists(CONFIG_PATH):
                 with open(CONFIG_PATH, 'r') as f:
-                    loaded_config = json.load(f)
-                    music_config = loaded_config.get("music", {})
-                    self.base_url = music_config.get("YTM_COMPANION_URL", default_url)
-                    if not self.base_url:
-                        logging.warning("YTM_COMPANION_URL missing or empty in config.json music section, using default.")
-                        self.base_url = default_url
-            except json.JSONDecodeError:
-                logging.error(f"Error decoding JSON from main config {CONFIG_PATH}. Using default YTM URL.")
-            except Exception as e:
-                logging.error(f"Error loading YTM_COMPANION_URL from main config {CONFIG_PATH}: {e}. Using default YTM URL.")
+                    app_config = json.load(f)
+                    ytm_config = app_config.get('music', {}).get('ytm_companion', {})
+                    # Prioritize explicit base_url if provided, else use config
+                    self.base_url = self.base_url or ytm_config.get('YTM_COMPANION_URL')
+                    logger.info(f"YTM Companion URL set to: {self.base_url}")
+            else:
+                logger.warning(f"Main config file {CONFIG_PATH} not found. YTM Companion URL might not be set if not passed directly.")
+        except Exception as e:
+            logger.error(f"Error loading YTM Companion URL from {CONFIG_PATH}: {e}")
 
-        logging.info(f"YTM Companion URL set to: {self.base_url}")
+        if not self.base_url:
+            logger.error("YTM Companion URL is not set. YTMClient cannot function.")
+            # Potentially raise an error or set a flag indicating an inoperable state
 
-        if self.base_url and self.base_url.startswith("ws://"):
-            self.base_url = "http://" + self.base_url[5:]
-        elif self.base_url and self.base_url.startswith("wss://"):
-            self.base_url = "https://" + self.base_url[6:]
-
-        # Load ytm_token from ytm_auth.json
-        self.ytm_token = None # Reset token before trying to load
-        if os.path.exists(YTM_AUTH_CONFIG_PATH):
-            try:
-                with open(YTM_AUTH_CONFIG_PATH, 'r') as f:
+        try:
+            if os.path.exists(YTM_AUTH_PATH):
+                with open(YTM_AUTH_PATH, 'r') as f:
                     auth_data = json.load(f)
-                    self.ytm_token = auth_data.get("YTM_COMPANION_TOKEN")
-                if self.ytm_token:
-                    logging.info(f"YTM Companion token loaded from {YTM_AUTH_CONFIG_PATH}.")
+                    # Prioritize explicit token if provided, else use file
+                    self.token = self.token or auth_data.get('token')
+                if self.token:
+                    self.headers['Authorization'] = f'Bearer {self.token}'
+                    logger.info(f"YTM Companion token loaded from {YTM_AUTH_PATH}.")
                 else:
-                    logging.warning(f"YTM_COMPANION_TOKEN not found in {YTM_AUTH_CONFIG_PATH}. YTM features will be disabled until token is present.")
-            except json.JSONDecodeError:
-                logging.error(f"Error decoding JSON from YTM auth file {YTM_AUTH_CONFIG_PATH}. YTM features will be disabled.")
-            except Exception as e:
-                logging.error(f"Error loading YTM auth config {YTM_AUTH_CONFIG_PATH}: {e}. YTM features will be disabled.")
-        else:
-            logging.warning(f"YTM auth file not found at {YTM_AUTH_CONFIG_PATH}. Run the authentication script to generate it. YTM features will be disabled.")
+                    logger.warning(f"Token not found in {YTM_AUTH_PATH}.")
+            else:
+                logger.warning(f"YTM auth token file not found at {YTM_AUTH_PATH}. Token not loaded.")
+        except Exception as e:
+            logger.error(f"Error loading YTM auth token from {YTM_AUTH_PATH}: {e}")
+        
+        if not self.token:
+            logger.warning("YTM Authentication token not available. YTM features requiring auth may fail.")
 
-    def _ensure_connected(self, timeout=5):
-        if not self.ytm_token:
-            # No token, so cannot authenticate or connect. Log this clearly.
-            # load_config already warns if token file or token itself is missing.
-            # logging.warning("No YTM token loaded. Cannot connect to Socket.IO. Run authentication script.")
-            self.is_connected = False
+
+    def _setup_event_handlers(self):
+        @self.sio.event
+        def connect():
+            logger.info(f"Successfully connected to YTM Companion Socket.IO server at {self.base_url} on namespace /api/v1/realtime")
+            self.is_connected_event.set()
+
+        @self.sio.event
+        def connect_error(data):
+            logger.error(f"YTM Socket.IO connection error to {self.base_url}: {data}")
+            self.is_connected_event.clear() # Ensure it's clear on error
+
+        @self.sio.event
+        def disconnect():
+            logger.info(f"Disconnected from YTM Companion Socket.IO server at {self.base_url} on namespace /api/v1/realtime")
+            self.is_connected_event.clear()
+        
+        # Handler for 'state' event from YTM Companion's Socket.IO server
+        @self.sio.on('state', namespace='/api/v1/realtime')
+        def _on_state_change(data):
+            # This is where YTM Companion pushes player state updates.
+            # logger.debug(f"YTMClient received 'state' update (raw): {data}") # Very verbose
+            if self.update_callback:
+                try:
+                    self.update_callback(data) # Pass the raw data to MusicManager
+                except Exception as e:
+                    logger.error(f"Error in YTMClient update_callback: {e}")
+
+    def _connect_socketio(self):
+        if not self.base_url:
+            logger.error("Cannot connect: YTM Companion URL not set.")
+            return False
+        if self.sio.connected:
+            logger.debug("Socket.IO already connected.")
+            return True
+        try:
+            logger.info(f"Attempting to connect to YTM Socket.IO server: {self.base_url} on namespace /api/v1/realtime")
+            self.sio.connect(self.base_url, namespaces=['/api/v1/realtime'], auth={'token': self.token} if self.token else None)
+            return True
+        except socketio.exceptions.ConnectionError as e:
+            logger.error(f"Socket.IO connection failed to {self.base_url}: {e}")
+            self.is_connected_event.clear()
+            return False
+        except Exception as e:
+            logger.error(f"Unexpected error during Socket.IO connection to {self.base_url}: {e}")
+            self.is_connected_event.clear()
             return False
 
-        if not self.is_connected:
-            logging.info(f"Attempting to connect to YTM Socket.IO server: {self.base_url} on namespace /api/v1/realtime")
-            auth_payload = {"token": self.ytm_token}
+    def disconnect_socketio(self):
+        if self.sio.connected:
+            logger.info("YTMClient: Explicitly disconnecting Socket.IO.")
+            self.sio.disconnect()
+        self.is_connected_event.clear()
 
-            try:
-                self._connection_event.clear() # Clear event before attempting connection
-                self.sio.connect(
-                    self.base_url, 
-                    transports=['websocket'], 
-                    wait_timeout=timeout, 
-                    namespaces=['/api/v1/realtime'],
-                    auth=auth_payload
-                )
-                # self._connection_event.clear() # No longer clear here
-                # Use a slightly longer timeout for the event wait than the connect call itself
-                # to ensure the connect event has time to be processed.
-                event_wait_timeout = timeout + 5 # e.g., if connect timeout is 10s, wait 15s for the event
-                if not self._connection_event.wait(timeout=event_wait_timeout):
-                    logging.warning(f"YTM Socket.IO connection event not received within {event_wait_timeout}s (connect timeout was {timeout}s).")
-                    self.is_connected = False # Ensure is_connected is false on timeout
-                    return False
-                return self.is_connected # This should be true if connect event fired and no timeout
-            except socketio.exceptions.ConnectionError as e:
-                logging.error(f"YTM Socket.IO connection error: {e}")
-                self.is_connected = False
-                return False
-            except Exception as e:
-                logging.error(f"Unexpected error during YTM Socket.IO connection: {e}")
-                self.is_connected = False
-                return False
-        return True # Already connected
+    def _connection_loop(self):
+        retry_delay = 5 # Initial retry delay
+        max_retry_delay = 60 # Maximum retry delay
+        
+        while not self.stop_event.is_set():
+            if not self.sio.connected:
+                logger.info(f"YTMClient connection loop: Not connected. Attempting to connect.")
+                if self._connect_socketio():
+                    # Successfully connected, wait for disconnect or stop signal
+                    self.is_connected_event.wait() # Wait until disconnected
+                    retry_delay = 5 # Reset retry delay on successful connect then disconnect
+                else:
+                    # Connection failed
+                    logger.info(f"YTMClient connection loop: Connection attempt failed. Retrying in {retry_delay}s.")
+                    time.sleep(retry_delay)
+                    retry_delay = min(retry_delay * 2, max_retry_delay) # Exponential backoff
+            else:
+                # Already connected, just wait for a bit or for stop_event
+                # This makes the loop responsive to stop_event even when connected.
+                self.stop_event.wait(timeout=1) # Check stop_event periodically
+        
+        logger.info("YTMClient connection loop stopped.")
+        # Ensure disconnected when loop exits
+        if self.sio.connected:
+            self.disconnect_socketio()
+
+    def start_client_listening(self): # Renamed from _start_connection_thread
+        if self.connection_thread and self.connection_thread.is_alive():
+            logger.info("YTMClient connection thread already running.")
+            # If stop_event was set, clear it to allow reconnection attempts
+            if self.stop_event.is_set():
+                logger.info("YTMClient: Clearing stop_event to resume connection attempts.")
+                self.stop_event.clear()
+            return
+
+        self.stop_event.clear() # Clear stop event before starting
+        self.connection_thread = threading.Thread(target=self._connection_loop, daemon=True)
+        self.connection_thread.start()
+        logger.info("YTMClient connection_thread started.")
+
+    def stop_client(self):
+        logger.info("YTMClient: Stopping client and connection thread...")
+        self.stop_event.set()
+        self.disconnect_socketio() # Attempt immediate disconnect
+        if self.connection_thread and self.connection_thread.is_alive():
+            self.connection_thread.join(timeout=5) # Wait for the thread to stop
+            if self.connection_thread.is_alive():
+                logger.warning("YTMClient connection thread did not stop in time.")
+        logger.info("YTMClient stopped.")
+        self.connection_thread = None
+
 
     def is_available(self):
-        if not self.ytm_token: # Quick check: if no token, definitely not available.
+        """
+        Checks basic connectivity to the YTM Companion server using a simple HTTP GET.
+        This is a quick check and doesn't guarantee full Socket.IO functionality or auth.
+        """
+        if not self.base_url:
             return False
-        if not self.is_connected:
-            return self._ensure_connected(timeout=10) 
-        return True
+        try:
+            # Use a different endpoint for a quick check, like /api/v1/player
+            # Requires authentication for /api/v1/player, /api/v1/track, etc.
+            # A simple health check endpoint on YTM Companion that doesn't require auth would be better.
+            # For now, let's try /api/v1/info which might not require auth.
+            # If YTM Companion requires auth for all /api/v1/*, this check needs self.headers.
+            # The original version used a specific check for connectivity.
+            # This method is mostly to see if the server *exists* at the URL.
+            
+            # Let's try to check if the socket is connected as a primary means of availability
+            if self.sio and self.sio.connected:
+                return True
+
+            # Fallback to HTTP check if socket not connected (e.g. before first connection)
+            # This is tricky because most YTM Companion endpoints require auth.
+            # A dedicated unauthenticated health endpoint on YTM Companion is ideal.
+            # For now, we'll assume if base_url is set, we *could* connect.
+            # A more robust check might try to connect the socket if not connected.
+
+            # Let's use the /api/v1/info endpoint that YTM Desktop provides (unauthenticated)
+            # Or a specific health check if available on the companion.
+            # Assuming YTM Companion might have a similar info endpoint or a root page.
+            # For now, the socket connection status is the most reliable.
+            # This method can be enhanced if YTM companion has a specific health check.
+            
+            # Simplified: if base_url exists, assume it *could* be available.
+            # The connection loop handles actual connection attempts.
+            # MusicManager will use this, then attempt ytm.connect() or rely on auto-connect.
+            
+            # Connectivity check based on trying to get /api/v1/info (usually doesn't need token)
+            response = requests.get(f"{self.base_url}/api/v1/info", timeout=2)
+            if response.status_code == 200:
+                 logger.debug("YTM Companion server reachable via /api/v1/info.")
+                 return True
+            else:
+                 logger.warning(f"YTM Companion server check to /api/v1/info failed with status {response.status_code}.")
+                 return False
+        except requests.exceptions.RequestException as e:
+            logger.warning(f"YTM Companion server not reachable at {self.base_url} during HTTP check: {e}")
+            return False
+        return bool(self.base_url) # Minimal check if base_url is set
+
 
     def get_current_track(self):
-        if not self.is_available(): # is_available will attempt to connect if not connected and token exists
-            # logging.warning("YTM client not available, cannot get current track.") # is_available() or _ensure_connected() already logs issues.
+        """
+        Fetches the current track info using a REST GET request.
+        This is used for polling when Socket.IO might not be preferred or as a fallback.
+        """
+        if not self.base_url:
+            logger.warning("Cannot get current track: Base URL not set.")
+            return None
+        if not self.is_available(): # Use the general availability check
+             logger.warning("YTM Companion not available, skipping get_current_track.")
+             return None
+        try:
+            # This request requires authentication
+            if 'Authorization' not in self.headers:
+                logger.warning("Cannot get current track: YTM auth token not available in headers.")
+                # Attempt to reload token if not present
+                self._load_config_and_token()
+                if 'Authorization' not in self.headers:
+                    logger.error("Failed to load YTM auth token. Cannot fetch track.")
+                    return None
+
+            response = requests.get(f"{self.base_url}/api/v1/track", headers=self.headers, timeout=3)
+            if response.status_code == 200:
+                track_data = response.json()
+                # logger.debug(f"YTMClient get_current_track (REST): {track_data}")
+                return track_data
+            elif response.status_code == 401:
+                logger.warning(f"YTM Companion: Authentication failed (401) for /api/v1/track. Token may be invalid.")
+                # Potentially trigger re-authentication or notify user.
+            elif response.status_code == 204: # No content - often means nothing playing or YTM desktop not focused
+                 logger.debug("YTM Companion /api/v1/track returned 204 No Content (likely nothing playing or player not active).")
+                 return None # Treat as nothing playing
+            else:
+                logger.error(f"Error getting current track from YTM Companion: {response.status_code} - {response.text}")
+            return None
+        except requests.exceptions.RequestException as e:
+            logger.error(f"RequestException getting current track from YTM Companion: {e}")
+            return None
+        except Exception as e:
+            logger.error(f"Unexpected error in get_current_track: {e}")
             return None
 
-        with self._data_lock:
-            if self.last_known_track_data:
-                return self.last_known_track_data
-            else:
-                # This is a normal state if no music is playing or just connected
-                # logging.debug("No track data received yet from YTM Companion Socket.IO.") 
-                return None
+# Example of how it might be used (for testing or if YTMClient is run directly)
+if __name__ == '__main__':
+    logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s:%(name)s:%(message)s')
+    
+    def my_callback(data):
+        # In a real scenario, this callback would be in MusicManager
+        logger.info(f"MAIN_CALLBACK received data: Title: {data.get('video',{}).get('title')}, Playing: {not data.get('player',{}).get('isPaused')}")
 
-    def disconnect_client(self):
-        if self.is_connected:
-            self.sio.disconnect()
-            logging.info("YTM Socket.IO client disconnected.")
+    # Create client but don't auto-start connection thread
+    ytm_client = YTMClient(update_callback=my_callback, auto_start=False)
+    
+    if not ytm_client.base_url or not ytm_client.token:
+        logger.error("YTM Client could not be initialized with URL and Token. Exiting test.")
+    else:
+        logger.info("YTM Client initialized. Manually starting listener...")
+        ytm_client.start_client_listening() # Manually start the connection
 
-# Example Usage (for testing - needs to be adapted for Socket.IO async nature)
-# if __name__ == '__main__':
-# client = YTMClient()
-# if client.is_available(): 
-# print("YTM Server is available (Socket.IO).")
-# try:
-# for _ in range(10): # Poll for a few seconds
-# track = client.get_current_track()
-# if track:
-# print(json.dumps(track, indent=2))
-# else:
-# print("No track currently playing or error fetching (Socket.IO).")
-# time.sleep(2)
-# finally:
-# client.disconnect_client()
-# else:
-# print(f"YTM Server not available at {client.base_url} (Socket.IO). Is YTMD running with companion server enabled?") 
+        logger.info("Client started. Listening for updates for 30 seconds or until Ctrl+C...")
+        try:
+            # Keep the main thread alive to observe callbacks
+            # In a real app, YTMClient runs in its own thread via start_client_listening()
+            # and MusicManager would integrate it.
+            
+            # Test get_current_track via REST polling
+            for i in range(3):
+                if not ytm_client.stop_event.is_set():
+                    logger.info(f"Polling for track (attempt {i+1})...")
+                    track = ytm_client.get_current_track()
+                    if track:
+                        my_callback(track) # Simulate processing
+                    else:
+                        logger.info("No track info from polling.")
+                    time.sleep(5)
+                else:
+                    break
+
+            if not ytm_client.stop_event.is_set():
+                 logger.info("Continuing to listen for Socket.IO updates for another 15 seconds...")
+                 time.sleep(15)
+
+
+        except KeyboardInterrupt:
+            logger.info("Keyboard interrupt received.")
+        finally:
+            logger.info("Stopping YTM client...")
+            ytm_client.stop_client()
+            logger.info("YTM client test finished.") 

@@ -748,50 +748,44 @@ class DisplayController:
 
                 if not is_currently_live:
                     # --- Currently in a Regular Mode (or just exited Live) ---
+                    old_mode_before_switch = self.current_display_mode # Store before potential change
+                    new_mode_after_switch = old_mode_before_switch
+
                     if has_live_games:
                         # Not currently live, but live games ARE available. Switch IN.
-                        # (This check ensures we only switch *in* if we weren't already live)
-                        new_mode = f"{live_sport_type}_live" # live_sport_type has the highest priority
-                        if self.current_display_mode != new_mode: # Avoid unnecessary resets if somehow already correct
+                        new_mode = f"{live_sport_type}_live" 
+                        if self.current_display_mode != new_mode: 
                              logger.info(f"Switching into LIVE mode: {new_mode} from {self.current_display_mode}")
                              self.current_display_mode = new_mode
                              self.force_clear = True
                              self.last_switch = current_time
                              manager_to_display = getattr(self, f"{live_sport_type}_live", None)
                         else:
-                             # Should technically not happen based on is_currently_live flag, but safety first
                              self.force_clear = False
-                             self.last_switch = current_time # Reset timer anyway
+                             self.last_switch = current_time 
                              manager_to_display = getattr(self, f"{live_sport_type}_live", None)
+                        new_mode_after_switch = self.current_display_mode
 
                     else:
                         # No live games detected, and not in live mode. Regular rotation.
                         needs_switch = False
                         if self.current_display_mode.endswith('_live'):
-                             # This case handles the explicit transition OUT of live mode 
-                             # initiated in the block above.
                              logger.info(f"Transitioning from live mode to regular rotation.")
                              needs_switch = True 
-                             # Find the next *regular* mode index cleanly
                              try:
-                                 # Find where we *would* be if we weren't live
-                                 # This assumes self.current_mode_index tracks the regular rotation position
                                  self.current_mode_index = (self.current_mode_index + 1) % len(self.available_modes)
-                             except Exception: # Catch potential issues if available_modes changed etc.
+                             except Exception: 
                                  logger.warning("Error advancing regular mode index after live mode exit. Resetting.")
                                  self.current_mode_index = 0 
                              
-                             if not self.available_modes: # Safety check
+                             if not self.available_modes: 
                                  logger.error("No available regular modes to switch to!")
-                                 self.current_display_mode = 'none' # Or handle error appropriately
-                                 # Consider exiting or sleeping
+                                 self.current_display_mode = 'none' 
                              else:
                                  self.current_display_mode = self.available_modes[self.current_mode_index]
 
                         elif current_time - self.last_switch >= self.get_current_duration():
-                             # Regular timer expired, advance to next mode
                              logger.debug(f"Timer expired for regular mode {self.current_display_mode}. Switching.")
-                             # Advance calendar event *before* potentially switching away
                              if self.current_display_mode == 'calendar' and self.calendar:
                                  self.calendar.advance_event()
                              needs_switch = True
@@ -803,11 +797,10 @@ class DisplayController:
                              self.force_clear = True
                              self.last_switch = current_time
                         else:
-                             # Timer not expired for current regular mode
                              self.force_clear = False
+                        new_mode_after_switch = self.current_display_mode
 
                         # Select the manager for the current regular mode
-                        # (This code block is largely the same as before)
                         if self.current_display_mode == 'clock' and self.clock:
                              manager_to_display = self.clock
                         elif self.current_display_mode == 'weather_current' and self.weather:
@@ -859,6 +852,15 @@ class DisplayController:
                             manager_to_display = self.ncaa_mens_baseball_recent
                         elif self.current_display_mode == 'ncaa_mens_baseball_upcoming' and self.ncaa_mens_baseball_upcoming:
                             manager_to_display = self.ncaa_mens_baseball_upcoming
+
+                    # Call activate/deactivate for music manager based on mode change
+                    if self.music_manager:
+                        if old_mode_before_switch == 'music' and new_mode_after_switch != 'music':
+                            logger.info(f"DisplayController: Mode changed from music to {new_mode_after_switch}. Deactivating music manager.")
+                            self.music_manager.deactivate_music_mode()
+                        elif old_mode_before_switch != 'music' and new_mode_after_switch == 'music':
+                            logger.info(f"DisplayController: Mode changed to music from {old_mode_before_switch}. Activating music manager.")
+                            self.music_manager.activate_music_mode()
 
                 # NCAA Mens Basketball rotation logic
                 elif self.current_display_mode == 'ncaa_mens_basketball_recent' or self.current_display_mode == 'ncaa_mens_basketball_upcoming':
