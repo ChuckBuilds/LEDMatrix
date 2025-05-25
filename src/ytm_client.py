@@ -13,6 +13,7 @@ logging.getLogger('socketio.client').setLevel(logging.WARNING)
 logging.getLogger('socketio.server').setLevel(logging.WARNING)
 logging.getLogger('engineio.client').setLevel(logging.WARNING)
 logging.getLogger('engineio.server').setLevel(logging.WARNING)
+logging.getLogger('src.ytm_client').setLevel(logging.DEBUG)
 
 # Define paths relative to this file's location
 CONFIG_DIR = os.path.join(os.path.dirname(__file__), '..', 'config')
@@ -94,7 +95,7 @@ class YTMClient:
         # For REST, "connected" is ephemeral per request. We check reachability.
         try:
             state_url = f"{self.base_url}/api/v1/state" # A common endpoint to check
-            headers = {"Authorization": self.ytm_token}
+            headers = {"Authorization": f"Bearer {self.ytm_token}"}
             # Use a short timeout for this check
             response = self.session.get(state_url, headers=headers, timeout=timeout)
             if response.status_code == 200:
@@ -119,7 +120,7 @@ class YTMClient:
             return None
 
         state_url = f"{self.base_url}/api/v1/state"
-        headers = {"Authorization": self.ytm_token}
+        headers = {"Authorization": f"Bearer {self.ytm_token}"}
 
         try:
             response = self.session.get(state_url, headers=headers, timeout=5) # Using self.session
