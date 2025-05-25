@@ -52,8 +52,12 @@ class YTMClient:
                 with open(CONFIG_PATH, 'r') as f:
                     app_config = json.load(f)
                     ytm_config = app_config.get('music', {}).get('ytm_companion', {})
-                    # Prioritize explicit base_url if provided, else use config
-                    self.base_url = self.base_url or ytm_config.get('YTM_COMPANION_URL')
+                    
+                    # Log the value retrieved directly from config before assigning
+                    retrieved_url = ytm_config.get('YTM_COMPANION_URL')
+                    logger.debug(f"YTMClient: Value for YTM_COMPANION_URL from config: '{retrieved_url}'")
+
+                    self.base_url = self.base_url or retrieved_url
                     logger.info(f"YTM Companion URL set to: {self.base_url}")
             else:
                 logger.warning(f"Main config file {CONFIG_PATH} not found. YTM Companion URL might not be set if not passed directly.")

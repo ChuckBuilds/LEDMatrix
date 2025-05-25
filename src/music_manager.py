@@ -130,6 +130,7 @@ class MusicManager:
 
     def activate_music_mode(self):
         logger.info("MusicManager: Activating music mode.")
+        logger.debug(f"MusicManager: Current self.ytm object: {self.ytm}")
         if not self.enabled:
             logger.info("MusicManager: Cannot activate, manager is disabled.")
             return
