@@ -206,6 +206,7 @@ class MusicManager:
                 logger.debug("Music display is active, calling update_callback for YTM.")
                 if self.update_callback:
                     self.update_callback(self.current_track_info)
+                    logger.debug("MusicManager: self.update_callback (to DisplayController) called from YTM direct update.")
                 # If music display is active, also fetch album art immediately.
                 if self.current_track_info and self.current_track_info.get('album_art_url'):
                     self._fetch_album_art(self.current_track_info['album_art_url'])
@@ -287,7 +288,7 @@ class MusicManager:
             logger.debug("MusicManager (_poll_music_data): Music display IS active. Proceeding with poll.")
             polled_track_info = None
             polled_source = MusicSource.NONE
-            is_playing = False
+            is_playing_on_current_iteration = False # Renamed from is_playing to avoid conflict with dict key
 
             # Determine which sources to poll based on preference
             poll_spotify = self.preferred_source in ["auto", "spotify"] and self.spotify and self.spotify.is_authenticated()
@@ -300,7 +301,7 @@ class MusicManager:
                     if spotify_track and spotify_track.get('is_playing'):
                         polled_track_info = spotify_track
                         polled_source = MusicSource.SPOTIFY
-                        is_playing = True
+                        is_playing_on_current_iteration = True
                         logging.debug(f"Polling Spotify: Active track - {spotify_track.get('item', {}).get('name')}")
                     else:
                         logging.debug("Polling Spotify: No active track or player paused.")
@@ -312,7 +313,7 @@ class MusicManager:
             # --- Try YTM if Spotify isn't playing OR if YTM is preferred ---
             # If YTM is preferred, poll it even if Spotify might be playing (config override)
             # If Auto, only poll YTM if Spotify wasn't found playing
-            should_poll_ytm_now = poll_ytm and (self.preferred_source == "ytm" or (self.preferred_source == "auto" and not is_playing))
+            should_poll_ytm_now = poll_ytm and (self.preferred_source == "ytm" or (self.preferred_source == "auto" and not is_playing_on_current_iteration))
 
             if should_poll_ytm_now:
                 # Re-check availability just before polling
@@ -321,10 +322,10 @@ class MusicManager:
                         ytm_track = self.ytm.get_current_track()
                         if ytm_track and not ytm_track.get('player', {}).get('isPaused'):
                             # If YTM is preferred, it overrides Spotify even if Spotify was playing
-                            if self.preferred_source == "ytm" or not is_playing:
+                            if self.preferred_source == "ytm" or not is_playing_on_current_iteration:
                                 polled_track_info = ytm_track
                                 polled_source = MusicSource.YTM
-                                is_playing = True
+                                is_playing_on_current_iteration = True
                                 logging.debug(f"Polling YTM: Active track - {ytm_track.get('track', {}).get('title')}")
                         else:
                              logging.debug("Polling YTM: No active track or player paused.")
@@ -337,29 +338,35 @@ class MusicManager:
             # --- Consolidate and Check for Changes ---
             simplified_info = self.get_simplified_track_info(polled_track_info, polled_source)
 
-            has_changed = False
-            if simplified_info != self.current_track_info:
-                has_changed = True
+            # Use the _is_new_track method for a more robust comparison
+            has_changed = self._is_new_track(simplified_info, self.current_track_info)
+
+            if has_changed:
+                # self.current_track_info is updated within _is_new_track if it returns True and old_track_info was passed
+                # However, _is_new_track currently doesn't modify state. Let's adjust logic.
+                # For now, let's keep the original state update logic here after _is_new_track confirms change.
                 
-                # Update internal state
                 old_album_art_url = self.current_track_info.get('album_art_url') if self.current_track_info else None
                 new_album_art_url = simplified_info.get('album_art_url') if simplified_info else None
 
-                self.current_track_info = simplified_info
-                self.current_source = polled_source
+                self.current_track_info = simplified_info # Update main state
+                self.current_source = polled_source # Update main state
 
                 if new_album_art_url != old_album_art_url:
                     self.album_art_image = None
                     self.last_album_art_url = new_album_art_url
                 
                 display_title = self.current_track_info.get('title', 'None') if self.current_track_info else 'None'
-                logger.debug(f"Track change detected. Source: {self.current_source.name}. Track: {display_title}")
+                logger.debug(f"Track change detected by polling. Source: {self.current_source.name}. Track: {display_title}")
             else:
-                logger.debug("No change in simplified track info.")
+                logger.debug("No change in simplified track info from polling.")
 
+            # Callback logic should be outside the if has_changed that updates self.current_track_info
+            # It should be based on the result of _is_new_track
             if has_changed and self.update_callback:
                 try:
                     self.update_callback(self.current_track_info)
+                    logger.debug("MusicManager: self.update_callback (to DisplayController) called from polling.")
                 except Exception as e:
                     logger.error(f"Error executing update callback: {e}")
             
@@ -613,22 +620,39 @@ class MusicManager:
                 pass # Logic within poll_music_status and _handle_ytm_update should cover callbacks
 
     def _is_new_track(self, new_track_info, old_track_info=None):
-        """
-        Checks if a new track is different from an old track.
-        Returns True if the track is new, False if it's the same or no old track is provided.
-        """
-        if not old_track_info:
-            return True
-        return (
-            new_track_info.get('source') != old_track_info.get('source') or
-            new_track_info.get('title') != old_track_info.get('title') or
-            new_track_info.get('artist') != old_track_info.get('artist') or
-            new_track_info.get('album') != old_track_info.get('album') or
-            new_track_info.get('album_art_url') != old_track_info.get('album_art_url') or
-            new_track_info.get('duration_ms') != old_track_info.get('duration_ms') or
-            new_track_info.get('progress_ms') != old_track_info.get('progress_ms') or
-            new_track_info.get('is_playing') != old_track_info.get('is_playing')
-        )
+        """Compares two simplified track_info dictionaries. Returns True if different."""
+        old_track_info_to_compare = old_track_info or self.current_track_info # Use provided or current
+
+        logger.debug(f"_is_new_track: Comparing NEW: {new_track_info}")
+        logger.debug(f"_is_new_track: Comparing OLD: {old_track_info_to_compare}")
+
+        if new_track_info == old_track_info_to_compare:
+            logger.debug("_is_new_track: Tracks are identical.")
+            return False
+
+        # If only one has track info (e.g., starting or stopping music)
+        if not new_track_info or not old_track_info_to_compare:
+            # Consider them different if one exists and the other doesn't, unless both are effectively 'None' playing
+            is_new_playing = new_track_info and new_track_info.get('source') != 'None' and new_track_info.get('is_playing')
+            is_old_playing = old_track_info_to_compare and old_track_info_to_compare.get('source') != 'None' and old_track_info_to_compare.get('is_playing')
+            if is_new_playing != is_old_playing:
+                logger.debug("_is_new_track: Different because one is playing and the other is not (or None).")
+                return True
+            # If both are effectively not playing, or one is None and other is "Nothing Playing", consider same for practical purposes
+            if not is_new_playing and not is_old_playing:
+                 logger.debug("_is_new_track: Both effectively not playing. Considered same for now.")
+                 return False 
+        
+        # More granular field comparison could be added here if direct dict comparison is insufficient
+        # For now, relying on direct dictionary comparison after basic checks.
+        # Example: Check specific important fields like title, artist, is_playing
+        # if new_track_info.get('title') != old_track_info_to_compare.get('title') or \
+        #    new_track_info.get('artist') != old_track_info_to_compare.get('artist') or \
+        #    new_track_info.get('is_playing') != old_track_info_to_compare.get('is_playing'):
+        #     return True
+
+        logger.debug("_is_new_track: Tracks are considered different by direct comparison or initial checks.")
+        return True # Default to true if not identical by direct comparison
 
     def _fetch_album_art(self, url):
         """Fetches and updates the album art image."""
