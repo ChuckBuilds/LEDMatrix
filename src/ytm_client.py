@@ -44,6 +44,8 @@ class YTMClient:
         self.stop_event = threading.Event()
         self.connection_thread = None
         self.headers = {}
+        self.last_known_track_data = None # Added attribute
+        self.data_lock = threading.Lock() # Added attribute
         logger.debug("YTMClient __init__ called.")
         self._load_config_and_token() # Load URL and token
         self._setup_event_handlers()
@@ -243,45 +245,25 @@ class YTMClient:
 
     def get_current_track(self):
         """
-        Fetches the current track info using a REST GET request.
-        This is used for polling when Socket.IO might not be preferred or as a fallback.
+        Returns the last known track data received via Socket.IO.
+        Does not perform a separate REST API call.
         """
-        if not self.base_url:
-            logger.warning("Cannot get current track: Base URL not set.")
-            return None
-        if not self.is_available(): # Use the general availability check
-             logger.warning("YTM Companion not available, skipping get_current_track.")
-             return None
-        try:
-            # This request requires authentication
-            if 'Authorization' not in self.headers:
-                logger.warning("Cannot get current track: YTM auth token not available in headers.")
-                # Attempt to reload token if not present
-                self._load_config_and_token()
-                if 'Authorization' not in self.headers:
-                    logger.error("Failed to load YTM auth token. Cannot fetch track.")
-                    return None
+        if not (self.sio and self.sio.connected):
+            # logger.debug("YTMClient.get_current_track: Socket.IO not connected. Returning None or last known data if available.")
+            # To prevent spamming logs if called frequently when disconnected, we won't log here.
+            # MusicManager's polling logic should handle the disconnected state.
+            pass # Continue to return last_known_track_data if any, or None
 
-            # Use /api/v1/player instead of /api/v1/track
-            response = requests.get(f"{self.base_url}/api/v1/player", headers=self.headers, timeout=3)
-            if response.status_code == 200:
-                track_data = response.json()
-                # logger.debug(f"YTMClient get_current_track (REST): {track_data}")
-                return track_data
-            elif response.status_code == 401:
-                logger.warning(f"YTM Companion: Authentication failed (401) for /api/v1/player. Token may be invalid.")
-            elif response.status_code == 204: # No content - often means nothing playing or YTM desktop not focused
-                 logger.debug("YTM Companion /api/v1/player returned 204 No Content (likely nothing playing or player not active).")
-                 return None # Treat as nothing playing
+        # self._load_config_and_token() # Token should be loaded at init and on auth failures for socket
+        # No, this method should not attempt to reload token, it's passive.
+
+        with self.data_lock: # Assuming you have a self.data_lock for self.last_known_track_data
+            if self.last_known_track_data:
+                # logger.debug(f"YTMClient.get_current_track returning from self.last_known_track_data: {self.last_known_track_data.get('video',{}).get('title')}")
+                return self.last_known_track_data
             else:
-                logger.error(f"Error getting current track from YTM Companion: {response.status_code} - {response.text}")
-            return None
-        except requests.exceptions.RequestException as e:
-            logger.error(f"RequestException getting current track from YTM Companion: {e}")
-            return None
-        except Exception as e:
-            logger.error(f"Unexpected error in get_current_track: {e}")
-            return None
+                # logger.debug("YTMClient.get_current_track: No track data available from Socket.IO yet.")
+                return None
 
 # Example of how it might be used (for testing or if YTMClient is run directly)
 if __name__ == '__main__':
