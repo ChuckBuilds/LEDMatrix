@@ -14,8 +14,9 @@ from .ytm_client import YTMClient
 # Removed: import config
 
 # Configure logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+# logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s') # Keep main as INFO or higher
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.DEBUG) # Set music_manager's logger to DEBUG
 
 # Define paths relative to this file's location
 CONFIG_DIR = os.path.join(os.path.dirname(__file__), '..', 'config')
