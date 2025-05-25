@@ -51,6 +51,7 @@ class MusicManager:
         self.title_scroll_tick = 0
         self.artist_scroll_tick = 0
         self._logged_nothing_playing_for_current_state = False # New attribute
+        self._last_logged_display_call_params = object() # For debouncing display() entry log
         
         self._load_config() # Load config first
         self._initialize_clients() # Initialize based on loaded config
@@ -567,7 +568,12 @@ class MusicManager:
 
     # Method moved from DisplayController and renamed
     def display(self, force_clear: bool = False):
-        logger.debug(f"MusicManager.display() called. force_clear={force_clear}. Current Source: {self.current_source.name}")
+        current_call_params = (force_clear, self.current_source.name)
+        # Log if force_clear is true, or if the tuple of (force_clear, current_source_name) has changed since last log
+        if force_clear or current_call_params != getattr(self, '_last_logged_display_call_params', object()):
+            logger.debug(f"MusicManager.display() called. force_clear={force_clear}. Current Source: {self.current_source.name}")
+            # Update the record of the last logged parameters
+            self._last_logged_display_call_params = current_call_params
         
         if force_clear: # Only log details when force_clear is True
             # Safely dump JSON, ensuring complex objects are handled if any (though current_track_info should be simple dicts)
@@ -644,6 +650,7 @@ class MusicManager:
                     logger.error(f"MusicManager: Critical error - cannot draw fallback rectangle: {e_rect}", exc_info=True)
 
             self.display_manager.update_display()
+            logger.debug("MusicManager: 'Nothing Playing' block executed and display updated.")
             self.scroll_position_title = 0
             self.scroll_position_artist = 0
             self.title_scroll_tick = 0 
