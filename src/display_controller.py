@@ -934,11 +934,10 @@ class DisplayController:
                 # --- Perform Display Update ---
                 try:
                     if self.current_display_mode == 'music' and self.music_manager:
-                        # Call MusicManager's display method
+                        if self.force_clear: # Only trigger immediate poll if it's a fresh switch to music mode
+                            logger.debug("DisplayController: Music mode activated, triggering immediate poll.")
+                            self.music_manager.trigger_immediate_poll_and_update()
                         self.music_manager.display(force_clear=self.force_clear)
-                        # Reset force_clear if it was true for this mode
-                        if self.force_clear:
-                            self.force_clear = False
                     elif manager_to_display:
                         logger.debug(f"Attempting to display mode: {self.current_display_mode} using manager {type(manager_to_display).__name__} with force_clear={self.force_clear}")
                         # Call the appropriate display method based on mode/manager type
