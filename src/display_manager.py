@@ -136,7 +136,7 @@ class DisplayManager:
             self.current_canvas.Clear()
             
             # Update the display to show the clear
-            self.update_display()
+            # self.update_display() # Removed this line
         except Exception as e:
             logger.error(f"Error clearing display: {e}")
 
