@@ -64,10 +64,9 @@ class YTMClient:
                     logger.debug(f"YTMClient: app_config loaded: {app_config is not None}")
                     music_section = app_config.get('music', {})
                     logger.debug(f"YTMClient: music_section: {music_section}")
-                    ytm_companion_section = music_section.get('ytm_companion', {})
-                    logger.debug(f"YTMClient: ytm_companion_section: {ytm_companion_section}")
-                    loaded_url_from_config = ytm_companion_section.get('YTM_COMPANION_URL')
-                    logger.debug(f"YTMClient: Value for YTM_COMPANION_URL from config: '{loaded_url_from_config}'")
+                    # Directly get the URL from the music_section, as YTM_COMPANION_URL is not nested further
+                    loaded_url_from_config = music_section.get('YTM_COMPANION_URL')
+                    logger.debug(f"YTMClient: Value for YTM_COMPANION_URL directly from music_section: '{loaded_url_from_config}'")
             else:
                 logger.warning(f"YTMClient: Config file NOT FOUND at {CONFIG_PATH}")
         except json.JSONDecodeError as e:
