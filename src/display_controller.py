@@ -63,29 +63,17 @@ class DisplayController:
         music_init_time = time.time()
         self.music_manager = None
         
-        if hasattr(self, 'config'):
-            music_config_main = self.config.get('music', {})
-            if music_config_main.get('enabled', False):
-                try:
-                    # Pass display_manager and config. The callback is now optional for MusicManager.
-                    # DisplayController might not need a specific music update callback anymore if MusicManager handles all display.
-                    self.music_manager = MusicManager(display_manager=self.display_manager, 
-                                                      config=self.config, 
-                                                      update_callback=self._handle_music_update,
-                                                      display_controller_obj=self)
-                    if self.music_manager.enabled: 
-                        logger.info("MusicManager initialized successfully.")
-                        self.music_manager.start_polling()
-                    else:
-                        logger.info("MusicManager initialized but is internally disabled or failed to load its own config.")
-                        self.music_manager = None 
-                except Exception as e:
-                    logger.error(f"Failed to initialize MusicManager: {e}", exc_info=True)
-                    self.music_manager = None
-            else:
-                logger.info("Music module is disabled in main configuration (config.json).")
+        if self.config.get_specific_config("music", "enabled"):
+            try:
+                self.music_manager = MusicManager(display_manager=self.display_manager,
+                                                config=self.config, 
+                                                update_callback=self.handle_music_update)
+                logger.info("MusicManager initialized successfully.")
+            except Exception as e:
+                logger.error(f"Failed to initialize MusicManager: {e}", exc_info=True)
+                self.music_manager = None
         else:
-            logger.error("Config not loaded before MusicManager initialization attempt.")
+            logger.info("Music module is disabled in main configuration (config.json).")
         logger.info("MusicManager initialized in %.3f seconds", time.time() - music_init_time)
         
         # Initialize NHL managers if enabled
@@ -382,7 +370,7 @@ class DisplayController:
         """Checks if the given display_name is the currently active display mode."""
         return self.current_display_mode == display_name
 
-    def _handle_music_update(self, track_info: Dict[str, Any]):
+    def handle_music_update(self, track_info: Dict[str, Any]):
         """Callback for when music track info changes. (Simplified)"""
         # MusicManager now handles its own display state (album art, etc.)
         # This callback might still be useful if DisplayController needs to react to music changes
