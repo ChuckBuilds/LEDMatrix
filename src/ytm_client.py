@@ -93,6 +93,7 @@ class YTMClient:
             if os.path.exists(YTM_AUTH_PATH):
                 with open(YTM_AUTH_PATH, 'r') as f:
                     auth_data = json.load(f)
+                    logger.debug(f"YTMClient: Loaded auth_data from {YTM_AUTH_PATH}: {auth_data}") # Log the loaded auth_data
                     # Prioritize explicit token if provided, else use file
                     self.token = self.token or auth_data.get('token')
                 if self.token:
