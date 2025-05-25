@@ -6,16 +6,22 @@ import time
 import threading
 import requests # Added for get_current_track
 
-# Ensure application-level logging is configured (as it is)
-# logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+# Set up logger for this module specifically
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.DEBUG)
+# If you want to ensure handlers are added if run standalone or if main app doesn't configure root logger well:
+if not logger.hasHandlers():
+    handler = logging.StreamHandler()
+    formatter = logging.Formatter('%(asctime)s - %(levelname)s:%(name)s:%(message)s')
+    handler.setFormatter(formatter)
+    logger.addHandler(handler)
+    logger.propagate = False # Prevent duplicate logs if root logger also has a handler
 
 # Reduce verbosity of socketio and engineio libraries
 logging.getLogger('socketio.client').setLevel(logging.WARNING)
 logging.getLogger('socketio.server').setLevel(logging.WARNING)
 logging.getLogger('engineio.client').setLevel(logging.WARNING)
 logging.getLogger('engineio.server').setLevel(logging.WARNING)
-
-logger = logging.getLogger(__name__) # Use module-specific logger
 
 # Define paths relative to this file's location
 CONFIG_DIR = os.path.join(os.path.dirname(__file__), '..', 'config')
@@ -38,7 +44,7 @@ class YTMClient:
         self.stop_event = threading.Event()
         self.connection_thread = None
         self.headers = {}
-
+        logger.debug("YTMClient __init__ called.")
         self._load_config_and_token() # Load URL and token
         self._setup_event_handlers()
 
@@ -46,27 +52,43 @@ class YTMClient:
             self.start_client_listening()
 
     def _load_config_and_token(self):
-        """Loads YTM Companion URL from config.json and token from ytm_auth.json."""
+        logger.debug(f"YTMClient: _load_config_and_token started. Initial self.base_url: '{self.base_url}'")
+        logger.debug(f"YTMClient: Attempting to load config from: {CONFIG_PATH}")
+        
+        loaded_url_from_config = None
         try:
             if os.path.exists(CONFIG_PATH):
+                logger.debug(f"YTMClient: Config file exists at {CONFIG_PATH}")
                 with open(CONFIG_PATH, 'r') as f:
                     app_config = json.load(f)
-                    ytm_config = app_config.get('music', {}).get('ytm_companion', {})
-                    
-                    # Log the value retrieved directly from config before assigning
-                    retrieved_url = ytm_config.get('YTM_COMPANION_URL')
-                    logger.debug(f"YTMClient: Value for YTM_COMPANION_URL from config: '{retrieved_url}'")
-
-                    self.base_url = self.base_url or retrieved_url
-                    logger.info(f"YTM Companion URL set to: {self.base_url}")
+                    logger.debug(f"YTMClient: app_config loaded: {app_config is not None}")
+                    music_section = app_config.get('music', {})
+                    logger.debug(f"YTMClient: music_section: {music_section}")
+                    ytm_companion_section = music_section.get('ytm_companion', {})
+                    logger.debug(f"YTMClient: ytm_companion_section: {ytm_companion_section}")
+                    loaded_url_from_config = ytm_companion_section.get('YTM_COMPANION_URL')
+                    logger.debug(f"YTMClient: Value for YTM_COMPANION_URL from config: '{loaded_url_from_config}'")
             else:
-                logger.warning(f"Main config file {CONFIG_PATH} not found. YTM Companion URL might not be set if not passed directly.")
+                logger.warning(f"YTMClient: Config file NOT FOUND at {CONFIG_PATH}")
+        except json.JSONDecodeError as e:
+            logger.error(f"YTMClient: JSONDecodeError reading {CONFIG_PATH}: {e}")
         except Exception as e:
-            logger.error(f"Error loading YTM Companion URL from {CONFIG_PATH}: {e}")
+            logger.error(f"YTMClient: Exception reading {CONFIG_PATH}: {e}", exc_info=True)
+
+        # Logic to set self.base_url using the potentially pre-set self.base_url or the loaded one
+        if self.base_url: # If base_url was provided to __init__ and is not None/empty
+            logger.debug(f"YTMClient: Using pre-existing self.base_url: '{self.base_url}'")
+        elif loaded_url_from_config:
+            logger.debug(f"YTMClient: Using loaded_url_from_config: '{loaded_url_from_config}'")
+            self.base_url = loaded_url_from_config
+        else:
+            logger.debug("YTMClient: No pre-existing base_url and no URL loaded from config.")
+            # self.base_url remains None or its initial value from __init__ which should be None if not passed
+
+        logger.info(f"YTM Companion URL set to: {self.base_url}")
 
         if not self.base_url:
             logger.error("YTM Companion URL is not set. YTMClient cannot function.")
-            # Potentially raise an error or set a flag indicating an inoperable state
 
         try:
             if os.path.exists(YTM_AUTH_PATH):
