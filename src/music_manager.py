@@ -137,18 +137,29 @@ class MusicManager:
         activated_successfully = False
         if self.ytm:
             logger.info("MusicManager: Telling YTMClient to start listening.")
-            self.ytm.start_client_listening()
-            # Wait for a short period for YTM client to connect
-            for _ in range(5): # Try for up to 5 seconds (5 * 1s)
-                if self.ytm.is_available(): # is_available() should ideally check sio.connected for YTM
-                    logger.info("MusicManager: YTMClient appears to be available after starting.")
+            self.ytm.start_client_listening() 
+            logger.info("MusicManager: Waiting for YTMClient to connect...")
+            # Wait for the YTM client's connection event with a timeout
+            if self.ytm.is_connected_event.wait(timeout=7.0): # Wait up to 7 seconds
+                logger.info("MusicManager: YTMClient connected (event signaled).")
+                # Double check with is_available for sanity, though event should be primary
+                if self.ytm.is_available():
+                    logger.info("MusicManager: YTMClient also reports as available.")
                     activated_successfully = True
-                    break
-                logger.info("MusicManager: Waiting for YTMClient to become available...")
-                time.sleep(1)
-            if not activated_successfully:
-                logger.warning("MusicManager: YTMClient did not become available after starting listener.")
-        elif self.spotify and self.spotify.is_authenticated(): # Check if Spotify can be used
+                else:
+                    logger.warning("MusicManager: YTMClient event signaled connected, but is_available() is false. Proceeding cautiously.")
+                    # Potentially still set activated_successfully = True if event is trusted more
+                    activated_successfully = True # Trust the event for now
+            else:
+                logger.warning("MusicManager: YTMClient did not signal connection within timeout.")
+                # Check is_available one last time in case the event was missed but it connected
+                if self.ytm.is_available():
+                    logger.warning("MusicManager: YTMClient event timed out, but is_available() is now true. Proceeding.")
+                    activated_successfully = True
+                else:
+                    logger.warning("MusicManager: YTMClient still not available after timeout.")
+
+        elif self.spotify and self.spotify.is_authenticated():
             logger.info("MusicManager: Spotify is available.")
             activated_successfully = True
         
