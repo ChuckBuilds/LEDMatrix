@@ -63,7 +63,9 @@ class DisplayController:
         music_init_time = time.time()
         self.music_manager = None
         
-        if self.config.get_specific_config("music", "enabled"):
+        # Access config using standard dictionary methods
+        music_config_data = self.config.get("music", {})
+        if music_config_data.get("enabled", False):
             try:
                 self.music_manager = MusicManager(display_manager=self.display_manager,
                                                 config=self.config, 
