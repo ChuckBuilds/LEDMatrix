@@ -565,6 +565,17 @@ class MusicManager:
 
     # Method moved from DisplayController and renamed
     def display(self, force_clear: bool = False):
+        logger.debug(f"MusicManager.display() called. force_clear={force_clear}. Current Source: {self.current_source.name}")
+        # Safely dump JSON, ensuring complex objects are handled if any (though current_track_info should be simple dicts)
+        try:
+            current_track_info_json = json.dumps(self.current_track_info, indent=2)
+        except TypeError:
+            current_track_info_json = str(self.current_track_info) # Fallback to string representation
+        logger.debug(f"MusicManager.display(): self.current_track_info = {current_track_info_json}")
+        logger.debug(f"MusicManager.display(): self.album_art_image is None: {self.album_art_image is None}")
+        if self.album_art_image:
+            logger.debug(f"MusicManager.display(): self.album_art_image size: {self.album_art_image.size}")
+
         if force_clear: # Removed self.force_clear as it's passed directly
             self.display_manager.clear()
             # self.force_clear = False # Not needed here
