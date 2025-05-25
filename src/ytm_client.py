@@ -94,8 +94,8 @@ class YTMClient:
                 with open(YTM_AUTH_PATH, 'r') as f:
                     auth_data = json.load(f)
                     logger.debug(f"YTMClient: Loaded auth_data from {YTM_AUTH_PATH}: {auth_data}") # Log the loaded auth_data
-                    # Prioritize explicit token if provided, else use file
-                    self.token = self.token or auth_data.get('token')
+                    # Prioritize explicit token if provided, else use file. Use the correct key 'YTM_COMPANION_TOKEN'.
+                    self.token = self.token or auth_data.get('YTM_COMPANION_TOKEN')
                 if self.token:
                     self.headers['Authorization'] = f'Bearer {self.token}'
                     logger.info(f"YTM Companion token loaded from {YTM_AUTH_PATH}.")
