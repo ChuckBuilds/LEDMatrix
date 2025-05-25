@@ -38,7 +38,7 @@ class YTMClient:
     def __init__(self, base_url=None, token=None, update_callback=None, auto_start=True): # Added auto_start
         self.base_url = base_url
         self.token = token
-        self.sio = socketio.Client(reconnection_attempts=5, reconnection_delay=5)
+        self.sio = socketio.Client(reconnection_attempts=5, reconnection_delay=5, logger=True, engineio_logger=True)
         self.update_callback = update_callback
         self.is_connected_event = threading.Event()
         self.stop_event = threading.Event()
@@ -129,11 +129,11 @@ class YTMClient:
             self.is_connected_event.clear()
         
         # Handler for event from YTM Companion's Socket.IO server
-        # Old version used 'state-update'. Current YTMDesktop v1 API docs say 'state'. Trying 'state-update'.
-        @self.sio.on('state-update', namespace='/api/v1/realtime')
+        # Reverting to 'state' as per 89ac66e and previous working state.
+        @self.sio.on('state', namespace='/api/v1/realtime')
         def _on_state_change(data):
             # This is where YTM Companion pushes player state updates.
-            # logger.debug(f"YTMClient received 'state-update' (raw): {data}") # Very verbose
+            # logger.debug(f"YTMClient received 'state' update (raw): {data}") # Very verbose
             if self.update_callback:
                 try:
                     self.update_callback(data) # Pass the raw data to MusicManager
