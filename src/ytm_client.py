@@ -36,6 +36,7 @@ class YTMClient:
         self.external_update_callback = update_callback
         self.polling_thread = None
         self.stop_polling_event = threading.Event()
+        self.last_auth_failure = False # Added to track auth failures
 
         if self.external_update_callback and self.ytm_token:
             self.start_polling()
@@ -89,6 +90,7 @@ class YTMClient:
     def _ensure_connected(self, timeout=5):
         """Checks if the server is reachable and token is likely valid."""
         if not self.ytm_token:
+            self.last_auth_failure = False # No token, so not an auth failure in the sense of an invalid token
             return False
         
         # This method now effectively becomes part of is_available or a health check.
@@ -99,15 +101,19 @@ class YTMClient:
             # Use a short timeout for this check
             response = self.session.get(state_url, headers=headers, timeout=timeout)
             if response.status_code == 200:
+                self.last_auth_failure = False
                 return True
             elif response.status_code == 401:
                 logging.warning(f"YTM Companion: Authentication failed (401) during connectivity check. Token may be invalid.")
+                self.last_auth_failure = True
                 return False # Treat as not 'connected' for practical purposes
             else:
                 logging.warning(f"YTM Companion: Server check returned status {response.status_code}.")
+                self.last_auth_failure = False
                 return False
         except requests.exceptions.RequestException as e:
             logging.warning(f"YTM Companion: Could not connect to server at {self.base_url} for connectivity check: {e}")
+            self.last_auth_failure = False
             return False
 
     def is_available(self):
@@ -117,6 +123,7 @@ class YTMClient:
     def get_current_track(self):
         if not self.ytm_token:
             logging.debug("No YTM token, cannot get current track.")
+            self.last_auth_failure = False # No token, so not an auth failure
             return None
 
         state_url = f"{self.base_url}/api/v1/state"
@@ -126,6 +133,7 @@ class YTMClient:
             response = self.session.get(state_url, headers=headers, timeout=5) # Using self.session
             if response.status_code == 200:
                 data = response.json()
+                self.last_auth_failure = False # Successful call
                 with self._data_lock:
                     # Update last_known_track_data even if it's the same,
                     # as the external_update_callback logic (when polling)
@@ -136,15 +144,19 @@ class YTMClient:
                 return data
             elif response.status_code == 401:
                 logging.error(f"Authentication failed (401) when trying to get YTM state. Check YTM_COMPANION_TOKEN.")
+                self.last_auth_failure = True
                 return None
             else:
                 logging.error(f"Error getting YTM state: {response.status_code} - {response.text}")
+                self.last_auth_failure = False
                 return None
         except requests.exceptions.RequestException as e:
             logging.error(f"RequestException while getting YTM state: {e}")
+            self.last_auth_failure = False
             return None
         except json.JSONDecodeError as e:
             logging.error(f"JSONDecodeError while parsing YTM state: {e}")
+            self.last_auth_failure = False
             return None
 
     def disconnect_client(self):
@@ -204,6 +216,10 @@ class YTMClient:
         # else:
             # logging.debug("Polling thread not running or already stopped.")
 
+    def is_experiencing_auth_failure(self) -> bool:
+        """Returns True if the last connection attempt failed due to a 401 auth error."""
+        return self.last_auth_failure
+
 # Example Usage (for testing - needs to be adapted for Socket.IO async nature)
 # if __name__ == '__main__':
 #     def my_callback(data):
@@ -230,31 +246,33 @@ class YTMClient:
 
 #     else:
 #         print(f"YTM Server not available at {client.base_url} (REST API). Is YTMD running with companion server enabled and token generated?")
+#         if client.is_experiencing_auth_failure():
+#             print("This unavailability is due to an authentication failure (401).")
 
-    # Example of a direct call (polling will also be active if callback was set)
-    # print("\nAttempting a direct get_current_track call:")
-    # track_info = client.get_current_track()
-    # if track_info:
-    #     print(json.dumps(track_info, indent=2))
-    # else:
-    #     print("No track currently playing or error fetching via REST API.")
+#     # Example of a direct call (polling will also be active if callback was set)
+#     print("\nAttempting a direct get_current_track call:")
+#     track_info = client.get_current_track()
+#     if track_info:
+#         print(json.dumps(track_info, indent=2))
+#     else:
+#         print("No track currently playing or error fetching via REST API.")
     
-    # if not client.external_update_callback: # If no callback, disconnect is simpler
-    #    client.disconnect_client() # Ensure session is closed if no polling was started
+#     if not client.external_update_callback: # If no callback, disconnect is simpler
+#        client.disconnect_client() # Ensure session is closed if no polling was started
     
-    # if __name__ == '__main__':
-    #     client = YTMClient()
-    #     if client.is_available(): 
-    #         print("YTM Server is available (Socket.IO).")
-    #         try:
-    #             for _ in range(10): # Poll for a few seconds
-    #                 track = client.get_current_track()
-    #                 if track:
-    #                     print(json.dumps(track, indent=2))
-    #                 else:
-    #                     print("No track currently playing or error fetching (Socket.IO).")
-    #                 time.sleep(2)
-    #         finally:
-    #             client.disconnect_client()
-    #     else:
-    #         print(f"YTM Server not available at {client.base_url} (Socket.IO). Is YTMD running with companion server enabled and token generated?") 
+#     if __name__ == '__main__':
+#         client = YTMClient()
+#         if client.is_available(): 
+#             print("YTM Server is available (Socket.IO).")
+#             try:
+#                 for _ in range(10): # Poll for a few seconds
+#                     track = client.get_current_track()
+#                     if track:
+#                         print(json.dumps(track, indent=2))
+#                     else:
+#                         print("No track currently playing or error fetching (Socket.IO).")
+#                     time.sleep(2)
+#             finally:
+#                 client.disconnect_client()
+#         else:
+#             print(f"YTM Server not available at {client.base_url} (Socket.IO). Is YTMD running with companion server enabled and token generated?") 
