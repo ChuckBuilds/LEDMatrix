@@ -1,14 +1,72 @@
 # LEDMatrix
+A sophisticated LED matrix display system that provides real-time information display capabilities for various data sources. The system is highly configurable and supports multiple display modes that can be enabled or disabled based on user preferences.
 
-A modular LED matrix display system for sports information using Raspberry Pi and RGB LED matrices.
+## Core Features
 
-# Work in Progress, things may break. I'll try to keep the main branch as stable as I can but this is absolutely in a pre-release state. There are also a ton of commits as it's an easy way to get the changes to the rpi for testing.
+### Time and Weather
+- Real-time clock display
+- Weather information with custom icons
+- Google Calendar event display
+
+### Sports Information
+The system supports live, recent, and upcoming game information for multiple sports leagues:
+- NHL (Hockey)
+- NBA (Basketball)
+- MLB (Baseball)
+- NFL (Football)
+- NCAA Football
+- NCAA Men's Basketball
+- NCAA Men's Baseball
+- Soccer
+(Note, some of these sports seasons were not active during development and might need fine tuning when games are active)
+
+### Financial Information
+- Near real-time stock & crypto price updates
+- Stock news headlines
+- Customizable stock & crypto watchlists
+
+### Entertainment
+- Music playback information from multiple sources:
+  - Spotify integration
+  - YouTube Music integration
+- Album art display
+- Now playing information with scrolling text
+
+### Custom Display Features
+- Text display capabilities
+- Font testing and customization
+- Configurable display modes
+- Cache management for improved performance
+
+
+## System Architecture
+
+The system is built with a modular architecture that allows for easy extension and maintenance:
+- `DisplayController`: Main orchestrator managing all display modes
+- Individual managers for each feature (sports, weather, music, etc.)
+- Separate authentication handlers for different services
+- Configurable display modes and rotation patterns
+
+## Configuration
+
+The system can be configured through a JSON configuration file that allows users to:
+- Enable/disable specific features
+- Set display durations
+- Configure API keys and endpoints
+- Customize display modes and rotation patterns
+- Set preferred music sources
+- Configure sports team preferences
+
 
 ## Hardware Requirements
-- Raspberry Pi 4 or older
+- Raspberry Pi 3b or 4
+ - Amazon Affiliate Links: 
 - Adafruit RGB Matrix Bonnet/HAT
 - 2x LED Matrix panels (64x32)
 - DC Power Supply for Adafruit RGB HAT
+
+
+-----------------------------------------------------------------------------------
 
 ## Installation
 
@@ -27,12 +85,7 @@ pip3 install --break-system-packages -r requirements.txt
 
 ## Configuration
 
-1. Copy the example configuration:
-```bash
-cp config/config.example.json config/config.json
-```
-
-2. Edit `config/config.json` with your preferences
+1.Edit `config/config.json` with your preferences via `sudo nano config/config.json`
 
 
 ## Important: Sound Module Configuration
