@@ -351,5 +351,159 @@ def save_raw_json_route():
             'message': f'Error saving raw JSON: {str(e)}'
         }), 400
 
+@app.route('/news_manager/status', methods=['GET'])
+def get_news_manager_status():
+    """Get news manager status and configuration"""
+    try:
+        config = config_manager.load_config()
+        news_config = config.get('news_manager', {})
+        
+        # Try to get status from the running display controller if possible
+        status = {
+            'enabled': news_config.get('enabled', False),
+            'enabled_feeds': news_config.get('enabled_feeds', []),
+            'available_feeds': [
+                'MLB', 'NFL', 'NCAA FB', 'NHL', 'NBA', 'TOP SPORTS', 
+                'BIG10', 'NCAA', 'Other'
+            ],
+            'headlines_per_feed': news_config.get('headlines_per_feed', 2),
+            'rotation_enabled': news_config.get('rotation_enabled', True),
+            'custom_feeds': news_config.get('custom_feeds', {})
+        }
+        
+        return jsonify({
+            'status': 'success',
+            'data': status
+        })
+        
+    except Exception as e:
+        return jsonify({
+            'status': 'error',
+            'message': f'Error getting news manager status: {str(e)}'
+        }), 400
+
+@app.route('/news_manager/update_feeds', methods=['POST'])
+def update_news_feeds():
+    """Update enabled news feeds"""
+    try:
+        data = request.get_json()
+        enabled_feeds = data.get('enabled_feeds', [])
+        headlines_per_feed = data.get('headlines_per_feed', 2)
+        
+        config = config_manager.load_config()
+        if 'news_manager' not in config:
+            config['news_manager'] = {}
+            
+        config['news_manager']['enabled_feeds'] = enabled_feeds
+        config['news_manager']['headlines_per_feed'] = headlines_per_feed
+        
+        config_manager.save_config(config)
+        
+        return jsonify({
+            'status': 'success',
+            'message': 'News feeds updated successfully!'
+        })
+        
+    except Exception as e:
+        return jsonify({
+            'status': 'error',
+            'message': f'Error updating news feeds: {str(e)}'
+        }), 400
+
+@app.route('/news_manager/add_custom_feed', methods=['POST'])
+def add_custom_news_feed():
+    """Add a custom RSS feed"""
+    try:
+        data = request.get_json()
+        name = data.get('name', '').strip()
+        url = data.get('url', '').strip()
+        
+        if not name or not url:
+            return jsonify({
+                'status': 'error',
+                'message': 'Name and URL are required'
+            }), 400
+            
+        config = config_manager.load_config()
+        if 'news_manager' not in config:
+            config['news_manager'] = {}
+        if 'custom_feeds' not in config['news_manager']:
+            config['news_manager']['custom_feeds'] = {}
+            
+        config['news_manager']['custom_feeds'][name] = url
+        config_manager.save_config(config)
+        
+        return jsonify({
+            'status': 'success',
+            'message': f'Custom feed "{name}" added successfully!'
+        })
+        
+    except Exception as e:
+        return jsonify({
+            'status': 'error',
+            'message': f'Error adding custom feed: {str(e)}'
+        }), 400
+
+@app.route('/news_manager/remove_custom_feed', methods=['POST'])
+def remove_custom_news_feed():
+    """Remove a custom RSS feed"""
+    try:
+        data = request.get_json()
+        name = data.get('name', '').strip()
+        
+        if not name:
+            return jsonify({
+                'status': 'error',
+                'message': 'Feed name is required'
+            }), 400
+            
+        config = config_manager.load_config()
+        custom_feeds = config.get('news_manager', {}).get('custom_feeds', {})
+        
+        if name in custom_feeds:
+            del custom_feeds[name]
+            config_manager.save_config(config)
+            
+            return jsonify({
+                'status': 'success',
+                'message': f'Custom feed "{name}" removed successfully!'
+            })
+        else:
+            return jsonify({
+                'status': 'error',
+                'message': f'Custom feed "{name}" not found'
+            }), 404
+            
+    except Exception as e:
+        return jsonify({
+            'status': 'error',
+            'message': f'Error removing custom feed: {str(e)}'
+        }), 400
+
+@app.route('/news_manager/toggle', methods=['POST'])
+def toggle_news_manager():
+    """Toggle news manager on/off"""
+    try:
+        data = request.get_json()
+        enabled = data.get('enabled', False)
+        
+        config = config_manager.load_config()
+        if 'news_manager' not in config:
+            config['news_manager'] = {}
+            
+        config['news_manager']['enabled'] = enabled
+        config_manager.save_config(config)
+        
+        return jsonify({
+            'status': 'success',
+            'message': f'News manager {"enabled" if enabled else "disabled"} successfully!'
+        })
+        
+    except Exception as e:
+        return jsonify({
+            'status': 'error',
+            'message': f'Error toggling news manager: {str(e)}'
+        }), 400
+
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000, debug=True) 

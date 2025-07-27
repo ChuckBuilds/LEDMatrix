@@ -48,6 +48,84 @@
             display: none; 
             padding: 20px 0;
         }
+        .checkbox-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 10px;
+            margin: 10px 0;
+        }
+        .checkbox-item {
+            padding: 8px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            background-color: #f9f9f9;
+        }
+        .checkbox-item label {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin: 0;
+            cursor: pointer;
+        }
+        .custom-feeds-container {
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            padding: 15px;
+            background-color: #f9f9f9;
+        }
+        .add-custom-feed {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 15px;
+            align-items: center;
+        }
+        .custom-feed-item {
+            margin: 10px 0;
+            padding: 10px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            background-color: white;
+        }
+        .custom-feed-info {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .remove-btn {
+            background-color: #ff4444;
+            color: white;
+            border: none;
+            padding: 4px 8px;
+            border-radius: 3px;
+            cursor: pointer;
+            font-size: 12px;
+        }
+        .remove-btn:hover {
+            background-color: #cc0000;
+        }
+        .settings-row {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+        }
+        .status-container {
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            padding: 15px;
+            background-color: #f0f8f0;
+        }
+        .status-info h4 {
+            margin-top: 0;
+            color: #2c5e2c;
+        }
+        .status-info p {
+            margin: 5px 0;
+        }
+        .button-group {
+            display: flex;
+            gap: 10px;
+            margin: 20px 0;
+        }
         .form-section {
             background: #f9f9f9;
             padding: 20px;
@@ -400,8 +478,9 @@
             <button class="tab-link" onclick="openTab(event, 'stocks')">Stocks & Crypto</button>
             <button class="tab-link" onclick="openTab(event, 'features')">Additional Features</button>
             <button class="tab-link" onclick="openTab(event, 'music')">Music</button>
-            <button class="tab-link" onclick="openTab(event, 'calendar')">Calendar</button>
-                    <button class="tab-link" onclick="openTab(event, 'secrets')">API Keys</button>
+                    <button class="tab-link" onclick="openTab(event, 'calendar')">Calendar</button>
+        <button class="tab-link" onclick="openTab(event, 'news')">News Manager</button>
+        <button class="tab-link" onclick="openTab(event, 'secrets')">API Keys</button>
         <button class="tab-link" onclick="openTab(event, 'actions')">Actions</button>
         <button class="tab-link" onclick="openTab(event, 'raw-json')">Raw JSON</button>
         <button class="tab-link" onclick="openTab(event, 'logs')">Logs</button>
@@ -2139,6 +2218,87 @@
             </div>
         </div>
 
+        <!-- News Manager Tab -->
+        <div id="news" class="tab-content">
+            <div class="form-section">
+                <h2>News Manager Configuration</h2>
+                <p>Configure RSS news feeds and scrolling ticker settings</p>
+                
+                <div class="form-group">
+                    <label for="news_enabled">Enable News Manager:</label>
+                    <div class="toggle-container">
+                        <label class="toggle-switch">
+                            <input type="checkbox" id="news_enabled" name="news_enabled">
+                            <span class="slider"></span>
+                        </label>
+                    </div>
+                </div>
+                
+                <div class="form-group">
+                    <label for="headlines_per_feed">Headlines Per Feed:</label>
+                    <input type="number" id="headlines_per_feed" name="headlines_per_feed" min="1" max="5" value="2">
+                    <div class="description">Number of headlines to show from each enabled feed</div>
+                </div>
+                
+                <div class="form-group">
+                    <label>Available News Feeds:</label>
+                    <div class="checkbox-grid" id="news_feeds_grid">
+                        <!-- Feeds will be populated by JavaScript -->
+                    </div>
+                </div>
+                
+                <div class="form-group">
+                    <h3>Custom RSS Feeds</h3>
+                    <div class="custom-feeds-container">
+                        <div class="add-custom-feed">
+                            <input type="text" id="custom_feed_name" placeholder="Feed Name" style="width: 200px;">
+                            <input type="text" id="custom_feed_url" placeholder="RSS Feed URL" style="width: 400px;">
+                            <button type="button" onclick="addCustomFeed()">Add Feed</button>
+                        </div>
+                        <div id="custom_feeds_list">
+                            <!-- Custom feeds will be populated by JavaScript -->
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="form-group">
+                    <h3>Scrolling Settings</h3>
+                    <div class="settings-row">
+                        <div>
+                            <label for="scroll_speed">Scroll Speed:</label>
+                            <input type="number" id="scroll_speed" min="1" max="10" value="2">
+                            <div class="description">Pixels per frame</div>
+                        </div>
+                        <div>
+                            <label for="scroll_delay">Scroll Delay (ms):</label>
+                            <input type="number" id="scroll_delay" min="5" max="100" value="20">
+                            <div class="description">Delay between scroll updates</div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="form-group">
+                    <label for="rotation_enabled">Enable Headline Rotation:</label>
+                    <div class="toggle-container">
+                        <label class="toggle-switch">
+                            <input type="checkbox" id="rotation_enabled" name="rotation_enabled" checked>
+                            <span class="slider"></span>
+                        </label>
+                    </div>
+                    <div class="description">Rotate through different headlines to avoid repetition</div>
+                </div>
+                
+                <div class="button-group">
+                    <button type="button" onclick="saveNewsSettings()">Save News Settings</button>
+                    <button type="button" onclick="refreshNewsStatus()">Refresh Status</button>
+                </div>
+                
+                <div id="news_status" class="status-container" style="margin-top: 20px;">
+                    <!-- Status will be populated by JavaScript -->
+                </div>
+            </div>
+        </div>
+
         <!-- Secrets Tab -->
         <div id="secrets" class="tab-content">
             <div class="form-section">
@@ -3533,6 +3693,214 @@
                 logContent.textContent = `Error loading logs: ${error}`;
             });
     }
+
+    // News Manager Functions
+    let newsManagerData = {};
+
+    function loadNewsManagerData() {
+        fetch('/news_manager/status')
+            .then(response => response.json())
+            .then(data => {
+                if (data.status === 'success') {
+                    newsManagerData = data.data;
+                    updateNewsManagerUI();
+                } else {
+                    console.error('Error loading news manager data:', data.message);
+                }
+            })
+            .catch(error => {
+                console.error('Error loading news manager data:', error);
+            });
+    }
+
+    function updateNewsManagerUI() {
+        // Update enabled toggle
+        document.getElementById('news_enabled').checked = newsManagerData.enabled || false;
+        
+        // Update headlines per feed
+        document.getElementById('headlines_per_feed').value = newsManagerData.headlines_per_feed || 2;
+        
+        // Update rotation enabled
+        document.getElementById('rotation_enabled').checked = newsManagerData.rotation_enabled !== false;
+        
+        // Populate available feeds
+        const feedsGrid = document.getElementById('news_feeds_grid');
+        feedsGrid.innerHTML = '';
+        
+        if (newsManagerData.available_feeds) {
+            newsManagerData.available_feeds.forEach(feed => {
+                const isEnabled = newsManagerData.enabled_feeds.includes(feed);
+                const feedDiv = document.createElement('div');
+                feedDiv.className = 'checkbox-item';
+                feedDiv.innerHTML = `
+                    <label>
+                        <input type="checkbox" name="news_feed" value="${feed}" ${isEnabled ? 'checked' : ''}>
+                        ${feed}
+                    </label>
+                `;
+                feedsGrid.appendChild(feedDiv);
+            });
+        }
+        
+        // Populate custom feeds
+        updateCustomFeedsList();
+        
+        // Update status
+        updateNewsStatus();
+    }
+
+    function updateCustomFeedsList() {
+        const customFeedsList = document.getElementById('custom_feeds_list');
+        customFeedsList.innerHTML = '';
+        
+        if (newsManagerData.custom_feeds) {
+            Object.entries(newsManagerData.custom_feeds).forEach(([name, url]) => {
+                const feedDiv = document.createElement('div');
+                feedDiv.className = 'custom-feed-item';
+                feedDiv.innerHTML = `
+                    <div class="custom-feed-info">
+                        <strong>${name}</strong>: ${url}
+                        <button type="button" onclick="removeCustomFeed('${name}')" class="remove-btn">Remove</button>
+                    </div>
+                `;
+                customFeedsList.appendChild(feedDiv);
+            });
+        }
+    }
+
+    function updateNewsStatus() {
+        const statusDiv = document.getElementById('news_status');
+        const enabledFeeds = newsManagerData.enabled_feeds || [];
+        const totalFeeds = enabledFeeds.length + Object.keys(newsManagerData.custom_feeds || {}).length;
+        
+        statusDiv.innerHTML = `
+            <div class="status-info">
+                <h4>Current Status</h4>
+                <p><strong>Enabled:</strong> ${newsManagerData.enabled ? 'Yes' : 'No'}</p>
+                <p><strong>Active Feeds:</strong> ${enabledFeeds.join(', ') || 'None'}</p>
+                <p><strong>Headlines per Feed:</strong> ${newsManagerData.headlines_per_feed || 2}</p>
+                <p><strong>Total Custom Feeds:</strong> ${Object.keys(newsManagerData.custom_feeds || {}).length}</p>
+                <p><strong>Rotation Enabled:</strong> ${newsManagerData.rotation_enabled !== false ? 'Yes' : 'No'}</p>
+            </div>
+        `;
+    }
+
+    function saveNewsSettings() {
+        // Get enabled feeds
+        const enabledFeeds = Array.from(document.querySelectorAll('input[name="news_feed"]:checked'))
+            .map(input => input.value);
+        
+        const headlinesPerFeed = parseInt(document.getElementById('headlines_per_feed').value);
+        const enabled = document.getElementById('news_enabled').checked;
+        const rotationEnabled = document.getElementById('rotation_enabled').checked;
+        
+        // Save enabled status first
+        fetch('/news_manager/toggle', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ enabled: enabled })
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.status === 'success') {
+                // Then save feed settings
+                return fetch('/news_manager/update_feeds', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        enabled_feeds: enabledFeeds,
+                        headlines_per_feed: headlinesPerFeed
+                    })
+                });
+            } else {
+                throw new Error(data.message);
+            }
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.status === 'success') {
+                showMessage('News settings saved successfully!', 'success');
+                loadNewsManagerData(); // Refresh the data
+            } else {
+                showMessage('Error saving news settings: ' + data.message, 'error');
+            }
+        })
+        .catch(error => {
+            showMessage('Error saving news settings: ' + error, 'error');
+        });
+    }
+
+    function addCustomFeed() {
+        const name = document.getElementById('custom_feed_name').value.trim();
+        const url = document.getElementById('custom_feed_url').value.trim();
+        
+        if (!name || !url) {
+            showMessage('Please enter both feed name and URL', 'error');
+            return;
+        }
+        
+        fetch('/news_manager/add_custom_feed', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name: name, url: url })
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.status === 'success') {
+                showMessage(data.message, 'success');
+                document.getElementById('custom_feed_name').value = '';
+                document.getElementById('custom_feed_url').value = '';
+                loadNewsManagerData(); // Refresh the data
+            } else {
+                showMessage('Error adding custom feed: ' + data.message, 'error');
+            }
+        })
+        .catch(error => {
+            showMessage('Error adding custom feed: ' + error, 'error');
+        });
+    }
+
+    function removeCustomFeed(name) {
+        if (!confirm(`Are you sure you want to remove the feed "${name}"?`)) {
+            return;
+        }
+        
+        fetch('/news_manager/remove_custom_feed', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name: name })
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.status === 'success') {
+                showMessage(data.message, 'success');
+                loadNewsManagerData(); // Refresh the data
+            } else {
+                showMessage('Error removing custom feed: ' + data.message, 'error');
+            }
+        })
+        .catch(error => {
+            showMessage('Error removing custom feed: ' + error, 'error');
+        });
+    }
+
+    function refreshNewsStatus() {
+        loadNewsManagerData();
+        showMessage('News status refreshed', 'success');
+    }
+
+    // Load news manager data when the news tab is opened
+    document.addEventListener('DOMContentLoaded', function() {
+        // Override the openTab function to load news data when news tab is opened
+        const originalOpenTab = window.openTab;
+        window.openTab = function(evt, tabName) {
+            originalOpenTab(evt, tabName);
+            if (tabName === 'news') {
+                loadNewsManagerData();
+            }
+        };
+    });
+
     </script>
 </body>
 </html> 

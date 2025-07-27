@@ -70,7 +70,8 @@
             "ncaam_basketball_recent": 30,
             "ncaam_basketball_upcoming": 30,
             "music": 30,
-            "of_the_day": 40
+            "of_the_day": 40,
+            "news_manager": 60
         },
         "use_short_date_format": true
     },
@@ -83,7 +84,7 @@
         "enabled": false,
         "update_interval": 1800,
         "units": "imperial",
-        "display_format": "{temp}°F\n{condition}"
+        "display_format": "{temp}\u00b0F\n{condition}"
     },
     "stocks": {
         "enabled": false,
@@ -92,7 +93,13 @@
         "scroll_delay": 0.01,
         "toggle_chart": false,
         "symbols": [
-            "ASTS", "SCHD", "INTC", "NVDA", "T", "VOO", "SMCI"
+            "ASTS",
+            "SCHD",
+            "INTC",
+            "NVDA",
+            "T",
+            "VOO",
+            "SMCI"
         ],
         "display_format": "{symbol}: ${price} ({change}%)"
     },
@@ -100,7 +107,8 @@
         "enabled": false,
         "update_interval": 600,
         "symbols": [
-            "BTC-USD", "ETH-USD"
+            "BTC-USD",
+            "ETH-USD"
         ],
         "display_format": "{symbol}: ${price} ({change}%)"
     },
@@ -119,7 +127,12 @@
         "max_games_per_league": 5,
         "show_odds_only": false,
         "sort_order": "soonest",
-        "enabled_leagues": ["nfl","mlb", "ncaa_fb", "milb"],
+        "enabled_leagues": [
+            "nfl",
+            "mlb",
+            "ncaa_fb",
+            "milb"
+        ],
         "update_interval": 3600,
         "scroll_speed": 1,
         "scroll_delay": 0.01,
@@ -133,7 +146,9 @@
         "token_file": "token.pickle",
         "update_interval": 3600,
         "max_events": 3,
-        "calendars": ["birthdays"]
+        "calendars": [
+            "birthdays"
+        ]
     },
     "nhl_scoreboard": {
         "enabled": false,
@@ -146,7 +161,9 @@
         "recent_update_interval": 3600,
         "upcoming_update_interval": 3600,
         "show_favorite_teams_only": true,
-        "favorite_teams": ["TB"],
+        "favorite_teams": [
+            "TB"
+        ],
         "logo_dir": "assets/sports/nhl_logos",
         "show_records": true,
         "display_modes": {
@@ -169,7 +186,9 @@
         "upcoming_update_interval": 3600,
         "recent_game_hours": 72,
         "show_favorite_teams_only": true,
-        "favorite_teams": ["DAL"],
+        "favorite_teams": [
+            "DAL"
+        ],
         "logo_dir": "assets/sports/nba_logos",
         "show_records": true,
         "display_modes": {
@@ -191,7 +210,10 @@
         "recent_games_to_show": 0,
         "upcoming_games_to_show": 2,
         "show_favorite_teams_only": true,
-        "favorite_teams": ["TB", "DAL"],
+        "favorite_teams": [
+            "TB",
+            "DAL"
+        ],
         "logo_dir": "assets/sports/nfl_logos",
         "show_records": true,
         "display_modes": {
@@ -214,7 +236,10 @@
         "recent_games_to_show": 0,
         "upcoming_games_to_show": 2,
         "show_favorite_teams_only": true,
-        "favorite_teams": ["UGA", "AUB"],
+        "favorite_teams": [
+            "UGA",
+            "AUB"
+        ],
         "logo_dir": "assets/sports/ncaa_fbs_logos",
         "show_records": true,
         "display_modes": {
@@ -235,7 +260,10 @@
         "upcoming_update_interval": 3600,
         "recent_game_hours": 72,
         "show_favorite_teams_only": true,
-        "favorite_teams": ["UGA", "AUB"],
+        "favorite_teams": [
+            "UGA",
+            "AUB"
+        ],
         "logo_dir": "assets/sports/ncaa_fbs_logos",
         "show_records": true,
         "display_modes": {
@@ -254,7 +282,10 @@
         "live_update_interval": 30,
         "recent_game_hours": 72,
         "show_favorite_teams_only": true,
-        "favorite_teams": ["UGA", "AUB"],
+        "favorite_teams": [
+            "UGA",
+            "AUB"
+        ],
         "logo_dir": "assets/sports/ncaa_fbs_logos",
         "show_records": true,
         "display_modes": {
@@ -264,11 +295,11 @@
         }
     },
     "youtube": {
-        "enabled":  false,
+        "enabled": false,
         "update_interval": 3600
     },
     "mlb": {
-        "enabled":  false,
+        "enabled": false,
         "live_priority": true,
         "live_game_duration": 30,
         "show_odds": true,
@@ -282,7 +313,10 @@
         "recent_games_to_show": 1,
         "upcoming_games_to_show": 1,
         "show_favorite_teams_only": true,
-        "favorite_teams": ["TB", "TEX"],
+        "favorite_teams": [
+            "TB",
+            "TEX"
+        ],
         "logo_dir": "assets/sports/mlb_logos",
         "show_records": true,
         "display_modes": {
@@ -292,7 +326,7 @@
         }
     },
     "milb": {
-        "enabled":  false,
+        "enabled": false,
         "live_priority": true,
         "live_game_duration": 30,
         "test_mode": false,
@@ -302,7 +336,9 @@
         "upcoming_update_interval": 3600,
         "recent_games_to_show": 1,
         "upcoming_games_to_show": 1,
-        "favorite_teams": ["TAM"],
+        "favorite_teams": [
+            "TAM"
+        ],
         "logo_dir": "assets/sports/milb_logos",
         "show_records": true,
         "upcoming_fetch_days": 7,
@@ -315,12 +351,20 @@
     "text_display": {
         "enabled": false,
         "text": "Subscribe to ChuckBuilds",
-        "font_path": "assets/fonts/press-start-2p.ttf", 
+        "font_path": "assets/fonts/press-start-2p.ttf",
         "font_size": 8,
         "scroll": true,
-        "scroll_speed": 40, 
-        "text_color": [255, 0, 0], 
-        "background_color": [0, 0, 0],
+        "scroll_speed": 40,
+        "text_color": [
+            255,
+            0,
+            0
+        ],
+        "background_color": [
+            0,
+            0,
+            0
+        ],
         "scroll_gap_width": 32
     },
     "soccer_scoreboard": {
@@ -335,8 +379,18 @@
         "upcoming_update_interval": 3600,
         "recent_game_hours": 168,
         "show_favorite_teams_only": true,
-        "favorite_teams": ["LIV"],
-        "leagues": ["eng.1", "esp.1", "ger.1", "ita.1", "fra.1", "uefa.champions", "usa.1"],
+        "favorite_teams": [
+            "LIV"
+        ],
+        "leagues": [
+            "eng.1",
+            "esp.1",
+            "ger.1",
+            "ita.1",
+            "fra.1",
+            "uefa.champions",
+            "usa.1"
+        ],
         "logo_dir": "assets/sports/soccer_logos",
         "show_records": true,
         "display_modes": {
@@ -356,7 +410,11 @@
         "display_rotate_interval": 20,
         "update_interval": 3600,
         "subtitle_rotate_interval": 10,
-        "category_order": ["word_of_the_day", "slovenian_word_of_the_day", "bible_verse_of_the_day"],
+        "category_order": [
+            "word_of_the_day",
+            "slovenian_word_of_the_day",
+            "bible_verse_of_the_day"
+        ],
         "categories": {
             "word_of_the_day": {
                 "enabled": true,
@@ -374,5 +432,31 @@
                 "display_name": "Bible Verse of the Day"
             }
         }
+    },
+    "news_manager": {
+        "enabled": true,
+        "update_interval": 300,
+        "scroll_speed": 2,
+        "scroll_delay": 0.02,
+        "headlines_per_feed": 2,
+        "enabled_feeds": [
+            "NFL",
+            "NCAA FB"
+        ],
+        "custom_feeds": {},
+        "rotation_enabled": true,
+        "rotation_threshold": 3,
+        "font_size": 12,
+        "font_path": "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+        "text_color": [
+            255,
+            255,
+            255
+        ],
+        "separator_color": [
+            255,
+            0,
+            0
+        ]
     }
-} 
+}
