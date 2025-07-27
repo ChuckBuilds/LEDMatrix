@@ -441,9 +441,14 @@
         "headlines_per_feed": 2,
         "enabled_feeds": [
             "NFL",
-            "NCAA FB"
+            "NCAA FB",
+            "F1",
+            "BBC F1"
         ],
-        "custom_feeds": {},
+        "custom_feeds": {
+            "F1": "https://www.espn.com/espn/rss/rpm/news",
+            "BBC F1": "http://feeds.bbci.co.uk/sport/formula1/rss.xml"
+        },
         "rotation_enabled": true,
         "rotation_threshold": 3,
         "font_size": 12,
