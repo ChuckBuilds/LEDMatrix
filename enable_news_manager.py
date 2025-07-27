@@ -24,15 +24,15 @@ def enable_news_manager():
         with open(config_path, 'w') as f:
             json.dump(config, f, indent=4)
         
-        print("✓ News manager enabled successfully!")
-        print(f"✓ Enabled feeds: {config['news_manager']['enabled_feeds']}")
-        print(f"✓ Headlines per feed: {config['news_manager']['headlines_per_feed']}")
-        print(f"✓ Update interval: {config['news_manager']['update_interval']} seconds")
+        print("SUCCESS: News manager enabled successfully!")
+        print(f"Enabled feeds: {config['news_manager']['enabled_feeds']}")
+        print(f"Headlines per feed: {config['news_manager']['headlines_per_feed']}")
+        print(f"Update interval: {config['news_manager']['update_interval']} seconds")
         
         return True
         
     except Exception as e:
-        print(f"✗ Error enabling news manager: {e}")
+        print(f"ERROR: Error enabling news manager: {e}")
         return False
 
 def disable_news_manager():
@@ -52,14 +52,14 @@ def disable_news_manager():
             with open(config_path, 'w') as f:
                 json.dump(config, f, indent=4)
             
-            print("✓ News manager disabled successfully!")
+            print("SUCCESS: News manager disabled successfully!")
         else:
             print("News manager configuration not found!")
             
         return True
         
     except Exception as e:
-        print(f"✗ Error disabling news manager: {e}")
+        print(f"ERROR: Error disabling news manager: {e}")
         return False
 
 def show_status():
@@ -97,7 +97,7 @@ def show_status():
             print("No custom feeds configured")
             
     except Exception as e:
-        print(f"✗ Error reading configuration: {e}")
+        print(f"ERROR: Error reading configuration: {e}")
 
 def main():
     if len(sys.argv) < 2:

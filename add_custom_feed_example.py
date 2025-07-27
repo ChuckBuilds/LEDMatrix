@@ -15,8 +15,8 @@ def add_custom_feed(feed_name, feed_url):
         
         # Ensure news_manager section exists
         if 'news_manager' not in config:
-            print("❌ News manager configuration not found!")
-            return False
+                    print("ERROR: News manager configuration not found!")
+        return False
         
         # Add custom feed
         if 'custom_feeds' not in config['news_manager']:
@@ -32,13 +32,13 @@ def add_custom_feed(feed_name, feed_url):
         with open(config_path, 'w') as f:
             json.dump(config, f, indent=4)
         
-        print(f"✅ Successfully added custom feed: {feed_name}")
+        print(f"SUCCESS: Successfully added custom feed: {feed_name}")
         print(f"   URL: {feed_url}")
         print(f"   Feed is now enabled and will appear in rotation")
         return True
         
     except Exception as e:
-        print(f"❌ Error adding custom feed: {e}")
+        print(f"ERROR: Error adding custom feed: {e}")
         return False
 
 def list_all_feeds():
@@ -53,7 +53,7 @@ def list_all_feeds():
         custom_feeds = news_config.get('custom_feeds', {})
         enabled_feeds = news_config.get('enabled_feeds', [])
         
-        print("\n📰 Available News Feeds:")
+        print("\nAvailable News Feeds:")
         print("=" * 50)
         
         # Default feeds (hardcoded in news_manager.py)
@@ -69,26 +69,26 @@ def list_all_feeds():
             'Other': 'https://www.coveringthecorner.com/rss/current.xml'
         }
         
-        print("\n🏈 Default Sports Feeds:")
+        print("\nDefault Sports Feeds:")
         for name, url in default_feeds.items():
-            status = "✅ ENABLED" if name in enabled_feeds else "⭕ DISABLED"
+            status = "ENABLED" if name in enabled_feeds else "DISABLED"
             print(f"  {name}: {status}")
             print(f"    {url}")
         
         if custom_feeds:
-            print("\n🏎️ Custom Feeds:")
+            print("\nCustom Feeds:")
             for name, url in custom_feeds.items():
-                status = "✅ ENABLED" if name in enabled_feeds else "⭕ DISABLED"
+                status = "ENABLED" if name in enabled_feeds else "DISABLED"
                 print(f"  {name}: {status}")
                 print(f"    {url}")
         else:
-            print("\n🏎️ Custom Feeds: None added yet")
+            print("\nCustom Feeds: None added yet")
         
-        print(f"\n📊 Currently Enabled Feeds: {len(enabled_feeds)}")
+        print(f"\nCurrently Enabled Feeds: {len(enabled_feeds)}")
         print(f"   {', '.join(enabled_feeds)}")
         
     except Exception as e:
-        print(f"❌ Error listing feeds: {e}")
+        print(f"ERROR: Error listing feeds: {e}")
 
 def remove_custom_feed(feed_name):
     """Remove a custom RSS feed"""
@@ -102,7 +102,7 @@ def remove_custom_feed(feed_name):
         custom_feeds = news_config.get('custom_feeds', {})
         
         if feed_name not in custom_feeds:
-            print(f"❌ Custom feed '{feed_name}' not found!")
+            print(f"ERROR: Custom feed '{feed_name}' not found!")
             return False
         
         # Remove from custom feeds
@@ -116,11 +116,11 @@ def remove_custom_feed(feed_name):
         with open(config_path, 'w') as f:
             json.dump(config, f, indent=4)
         
-        print(f"✅ Successfully removed custom feed: {feed_name}")
+        print(f"SUCCESS: Successfully removed custom feed: {feed_name}")
         return True
         
     except Exception as e:
-        print(f"❌ Error removing custom feed: {e}")
+        print(f"ERROR: Error removing custom feed: {e}")
         return False
 
 def main():
@@ -144,19 +144,19 @@ def main():
         list_all_feeds()
     elif command == 'add':
         if len(sys.argv) != 4:
-            print("❌ Usage: python3 add_custom_feed_example.py add <feed_name> <feed_url>")
+            print("ERROR: Usage: python3 add_custom_feed_example.py add <feed_name> <feed_url>")
             return
         feed_name = sys.argv[2]
         feed_url = sys.argv[3]
         add_custom_feed(feed_name, feed_url)
     elif command == 'remove':
         if len(sys.argv) != 3:
-            print("❌ Usage: python3 add_custom_feed_example.py remove <feed_name>")
+            print("ERROR: Usage: python3 add_custom_feed_example.py remove <feed_name>")
             return
         feed_name = sys.argv[2]
         remove_custom_feed(feed_name)
     else:
-        print(f"❌ Unknown command: {command}")
+        print(f"ERROR: Unknown command: {command}")
 
 if __name__ == "__main__":
     main()

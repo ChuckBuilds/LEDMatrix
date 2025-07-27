@@ -1,8 +1,8 @@
-# 🏎️ Adding Custom RSS Feeds & Sports - Complete Guide
+# Adding Custom RSS Feeds & Sports - Complete Guide
 
 This guide shows you **3 different ways** to add custom RSS feeds like F1, MotoGP, or any personal feeds to your news manager.
 
-## 🚀 Quick Examples
+## Quick Examples
 
 ### F1 Racing Feeds
 ```bash
@@ -45,7 +45,7 @@ python3 add_custom_feed_example.py add "Local News" "https://localnews.com/rss"
 
 ---
 
-## 📱 Method 1: Command Line (Easiest)
+## Method 1: Command Line (Easiest)
 
 ### Add a Feed
 ```bash
@@ -76,7 +76,7 @@ python3 add_custom_feed_example.py list
 
 ---
 
-## 🌐 Method 2: Web Interface
+## Method 2: Web Interface
 
 1. **Open Web Interface**: Go to `http://your-display-ip:5000`
 2. **Navigate to News Tab**: Click the "News Manager" tab
@@ -89,7 +89,7 @@ python3 add_custom_feed_example.py list
 
 ---
 
-## ⚙️ Method 3: Direct Config Edit
+## Method 3: Direct Config Edit
 
 Edit `config/config.json` directly:
 
@@ -110,7 +110,7 @@ Edit `config/config.json` directly:
 
 ---
 
-## 🔍 Finding RSS Feeds
+## Finding RSS Feeds
 
 ### Popular Sports RSS Feeds
 
@@ -126,7 +126,7 @@ Edit `config/config.json` directly:
 | **UFC/MMA** | ESPN | `https://www.espn.com/espn/rss/mma/news` |
 
 ### How to Find RSS Feeds
-1. **Look for RSS icons** 📡 on websites
+1. **Look for RSS icons** on websites
 2. **Check `/rss`, `/feed`, or `/rss.xml`** paths
 3. **Use RSS discovery tools** like RSS Feed Finder
 4. **Check site footers** for RSS links
@@ -141,18 +141,18 @@ url = 'YOUR_RSS_URL_HERE'
 try:
     response = requests.get(url, timeout=10)
     feed = feedparser.parse(response.content)
-    print(f'✅ Feed works! Title: {feed.feed.get(\"title\", \"N/A\")}')
-    print(f'✅ {len(feed.entries)} articles found')
+    print(f'SUCCESS: Feed works! Title: {feed.feed.get(\"title\", \"N/A\")}')
+    print(f'{len(feed.entries)} articles found')
     if feed.entries:
-        print(f'✅ Latest: {feed.entries[0].title}')
+        print(f'Latest: {feed.entries[0].title}')
 except Exception as e:
-    print(f'❌ Error: {e}')
+    print(f'ERROR: {e}')
 "
 ```
 
 ---
 
-## 🎛️ Advanced Configuration
+## Advanced Configuration
 
 ### Controlling Feed Behavior
 
@@ -178,13 +178,13 @@ Feeds are displayed in the order they appear in `enabled_feeds`:
 ### Custom Display Names
 You can use any display name for feeds:
 ```bash
-python3 add_custom_feed_example.py add "🏎️ Formula 1" "http://feeds.bbci.co.uk/sport/formula1/rss.xml"
-python3 add_custom_feed_example.py add "🏀 Basketball News" "https://www.espn.com/espn/rss/nba/news"
+python3 add_custom_feed_example.py add "Formula 1" "http://feeds.bbci.co.uk/sport/formula1/rss.xml"
+python3 add_custom_feed_example.py add "Basketball News" "https://www.espn.com/espn/rss/nba/news"
 ```
 
 ---
 
-## 🚨 Troubleshooting
+## Troubleshooting
 
 ### Feed Not Working?
 1. **Test the RSS URL** using the testing command above
@@ -207,7 +207,7 @@ If one feed doesn't work, try alternatives:
 
 ---
 
-## 📊 Real-World Example: Complete F1 Setup
+## Real-World Example: Complete F1 Setup
 
 ```bash
 # 1. List current setup
@@ -227,11 +227,11 @@ python3 simple_news_test.py
 python3 add_custom_feed_example.py list
 ```
 
-Result: Your display will now rotate between NFL, NCAA FB, BBC F1, Motorsport F1, and MotoGP headlines! 🏁
+Result: Your display will now rotate between NFL, NCAA FB, BBC F1, Motorsport F1, and MotoGP headlines!
 
 ---
 
-## 🎯 Pro Tips
+## Pro Tips
 
 1. **Start Small**: Add one feed at a time and test it
 2. **Mix Sources**: Use multiple sources for the same sport for better coverage
