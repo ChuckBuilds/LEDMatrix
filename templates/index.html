@@ -2278,6 +2278,38 @@
                 </div>
                 
                 <div class="form-group">
+                    <label for="dynamic_duration">Enable Dynamic Duration:</label>
+                    <div class="toggle-container">
+                        <label class="toggle-switch">
+                            <input type="checkbox" id="dynamic_duration" name="dynamic_duration" checked>
+                            <span class="slider"></span>
+                        </label>
+                    </div>
+                    <div class="description">Automatically calculate display time based on headline length</div>
+                </div>
+                
+                <div class="form-group">
+                    <h3>Duration Settings</h3>
+                    <div class="settings-row">
+                        <div>
+                            <label for="min_duration">Min Duration (s):</label>
+                            <input type="number" id="min_duration" min="10" max="120" value="30">
+                            <div class="description">Minimum display time</div>
+                        </div>
+                        <div>
+                            <label for="max_duration">Max Duration (s):</label>
+                            <input type="number" id="max_duration" min="60" max="600" value="300">
+                            <div class="description">Maximum display time</div>
+                        </div>
+                        <div>
+                            <label for="duration_buffer">Buffer (%):</label>
+                            <input type="number" id="duration_buffer" min="0" max="50" value="10" step="5">
+                            <div class="description">Extra time for smooth cycling</div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="form-group">
                     <label for="rotation_enabled">Enable Headline Rotation:</label>
                     <div class="toggle-container">
                         <label class="toggle-switch">

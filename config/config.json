@@ -451,6 +451,10 @@
         },
         "rotation_enabled": true,
         "rotation_threshold": 3,
+        "dynamic_duration": true,
+        "min_duration": 30,
+        "max_duration": 300,
+        "duration_buffer": 0.1,
         "font_size": 12,
         "font_path": "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
         "text_color": [

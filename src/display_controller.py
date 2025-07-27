@@ -443,6 +443,17 @@ class DisplayController:
         """Get the duration for the current display mode."""
         mode_key = self.current_display_mode
 
+        # Handle dynamic duration for news manager
+        if mode_key == 'news_manager' and self.news_manager:
+            try:
+                dynamic_duration = self.news_manager.get_dynamic_duration()
+                logger.info(f"Using dynamic duration for news_manager: {dynamic_duration} seconds")
+                return dynamic_duration
+            except Exception as e:
+                logger.error(f"Error getting dynamic duration for news_manager: {e}")
+                # Fall back to configured duration
+                return self.display_durations.get(mode_key, 60)
+
         # Simplify weather key handling
         if mode_key.startswith('weather_'):
             return self.display_durations.get(mode_key, 15)

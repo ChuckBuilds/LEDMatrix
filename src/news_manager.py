@@ -37,6 +37,7 @@ class NewsManager:
         self.headline_start_times = []
         self.total_scroll_width = 0
         self.headlines_displayed = set()  # Track displayed headlines for rotation
+        self.dynamic_duration = 60  # Default duration in seconds
         
         # Default RSS feeds
         self.default_feeds = {
@@ -65,6 +66,12 @@ class NewsManager:
         self.rotation_enabled = self.news_config.get('rotation_enabled', True)
         self.rotation_threshold = self.news_config.get('rotation_threshold', 3)  # After 3 full cycles
         self.rotation_count = 0
+        
+        # Dynamic duration settings
+        self.dynamic_duration_enabled = self.news_config.get('dynamic_duration', True)
+        self.min_duration = self.news_config.get('min_duration', 30)
+        self.max_duration = self.news_config.get('max_duration', 300)
+        self.duration_buffer = self.news_config.get('duration_buffer', 0.1)
         
         # Font settings
         self.font_size = self.news_config.get('font_size', 12)
@@ -230,11 +237,69 @@ class NewsManager:
             bbox = temp_draw.textbbox((0, 0), self.cached_text, font=font)
             self.total_scroll_width = bbox[2] - bbox[0]
             
+            # Calculate dynamic display duration
+            self.calculate_dynamic_duration()
+            
             logger.info(f"Text width calculated: {self.total_scroll_width} pixels")
+            logger.info(f"Dynamic duration calculated: {self.dynamic_duration} seconds")
             
         except Exception as e:
             logger.error(f"Error calculating scroll dimensions: {e}")
             self.total_scroll_width = len(self.cached_text) * 8  # Fallback estimate
+            self.calculate_dynamic_duration()
+
+    def calculate_dynamic_duration(self):
+        """Calculate the exact time needed to display all headlines"""
+        # If dynamic duration is disabled, use fixed duration from config
+        if not self.dynamic_duration_enabled:
+            self.dynamic_duration = self.news_config.get('fixed_duration', 60)
+            logger.info(f"Dynamic duration disabled, using fixed duration: {self.dynamic_duration}s")
+            return
+            
+        if not self.total_scroll_width:
+            self.dynamic_duration = self.min_duration  # Use configured minimum
+            return
+            
+        try:
+            # Get display width (assume full width of display)
+            display_width = getattr(self.display_manager, 'width', 128)  # Default to 128 if not available
+            
+            # Calculate total scroll distance needed
+            # Text needs to scroll from right edge to completely off left edge
+            total_scroll_distance = display_width + self.total_scroll_width
+            
+            # Calculate time based on scroll speed and delay
+            # scroll_speed = pixels per frame, scroll_delay = seconds per frame
+            frames_needed = total_scroll_distance / self.scroll_speed
+            total_time = frames_needed * self.scroll_delay
+            
+            # Add buffer time for smooth cycling (configurable %)
+            buffer_time = total_time * self.duration_buffer
+            calculated_duration = int(total_time + buffer_time)
+            
+            # Apply configured min/max limits
+            if calculated_duration < self.min_duration:
+                self.dynamic_duration = self.min_duration
+                logger.info(f"Duration capped to minimum: {self.min_duration}s")
+            elif calculated_duration > self.max_duration:
+                self.dynamic_duration = self.max_duration
+                logger.info(f"Duration capped to maximum: {self.max_duration}s")
+            else:
+                self.dynamic_duration = calculated_duration
+                
+            logger.info(f"Dynamic duration calculation:")
+            logger.info(f"  Display width: {display_width}px")
+            logger.info(f"  Text width: {self.total_scroll_width}px")
+            logger.info(f"  Total scroll distance: {total_scroll_distance}px")
+            logger.info(f"  Frames needed: {frames_needed:.1f}")
+            logger.info(f"  Base time: {total_time:.2f}s")
+            logger.info(f"  Buffer time: {buffer_time:.2f}s ({self.duration_buffer*100}%)")
+            logger.info(f"  Calculated duration: {calculated_duration}s")
+            logger.info(f"  Final duration: {self.dynamic_duration}s")
+            
+        except Exception as e:
+            logger.error(f"Error calculating dynamic duration: {e}")
+            self.dynamic_duration = self.min_duration  # Use configured minimum as fallback
 
     def should_update(self) -> bool:
         """Check if news data should be updated"""
@@ -407,6 +472,17 @@ class NewsManager:
             'last_update': self.last_update,
             'total_headlines': sum(len(headlines) for headlines in self.news_data.values()),
             'rotation_enabled': self.rotation_enabled,
-            'rotation_count': self.rotation_count
+            'rotation_count': self.rotation_count,
+            'dynamic_duration': self.dynamic_duration
         }
         return status
+
+    def get_dynamic_duration(self) -> int:
+        """Get the calculated dynamic duration for display"""
+        # Ensure we have current data and calculated duration
+        if not self.cached_text or self.dynamic_duration == 60:
+            # Try to refresh if we don't have current data
+            if self.should_update() or not self.current_headlines:
+                self.fetch_news_data()
+        
+        return self.dynamic_duration
