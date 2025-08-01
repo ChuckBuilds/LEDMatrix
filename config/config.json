@@ -326,7 +326,7 @@
         }
     },
     "milb": {
-        "enabled": false,
+        "enabled": true,
         "live_priority": true,
         "live_game_duration": 30,
         "test_mode": false,
@@ -455,7 +455,7 @@
         "min_duration": 30,
         "max_duration": 300,
         "duration_buffer": 0.1,
-        "font_size": 12,
+        "font_size": 8,
         "font_path": "assets/fonts/PressStart2P-Regular.ttf",
         "text_color": [
             255,

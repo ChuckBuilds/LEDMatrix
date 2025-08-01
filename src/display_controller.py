@@ -538,38 +538,31 @@ class DisplayController:
             sport_type will be 'nhl', 'nba', 'mlb', 'milb', 'soccer' or None
         """
         # Prioritize sports (e.g., Soccer > NHL > NBA > MLB)
-        live_checks = {
-            'nhl': self.nhl_live and self.nhl_live.live_games,
-            'nba': self.nba_live and self.nba_live.live_games,
-            'mlb': self.mlb_live and self.mlb_live.live_games,
-            'milb': self.milb_live and self.milb_live.live_games,
-            'nfl': self.nfl_live and self.nfl_live.live_games,
-            # ... other sports
-        }
+        # Only include sports that are enabled in config
+        live_checks = {}
+        if 'nhl_scoreboard' in self.config and self.config['nhl_scoreboard'].get('enabled', False):
+            live_checks['nhl'] = self.nhl_live and self.nhl_live.live_games
+        if 'nba_scoreboard' in self.config and self.config['nba_scoreboard'].get('enabled', False):
+            live_checks['nba'] = self.nba_live and self.nba_live.live_games
+        if 'mlb' in self.config and self.config['mlb'].get('enabled', False):
+            live_checks['mlb'] = self.mlb_live and self.mlb_live.live_games
+        if 'milb' in self.config and self.config['milb'].get('enabled', False):
+            live_checks['milb'] = self.milb_live and self.milb_live.live_games
+        if 'nfl_scoreboard' in self.config and self.config['nfl_scoreboard'].get('enabled', False):
+            live_checks['nfl'] = self.nfl_live and self.nfl_live.live_games
+        if 'soccer_scoreboard' in self.config and self.config['soccer_scoreboard'].get('enabled', False):
+            live_checks['soccer'] = self.soccer_live and self.soccer_live.live_games
+        if 'ncaa_fb_scoreboard' in self.config and self.config['ncaa_fb_scoreboard'].get('enabled', False):
+            live_checks['ncaa_fb'] = self.ncaa_fb_live and self.ncaa_fb_live.live_games
+        if 'ncaa_baseball_scoreboard' in self.config and self.config['ncaa_baseball_scoreboard'].get('enabled', False):
+            live_checks['ncaa_baseball'] = self.ncaa_baseball_live and self.ncaa_baseball_live.live_games
+        if 'ncaam_basketball_scoreboard' in self.config and self.config['ncaam_basketball_scoreboard'].get('enabled', False):
+            live_checks['ncaam_basketball'] = self.ncaam_basketball_live and self.ncaam_basketball_live.live_games
 
         for sport, live_games in live_checks.items():
             if live_games:
                 logger.debug(f"{sport.upper()} live games available")
                 return True, sport
-
-        if 'ncaa_fb_scoreboard' in self.config and self.config['ncaa_fb_scoreboard'].get('enabled', False):
-            if self.ncaa_fb_live and self.ncaa_fb_live.live_games:
-                logger.debug("NCAA FB live games available")
-                return True, 'ncaa_fb'
-        
-        if 'ncaa_baseball_scoreboard' in self.config and self.config['ncaa_baseball_scoreboard'].get('enabled', False):
-            if self.ncaa_baseball_live and self.ncaa_baseball_live.live_games:
-                logger.debug("NCAA Baseball live games available")
-                return True, 'ncaa_baseball'
-
-        if 'ncaam_basketball_scoreboard' in self.config and self.config['ncaam_basketball_scoreboard'].get('enabled', False):
-            if self.ncaam_basketball_live and self.ncaam_basketball_live.live_games:
-                logger.debug("NCAA Men's Basketball live games available")
-                return True, 'ncaam_basketball'
-        # Add more sports checks here (e.g., MLB, Soccer)
-        if 'mlb' in self.config and self.config['mlb'].get('enabled', False):
-            if self.mlb_live and self.mlb_live.live_games:
-                return True, 'mlb'
             
         return False, None
 
@@ -781,23 +774,48 @@ class DisplayController:
     def _update_live_modes_in_rotation(self):
         """Add or remove live modes from available_modes based on live_priority and live games."""
         # Helper to add/remove live modes for all sports
-        def update_mode(mode_name, manager, live_priority):
+        def update_mode(mode_name, manager, live_priority, sport_enabled):
+            # Only process if the sport is enabled in config
+            if not sport_enabled:
+                # If sport is disabled, ensure the mode is removed from rotation
+                if mode_name in self.available_modes:
+                    self.available_modes.remove(mode_name)
+                return
+                
             if not live_priority:
+                # Only add to rotation if manager exists and has live games
                 if manager and getattr(manager, 'live_games', None):
                     if mode_name not in self.available_modes:
                         self.available_modes.append(mode_name)
                 else:
                     if mode_name in self.available_modes:
                         self.available_modes.remove(mode_name)
-        update_mode('nhl_live', getattr(self, 'nhl_live', None), self.nhl_live_priority)
-        update_mode('nba_live', getattr(self, 'nba_live', None), self.nba_live_priority)
-        update_mode('mlb_live', getattr(self, 'mlb_live', None), self.mlb_live_priority)
-        update_mode('milb_live', getattr(self, 'milb_live', None), self.milb_live_priority)
-        update_mode('soccer_live', getattr(self, 'soccer_live', None), self.soccer_live_priority)
-        update_mode('nfl_live', getattr(self, 'nfl_live', None), self.nfl_live_priority)
-        update_mode('ncaa_fb_live', getattr(self, 'ncaa_fb_live', None), self.ncaa_fb_live_priority)
-        update_mode('ncaa_baseball_live', getattr(self, 'ncaa_baseball_live', None), self.ncaa_baseball_live_priority)
-        update_mode('ncaam_basketball_live', getattr(self, 'ncaam_basketball_live', None), self.ncaam_basketball_live_priority)
+            else:
+                # For live_priority=True, never add to regular rotation
+                # These modes are only used for live priority takeover
+                if mode_name in self.available_modes:
+                    self.available_modes.remove(mode_name)
+        
+        # Check if each sport is enabled before processing
+        nhl_enabled = self.config.get('nhl_scoreboard', {}).get('enabled', False)
+        nba_enabled = self.config.get('nba_scoreboard', {}).get('enabled', False)
+        mlb_enabled = self.config.get('mlb', {}).get('enabled', False)
+        milb_enabled = self.config.get('milb', {}).get('enabled', False)
+        soccer_enabled = self.config.get('soccer_scoreboard', {}).get('enabled', False)
+        nfl_enabled = self.config.get('nfl_scoreboard', {}).get('enabled', False)
+        ncaa_fb_enabled = self.config.get('ncaa_fb_scoreboard', {}).get('enabled', False)
+        ncaa_baseball_enabled = self.config.get('ncaa_baseball_scoreboard', {}).get('enabled', False)
+        ncaam_basketball_enabled = self.config.get('ncaam_basketball_scoreboard', {}).get('enabled', False)
+        
+        update_mode('nhl_live', getattr(self, 'nhl_live', None), self.nhl_live_priority, nhl_enabled)
+        update_mode('nba_live', getattr(self, 'nba_live', None), self.nba_live_priority, nba_enabled)
+        update_mode('mlb_live', getattr(self, 'mlb_live', None), self.mlb_live_priority, mlb_enabled)
+        update_mode('milb_live', getattr(self, 'milb_live', None), self.milb_live_priority, milb_enabled)
+        update_mode('soccer_live', getattr(self, 'soccer_live', None), self.soccer_live_priority, soccer_enabled)
+        update_mode('nfl_live', getattr(self, 'nfl_live', None), self.nfl_live_priority, nfl_enabled)
+        update_mode('ncaa_fb_live', getattr(self, 'ncaa_fb_live', None), self.ncaa_fb_live_priority, ncaa_fb_enabled)
+        update_mode('ncaa_baseball_live', getattr(self, 'ncaa_baseball_live', None), self.ncaa_baseball_live_priority, ncaa_baseball_enabled)
+        update_mode('ncaam_basketball_live', getattr(self, 'ncaam_basketball_live', None), self.ncaam_basketball_live_priority, ncaam_basketball_enabled)
 
     def run(self):
         """Run the display controller, switching between displays."""
@@ -879,6 +897,7 @@ class DisplayController:
                     if live_priority_takeover:
                         new_mode = f"{live_priority_sport}_live"
                         if self.current_display_mode != new_mode:
+                            logger.info(f"Live priority takeover: Switching to {new_mode} from {self.current_display_mode}")
                             if previous_mode_before_switch == 'music' and self.music_manager:
                                 self.music_manager.deactivate_music_display()
                             self.current_display_mode = new_mode
@@ -896,7 +915,19 @@ class DisplayController:
                         # No live_priority takeover, regular rotation
                         needs_switch = False
                         if self.current_display_mode.endswith('_live'):
-                            needs_switch = True
+                            # For live modes without live_priority, check if duration has elapsed
+                            if current_time - self.last_switch >= self.get_current_duration():
+                                needs_switch = True
+                                self.current_mode_index = (self.current_mode_index + 1) % len(self.available_modes)
+                                new_mode_after_timer = self.available_modes[self.current_mode_index]
+                                if previous_mode_before_switch == 'music' and self.music_manager and new_mode_after_timer != 'music':
+                                    self.music_manager.deactivate_music_display()
+                                if self.current_display_mode != new_mode_after_timer:
+                                    logger.info(f"Switching to {new_mode_after_timer} from {self.current_display_mode}")
+                                self.current_display_mode = new_mode_after_timer
+                                # Reset logged duration when mode changes
+                                if hasattr(self, '_last_logged_duration'):
+                                    delattr(self, '_last_logged_duration')
                         elif current_time - self.last_switch >= self.get_current_duration():
                             if self.current_display_mode == 'calendar' and self.calendar:
                                 self.calendar.advance_event()
@@ -907,6 +938,8 @@ class DisplayController:
                             new_mode_after_timer = self.available_modes[self.current_mode_index]
                             if previous_mode_before_switch == 'music' and self.music_manager and new_mode_after_timer != 'music':
                                 self.music_manager.deactivate_music_display()
+                            if self.current_display_mode != new_mode_after_timer:
+                                logger.info(f"Switching to {new_mode_after_timer} from {self.current_display_mode}")
                             self.current_display_mode = new_mode_after_timer
                             # Reset logged duration when mode changes
                             if hasattr(self, '_last_logged_duration'):
@@ -945,42 +978,65 @@ class DisplayController:
                             manager_to_display = self.nhl_recent
                         elif self.current_display_mode == 'nhl_upcoming' and self.nhl_upcoming:
                             manager_to_display = self.nhl_upcoming
+                        elif self.current_display_mode == 'nhl_live' and self.nhl_live:
+                            manager_to_display = self.nhl_live
                         elif self.current_display_mode == 'nba_recent' and self.nba_recent:
                             manager_to_display = self.nba_recent
                         elif self.current_display_mode == 'nba_upcoming' and self.nba_upcoming:
                             manager_to_display = self.nba_upcoming
+                        elif self.current_display_mode == 'nba_live' and self.nba_live:
+                            manager_to_display = self.nba_live
                         elif self.current_display_mode == 'mlb_recent' and self.mlb_recent:
                             manager_to_display = self.mlb_recent
                         elif self.current_display_mode == 'mlb_upcoming' and self.mlb_upcoming:
                             manager_to_display = self.mlb_upcoming
+                        elif self.current_display_mode == 'mlb_live' and self.mlb_live:
+                            manager_to_display = self.mlb_live
                         elif self.current_display_mode == 'milb_recent' and self.milb_recent:
                             manager_to_display = self.milb_recent
                         elif self.current_display_mode == 'milb_upcoming' and self.milb_upcoming:
                             manager_to_display = self.milb_upcoming
+                        elif self.current_display_mode == 'milb_live' and self.milb_live:
+                            manager_to_display = self.milb_live
                         elif self.current_display_mode == 'soccer_recent' and self.soccer_recent:
                             manager_to_display = self.soccer_recent
                         elif self.current_display_mode == 'soccer_upcoming' and self.soccer_upcoming:
                             manager_to_display = self.soccer_upcoming
+                        elif self.current_display_mode == 'soccer_live' and self.soccer_live:
+                            manager_to_display = self.soccer_live
                         elif self.current_display_mode == 'nfl_recent' and self.nfl_recent:
                             manager_to_display = self.nfl_recent
                         elif self.current_display_mode == 'nfl_upcoming' and self.nfl_upcoming:
                             manager_to_display = self.nfl_upcoming
+                        elif self.current_display_mode == 'nfl_live' and self.nfl_live:
+                            manager_to_display = self.nfl_live
                         elif self.current_display_mode == 'ncaa_fb_recent' and self.ncaa_fb_recent:
                             manager_to_display = self.ncaa_fb_recent
                         elif self.current_display_mode == 'ncaa_fb_upcoming' and self.ncaa_fb_upcoming:
                             manager_to_display = self.ncaa_fb_upcoming
+                        elif self.current_display_mode == 'ncaa_fb_live' and self.ncaa_fb_live:
+                            manager_to_display = self.ncaa_fb_live
                         elif self.current_display_mode == 'ncaa_baseball_recent' and self.ncaa_baseball_recent:
                             manager_to_display = self.ncaa_baseball_recent
                         elif self.current_display_mode == 'ncaa_baseball_upcoming' and self.ncaa_baseball_upcoming:
                             manager_to_display = self.ncaa_baseball_upcoming
+                        elif self.current_display_mode == 'ncaa_baseball_live' and self.ncaa_baseball_live:
+                            manager_to_display = self.ncaa_baseball_live
                         elif self.current_display_mode == 'ncaam_basketball_recent' and self.ncaam_basketball_recent:
                             manager_to_display = self.ncaam_basketball_recent
                         elif self.current_display_mode == 'ncaam_basketball_upcoming' and self.ncaam_basketball_upcoming:
                             manager_to_display = self.ncaam_basketball_upcoming
+                        elif self.current_display_mode == 'ncaam_basketball_live' and self.ncaam_basketball_live:
+                            manager_to_display = self.ncaam_basketball_live
 
 
                 # --- Perform Display Update ---
                 try:
+                    # Log which display is being shown
+                    if self.current_display_mode != getattr(self, '_last_logged_mode', None):
+                        logger.info(f"Showing {self.current_display_mode}")
+                        self._last_logged_mode = self.current_display_mode
+                    
                     if self.current_display_mode == 'music' and self.music_manager:
                         # Call MusicManager's display method
                         self.music_manager.display(force_clear=self.force_clear)

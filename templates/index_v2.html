@@ -1,0 +1,2093 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LED Matrix Control Panel - Enhanced</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/Sortable/1.15.0/Sortable.min.js"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <style>
+        :root {
+            --primary-color: #2c3e50;
+            --secondary-color: #3498db;
+            --accent-color: #e74c3c;
+            --success-color: #27ae60;
+            --warning-color: #f39c12;
+            --background-color: #ecf0f1;
+            --card-background: #ffffff;
+            --text-color: #2c3e50;
+            --border-color: #bdc3c7;
+            --shadow: 0 2px 10px rgba(0,0,0,0.1);
+            --border-radius: 8px;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            color: var(--text-color);
+        }
+
+        .container {
+            max-width: 1600px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        .header {
+            background: var(--card-background);
+            border-radius: var(--border-radius);
+            padding: 20px;
+            margin-bottom: 20px;
+            box-shadow: var(--shadow);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+
+        .header h1 {
+            color: var(--primary-color);
+            font-size: 2rem;
+            font-weight: 300;
+        }
+
+        .system-status {
+            display: flex;
+            gap: 15px;
+            flex-wrap: wrap;
+        }
+
+        .status-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 12px;
+            border-radius: 20px;
+            font-size: 0.9rem;
+            font-weight: 500;
+        }
+
+        .status-active {
+            background: rgba(39, 174, 96, 0.1);
+            color: var(--success-color);
+        }
+
+        .status-inactive {
+            background: rgba(231, 76, 60, 0.1);
+            color: var(--accent-color);
+        }
+
+        .status-warning {
+            background: rgba(243, 156, 18, 0.1);
+            color: var(--warning-color);
+        }
+
+        .main-grid {
+            display: grid;
+            grid-template-columns: 1fr 450px;
+            gap: 20px;
+            margin-bottom: 20px;
+        }
+
+        .display-panel {
+            background: var(--card-background);
+            border-radius: var(--border-radius);
+            padding: 20px;
+            box-shadow: var(--shadow);
+        }
+
+        .display-preview {
+            background: #000;
+            border-radius: var(--border-radius);
+            padding: 20px;
+            text-align: center;
+            position: relative;
+            min-height: 400px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border: 2px solid #333;
+        }
+
+        .display-image {
+            max-width: 100%;
+            max-height: 100%;
+            image-rendering: pixelated;
+            border: 1px solid #555;
+            border-radius: 4px;
+            background: #111;
+        }
+
+        .display-controls {
+            margin-top: 20px;
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+
+        .btn {
+            padding: 12px 20px;
+            border: none;
+            border-radius: var(--border-radius);
+            cursor: pointer;
+            font-size: 0.9rem;
+            font-weight: 500;
+            transition: all 0.3s ease;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            text-decoration: none;
+        }
+
+        .btn-primary {
+            background: var(--secondary-color);
+            color: white;
+        }
+
+        .btn-primary:hover {
+            background: #2980b9;
+            transform: translateY(-2px);
+        }
+
+        .btn-success {
+            background: var(--success-color);
+            color: white;
+        }
+
+        .btn-success:hover {
+            background: #219a52;
+            transform: translateY(-2px);
+        }
+
+        .btn-danger {
+            background: var(--accent-color);
+            color: white;
+        }
+
+        .btn-danger:hover {
+            background: #c0392b;
+            transform: translateY(-2px);
+        }
+
+        .btn-warning {
+            background: var(--warning-color);
+            color: white;
+        }
+
+        .btn-warning:hover {
+            background: #d68910;
+            transform: translateY(-2px);
+        }
+
+        .control-panel {
+            background: var(--card-background);
+            border-radius: var(--border-radius);
+            padding: 20px;
+            box-shadow: var(--shadow);
+        }
+
+        .tabs {
+            display: flex;
+            border-bottom: 2px solid var(--border-color);
+            margin-bottom: 20px;
+            overflow-x: auto;
+            flex-wrap: wrap;
+        }
+
+        .tab-btn {
+            padding: 12px 20px;
+            border: none;
+            background: none;
+            cursor: pointer;
+            font-size: 0.9rem;
+            font-weight: 500;
+            color: var(--text-color);
+            border-bottom: 3px solid transparent;
+            transition: all 0.3s ease;
+            white-space: nowrap;
+        }
+
+        .tab-btn.active {
+            color: var(--secondary-color);
+            border-bottom-color: var(--secondary-color);
+        }
+
+        .tab-btn:hover {
+            background: rgba(52, 152, 219, 0.1);
+        }
+
+        .tab-content {
+            display: none;
+            max-height: 70vh;
+            overflow-y: auto;
+        }
+
+        .tab-content.active {
+            display: block;
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 500;
+            color: var(--text-color);
+        }
+
+        .form-control {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid var(--border-color);
+            border-radius: var(--border-radius);
+            font-size: 0.9rem;
+            transition: border-color 0.3s ease;
+        }
+
+        .form-control:focus {
+            outline: none;
+            border-color: var(--secondary-color);
+        }
+
+        .form-row {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 20px;
+        }
+
+        .config-section {
+            background: #f9f9f9;
+            padding: 20px;
+            margin-bottom: 20px;
+            border-radius: var(--border-radius);
+            border-left: 4px solid var(--secondary-color);
+        }
+
+        .config-section h3 {
+            color: var(--secondary-color);
+            margin-bottom: 15px;
+        }
+
+        .toggle-switch {
+            position: relative;
+            display: inline-block;
+            width: 60px;
+            height: 34px;
+        }
+
+        .toggle-switch input {
+            opacity: 0;
+            width: 0;
+            height: 0;
+        }
+
+        .slider {
+            position: absolute;
+            cursor: pointer;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-color: #ccc;
+            transition: 0.4s;
+            border-radius: 34px;
+        }
+
+        .slider:before {
+            position: absolute;
+            content: "";
+            height: 26px;
+            width: 26px;
+            left: 4px;
+            bottom: 4px;
+            background-color: white;
+            transition: 0.4s;
+            border-radius: 50%;
+        }
+
+        input:checked + .slider {
+            background-color: var(--secondary-color);
+        }
+
+        input:checked + .slider:before {
+            transform: translateX(26px);
+        }
+
+        .editor-mode {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 20px;
+            border-radius: var(--border-radius);
+            margin-bottom: 20px;
+        }
+
+        .editor-toolbar {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+            flex-wrap: wrap;
+        }
+
+        .element-palette {
+            background: var(--card-background);
+            border-radius: var(--border-radius);
+            padding: 15px;
+            margin-bottom: 20px;
+        }
+
+        .palette-item {
+            display: inline-block;
+            padding: 10px 15px;
+            margin: 5px;
+            background: var(--secondary-color);
+            color: white;
+            border-radius: var(--border-radius);
+            cursor: pointer;
+            transition: all 0.3s ease;
+            font-size: 0.9rem;
+        }
+
+        .palette-item:hover {
+            background: #2980b9;
+            transform: translateY(-2px);
+        }
+
+        .properties-panel {
+            background: var(--card-background);
+            border-radius: var(--border-radius);
+            padding: 15px;
+            margin-top: 20px;
+        }
+
+        .color-picker {
+            display: flex;
+            gap: 10px;
+            margin-top: 10px;
+        }
+
+        .color-option {
+            width: 30px;
+            height: 30px;
+            border-radius: 50%;
+            cursor: pointer;
+            border: 3px solid transparent;
+            transition: all 0.3s ease;
+        }
+
+        .color-option.selected {
+            border-color: var(--text-color);
+            transform: scale(1.1);
+        }
+
+        .notification {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            padding: 15px 20px;
+            border-radius: var(--border-radius);
+            color: white;
+            font-weight: 500;
+            z-index: 1000;
+            opacity: 0;
+            transform: translateX(100%);
+            transition: all 0.3s ease;
+        }
+
+        .notification.show {
+            opacity: 1;
+            transform: translateX(0);
+        }
+
+        .notification.success {
+            background: var(--success-color);
+        }
+
+        .notification.error {
+            background: var(--accent-color);
+        }
+
+        .notification.warning {
+            background: var(--warning-color);
+        }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-bottom: 20px;
+        }
+
+        .stat-card {
+            background: var(--card-background);
+            border-radius: var(--border-radius);
+            padding: 20px;
+            box-shadow: var(--shadow);
+            text-align: center;
+        }
+
+        .stat-value {
+            font-size: 2rem;
+            font-weight: bold;
+            color: var(--secondary-color);
+        }
+
+        .stat-label {
+            color: var(--text-color);
+            font-size: 0.9rem;
+            margin-top: 5px;
+        }
+
+        .json-container {
+            position: relative;
+            margin-bottom: 15px;
+        }
+
+        .json-container textarea {
+            width: 100%;
+            min-height: 300px;
+            padding: 15px;
+            border: 2px solid var(--border-color);
+            border-radius: var(--border-radius);
+            font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+            font-size: 12px;
+            line-height: 1.4;
+            transition: border-color 0.3s ease;
+        }
+
+        .json-container textarea:focus {
+            border-color: var(--secondary-color);
+            outline: none;
+        }
+
+        .json-container textarea.error {
+            border-color: var(--accent-color);
+        }
+
+        .json-container textarea.valid {
+            border-color: var(--success-color);
+        }
+
+        .json-status {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            padding: 4px 8px;
+            border-radius: 3px;
+            font-size: 11px;
+            font-weight: bold;
+            color: white;
+        }
+
+        .json-status.valid {
+            background-color: var(--success-color);
+        }
+
+        .json-status.error {
+            background-color: var(--accent-color);
+        }
+
+        .json-status.warning {
+            background-color: var(--warning-color);
+        }
+
+        .json-validation {
+            margin-top: 10px;
+            padding: 10px;
+            border-radius: var(--border-radius);
+            font-family: monospace;
+            font-size: 12px;
+            display: none;
+        }
+
+        .json-validation.success {
+            background-color: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+
+        .json-validation.error {
+            background-color: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+
+        .json-validation.warning {
+            background-color: #fff3cd;
+            color: #856404;
+            border: 1px solid #ffeaa7;
+        }
+
+        .json-actions {
+            margin-top: 15px;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            align-items: center;
+        }
+
+        .description {
+            font-size: 12px;
+            color: #666;
+            margin-top: 5px;
+            font-style: italic;
+        }
+
+        .array-input {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            align-items: center;
+        }
+
+        .array-input input {
+            flex: 1;
+            min-width: 120px;
+        }
+
+        .checkbox-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 10px;
+            margin: 10px 0;
+        }
+
+        .checkbox-item {
+            padding: 8px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            background-color: #f9f9f9;
+        }
+
+        .checkbox-item label {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin: 0;
+            cursor: pointer;
+        }
+
+        @media (max-width: 768px) {
+            .main-grid {
+                grid-template-columns: 1fr;
+            }
+            
+            .header {
+                flex-direction: column;
+                gap: 15px;
+            }
+            
+            .system-status {
+                justify-content: center;
+            }
+            
+            .display-controls {
+                justify-content: center;
+            }
+
+            .tabs {
+                flex-wrap: wrap;
+            }
+        }
+
+        .loading {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 3px solid rgba(255,255,255,.3);
+            border-radius: 50%;
+            border-top-color: #fff;
+            animation: spin 1s ease-in-out infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .connection-status {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            padding: 10px 15px;
+            border-radius: 20px;
+            font-size: 0.8rem;
+            font-weight: 500;
+            z-index: 1000;
+        }
+
+        .connected {
+            background: rgba(39, 174, 96, 0.9);
+            color: white;
+        }
+
+        .disconnected {
+            background: rgba(231, 76, 60, 0.9);
+            color: white;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <div class="header">
+            <h1><i class="fas fa-tv"></i> LED Matrix Control Panel - Enhanced</h1>
+            <div class="system-status">
+                <div class="status-item {{ 'status-active' if system_status.service_active else 'status-inactive' }}">
+                    <i class="fas fa-{{ 'play' if system_status.service_active else 'stop' }}"></i>
+                    Service {{ 'Active' if system_status.service_active else 'Inactive' }}
+                </div>
+                <div class="status-item {{ 'status-warning' if system_status.cpu_percent > 80 else 'status-active' }}">
+                    <i class="fas fa-microchip"></i>
+                    {{ system_status.cpu_percent }}% CPU
+                </div>
+                <div class="status-item {{ 'status-warning' if system_status.memory_used_percent > 80 else 'status-active' }}">
+                    <i class="fas fa-memory"></i>
+                    {{ system_status.memory_used_percent }}% RAM
+                </div>
+                <div class="status-item {{ 'status-warning' if system_status.cpu_temp > 70 else 'status-active' }}">
+                    <i class="fas fa-thermometer-half"></i>
+                    {{ system_status.cpu_temp }}°C
+                </div>
+                <div class="status-item status-active">
+                    <i class="fas fa-clock"></i>
+                    {{ system_status.uptime }}
+                </div>
+            </div>
+        </div>
+
+        <!-- Editor Mode Banner -->
+        {% if editor_mode %}
+        <div class="editor-mode">
+            <h2><i class="fas fa-edit"></i> Display Editor Mode Active</h2>
+            <p>Normal display operation is paused. Use the tools below to customize your display layout.</p>
+        </div>
+        {% endif %}
+
+        <!-- Main Grid -->
+        <div class="main-grid">
+            <!-- Display Panel -->
+            <div class="display-panel">
+                <h2><i class="fas fa-desktop"></i> Live Display Preview</h2>
+                <div class="display-preview" id="displayPreview">
+                    <div style="color: #666; font-size: 1.2rem;">
+                        <i class="fas fa-spinner fa-spin"></i>
+                        Connecting to display...
+                    </div>
+                </div>
+                <div class="display-controls">
+                    <button class="btn btn-success" onclick="startDisplay()">
+                        <i class="fas fa-play"></i> Start Display
+                    </button>
+                    <button class="btn btn-danger" onclick="stopDisplay()">
+                        <i class="fas fa-stop"></i> Stop Display
+                    </button>
+                    <button class="btn btn-warning" onclick="toggleEditorMode()">
+                        <i class="fas fa-edit"></i> 
+                        {{ 'Exit Editor' if editor_mode else 'Enter Editor' }}
+                    </button>
+                    <button class="btn btn-primary" onclick="takeScreenshot()">
+                        <i class="fas fa-camera"></i> Screenshot
+                    </button>
+                </div>
+            </div>
+
+            <!-- Control Panel -->
+            <div class="control-panel">
+                <div class="tabs">
+                    <button class="tab-btn active" onclick="showTab('overview')">
+                        <i class="fas fa-tachometer-alt"></i> Overview
+                    </button>
+                    <button class="tab-btn" onclick="showTab('schedule')">
+                        <i class="fas fa-calendar"></i> Schedule
+                    </button>
+                    <button class="tab-btn" onclick="showTab('display')">
+                        <i class="fas fa-cog"></i> Display
+                    </button>
+                    <button class="tab-btn" onclick="showTab('sports')">
+                        <i class="fas fa-football-ball"></i> Sports
+                    </button>
+                    <button class="tab-btn" onclick="showTab('weather')">
+                        <i class="fas fa-cloud-sun"></i> Weather
+                    </button>
+                    <button class="tab-btn" onclick="showTab('stocks')">
+                        <i class="fas fa-chart-line"></i> Stocks
+                    </button>
+                    <button class="tab-btn" onclick="showTab('features')">
+                        <i class="fas fa-star"></i> Features
+                    </button>
+                    <button class="tab-btn" onclick="showTab('music')">
+                        <i class="fas fa-music"></i> Music
+                    </button>
+                    <button class="tab-btn" onclick="showTab('calendar')">
+                        <i class="fas fa-calendar-alt"></i> Calendar
+                    </button>
+                    <button class="tab-btn" onclick="showTab('news')">
+                        <i class="fas fa-newspaper"></i> News
+                    </button>
+                    <button class="tab-btn" onclick="showTab('secrets')">
+                        <i class="fas fa-key"></i> API Keys
+                    </button>
+                    <button class="tab-btn" onclick="showTab('editor')">
+                        <i class="fas fa-paint-brush"></i> Editor
+                    </button>
+                    <button class="tab-btn" onclick="showTab('actions')">
+                        <i class="fas fa-tools"></i> Actions
+                    </button>
+                    <button class="tab-btn" onclick="showTab('raw-json')">
+                        <i class="fas fa-code"></i> Raw JSON
+                    </button>
+                    <button class="tab-btn" onclick="showTab('logs')">
+                        <i class="fas fa-file-alt"></i> Logs
+                    </button>
+                </div>
+
+                <!-- Overview Tab -->
+                <div id="overview" class="tab-content active">
+                    <h3>System Overview</h3>
+                    <div class="stats-grid">
+                        <div class="stat-card">
+                            <div class="stat-value">{{ system_status.cpu_percent }}%</div>
+                            <div class="stat-label">CPU Usage</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-value">{{ system_status.memory_used_percent }}%</div>
+                            <div class="stat-label">Memory Usage</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-value">{{ system_status.cpu_temp }}°C</div>
+                            <div class="stat-label">CPU Temperature</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-value">{{ main_config.display.hardware.brightness }}</div>
+                            <div class="stat-label">Brightness</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-value">{{ main_config.display.hardware.cols }}x{{ main_config.display.hardware.rows }}</div>
+                            <div class="stat-label">Resolution</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-value">{{ system_status.disk_used_percent }}%</div>
+                            <div class="stat-label">Disk Usage</div>
+                        </div>
+                    </div>
+
+                    <h4>Quick Actions</h4>
+                    <div class="display-controls">
+                        <button class="btn btn-primary" onclick="systemAction('restart_service')">
+                            <i class="fas fa-redo"></i> Restart Service
+                        </button>
+                        <button class="btn btn-warning" onclick="systemAction('git_pull')">
+                            <i class="fas fa-download"></i> Update Code
+                        </button>
+                        <button class="btn btn-danger" onclick="systemAction('reboot_system')">
+                            <i class="fas fa-power-off"></i> Reboot System
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Schedule Tab -->
+                <div id="schedule" class="tab-content">
+                    <div class="config-section">
+                        <h3>Display Schedule</h3>
+                        <p>Set the time for the display to be active. A restart is needed for changes to take effect.</p>
+                        <form id="schedule-form">
+                            <div class="form-group">
+                                <label for="schedule_enabled">Enable Schedule:</label>
+                                <div style="display: flex; align-items: center; gap: 10px;">
+                                    <label class="toggle-switch">
+                                        <input type="checkbox" id="schedule_enabled" name="schedule_enabled" {% if schedule_config.enabled %}checked{% endif %}>
+                                        <span class="slider"></span>
+                                    </label>
+                                    <span>Turn display on/off automatically</span>
+                                </div>
+                            </div>
+                            <div class="form-group">
+                                <label for="start_time">Display On Time:</label>
+                                <input type="time" class="form-control" id="start_time" name="start_time" value="{{ schedule_config.start_time }}">
+                                <div class="description">Time when the display should turn on</div>
+                            </div>
+                            <div class="form-group">
+                                <label for="end_time">Display Off Time:</label>
+                                <input type="time" class="form-control" id="end_time" name="end_time" value="{{ schedule_config.end_time }}">
+                                <div class="description">Time when the display should turn off</div>
+                            </div>
+                            <button type="submit" class="btn btn-success">Save Schedule</button>
+                        </form>
+                    </div>
+                </div>
+
+                <!-- Display Settings Tab -->
+                <div id="display" class="tab-content">
+                    <div class="config-section">
+                        <h3>LED Matrix Hardware Settings</h3>
+                        <form id="display-form">
+                            <div class="form-row">
+                                <div>
+                                    <div class="form-group">
+                                        <label for="rows">Rows:</label>
+                                        <input type="number" class="form-control" id="rows" name="rows" value="{{ main_config.display.hardware.rows }}" min="1" max="64">
+                                        <div class="description">Number of LED rows</div>
+                                    </div>
+                                    <div class="form-group">
+                                        <label for="cols">Columns:</label>
+                                        <input type="number" class="form-control" id="cols" name="cols" value="{{ main_config.display.hardware.cols }}" min="1" max="128">
+                                        <div class="description">Number of LED columns</div>
+                                    </div>
+                                    <div class="form-group">
+                                        <label for="chain_length">Chain Length:</label>
+                                        <input type="number" class="form-control" id="chain_length" name="chain_length" value="{{ main_config.display.hardware.chain_length }}" min="1" max="8">
+                                        <div class="description">Number of LED panels chained together</div>
+                                    </div>
+                                    <div class="form-group">
+                                        <label for="parallel">Parallel:</label>
+                                        <input type="number" class="form-control" id="parallel" name="parallel" value="{{ main_config.display.hardware.parallel }}" min="1" max="4">
+                                        <div class="description">Number of parallel chains</div>
+                                    </div>
+                                    <div class="form-group">
+                                        <label for="brightness">Brightness:</label>
+                                        <input type="range" class="form-control" id="brightness" name="brightness" value="{{ main_config.display.hardware.brightness }}" min="1" max="100" oninput="updateBrightnessDisplay(this.value)">
+                                        <div class="description">LED brightness: <span id="brightness-value">{{ main_config.display.hardware.brightness }}</span>%</div>
+                                    </div>
+                                    <div class="form-group">
+                                        <label for="hardware_mapping">Hardware Mapping:</label>
+                                        <select class="form-control" id="hardware_mapping" name="hardware_mapping">
+                                            <option value="adafruit-hat-pwm" {% if main_config.display.hardware.hardware_mapping == "adafruit-hat-pwm" %}selected{% endif %}>Adafruit HAT PWM</option>
+                                            <option value="adafruit-hat" {% if main_config.display.hardware.hardware_mapping == "adafruit-hat" %}selected{% endif %}>Adafruit HAT</option>
+                                            <option value="regular" {% if main_config.display.hardware.hardware_mapping == "regular" %}selected{% endif %}>Regular</option>
+                                            <option value="regular-pi1" {% if main_config.display.hardware.hardware_mapping == "regular-pi1" %}selected{% endif %}>Regular Pi1</option>
+                                        </select>
+                                        <div class="description">Hardware mapping type</div>
+                                    </div>
+                                </div>
+                                <div>
+                                    <div class="form-group">
+                                        <label for="gpio_slowdown">GPIO Slowdown:</label>
+                                        <input type="number" class="form-control" id="gpio_slowdown" name="gpio_slowdown" value="{{ main_config.display.runtime.gpio_slowdown }}" min="0" max="5">
+                                        <div class="description">GPIO slowdown factor (0-5)</div>
+                                    </div>
+                                    <div class="form-group">
+                                        <label for="scan_mode">Scan Mode:</label>
+                                        <input type="number" class="form-control" id="scan_mode" name="scan_mode" value="{{ main_config.display.hardware.scan_mode }}" min="0" max="1">
+                                        <div class="description">Scan mode for LED matrix (0-1)</div>
+                                    </div>
+                                    <div class="form-group">
+                                        <label for="pwm_bits">PWM Bits:</label>
+                                        <input type="number" class="form-control" id="pwm_bits" name="pwm_bits" value="{{ main_config.display.hardware.pwm_bits }}" min="1" max="11">
+                                        <div class="description">PWM bits for brightness control (1-11)</div>
+                                    </div>
+                                    <div class="form-group">
+                                        <label for="pwm_dither_bits">PWM Dither Bits:</label>
+                                        <input type="number" class="form-control" id="pwm_dither_bits" name="pwm_dither_bits" value="{{ main_config.display.hardware.pwm_dither_bits }}" min="0" max="4">
+                                        <div class="description">PWM dither bits (0-4)</div>
+                                    </div>
+                                    <div class="form-group">
+                                        <label for="pwm_lsb_nanoseconds">PWM LSB Nanoseconds:</label>
+                                        <input type="number" class="form-control" id="pwm_lsb_nanoseconds" name="pwm_lsb_nanoseconds" value="{{ main_config.display.hardware.pwm_lsb_nanoseconds }}" min="50" max="500">
+                                        <div class="description">PWM LSB nanoseconds (50-500)</div>
+                                    </div>
+                                    <div class="form-group">
+                                        <label for="limit_refresh_rate_hz">Limit Refresh Rate (Hz):</label>
+                                        <input type="number" class="form-control" id="limit_refresh_rate_hz" name="limit_refresh_rate_hz" value="{{ main_config.display.hardware.limit_refresh_rate_hz }}" min="1" max="1000">
+                                        <div class="description">Limit refresh rate in Hz (1-1000)</div>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label>
+                                        <input type="checkbox" id="disable_hardware_pulsing" name="disable_hardware_pulsing" {% if main_config.display.hardware.disable_hardware_pulsing %}checked{% endif %}>
+                                        Disable Hardware Pulsing
+                                    </label>
+                                    <div class="description">Disable hardware pulsing</div>
+                                </div>
+                                <div class="form-group">
+                                    <label>
+                                        <input type="checkbox" id="inverse_colors" name="inverse_colors" {% if main_config.display.hardware.inverse_colors %}checked{% endif %}>
+                                        Inverse Colors
+                                    </label>
+                                    <div class="description">Inverse color display</div>
+                                </div>
+                                <div class="form-group">
+                                    <label>
+                                        <input type="checkbox" id="show_refresh_rate" name="show_refresh_rate" {% if main_config.display.hardware.show_refresh_rate %}checked{% endif %}>
+                                        Show Refresh Rate
+                                    </label>
+                                    <div class="description">Show refresh rate on display</div>
+                                </div>
+                                <div class="form-group">
+                                    <label>
+                                        <input type="checkbox" id="use_short_date_format" name="use_short_date_format" {% if main_config.display.use_short_date_format %}checked{% endif %}>
+                                        Use Short Date Format
+                                    </label>
+                                    <div class="description">Use short date format for display</div>
+                                </div>
+                            </div>
+                            
+                            <button type="submit" class="btn btn-success">Save Display Settings</button>
+                        </form>
+                    </div>
+                </div>
+
+                <!-- Sports Tab -->
+                <div id="sports" class="tab-content">
+                    <div class="config-section">
+                        <h3>Sports Configuration</h3>
+                        <p>Configure which sports leagues to display and their settings.</p>
+                        <!-- Sports configuration will be populated by JavaScript -->
+                        <div id="sports-config">
+                            Loading sports configuration...
+                        </div>
+                        <button type="button" class="btn btn-success" onclick="saveSportsConfig()">Save Sports Settings</button>
+                    </div>
+                </div>
+
+                <!-- Weather Tab -->
+                <div id="weather" class="tab-content">
+                    <div class="config-section">
+                        <h3>Weather Configuration</h3>
+                        <form id="weather-form">
+                            <div class="form-group">
+                                <label>
+                                    <input type="checkbox" id="weather_enabled" name="weather_enabled" {% if main_config.weather.enabled %}checked{% endif %}>
+                                    Enable Weather
+                                </label>
+                            </div>
+                            <div class="form-group">
+                                <label for="weather_city">City:</label>
+                                <input type="text" class="form-control" id="weather_city" name="weather_city" value="{{ main_config.location.city }}">
+                                <div class="description">City name for weather data</div>
+                            </div>
+                            <div class="form-group">
+                                <label for="weather_state">State:</label>
+                                <input type="text" class="form-control" id="weather_state" name="weather_state" value="{{ main_config.location.state }}">
+                                <div class="description">State/province name</div>
+                            </div>
+                            <div class="form-group">
+                                <label for="weather_units">Units:</label>
+                                <select class="form-control" id="weather_units" name="weather_units">
+                                    <option value="imperial" {% if main_config.weather.units == "imperial" %}selected{% endif %}>Fahrenheit</option>
+                                    <option value="metric" {% if main_config.weather.units == "metric" %}selected{% endif %}>Celsius</option>
+                                </select>
+                                <div class="description">Temperature units</div>
+                            </div>
+                            <div class="form-group">
+                                <label for="weather_update_interval">Update Interval (seconds):</label>
+                                <input type="number" class="form-control" id="weather_update_interval" name="weather_update_interval" value="{{ main_config.weather.update_interval }}" min="300" max="3600">
+                                <div class="description">How often to update weather data (300-3600 seconds)</div>
+                            </div>
+                            <button type="submit" class="btn btn-success">Save Weather Settings</button>
+                        </form>
+                    </div>
+                </div>
+
+                <!-- Stocks Tab -->
+                <div id="stocks" class="tab-content">
+                    <div class="config-section">
+                        <h3>Stocks & Crypto Configuration</h3>
+                        <form id="stocks-form">
+                            <div class="form-group">
+                                <label>
+                                    <input type="checkbox" id="stocks_enabled" name="stocks_enabled" {% if main_config.stocks.enabled %}checked{% endif %}>
+                                    Enable Stocks
+                                </label>
+                            </div>
+                            <div class="form-group">
+                                <label for="stocks_symbols">Stock Symbols:</label>
+                                <input type="text" class="form-control" id="stocks_symbols" name="stocks_symbols" value="{{ main_config.stocks.symbols|join(', ') }}" placeholder="AAPL, GOOGL, MSFT">
+                                <div class="description">Comma-separated stock symbols</div>
+                            </div>
+                            <div class="form-group">
+                                <label for="stocks_update_interval">Update Interval (seconds):</label>
+                                <input type="number" class="form-control" id="stocks_update_interval" name="stocks_update_interval" value="{{ main_config.stocks.update_interval }}" min="60" max="3600">
+                                <div class="description">How often to update stock data</div>
+                            </div>
+                            <div class="form-group">
+                                <label>
+                                    <input type="checkbox" id="stocks_toggle_chart" name="stocks_toggle_chart" {% if main_config.stocks.toggle_chart %}checked{% endif %}>
+                                    Show Charts
+                                </label>
+                                <div class="description">Display mini charts alongside stock ticker data</div>
+                            </div>
+                            <button type="submit" class="btn btn-success">Save Stocks Settings</button>
+                        </form>
+
+                        <h3>Cryptocurrency</h3>
+                        <form id="crypto-form">
+                            <div class="form-group">
+                                <label>
+                                    <input type="checkbox" id="crypto_enabled" name="crypto_enabled" {% if main_config.crypto.enabled %}checked{% endif %}>
+                                    Enable Crypto
+                                </label>
+                            </div>
+                            <div class="form-group">
+                                <label for="crypto_symbols">Crypto Symbols:</label>
+                                <input type="text" class="form-control" id="crypto_symbols" name="crypto_symbols" value="{{ main_config.crypto.symbols|join(', ') }}" placeholder="BTC-USD, ETH-USD">
+                                <div class="description">Comma-separated crypto symbols (e.g., BTC-USD, ETH-USD)</div>
+                            </div>
+                            <div class="form-group">
+                                <label for="crypto_update_interval">Update Interval (seconds):</label>
+                                <input type="number" class="form-control" id="crypto_update_interval" name="crypto_update_interval" value="{{ main_config.crypto.update_interval }}" min="60" max="3600">
+                                <div class="description">How often to update crypto data</div>
+                            </div>
+                            <button type="submit" class="btn btn-success">Save Crypto Settings</button>
+                        </form>
+                    </div>
+                </div>
+
+                <!-- Features Tab -->
+                <div id="features" class="tab-content">
+                    <div class="config-section">
+                        <h3>Additional Features</h3>
+                        <p>Configure additional features like clock, text display, and more.</p>
+                        <!-- Features configuration will be populated by JavaScript -->
+                        <div id="features-config">
+                            Loading features configuration...
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Music Tab -->
+                <div id="music" class="tab-content">
+                    <div class="config-section">
+                        <h3>Music Configuration</h3>
+                        <form id="music-form">
+                            <div class="form-group">
+                                <label>
+                                    <input type="checkbox" id="music_enabled" name="music_enabled" {% if main_config.music.enabled %}checked{% endif %}>
+                                    Enable Music Display
+                                </label>
+                            </div>
+                            <div class="form-group">
+                                <label for="music_preferred_source">Preferred Source:</label>
+                                <select class="form-control" id="music_preferred_source" name="music_preferred_source">
+                                    <option value="ytm" {% if main_config.music.preferred_source == "ytm" %}selected{% endif %}>YouTube Music</option>
+                                    <option value="spotify" {% if main_config.music.preferred_source == "spotify" %}selected{% endif %}>Spotify</option>
+                                </select>
+                                <div class="description">Primary music source to display</div>
+                            </div>
+                            <div class="form-group">
+                                <label for="ytm_companion_url">YouTube Music Companion URL:</label>
+                                <input type="text" class="form-control" id="ytm_companion_url" name="ytm_companion_url" value="{{ main_config.music.YTM_COMPANION_URL }}">
+                                <div class="description">URL for YouTube Music companion app</div>
+                            </div>
+                            <div class="form-group">
+                                <label for="music_polling_interval">Polling Interval (seconds):</label>
+                                <input type="number" class="form-control" id="music_polling_interval" name="music_polling_interval" value="{{ main_config.music.POLLING_INTERVAL_SECONDS }}" min="1" max="60">
+                                <div class="description">How often to check for music updates</div>
+                            </div>
+                            <button type="submit" class="btn btn-success">Save Music Settings</button>
+                        </form>
+                    </div>
+                </div>
+
+                <!-- Calendar Tab -->
+                <div id="calendar" class="tab-content">
+                    <div class="config-section">
+                        <h3>Calendar Configuration</h3>
+                        <form id="calendar-form">
+                            <div class="form-group">
+                                <label>
+                                    <input type="checkbox" id="calendar_enabled" name="calendar_enabled" {% if main_config.calendar.enabled %}checked{% endif %}>
+                                    Enable Calendar
+                                </label>
+                            </div>
+                            <div class="form-group">
+                                <label for="calendar_max_events">Max Events to Show:</label>
+                                <input type="number" class="form-control" id="calendar_max_events" name="calendar_max_events" value="{{ main_config.calendar.max_events }}" min="1" max="10">
+                                <div class="description">Maximum number of events to display</div>
+                            </div>
+                            <div class="form-group">
+                                <label for="calendar_update_interval">Update Interval (seconds):</label>
+                                <input type="number" class="form-control" id="calendar_update_interval" name="calendar_update_interval" value="{{ main_config.calendar.update_interval }}" min="300" max="3600">
+                                <div class="description">How often to update calendar data</div>
+                            </div>
+                            <div class="form-group">
+                                <label for="calendar_calendars">Calendars:</label>
+                                <input type="text" class="form-control" id="calendar_calendars" name="calendar_calendars" value="{{ main_config.calendar.calendars|join(', ') }}" placeholder="birthdays, work">
+                                <div class="description">Comma-separated calendar names</div>
+                            </div>
+                            <button type="submit" class="btn btn-success">Save Calendar Settings</button>
+                        </form>
+                    </div>
+                </div>
+
+                <!-- News Tab -->
+                <div id="news" class="tab-content">
+                    <div class="config-section">
+                        <h3>News Manager Configuration</h3>
+                        <p>Configure RSS news feeds and scrolling ticker settings</p>
+                        
+                        <div class="form-group">
+                            <label>
+                                <input type="checkbox" id="news_enabled" name="news_enabled">
+                                Enable News Manager
+                            </label>
+                        </div>
+                        
+                        <div class="form-group">
+                            <label for="headlines_per_feed">Headlines Per Feed:</label>
+                            <input type="number" class="form-control" id="headlines_per_feed" name="headlines_per_feed" min="1" max="5" value="2">
+                            <div class="description">Number of headlines to show from each enabled feed</div>
+                        </div>
+                        
+                        <div class="form-group">
+                            <label>Available News Feeds:</label>
+                            <div class="checkbox-grid" id="news_feeds_grid">
+                                <!-- Feeds will be populated by JavaScript -->
+                            </div>
+                        </div>
+                        
+                        <div class="form-group">
+                            <h4>Custom RSS Feeds</h4>
+                            <div style="display: flex; gap: 10px; margin-bottom: 15px;">
+                                <input type="text" class="form-control" id="custom_feed_name" placeholder="Feed Name" style="width: 200px;">
+                                <input type="text" class="form-control" id="custom_feed_url" placeholder="RSS Feed URL" style="flex: 1;">
+                                <button type="button" class="btn btn-primary" onclick="addCustomFeed()">Add Feed</button>
+                            </div>
+                            <div id="custom_feeds_list">
+                                <!-- Custom feeds will be populated by JavaScript -->
+                            </div>
+                        </div>
+                        
+                        <div class="form-group">
+                            <label>
+                                <input type="checkbox" id="rotation_enabled" name="rotation_enabled" checked>
+                                Enable Headline Rotation
+                            </label>
+                            <div class="description">Rotate through different headlines to avoid repetition</div>
+                        </div>
+                        
+                        <div style="display: flex; gap: 10px;">
+                            <button type="button" class="btn btn-success" onclick="saveNewsSettings()">Save News Settings</button>
+                            <button type="button" class="btn btn-primary" onclick="refreshNewsStatus()">Refresh Status</button>
+                        </div>
+                        
+                        <div id="news_status" style="margin-top: 20px; padding: 15px; background: #f0f8f0; border-radius: var(--border-radius);">
+                            <!-- Status will be populated by JavaScript -->
+                        </div>
+                    </div>
+                </div>
+
+                <!-- API Keys Tab -->
+                <div id="secrets" class="tab-content">
+                    <div class="config-section">
+                        <h3>API Keys Configuration</h3>
+                        <p>Enter your API keys for various services. These are stored securely and not shared.</p>
+                        
+                        <form id="secrets-form">
+                            <h4>Weather API</h4>
+                            <div class="form-group">
+                                <label for="weather_api_key">OpenWeatherMap API Key:</label>
+                                <input type="password" class="form-control" id="weather_api_key" name="weather_api_key" value="{{ secrets_config.weather.api_key if secrets_config.weather.api_key != 'YOUR_OPENWEATHERMAP_API_KEY' else '' }}" placeholder="Enter your OpenWeatherMap API key">
+                                <div class="description">Get your free API key from <a href="https://openweathermap.org/api" target="_blank">OpenWeatherMap</a></div>
+                            </div>
+
+                            <h4>YouTube API</h4>
+                            <div class="form-group">
+                                <label for="youtube_api_key">YouTube API Key:</label>
+                                <input type="password" class="form-control" id="youtube_api_key" name="youtube_api_key" value="{{ secrets_config.youtube.api_key if secrets_config.youtube.api_key != 'YOUR_YOUTUBE_API_KEY' else '' }}" placeholder="Enter your YouTube API key">
+                                <div class="description">Get your API key from <a href="https://console.developers.google.com/" target="_blank">Google Cloud Console</a></div>
+                            </div>
+
+                            <h4>Spotify API</h4>
+                            <div class="form-group">
+                                <label for="spotify_client_id">Spotify Client ID:</label>
+                                <input type="password" class="form-control" id="spotify_client_id" name="spotify_client_id" value="{{ secrets_config.music.SPOTIFY_CLIENT_ID if secrets_config.music.SPOTIFY_CLIENT_ID != 'YOUR_SPOTIFY_CLIENT_ID_HERE' else '' }}" placeholder="Enter your Spotify Client ID">
+                                <div class="description">Get from <a href="https://developer.spotify.com/dashboard" target="_blank">Spotify Developer Dashboard</a></div>
+                            </div>
+                            <div class="form-group">
+                                <label for="spotify_client_secret">Spotify Client Secret:</label>
+                                <input type="password" class="form-control" id="spotify_client_secret" name="spotify_client_secret" value="{{ secrets_config.music.SPOTIFY_CLIENT_SECRET if secrets_config.music.SPOTIFY_CLIENT_SECRET != 'YOUR_SPOTIFY_CLIENT_SECRET_HERE' else '' }}" placeholder="Enter your Spotify Client Secret">
+                                <div class="description">Your Spotify Client Secret</div>
+                            </div>
+                            
+                            <button type="submit" class="btn btn-success">Save API Keys</button>
+                        </form>
+                    </div>
+                </div>
+
+                <!-- Editor Tab -->
+                <div id="editor" class="tab-content">
+                    <h3>Display Editor</h3>
+                    
+                    <div class="element-palette">
+                        <h4>Elements</h4>
+                        <div class="palette-item" draggable="true" data-type="text">
+                            <i class="fas fa-font"></i> Text
+                        </div>
+                        <div class="palette-item" draggable="true" data-type="weather_icon">
+                            <i class="fas fa-cloud-sun"></i> Weather Icon
+                        </div>
+                        <div class="palette-item" draggable="true" data-type="rectangle">
+                            <i class="fas fa-square"></i> Rectangle
+                        </div>
+                        <div class="palette-item" draggable="true" data-type="line">
+                            <i class="fas fa-minus"></i> Line
+                        </div>
+                    </div>
+
+                    <div class="editor-toolbar">
+                        <button class="btn btn-primary" onclick="clearEditor()">
+                            <i class="fas fa-trash"></i> Clear
+                        </button>
+                        <button class="btn btn-success" onclick="saveLayout()">
+                            <i class="fas fa-save"></i> Save Layout
+                        </button>
+                        <button class="btn btn-warning" onclick="loadLayout()">
+                            <i class="fas fa-folder-open"></i> Load Layout
+                        </button>
+                    </div>
+
+                    <div class="properties-panel">
+                        <h4>Element Properties</h4>
+                        <div id="elementProperties">
+                            <p>Select an element to edit its properties</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Actions Tab -->
+                <div id="actions" class="tab-content">
+                    <div class="config-section">
+                        <h3>System Actions</h3>
+                        <p>Control the display service and system operations.</p>
+                        
+                        <h4>Display Control</h4>
+                        <div class="display-controls">
+                            <button type="button" class="btn btn-success" onclick="runAction('start_display')">
+                                <i class="fas fa-play"></i> Start Display
+                            </button>
+                            <button type="button" class="btn btn-danger" onclick="runAction('stop_display')">
+                                <i class="fas fa-stop"></i> Stop Display
+                            </button>
+                        </div>
+
+                        <h4>Auto-Start Settings</h4>
+                        <div class="display-controls">
+                            <button type="button" class="btn btn-success" onclick="runAction('enable_autostart')">
+                                <i class="fas fa-check"></i> Enable Auto-Start
+                            </button>
+                            <button type="button" class="btn btn-warning" onclick="runAction('disable_autostart')">
+                                <i class="fas fa-times"></i> Disable Auto-Start
+                            </button>
+                        </div>
+
+                        <h4>System Operations</h4>
+                        <div class="display-controls">
+                            <button type="button" class="btn btn-warning" onclick="runAction('git_pull')">
+                                <i class="fas fa-download"></i> Download Latest Update
+                            </button>
+                            <button type="button" class="btn btn-danger" onclick="runAction('reboot_system')" onclick="return confirm('Are you sure you want to reboot?')">
+                                <i class="fas fa-power-off"></i> Reboot System
+                            </button>
+                        </div>
+
+                        <h4>Action Output</h4>
+                        <div style="margin-top: 20px;">
+                            <pre id="action_output" style="background: #f5f5f5; padding: 15px; border-radius: var(--border-radius); min-height: 100px; white-space: pre-wrap;">No action run yet.</pre>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Raw JSON Tab -->
+                <div id="raw-json" class="tab-content">
+                    <div class="config-section">
+                        <h3>Raw Configuration JSON</h3>
+                        <p>View, edit, and save the complete configuration files directly. <strong>⚠️ Warning:</strong> Be careful when editing raw JSON - invalid syntax will prevent saving.</p>
+                        
+                        <h4>Main Configuration (config.json)</h4>
+                        <div class="form-group">
+                            <label>Configuration Path:</label>
+                            <span>{{ main_config_path }}</span>
+                        </div>
+                        <div class="json-container">
+                            <textarea id="main-config-json">{{ main_config_json }}</textarea>
+                            <div id="main-config-status" class="json-status valid">VALID</div>
+                            <div id="main-config-validation" class="json-validation"></div>
+                        </div>
+                        <div class="json-actions">
+                            <button type="button" class="btn btn-primary" onclick="formatJson('main-config-json')">Format JSON</button>
+                            <button type="button" class="btn btn-warning" onclick="validateJson('main-config-json', 'main-config-validation')">Validate JSON</button>
+                            <button type="button" class="btn btn-success" onclick="saveRawJson('main')">Save Main Config</button>
+                        </div>
+
+                        <h4>Secrets Configuration (config_secrets.json)</h4>
+                        <div class="form-group">
+                            <label>Configuration Path:</label>
+                            <span>{{ secrets_config_path }}</span>
+                        </div>
+                        <div class="json-container">
+                            <textarea id="secrets-config-json">{{ secrets_config_json }}</textarea>
+                            <div id="secrets-config-status" class="json-status valid">VALID</div>
+                            <div id="secrets-config-validation" class="json-validation"></div>
+                        </div>
+                        <div class="json-actions">
+                            <button type="button" class="btn btn-primary" onclick="formatJson('secrets-config-json')">Format JSON</button>
+                            <button type="button" class="btn btn-warning" onclick="validateJson('secrets-config-json', 'secrets-config-validation')">Validate JSON</button>
+                            <button type="button" class="btn btn-success" onclick="saveRawJson('secrets')">Save Secrets Config</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Logs Tab -->
+                <div id="logs" class="tab-content">
+                    <div class="config-section">
+                        <h3>System Logs</h3>
+                        <p>View logs for the LED matrix service. Useful for debugging.</p>
+                        <button class="btn btn-primary" onclick="fetchLogs()">
+                            <i class="fas fa-refresh"></i> Refresh Logs
+                        </button>
+                        <pre id="log-content" style="background-color: #1e1e1e; color: #d4d4d4; padding: 15px; border-radius: var(--border-radius); max-height: 600px; overflow-y: auto; white-space: pre-wrap; word-wrap: break-word; margin-top: 15px;"></pre>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Connection Status -->
+    <div id="connectionStatus" class="connection-status disconnected">
+        <i class="fas fa-wifi"></i> Disconnected
+    </div>
+
+    <!-- Notification -->
+    <div id="notification" class="notification"></div>
+
+    <script>
+        // Global variables
+        let socket;
+        let currentConfig = {{ main_config | tojson }};
+        let editorMode = {{ editor_mode | tojson }};
+        let currentElements = [];
+        let selectedElement = null;
+
+        // Initialize on page load
+        document.addEventListener('DOMContentLoaded', function() {
+            initializeSocket();
+            initializeEditor();
+            updateSystemStats();
+            loadNewsManagerData();
+            
+            // Update stats every 30 seconds
+            setInterval(updateSystemStats, 30000);
+        });
+
+        // Socket.IO connection
+        function initializeSocket() {
+            socket = io();
+            
+            socket.on('connect', function() {
+                updateConnectionStatus(true);
+                showNotification('Connected to LED Matrix', 'success');
+            });
+            
+            socket.on('disconnect', function() {
+                updateConnectionStatus(false);
+                showNotification('Disconnected from LED Matrix', 'error');
+            });
+            
+            socket.on('display_update', function(data) {
+                updateDisplayPreview(data);
+            });
+        }
+
+        // Update connection status
+        function updateConnectionStatus(connected) {
+            const status = document.getElementById('connectionStatus');
+            if (connected) {
+                status.className = 'connection-status connected';
+                status.innerHTML = '<i class="fas fa-wifi"></i> Connected';
+            } else {
+                status.className = 'connection-status disconnected';
+                status.innerHTML = '<i class="fas fa-wifi"></i> Disconnected';
+            }
+        }
+
+        // Update display preview with better scaling and error handling
+        function updateDisplayPreview(data) {
+            const preview = document.getElementById('displayPreview');
+            if (data.image) {
+                preview.innerHTML = `<img src="data:image/png;base64,${data.image}" 
+                                           class="display-image" 
+                                           alt="LED Matrix Display"
+                                           style="max-width: 100%; height: auto; image-rendering: pixelated;">`;
+            } else {
+                preview.innerHTML = `<div style="color: #666; font-size: 1.2rem;">
+                                       <i class="fas fa-exclamation-triangle"></i>
+                                       No display data available
+                                     </div>`;
+            }
+        }
+
+        // Tab functionality
+        function showTab(tabName) {
+            // Hide all tab contents
+            const contents = document.querySelectorAll('.tab-content');
+            contents.forEach(content => content.classList.remove('active'));
+            
+            // Remove active class from all tab buttons
+            const buttons = document.querySelectorAll('.tab-btn');
+            buttons.forEach(btn => btn.classList.remove('active'));
+            
+            // Show selected tab content
+            document.getElementById(tabName).classList.add('active');
+            
+            // Add active class to clicked button
+            event.target.classList.add('active');
+
+            // Load specific data when tabs are opened
+            if (tabName === 'news') {
+                loadNewsManagerData();
+            } else if (tabName === 'logs') {
+                fetchLogs();
+            } else if (tabName === 'raw-json') {
+                setTimeout(() => {
+                    validateJson('main-config-json', 'main-config-validation');
+                    validateJson('secrets-config-json', 'secrets-config-validation');
+                }, 100);
+            }
+        }
+
+        // Display control functions
+        async function startDisplay() {
+            try {
+                const response = await fetch('/api/display/start', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'}
+                });
+                const result = await response.json();
+                showNotification(result.message, result.status);
+            } catch (error) {
+                showNotification('Error starting display: ' + error.message, 'error');
+            }
+        }
+
+        async function stopDisplay() {
+            try {
+                const response = await fetch('/api/display/stop', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'}
+                });
+                const result = await response.json();
+                showNotification(result.message, result.status);
+            } catch (error) {
+                showNotification('Error stopping display: ' + error.message, 'error');
+            }
+        }
+
+        async function toggleEditorMode() {
+            try {
+                const response = await fetch('/api/editor/toggle', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'}
+                });
+                const result = await response.json();
+                showNotification(result.message, result.status);
+                
+                if (result.status === 'success') {
+                    editorMode = result.editor_mode;
+                    location.reload(); // Reload to update UI
+                }
+            } catch (error) {
+                showNotification('Error toggling editor mode: ' + error.message, 'error');
+            }
+        }
+
+        async function takeScreenshot() {
+            try {
+                const response = await fetch('/api/display/current');
+                const data = await response.json();
+                
+                if (data.image) {
+                    // Create download link
+                    const link = document.createElement('a');
+                    link.href = 'data:image/png;base64,' + data.image;
+                    link.download = 'led_matrix_screenshot_' + new Date().getTime() + '.png';
+                    link.click();
+                    showNotification('Screenshot saved', 'success');
+                } else {
+                    showNotification('No display data available', 'warning');
+                }
+            } catch (error) {
+                showNotification('Error taking screenshot: ' + error.message, 'error');
+            }
+        }
+
+        // System action functions
+        async function systemAction(action) {
+            if (action === 'reboot_system' && !confirm('Are you sure you want to reboot the system?')) {
+                return;
+            }
+            
+            try {
+                const response = await fetch('/api/system/action', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({action: action})
+                });
+                const result = await response.json();
+                showNotification(result.message, result.status);
+            } catch (error) {
+                showNotification('Error executing action: ' + error.message, 'error');
+            }
+        }
+
+        // Editor functions
+        function initializeEditor() {
+            // Initialize drag and drop for editor elements
+            const paletteItems = document.querySelectorAll('.palette-item');
+            paletteItems.forEach(item => {
+                item.addEventListener('dragstart', function(e) {
+                    e.dataTransfer.setData('text/plain', this.dataset.type);
+                });
+            });
+
+            // Make display preview a drop zone
+            const preview = document.getElementById('displayPreview');
+            preview.addEventListener('dragover', function(e) {
+                e.preventDefault();
+            });
+            
+            preview.addEventListener('drop', function(e) {
+                e.preventDefault();
+                const elementType = e.dataTransfer.getData('text/plain');
+                const rect = preview.getBoundingClientRect();
+                const x = Math.floor((e.clientX - rect.left) / 8); // Scale down from preview (8x scaling)
+                const y = Math.floor((e.clientY - rect.top) / 8);
+                
+                addElement(elementType, x, y);
+            });
+        }
+
+        function addElement(type, x, y) {
+            const element = {
+                id: Date.now(),
+                type: type,
+                x: x,
+                y: y,
+                properties: getDefaultProperties(type)
+            };
+            
+            currentElements.push(element);
+            updatePreview();
+            selectElement(element);
+        }
+
+        function getDefaultProperties(type) {
+            switch (type) {
+                case 'text':
+                    return {
+                        text: 'Sample Text',
+                        color: [255, 255, 255],
+                        font_size: 'normal'
+                    };
+                case 'weather_icon':
+                    return {
+                        condition: 'sunny',
+                        size: 16
+                    };
+                case 'rectangle':
+                    return {
+                        width: 20,
+                        height: 10,
+                        color: [255, 255, 255]
+                    };
+                case 'line':
+                    return {
+                        x2: x + 20,
+                        y2: y,
+                        color: [255, 255, 255]
+                    };
+                default:
+                    return {};
+            }
+        }
+
+        async function updatePreview() {
+            if (!editorMode) return;
+            
+            try {
+                const response = await fetch('/api/editor/preview', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        elements: currentElements
+                    })
+                });
+                const result = await response.json();
+                if (result.status !== 'success') {
+                    showNotification(result.message, 'error');
+                }
+            } catch (error) {
+                showNotification('Error updating preview: ' + error.message, 'error');
+            }
+        }
+
+        function selectElement(element) {
+            selectedElement = element;
+            updatePropertiesPanel();
+        }
+
+        function updatePropertiesPanel() {
+            const panel = document.getElementById('elementProperties');
+            if (!selectedElement) {
+                panel.innerHTML = '<p>Select an element to edit its properties</p>';
+                return;
+            }
+
+            let html = `<h5>${selectedElement.type.toUpperCase()} Properties</h5>`;
+            html += `<div class="form-group">
+                        <label>X Position</label>
+                        <input type="number" class="form-control" value="${selectedElement.x}" 
+                               onchange="updateElementProperty('x', parseInt(this.value))">
+                     </div>`;
+            html += `<div class="form-group">
+                        <label>Y Position</label>
+                        <input type="number" class="form-control" value="${selectedElement.y}" 
+                               onchange="updateElementProperty('y', parseInt(this.value))">
+                     </div>`;
+
+            // Add type-specific properties
+            if (selectedElement.type === 'text') {
+                html += `<div class="form-group">
+                            <label>Text</label>
+                            <input type="text" class="form-control" value="${selectedElement.properties.text}" 
+                                   onchange="updateElementProperty('properties.text', this.value)">
+                         </div>`;
+            }
+
+            panel.innerHTML = html;
+        }
+
+        function updateElementProperty(path, value) {
+            if (!selectedElement) return;
+            
+            const keys = path.split('.');
+            let obj = selectedElement;
+            
+            for (let i = 0; i < keys.length - 1; i++) {
+                if (!obj[keys[i]]) obj[keys[i]] = {};
+                obj = obj[keys[i]];
+            }
+            
+            obj[keys[keys.length - 1]] = value;
+            updatePreview();
+        }
+
+        function clearEditor() {
+            currentElements = [];
+            selectedElement = null;
+            updatePreview();
+            updatePropertiesPanel();
+        }
+
+        async function saveLayout() {
+            try {
+                const response = await fetch('/api/config/save', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        type: 'layout',
+                        data: {
+                            elements: currentElements,
+                            timestamp: Date.now()
+                        }
+                    })
+                });
+                const result = await response.json();
+                showNotification(result.message, result.status);
+            } catch (error) {
+                showNotification('Error saving layout: ' + error.message, 'error');
+            }
+        }
+
+        // Utility functions
+        function showNotification(message, type) {
+            const notification = document.getElementById('notification');
+            notification.textContent = message;
+            notification.className = `notification ${type} show`;
+            
+            setTimeout(() => {
+                notification.classList.remove('show');
+            }, 3000);
+        }
+
+        async function updateSystemStats() {
+            try {
+                const response = await fetch('/api/system/status');
+                const stats = await response.json();
+                
+                // Update stats in the overview tab if they exist
+                const cpuUsage = document.querySelector('.stat-card .stat-value');
+                if (cpuUsage) {
+                    document.querySelectorAll('.stat-card .stat-value')[0].textContent = stats.cpu_percent + '%';
+                    document.querySelectorAll('.stat-card .stat-value')[1].textContent = stats.memory_used_percent + '%';
+                    document.querySelectorAll('.stat-card .stat-value')[2].textContent = stats.cpu_temp + '°C';
+                    document.querySelectorAll('.stat-card .stat-value')[5].textContent = stats.disk_used_percent + '%';
+                }
+            } catch (error) {
+                console.error('Error updating system stats:', error);
+            }
+        }
+
+        function updateBrightnessDisplay(value) {
+            document.getElementById('brightness-value').textContent = value;
+        }
+
+        // Form submission handlers
+        document.getElementById('schedule-form').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            const formData = new FormData(this);
+            
+            try {
+                const response = await fetch('/save_schedule', {
+                    method: 'POST',
+                    body: formData
+                });
+                const result = await response.json();
+                showNotification(result.message, result.status);
+            } catch (error) {
+                showNotification('Error saving schedule: ' + error.message, 'error');
+            }
+        });
+
+        document.getElementById('display-form').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            const formData = new FormData(this);
+            
+            try {
+                const response = await fetch('/save_config', {
+                    method: 'POST',
+                    body: formData
+                });
+                const result = await response.json();
+                showNotification(result.message, result.status);
+            } catch (error) {
+                showNotification('Error saving display settings: ' + error.message, 'error');
+            }
+        });
+
+        // JSON validation and formatting functions
+        function formatJson(elementId) {
+            const textarea = document.getElementById(elementId);
+            const jsonText = textarea.value;
+            
+            try {
+                const parsed = JSON.parse(jsonText);
+                const formatted = JSON.stringify(parsed, null, 4);
+                textarea.value = formatted;
+                
+                textarea.classList.remove('error');
+                textarea.classList.add('valid');
+                
+                showNotification('JSON formatted successfully!', 'success');
+            } catch (error) {
+                showNotification(`Cannot format invalid JSON: ${error.message}`, 'error');
+                textarea.classList.remove('valid');
+                textarea.classList.add('error');
+            }
+        }
+
+        function validateJson(textareaId, validationId) {
+            const textarea = document.getElementById(textareaId);
+            const validationDiv = document.getElementById(validationId);
+            const jsonText = textarea.value;
+            
+            validationDiv.innerHTML = '';
+            validationDiv.className = 'json-validation';
+            validationDiv.style.display = 'block';
+            
+            const statusId = validationId.replace('-validation', '-status');
+            const statusElement = document.getElementById(statusId);
+            
+            try {
+                const parsed = JSON.parse(jsonText);
+                
+                validationDiv.className = 'json-validation success';
+                if (statusElement) {
+                    statusElement.textContent = 'VALID';
+                    statusElement.className = 'json-status valid';
+                }
+                validationDiv.innerHTML = `
+                    <div><strong>✅ JSON is valid!</strong></div>
+                    <div>✓ Valid JSON syntax<br>✓ Proper structure<br>✓ No obvious issues detected</div>
+                `;
+                
+            } catch (error) {
+                validationDiv.className = 'json-validation error';
+                if (statusElement) {
+                    statusElement.textContent = 'INVALID';
+                    statusElement.className = 'json-status error';
+                }
+                
+                validationDiv.innerHTML = `
+                    <div><strong>❌ Invalid JSON syntax</strong></div>
+                    <div><strong>Error:</strong> ${error.message}</div>
+                `;
+            }
+        }
+
+        async function saveRawJson(configType) {
+            const textareaId = configType === 'main' ? 'main-config-json' : 'secrets-config-json';
+            const textarea = document.getElementById(textareaId);
+            const jsonText = textarea.value;
+            
+            try {
+                JSON.parse(jsonText);
+            } catch (error) {
+                showNotification(`Invalid JSON format: ${error.message}`, 'error');
+                return;
+            }
+            
+            const configName = configType === 'main' ? 'Main Configuration' : 'Secrets Configuration';
+            if (!confirm(`Are you sure you want to save changes to the ${configName}?`)) {
+                return;
+            }
+            
+            try {
+                const response = await fetch('/save_raw_json', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        config_type: configType,
+                        config_data: jsonText
+                    })
+                });
+                const data = await response.json();
+                showNotification(data.message, data.status);
+            } catch (error) {
+                showNotification(`Error saving configuration: ${error}`, 'error');
+            }
+        }
+
+        // Action functions
+        async function runAction(actionName) {
+            const outputElement = document.getElementById('action_output');
+            outputElement.textContent = `Running ${actionName.replace(/_/g, ' ')}...`;
+
+            try {
+                const response = await fetch('/run_action', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ action: actionName })
+                });
+                const data = await response.json();
+                
+                let outputText = `Status: ${data.status}\nMessage: ${data.message}\n`;
+                if (data.stdout) outputText += `\n--- STDOUT ---\n${data.stdout}`;
+                if (data.stderr) outputText += `\n--- STDERR ---\n${data.stderr}`;
+                outputElement.textContent = outputText;
+                
+                showNotification(data.message, data.status);
+            } catch (error) {
+                outputElement.textContent = `Error: ${error}`;
+                showNotification(`Error running action: ${error}`, 'error');
+            }
+        }
+
+        async function fetchLogs() {
+            const logContent = document.getElementById('log-content');
+            logContent.textContent = 'Loading logs...';
+
+            try {
+                const response = await fetch('/get_logs');
+                const data = await response.json();
+                
+                if (data.status === 'success') {
+                    logContent.textContent = data.logs;
+                } else {
+                    logContent.textContent = `Error loading logs: ${data.message}`;
+                }
+            } catch (error) {
+                logContent.textContent = `Error loading logs: ${error}`;
+            }
+        }
+
+        // News Manager Functions
+        let newsManagerData = {};
+
+        async function loadNewsManagerData() {
+            try {
+                const response = await fetch('/news_manager/status');
+                const data = await response.json();
+                
+                if (data.status === 'success') {
+                    newsManagerData = data.data;
+                    updateNewsManagerUI();
+                } else {
+                    console.error('Error loading news manager data:', data.message);
+                }
+            } catch (error) {
+                console.error('Error loading news manager data:', error);
+            }
+        }
+
+        function updateNewsManagerUI() {
+            document.getElementById('news_enabled').checked = newsManagerData.enabled || false;
+            document.getElementById('headlines_per_feed').value = newsManagerData.headlines_per_feed || 2;
+            document.getElementById('rotation_enabled').checked = newsManagerData.rotation_enabled !== false;
+            
+            // Populate available feeds
+            const feedsGrid = document.getElementById('news_feeds_grid');
+            feedsGrid.innerHTML = '';
+            
+            if (newsManagerData.available_feeds) {
+                newsManagerData.available_feeds.forEach(feed => {
+                    const isEnabled = newsManagerData.enabled_feeds.includes(feed);
+                    const feedDiv = document.createElement('div');
+                    feedDiv.className = 'checkbox-item';
+                    feedDiv.innerHTML = `
+                        <label>
+                            <input type="checkbox" name="news_feed" value="${feed}" ${isEnabled ? 'checked' : ''}>
+                            ${feed}
+                        </label>
+                    `;
+                    feedsGrid.appendChild(feedDiv);
+                });
+            }
+            
+            updateCustomFeedsList();
+            updateNewsStatus();
+        }
+
+        function updateCustomFeedsList() {
+            const customFeedsList = document.getElementById('custom_feeds_list');
+            customFeedsList.innerHTML = '';
+            
+            if (newsManagerData.custom_feeds) {
+                Object.entries(newsManagerData.custom_feeds).forEach(([name, url]) => {
+                    const feedDiv = document.createElement('div');
+                    feedDiv.style.cssText = 'margin: 10px 0; padding: 10px; border: 1px solid #ccc; border-radius: 4px; background: white;';
+                    feedDiv.innerHTML = `
+                        <div style="display: flex; justify-content: space-between; align-items: center;">
+                            <div><strong>${name}</strong>: ${url}</div>
+                            <button type="button" onclick="removeCustomFeed('${name}')" 
+                                    style="background: #ff4444; color: white; border: none; padding: 4px 8px; border-radius: 3px; cursor: pointer;">Remove</button>
+                        </div>
+                    `;
+                    customFeedsList.appendChild(feedDiv);
+                });
+            }
+        }
+
+        function updateNewsStatus() {
+            const statusDiv = document.getElementById('news_status');
+            const enabledFeeds = newsManagerData.enabled_feeds || [];
+            
+            statusDiv.innerHTML = `
+                <h4>Current Status</h4>
+                <p><strong>Enabled:</strong> ${newsManagerData.enabled ? 'Yes' : 'No'}</p>
+                <p><strong>Active Feeds:</strong> ${enabledFeeds.join(', ') || 'None'}</p>
+                <p><strong>Headlines per Feed:</strong> ${newsManagerData.headlines_per_feed || 2}</p>
+                <p><strong>Total Custom Feeds:</strong> ${Object.keys(newsManagerData.custom_feeds || {}).length}</p>
+                <p><strong>Rotation Enabled:</strong> ${newsManagerData.rotation_enabled !== false ? 'Yes' : 'No'}</p>
+            `;
+        }
+
+        async function saveNewsSettings() {
+            const enabledFeeds = Array.from(document.querySelectorAll('input[name="news_feed"]:checked'))
+                .map(input => input.value);
+            
+            const headlinesPerFeed = parseInt(document.getElementById('headlines_per_feed').value);
+            const enabled = document.getElementById('news_enabled').checked;
+            
+            try {
+                await fetch('/news_manager/toggle', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ enabled: enabled })
+                });
+                
+                const response = await fetch('/news_manager/update_feeds', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        enabled_feeds: enabledFeeds,
+                        headlines_per_feed: headlinesPerFeed
+                    })
+                });
+                
+                const data = await response.json();
+                showNotification(data.message, data.status);
+                
+                if (data.status === 'success') {
+                    loadNewsManagerData();
+                }
+            } catch (error) {
+                showNotification('Error saving news settings: ' + error, 'error');
+            }
+        }
+
+        async function addCustomFeed() {
+            const name = document.getElementById('custom_feed_name').value.trim();
+            const url = document.getElementById('custom_feed_url').value.trim();
+            
+            if (!name || !url) {
+                showNotification('Please enter both feed name and URL', 'error');
+                return;
+            }
+            
+            try {
+                const response = await fetch('/news_manager/add_custom_feed', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name: name, url: url })
+                });
+                
+                const data = await response.json();
+                showNotification(data.message, data.status);
+                
+                if (data.status === 'success') {
+                    document.getElementById('custom_feed_name').value = '';
+                    document.getElementById('custom_feed_url').value = '';
+                    loadNewsManagerData();
+                }
+            } catch (error) {
+                showNotification('Error adding custom feed: ' + error, 'error');
+            }
+        }
+
+        async function removeCustomFeed(name) {
+            if (!confirm(`Are you sure you want to remove the feed "${name}"?`)) {
+                return;
+            }
+            
+            try {
+                const response = await fetch('/news_manager/remove_custom_feed', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name: name })
+                });
+                
+                const data = await response.json();
+                showNotification(data.message, data.status);
+                
+                if (data.status === 'success') {
+                    loadNewsManagerData();
+                }
+            } catch (error) {
+                showNotification('Error removing custom feed: ' + error, 'error');
+            }
+        }
+
+        function refreshNewsStatus() {
+            loadNewsManagerData();
+            showNotification('News status refreshed', 'success');
+        }
+
+        // Sports configuration placeholder
+        function saveSportsConfig() {
+            showNotification('Sports configuration saved (placeholder)', 'success');
+        }
+    </script>
+</body>
+</html>

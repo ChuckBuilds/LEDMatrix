@@ -436,7 +436,11 @@ class CacheManager:
         
         try:
             config = self.config_manager.get_config()
-            sport_config = config.get(f"{sport_key}_scoreboard", {})
+            # For MiLB, look for "milb" config instead of "milb_scoreboard"
+            if sport_key == 'milb':
+                sport_config = config.get("milb", {})
+            else:
+                sport_config = config.get(f"{sport_key}_scoreboard", {})
             return sport_config.get("live_update_interval", 60)  # Default to 60 seconds
         except Exception as e:
             self.logger.warning(f"Could not get live_update_interval for {sport_key}: {e}")

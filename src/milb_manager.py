@@ -317,7 +317,7 @@ class BaseMiLBManager:
 
     def _fetch_milb_api_data(self, use_cache: bool = True) -> Dict[str, Any]:
         """Fetch MiLB game data from the MLB Stats API."""
-        cache_key = "milb_api_data"
+        cache_key = "milb_live_api_data"
         if use_cache:
             cached_data = self.cache_manager.get_with_auto_strategy(cache_key)
             if cached_data:

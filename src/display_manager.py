@@ -37,92 +37,136 @@ class DisplayManager:
     def _setup_matrix(self):
         """Initialize the RGB matrix with configuration settings."""
         setup_start = time.time()
-        options = RGBMatrixOptions()
         
-        # Hardware configuration
-        hardware_config = self.config.get('display', {}).get('hardware', {})
-        runtime_config = self.config.get('display', {}).get('runtime', {})
-        
-        # Basic hardware settings
-        options.rows = hardware_config.get('rows', 32)
-        options.cols = hardware_config.get('cols', 64)
-        options.chain_length = hardware_config.get('chain_length', 2)
-        options.parallel = hardware_config.get('parallel', 1)
-        options.hardware_mapping = hardware_config.get('hardware_mapping', 'adafruit-hat-pwm')
-        
-        # Performance and stability settings
-        options.brightness = hardware_config.get('brightness', 90)
-        options.pwm_bits = hardware_config.get('pwm_bits', 10)
-        options.pwm_lsb_nanoseconds = hardware_config.get('pwm_lsb_nanoseconds', 150)
-        options.led_rgb_sequence = hardware_config.get('led_rgb_sequence', 'RGB')
-        options.pixel_mapper_config = hardware_config.get('pixel_mapper_config', '')
-        options.row_address_type = hardware_config.get('row_address_type', 0)
-        options.multiplexing = hardware_config.get('multiplexing', 0)
-        options.disable_hardware_pulsing = hardware_config.get('disable_hardware_pulsing', False)
-        options.show_refresh_rate = hardware_config.get('show_refresh_rate', False)
-        options.limit_refresh_rate_hz = hardware_config.get('limit_refresh_rate_hz', 90)
-        options.gpio_slowdown = runtime_config.get('gpio_slowdown', 2)
-        
-        # Additional settings from config
-        if 'scan_mode' in hardware_config:
-            options.scan_mode = hardware_config.get('scan_mode')
-        if 'pwm_dither_bits' in hardware_config:
-            options.pwm_dither_bits = hardware_config.get('pwm_dither_bits')
-        if 'inverse_colors' in hardware_config:
-            options.inverse_colors = hardware_config.get('inverse_colors')
-        
-        # Initialize the matrix
-        self.matrix = RGBMatrix(options=options)
-        
-        # Create double buffer for smooth updates
-        self.offscreen_canvas = self.matrix.CreateFrameCanvas()
-        self.current_canvas = self.matrix.CreateFrameCanvas()
-        
-        # Create image with full chain width
-        self.image = Image.new('RGB', (self.matrix.width, self.matrix.height))
-        self.draw = ImageDraw.Draw(self.image)
-        
-        # Initialize font with Press Start 2P
         try:
-            self.font = ImageFont.truetype("assets/fonts/PressStart2P-Regular.ttf", 8)
-            logger.info("Initial Press Start 2P font loaded successfully")
+            options = RGBMatrixOptions()
+            
+            # Hardware configuration
+            hardware_config = self.config.get('display', {}).get('hardware', {})
+            runtime_config = self.config.get('display', {}).get('runtime', {})
+            
+            # Basic hardware settings
+            options.rows = hardware_config.get('rows', 32)
+            options.cols = hardware_config.get('cols', 64)
+            options.chain_length = hardware_config.get('chain_length', 2)
+            options.parallel = hardware_config.get('parallel', 1)
+            options.hardware_mapping = hardware_config.get('hardware_mapping', 'adafruit-hat-pwm')
+            
+            # Performance and stability settings
+            options.brightness = hardware_config.get('brightness', 90)
+            options.pwm_bits = hardware_config.get('pwm_bits', 10)
+            options.pwm_lsb_nanoseconds = hardware_config.get('pwm_lsb_nanoseconds', 150)
+            options.led_rgb_sequence = hardware_config.get('led_rgb_sequence', 'RGB')
+            options.pixel_mapper_config = hardware_config.get('pixel_mapper_config', '')
+            options.row_address_type = hardware_config.get('row_address_type', 0)
+            options.multiplexing = hardware_config.get('multiplexing', 0)
+            options.disable_hardware_pulsing = hardware_config.get('disable_hardware_pulsing', False)
+            options.show_refresh_rate = hardware_config.get('show_refresh_rate', False)
+            options.limit_refresh_rate_hz = hardware_config.get('limit_refresh_rate_hz', 90)
+            options.gpio_slowdown = runtime_config.get('gpio_slowdown', 2)
+            
+            # Additional settings from config
+            if 'scan_mode' in hardware_config:
+                options.scan_mode = hardware_config.get('scan_mode')
+            if 'pwm_dither_bits' in hardware_config:
+                options.pwm_dither_bits = hardware_config.get('pwm_dither_bits')
+            if 'inverse_colors' in hardware_config:
+                options.inverse_colors = hardware_config.get('inverse_colors')
+            
+            logger.info(f"Initializing RGB Matrix with settings: rows={options.rows}, cols={options.cols}, chain_length={options.chain_length}, parallel={options.parallel}, hardware_mapping={options.hardware_mapping}")
+            
+            # Initialize the matrix
+            self.matrix = RGBMatrix(options=options)
+            logger.info("RGB Matrix initialized successfully")
+            
+            # Create double buffer for smooth updates
+            self.offscreen_canvas = self.matrix.CreateFrameCanvas()
+            self.current_canvas = self.matrix.CreateFrameCanvas()
+            logger.info("Frame canvases created successfully")
+            
+            # Create image with full chain width
+            self.image = Image.new('RGB', (self.matrix.width, self.matrix.height))
+            self.draw = ImageDraw.Draw(self.image)
+            logger.info(f"Image canvas created with dimensions: {self.matrix.width}x{self.matrix.height}")
+            
+            # Initialize font with Press Start 2P
+            try:
+                self.font = ImageFont.truetype("assets/fonts/PressStart2P-Regular.ttf", 8)
+                logger.info("Initial Press Start 2P font loaded successfully")
+            except Exception as e:
+                logger.error(f"Failed to load initial font: {e}")
+                self.font = ImageFont.load_default()
+            
+            # Draw a test pattern
+            self._draw_test_pattern()
+            
         except Exception as e:
-            logger.error(f"Failed to load initial font: {e}")
-            self.font = ImageFont.load_default()
-        
-        # Draw a test pattern
-        self._draw_test_pattern()
+            logger.error(f"Failed to initialize RGB Matrix: {e}", exc_info=True)
+            # Create a fallback image for web preview
+            self.matrix = None
+            self.image = Image.new('RGB', (128, 32))  # Default size
+            self.draw = ImageDraw.Draw(self.image)
+            self.draw.text((10, 10), "Matrix Error", fill=(255, 0, 0))
+            logger.error(f"Matrix initialization failed, using fallback mode. Error: {e}")
+            raise
 
     @property
     def width(self):
         """Get the display width."""
-        return self.matrix.width if hasattr(self, 'matrix') else 128
+        if hasattr(self, 'matrix') and self.matrix is not None:
+            return self.matrix.width
+        elif hasattr(self, 'image'):
+            return self.image.width
+        else:
+            return 128  # Default fallback width
 
     @property
     def height(self):
         """Get the display height."""
-        return self.matrix.height if hasattr(self, 'matrix') else 32
+        if hasattr(self, 'matrix') and self.matrix is not None:
+            return self.matrix.height
+        elif hasattr(self, 'image'):
+            return self.image.height
+        else:
+            return 32  # Default fallback height
 
     def _draw_test_pattern(self):
         """Draw a test pattern to verify the display is working."""
-        self.clear()
-        
-        # Draw a red rectangle border
-        self.draw.rectangle([0, 0, self.matrix.width-1, self.matrix.height-1], outline=(255, 0, 0))
-        
-        # Draw a diagonal line
-        self.draw.line([0, 0, self.matrix.width-1, self.matrix.height-1], fill=(0, 255, 0))
-        
-        # Draw some text - changed from "TEST" to "Initializing" with smaller font
-        self.draw.text((10, 10), "Initializing", font=self.font, fill=(0, 0, 255))
-        
-        # Update the display once after everything is drawn
-        self.update_display()
-        time.sleep(0.5)  # Reduced from 1 second to 0.5 seconds for faster animation
+        try:
+            self.clear()
+            
+            if self.matrix is None:
+                # Fallback mode - just draw on the image
+                self.draw.rectangle([0, 0, self.image.width-1, self.image.height-1], outline=(255, 0, 0))
+                self.draw.line([0, 0, self.image.width-1, self.image.height-1], fill=(0, 255, 0))
+                self.draw.text((10, 10), "Simulation", font=self.font, fill=(0, 0, 255))
+                logger.info("Drew test pattern in fallback mode")
+                return
+            
+            # Draw a red rectangle border
+            self.draw.rectangle([0, 0, self.matrix.width-1, self.matrix.height-1], outline=(255, 0, 0))
+            
+            # Draw a diagonal line
+            self.draw.line([0, 0, self.matrix.width-1, self.matrix.height-1], fill=(0, 255, 0))
+            
+            # Draw some text - changed from "TEST" to "Initializing" with smaller font
+            self.draw.text((10, 10), "Initializing", font=self.font, fill=(0, 0, 255))
+            
+            # Update the display once after everything is drawn
+            self.update_display()
+            time.sleep(0.5)  # Reduced from 1 second to 0.5 seconds for faster animation
+            
+        except Exception as e:
+            logger.error(f"Error drawing test pattern: {e}", exc_info=True)
 
     def update_display(self):
         """Update the display using double buffering with proper sync."""
         try:
+            if self.matrix is None:
+                # Fallback mode - no actual hardware to update
+                logger.debug("Update display called in fallback mode (no hardware)")
+                return
+                
             # Copy the current image to the offscreen canvas   
             self.offscreen_canvas.SetImage(self.image)
             
@@ -137,6 +181,13 @@ class DisplayManager:
     def clear(self):
         """Clear the display completely."""
         try:
+            if self.matrix is None:
+                # Fallback mode - just clear the image
+                self.image = Image.new('RGB', (self.image.width, self.image.height))
+                self.draw = ImageDraw.Draw(self.image)
+                logger.debug("Cleared display in fallback mode")
+                return
+                
             # Create a new black image
             self.image = Image.new('RGB', (self.matrix.width, self.matrix.height))
             self.draw = ImageDraw.Draw(self.image)
