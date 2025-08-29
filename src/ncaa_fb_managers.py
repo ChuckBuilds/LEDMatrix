@@ -313,6 +313,37 @@ class BaseNCAAFBManager: # Renamed class
             draw.text((x + dx, y + dy), text, font=font, fill=outline_color)
         draw.text((x, y), text, font=font, fill=fill)
 
+    def _download_team_logo(self, team_id):
+        # Base API URL with placeholder for team ID
+        API_URL_TEMPLATE = "http://site.api.espn.com/apis/site/v2/sports/football/college-football/teams/{}"
+
+        url = API_URL_TEMPLATE.format(team_id)
+        response = requests.get(url)
+
+        if response.status_code != 200:
+            print(f"Failed to fetch data for team ID {team_id}. Status code: {response.status_code}")
+            return
+
+        data = response.json()
+        team = data.get("team", {})
+        logos = team.get("logos", [])
+
+        if logos:
+            logo_url = logos[0].get("href")
+            if logo_url:
+                try:
+                    img_data = requests.get(logo_url).content
+                    file_path = f"{self.logo_dir}/{team_id}.png"
+                    with open(file_path, "wb") as f:
+                        f.write(img_data)
+                    print(f"Saved logo for {team_id} as {file_path}")
+                except Exception as e:
+                    print(f"Error downloading logo for {team_id}: {e}")
+            else:
+                print(f"No logo URL found for team ID {team_id}")
+        else:
+            print(f"No logos found for team ID {team_id}")
+
     def _load_and_resize_logo(self, team_abbrev: str) -> Optional[Image.Image]:
         """Load and resize a team logo, with caching."""
         if team_abbrev in self._logo_cache:
@@ -322,9 +353,14 @@ class BaseNCAAFBManager: # Renamed class
         self.logger.debug(f"Logo path: {logo_path}")
 
         try:
-            # Create placeholder if logo doesn't exist (useful for testing)
+            # Try to download team logo
             if not os.path.exists(logo_path):
-                self.logger.warning(f"Logo not found for {team_abbrev} at {logo_path}. Creating placeholder.")
+                self.logger.warning(f"Logo not found for {team_abbrev} at {logo_path}. Attempting to download.")
+                self._download_team_logo(team_abbrev)
+
+            # Check to make sure logo was able to be downloaded and saved.  If not, create a placeholder.
+            if not os.path.exists(logo_path):
+                self.logger.warning(f"Error occured donwloading logo for {team_abbrev} at {logo_path}. Creating placeholder.")
                 os.makedirs(os.path.dirname(logo_path), exist_ok=True)
                 logo = Image.new('RGBA', (32, 32), (200, 200, 200, 255)) # Gray placeholder
                 draw = ImageDraw.Draw(logo)
