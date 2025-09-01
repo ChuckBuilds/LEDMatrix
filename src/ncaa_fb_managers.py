@@ -100,6 +100,8 @@ class BaseNCAAFBManager: # Renamed class
 
         self._logo_cache = {}
 
+        self.top_25_rankings = []
+
         self.logger.info(f"Initialized NCAAFB manager with display dimensions: {self.display_width}x{self.display_height}")
         self.logger.info(f"Logo directory: {self.logo_dir}")
         self.logger.info(f"Display modes - Recent: {self.recent_enabled}, Upcoming: {self.upcoming_enabled}, Live: {self.live_enabled}")
@@ -207,6 +209,39 @@ class BaseNCAAFBManager: # Renamed class
         else:
             return self._fetch_ncaa_fb_api_data(use_cache=True)
 
+    def _fetch_rankings(self):
+        self.logger.info(f"[NCAAFB] Fetching current AP Top 25 rankings from ESPN API...")
+        try:
+            url = "http://site.api.espn.com/apis/site/v2/sports/football/college-football/rankings"
+
+            response = requests.get(url)
+            response.raise_for_status()
+            data = response.json()
+
+            # Grab rankings[0]
+            rankings_0 = data.get("rankings", [])[0]
+
+            # Extract top 25 team abbreviations
+            self.top_25_rankings = [
+                entry["team"]["abbreviation"]
+                for entry in rankings_0.get("ranks", [])[:25]
+            ]
+
+        except requests.exceptions.RequestException as e:
+            self.logger.error(f"[NCAAFB] Error retrieving AP Top 25 rankings: {e}")
+
+    def _get_rank(self, team_to_check):
+        i = 1
+        if self.top_25_rankings:
+            for team in self.top_25_rankings:
+                if team == team_to_check:
+                    return i
+                i += 1
+            else:
+                return 0
+        else:
+            return 0
+
     def _load_fonts(self):
         """Load fonts used by the scoreboard."""
         fonts = {}
@@ -216,6 +251,7 @@ class BaseNCAAFBManager: # Renamed class
             fonts['team'] = ImageFont.truetype("assets/fonts/PressStart2P-Regular.ttf", 8)
             fonts['status'] = ImageFont.truetype("assets/fonts/4x6-font.ttf", 6) # Using 4x6 for status
             fonts['detail'] = ImageFont.truetype("assets/fonts/4x6-font.ttf", 6) # Added detail font
+            fonts['rank'] = ImageFont.truetype("assets/fonts/PressStart2P-Regular.ttf", 10)
             logging.info("[NCAAFB] Successfully loaded fonts") # Changed log prefix
         except IOError:
             logging.warning("[NCAAFB] Fonts not found, using default PIL font.") # Changed log prefix
@@ -224,6 +260,7 @@ class BaseNCAAFBManager: # Renamed class
             fonts['team'] = ImageFont.load_default()
             fonts['status'] = ImageFont.load_default()
             fonts['detail'] = ImageFont.load_default()
+            fonts['rank'] = ImageFont.load_default()
         return fonts
 
     def _draw_dynamic_odds(self, draw: ImageDraw.Draw, odds: Dict[str, Any], width: int, height: int) -> None:
@@ -672,6 +709,9 @@ class NCAAFBLiveManager(BaseNCAAFBManager): # Renamed class
                         self.logger.warning("[NCAAFB] Test mode: Could not parse clock") # Changed log prefix
                 # No actual display call here, let main loop handle it
             else:
+                # Fetch rankings
+                self._fetch_rankings()
+
                 # Fetch live game data
                 data = self._fetch_data()
                 new_live_games = []
@@ -799,6 +839,24 @@ class NCAAFBLiveManager(BaseNCAAFBManager): # Renamed class
             main_img.paste(away_logo, (away_x, away_y), away_logo)
 
             # --- Draw Text Elements on Overlay ---
+            # Ranking (if ranked)
+            home_rank = self._get_rank(game["home_abbr"])
+            away_rank = self._get_rank(game["away_abbr"])
+
+            if home_rank > 0:
+                rank_text = str(home_rank)
+                rank_width = draw_overlay.textlength(rank_text, font=self.fonts['rank'])
+                rank_x = home_x - 8
+                rank_y = 2
+                self._draw_text_with_outline(draw_overlay, rank_text, (rank_x, rank_y), self.fonts['rank'])
+
+            if away_rank > 0:
+                rank_text = str(away_rank)
+                rank_width = draw_overlay.textlength(rank_text, font=self.fonts['rank'])
+                rank_x = away_x + away_logo.width + 8
+                rank_y = 2
+                self._draw_text_with_outline(draw_overlay, rank_text, (rank_x, rank_y), self.fonts['rank'])
+
             # Scores (centered, slightly above bottom)
             home_score = str(game.get("home_score", "0"))
             away_score = str(game.get("away_score", "0"))
@@ -922,6 +980,9 @@ class NCAAFBRecentManager(BaseNCAAFBManager): # Renamed class
         self.last_update = current_time # Update time even if fetch fails
         
         try:
+            # Fetch rankings
+            self._fetch_rankings()
+
             data = self._fetch_data() # Uses shared cache
             if not data or 'events' not in data:
                 self.logger.warning("[NCAAFB Recent] No events found in shared data.") # Changed log prefix
@@ -1026,6 +1087,24 @@ class NCAAFBRecentManager(BaseNCAAFBManager): # Renamed class
             main_img.paste(away_logo, (away_x, away_y), away_logo)
 
             # Draw Text Elements on Overlay
+            # Ranking (if ranked)
+            home_rank = self._get_rank(game["home_abbr"])
+            away_rank = self._get_rank(game["away_abbr"])
+
+            if home_rank > 0:
+                rank_text = str(home_rank)
+                rank_width = draw_overlay.textlength(rank_text, font=self.fonts['rank'])
+                rank_x = home_x - 8
+                rank_y = 2
+                self._draw_text_with_outline(draw_overlay, rank_text, (rank_x, rank_y), self.fonts['rank'])
+
+            if away_rank > 0:
+                rank_text = str(away_rank)
+                rank_width = draw_overlay.textlength(rank_text, font=self.fonts['rank'])
+                rank_x = away_x + away_logo.width - 8
+                rank_y = 2
+                self._draw_text_with_outline(draw_overlay, rank_text, (rank_x, rank_y), self.fonts['rank'])
+
             # Final Scores (Centered, same position as live)
             home_score = str(game.get("home_score", "0"))
             away_score = str(game.get("away_score", "0"))
@@ -1134,6 +1213,9 @@ class NCAAFBUpcomingManager(BaseNCAAFBManager): # Renamed class
         self.last_update = current_time
         
         try:
+            # Fetch rankings
+            self._fetch_rankings()
+
             data = self._fetch_data() # Uses shared cache
             if not data or 'events' not in data:
                 self.logger.warning("[NCAAFB Upcoming] No events found in shared data.") # Changed log prefix
@@ -1259,6 +1341,25 @@ class NCAAFBUpcomingManager(BaseNCAAFBManager): # Renamed class
             # Draw Text Elements on Overlay
             game_date = game.get("game_date", "")
             game_time = game.get("game_time", "")
+
+            # Ranking (if ranked)
+            home_rank = self._get_rank(game["home_abbr"])
+            away_rank = self._get_rank(game["away_abbr"])
+
+            if home_rank > 0:
+                rank_text = str(home_rank)
+                rank_width = draw_overlay.textlength(rank_text, font=self.fonts['rank'])
+                rank_x = home_x - 8
+                rank_y = 2
+                self._draw_text_with_outline(draw_overlay, rank_text, (rank_x, rank_y), self.fonts['rank'])
+
+            if away_rank > 0:
+                rank_text = str(away_rank)
+                rank_width = draw_overlay.textlength(rank_text, font=self.fonts['rank'])
+                rank_x = away_x + away_logo.width - 8
+                rank_y = 2
+                self._draw_text_with_outline(draw_overlay, rank_text, (rank_x, rank_y), self.fonts['rank'])
+
 
             # "Next Game" at the top (use smaller status font)
             status_text = "Next Game"
