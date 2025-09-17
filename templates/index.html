@@ -1277,6 +1277,26 @@
                         </div>
                         <div class="description">Only display games involving your favorite teams</div>
                     </div>
+                    <div class="form-group">
+                        <label for="ncaa_fb_show_records">Show Team Records:</label>
+                        <div class="toggle-container">
+                            <label class="toggle-switch">
+                                <input type="checkbox" id="ncaa_fb_show_records" name="ncaa_fb_show_records" {% if main_config.ncaa_fb_scoreboard.show_records %}checked{% endif %}>
+                                <span class="slider"></span>
+                            </label>
+                        </div>
+                        <div class="description">Display team win-loss records in bottom corners</div>
+                    </div>
+                    <div class="form-group">
+                        <label for="ncaa_fb_show_ranking">Show Team Rankings:</label>
+                        <div class="toggle-container">
+                            <label class="toggle-switch">
+                                <input type="checkbox" id="ncaa_fb_show_ranking" name="ncaa_fb_show_ranking" {% if main_config.ncaa_fb_scoreboard.show_ranking %}checked{% endif %}>
+                                <span class="slider"></span>
+                            </label>
+                        </div>
+                        <div class="description">Display AP Top 25 rankings instead of records for ranked teams</div>
+                    </div>
                 </div>
 
                 <div class="config-section">
@@ -2894,7 +2914,9 @@
                 live_priority: document.getElementById('ncaa_fb_live_priority').checked,
                 live_game_duration: parseInt(document.getElementById('ncaa_fb_live_game_duration').value),
                 show_odds: document.getElementById('ncaa_fb_show_odds').checked,
-                show_favorite_teams_only: document.getElementById('ncaa_fb_show_favorite_teams_only').checked
+                show_favorite_teams_only: document.getElementById('ncaa_fb_show_favorite_teams_only').checked,
+                show_records: document.getElementById('ncaa_fb_show_records').checked,
+                show_ranking: document.getElementById('ncaa_fb_show_ranking').checked
             },
             ncaa_baseball_scoreboard: {
                 enabled: document.getElementById('ncaa_baseball_enabled').checked,

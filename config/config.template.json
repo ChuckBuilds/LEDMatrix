@@ -305,6 +305,7 @@
         ],
         "logo_dir": "assets/sports/ncaa_logos",
         "show_records": true,
+        "show_ranking": true,
         "display_modes": {
             "ncaa_fb_live": true,
             "ncaa_fb_recent": true,
