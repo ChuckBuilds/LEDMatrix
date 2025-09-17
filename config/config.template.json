@@ -151,7 +151,14 @@
         "dynamic_duration": true,
         "min_duration": 30,
         "max_duration": 300,
-        "duration_buffer": 0.1
+        "duration_buffer": 0.1,
+        "background_service": {
+            "enabled": true,
+            "max_workers": 3,
+            "request_timeout": 30,
+            "max_retries": 3,
+            "priority": 2
+        }
     },
     "leaderboard": {
         "enabled": false,
@@ -196,7 +203,14 @@
         "dynamic_duration": true,
         "min_duration": 45,
         "max_duration": 600,
-        "duration_buffer": 0.1
+        "duration_buffer": 0.1,
+        "background_service": {
+            "enabled": true,
+            "max_workers": 3,
+            "request_timeout": 30,
+            "max_retries": 3,
+            "priority": 2
+        }
     },
     "calendar": {
         "enabled": false,
@@ -462,6 +476,13 @@
         "logo_dir": "assets/sports/milb_logos",
         "show_records": true,
         "upcoming_fetch_days": 7,
+        "background_service": {
+            "enabled": true,
+            "max_workers": 3,
+            "request_timeout": 30,
+            "max_retries": 3,
+            "priority": 2
+        },
         "display_modes": {
             "milb_live": true,
             "milb_recent": true,
@@ -508,6 +529,13 @@
         ],
         "logo_dir": "assets/sports/soccer_logos",
         "show_records": true,
+        "background_service": {
+            "enabled": true,
+            "max_workers": 3,
+            "request_timeout": 30,
+            "max_retries": 3,
+            "priority": 2
+        },
         "display_modes": {
             "soccer_live": true,
             "soccer_recent": true,

@@ -13,6 +13,7 @@ from src.cache_manager import CacheManager
 from src.config_manager import ConfigManager
 from src.odds_manager import OddsManager
 from src.logo_downloader import download_missing_logo, get_soccer_league_key
+from src.background_data_service import get_background_service
 import pytz
 
 # Import the API counter function from web interface
@@ -91,6 +92,20 @@ class BaseSoccerManager:
         self.display_height = self.display_manager.matrix.height
         
         self._logo_cache = {}
+        
+        # Initialize background data service
+        background_config = self.soccer_config.get("background_service", {})
+        if background_config.get("enabled", True):  # Default to enabled
+            max_workers = background_config.get("max_workers", 3)
+            self.background_service = get_background_service(self.cache_manager, max_workers)
+            self.background_fetch_requests = {}  # Track background fetch requests
+            self.background_enabled = True
+            self.logger.info(f"[Soccer] Background service enabled with {max_workers} workers")
+        else:
+            self.background_service = None
+            self.background_fetch_requests = {}
+            self.background_enabled = False
+            self.logger.info("[Soccer] Background service disabled")
 
         # Ensure data directory exists
         os.makedirs(os.path.dirname(self.team_map_file), exist_ok=True)

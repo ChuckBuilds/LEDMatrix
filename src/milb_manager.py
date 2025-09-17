@@ -12,6 +12,7 @@ from .cache_manager import CacheManager
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 import pytz
+from src.background_data_service import get_background_service
 
 # Import API counter function
 try:
@@ -70,6 +71,20 @@ class BaseMiLBManager:
         self.headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
         }
+        
+        # Initialize background data service
+        background_config = self.milb_config.get("background_service", {})
+        if background_config.get("enabled", True):  # Default to enabled
+            max_workers = background_config.get("max_workers", 3)
+            self.background_service = get_background_service(self.cache_manager, max_workers)
+            self.background_fetch_requests = {}  # Track background fetch requests
+            self.background_enabled = True
+            self.logger.info(f"[MiLB] Background service enabled with {max_workers} workers")
+        else:
+            self.background_service = None
+            self.background_fetch_requests = {}
+            self.background_enabled = False
+            self.logger.info("[MiLB] Background service disabled")
 
     def _probe_and_update_from_live_feed(self, game_pk: str, game_data: Dict[str, Any]) -> bool:
         """Probe MLB Stats live feed for a game and update game_data in-place if live.
