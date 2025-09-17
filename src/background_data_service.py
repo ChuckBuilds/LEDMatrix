@@ -473,15 +473,24 @@ class BackgroundDataService:
             for request_id in list(self.active_requests.keys()):
                 self.cancel_request(request_id)
         
-        # Shutdown executor
-        self.executor.shutdown(wait=wait, timeout=timeout)
+        # Shutdown executor with compatibility for older Python versions
+        try:
+            # Try with timeout parameter (Python 3.9+)
+            self.executor.shutdown(wait=wait, timeout=timeout)
+        except TypeError:
+            # Fallback for older Python versions that don't support timeout
+            if wait and timeout:
+                # For older versions, we can't specify timeout, so just wait
+                self.executor.shutdown(wait=True)
+            else:
+                self.executor.shutdown(wait=wait)
         
         logger.info("BackgroundDataService shutdown complete")
     
     def __del__(self):
         """Cleanup when service is destroyed."""
         if not self._shutdown:
-            self.shutdown(wait=False)
+            self.shutdown(wait=False, timeout=None)
 
 # Global service instance
 _background_service: Optional[BackgroundDataService] = None
