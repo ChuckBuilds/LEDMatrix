@@ -47,7 +47,7 @@ def test_background_service():
     
     # Initialize components
     config_manager = ConfigManager()
-    cache_manager = CacheManager(config_manager)
+    cache_manager = CacheManager()
     
     # Test configuration for NFL
     test_config = {
