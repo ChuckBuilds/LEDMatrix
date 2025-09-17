@@ -104,7 +104,6 @@ class BaseNCAAFBManager: # Renamed class
         self._rankings_cache_timestamp = 0
         self._rankings_cache_duration = 3600  # Cache rankings for 1 hour
 
-        self.top_25_rankings = []
 
         # Initialize background data service
         background_config = self.ncaa_fb_config.get("background_service", {})
@@ -384,38 +383,6 @@ class BaseNCAAFBManager: # Renamed class
         else:
             return self._fetch_ncaa_fb_api_data(use_cache=True)
 
-    def _fetch_rankings(self):
-        self.logger.info(f"[NCAAFB] Fetching current AP Top 25 rankings from ESPN API...")
-        try:
-            url = "http://site.api.espn.com/apis/site/v2/sports/football/college-football/rankings"
-
-            response = requests.get(url)
-            response.raise_for_status()
-            data = response.json()
-
-            # Grab rankings[0]
-            rankings_0 = data.get("rankings", [])[0]
-
-            # Extract top 25 team abbreviations
-            self.top_25_rankings = [
-                entry["team"]["abbreviation"]
-                for entry in rankings_0.get("ranks", [])[:25]
-            ]
-
-        except requests.exceptions.RequestException as e:
-            self.logger.error(f"[NCAAFB] Error retrieving AP Top 25 rankings: {e}")
-
-    def _get_rank(self, team_to_check):
-        i = 1
-        if self.top_25_rankings:
-            for team in self.top_25_rankings:
-                if team == team_to_check:
-                    return i
-                i += 1
-            else:
-                return 0
-        else:
-            return 0
 
     def _load_fonts(self):
         """Load fonts used by the scoreboard."""
@@ -846,6 +813,10 @@ class NCAAFBLiveManager(BaseNCAAFBManager): # Renamed class
         if current_time - self.last_update >= interval:
             self.last_update = current_time
 
+            # Fetch rankings if enabled
+            if self.show_ranking:
+                self._fetch_team_rankings()
+
             if self.test_mode:
                 # Simulate clock running down in test mode
                 if self.current_game and self.current_game["is_live"]:
@@ -1120,6 +1091,86 @@ class NCAAFBLiveManager(BaseNCAAFBManager): # Renamed class
             if 'odds' in game and game['odds']:
                 self._draw_dynamic_odds(draw_overlay, game['odds'], self.display_width, self.display_height)
 
+            # Draw records or rankings if enabled
+            if self.show_records or self.show_ranking:
+                try:
+                    record_font = ImageFont.truetype("assets/fonts/4x6-font.ttf", 6)
+                    self.logger.debug(f"Loaded 6px record font successfully")
+                except IOError:
+                    record_font = ImageFont.load_default()
+                    self.logger.warning(f"Failed to load 6px font, using default font (size: {record_font.size})")
+                
+                # Get team abbreviations
+                away_abbr = game.get('away_abbr', '')
+                home_abbr = game.get('home_abbr', '')
+                
+                record_bbox = draw_overlay.textbbox((0,0), "0-0", font=record_font)
+                record_height = record_bbox[3] - record_bbox[1]
+                record_y = self.display_height - record_height
+                self.logger.debug(f"Record positioning: height={record_height}, record_y={record_y}, display_height={self.display_height}")
+
+                # Display away team info
+                if away_abbr:
+                    if self.show_ranking and self.show_records:
+                        # When both rankings and records are enabled, rankings replace records completely
+                        rankings = self._fetch_team_rankings()
+                        away_rank = rankings.get(away_abbr, 0)
+                        if away_rank > 0:
+                            away_text = f"#{away_rank}"
+                        else:
+                            # Show nothing for unranked teams when rankings are prioritized
+                            away_text = ''
+                    elif self.show_ranking:
+                        # Show ranking only if available
+                        rankings = self._fetch_team_rankings()
+                        away_rank = rankings.get(away_abbr, 0)
+                        if away_rank > 0:
+                            away_text = f"#{away_rank}"
+                        else:
+                            away_text = ''
+                    elif self.show_records:
+                        # Show record only when rankings are disabled
+                        away_text = game.get('away_record', '')
+                    else:
+                        away_text = ''
+                    
+                    if away_text:
+                        away_record_x = 0
+                        self.logger.debug(f"Drawing away ranking '{away_text}' at ({away_record_x}, {record_y}) with font size {record_font.size if hasattr(record_font, 'size') else 'unknown'}")
+                        self._draw_text_with_outline(draw_overlay, away_text, (away_record_x, record_y), record_font)
+
+                # Display home team info
+                if home_abbr:
+                    if self.show_ranking and self.show_records:
+                        # When both rankings and records are enabled, rankings replace records completely
+                        rankings = self._fetch_team_rankings()
+                        home_rank = rankings.get(home_abbr, 0)
+                        if home_rank > 0:
+                            home_text = f"#{home_rank}"
+                        else:
+                            # Show nothing for unranked teams when rankings are prioritized
+                            home_text = ''
+                    elif self.show_ranking:
+                        # Show ranking only if available
+                        rankings = self._fetch_team_rankings()
+                        home_rank = rankings.get(home_abbr, 0)
+                        if home_rank > 0:
+                            home_text = f"#{home_rank}"
+                        else:
+                            home_text = ''
+                    elif self.show_records:
+                        # Show record only when rankings are disabled
+                        home_text = game.get('home_record', '')
+                    else:
+                        home_text = ''
+                    
+                    if home_text:
+                        home_record_bbox = draw_overlay.textbbox((0,0), home_text, font=record_font)
+                        home_record_width = home_record_bbox[2] - home_record_bbox[0]
+                        home_record_x = self.display_width - home_record_width
+                        self.logger.debug(f"Drawing home ranking '{home_text}' at ({home_record_x}, {record_y}) with font size {record_font.size if hasattr(record_font, 'size') else 'unknown'}")
+                        self._draw_text_with_outline(draw_overlay, home_text, (home_record_x, record_y), record_font)
+
             # Composite the text overlay onto the main image
             main_img = Image.alpha_composite(main_img, overlay)
             main_img = main_img.convert('RGB') # Convert for display
@@ -1155,6 +1206,10 @@ class NCAAFBRecentManager(BaseNCAAFBManager): # Renamed class
             return
 
         self.last_update = current_time # Update time even if fetch fails
+        
+        # Fetch rankings if enabled
+        if self.show_ranking:
+            self._fetch_team_rankings()
         
         try:
             data = self._fetch_data() # Uses shared cache
@@ -1454,6 +1509,10 @@ class NCAAFBUpcomingManager(BaseNCAAFBManager): # Renamed class
             return
 
         self.last_update = current_time
+        
+        # Fetch rankings if enabled
+        if self.show_ranking:
+            self._fetch_team_rankings()
         
         try:
             data = self._fetch_data() # Uses shared cache
