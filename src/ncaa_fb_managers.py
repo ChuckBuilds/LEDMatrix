@@ -870,9 +870,6 @@ class NCAAFBLiveManager(BaseNCAAFBManager): # Renamed class
                         self.logger.warning("[NCAAFB] Test mode: Could not parse clock") # Changed log prefix
                 # No actual display call here, let main loop handle it
             else:
-                # Fetch rankings
-                self._fetch_rankings()
-
                 # Fetch live game data
                 data = self._fetch_data()
                 new_live_games = []
@@ -1000,23 +997,7 @@ class NCAAFBLiveManager(BaseNCAAFBManager): # Renamed class
             main_img.paste(away_logo, (away_x, away_y), away_logo)
 
             # --- Draw Text Elements on Overlay ---
-            # Ranking (if ranked)
-            home_rank = self._get_rank(game["home_abbr"])
-            away_rank = self._get_rank(game["away_abbr"])
-
-            if home_rank > 0:
-                rank_text = str(home_rank)
-                rank_width = draw_overlay.textlength(rank_text, font=self.fonts['rank'])
-                rank_x = home_x - 8
-                rank_y = 2
-                self._draw_text_with_outline(draw_overlay, rank_text, (rank_x, rank_y), self.fonts['rank'])
-
-            if away_rank > 0:
-                rank_text = str(away_rank)
-                rank_width = draw_overlay.textlength(rank_text, font=self.fonts['rank'])
-                rank_x = away_x + away_logo.width + 8
-                rank_y = 2
-                self._draw_text_with_outline(draw_overlay, rank_text, (rank_x, rank_y), self.fonts['rank'])
+            # Note: Rankings are now handled in the records/rankings section below
 
             # Scores (centered, slightly above bottom)
             home_score = str(game.get("home_score", "0"))
@@ -1161,9 +1142,6 @@ class NCAAFBRecentManager(BaseNCAAFBManager): # Renamed class
         self.last_update = current_time # Update time even if fetch fails
         
         try:
-            # Fetch rankings
-            self._fetch_rankings()
-
             data = self._fetch_data() # Uses shared cache
             if not data or 'events' not in data:
                 self.logger.warning("[NCAAFB Recent] No events found in shared data.") # Changed log prefix
@@ -1297,23 +1275,7 @@ class NCAAFBRecentManager(BaseNCAAFBManager): # Renamed class
             main_img.paste(away_logo, (away_x, away_y), away_logo)
 
             # Draw Text Elements on Overlay
-            # Ranking (if ranked)
-            home_rank = self._get_rank(game["home_abbr"])
-            away_rank = self._get_rank(game["away_abbr"])
-
-            if home_rank > 0:
-                rank_text = str(home_rank)
-                rank_width = draw_overlay.textlength(rank_text, font=self.fonts['rank'])
-                rank_x = home_x - 8
-                rank_y = 2
-                self._draw_text_with_outline(draw_overlay, rank_text, (rank_x, rank_y), self.fonts['rank'])
-
-            if away_rank > 0:
-                rank_text = str(away_rank)
-                rank_width = draw_overlay.textlength(rank_text, font=self.fonts['rank'])
-                rank_x = away_x + away_logo.width - 8
-                rank_y = 2
-                self._draw_text_with_outline(draw_overlay, rank_text, (rank_x, rank_y), self.fonts['rank'])
+            # Note: Rankings are now handled in the records/rankings section below
 
             # Final Scores (Centered, same position as live)
             home_score = str(game.get("home_score", "0"))
@@ -1479,9 +1441,6 @@ class NCAAFBUpcomingManager(BaseNCAAFBManager): # Renamed class
         self.last_update = current_time
         
         try:
-            # Fetch rankings
-            self._fetch_rankings()
-
             data = self._fetch_data() # Uses shared cache
             if not data or 'events' not in data:
                 self.logger.warning("[NCAAFB Upcoming] No events found in shared data.") # Changed log prefix
@@ -1669,24 +1628,7 @@ class NCAAFBUpcomingManager(BaseNCAAFBManager): # Renamed class
             game_date = game.get("game_date", "")
             game_time = game.get("game_time", "")
 
-            # Ranking (if ranked)
-            home_rank = self._get_rank(game["home_abbr"])
-            away_rank = self._get_rank(game["away_abbr"])
-
-            if home_rank > 0:
-                rank_text = str(home_rank)
-                rank_width = draw_overlay.textlength(rank_text, font=self.fonts['rank'])
-                rank_x = home_x - 8
-                rank_y = 2
-                self._draw_text_with_outline(draw_overlay, rank_text, (rank_x, rank_y), self.fonts['rank'])
-
-            if away_rank > 0:
-                rank_text = str(away_rank)
-                rank_width = draw_overlay.textlength(rank_text, font=self.fonts['rank'])
-                rank_x = away_x + away_logo.width - 8
-                rank_y = 2
-                self._draw_text_with_outline(draw_overlay, rank_text, (rank_x, rank_y), self.fonts['rank'])
-
+            # Note: Rankings are now handled in the records/rankings section below
 
             # "Next Game" at the top (use smaller status font)
             status_text = "Next Game"
