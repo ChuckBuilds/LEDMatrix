@@ -165,8 +165,18 @@ class BaseNFLManager: # Renamed class
         if use_cache:
             cached_data = self.cache_manager.get(cache_key)
             if cached_data:
-                self.logger.info(f"[NFL] Using cached schedule for {current_year}")
-                return {'events': cached_data}
+                # Validate cached data structure
+                if isinstance(cached_data, dict) and 'events' in cached_data:
+                    self.logger.info(f"[NFL] Using cached schedule for {current_year}")
+                    return cached_data
+                elif isinstance(cached_data, list):
+                    # Handle old cache format (list of events)
+                    self.logger.info(f"[NFL] Using cached schedule for {current_year} (legacy format)")
+                    return {'events': cached_data}
+                else:
+                    self.logger.warning(f"[NFL] Invalid cached data format for {current_year}: {type(cached_data)}")
+                    # Clear invalid cache
+                    self.cache_manager.delete(cache_key)
         
         # If background service is disabled, fall back to synchronous fetch
         if not self.background_enabled or not self.background_service:
@@ -179,7 +189,15 @@ class BaseNFLManager: # Renamed class
             
             if result and result.success:
                 self.logger.info(f"[NFL] Background fetch completed for {current_year}")
-                return {'events': result.data}
+                # Validate result data structure
+                if isinstance(result.data, dict) and 'events' in result.data:
+                    return result.data
+                elif isinstance(result.data, list):
+                    # Handle case where result.data is just the events list
+                    return {'events': result.data}
+                else:
+                    self.logger.error(f"[NFL] Invalid background fetch result format: {type(result.data)}")
+                    return None
             elif result and not result.success:
                 self.logger.warning(f"[NFL] Background fetch failed for {current_year}: {result.error}")
                 # Remove failed request and try again
@@ -425,9 +443,24 @@ class BaseNFLManager: # Renamed class
     def _extract_game_details(self, game_event: Dict) -> Optional[Dict]:
         """Extract relevant game details from ESPN NFL API response."""
         # --- THIS METHOD NEEDS SIGNIFICANT ADAPTATION FOR NFL API ---
-        if not game_event: return None
+        if not game_event: 
+            return None
+
+        # Validate event structure
+        if not isinstance(game_event, dict):
+            self.logger.warning(f"[NFL] Skipping invalid game event (not dict): {type(game_event)}")
+            return None
 
         try:
+            # Validate required fields
+            if "competitions" not in game_event or not game_event["competitions"]:
+                self.logger.warning(f"[NFL] Skipping event without competitions: {game_event.get('id', 'unknown')}")
+                return None
+                
+            if "date" not in game_event:
+                self.logger.warning(f"[NFL] Skipping event without date: {game_event.get('id', 'unknown')}")
+                return None
+
             competition = game_event["competitions"][0]
             status = competition["status"]
             competitors = competition["competitors"]
@@ -999,10 +1032,20 @@ class NFLRecentManager(BaseNFLManager): # Renamed class
                 filtered_events = []
                 for event in events:
                     try:
+                        # Validate event structure
+                        if not isinstance(event, dict):
+                            self.logger.warning(f"[NFL Recent] Skipping invalid event (not dict): {type(event)}")
+                            continue
+                        
+                        if "competitions" not in event or not event["competitions"]:
+                            self.logger.warning(f"[NFL Recent] Skipping event without competitions: {event.get('id', 'unknown')}")
+                            continue
+                            
                         competitors = event["competitions"][0]["competitors"]
                         if any(c["team"]["abbreviation"] in self.favorite_teams for c in competitors):
                             filtered_events.append(event)
-                    except (KeyError, IndexError):
+                    except (KeyError, IndexError, TypeError) as e:
+                        self.logger.warning(f"[NFL Recent] Skipping malformed event: {e}")
                         continue # Skip event if data structure is unexpected
                 events = filtered_events
                 self.logger.info(f"[NFL Recent] Filtered to {len(events)} events for favorite teams.")
@@ -1233,10 +1276,20 @@ class NFLUpcomingManager(BaseNFLManager): # Renamed class
                 filtered_events = []
                 for event in events:
                     try:
+                        # Validate event structure
+                        if not isinstance(event, dict):
+                            self.logger.warning(f"[NFL Upcoming] Skipping invalid event (not dict): {type(event)}")
+                            continue
+                        
+                        if "competitions" not in event or not event["competitions"]:
+                            self.logger.warning(f"[NFL Upcoming] Skipping event without competitions: {event.get('id', 'unknown')}")
+                            continue
+                            
                         competitors = event["competitions"][0]["competitors"]
                         if any(c["team"]["abbreviation"] in self.favorite_teams for c in competitors):
                             filtered_events.append(event)
-                    except (KeyError, IndexError):
+                    except (KeyError, IndexError, TypeError) as e:
+                        self.logger.warning(f"[NFL Upcoming] Skipping malformed event: {e}")
                         continue # Skip event if data structure is unexpected
                 events = filtered_events
                 self.logger.info(f"[NFL Upcoming] Filtered to {len(events)} events for favorite teams.")

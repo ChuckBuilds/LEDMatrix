@@ -237,6 +237,21 @@ class BackgroundDataService:
             # Parse response
             data = response.json()
             
+            # Validate data structure
+            if not isinstance(data, dict):
+                raise ValueError(f"Expected dict response, got {type(data)}")
+            
+            if 'events' not in data:
+                raise ValueError("Response missing 'events' field")
+            
+            # Validate events structure
+            events = data.get('events', [])
+            if not isinstance(events, list):
+                raise ValueError(f"Expected events to be list, got {type(events)}")
+            
+            # Log data validation
+            logger.debug(f"Validated {len(events)} events for {request.sport} {request.year}")
+            
             # Cache the data
             self.cache_manager.set(request.cache_key, data)
             
