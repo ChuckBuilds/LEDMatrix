@@ -279,6 +279,13 @@
         ],
         "logo_dir": "assets/sports/nfl_logos",
         "show_records": true,
+        "background_service": {
+            "enabled": true,
+            "max_workers": 3,
+            "request_timeout": 30,
+            "max_retries": 3,
+            "priority": 2
+        },
         "display_modes": {
             "nfl_live": true,
             "nfl_recent": true,
