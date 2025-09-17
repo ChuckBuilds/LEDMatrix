@@ -12,6 +12,7 @@ from src.cache_manager import CacheManager # Keep CacheManager import
 from src.config_manager import ConfigManager
 from src.odds_manager import OddsManager
 from src.logo_downloader import download_missing_logo
+from src.background_data_service import get_background_service
 import pytz
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
@@ -104,6 +105,20 @@ class BaseNCAAFBManager: # Renamed class
         self._rankings_cache_duration = 3600  # Cache rankings for 1 hour
 
         self.top_25_rankings = []
+
+        # Initialize background data service
+        background_config = self.ncaa_fb_config.get("background_service", {})
+        if background_config.get("enabled", True):  # Default to enabled
+            max_workers = background_config.get("max_workers", 3)
+            self.background_service = get_background_service(self.cache_manager, max_workers)
+            self.background_fetch_requests = {}  # Track background fetch requests
+            self.background_enabled = True
+            self.logger.info(f"[NCAAFB] Background service enabled with {max_workers} workers")
+        else:
+            self.background_service = None
+            self.background_fetch_requests = {}
+            self.background_enabled = False
+            self.logger.info("[NCAAFB] Background service disabled")
 
         self.logger.info(f"Initialized NCAAFB manager with display dimensions: {self.display_width}x{self.display_height}")
         self.logger.info(f"Logo directory: {self.logo_dir}")

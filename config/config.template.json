@@ -226,6 +226,13 @@
         ],
         "logo_dir": "assets/sports/nhl_logos",
         "show_records": true,
+        "background_service": {
+            "enabled": true,
+            "max_workers": 3,
+            "request_timeout": 30,
+            "max_retries": 3,
+            "priority": 2
+        },
         "display_modes": {
             "nhl_live": true,
             "nhl_recent": true,
@@ -252,6 +259,13 @@
         ],
         "logo_dir": "assets/sports/nba_logos",
         "show_records": true,
+        "background_service": {
+            "enabled": true,
+            "max_workers": 3,
+            "request_timeout": 30,
+            "max_retries": 3,
+            "priority": 2
+        },
         "display_modes": {
             "nba_live": true,
             "nba_recent": true,
@@ -313,6 +327,13 @@
         "logo_dir": "assets/sports/ncaa_logos",
         "show_records": true,
         "show_ranking": true,
+        "background_service": {
+            "enabled": true,
+            "max_workers": 3,
+            "request_timeout": 30,
+            "max_retries": 3,
+            "priority": 2
+        },
         "display_modes": {
             "ncaa_fb_live": true,
             "ncaa_fb_recent": true,

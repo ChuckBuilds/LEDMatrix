@@ -11,6 +11,7 @@ from src.display_manager import DisplayManager
 from src.cache_manager import CacheManager
 from src.config_manager import ConfigManager
 from src.odds_manager import OddsManager
+from src.background_data_service import get_background_service
 import pytz
 
 # Import the API counter function from web interface
@@ -70,6 +71,20 @@ class BaseNHLManager:
         
         # Cache for loaded logos
         self._logo_cache = {}
+        
+        # Initialize background data service
+        background_config = self.nhl_config.get("background_service", {})
+        if background_config.get("enabled", True):  # Default to enabled
+            max_workers = background_config.get("max_workers", 3)
+            self.background_service = get_background_service(self.cache_manager, max_workers)
+            self.background_fetch_requests = {}  # Track background fetch requests
+            self.background_enabled = True
+            self.logger.info(f"[NHL] Background service enabled with {max_workers} workers")
+        else:
+            self.background_service = None
+            self.background_fetch_requests = {}
+            self.background_enabled = False
+            self.logger.info("[NHL] Background service disabled")
         
         self.logger.info(f"Initialized NHL manager with display dimensions: {self.display_width}x{self.display_height}")
         self.logger.info(f"Logo directory: {self.logo_dir}")
