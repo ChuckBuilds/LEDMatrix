@@ -109,10 +109,8 @@ class OddsTickerManager:
         
         # Initialize managers
         self.cache_manager = CacheManager()
-        # OddsManager doesn't actually use the config_manager parameter, so pass None
-        self.odds_manager = OddsManager(self.cache_manager, None)
         
-        # Initialize background data service
+        # Initialize background data service first
         background_config = self.odds_ticker_config.get("background_service", {})
         if background_config.get("enabled", True):  # Default to enabled
             max_workers = background_config.get("max_workers", 3)
@@ -125,6 +123,9 @@ class OddsTickerManager:
             self.background_fetch_requests = {}
             self.background_enabled = False
             logger.info("[Odds Ticker] Background service disabled")
+        
+        # Pass background service to OddsManager for async odds fetching
+        self.odds_manager = OddsManager(self.cache_manager, None, self.background_service)
         
         # State variables
         self.last_update = 0
@@ -570,43 +571,18 @@ class OddsTickerManager:
                                 
                                 logger.debug(f"Game {game_id} starts in {time_until_game}. Setting odds update interval to {update_interval_seconds}s.")
                                 
-                                # Fetch odds with timeout protection to prevent freezing (if enabled)
+                                # Fetch odds using background service (if enabled)
                                 if self.fetch_odds:
                                     try:
-                                        import threading
-                                        import queue
-                                        
-                                        result_queue = queue.Queue()
-                                        
-                                        def fetch_odds():
-                                            try:
-                                                odds_result = self.odds_manager.get_odds(
-                                                    sport=sport,
-                                                    league=league,
-                                                    event_id=game_id,
-                                                    update_interval_seconds=update_interval_seconds
-                                                )
-                                                result_queue.put(('success', odds_result))
-                                            except Exception as e:
-                                                result_queue.put(('error', e))
-                                        
-                                        # Start odds fetch in a separate thread
-                                        odds_thread = threading.Thread(target=fetch_odds)
-                                        odds_thread.daemon = True
-                                        odds_thread.start()
-                                        
-                                        # Wait for result with 3-second timeout
-                                        try:
-                                            result_type, result_data = result_queue.get(timeout=3)
-                                            if result_type == 'success':
-                                                odds_data = result_data
-                                            else:
-                                                logger.warning(f"Odds fetch failed for game {game_id}: {result_data}")
-                                                odds_data = None
-                                        except queue.Empty:
-                                            logger.warning(f"Odds fetch timed out for game {game_id}")
-                                            odds_data = None
-                                        
+                                        odds_data = self.odds_manager.get_odds(
+                                            sport=sport,
+                                            league=league,
+                                            event_id=game_id,
+                                            update_interval_seconds=update_interval_seconds,
+                                            use_background=self.background_enabled
+                                        )
+                                        if odds_data is None and self.background_enabled:
+                                            logger.debug(f"Odds fetch in progress for game {game_id}, will be available on next update")
                                     except Exception as e:
                                         logger.warning(f"Odds fetch failed for game {game_id}: {e}")
                                         odds_data = None
