@@ -316,7 +316,7 @@ class BaseNFLManager: # Renamed class
     def _fetch_data(self, date_str: str = None) -> Optional[Dict]:
         """Fetch data using shared data mechanism or direct fetch for live."""
         if isinstance(self, NFLLiveManager):
-            return self._fetch_nfl_api_data(use_cache=False)
+            return self._fetch_nfl_api_data(use_cache=True)  # Use cache for live manager to get fresh data
         else:
             return self._fetch_nfl_api_data(use_cache=True)
 
