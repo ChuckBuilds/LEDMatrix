@@ -745,7 +745,7 @@ class NCAAMHockeyRecentManager(BaseNCAAMHockeyManager):
         self.recent_games = []
         self.current_game_index = 0
         self.last_update = 0
-        self.update_interval = 300  # 5 minutes
+        self.update_interval = self.ncaam_hockey_config.get("recent_update_interval", 3600)  # Use config, default 1 hour
         self.recent_games_to_show = self.ncaam_hockey_config.get("recent_games_to_show", 5)  # Number of most recent games to display
         self.last_game_switch = 0
         self.game_display_duration = 15  # Display each game for 15 seconds
@@ -842,7 +842,7 @@ class NCAAMHockeyUpcomingManager(BaseNCAAMHockeyManager):
         self.upcoming_games = []
         self.current_game_index = 0
         self.last_update = 0
-        self.update_interval = 300  # 5 minutes
+        self.update_interval = self.ncaam_hockey_config.get("upcoming_update_interval", 3600)  # Use config, default 1 hour
         self.upcoming_games_to_show = self.ncaam_hockey_config.get("upcoming_games_to_show", 5)  # Number of upcoming games to display
         self.last_log_time = 0
         self.log_interval = 300  # Only log status every 5 minutes

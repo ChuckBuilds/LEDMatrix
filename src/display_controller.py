@@ -591,6 +591,55 @@ class DisplayController:
                 self.display_manager.defer_update(self.nfl_recent.update, priority=3)
             if hasattr(self, 'nfl_upcoming') and self.nfl_upcoming:
                 self.display_manager.defer_update(self.nfl_upcoming.update, priority=3)
+            # Defer other sport manager updates
+            if hasattr(self, 'nhl_live') and self.nhl_live:
+                self.display_manager.defer_update(self.nhl_live.update, priority=3)
+            if hasattr(self, 'nhl_recent') and self.nhl_recent:
+                self.display_manager.defer_update(self.nhl_recent.update, priority=3)
+            if hasattr(self, 'nhl_upcoming') and self.nhl_upcoming:
+                self.display_manager.defer_update(self.nhl_upcoming.update, priority=3)
+            if hasattr(self, 'nba_live') and self.nba_live:
+                self.display_manager.defer_update(self.nba_live.update, priority=3)
+            if hasattr(self, 'nba_recent') and self.nba_recent:
+                self.display_manager.defer_update(self.nba_recent.update, priority=3)
+            if hasattr(self, 'nba_upcoming') and self.nba_upcoming:
+                self.display_manager.defer_update(self.nba_upcoming.update, priority=3)
+            if hasattr(self, 'mlb_live') and self.mlb_live:
+                self.display_manager.defer_update(self.mlb_live.update, priority=3)
+            if hasattr(self, 'mlb_recent') and self.mlb_recent:
+                self.display_manager.defer_update(self.mlb_recent.update, priority=3)
+            if hasattr(self, 'mlb_upcoming') and self.mlb_upcoming:
+                self.display_manager.defer_update(self.mlb_upcoming.update, priority=3)
+            if hasattr(self, 'milb_live') and self.milb_live:
+                self.display_manager.defer_update(self.milb_live.update, priority=3)
+            if hasattr(self, 'milb_recent') and self.milb_recent:
+                self.display_manager.defer_update(self.milb_recent.update, priority=3)
+            if hasattr(self, 'milb_upcoming') and self.milb_upcoming:
+                self.display_manager.defer_update(self.milb_upcoming.update, priority=3)
+            if hasattr(self, 'soccer_live') and self.soccer_live:
+                self.display_manager.defer_update(self.soccer_live.update, priority=3)
+            if hasattr(self, 'soccer_recent') and self.soccer_recent:
+                self.display_manager.defer_update(self.soccer_recent.update, priority=3)
+            if hasattr(self, 'soccer_upcoming') and self.soccer_upcoming:
+                self.display_manager.defer_update(self.soccer_upcoming.update, priority=3)
+            if hasattr(self, 'ncaa_baseball_live') and self.ncaa_baseball_live:
+                self.display_manager.defer_update(self.ncaa_baseball_live.update, priority=3)
+            if hasattr(self, 'ncaa_baseball_recent') and self.ncaa_baseball_recent:
+                self.display_manager.defer_update(self.ncaa_baseball_recent.update, priority=3)
+            if hasattr(self, 'ncaa_baseball_upcoming') and self.ncaa_baseball_upcoming:
+                self.display_manager.defer_update(self.ncaa_baseball_upcoming.update, priority=3)
+            if hasattr(self, 'ncaam_basketball_live') and self.ncaam_basketball_live:
+                self.display_manager.defer_update(self.ncaam_basketball_live.update, priority=3)
+            if hasattr(self, 'ncaam_basketball_recent') and self.ncaam_basketball_recent:
+                self.display_manager.defer_update(self.ncaam_basketball_recent.update, priority=3)
+            if hasattr(self, 'ncaam_basketball_upcoming') and self.ncaam_basketball_upcoming:
+                self.display_manager.defer_update(self.ncaam_basketball_upcoming.update, priority=3)
+            if hasattr(self, 'ncaam_hockey_live') and self.ncaam_hockey_live:
+                self.display_manager.defer_update(self.ncaam_hockey_live.update, priority=3)
+            if hasattr(self, 'ncaam_hockey_recent') and self.ncaam_hockey_recent:
+                self.display_manager.defer_update(self.ncaam_hockey_recent.update, priority=3)
+            if hasattr(self, 'ncaam_hockey_upcoming') and self.ncaam_hockey_upcoming:
+                self.display_manager.defer_update(self.ncaam_hockey_upcoming.update, priority=3)
             # Continue with non-scrolling-sensitive updates
             if self.weather: self.weather.get_weather()
             if self.calendar: self.calendar.update(time.time())
@@ -607,6 +656,57 @@ class DisplayController:
             if self.youtube: self.youtube.update()
             if self.text_display: self.text_display.update()
             if self.of_the_day: self.of_the_day.update(time.time())
+            
+            # Update all sports managers in background
+            # NHL managers
+            if self.nhl_live: self.nhl_live.update()
+            if self.nhl_recent: self.nhl_recent.update()
+            if self.nhl_upcoming: self.nhl_upcoming.update()
+            
+            # NBA managers
+            if self.nba_live: self.nba_live.update()
+            if self.nba_recent: self.nba_recent.update()
+            if self.nba_upcoming: self.nba_upcoming.update()
+            
+            # MLB managers
+            if self.mlb_live: self.mlb_live.update()
+            if self.mlb_recent: self.mlb_recent.update()
+            if self.mlb_upcoming: self.mlb_upcoming.update()
+            
+            # MiLB managers
+            if self.milb_live: self.milb_live.update()
+            if self.milb_recent: self.milb_recent.update()
+            if self.milb_upcoming: self.milb_upcoming.update()
+            
+            # Soccer managers
+            if self.soccer_live: self.soccer_live.update()
+            if self.soccer_recent: self.soccer_recent.update()
+            if self.soccer_upcoming: self.soccer_upcoming.update()
+            
+            # NFL managers
+            if self.nfl_live: self.nfl_live.update()
+            if self.nfl_recent: self.nfl_recent.update()
+            if self.nfl_upcoming: self.nfl_upcoming.update()
+            
+            # NCAAFB managers
+            if self.ncaa_fb_live: self.ncaa_fb_live.update()
+            if self.ncaa_fb_recent: self.ncaa_fb_recent.update()
+            if self.ncaa_fb_upcoming: self.ncaa_fb_upcoming.update()
+            
+            # NCAA Baseball managers
+            if self.ncaa_baseball_live: self.ncaa_baseball_live.update()
+            if self.ncaa_baseball_recent: self.ncaa_baseball_recent.update()
+            if self.ncaa_baseball_upcoming: self.ncaa_baseball_upcoming.update()
+            
+            # NCAA Basketball managers
+            if self.ncaam_basketball_live: self.ncaam_basketball_live.update()
+            if self.ncaam_basketball_recent: self.ncaam_basketball_recent.update()
+            if self.ncaam_basketball_upcoming: self.ncaam_basketball_upcoming.update()
+            
+            # NCAA Hockey managers
+            if self.ncaam_hockey_live: self.ncaam_hockey_live.update()
+            if self.ncaam_hockey_recent: self.ncaam_hockey_recent.update()
+            if self.ncaam_hockey_upcoming: self.ncaam_hockey_upcoming.update()
         
         # News manager fetches data when displayed, not during updates
         # if self.news_manager: self.news_manager.fetch_news_data()

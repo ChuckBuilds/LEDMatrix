@@ -788,7 +788,7 @@ class NCAAMBasketballRecentManager(BaseNCAAMBasketballManager):
         self.recent_games = []
         self.current_game_index = 0
         self.last_update = 0
-        self.update_interval = 3600  # 1 hour for recent games
+        self.update_interval = self.ncaam_basketball_config.get("recent_update_interval", 3600)  # Use config, default 1 hour
         self.recent_games_to_show = self.ncaam_basketball_config.get("recent_games_to_show", 5)  # Number of most recent games to display
         self.last_game_switch = 0
         self.game_display_duration = self.ncaam_basketball_config.get("recent_game_duration", 15) # Configurable duration
@@ -939,7 +939,7 @@ class NCAAMBasketballUpcomingManager(BaseNCAAMBasketballManager):
         self.upcoming_games = []
         self.current_game_index = 0
         self.last_update = 0
-        self.update_interval = 3600  # 1 hour for upcoming games
+        self.update_interval = self.ncaam_basketball_config.get("upcoming_update_interval", 3600)  # Use config, default 1 hour
         self.upcoming_games_to_show = self.ncaam_basketball_config.get("upcoming_games_to_show", 5)  # Number of upcoming games to display
         self.last_warning_time = 0
         self.warning_cooldown = 300  # Only show warning every 5 minutes
