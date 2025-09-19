@@ -335,6 +335,7 @@ class BaseNFLManager: # Renamed class
             # Live games should fetch only current games, not entire season
             return self._fetch_current_nfl_games()
         else:
+            # Recent and Upcoming managers should use cached season data
             return self._fetch_nfl_api_data(use_cache=True)
 
     def _load_fonts(self):
