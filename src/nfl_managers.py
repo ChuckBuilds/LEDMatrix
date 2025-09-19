@@ -313,11 +313,27 @@ class BaseNFLManager: # Renamed class
         
         return None
 
+    def _fetch_current_nfl_games(self) -> Optional[Dict]:
+        """Fetch only current NFL games for live updates (not entire season)."""
+        try:
+            # Fetch current week's games only
+            url = "https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard"
+            response = self.session.get(url, headers=self.headers, timeout=10)
+            response.raise_for_status()
+            data = response.json()
+            events = data.get('events', [])
+            
+            self.logger.info(f"[NFL Live] Fetched {len(events)} current games")
+            return {'events': events}
+        except requests.exceptions.RequestException as e:
+            self.logger.error(f"[NFL Live] API error fetching current games: {e}")
+            return None
+
     def _fetch_data(self, date_str: str = None) -> Optional[Dict]:
         """Fetch data using shared data mechanism or direct fetch for live."""
         if isinstance(self, NFLLiveManager):
-            # Live games should always fetch fresh data directly from API
-            return self._fetch_nfl_api_data_sync(use_cache=False)
+            # Live games should fetch only current games, not entire season
+            return self._fetch_current_nfl_games()
         else:
             return self._fetch_nfl_api_data(use_cache=True)
 
