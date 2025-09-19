@@ -572,8 +572,8 @@ class BaseNFLManager: # Renamed class
             # Timeouts (assuming max 3 per half, not carried over well in standard API)
             # API often provides 'timeouts' directly under team, but reset logic is tricky
             # We might need to simplify this or just use a fixed display if API is unreliable
-            home_timeouts = home_team.get("timeouts", 3) # Default to 3 if not specified
-            away_timeouts = away_team.get("timeouts", 3) # Default to 3 if not specified
+            home_timeouts = situation.get("homeTimeouts", 3) if situation else 3 # Default to 3 if not specified
+            away_timeouts = situation.get("awayTimeouts", 3) if situation else 3 # Default to 3 if not specified
 
 
             details = {
