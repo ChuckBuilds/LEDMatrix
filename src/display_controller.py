@@ -583,6 +583,10 @@ class DisplayController:
                 self.display_manager.defer_update(self.ncaa_fb_live.update, priority=3)
             if hasattr(self, 'nfl_live') and self.nfl_live:
                 self.display_manager.defer_update(self.nfl_live.update, priority=3)
+            if hasattr(self, 'nfl_recent') and self.nfl_recent:
+                self.display_manager.defer_update(self.nfl_recent.update, priority=3)
+            if hasattr(self, 'nfl_upcoming') and self.nfl_upcoming:
+                self.display_manager.defer_update(self.nfl_upcoming.update, priority=3)
             # Continue with non-scrolling-sensitive updates
             if self.weather: self.weather.get_weather()
             if self.calendar: self.calendar.update(time.time())
@@ -599,6 +603,11 @@ class DisplayController:
             if self.youtube: self.youtube.update()
             if self.text_display: self.text_display.update()
             if self.of_the_day: self.of_the_day.update(time.time())
+            
+            # Update NFL managers
+            if self.nfl_live: self.nfl_live.update()
+            if self.nfl_recent: self.nfl_recent.update()
+            if self.nfl_upcoming: self.nfl_upcoming.update()
         
         # News manager fetches data when displayed, not during updates
         # if self.news_manager: self.news_manager.fetch_news_data()
