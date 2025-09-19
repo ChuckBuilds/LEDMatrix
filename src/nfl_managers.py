@@ -316,15 +316,8 @@ class BaseNFLManager: # Renamed class
     def _fetch_data(self, date_str: str = None) -> Optional[Dict]:
         """Fetch data using shared data mechanism or direct fetch for live."""
         if isinstance(self, NFLLiveManager):
-            # For live manager, force fresh data by bypassing cache when update interval has passed
-            current_time = time.time()
-            if hasattr(self, 'last_update') and current_time - self.last_update >= self.update_interval:
-                # Force fresh fetch for live updates
-                self.logger.info(f"[NFL Live] Forcing fresh fetch after {current_time - self.last_update:.1f}s interval")
-                return self._fetch_nfl_api_data(use_cache=False)
-            else:
-                # Use cache for immediate response
-                return self._fetch_nfl_api_data(use_cache=True)
+            # Live games should always fetch fresh data directly from API
+            return self._fetch_nfl_api_data(use_cache=False)
         else:
             return self._fetch_nfl_api_data(use_cache=True)
 
