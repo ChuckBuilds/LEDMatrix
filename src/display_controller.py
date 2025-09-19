@@ -1,6 +1,7 @@
 import time
 import logging
 import sys
+import pytz
 from typing import Dict, Any, List
 from datetime import datetime, time as time_obj
 
@@ -930,7 +931,15 @@ class DisplayController:
                 self.is_display_active = True
             return
 
-        now_time = datetime.now().time()
+        # Get current time in configured timezone
+        timezone_str = self.config.get('timezone', 'UTC')
+        try:
+            tz = pytz.timezone(timezone_str)
+        except pytz.exceptions.UnknownTimeZoneError:
+            logger.warning(f"Unknown timezone: {timezone_str}, falling back to UTC")
+            tz = pytz.UTC
+        
+        now_time = datetime.now(tz).time()
         
         # Handle overnight schedules
         if self.start_time <= self.end_time:
