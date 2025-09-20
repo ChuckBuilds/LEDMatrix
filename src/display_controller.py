@@ -74,6 +74,7 @@ class DisplayController:
         logger.info(f"News Manager initialized: {'Object' if self.news_manager else 'None'}")
         logger.info("Display modes initialized in %.3f seconds", time.time() - init_time)
         
+        self.force_change = False
         # Initialize Music Manager
         music_init_time = time.time()
         self.music_manager = None
@@ -499,7 +500,7 @@ class DisplayController:
                 return self.display_durations.get(mode_key, 60)
 
         # Handle dynamic duration for stocks
-        if mode_key == 'stocks' and self.stocks:
+        elif mode_key == 'stocks' and self.stocks:
             try:
                 dynamic_duration = self.stocks.get_dynamic_duration()
                 # Only log if duration has changed or we haven't logged this duration yet
@@ -513,7 +514,7 @@ class DisplayController:
                 return self.display_durations.get(mode_key, 60)
 
         # Handle dynamic duration for stock_news
-        if mode_key == 'stock_news' and self.news:
+        elif mode_key == 'stock_news' and self.news:
             try:
                 dynamic_duration = self.news.get_dynamic_duration()
                 # Only log if duration has changed or we haven't logged this duration yet
@@ -527,7 +528,7 @@ class DisplayController:
                 return self.display_durations.get(mode_key, 60)
 
         # Handle dynamic duration for odds_ticker
-        if mode_key == 'odds_ticker' and self.odds_ticker:
+        elif mode_key == 'odds_ticker' and self.odds_ticker:
             try:
                 dynamic_duration = self.odds_ticker.get_dynamic_duration()
                 # Only log if duration has changed or we haven't logged this duration yet
@@ -541,7 +542,7 @@ class DisplayController:
                 return self.display_durations.get(mode_key, 60)
 
         # Handle dynamic duration for leaderboard
-        if mode_key == 'leaderboard' and self.leaderboard:
+        elif mode_key == 'leaderboard' and self.leaderboard:
             try:
                 dynamic_duration = self.leaderboard.get_dynamic_duration()
                 # Only log if duration has changed or we haven't logged this duration yet
@@ -555,7 +556,7 @@ class DisplayController:
                 return self.display_durations.get(mode_key, 60)
 
         # Simplify weather key handling
-        if mode_key.startswith('weather_'):
+        elif mode_key.startswith('weather_'):
             return self.display_durations.get(mode_key, 15)
             # duration_key = mode_key.split('_', 1)[1]
             # if duration_key == 'current': duration_key = 'weather_current' # Keep specific keys
@@ -1139,7 +1140,8 @@ class DisplayController:
                                 # Reset logged duration when mode changes
                                 if hasattr(self, '_last_logged_duration'):
                                     delattr(self, '_last_logged_duration')
-                        elif current_time - self.last_switch >= self.get_current_duration():
+                        elif current_time - self.last_switch >= self.get_current_duration() or self.force_change:
+                            self.force_change = False
                             if self.current_display_mode == 'calendar' and self.calendar:
                                 self.calendar.advance_event()
                             elif self.current_display_mode == 'of_the_day' and self.of_the_day:
@@ -1288,8 +1290,11 @@ class DisplayController:
                             manager_to_display.display_stocks(force_clear=self.force_clear)
                         elif self.current_display_mode == 'stock_news':
                              manager_to_display.display_news() # Assumes internal clearing
-                        elif self.current_display_mode == 'odds_ticker':
-                             manager_to_display.display(force_clear=self.force_clear)
+                        elif self.current_display_mode in {'odds_ticker', 'leaderboard'}:
+                            try:
+                                manager_to_display.display(force_clear=self.force_clear)
+                            except StopIteration:
+                                self.force_change = True
                         elif self.current_display_mode == 'calendar':
                              manager_to_display.display(force_clear=self.force_clear)
                         elif self.current_display_mode == 'youtube':

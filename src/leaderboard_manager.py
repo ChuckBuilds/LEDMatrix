@@ -3,6 +3,7 @@ import logging
 import requests
 from typing import Dict, Any, List, Optional
 import os
+import time
 from PIL import Image, ImageDraw, ImageFont
 try:
     from .display_manager import DisplayManager
@@ -42,7 +43,7 @@ class LeaderboardManager:
         self.display_duration = self.leaderboard_config.get('display_duration', 30)
         self.loop = self.leaderboard_config.get('loop', True)
         self.request_timeout = self.leaderboard_config.get('request_timeout', 30)
-        
+        self.time_over = 0
         # Dynamic duration settings
         self.dynamic_duration_enabled = self.leaderboard_config.get('dynamic_duration', True)
         self.min_duration = self.leaderboard_config.get('min_duration', 30)
@@ -1355,6 +1356,11 @@ class LeaderboardManager:
                     # Signal that scrolling has stopped
                     self.display_manager.set_scrolling_state(False)
                     logger.info("Leaderboard scrolling stopped - reached end of content")
+                    if self.time_over == 0:
+                        self.time_over = time.time()
+                    elif time.time() - self.time_over >= 2:
+                        self.time_over = 0
+                        raise StopIteration 
             
             # Check if we're at a natural break point for mode switching
             elapsed_time = current_time - self._display_start_time
@@ -1402,6 +1408,8 @@ class LeaderboardManager:
             self.display_manager.draw = ImageDraw.Draw(self.display_manager.image)
             self.display_manager.update_display()
             
+        except StopIteration as e:
+            raise e
         except Exception as e:
             logger.error(f"Error in leaderboard display: {e}")
             self._display_fallback_message()

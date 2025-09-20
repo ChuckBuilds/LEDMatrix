@@ -95,7 +95,8 @@ class LogoDownloader:
             'Connection': 'keep-alive'
         }
     
-    def normalize_abbreviation(self, abbreviation: str) -> str:
+    @staticmethod
+    def normalize_abbreviation(abbreviation: str) -> str:
         """Normalize team abbreviation for consistent filename usage."""
         # Handle special characters that can cause filesystem issues
         normalized = abbreviation.upper()
@@ -450,7 +451,7 @@ class LogoDownloader:
         logger.info(f"Comprehensive NCAA football logo download complete: {downloaded_count} downloaded, {failed_count} failed")
         return downloaded_count, failed_count
     
-    def download_missing_logo_for_team(self, team_abbreviation: str, league: str, team_name: str = None) -> bool:
+    def download_missing_logo_for_team(self, team_abbreviation: str, league: str, team_name: str | None = None) -> bool:
         """Download a specific team's logo if it's missing."""
         logo_dir = self.get_logo_directory(league)
         if not self.ensure_logo_directory(logo_dir):
@@ -509,7 +510,7 @@ class LogoDownloader:
             time.sleep(0.1)  # Small delay
         return success
     
-    def download_all_missing_logos(self, leagues: List[str] = None, force_download: bool = False) -> Dict[str, Tuple[int, int]]:
+    def download_all_missing_logos(self, leagues: List[str] | None = None, force_download: bool = False) -> Dict[str, Tuple[int, int]]:
         """Download missing logos for all specified leagues."""
         if leagues is None:
             leagues = list(self.API_ENDPOINTS.keys())
@@ -531,7 +532,7 @@ class LogoDownloader:
         logger.info(f"Overall logo download results: {total_downloaded} downloaded, {total_failed} failed")
         return results
     
-    def create_placeholder_logo(self, team_abbreviation: str, logo_dir: str, team_name: str = None) -> bool:
+    def create_placeholder_logo(self, team_abbreviation: str, logo_dir: str, team_name: str | None = None) -> bool:
         """Create a placeholder logo when real logo cannot be downloaded."""
         try:
             # Ensure the logo directory exists
@@ -642,7 +643,7 @@ def get_soccer_league_key(league_code: str) -> str:
 
 
 # Convenience function for easy integration
-def download_missing_logo(team_abbreviation: str, league: str, team_name: str = None, create_placeholder: bool = True) -> bool:
+def download_missing_logo(team_abbreviation: str, league: str, team_name: str | None = None, create_placeholder: bool = True) -> bool:
     """
     Convenience function to download a missing team logo.
     
