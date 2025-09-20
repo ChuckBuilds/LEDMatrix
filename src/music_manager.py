@@ -371,11 +371,33 @@ class MusicManager:
                         
                         with self.track_info_lock:
                             if simplified_info_poll != self.current_track_info:
+                                # Check for significant changes (same logic as YTM)
+                                significant_change_detected = False
+                                if self.current_track_info is None and simplified_info_poll.get('title') != 'Nothing Playing':
+                                    significant_change_detected = True
+                                    logger.debug("Polling Spotify: First valid track data, marking as significant.")
+                                elif self.current_track_info is not None and (
+                                    simplified_info_poll.get('title') != self.current_track_info.get('title') or
+                                    simplified_info_poll.get('artist') != self.current_track_info.get('artist') or
+                                    simplified_info_poll.get('album_art_url') != self.current_track_info.get('album_art_url') or
+                                    simplified_info_poll.get('is_playing') != self.current_track_info.get('is_playing')
+                                ):
+                                    significant_change_detected = True
+                                    logger.debug("Polling Spotify: Significant change (title/artist/art/is_playing) detected.")
+                                else:
+                                    logger.debug("Polling Spotify: Only progress changed, not significant.")
+                                
                                 self.current_track_info = simplified_info_poll
                                 self.current_source = MusicSource.SPOTIFY
-                                significant_change_for_callback = True # Spotify poll changes always considered significant
+                                significant_change_for_callback = significant_change_detected
                                 simplified_info_for_callback = simplified_info_poll.copy()
-                                self._needs_immediate_full_refresh = True # Reset display state
+                                
+                                if significant_change_detected:
+                                    self._needs_immediate_full_refresh = True # Reset display state
+                                    logger.info("Polling Spotify: Significant change detected.")
+                                else:
+                                    logger.debug("Polling Spotify: Minor update (progress only), no full refresh needed.")
+                                
                                 # Handle album art for Spotify if needed (similar to _process_ytm_data_update)
                                 old_album_art_url = self.current_track_info.get('album_art_url_prev_spotify') # Need a way to store prev
                                 new_album_art_url = simplified_info_poll.get('album_art_url')
@@ -383,7 +405,6 @@ class MusicManager:
                                      self.album_art_image = None
                                      self.last_album_art_url = new_album_art_url
                                 self.current_track_info['album_art_url_prev_spotify'] = new_album_art_url
-
 
                                 logger.debug(f"Polling Spotify: Active track - {spotify_track.get('item', {}).get('name')}")
                             else:
