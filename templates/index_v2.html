@@ -2764,12 +2764,18 @@
         document.getElementById('display-form').addEventListener('submit', async function(e) {
             e.preventDefault();
             const formData = new FormData(this);
+            formData.append('config_type', 'main');
             
             try {
                 const response = await fetch('/save_config', {
                     method: 'POST',
                     body: formData
                 });
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+                
                 const result = await response.json();
                 showNotification(result.message, result.status);
             } catch (error) {
