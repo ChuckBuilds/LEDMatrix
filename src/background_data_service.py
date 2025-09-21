@@ -128,11 +128,24 @@ class BackgroundDataService:
         
         logger.info(f"BackgroundDataService initialized with {max_workers} workers")
     
+    def get_sport_cache_key(self, sport: str, date_str: str = None) -> str:
+        """
+        Generate consistent cache keys for sports data.
+        This ensures Recent/Upcoming managers and background service
+        use the same cache keys.
+        """
+        if date_str is None:
+            from datetime import datetime
+            import pytz
+            date_str = datetime.now(pytz.utc).strftime('%Y%m%d')
+        
+        return f"{sport}_{date_str}"
+
     def submit_fetch_request(self, 
                            sport: str, 
                            year: int, 
                            url: str,
-                           cache_key: str,
+                           cache_key: str = None,
                            params: Optional[Dict[str, Any]] = None,
                            headers: Optional[Dict[str, str]] = None,
                            timeout: Optional[int] = None,
@@ -159,6 +172,10 @@ class BackgroundDataService:
         """
         if self._shutdown:
             raise RuntimeError("BackgroundDataService is shutting down")
+        
+        # Generate cache key if not provided
+        if cache_key is None:
+            cache_key = self.get_sport_cache_key(sport)
         
         request_id = f"{sport}_{year}_{int(time.time() * 1000)}"
         

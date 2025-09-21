@@ -347,11 +347,30 @@ class BaseNCAAMBasketballManager:
             return None
 
     def _fetch_data(self, date_str: str = None) -> Optional[Dict]:
-        """Fetch data using shared data mechanism."""
+        """
+        Fetch data using background service cache first, fallback to direct API call.
+        This eliminates redundant caching and ensures Recent/Upcoming managers
+        use the same data source as the background service.
+        """
+        # For Live managers, always fetch fresh data
         if isinstance(self, NCAAMBasketballLiveManager):
             return self._fetch_ncaam_basketball_api_data(use_cache=False)
-        else:
-            return self._fetch_ncaam_basketball_api_data(use_cache=True)
+        
+        # For Recent/Upcoming managers, try to use background service cache first
+        from datetime import datetime
+        import pytz
+        cache_key = f"ncaam_basketball_{datetime.now(pytz.utc).strftime('%Y%m%d')}"
+        
+        # Check if background service has fresh data
+        if self.cache_manager.is_background_data_available(cache_key, 'ncaam_basketball'):
+            cached_data = self.cache_manager.get_background_cached_data(cache_key, 'ncaam_basketball')
+            if cached_data:
+                self.logger.info(f"[NCAAMBasketball] Using background service cache for {cache_key}")
+                return cached_data
+        
+        # Fallback to direct API call if background data not available
+        self.logger.info(f"[NCAAMBasketball] Background data not available, fetching directly for {cache_key}")
+        return self._fetch_ncaam_basketball_api_data(use_cache=True)
 
     def _extract_game_details(self, game_event: Dict) -> Optional[Dict]:
         """Extract relevant game details from ESPN API response."""

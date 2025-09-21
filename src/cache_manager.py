@@ -736,3 +736,49 @@ class CacheManager:
         """
         data_type = self.get_data_type_from_key(key)
         return self.get_cached_data_with_strategy(key, data_type)
+
+    def get_background_cached_data(self, key: str, sport_key: str = None) -> Optional[Dict]:
+        """
+        Get data from background service cache with appropriate strategy.
+        This method is specifically designed for Recent/Upcoming managers
+        to use data cached by the background service.
+        
+        Args:
+            key: Cache key to retrieve
+            sport_key: Sport key for determining appropriate cache strategy
+            
+        Returns:
+            Cached data if available and fresh, None otherwise
+        """
+        # Determine the appropriate cache strategy
+        data_type = self.get_data_type_from_key(key)
+        strategy = self.get_cache_strategy(data_type, sport_key)
+        
+        # For Recent/Upcoming managers, we want to use the background service cache
+        # which should have longer TTLs than the individual manager caches
+        max_age = strategy['max_age']
+        memory_ttl = strategy.get('memory_ttl', max_age)
+        
+        # Get the cached data
+        cached_data = self.get_cached_data(key, max_age, memory_ttl)
+        
+        if cached_data:
+            # Unwrap if stored in { 'data': ..., 'timestamp': ... } format
+            if isinstance(cached_data, dict) and 'data' in cached_data:
+                return cached_data['data']
+            return cached_data
+        
+        return None
+
+    def is_background_data_available(self, key: str, sport_key: str = None) -> bool:
+        """
+        Check if background service has fresh data available.
+        This helps Recent/Upcoming managers determine if they should
+        wait for background data or fetch immediately.
+        """
+        data_type = self.get_data_type_from_key(key)
+        strategy = self.get_cache_strategy(data_type, sport_key)
+        
+        # Check if we have data that's still fresh according to background service TTL
+        cached_data = self.get_cached_data(key, strategy['max_age'])
+        return cached_data is not None

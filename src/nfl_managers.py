@@ -330,13 +330,31 @@ class BaseNFLManager: # Renamed class
             return None
 
     def _fetch_data(self, date_str: str = None) -> Optional[Dict]:
-        """Fetch data using shared data mechanism or direct fetch for live."""
+        """
+        Fetch data using background service cache first, fallback to direct API call.
+        This eliminates redundant caching and ensures Recent/Upcoming managers
+        use the same data source as the background service.
+        """
+        # For Live managers, always fetch fresh data
         if isinstance(self, NFLLiveManager):
             # Live games should fetch only current games, not entire season
             return self._fetch_current_nfl_games()
-        else:
-            # Recent and Upcoming managers should use cached season data
-            return self._fetch_nfl_api_data(use_cache=True)
+        
+        # For Recent/Upcoming managers, try to use background service cache first
+        from datetime import datetime
+        import pytz
+        cache_key = f"nfl_{datetime.now(pytz.utc).strftime('%Y%m%d')}"
+        
+        # Check if background service has fresh data
+        if self.cache_manager.is_background_data_available(cache_key, 'nfl'):
+            cached_data = self.cache_manager.get_background_cached_data(cache_key, 'nfl')
+            if cached_data:
+                self.logger.info(f"[NFL] Using background service cache for {cache_key}")
+                return cached_data
+        
+        # Fallback to direct API call if background data not available
+        self.logger.info(f"[NFL] Background data not available, fetching directly for {cache_key}")
+        return self._fetch_nfl_api_data(use_cache=True)
 
     def _load_fonts(self):
         """Load fonts used by the scoreboard."""
