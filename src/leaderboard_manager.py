@@ -78,6 +78,12 @@ class LeaderboardManager:
         self.leaderboard_image = None  # This will hold the single, wide image
         self.last_display_time = 0
         
+        # FPS tracking variables
+        self.frame_times = []  # Store last 60 frame times for averaging
+        self.last_frame_time = 0
+        self.fps_log_interval = 5.0  # Log FPS every 5 seconds
+        self.last_fps_log_time = 0
+        
         # Font setup
         self.fonts = self._load_fonts()
         
@@ -1185,6 +1191,11 @@ class LeaderboardManager:
             logger.debug(f"Reset/initialized display start time: {self._display_start_time}")
             # Also reset scroll position for clean start
             self.scroll_position = 0
+            # Initialize FPS tracking
+            self.last_frame_time = 0
+            self.frame_times = []
+            self.last_fps_log_time = time.time()
+            logger.info("Leaderboard FPS tracking initialized")
         
         logger.debug(f"Number of leagues in data at start of display method: {len(self.leaderboard_data)}")
         if not self.leaderboard_data:
@@ -1205,6 +1216,25 @@ class LeaderboardManager:
 
         try:
             current_time = time.time()
+            
+            # FPS tracking
+            if self.last_frame_time > 0:
+                frame_time = current_time - self.last_frame_time
+                self.frame_times.append(frame_time)
+                # Keep only last 60 frame times for averaging
+                if len(self.frame_times) > 60:
+                    self.frame_times.pop(0)
+                
+                # Log FPS status every 5 seconds
+                if current_time - self.last_fps_log_time >= self.fps_log_interval:
+                    if self.frame_times:
+                        avg_frame_time = sum(self.frame_times) / len(self.frame_times)
+                        current_fps = 1.0 / frame_time if frame_time > 0 else 0
+                        avg_fps = 1.0 / avg_frame_time if avg_frame_time > 0 else 0
+                        logger.info(f"Leaderboard FPS: Current={current_fps:.1f}, Average={avg_fps:.1f}, Frame Time={frame_time*1000:.1f}ms")
+                    self.last_fps_log_time = current_time
+            
+            self.last_frame_time = current_time
             
             # Always scroll every frame for smooth animation (like stock ticker)
             should_scroll = True
