@@ -44,7 +44,7 @@ class StockNewsManager:
         
         # Get scroll settings from config with faster defaults
         self.scroll_speed = self.stock_news_config.get('scroll_speed', 1)
-        self.scroll_delay = self.stock_news_config.get('scroll_delay', 0.01)  # Default to 5ms for smoother scrolling
+        self.scroll_delay = self.stock_news_config.get('scroll_delay', 0.01)  # Default to 10ms for 100 FPS
         
         # Get headline settings from config
         self.max_headlines_per_symbol = self.stock_news_config.get('max_headlines_per_symbol', 1)

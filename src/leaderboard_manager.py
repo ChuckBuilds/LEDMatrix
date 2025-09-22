@@ -83,8 +83,8 @@ class LeaderboardManager:
         self.last_frame_time = 0
         self.fps_log_interval = 5.0  # Log FPS every 5 seconds
         self.last_fps_log_time = 0
-        # Set realistic target FPS for smooth scrolling (30 FPS is sufficient for smooth text scrolling)
-        self.target_fps = self.leaderboard_config.get('target_fps', 30)
+        # Set target FPS for smooth scrolling (60-100 FPS for buttery smooth animation)
+        self.target_fps = self.leaderboard_config.get('target_fps', 60)
         self.target_frame_time = 1.0 / self.target_fps
         
         # Performance optimization caches
