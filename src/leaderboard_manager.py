@@ -83,7 +83,8 @@ class LeaderboardManager:
         self.last_frame_time = 0
         self.fps_log_interval = 5.0  # Log FPS every 5 seconds
         self.last_fps_log_time = 0
-        self.target_fps = self.leaderboard_config.get('target_fps', 120)
+        # Set realistic target FPS for smooth scrolling (30 FPS is sufficient for smooth text scrolling)
+        self.target_fps = self.leaderboard_config.get('target_fps', 30)
         self.target_frame_time = 1.0 / self.target_fps
         
         # Performance optimization caches
@@ -1216,8 +1217,11 @@ class LeaderboardManager:
             self._cached_draw = None
             self._last_visible_image = None
             self._last_scroll_position = -1
-            self._text_measurement_cache = {}
-            self._logo_cache = {}
+            # Clear caches but limit their size to prevent memory leaks
+            if len(self._text_measurement_cache) > 100:
+                self._text_measurement_cache.clear()
+            if len(self._logo_cache) > 50:
+                self._logo_cache.clear()
             logger.info("Leaderboard FPS tracking initialized")
         
         if not self.leaderboard_data:
@@ -1238,20 +1242,20 @@ class LeaderboardManager:
             # Frame rate limiting - sleep to achieve target FPS
             if self.last_frame_time > 0:
                 frame_time = current_time - self.last_frame_time
+                
+                # FPS tracking - use circular buffer to prevent memory growth
+                self.frame_times.append(frame_time)
+                if len(self.frame_times) > 30:  # Reduce buffer size for less memory usage
+                    self.frame_times.pop(0)
+                
+                # Apply frame rate limiting after tracking
                 if frame_time < self.target_frame_time:
                     sleep_time = self.target_frame_time - frame_time
                     time.sleep(sleep_time)
-                    current_time = time.time()  # Update time after sleep
-                    frame_time = current_time - self.last_frame_time
+                    # Don't recalculate frame_time after sleep to avoid confusion in metrics
                 
-                # FPS tracking
-                self.frame_times.append(frame_time)
-                # Keep only last 60 frame times for averaging
-                if len(self.frame_times) > 60:
-                    self.frame_times.pop(0)
-                
-                # Log FPS status every 5 seconds
-                if current_time - self.last_fps_log_time >= self.fps_log_interval:
+                # Log FPS status every 10 seconds (reduced frequency)
+                if current_time - self.last_fps_log_time >= 10.0:
                     if self.frame_times:
                         avg_frame_time = sum(self.frame_times) / len(self.frame_times)
                         current_fps = 1.0 / frame_time if frame_time > 0 else 0
@@ -1293,19 +1297,29 @@ class LeaderboardManager:
             if elapsed_time > self.max_display_time:
                 raise StopIteration("Maximum display time exceeded")
             
-            # Optimize: Only create new visible image if scroll position changed
-            if self.scroll_position != self._last_scroll_position:
-                # Create the visible part of the image by cropping from the leaderboard_image
-                self._last_visible_image = self.leaderboard_image.crop((
-                    self.scroll_position,
-                    0,
-                    self.scroll_position + width,
-                    height
-                ))
-                self._last_scroll_position = self.scroll_position
+            # Optimize: Only create new visible image if scroll position changed significantly
+            # Use integer scroll position to reduce unnecessary crops
+            int_scroll_position = int(self.scroll_position)
+            if int_scroll_position != self._last_scroll_position:
+                # Ensure crop coordinates are within bounds
+                crop_left = max(0, int_scroll_position)
+                crop_right = min(self.leaderboard_image.width, int_scroll_position + width)
                 
-                # Cache the draw object to avoid creating it every frame
-                self._cached_draw = ImageDraw.Draw(self._last_visible_image)
+                if crop_right > crop_left:  # Valid crop region
+                    # Create the visible part of the image by cropping from the leaderboard_image
+                    self._last_visible_image = self.leaderboard_image.crop((
+                        crop_left,
+                        0,
+                        crop_right,
+                        height
+                    ))
+                    self._last_scroll_position = int_scroll_position
+                    
+                    # Cache the draw object to avoid creating it every frame
+                    self._cached_draw = ImageDraw.Draw(self._last_visible_image)
+                else:
+                    # Invalid crop region, skip this frame
+                    return
             
             # Display the visible portion
             self.display_manager.image = self._last_visible_image

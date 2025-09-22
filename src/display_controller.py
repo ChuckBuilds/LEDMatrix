@@ -1130,8 +1130,9 @@ class DisplayController:
                 # Update data for all modules first
                 self._update_modules()
                 
-                # Process any deferred updates that may have accumulated
-                self.display_manager.process_deferred_updates()
+                # Process deferred updates less frequently when scrolling to improve performance
+                if not self.display_manager.is_currently_scrolling() or (current_time % 2.0 < 0.1):
+                    self.display_manager.process_deferred_updates()
                 
                 # Update live modes in rotation if needed
                 self._update_live_modes_in_rotation()

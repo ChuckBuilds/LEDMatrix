@@ -40,7 +40,9 @@ class DisplayManager:
             'is_scrolling': False,
             'last_scroll_activity': 0,
             'scroll_inactivity_threshold': 2.0,  # seconds of inactivity before considering "not scrolling"
-            'deferred_updates': []
+            'deferred_updates': [],
+            'max_deferred_updates': 50,  # Limit queue size to prevent memory issues
+            'deferred_update_ttl': 300.0  # 5 minutes TTL for deferred updates
         }
         
         self._setup_matrix()
@@ -677,13 +679,27 @@ class DisplayManager:
             update_func: Function to call when not scrolling
             priority: Priority level (lower numbers = higher priority)
         """
+        current_time = time.time()
+        
+        # Clean up expired updates before adding new ones
+        self._cleanup_expired_deferred_updates(current_time)
+        
+        # Limit queue size to prevent memory issues
+        if len(self._scrolling_state['deferred_updates']) >= self._scrolling_state['max_deferred_updates']:
+            # Remove oldest update to make room
+            self._scrolling_state['deferred_updates'].pop(0)
+            logger.debug("Removed oldest deferred update due to queue size limit")
+        
         self._scrolling_state['deferred_updates'].append({
             'func': update_func,
             'priority': priority,
-            'timestamp': time.time()
+            'timestamp': current_time
         })
-        # Sort by priority (lower numbers first)
-        self._scrolling_state['deferred_updates'].sort(key=lambda x: x['priority'])
+        
+        # Only sort if we have a reasonable number of updates to avoid excessive sorting
+        if len(self._scrolling_state['deferred_updates']) <= 20:
+            self._scrolling_state['deferred_updates'].sort(key=lambda x: x['priority'])
+        
         logger.debug(f"Deferred update added. Total deferred: {len(self._scrolling_state['deferred_updates'])}")
 
     def process_deferred_updates(self):
@@ -693,21 +709,56 @@ class DisplayManager:
             
         if not self._scrolling_state['deferred_updates']:
             return
+        
+        current_time = time.time()
+        
+        # Clean up expired updates first
+        self._cleanup_expired_deferred_updates(current_time)
             
-        # Process all deferred updates
-        updates_to_process = self._scrolling_state['deferred_updates'].copy()
-        self._scrolling_state['deferred_updates'].clear()
+        if not self._scrolling_state['deferred_updates']:
+            return
+            
+        # Process only a limited number of updates per call to avoid blocking
+        max_updates_per_call = min(5, len(self._scrolling_state['deferred_updates']))
+        updates_to_process = self._scrolling_state['deferred_updates'][:max_updates_per_call]
+        self._scrolling_state['deferred_updates'] = self._scrolling_state['deferred_updates'][max_updates_per_call:]
         
-        logger.debug(f"Processing {len(updates_to_process)} deferred updates")
+        logger.debug(f"Processing {len(updates_to_process)} deferred updates (queue size: {len(self._scrolling_state['deferred_updates'])})")
         
+        failed_updates = []
         for update_info in updates_to_process:
             try:
+                # Check if update is still valid (not too old)
+                if current_time - update_info['timestamp'] > self._scrolling_state['deferred_update_ttl']:
+                    logger.debug("Skipping expired deferred update")
+                    continue
+                    
                 update_info['func']()
                 logger.debug("Deferred update executed successfully")
             except Exception as e:
                 logger.error(f"Error executing deferred update: {e}")
-                # Re-add failed updates for retry
-                self._scrolling_state['deferred_updates'].append(update_info)
+                # Only retry recent failures, and limit retries
+                if current_time - update_info['timestamp'] < 60.0:  # Only retry for 1 minute
+                    failed_updates.append(update_info)
+        
+        # Re-add failed updates to the end of the queue (not the beginning)
+        if failed_updates:
+            self._scrolling_state['deferred_updates'].extend(failed_updates)
+
+    def _cleanup_expired_deferred_updates(self, current_time: float):
+        """Remove expired deferred updates to prevent memory leaks."""
+        ttl = self._scrolling_state['deferred_update_ttl']
+        initial_count = len(self._scrolling_state['deferred_updates'])
+        
+        # Filter out expired updates
+        self._scrolling_state['deferred_updates'] = [
+            update for update in self._scrolling_state['deferred_updates']
+            if current_time - update['timestamp'] <= ttl
+        ]
+        
+        removed_count = initial_count - len(self._scrolling_state['deferred_updates'])
+        if removed_count > 0:
+            logger.debug(f"Cleaned up {removed_count} expired deferred updates")
 
     def get_scrolling_stats(self) -> dict:
         """Get current scrolling statistics for debugging."""
@@ -715,7 +766,9 @@ class DisplayManager:
             'is_scrolling': self._scrolling_state['is_scrolling'],
             'last_activity': self._scrolling_state['last_scroll_activity'],
             'deferred_count': len(self._scrolling_state['deferred_updates']),
-            'inactivity_threshold': self._scrolling_state['scroll_inactivity_threshold']
+            'inactivity_threshold': self._scrolling_state['scroll_inactivity_threshold'],
+            'max_deferred_updates': self._scrolling_state['max_deferred_updates'],
+            'deferred_update_ttl': self._scrolling_state['deferred_update_ttl']
         }
 
     def _write_snapshot_if_due(self) -> None:
