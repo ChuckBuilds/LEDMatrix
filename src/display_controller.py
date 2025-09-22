@@ -542,19 +542,20 @@ class DisplayController:
                 # Fall back to configured duration
                 return self.display_durations.get(mode_key, 60)
 
-        # Handle dynamic duration for leaderboard
+        # Handle leaderboard duration (simplified approach)
         if mode_key == 'leaderboard' and self.leaderboard:
             try:
-                dynamic_duration = self.leaderboard.get_dynamic_duration()
+                # Use the configured display duration (now set to 600s by default)
+                duration = self.leaderboard.display_duration
                 # Only log if duration has changed or we haven't logged this duration yet
-                if not hasattr(self, '_last_logged_leaderboard_duration') or self._last_logged_leaderboard_duration != dynamic_duration:
-                    logger.info(f"Using dynamic duration for leaderboard: {dynamic_duration} seconds")
-                    self._last_logged_leaderboard_duration = dynamic_duration
-                return dynamic_duration
+                if not hasattr(self, '_last_logged_leaderboard_duration') or self._last_logged_leaderboard_duration != duration:
+                    logger.info(f"Using leaderboard duration: {duration} seconds")
+                    self._last_logged_leaderboard_duration = duration
+                return duration
             except Exception as e:
-                logger.error(f"Error getting dynamic duration for leaderboard: {e}")
+                logger.error(f"Error getting duration for leaderboard: {e}")
                 # Fall back to configured duration
-                return self.display_durations.get(mode_key, 60)
+                return self.display_durations.get(mode_key, 600)
 
         # Simplify weather key handling
         if mode_key.startswith('weather_'):

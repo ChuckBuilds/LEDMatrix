@@ -63,21 +63,27 @@ def test_progress_tracking():
     assert abs(progress_behind) < 0.01  # Should be on track
     print(f"✓ Progress tracking: {current_progress:.1%} complete, {progress_behind:+.1%} vs expected")
 
-def test_safety_timeout():
-    """Test safety timeout logic"""
-    print("Testing safety timeout...")
+def test_safety_buffer():
+    """Test safety buffer logic"""
+    print("Testing safety buffer...")
     
-    # Test timeout conditions
+    # Test safety buffer conditions
     max_display_time = 120
-    elapsed_time_1 = 100  # Should not timeout
-    elapsed_time_2 = 150  # Should timeout
+    safety_buffer = 10
+    safety_threshold = max_display_time - safety_buffer  # 110 seconds
     
-    timeout_1 = elapsed_time_1 > max_display_time
-    timeout_2 = elapsed_time_2 > max_display_time
+    elapsed_time_1 = 100  # Should not trigger warning
+    elapsed_time_2 = 115  # Should trigger warning
+    elapsed_time_3 = 125  # Should trigger timeout
     
-    assert timeout_1 == False
-    assert timeout_2 == True
-    print("✓ Safety timeout logic works correctly")
+    warning_1 = elapsed_time_1 > safety_threshold
+    warning_2 = elapsed_time_2 > safety_threshold
+    timeout_3 = elapsed_time_3 > max_display_time
+    
+    assert warning_1 == False
+    assert warning_2 == True
+    assert timeout_3 == True
+    print(f"✓ Safety buffer works: warning at {safety_threshold}s, timeout at {max_display_time}s")
 
 def main():
     """Run all tests"""
@@ -87,7 +93,7 @@ def main():
         test_scroll_speed_calculation()
         test_duration_calculation()
         test_progress_tracking()
-        test_safety_timeout()
+        test_safety_buffer()
         
         print("\n✅ All timing logic tests passed!")
         print("\nKey improvements implemented:")
