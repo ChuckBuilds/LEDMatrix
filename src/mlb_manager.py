@@ -410,7 +410,10 @@ class BaseMLBManager:
             return "TBD"
 
     def _fetch_mlb_api_data(self, use_cache: bool = True) -> Dict[str, Any]:
-        """Fetch MLB game data from the ESPN API."""
+        """
+        Fetch MLB game data from the ESPN API.
+        Updated to use background service cache for Recent/Upcoming managers.
+        """
         # Define cache key based on dates
         now = datetime.now(timezone.utc)
         yesterday = now - timedelta(days=1)
@@ -420,6 +423,16 @@ class BaseMLBManager:
 
         # If using cache, try to load from cache first
         if use_cache:
+            # For Recent/Upcoming managers, try background service cache first
+            if hasattr(self, '__class__') and any(x in self.__class__.__name__ for x in ['Recent', 'Upcoming']):
+                if self.cache_manager.is_background_data_available(cache_key, 'mlb'):
+                    cached_data = self.cache_manager.get_background_cached_data(cache_key, 'mlb')
+                    if cached_data:
+                        self.logger.info(f"[MLB] Using background service cache for {cache_key}")
+                        return cached_data
+                self.logger.info(f"[MLB] Background data not available, fetching directly for {cache_key}")
+            
+            # Fallback to regular cache strategy
             cached_data = self.cache_manager.get_with_auto_strategy(cache_key)
             if cached_data:
                 self.logger.info("Using cached MLB API data.")
