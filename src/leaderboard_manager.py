@@ -1206,20 +1206,17 @@ class LeaderboardManager:
         try:
             current_time = time.time()
             
-            # Check if we should be scrolling
-            should_scroll = current_time - self.last_scroll_time >= self.scroll_delay
+            # Always scroll every frame for smooth animation (like stock ticker)
+            should_scroll = True
             
             # Signal scrolling state to display manager
-            if should_scroll:
-                self.display_manager.set_scrolling_state(True)
-            else:
-                # If we're not scrolling, check if we should process deferred updates
-                self.display_manager.process_deferred_updates()
+            self.display_manager.set_scrolling_state(True)
             
-            # Scroll the image
-            if should_scroll:
-                self.scroll_position += self.scroll_speed
-                self.last_scroll_time = current_time
+            # Process any deferred updates
+            self.display_manager.process_deferred_updates()
+            
+            # Scroll the image every frame for smooth animation
+            self.scroll_position += self.scroll_speed
             
             # Calculate crop region
             width = self.display_manager.matrix.width
