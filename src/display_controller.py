@@ -542,14 +542,14 @@ class DisplayController:
                 # Fall back to configured duration
                 return self.display_durations.get(mode_key, 60)
 
-        # Handle leaderboard duration (simplified approach)
+        # Handle leaderboard duration (user choice between fixed or dynamic)
         if mode_key == 'leaderboard' and self.leaderboard:
             try:
-                # Use the configured display duration (now set to 600s by default)
-                duration = self.leaderboard.display_duration
+                duration = self.leaderboard.get_duration()
+                mode_type = "dynamic" if self.leaderboard.dynamic_duration else "fixed"
                 # Only log if duration has changed or we haven't logged this duration yet
                 if not hasattr(self, '_last_logged_leaderboard_duration') or self._last_logged_leaderboard_duration != duration:
-                    logger.info(f"Using leaderboard duration: {duration} seconds")
+                    logger.info(f"Using leaderboard {mode_type} duration: {duration} seconds")
                     self._last_logged_leaderboard_duration = duration
                 return duration
             except Exception as e:

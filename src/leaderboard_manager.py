@@ -44,8 +44,10 @@ class LeaderboardManager:
         self.request_timeout = self.leaderboard_config.get('request_timeout', 30)
         self.time_over = 0
         
-        # Simplified duration settings - just use a long timeout and let content determine when done
-        self.display_duration = self.leaderboard_config.get('display_duration', 600)  # 10 minutes default
+        # Duration settings - user can choose between fixed or dynamic (exception-based)
+        self.dynamic_duration = self.leaderboard_config.get('dynamic_duration', True)
+        # Get duration from main display_durations section
+        self.display_duration = config.get('display', {}).get('display_durations', {}).get('leaderboard', 300)
         self.max_display_time = self.leaderboard_config.get('max_display_time', 600)  # 10 minutes maximum
         
         # Initialize managers
@@ -1108,6 +1110,14 @@ class LeaderboardManager:
             logger.error(f"Error creating leaderboard image: {e}")
             self.leaderboard_image = None
 
+    def get_duration(self) -> int:
+        """Get the duration for display based on user preference"""
+        if self.dynamic_duration:
+            # Use long timeout and let content determine when done via StopIteration
+            return self.max_display_time
+        else:
+            # Use fixed duration from config
+            return self.display_duration
 
     def update(self) -> None:
         """Update leaderboard data."""

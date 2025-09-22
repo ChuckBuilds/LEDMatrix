@@ -4,19 +4,39 @@ Test script for simplified leaderboard timing approach.
 Tests the new simplified timing without complex calculations.
 """
 
-def test_simplified_duration():
-    """Test simplified duration approach"""
-    print("Testing simplified duration approach...")
+def test_duration_modes():
+    """Test both fixed and dynamic duration modes"""
+    print("Testing duration modes...")
     
-    # Test parameters - much simpler now
-    display_duration = 600  # 10 minutes
-    max_display_time = 600  # 10 minutes
+    # Test parameters
+    display_duration = 300  # 5 minutes fixed
+    max_display_time = 600  # 10 minutes max
     
-    # Should be the same
-    assert display_duration == max_display_time
-    assert display_duration == 600
+    # Test fixed duration mode
+    dynamic_duration = False
+    if dynamic_duration:
+        duration = max_display_time
+        mode = "dynamic"
+    else:
+        duration = display_duration
+        mode = "fixed"
     
-    print(f"✓ Simplified duration: {display_duration}s (10 minutes)")
+    assert duration == 300
+    assert mode == "fixed"
+    print(f"✓ Fixed duration mode: {duration}s")
+    
+    # Test dynamic duration mode
+    dynamic_duration = True
+    if dynamic_duration:
+        duration = max_display_time
+        mode = "dynamic"
+    else:
+        duration = display_duration
+        mode = "fixed"
+    
+    assert duration == 600
+    assert mode == "dynamic"
+    print(f"✓ Dynamic duration mode: {duration}s (long timeout with exception-based ending)")
 
 def test_timeout_logic():
     """Test simple timeout logic"""
@@ -66,16 +86,17 @@ def main():
     print("Testing simplified leaderboard timing approach...\n")
     
     try:
-        test_simplified_duration()
+        test_duration_modes()
         test_timeout_logic()
         test_exception_based_ending()
         
         print("\n✅ All simplified timing tests passed!")
         print("\nSimplified approach benefits:")
+        print("  • User choice between fixed or dynamic duration")
         print("  • No complex duration calculations")
         print("  • No safety buffer complexity")
-        print("  • Simple 10-minute timeout")
-        print("  • Content-driven ending via StopIteration")
+        print("  • Fixed mode: Uses configured duration")
+        print("  • Dynamic mode: Long timeout with content-driven ending via StopIteration")
         print("  • Much easier to understand and maintain")
         
         return 0

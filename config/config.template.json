@@ -39,7 +39,7 @@
             "daily_forecast": 30,
             "stock_news": 20,
             "odds_ticker": 60,
-            "leaderboard": 60,
+            "leaderboard": 300,
             "nhl_live": 30,
             "nhl_recent": 30,
             "nhl_upcoming": 30,
@@ -199,7 +199,7 @@
         "scroll_delay": 0.01,
         "loop": false,
         "request_timeout": 30,
-        "display_duration": 600,
+        "dynamic_duration": true,
         "max_display_time": 600,
         "background_service": {
             "enabled": true,
