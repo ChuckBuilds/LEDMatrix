@@ -52,6 +52,15 @@ class LeaderboardManager:
         self.dynamic_duration = 60  # Default duration in seconds
         self.total_scroll_width = 0  # Track total width for dynamic duration calculation
         
+        # Safety timeout settings
+        self.max_display_time = self.leaderboard_config.get('max_display_time', 120)  # 2 minutes maximum
+        self.safety_buffer = self.leaderboard_config.get('safety_buffer', 10)  # 10 seconds safety buffer
+        
+        # Dynamic scroll speed tracking
+        self.actual_scroll_speed = 54.2  # Default from logs, will be updated dynamically
+        self.scroll_measurements = []  # Track recent scroll speed measurements
+        self.max_measurements = 10  # Keep last 10 measurements for averaging
+        
         # Initialize managers
         self.cache_manager = CacheManager()
         # Store reference to config instead of creating new ConfigManager
@@ -79,6 +88,10 @@ class LeaderboardManager:
         self.current_sport_index = 0
         self.leaderboard_image = None  # This will hold the single, wide image
         self.last_display_time = 0
+        
+        # Progress tracking
+        self.expected_completion_time = 0
+        self.last_progress_log_time = 0
         
         # Font setup
         self.fonts = self._load_fonts()
@@ -1115,6 +1128,26 @@ class LeaderboardManager:
             logger.error(f"Error creating leaderboard image: {e}")
             self.leaderboard_image = None
 
+    def update_scroll_speed_measurement(self, distance_pixels: float, time_seconds: float):
+        """Update the actual scroll speed measurement for more accurate timing"""
+        if time_seconds > 0 and distance_pixels > 0:
+            current_speed = distance_pixels / time_seconds
+            
+            # Add to measurements list
+            self.scroll_measurements.append(current_speed)
+            
+            # Keep only the most recent measurements
+            if len(self.scroll_measurements) > self.max_measurements:
+                self.scroll_measurements.pop(0)
+            
+            # Calculate average speed from recent measurements
+            if len(self.scroll_measurements) >= 3:  # Need at least 3 measurements for stability
+                self.actual_scroll_speed = sum(self.scroll_measurements) / len(self.scroll_measurements)
+                logger.debug(f"Updated scroll speed: {self.actual_scroll_speed:.1f} px/s (from {len(self.scroll_measurements)} measurements)")
+            
+            # Ensure reasonable bounds (10-200 px/s)
+            self.actual_scroll_speed = max(10, min(200, self.actual_scroll_speed))
+
     def calculate_dynamic_duration(self):
         """Calculate the exact time needed to display all leaderboard content"""
         logger.info(f"Calculating dynamic duration - enabled: {self.dynamic_duration_enabled}, content width: {self.total_scroll_width}px")
@@ -1148,13 +1181,8 @@ class LeaderboardManager:
                 total_scroll_distance = max(0, self.total_scroll_width - display_width)
             
             # Calculate time based on scroll speed and delay
-            # scroll_speed = pixels per frame, scroll_delay = seconds per frame
-            # However, actual observed speed is slower than theoretical calculation
-            # Based on log analysis: 1950px in 36s = 54.2 px/s actual speed
-            # vs theoretical: 1px/0.01s = 100 px/s
-            # Use actual observed speed for more accurate timing
-            actual_scroll_speed = 54.2  # pixels per second (calculated from logs)
-            total_time = total_scroll_distance / actual_scroll_speed
+            # Use dynamic scroll speed measurement for more accurate timing
+            total_time = total_scroll_distance / self.actual_scroll_speed
             
             # Add buffer time for smooth cycling (configurable %)
             buffer_time = total_time * self.duration_buffer
@@ -1181,6 +1209,11 @@ class LeaderboardManager:
             else:
                 self.dynamic_duration = calculated_duration
             
+            # Apply safety timeout cap to prevent hanging
+            if self.dynamic_duration > self.max_display_time:
+                self.dynamic_duration = self.max_display_time
+                logger.warning(f"Duration capped to safety maximum: {self.max_display_time}s")
+            
             # Additional safety check: if the calculated duration seems too short for the content,
             # ensure we have enough time to display all content properly
             if self.dynamic_duration < 45 and self.total_scroll_width > 200:
@@ -1195,7 +1228,7 @@ class LeaderboardManager:
             logger.info(f"  Total scroll distance: {total_scroll_distance}px")
             logger.info(f"  Configured scroll speed: {self.scroll_speed}px/frame")
             logger.info(f"  Configured scroll delay: {self.scroll_delay}s/frame")
-            logger.info(f"  Actual observed scroll speed: {actual_scroll_speed}px/s (from log analysis)")
+            logger.info(f"  Dynamic scroll speed: {self.actual_scroll_speed:.1f}px/s (from {len(self.scroll_measurements)} measurements)")
             logger.info(f"  Base time: {total_time:.2f}s")
             logger.info(f"  Buffer time: {buffer_time:.2f}s ({self.duration_buffer*100}%)")
             logger.info(f"  Looping enabled: {self.loop}")
@@ -1203,7 +1236,7 @@ class LeaderboardManager:
             logger.info(f"Final calculated duration: {self.dynamic_duration}s")
             
             # Verify the duration makes sense for the content
-            expected_scroll_time = self.total_scroll_width / actual_scroll_speed
+            expected_scroll_time = self.total_scroll_width / self.actual_scroll_speed
             logger.info(f"  Verification - Time to scroll content: {expected_scroll_time:.1f}s")
             
         except Exception as e:
@@ -1334,7 +1367,14 @@ class LeaderboardManager:
             
             # Scroll the image
             if should_scroll:
+                previous_position = self.scroll_position
                 self.scroll_position += self.scroll_speed
+                
+                # Track scroll speed for dynamic timing
+                time_delta = current_time - self.last_scroll_time
+                if time_delta > 0:
+                    self.update_scroll_speed_measurement(self.scroll_speed, time_delta)
+                
                 self.last_scroll_time = current_time
             
             # Calculate crop region
@@ -1366,34 +1406,36 @@ class LeaderboardManager:
             elapsed_time = current_time - self._display_start_time
             remaining_time = self.dynamic_duration - elapsed_time
             
-            # Log scroll progress every 50 pixels to help debug (less verbose)
-            if self.scroll_position % 50 == 0 and self.scroll_position > 0:
-                logger.info(f"Leaderboard progress: elapsed={elapsed_time:.1f}s, remaining={remaining_time:.1f}s, scroll_pos={self.scroll_position}/{self.leaderboard_image.width}px")
+            # Safety timeout - prevent hanging beyond maximum display time
+            if elapsed_time > self.max_display_time:
+                logger.warning(f"Leaderboard display exceeded maximum time ({self.max_display_time}s), forcing next view")
+                raise StopIteration("Maximum display time exceeded")
             
-            # If we have less than 2 seconds remaining, check if we can complete the content display
-            if remaining_time < 2.0 and self.scroll_position > 0:
-                # Calculate how much time we need to complete the current scroll position
-                # Use actual observed scroll speed (54.2 px/s) instead of theoretical calculation
-                actual_scroll_speed = 54.2  # pixels per second (calculated from logs)
+            # Enhanced progress tracking and logging
+            current_progress = self.scroll_position / self.leaderboard_image.width if self.leaderboard_image.width > 0 else 0
+            expected_progress = elapsed_time / self.dynamic_duration if self.dynamic_duration > 0 else 0
+            
+            # Log progress every 10 seconds or every 100 pixels, whichever comes first
+            should_log_progress = (
+                current_time - self.last_progress_log_time >= 10 or 
+                (self.scroll_position % 100 == 0 and self.scroll_position > 0)
+            )
+            
+            if should_log_progress and self.scroll_position > 0:
+                progress_behind = expected_progress - current_progress
+                logger.info(f"Leaderboard progress: {current_progress:.1%} complete, {progress_behind:+.1%} vs expected")
+                logger.info(f"  Elapsed: {elapsed_time:.1f}s, Remaining: {remaining_time:.1f}s")
+                logger.info(f"  Scroll: {self.scroll_position}/{self.leaderboard_image.width}px, Speed: {self.actual_scroll_speed:.1f}px/s")
+                self.last_progress_log_time = current_time
                 
-                if self.loop:
-                    # For looping, we need to complete one full cycle
-                    distance_to_complete = self.leaderboard_image.width - self.scroll_position
-                else:
-                    # For single pass, we need to reach the end (content width minus display width)
-                    end_position = max(0, self.leaderboard_image.width - width)
-                    distance_to_complete = end_position - self.scroll_position
-                
-                time_to_complete = distance_to_complete / actual_scroll_speed
-                
-                if time_to_complete <= remaining_time:
-                    # We have enough time to complete the scroll, continue normally
-                    logger.debug(f"Sufficient time remaining ({remaining_time:.1f}s) to complete scroll ({time_to_complete:.1f}s)")
-                else:
-                    # Not enough time, reset to beginning for clean transition
-                    logger.warning(f"Not enough time to complete content display - remaining: {remaining_time:.1f}s, needed: {time_to_complete:.1f}s")
-                    logger.debug(f"Resetting scroll position for clean transition")
-                    self.scroll_position = 0
+                # If we're significantly behind schedule, warn about potential timeout
+                if progress_behind > 0.2:  # More than 20% behind
+                    logger.warning(f"Leaderboard is {progress_behind:.1%} behind expected progress")
+            
+            # Simple timeout check - if we've exceeded our calculated duration, move to next view
+            if elapsed_time > self.dynamic_duration:
+                logger.info(f"Leaderboard display duration completed ({elapsed_time:.1f}s >= {self.dynamic_duration}s), moving to next view")
+                raise StopIteration("Display duration completed")
             
             # Create the visible part of the image by cropping from the leaderboard_image
             visible_image = self.leaderboard_image.crop((

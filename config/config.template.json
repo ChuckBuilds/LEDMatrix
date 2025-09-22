@@ -204,6 +204,8 @@
         "min_duration": 45,
         "max_duration": 600,
         "duration_buffer": 0.1,
+        "max_display_time": 120,
+        "safety_buffer": 10,
         "background_service": {
             "enabled": true,
             "max_workers": 3,
