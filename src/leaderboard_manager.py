@@ -1212,9 +1212,6 @@ class LeaderboardManager:
             # Signal scrolling state to display manager
             self.display_manager.set_scrolling_state(True)
             
-            # Process any deferred updates
-            self.display_manager.process_deferred_updates()
-            
             # Scroll the image every frame for smooth animation
             self.scroll_position += self.scroll_speed
             

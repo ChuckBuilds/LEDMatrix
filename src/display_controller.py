@@ -577,6 +577,8 @@ class DisplayController:
             # Defer updates for modules that might cause lag during scrolling
             if self.odds_ticker: 
                 self.display_manager.defer_update(self.odds_ticker.update, priority=1)
+            if self.leaderboard:
+                self.display_manager.defer_update(self.leaderboard.update, priority=1)
             if self.stocks: 
                 self.display_manager.defer_update(self.stocks.update_stock_data, priority=2)
             if self.news: 
