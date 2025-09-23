@@ -508,11 +508,15 @@ class DisplayController:
                 if not hasattr(self, '_last_logged_duration') or self._last_logged_duration != dynamic_duration:
                     logger.info(f"Using dynamic duration for stocks: {dynamic_duration} seconds")
                     self._last_logged_duration = dynamic_duration
+                # Debug: Always log the current dynamic duration value
+                logger.debug(f"Stocks dynamic duration check: {dynamic_duration}s")
                 return dynamic_duration
             except Exception as e:
                 logger.error(f"Error getting dynamic duration for stocks: {e}")
                 # Fall back to configured duration
-                return self.display_durations.get(mode_key, 60)
+                fallback_duration = self.display_durations.get(mode_key, 60)
+                logger.debug(f"Using fallback duration for stocks: {fallback_duration}s")
+                return fallback_duration
 
         # Handle dynamic duration for stock_news
         if mode_key == 'stock_news' and self.news:
@@ -1254,6 +1258,10 @@ class DisplayController:
                                 if hasattr(self, '_last_logged_duration'):
                                     delattr(self, '_last_logged_duration')
                         elif current_time - self.last_switch >= self.get_current_duration() or self.force_change:
+                            # Debug timing information
+                            elapsed_time = current_time - self.last_switch
+                            expected_duration = self.get_current_duration()
+                            logger.debug(f"Mode switch triggered: {self.current_display_mode} - Elapsed: {elapsed_time:.1f}s, Expected: {expected_duration}s, Force: {self.force_change}")
                             self.force_change = False
                             if self.current_display_mode == 'calendar' and self.calendar:
                                 self.calendar.advance_event()
@@ -1275,6 +1283,8 @@ class DisplayController:
                         if needs_switch:
                             self.force_clear = True
                             self.last_switch = current_time
+                            # Debug: Log when we set the switch time for a new mode
+                            logger.debug(f"Mode switch completed: {self.current_display_mode} - Switch time set to {current_time}, Duration: {self.get_current_duration()}s")
                         else:
                             self.force_clear = False
                         # Only set manager_to_display if it hasn't been set by live priority logic

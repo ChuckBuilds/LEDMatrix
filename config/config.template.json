@@ -201,7 +201,6 @@
         "request_timeout": 30,
         "dynamic_duration": true,
         "max_display_time": 600,
-        "target_fps": 60,
         "background_service": {
             "enabled": true,
             "max_workers": 3,

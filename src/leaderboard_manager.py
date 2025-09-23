@@ -79,13 +79,10 @@ class LeaderboardManager:
         self.last_display_time = 0
         
         # FPS tracking variables
-        self.frame_times = []  # Store last 60 frame times for averaging
+        self.frame_times = []  # Store last 30 frame times for averaging
         self.last_frame_time = 0
-        self.fps_log_interval = 5.0  # Log FPS every 5 seconds
+        self.fps_log_interval = 10.0  # Log FPS every 10 seconds
         self.last_fps_log_time = 0
-        # Set target FPS for smooth scrolling (60-100 FPS for buttery smooth animation)
-        self.target_fps = self.leaderboard_config.get('target_fps', 60)
-        self.target_frame_time = 1.0 / self.target_fps
         
         # Performance optimization caches
         self._cached_draw = None
@@ -1239,23 +1236,17 @@ class LeaderboardManager:
         try:
             current_time = time.time()
             
-            # Frame rate limiting - sleep to achieve target FPS
+            # FPS tracking only (no artificial throttling)
             if self.last_frame_time > 0:
                 frame_time = current_time - self.last_frame_time
                 
                 # FPS tracking - use circular buffer to prevent memory growth
                 self.frame_times.append(frame_time)
-                if len(self.frame_times) > 30:  # Reduce buffer size for less memory usage
+                if len(self.frame_times) > 30:  # Keep buffer size reasonable
                     self.frame_times.pop(0)
                 
-                # Apply frame rate limiting after tracking
-                if frame_time < self.target_frame_time:
-                    sleep_time = self.target_frame_time - frame_time
-                    time.sleep(sleep_time)
-                    # Don't recalculate frame_time after sleep to avoid confusion in metrics
-                
-                # Log FPS status every 10 seconds (reduced frequency)
-                if current_time - self.last_fps_log_time >= 10.0:
+                # Log FPS status every 10 seconds
+                if current_time - self.last_fps_log_time >= self.fps_log_interval:
                     if self.frame_times:
                         avg_frame_time = sum(self.frame_times) / len(self.frame_times)
                         current_fps = 1.0 / frame_time if frame_time > 0 else 0
@@ -1270,6 +1261,9 @@ class LeaderboardManager:
             
             # Scroll the image every frame for smooth animation
             self.scroll_position += self.scroll_speed
+            
+            # Add scroll delay like other managers for consistent timing
+            time.sleep(self.scroll_delay)
             
             # Get display dimensions once
             width = self.display_manager.matrix.width
