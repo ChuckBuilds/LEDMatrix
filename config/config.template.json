@@ -200,6 +200,7 @@
         "loop": false,
         "request_timeout": 30,
         "dynamic_duration": true,
+        "min_duration": 30,
         "max_display_time": 600,
         "background_service": {
             "enabled": true,
