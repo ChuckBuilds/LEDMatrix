@@ -231,29 +231,6 @@ class NewsManager:
             self.current_headlines = display_headlines
             logger.debug(f"Prepared {len(display_headlines)} headlines for display")
 
-    def create_scrolling_image(self):
-        """Create a pre-rendered image for smooth scrolling."""
-        if not self.cached_text:
-            self.scrolling_image = None
-            return
-
-        try:
-            font = ImageFont.truetype(self.font_path, self.font_size)
-        except Exception as e:
-            logger.warning(f"Failed to load custom font for pre-rendering: {e}. Using default.")
-            font = ImageFont.load_default()
-
-        height = self.display_manager.height
-        width = self.total_scroll_width
-
-        self.scrolling_image = Image.new('RGB', (width, height), (0, 0, 0))
-        draw = ImageDraw.Draw(self.scrolling_image)
-
-        text_height = self.font_size
-        y_pos = (height - text_height) // 2
-        draw.text((0, y_pos), self.cached_text, font=font, fill=self.text_color)
-        logger.debug("Pre-rendered scrolling news image created.")
-
     def calculate_scroll_dimensions(self):
         """Calculate exact dimensions needed for smooth scrolling"""
         if not self.cached_text:
@@ -274,7 +251,10 @@ class NewsManager:
             
             # Get text dimensions
             bbox = temp_draw.textbbox((0, 0), self.cached_text, font=font)
-            self.total_scroll_width = bbox[2] - bbox[0]
+            text_width = bbox[2] - bbox[0]
+            # Add display width gap at the beginning (simulates blank screen)
+            display_width = self.display_manager.width
+            self.total_scroll_width = display_width + text_width
             
             # Calculate dynamic display duration
             self.calculate_dynamic_duration()
@@ -307,7 +287,9 @@ class NewsManager:
 
         text_height = self.font_size
         y_pos = (height - text_height) // 2
-        draw.text((0, y_pos), self.cached_text, font=font, fill=self.text_color)
+        # Draw text starting after display width gap (simulates blank screen)
+        display_width = self.display_manager.width
+        draw.text((display_width, y_pos), self.cached_text, font=font, fill=self.text_color)
         logger.debug("Pre-rendered scrolling news image created.")
 
     def calculate_dynamic_duration(self):
