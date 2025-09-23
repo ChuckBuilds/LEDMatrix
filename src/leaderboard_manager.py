@@ -913,7 +913,8 @@ class LeaderboardManager:
             
             # Calculate total width needed
             total_width = 0
-            spacing = 40  # Spacing between leagues
+            # Use display width for spacing between leagues (simulates blank screen)
+            spacing = self.display_manager.matrix.width
             
             # Calculate width for each league section
             for league_data in self.leaderboard_data:
@@ -1071,12 +1072,12 @@ class LeaderboardManager:
                 # Move to next league section (match width calculation logic)
                 # Update current_x to where team drawing actually ended
                 logger.info(f"League {league_idx+1} ({league_key}) teams ended at x={team_x}px")
-                current_x = team_x + 20 + spacing  # team_x is at end of teams, add internal spacing + inter-league spacing
-                logger.info(f"Next league will start at x={current_x}px (gap: {20 + spacing}px)")
+                current_x = team_x + spacing  # team_x is at end of teams, add display width gap (simulates blank screen)
+                logger.info(f"Next league will start at x={current_x}px (gap: {spacing}px)")
             
             # Set total scroll width for dynamic duration calculation
             # Use actual content width (current_x at end) instead of pre-calculated total_width
-            actual_content_width = current_x - (20 + spacing)  # Remove the final spacing that won't be used
+            actual_content_width = current_x - spacing  # Remove the final spacing that won't be used
             self.total_scroll_width = actual_content_width
             logger.info(f"Content width - Calculated: {total_width}px, Actual: {actual_content_width}px")
             
@@ -1131,7 +1132,7 @@ class LeaderboardManager:
                 else:
                     logger.info(f"  Final league ends at: {league_end_x}px")
             
-            logger.info(f"Total image width: {total_width}px, Display width: {height}px")
+            logger.info(f"Total image width: {total_width}px, Display width: {self.display_manager.matrix.width}px")
             
             logger.info(f"Created leaderboard image with width {total_width}")
             
