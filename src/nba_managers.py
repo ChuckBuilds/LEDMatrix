@@ -12,6 +12,7 @@ from src.cache_manager import CacheManager
 from src.config_manager import ConfigManager
 from src.odds_manager import OddsManager
 from src.background_data_service import get_background_service
+from src.background_cache_mixin import BackgroundCacheMixin
 import pytz
 
 # Import the API counter function from web interface
@@ -32,7 +33,7 @@ logging.basicConfig(
     datefmt='%Y-%m-%d %H:%M:%S'
 )
 
-class BaseNBAManager:
+class BaseNBAManager(BackgroundCacheMixin):
     """Base class for NBA managers with common functionality."""
     # Class variables for warning tracking
     _no_data_warning_logged = False
@@ -322,25 +323,11 @@ class BaseNBAManager:
         This eliminates redundant caching and ensures Recent/Upcoming managers
         use the same data source as the background service.
         """
-        # For Live managers, always fetch fresh data
-        if isinstance(self, NBALiveManager):
-            return self._fetch_nba_api_data(use_cache=False)
-        
-        # For Recent/Upcoming managers, try to use background service cache first
-        from datetime import datetime
-        import pytz
-        cache_key = f"nba_{datetime.now(pytz.utc).strftime('%Y%m%d')}"
-        
-        # Check if background service has fresh data
-        if self.cache_manager.is_background_data_available(cache_key, 'nba'):
-            cached_data = self.cache_manager.get_background_cached_data(cache_key, 'nba')
-            if cached_data:
-                self.logger.info(f"[NBA] Using background service cache for {cache_key}")
-                return cached_data
-        
-        # Fallback to direct API call if background data not available
-        self.logger.info(f"[NBA] Background data not available, fetching directly for {cache_key}")
-        return self._fetch_nba_api_data(use_cache=True)
+        return self._fetch_data_with_background_cache(
+            sport_key='nba',
+            api_fetch_method=self._fetch_nba_api_data,
+            live_manager_class=NBALiveManager
+        )
 
     def _fetch_odds(self, game: Dict) -> None:
         """Fetch odds for a specific game if conditions are met."""

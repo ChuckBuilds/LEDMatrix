@@ -134,12 +134,10 @@ class BackgroundDataService:
         This ensures Recent/Upcoming managers and background service
         use the same cache keys.
         """
-        if date_str is None:
-            from datetime import datetime
-            import pytz
-            date_str = datetime.now(pytz.utc).strftime('%Y%m%d')
-        
-        return f"{sport}_{date_str}"
+        # Use the centralized cache key generation from CacheManager
+        from src.cache_manager import CacheManager
+        cache_manager = CacheManager()
+        return cache_manager.generate_sport_cache_key(sport, date_str)
 
     def submit_fetch_request(self, 
                            sport: str, 

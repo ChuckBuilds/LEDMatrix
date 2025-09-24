@@ -12,6 +12,7 @@ from src.cache_manager import CacheManager
 from src.config_manager import ConfigManager
 from src.odds_manager import OddsManager
 from src.background_data_service import get_background_service
+from src.background_cache_mixin import BackgroundCacheMixin
 import pytz
 
 # Constants
@@ -27,7 +28,7 @@ logging.basicConfig(
 
 
 
-class BaseNFLManager: # Renamed class
+class BaseNFLManager(BackgroundCacheMixin): # Renamed class
     """Base class for NFL managers with common functionality."""
     # Class variables for warning tracking
     _no_data_warning_logged = False
@@ -340,21 +341,12 @@ class BaseNFLManager: # Renamed class
             # Live games should fetch only current games, not entire season
             return self._fetch_current_nfl_games()
         
-        # For Recent/Upcoming managers, try to use background service cache first
-        from datetime import datetime
-        import pytz
-        cache_key = f"nfl_{datetime.now(pytz.utc).strftime('%Y%m%d')}"
-        
-        # Check if background service has fresh data
-        if self.cache_manager.is_background_data_available(cache_key, 'nfl'):
-            cached_data = self.cache_manager.get_background_cached_data(cache_key, 'nfl')
-            if cached_data:
-                self.logger.info(f"[NFL] Using background service cache for {cache_key}")
-                return cached_data
-        
-        # Fallback to direct API call if background data not available
-        self.logger.info(f"[NFL] Background data not available, fetching directly for {cache_key}")
-        return self._fetch_nfl_api_data(use_cache=True)
+        # For Recent/Upcoming managers, use the centralized background cache method
+        return self._fetch_data_with_background_cache(
+            sport_key='nfl',
+            api_fetch_method=self._fetch_nfl_api_data,
+            live_manager_class=NFLLiveManager
+        )
 
     def _load_fonts(self):
         """Load fonts used by the scoreboard."""

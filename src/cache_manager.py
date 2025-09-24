@@ -44,6 +44,17 @@ class CacheManager:
         except ImportError:
             self.config_manager = None
             self.logger.warning("ConfigManager not available, using default cache intervals")
+        
+        # Initialize performance metrics
+        self._cache_metrics = {
+            'hits': 0,
+            'misses': 0,
+            'api_calls_saved': 0,
+            'background_hits': 0,
+            'background_misses': 0,
+            'total_fetch_time': 0.0,
+            'fetch_count': 0
+        }
 
     def _get_writable_cache_dir(self) -> Optional[str]:
         """Tries to find or create a writable cache directory, preferring a system path when available."""
@@ -763,11 +774,15 @@ class CacheManager:
         cached_data = self.get_cached_data(key, max_age, memory_ttl)
         
         if cached_data:
+            # Record cache hit for performance monitoring
+            self.record_cache_hit('background')
             # Unwrap if stored in { 'data': ..., 'timestamp': ... } format
             if isinstance(cached_data, dict) and 'data' in cached_data:
                 return cached_data['data']
             return cached_data
         
+        # Record cache miss for performance monitoring
+        self.record_cache_miss('background')
         return None
 
     def is_background_data_available(self, key: str, sport_key: str = None) -> bool:
@@ -782,3 +797,72 @@ class CacheManager:
         # Check if we have data that's still fresh according to background service TTL
         cached_data = self.get_cached_data(key, strategy['max_age'])
         return cached_data is not None
+
+    def generate_sport_cache_key(self, sport: str, date_str: str = None) -> str:
+        """
+        Centralized cache key generation for sports data.
+        This ensures consistent cache keys across background service and managers.
+        
+        Args:
+            sport: Sport identifier (e.g., 'nba', 'nfl', 'ncaa_fb')
+            date_str: Date string in YYYYMMDD format. If None, uses current UTC date.
+            
+        Returns:
+            Cache key in format: {sport}_{date}
+        """
+        if date_str is None:
+            date_str = datetime.now(pytz.utc).strftime('%Y%m%d')
+        return f"{sport}_{date_str}"
+
+    def record_cache_hit(self, cache_type: str = 'regular'):
+        """Record a cache hit for performance monitoring."""
+        with self._cache_lock:
+            if cache_type == 'background':
+                self._cache_metrics['background_hits'] += 1
+            else:
+                self._cache_metrics['hits'] += 1
+
+    def record_cache_miss(self, cache_type: str = 'regular'):
+        """Record a cache miss for performance monitoring."""
+        with self._cache_lock:
+            if cache_type == 'background':
+                self._cache_metrics['background_misses'] += 1
+            else:
+                self._cache_metrics['misses'] += 1
+            self._cache_metrics['api_calls_saved'] += 1
+
+    def record_fetch_time(self, duration: float):
+        """Record fetch operation duration for performance monitoring."""
+        with self._cache_lock:
+            self._cache_metrics['total_fetch_time'] += duration
+            self._cache_metrics['fetch_count'] += 1
+
+    def get_cache_metrics(self) -> Dict[str, Any]:
+        """Get current cache performance metrics."""
+        with self._cache_lock:
+            total_hits = self._cache_metrics['hits'] + self._cache_metrics['background_hits']
+            total_misses = self._cache_metrics['misses'] + self._cache_metrics['background_misses']
+            total_requests = total_hits + total_misses
+            
+            avg_fetch_time = (self._cache_metrics['total_fetch_time'] / 
+                             self._cache_metrics['fetch_count']) if self._cache_metrics['fetch_count'] > 0 else 0.0
+            
+            return {
+                'total_requests': total_requests,
+                'cache_hit_rate': total_hits / total_requests if total_requests > 0 else 0.0,
+                'background_hit_rate': (self._cache_metrics['background_hits'] / 
+                                       (self._cache_metrics['background_hits'] + self._cache_metrics['background_misses'])
+                                       if (self._cache_metrics['background_hits'] + self._cache_metrics['background_misses']) > 0 else 0.0),
+                'api_calls_saved': self._cache_metrics['api_calls_saved'],
+                'average_fetch_time': avg_fetch_time,
+                'total_fetch_time': self._cache_metrics['total_fetch_time'],
+                'fetch_count': self._cache_metrics['fetch_count']
+            }
+
+    def log_cache_metrics(self):
+        """Log current cache performance metrics."""
+        metrics = self.get_cache_metrics()
+        self.logger.info(f"Cache Performance - Hit Rate: {metrics['cache_hit_rate']:.2%}, "
+                        f"Background Hit Rate: {metrics['background_hit_rate']:.2%}, "
+                        f"API Calls Saved: {metrics['api_calls_saved']}, "
+                        f"Avg Fetch Time: {metrics['average_fetch_time']:.2f}s")
