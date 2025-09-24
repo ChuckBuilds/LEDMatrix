@@ -1020,8 +1020,10 @@ class DisplayController:
             return
              
         try:
+            logger.info("Clearing cache and refetching data to prevent stale data issues...")
             self.cache_manager.clear_cache()
             self._update_modules()
+            logger.info("Cache cleared, waiting 5 seconds for fresh data fetch...")
             time.sleep(5)
             self.current_display_mode = self.available_modes[self.current_mode_index] if self.available_modes else 'none'
             while True:
