@@ -40,7 +40,7 @@ class LeaderboardManager:
         self.enabled_sports = self.leaderboard_config.get('enabled_sports', {})
         self.update_interval = self.leaderboard_config.get('update_interval', 3600)
         self.scroll_speed = self.leaderboard_config.get('scroll_speed', 2)
-        self.scroll_delay = self.leaderboard_config.get('scroll_delay', 0.05)
+        self.scroll_delay = self.leaderboard_config.get('scroll_delay', 0.01)
         self.display_duration = self.leaderboard_config.get('display_duration', 30)
         self.loop = self.leaderboard_config.get('loop', True)
         self.request_timeout = self.leaderboard_config.get('request_timeout', 30)
@@ -52,6 +52,12 @@ class LeaderboardManager:
         self.duration_buffer = self.leaderboard_config.get('duration_buffer', 0.1)
         self.dynamic_duration = 60  # Default duration in seconds
         self.total_scroll_width = 0  # Track total width for dynamic duration calculation
+        
+        # FPS tracking variables
+        self.frame_times = []  # Store last 30 frame times for averaging
+        self.last_frame_time = 0
+        self.fps_log_interval = 10.0  # Log FPS every 10 seconds
+        self.last_fps_log_time = 0
         
         # Initialize managers
         self.cache_manager = CacheManager()
@@ -1329,20 +1335,31 @@ class LeaderboardManager:
         try:
             current_time = time.time()
             
-            # Check if we should be scrolling
-            should_scroll = current_time - self.last_scroll_time >= self.scroll_delay
+            # FPS tracking
+            if self.last_frame_time > 0:
+                frame_time = current_time - self.last_frame_time
+                self.frame_times.append(frame_time)
+                if len(self.frame_times) > 30:
+                    self.frame_times.pop(0)
+                
+                # Log FPS every 10 seconds
+                if current_time - self.last_fps_log_time >= self.fps_log_interval:
+                    if self.frame_times:
+                        avg_frame_time = sum(self.frame_times) / len(self.frame_times)
+                        fps = 1.0 / avg_frame_time if avg_frame_time > 0 else 0
+                        logger.info(f"Leaderboard FPS: {fps:.1f} (avg frame time: {avg_frame_time*1000:.1f}ms)")
+                    self.last_fps_log_time = current_time
+            
+            self.last_frame_time = current_time
             
             # Signal scrolling state to display manager
-            if should_scroll:
-                self.display_manager.set_scrolling_state(True)
-            else:
-                # If we're not scrolling, check if we should process deferred updates
-                self.display_manager.process_deferred_updates()
+            self.display_manager.set_scrolling_state(True)
             
-            # Scroll the image
-            if should_scroll:
-                self.scroll_position += self.scroll_speed
-                self.last_scroll_time = current_time
+            # Scroll the image every frame for smooth animation
+            self.scroll_position += self.scroll_speed
+            
+            # Add scroll delay like other managers for consistent timing
+            time.sleep(self.scroll_delay)
             
             # Calculate crop region
             width = self.display_manager.matrix.width
