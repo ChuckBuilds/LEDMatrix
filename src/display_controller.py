@@ -541,19 +541,20 @@ class DisplayController:
                 # Fall back to configured duration
                 return self.display_durations.get(mode_key, 60)
 
-        # Handle dynamic duration for leaderboard
+        # Handle leaderboard duration (user choice between fixed or dynamic)
         elif mode_key == 'leaderboard' and self.leaderboard:
             try:
-                dynamic_duration = self.leaderboard.get_dynamic_duration()
+                duration = self.leaderboard.get_duration()
+                mode_type = "dynamic" if self.leaderboard.dynamic_duration else "fixed"
                 # Only log if duration has changed or we haven't logged this duration yet
-                if not hasattr(self, '_last_logged_leaderboard_duration') or self._last_logged_leaderboard_duration != dynamic_duration:
-                    logger.info(f"Using dynamic duration for leaderboard: {dynamic_duration} seconds")
-                    self._last_logged_leaderboard_duration = dynamic_duration
-                return dynamic_duration
+                if not hasattr(self, '_last_logged_leaderboard_duration') or self._last_logged_leaderboard_duration != duration:
+                    logger.info(f"Using leaderboard {mode_type} duration: {duration} seconds")
+                    self._last_logged_leaderboard_duration = duration
+                return duration
             except Exception as e:
-                logger.error(f"Error getting dynamic duration for leaderboard: {e}")
+                logger.error(f"Error getting duration for leaderboard: {e}")
                 # Fall back to configured duration
-                return self.display_durations.get(mode_key, 60)
+                return self.display_durations.get(mode_key, 600)
 
         # Simplify weather key handling
         elif mode_key.startswith('weather_'):
@@ -575,6 +576,8 @@ class DisplayController:
             # Defer updates for modules that might cause lag during scrolling
             if self.odds_ticker: 
                 self.display_manager.defer_update(self.odds_ticker.update, priority=1)
+            if self.leaderboard:
+                self.display_manager.defer_update(self.leaderboard.update, priority=1)
             if self.stocks: 
                 self.display_manager.defer_update(self.stocks.update_stock_data, priority=2)
             if self.news: 
@@ -608,6 +611,17 @@ class DisplayController:
             if self.youtube: self.youtube.update()
             if self.text_display: self.text_display.update()
             if self.of_the_day: self.of_the_day.update(time.time())
+            
+            # Update sports managers for leaderboard data
+            if self.leaderboard: self.leaderboard.update()
+            
+            # Update key sports managers that feed the leaderboard
+            if self.nfl_live: self.nfl_live.update()
+            if self.nfl_recent: self.nfl_recent.update()
+            if self.nfl_upcoming: self.nfl_upcoming.update()
+            if self.ncaa_fb_live: self.ncaa_fb_live.update()
+            if self.ncaa_fb_recent: self.ncaa_fb_recent.update()
+            if self.ncaa_fb_upcoming: self.ncaa_fb_upcoming.update()
         
         # News manager fetches data when displayed, not during updates
         # if self.news_manager: self.news_manager.fetch_news_data()
