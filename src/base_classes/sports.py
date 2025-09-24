@@ -393,7 +393,7 @@ class SportsCore:
             # Don't show "0-0" records - set to blank instead
             if home_record in {"0-0", "0-0-0"}:
                 home_record = ''
-            if away_record == {"0-0", "0-0-0"}:
+            if away_record in {"0-0", "0-0-0"}:
                 away_record = ''
 
             details = {
