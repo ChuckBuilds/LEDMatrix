@@ -756,6 +756,10 @@ class StockManager(ScrollMixin):
         
         # Use new scroll system
         if self.cached_text_image:
+            # Ensure scroll controller is initialized
+            if self._scroll_controller is None and self._content_width > 0:
+                self._ensure_scroll_controller()
+            
             # Update scroll position using new system
             scroll_metrics = self.update_scroll(time.time())
             

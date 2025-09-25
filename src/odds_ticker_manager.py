@@ -1838,6 +1838,10 @@ class OddsTickerManager(ScrollMixin):
         try:
             current_time = time.time()
             
+            # Ensure scroll controller is initialized
+            if self._scroll_controller is None and self._content_width > 0:
+                self._ensure_scroll_controller()
+            
             # Use new scroll system
             scroll_metrics = self.update_scroll(current_time)
             
