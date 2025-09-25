@@ -249,18 +249,34 @@ class SportsCore:
         self.logger.debug(f"Logo path: {logo_path}")
 
         try:
-            # Try to download missing logo first
-            if not logo_path.exists():
+            # Try different filename variations first (for cases like TA&M vs TAANDM)
+            actual_logo_path = None
+            filename_variations = LogoDownloader.get_logo_filename_variations(team_abbrev)
+            
+            for filename in filename_variations:
+                test_path = logo_path.parent / filename
+                if test_path.exists():
+                    actual_logo_path = test_path
+                    self.logger.debug(f"Found logo at alternative path: {actual_logo_path}")
+                    break
+            
+            # If no variation found, try to download missing logo
+            if not actual_logo_path and not logo_path.exists():
                 self.logger.info(f"Logo not found for {team_abbrev} at {logo_path}. Attempting to download.")
                 
                 # Try to download the logo from ESPN API (this will create placeholder if download fails)
                 download_missing_logo(self.sport_key, team_id, team_abbrev, logo_path, logo_url)
+                actual_logo_path = logo_path
+
+            # Use the original path if no alternative was found
+            if not actual_logo_path:
+                actual_logo_path = logo_path
 
             # Only try to open the logo if the file exists
-            if os.path.exists(logo_path):
-                logo = Image.open(logo_path)
+            if os.path.exists(actual_logo_path):
+                logo = Image.open(actual_logo_path)
             else:
-                self.logger.error(f"Logo file still doesn't exist at {logo_path} after download attempt")
+                self.logger.error(f"Logo file still doesn't exist at {actual_logo_path} after download attempt")
                 return None
             if logo.mode != 'RGBA':
                 logo = logo.convert('RGBA')
