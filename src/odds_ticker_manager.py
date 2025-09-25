@@ -1783,32 +1783,31 @@ class OddsTickerManager:
         try:
             current_time = time.time()
             
-            # Check if we should be scrolling
-            should_scroll = current_time - self.last_scroll_time >= self.scroll_delay
-            
-            # Signal scrolling state to display manager
-            if should_scroll:
-                self.display_manager.set_scrolling_state(True)
+            # Smooth time-based scrolling - always scroll based on elapsed time
+            if self.last_scroll_time > 0:
+                elapsed_scroll_time = current_time - self.last_scroll_time
+                # Calculate smooth scroll increment based on actual elapsed time
+                scroll_increment = elapsed_scroll_time * (self.scroll_speed / self.scroll_delay)
+                self.scroll_position += scroll_increment
             else:
-                # If we're not scrolling, check if we should process deferred updates
-                self.display_manager.process_deferred_updates()
-            
-            # Scroll the image with integer position optimization
-            if should_scroll:
-                self.scroll_position += self.scroll_speed
+                # First frame - initialize scroll time
                 self.last_scroll_time = current_time
-                # Ensure scroll position is integer to prevent unnecessary image cropping
-                self.scroll_position = int(self.scroll_position)
-                
-                # FPS tracking with circular buffer
-                if self.last_frame_time > 0:
-                    frame_time = current_time - self.last_frame_time
-                    self.frame_times.append(frame_time)
-                    # Keep only last 30 frame times for averaging
-                    if len(self.frame_times) > 30:
-                        self.frame_times.pop(0)
-                
-                self.last_frame_time = current_time
+            
+            # Update scroll time for next frame
+            self.last_scroll_time = current_time
+            
+            # Signal scrolling state to display manager (always scrolling)
+            self.display_manager.set_scrolling_state(True)
+            
+            # FPS tracking with circular buffer
+            if self.last_frame_time > 0:
+                frame_time = current_time - self.last_frame_time
+                self.frame_times.append(frame_time)
+                # Keep only last 30 frame times for averaging
+                if len(self.frame_times) > 30:
+                    self.frame_times.pop(0)
+            
+            self.last_frame_time = current_time
             
             # Calculate crop region
             width = self.display_manager.matrix.width
@@ -1880,38 +1879,23 @@ class OddsTickerManager:
                         logger.debug(f"Resetting scroll position for clean transition (insufficient time warning already logged)")
                     self.scroll_position = 0
             
-            # Optimized image cropping with caching
-            # Only recrop when scroll position changes significantly
-            if self.scroll_position != self._last_crop_position or self._last_visible_image is None:
-                # Create the visible part of the image by pasting from the ticker_image
-                visible_image = Image.new('RGB', (width, height))
-                
-                # Main part
-                visible_image.paste(self.ticker_image, (-self.scroll_position, 0))
-
-                # Handle wrap-around for continuous scroll
-                if self.scroll_position + width > self.ticker_image.width:
-                    wrap_around_width = (self.scroll_position + width) - self.ticker_image.width
-                    wrap_around_image = self.ticker_image.crop((0, 0, wrap_around_width, height))
-                    visible_image.paste(wrap_around_image, (self.ticker_image.width - self.scroll_position, 0))
-                
-                # Cache the image and draw object
-                self._last_visible_image = visible_image
-                self._cached_draw = ImageDraw.Draw(visible_image)
-                self._last_crop_position = self.scroll_position
-            else:
-                # Use cached image with fallback handling
-                visible_image = self._last_visible_image
-                self._cached_draw = self._cached_draw
-                
-                # Fallback if cached image is None
-                if visible_image is None:
-                    visible_image = Image.new('RGB', (width, height), color=(0, 0, 0))
-                    self._cached_draw = ImageDraw.Draw(visible_image)
+            # Create the visible part of the image by pasting from the ticker_image
+            # Use integer scroll position for pasting to avoid sub-pixel artifacts
+            int_scroll_position = int(self.scroll_position)
+            visible_image = Image.new('RGB', (width, height))
             
-            # Display the cropped image (cached or new)
+            # Main part
+            visible_image.paste(self.ticker_image, (-int_scroll_position, 0))
+
+            # Handle wrap-around for continuous scroll
+            if int_scroll_position + width > self.ticker_image.width:
+                wrap_around_width = (int_scroll_position + width) - self.ticker_image.width
+                wrap_around_image = self.ticker_image.crop((0, 0, wrap_around_width, height))
+                visible_image.paste(wrap_around_image, (self.ticker_image.width - int_scroll_position, 0))
+            
+            # Display the cropped image
             self.display_manager.image = visible_image
-            self.display_manager.draw = self._cached_draw if self._cached_draw else ImageDraw.Draw(visible_image)
+            self.display_manager.draw = ImageDraw.Draw(self.display_manager.image)
             
             # Direct display update call - threading bottleneck eliminated
             try:

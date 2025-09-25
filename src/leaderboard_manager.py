@@ -1383,22 +1383,21 @@ class LeaderboardManager:
             
             self.last_frame_time = current_time
             
-            # Check if we should be scrolling based on time
-            should_scroll = current_time - self.last_scroll_time >= self.scroll_delay
-            
-            # Signal scrolling state to display manager
-            if should_scroll:
-                self.display_manager.set_scrolling_state(True)
+            # Smooth time-based scrolling - always scroll based on elapsed time
+            if self.last_scroll_time > 0:
+                elapsed_scroll_time = current_time - self.last_scroll_time
+                # Calculate smooth scroll increment based on actual elapsed time
+                scroll_increment = elapsed_scroll_time * (self.scroll_speed / self.scroll_delay)
+                self.scroll_position += scroll_increment
             else:
-                # If we're not scrolling, check if we should process deferred updates
-                self.display_manager.process_deferred_updates()
-            
-            # Scroll the image with time-based control
-            if should_scroll:
-                self.scroll_position += self.scroll_speed
+                # First frame - initialize scroll time
                 self.last_scroll_time = current_time
-                # Ensure scroll position is integer to prevent unnecessary image cropping
-                self.scroll_position = int(self.scroll_position)
+            
+            # Update scroll time for next frame
+            self.last_scroll_time = current_time
+            
+            # Signal scrolling state to display manager (always scrolling)
+            self.display_manager.set_scrolling_state(True)
             
             # Calculate crop region
             width = self.display_manager.matrix.width
@@ -1465,34 +1464,19 @@ class LeaderboardManager:
                     logger.debug(f"Resetting scroll position for clean transition")
                     self.scroll_position = 0
             
-            # Optimized image cropping with caching
-            # Only recrop when scroll position changes significantly
-            if self.scroll_position != self._last_crop_position or self._last_visible_image is None:
-                # Create the visible part of the image by cropping from the leaderboard_image
-                visible_image = self.leaderboard_image.crop((
-                    self.scroll_position,
-                    0,
-                    self.scroll_position + width,
-                    height
-                ))
-                
-                # Cache the image and draw object
-                self._last_visible_image = visible_image
-                self._cached_draw = ImageDraw.Draw(visible_image)
-                self._last_crop_position = self.scroll_position
-            else:
-                # Use cached image with fallback handling
-                visible_image = self._last_visible_image
-                self._cached_draw = self._cached_draw
-                
-                # Fallback if cached image is None
-                if visible_image is None:
-                    visible_image = Image.new('RGB', (width, height), color=(0, 0, 0))
-                    self._cached_draw = ImageDraw.Draw(visible_image)
+            # Create the visible part of the image by cropping from the leaderboard_image
+            # Use integer scroll position for cropping to avoid sub-pixel artifacts
+            int_scroll_position = int(self.scroll_position)
+            visible_image = self.leaderboard_image.crop((
+                int_scroll_position,
+                0,
+                int_scroll_position + width,
+                height
+            ))
             
-            # Display the visible portion (cached or new)
+            # Display the visible portion
             self.display_manager.image = visible_image
-            self.display_manager.draw = self._cached_draw if self._cached_draw else ImageDraw.Draw(visible_image)
+            self.display_manager.draw = ImageDraw.Draw(self.display_manager.image)
             self.display_manager.update_display()
             
         except StopIteration as e:
