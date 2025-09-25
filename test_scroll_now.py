@@ -26,7 +26,14 @@ def test_scroll_system():
     try:
         # Import after path setup
         from display_manager import DisplayManager
-        from base_classes.scroll_base import BaseScrollController
+        # Import scroll base without relative imports
+        import importlib.util
+        scroll_base_path = os.path.join('src', 'base_classes', 'scroll_base.py')
+        spec = importlib.util.spec_from_file_location("scroll_base", scroll_base_path)
+        scroll_base = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(scroll_base)
+        BaseScrollController = scroll_base.BaseScrollController
+        
         from PIL import Image, ImageDraw
         
         # Simple config

@@ -6,8 +6,8 @@ across different display managers, including scrolling, sports data handling,
 and API interactions.
 """
 
-from .scroll_base import BaseScrollController, ScrollMode, ScrollDirection, ScrollMetrics
-from .scroll_mixin import ScrollMixin, LegacyScrollAdapter
+from base_classes.scroll_base import BaseScrollController, ScrollMode, ScrollDirection, ScrollMetrics
+from base_classes.scroll_mixin import ScrollMixin, LegacyScrollAdapter
 
 __all__ = [
     'BaseScrollController',
