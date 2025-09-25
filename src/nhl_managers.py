@@ -12,6 +12,7 @@ from src.cache_manager import CacheManager
 from src.config_manager import ConfigManager
 from src.odds_manager import OddsManager
 from src.background_data_service import get_background_service
+from src.base_classes.hockey import Hockey
 import pytz
 
 # Import the API counter function from web interface
@@ -32,7 +33,7 @@ logging.basicConfig(
     datefmt='%Y-%m-%d %H:%M:%S'
 )
 
-class BaseNHLManager:
+class BaseNHLManager(Hockey):
     """Base class for NHL managers with common functionality."""
     # Class variables for warning tracking
     _no_data_warning_logged = False
@@ -42,13 +43,10 @@ class BaseNHLManager:
     _last_shared_update = 0
     
     def __init__(self, config: Dict[str, Any], display_manager: DisplayManager, cache_manager: CacheManager):
-        self.display_manager = display_manager
-        # Store reference to config instead of creating new ConfigManager
-        self.config_manager = None  # Not used in this class
-        self.config = config
-        self.cache_manager = cache_manager
-        self.odds_manager = OddsManager(self.cache_manager, None)
         self.logger = logging.getLogger(__name__)
+        # Initialize with Hockey base class
+        super().__init__(config, display_manager, cache_manager, self.logger, "nhl")
+        self.odds_manager = OddsManager(self.cache_manager, None)
         self.nhl_config = config.get("nhl_scoreboard", {})
         self.is_enabled = self.nhl_config.get("enabled", False)
         self.show_odds = self.nhl_config.get("show_odds", False)
