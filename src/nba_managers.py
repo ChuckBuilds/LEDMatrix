@@ -11,7 +11,6 @@ from src.display_manager import DisplayManager
 from src.cache_manager import CacheManager
 from src.config_manager import ConfigManager
 from src.odds_manager import OddsManager
-from src.background_data_service import get_background_service
 from src.background_cache_mixin import BackgroundCacheMixin
 import pytz
 
@@ -77,7 +76,8 @@ class BaseNBAManager(BackgroundCacheMixin):
         background_config = self.nba_config.get("background_service", {})
         if background_config.get("enabled", True):  # Default to enabled
             max_workers = background_config.get("max_workers", 3)
-            self.background_service = get_background_service(self.cache_manager, max_workers)
+            from src.background_data_service import BackgroundDataService
+            self.background_service = BackgroundDataService(self.cache_manager, max_workers)
             self.background_fetch_requests = {}  # Track background fetch requests
             self.background_enabled = True
             self.logger.info(f"[NBA] Background service enabled with {max_workers} workers")

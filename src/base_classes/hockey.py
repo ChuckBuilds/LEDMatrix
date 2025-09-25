@@ -12,21 +12,8 @@ from src.base_classes.data_sources import ESPNDataSource
 class Hockey(SportsCore):
     """Base class for hockey sports with common functionality."""
     
-    # Hockey sport configuration (moved from sport_configs.py)
-    SPORT_CONFIG = {
-        'update_cadence': 'daily',
-        'season_length': 82,  # NHL default
-        'games_per_week': 3,
-        'api_endpoints': ['scoreboard', 'standings'],
-        'sport_specific_fields': ['period', 'power_play', 'penalties', 'shots_on_goal'],
-        'update_interval_seconds': 30,
-        'logo_dir': 'assets/sports/nhl_logos',
-        'show_records': True,
-        'show_ranking': True,
-        'show_odds': True,
-        'data_source_type': 'espn',
-        'api_base_url': 'https://site.api.espn.com/apis/site/v2/sports/hockey'
-    }
+    # Hockey sport configuration - now uses centralized data source system
+    # Configuration is handled by data sources and API extractors
     
     def __init__(self, config: Dict[str, Any], display_manager: DisplayManager, cache_manager: CacheManager, logger: logging.Logger, sport_key: str):
         super().__init__(config, display_manager, cache_manager, logger, sport_key)
@@ -37,8 +24,13 @@ class Hockey(SportsCore):
         self.data_source = ESPNDataSource(logger)
     
     def get_sport_config(self) -> Dict[str, Any]:
-        """Get hockey sport configuration."""
-        return self.SPORT_CONFIG.copy()
+        """Get hockey sport configuration - now handled by data source system."""
+        # Return basic configuration - detailed config is handled by data sources
+        return {
+            'sport': 'hockey',
+            'data_source_type': 'espn',
+            'logo_dir': 'assets/sports/nhl_logos'
+        }
 
     def _fetch_odds(self, game: Dict, league: str) -> None:
         super()._fetch_odds(game, "hockey", league)

@@ -12,6 +12,7 @@ Key Features:
 - Graceful error handling
 - Progress tracking and logging
 - Memory-efficient data storage
+- Integration with new API extractor system
 """
 
 import os
@@ -28,6 +29,8 @@ import queue
 from concurrent.futures import ThreadPoolExecutor, Future
 import weakref
 from src.cache_manager import CacheManager
+from src.base_classes.data_sources import ESPNDataSource, MLBAPIDataSource, SoccerAPIDataSource
+from src.base_classes.api_extractors import ESPNFootballExtractor, ESPNBaseballExtractor, ESPNHockeyExtractor, SoccerAPIExtractor
 # Configure logging
 logger = logging.getLogger(__name__)
 
@@ -126,7 +129,215 @@ class BackgroundDataService:
             'Connection': 'keep-alive'
         }
         
+        # Initialize data sources and extractors
+        self._initialize_data_sources()
+        self._initialize_api_extractors()
+        
         logger.info(f"BackgroundDataService initialized with {max_workers} workers")
+    
+    def _initialize_data_sources(self):
+        """Initialize data sources for different sports."""
+        self.data_sources = {
+            'espn': ESPNDataSource(logger),
+            'mlb_api': MLBAPIDataSource(logger),
+            'soccer_api': SoccerAPIDataSource(logger)
+        }
+        logger.debug("Initialized data sources for ESPN, MLB API, and Soccer API")
+    
+    def _initialize_api_extractors(self):
+        """Initialize API extractors for different sports."""
+        self.api_extractors = {
+            'football': ESPNFootballExtractor(logger),
+            'baseball': ESPNBaseballExtractor(logger),
+            'hockey': ESPNHockeyExtractor(logger),
+            'soccer': SoccerAPIExtractor(logger)
+        }
+        logger.debug("Initialized API extractors for football, baseball, hockey, and soccer")
+    
+    def submit_extractor_fetch_request(self, 
+                                     sport: str, 
+                                     league: str,
+                                     data_source_type: str = 'espn',
+                                     fetch_type: str = 'live_games',
+                                     cache_key: str = None,
+                                     priority: int = 1,
+                                     callback: Optional[Callable] = None) -> str:
+        """
+        Submit a fetch request using the new API extractor system.
+        
+        Args:
+            sport: Sport identifier (e.g., 'football', 'baseball', 'hockey')
+            league: League identifier (e.g., 'nfl', 'mlb', 'nhl')
+            data_source_type: Type of data source ('espn', 'mlb_api', 'soccer_api')
+            fetch_type: Type of data to fetch ('live_games', 'schedule', 'standings')
+            cache_key: Cache key for storing results
+            priority: Priority for the request (1=highest, 5=lowest)
+            callback: Optional callback function
+            
+        Returns:
+            Request ID for tracking
+        """
+        request_id = f"{sport}_{league}_{fetch_type}_{int(time.time())}"
+        
+        if cache_key is None:
+            cache_key = f"{sport}_{league}_{fetch_type}_{datetime.now().strftime('%Y%m%d')}"
+        
+        # Check cache first
+        if self.cache_manager.get(cache_key):
+            logger.debug(f"Cache hit for {sport} {league} {fetch_type} data")
+            return request_id
+        
+        # Create fetch request with extractor info
+        request = FetchRequest(
+            id=request_id,
+            sport=sport,
+            year=datetime.now().year,
+            cache_key=cache_key,
+            url="",  # Not used for extractor-based fetching
+            params={'league': league, 'data_source_type': data_source_type, 'fetch_type': fetch_type},
+            headers={},
+            timeout=self.request_timeout,
+            max_retries=3,
+            priority=priority,
+            callback=callback
+        )
+        
+        with self._lock:
+            self.active_requests[request_id] = request
+            self.stats['total_requests'] += 1
+            self.stats['cache_misses'] += 1
+        
+        # Submit to executor
+        future = self.executor.submit(self._fetch_data_with_extractor, request)
+        
+        logger.info(f"Submitted extractor-based fetch request {request_id} for {sport} {league} {fetch_type}")
+        return request_id
+    
+    def _fetch_data_with_extractor(self, request: FetchRequest) -> FetchResult:
+        """
+        Worker function that performs data fetching using API extractors.
+        
+        Args:
+            request: Fetch request to process
+            
+        Returns:
+            Fetch result with processed data or error information
+        """
+        start_time = time.time()
+        result = FetchResult(request_id=request.id, success=False, retry_count=request.retry_count)
+        
+        try:
+            with self._lock:
+                request.status = FetchStatus.IN_PROGRESS
+            
+            logger.info(f"Starting extractor-based fetch for {request.sport} {request.params.get('league', '')}")
+            
+            # Get data source and extractor
+            data_source_type = request.params.get('data_source_type', 'espn')
+            league = request.params.get('league', '')
+            fetch_type = request.params.get('fetch_type', 'live_games')
+            
+            data_source = self.data_sources.get(data_source_type)
+            extractor = self.api_extractors.get(request.sport)
+            
+            if not data_source:
+                raise ValueError(f"Unknown data source type: {data_source_type}")
+            if not extractor:
+                raise ValueError(f"No extractor available for sport: {request.sport}")
+            
+            # Fetch raw data based on type
+            raw_data = []
+            if fetch_type == 'live_games':
+                raw_data = data_source.fetch_live_games(request.sport, league)
+            elif fetch_type == 'schedule':
+                # For schedule, we need date range - using today for now
+                today = datetime.now()
+                raw_data = data_source.fetch_schedule(request.sport, league, (today, today))
+            elif fetch_type == 'standings':
+                standings_data = data_source.fetch_standings(request.sport, league)
+                raw_data = [standings_data] if standings_data else []
+            
+            # Process data through extractor
+            processed_data = []
+            for item in raw_data:
+                if fetch_type == 'standings':
+                    # Standings don't need extraction, use as-is
+                    processed_data.append(item)
+                else:
+                    # Extract game details
+                    extracted = extractor.extract_game_details(item)
+                    if extracted:
+                        processed_data.append(extracted)
+            
+            # Create final data structure
+            final_data = {
+                'events': processed_data,
+                'metadata': {
+                    'sport': request.sport,
+                    'league': league,
+                    'data_source_type': data_source_type,
+                    'fetch_type': fetch_type,
+                    'timestamp': datetime.now().isoformat(),
+                    'count': len(processed_data)
+                }
+            }
+            
+            # Cache the processed data
+            self.cache_manager.set(request.cache_key, final_data)
+            
+            # Update request status
+            with self._lock:
+                request.status = FetchStatus.COMPLETED
+                request.result = final_data
+            
+            # Create successful result
+            fetch_time = time.time() - start_time
+            result = FetchResult(
+                request_id=request.id,
+                success=True,
+                data=final_data,
+                fetch_time=fetch_time,
+                retry_count=request.retry_count
+            )
+            
+            logger.info(f"Successfully fetched and processed {request.sport} {league} {fetch_type} data in {fetch_time:.2f}s ({len(processed_data)} items)")
+            
+        except Exception as e:
+            error_msg = str(e)
+            logger.error(f"Failed to fetch {request.sport} {request.params.get('league', '')} data: {error_msg}")
+            
+            with self._lock:
+                request.status = FetchStatus.FAILED
+                request.error = error_msg
+            
+            result = FetchResult(
+                request_id=request.id,
+                success=False,
+                error=error_msg,
+                fetch_time=time.time() - start_time,
+                retry_count=request.retry_count
+            )
+            
+            self.stats['failed_requests'] += 1
+        
+        # Store result
+        with self._lock:
+            self.completed_requests[request.id] = result
+            if request.id in self.active_requests:
+                del self.active_requests[request.id]
+        
+        # Update statistics
+        self.stats['total_fetch_time'] += result.fetch_time
+        self.stats['average_fetch_time'] = self.stats['total_fetch_time'] / max(1, self.stats['completed_requests'] + self.stats['failed_requests'])
+        
+        # Call callback if provided
+        if request.callback:
+            try:
+                request.callback(result)
+            except Exception as e:
+                logger.error(f"Error in fetch callback: {e}")
+        
+        return result
     
     def get_sport_cache_key(self, sport: str, date_str: str = None) -> str:
         """

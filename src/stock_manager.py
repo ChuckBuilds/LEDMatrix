@@ -40,6 +40,9 @@ class StockManager:
         self.cached_text = None
         self.cache_manager = CacheManager()
         
+        # Initialize logo cache to prevent repeated file I/O
+        self._logo_cache = {}
+        
         # Get scroll settings from config with faster defaults
         self.scroll_speed = self.stocks_config.get('scroll_speed', 1)
         self.scroll_delay = self.stocks_config.get('scroll_delay', 0.01)
@@ -414,7 +417,12 @@ class StockManager:
             logger.error(f"Error updating stock data: {e}")
 
     def _get_stock_logo(self, symbol: str, is_crypto: bool = False) -> Image.Image:
-        """Get stock or crypto logo image from local directory."""
+        """Get stock or crypto logo image from local directory with caching."""
+        # Check cache first to avoid repeated file I/O
+        cache_key = f"{symbol}_{'crypto' if is_crypto else 'stock'}"
+        if cache_key in self._logo_cache:
+            return self._logo_cache[cache_key]
+        
         try:
             # Try crypto icons first if it's a crypto symbol
             if is_crypto:
@@ -428,7 +436,9 @@ class StockManager:
                         max_size = min(int(self.display_manager.matrix.width / 1.2), 
                                     int(self.display_manager.matrix.height / 1.2))
                         img = img.resize((max_size, max_size), Image.Resampling.LANCZOS)
-                        return img.copy()
+                        cached_img = img.copy()
+                        self._logo_cache[cache_key] = cached_img
+                        return cached_img
             
             # Fall back to stock icons if not crypto or crypto icon not found
             icon_path = os.path.join(self.ticker_icons_dir, f"{symbol}.png")
@@ -439,7 +449,9 @@ class StockManager:
                     max_size = min(int(self.display_manager.matrix.width / 1.2), 
                                 int(self.display_manager.matrix.height / 1.2))
                     img = img.resize((max_size, max_size), Image.Resampling.LANCZOS)
-                    return img.copy()
+                    cached_img = img.copy()
+                    self._logo_cache[cache_key] = cached_img
+                    return cached_img
         except Exception as e:
             logger.warning(f"Error loading local icon for {symbol}: {e}")
 
@@ -464,6 +476,9 @@ class StockManager:
         x = (32 - text_width) // 2
         y = (32 - text_height) // 2
         draw.text((x, y), text, font=font, fill=(255, 255, 255, 255))
+        
+        # Cache the fallback logo as well
+        self._logo_cache[cache_key] = fallback
         return fallback
 
     def _create_stock_display(self, symbol: str, price: float, change: float, change_percent: float, is_crypto: bool = False) -> Image.Image:
@@ -656,7 +671,12 @@ class StockManager:
             return
             
         # Create a continuous scrolling image if needed
-        if self.cached_text_image is None or force_clear:
+        # Check if stock data has changed by comparing with cached symbols
+        current_symbols = sorted(symbols)
+        cached_symbols = getattr(self, '_cached_symbols', None)
+        data_changed = cached_symbols != current_symbols
+        
+        if self.cached_text_image is None or force_clear or data_changed:
             # Create a very wide image that contains all stocks in sequence
             width = self.display_manager.matrix.width
             height = self.display_manager.matrix.height
@@ -698,8 +718,9 @@ class StockManager:
                 if symbol != symbols[-1]:  # Don't add gap after the last stock
                     current_x += stock_gap
             
-            # Cache the full image
+            # Cache the full image and symbols
             self.cached_text_image = full_image
+            self._cached_symbols = current_symbols
             self.scroll_position = 0
             self.last_update = time.time()
             
