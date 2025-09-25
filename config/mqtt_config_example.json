@@ -6,102 +6,22 @@
       "port": 1883,
       "username": "homeassistant",
       "password": "your_mqtt_password_here",
-      "client_id": "ledmatrix",
-      "keepalive": 60,
-      "ssl": false
+      "client_id": "ledmatrix"
     },
     "displays": {
       "rotation": [
         {
-          "name": "Living Room Temperature",
+          "name": "Temperature",
           "type": "rotation",
-          "priority": 1,
           "duration": 15,
           "elements": [
             {
-              "type": "icon",
-              "x": 0,
-              "y": 0,
-              "width": 24,
-              "height": 24,
-              "path": "assets/mqtt_icons/presets/temperature.png",
-              "fallback_text": "T"
-            },
-            {
               "type": "text",
-              "x": 30,
-              "y": 8,
+              "x": 10,
+              "y": 20,
               "mqtt_topic": "homeassistant/climate/living_room/current_temperature",
               "format": "{value}°F",
-              "font_size": 12,
-              "color": [255, 255, 255]
-            }
-          ]
-        },
-        {
-          "name": "People Home Count",
-          "type": "rotation",
-          "priority": 2,
-          "duration": 10,
-          "elements": [
-            {
-              "type": "icon",
-              "x": 0,
-              "y": 16,
-              "width": 16,
-              "height": 16,
-              "path": "assets/mqtt_icons/presets/motion.png",
-              "fallback_text": "P"
-            },
-            {
-              "type": "text",
-              "x": 20,
-              "y": 20,
-              "mqtt_topic": "homeassistant/sensor/people_home_count/state",
-              "format": "{value}",
-              "font_size": 10,
-              "color": [0, 255, 0]
-            },
-            {
-              "type": "text",
-              "x": 30,
-              "y": 20,
-              "text": "HOME",
-              "font_size": 8,
-              "color": [255, 255, 255]
-            }
-          ]
-        },
-        {
-          "name": "Lights Status",
-          "type": "rotation",
-          "priority": 3,
-          "duration": 12,
-          "elements": [
-            {
-              "type": "icon",
-              "x": 0,
-              "y": 0,
-              "width": 20,
-              "height": 20,
-              "path": "assets/mqtt_icons/presets/light.png",
-              "fallback_text": "L"
-            },
-            {
-              "type": "text",
-              "x": 25,
-              "y": 6,
-              "mqtt_topic": "homeassistant/sensor/lights_on_count/state",
-              "format": "{value}",
               "font_size": 14,
-              "color": [255, 255, 0]
-            },
-            {
-              "type": "text",
-              "x": 35,
-              "y": 6,
-              "text": "ON",
-              "font_size": 8,
               "color": [255, 255, 255]
             }
           ]
@@ -109,113 +29,18 @@
       ],
       "ondemand": [
         {
-          "name": "Doorbell Alert",
+          "name": "Doorbell",
           "type": "ondemand",
           "trigger_topic": "homeassistant/binary_sensor/doorbell/state",
           "trigger_value": "on",
           "duration": 8,
           "elements": [
             {
-              "type": "icon",
-              "x": 20,
-              "y": 16,
-              "width": 32,
-              "height": 32,
-              "path": "assets/mqtt_icons/user_uploads/doorbell.png",
-              "fallback_text": "🔔"
-            },
-            {
               "type": "text",
-              "x": 10,
-              "y": 50,
+              "x": 20,
+              "y": 30,
               "text": "DOORBELL",
-              "font_size": 8,
-              "color": [255, 0, 0]
-            }
-          ]
-        },
-        {
-          "name": "Laundry Complete",
-          "type": "ondemand",
-          "trigger_topic": "homeassistant/binary_sensor/washing_machine_complete/state",
-          "trigger_value": "on",
-          "duration": 10,
-          "elements": [
-            {
-              "type": "icon",
-              "x": 16,
-              "y": 12,
-              "width": 32,
-              "height": 32,
-              "path": "assets/mqtt_icons/user_uploads/washing_machine.png",
-              "fallback_text": "🧺"
-            },
-            {
-              "type": "text",
-              "x": 5,
-              "y": 48,
-              "text": "LAUNDRY DONE",
-              "font_size": 7,
-              "color": [0, 255, 255]
-            }
-          ]
-        },
-        {
-          "name": "Motion Alert",
-          "type": "ondemand",
-          "trigger_topic": "homeassistant/binary_sensor/front_door_motion/state",
-          "trigger_value": "on",
-          "duration": 6,
-          "elements": [
-            {
-              "type": "icon",
-              "x": 20,
-              "y": 16,
-              "width": 24,
-              "height": 24,
-              "path": "assets/mqtt_icons/presets/motion.png",
-              "fallback_text": "👁"
-            },
-            {
-              "type": "text",
-              "x": 15,
-              "y": 44,
-              "text": "MOTION",
-              "font_size": 8,
-              "color": [255, 165, 0]
-            }
-          ]
-        },
-        {
-          "name": "Security Alert",
-          "type": "ondemand",
-          "trigger_topic": "homeassistant/alarm_control_panel/home_alarm/state",
-          "trigger_value": "triggered",
-          "duration": 15,
-          "elements": [
-            {
-              "type": "icon",
-              "x": 20,
-              "y": 12,
-              "width": 24,
-              "height": 24,
-              "path": "assets/mqtt_icons/presets/security.png",
-              "fallback_text": "🚨"
-            },
-            {
-              "type": "text",
-              "x": 8,
-              "y": 40,
-              "text": "SECURITY",
-              "font_size": 8,
-              "color": [255, 0, 0]
-            },
-            {
-              "type": "text",
-              "x": 12,
-              "y": 50,
-              "text": "ALERT",
-              "font_size": 8,
+              "font_size": 12,
               "color": [255, 0, 0]
             }
           ]
