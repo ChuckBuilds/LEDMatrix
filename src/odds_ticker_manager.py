@@ -1847,12 +1847,20 @@ class OddsTickerManager(ScrollMixin):
             # Ensure scroll controller is initialized
             if self._scroll_controller is None and self._content_width > 0:
                 self._ensure_scroll_controller()
+            elif self._scroll_controller is None:
+                # Debug: Log why scroll controller isn't being initialized
+                if not hasattr(self, '_scroll_debug_logged'):
+                    logger.warning(f"OddsTickerManager: Cannot initialize scroll controller - content dimensions: {self._content_width}x{self._content_height}")
+                    self._scroll_debug_logged = True
             
             # Use new scroll system if available, otherwise fallback to old system
             if self._scroll_controller is not None:
                 scroll_metrics = self.update_scroll(current_time)
             else:
-                logger.warning("OddsTickerManager: Scroll controller not available, using fallback display")
+                # Only log warning once per session to avoid spam
+                if not hasattr(self, '_scroll_fallback_logged') or not self._scroll_fallback_logged:
+                    logger.warning("OddsTickerManager: Scroll controller not available, using fallback display")
+                    self._scroll_fallback_logged = True
                 self._display_fallback_message()
                 return
             
