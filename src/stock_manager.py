@@ -766,9 +766,8 @@ class StockManager(ScrollMixin):
             else:
                 # Only log warning once per session to avoid spam
                 if not hasattr(self, '_scroll_fallback_logged') or not self._scroll_fallback_logged:
-                    logger.warning("StockManager: Scroll controller not available, using fallback display")
+                    logger.warning("StockManager: Scroll controller not available, skipping display")
                     self._scroll_fallback_logged = True
-                self._display_fallback_message()
                 return
             
             # Get the visible portion using new system
