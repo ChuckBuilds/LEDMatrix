@@ -918,6 +918,13 @@ class MLBLiveManager(BaseMLBManager, BaseballLive):
                 self.current_game_index = (self.current_game_index + 1) % len(self.live_games)
                 self.current_game = self.live_games[self.current_game_index]
                 self.last_game_switch = current_time
+                
+                # Log team switching
+                if self.current_game:
+                    away_abbr = self.current_game.get('away_abbr', 'UNK')
+                    home_abbr = self.current_game.get('home_abbr', 'UNK')
+                    self.logger.info(f"[MLB Live] Showing {away_abbr} vs {home_abbr}")
+                
                 # Force display update when switching games
                 # self.display(force_clear=True) # REMOVED: DisplayController handles this
                 self.last_display_update = current_time
@@ -1313,6 +1320,12 @@ class MLBRecentManager(BaseMLBManager, SportsRecent):
                 self.current_game = self.recent_games[self.current_game_index]
                 self.last_game_switch = current_time
                 force_clear = True  # Force clear when switching games
+                
+                # Log team switching
+                if self.current_game:
+                    away_abbr = self.current_game.get('away_abbr', 'UNK')
+                    home_abbr = self.current_game.get('home_abbr', 'UNK')
+                    self.logger.info(f"[MLB Recent] Showing {away_abbr} vs {home_abbr}")
             
             # Create and display the game image
             game_image = self._create_game_display(self.current_game)
@@ -1454,6 +1467,12 @@ class MLBUpcomingManager(BaseMLBManager, SportsUpcoming):
                 self.current_game = self.upcoming_games[self.current_game_index]
                 self.last_game_switch = current_time
                 force_clear = True  # Force clear when switching games
+                
+                # Log team switching
+                if self.current_game:
+                    away_abbr = self.current_game.get('away_abbr', 'UNK')
+                    home_abbr = self.current_game.get('home_abbr', 'UNK')
+                    self.logger.info(f"[MLB Upcoming] Showing {away_abbr} vs {home_abbr}")
             
             # Create and display the game image
             game_image = self._create_game_display(self.current_game)

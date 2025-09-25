@@ -676,13 +676,20 @@ class NHLLiveManager(BaseNHLManager):
                         self.live_games = []
                         self.current_game = None
                 
-                # Check if it's time to switch games
-                if len(self.live_games) > 1 and (current_time - self.last_game_switch) >= self.game_display_duration:
-                    self.current_game_index = (self.current_game_index + 1) % len(self.live_games)
-                    self.current_game = self.live_games[self.current_game_index]
-                    self.last_game_switch = current_time
-                    # self.display(force_clear=True) # REMOVED: DisplayController handles this
-                    self.last_display_update = current_time # Track time for potential display update
+            # Check if it's time to switch games
+            if len(self.live_games) > 1 and (current_time - self.last_game_switch) >= self.game_display_duration:
+                self.current_game_index = (self.current_game_index + 1) % len(self.live_games)
+                self.current_game = self.live_games[self.current_game_index]
+                self.last_game_switch = current_time
+                
+                # Log team switching
+                if self.current_game:
+                    away_abbr = self.current_game.get('away_abbr', 'UNK')
+                    home_abbr = self.current_game.get('home_abbr', 'UNK')
+                    self.logger.info(f"[NHL Live] Showing {away_abbr} vs {home_abbr}")
+                
+                # self.display(force_clear=True) # REMOVED: DisplayController handles this
+                self.last_display_update = current_time # Track time for potential display update
 
     def display(self, force_clear=False):
         """Display live game information."""
@@ -792,6 +799,12 @@ class NHLRecentManager(BaseNHLManager):
                 self.current_game = self.games_list[self.current_game_index]
                 self.last_game_switch = current_time
                 force_clear = True  # Force clear when switching games
+                
+                # Log team switching
+                if self.current_game:
+                    away_abbr = self.current_game.get('away_abbr', 'UNK')
+                    home_abbr = self.current_game.get('home_abbr', 'UNK')
+                    self.logger.info(f"[NHL Recent] Showing {away_abbr} vs {home_abbr}")
             
             # Draw the scorebug layout
             self._draw_scorebug_layout(self.current_game, force_clear)
@@ -925,6 +938,12 @@ class NHLUpcomingManager(BaseNHLManager):
                 self.current_game = self.upcoming_games[self.current_game_index]
                 self.last_game_switch = current_time
                 force_clear = True  # Force clear when switching games
+                
+                # Log team switching
+                if self.current_game:
+                    away_abbr = self.current_game.get('away_abbr', 'UNK')
+                    home_abbr = self.current_game.get('home_abbr', 'UNK')
+                    self.logger.info(f"[NHL Upcoming] Showing {away_abbr} vs {home_abbr}")
             
             # Draw the scorebug layout
             self._draw_scorebug_layout(self.current_game, force_clear)

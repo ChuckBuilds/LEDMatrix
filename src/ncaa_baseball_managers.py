@@ -680,6 +680,13 @@ class NCAABaseballLiveManager(BaseNCAABaseballManager, BaseballLive):
                 self.current_game_index = (self.current_game_index + 1) % len(self.live_games)
                 self.current_game = self.live_games[self.current_game_index]
                 self.last_game_switch = current_time
+                
+                # Log team switching
+                if self.current_game:
+                    away_team = self.current_game.get('away_team', 'UNK')
+                    home_team = self.current_game.get('home_team', 'UNK')
+                    self.logger.info(f"[NCAABASEBALL Live] Showing {away_team} vs {home_team}")
+                
                 # Force display update when switching games
                 # self.display(force_clear=True) # REMOVED: DisplayController handles this
                 self.last_display_update = current_time # Track last successful update that *would* have displayed
@@ -966,6 +973,12 @@ class NCAABaseballRecentManager(BaseNCAABaseballManager, SportsRecent):
                 self.current_game = self.recent_games[self.current_game_index]
                 self.last_game_switch = current_time
                 force_clear = True
+                
+                # Log team switching
+                if self.current_game:
+                    away_team = self.current_game.get('away_team', 'UNK')
+                    home_team = self.current_game.get('home_team', 'UNK')
+                    logger.info(f"[NCAABASEBALL Recent] Showing {away_team} vs {home_team}")
             
             if self.current_game:
                 game_image = self._create_game_display(self.current_game)
@@ -1086,6 +1099,12 @@ class NCAABaseballUpcomingManager(BaseNCAABaseballManager, SportsUpcoming):
                 self.current_game = self.upcoming_games[self.current_game_index]
                 self.last_game_switch = current_time
                 force_clear = True
+                
+                # Log team switching
+                if self.current_game:
+                    away_team = self.current_game.get('away_team', 'UNK')
+                    home_team = self.current_game.get('home_team', 'UNK')
+                    logger.info(f"[NCAABASEBALL Upcoming] Showing {away_team} vs {home_team}")
             
             if self.current_game:
                 game_image = self._create_game_display(self.current_game)

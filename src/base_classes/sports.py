@@ -1015,7 +1015,15 @@ class SportsUpcoming(SportsCore):
                 self.current_game = self.games_list[self.current_game_index]
                 self.last_game_switch = current_time
                 force_clear = True # Force redraw on switch
-                self.logger.debug(f"Switched to game index {self.current_game_index}") # Changed log prefix
+                
+                # Log team switching with sport prefix
+                if self.current_game:
+                    away_abbr = self.current_game.get('away_abbr', 'UNK')
+                    home_abbr = self.current_game.get('home_abbr', 'UNK')
+                    sport_prefix = self.sport_key.upper() if hasattr(self, 'sport_key') else 'SPORT'
+                    self.logger.info(f"[{sport_prefix} Upcoming] Showing {away_abbr} vs {home_abbr}")
+                else:
+                    self.logger.debug(f"Switched to game index {self.current_game_index}")
 
             if self.current_game:
                 self._draw_scorebug_layout(self.current_game, force_clear)
@@ -1304,7 +1312,15 @@ class SportsRecent(SportsCore):
                 self.current_game = self.games_list[self.current_game_index]
                 self.last_game_switch = current_time
                 force_clear = True # Force redraw on switch
-                self.logger.debug(f"Switched to game index {self.current_game_index}") # Changed log prefix
+                
+                # Log team switching with sport prefix
+                if self.current_game:
+                    away_abbr = self.current_game.get('away_abbr', 'UNK')
+                    home_abbr = self.current_game.get('home_abbr', 'UNK')
+                    sport_prefix = self.sport_key.upper() if hasattr(self, 'sport_key') else 'SPORT'
+                    self.logger.info(f"[{sport_prefix} Recent] Showing {away_abbr} vs {home_abbr}")
+                else:
+                    self.logger.debug(f"Switched to game index {self.current_game_index}")
 
             if self.current_game:
                 self._draw_scorebug_layout(self.current_game, force_clear)

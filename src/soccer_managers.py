@@ -1089,6 +1089,12 @@ class SoccerRecentManager(BaseSoccerManager):
                 self.current_game = self.games_list[self.current_game_index]
                 self.last_game_switch = current_time
                 force_clear = True # Force clear when switching games
+                
+                # Log team switching
+                if self.current_game:
+                    away_abbr = self.current_game.get('away_abbr', 'UNK')
+                    home_abbr = self.current_game.get('home_abbr', 'UNK')
+                    self.logger.info(f"[SOCCER Recent] Showing {away_abbr} vs {home_abbr}")
 
             # Ensure current_game is set (it might be None initially)
             if not self.current_game and self.games_list:
@@ -1228,6 +1234,12 @@ class SoccerUpcomingManager(BaseSoccerManager):
                 self.current_game = self.upcoming_games[self.current_game_index]
                 self.last_game_switch = current_time
                 force_clear = True # Force clear when switching games
+                
+                # Log team switching
+                if self.current_game:
+                    away_abbr = self.current_game.get('away_abbr', 'UNK')
+                    home_abbr = self.current_game.get('home_abbr', 'UNK')
+                    self.logger.info(f"[SOCCER Upcoming] Showing {away_abbr} vs {home_abbr}")
 
             # Ensure current_game is set
             if not self.current_game and self.upcoming_games:

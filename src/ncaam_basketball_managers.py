@@ -778,6 +778,12 @@ class NCAAMBasketballLiveManager(BaseNCAAMBasketballManager):
                              self.current_game_index = (self.current_game_index + 1) % len(self.live_games)
                              self.current_game = self.live_games[self.current_game_index]
                              self.last_game_switch = current_time
+                             
+                             # Log team switching
+                             if self.current_game:
+                                 away_abbr = self.current_game.get('away_abbr', 'UNK')
+                                 home_abbr = self.current_game.get('home_abbr', 'UNK')
+                                 self.logger.info(f"[NCAAMBASKETBALL Live] Showing {away_abbr} vs {home_abbr}")
 
 
                         # Only update display if we have new data and enough time has passed
@@ -934,6 +940,12 @@ class NCAAMBasketballRecentManager(BaseNCAAMBasketballManager):
                 self.current_game = self.recent_games[self.current_game_index]
                 self.last_game_switch = current_time
                 force_clear = True  # Force clear when switching games
+                
+                # Log team switching
+                if self.current_game:
+                    away_abbr = self.current_game.get('away_abbr', 'UNK')
+                    home_abbr = self.current_game.get('home_abbr', 'UNK')
+                    self.logger.info(f"[NCAAMBASKETBALL Recent] Showing {away_abbr} vs {home_abbr}")
 
             # If only one game, ensure it's set correctly
             elif len(self.recent_games) == 1:
@@ -1077,6 +1089,12 @@ class NCAAMBasketballUpcomingManager(BaseNCAAMBasketballManager):
                 self.current_game = self.upcoming_games[self.current_game_index]
                 self.last_game_switch = current_time
                 force_clear = True  # Force clear when switching games
+                
+                # Log team switching
+                if self.current_game:
+                    away_abbr = self.current_game.get('away_abbr', 'UNK')
+                    home_abbr = self.current_game.get('home_abbr', 'UNK')
+                    self.logger.info(f"[NCAAMBASKETBALL Upcoming] Showing {away_abbr} vs {home_abbr}")
 
             # If only one game, ensure it's set
             elif len(self.upcoming_games) == 1:

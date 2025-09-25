@@ -833,6 +833,12 @@ class NBARecentManager(BaseNBAManager):
                 self.current_game = self.recent_games[self.current_game_index]
                 self.last_game_switch = current_time
                 force_clear = True
+                
+                # Log team switching
+                if self.current_game:
+                    away_abbr = self.current_game.get('away_abbr', 'UNK')
+                    home_abbr = self.current_game.get('home_abbr', 'UNK')
+                    self.logger.info(f"[NBA Recent] Showing {away_abbr} vs {home_abbr}")
 
             # Draw the scorebug layout
             self._draw_scorebug_layout(self.current_game, force_clear)
@@ -927,6 +933,12 @@ class NBAUpcomingManager(BaseNBAManager):
                 self.current_game = self.upcoming_games[self.current_game_index]
                 self.last_game_switch = current_time
                 force_clear = True
+                
+                # Log team switching
+                if self.current_game:
+                    away_abbr = self.current_game.get('away_abbr', 'UNK')
+                    home_abbr = self.current_game.get('home_abbr', 'UNK')
+                    self.logger.info(f"[NBA Upcoming] Showing {away_abbr} vs {home_abbr}")
             
             # Draw the scorebug layout
             self._draw_scorebug_layout(self.current_game, force_clear)
