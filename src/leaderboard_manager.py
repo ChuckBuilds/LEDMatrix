@@ -41,6 +41,12 @@ class LeaderboardManager:
         self.update_interval = self.leaderboard_config.get('update_interval', 3600)
         self.scroll_speed = self.leaderboard_config.get('scroll_speed', 2)
         self.scroll_delay = self.leaderboard_config.get('scroll_delay', 0.01)
+        
+        # FPS control - allow users to set target FPS instead of scroll_delay
+        target_fps = self.leaderboard_config.get('target_fps', None)
+        if target_fps is not None:
+            self.scroll_delay = 1.0 / target_fps
+            logger.info(f"[Leaderboard] Target FPS set to {target_fps}, scroll_delay calculated as {self.scroll_delay:.4f}s")
         self.display_duration = self.leaderboard_config.get('display_duration', 30)
         self.loop = self.leaderboard_config.get('loop', True)
         self.request_timeout = self.leaderboard_config.get('request_timeout', 30)

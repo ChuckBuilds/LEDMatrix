@@ -91,6 +91,12 @@ class OddsTickerManager:
         self.update_interval = self.odds_ticker_config.get('update_interval', 3600)
         self.scroll_speed = self.odds_ticker_config.get('scroll_speed', 2)
         self.scroll_delay = self.odds_ticker_config.get('scroll_delay', 0.05)
+        
+        # FPS control - allow users to set target FPS instead of scroll_delay
+        target_fps = self.odds_ticker_config.get('target_fps', None)
+        if target_fps is not None:
+            self.scroll_delay = 1.0 / target_fps
+            logger.info(f"[Odds Ticker] Target FPS set to {target_fps}, scroll_delay calculated as {self.scroll_delay:.4f}s")
         self.display_duration = self.odds_ticker_config.get('display_duration', 30)
         self.future_fetch_days = self.odds_ticker_config.get('future_fetch_days', 7)
         self.loop = self.odds_ticker_config.get('loop', True)
