@@ -1389,18 +1389,16 @@ class LeaderboardManager:
             
             self.last_frame_time = current_time
             
-            # Smooth time-based scrolling with frame rate control
+            # Simple time-based scrolling (like text_display.py)
             if self.last_scroll_time > 0:
-                elapsed_scroll_time = current_time - self.last_scroll_time
-                # Only scroll if enough time has passed (frame rate limiting)
-                if elapsed_scroll_time >= self.scroll_delay:
-                    # Calculate scroll increment: scroll_speed pixels per scroll_delay seconds
-                    scroll_increment = self.scroll_speed
-                    self.scroll_position += scroll_increment
-                    self.last_scroll_time = current_time
+                delta_time = current_time - self.last_scroll_time
+                scroll_delta = delta_time * (self.scroll_speed / self.scroll_delay)
+                self.scroll_position += scroll_delta
             else:
                 # First frame - initialize scroll time
                 self.last_scroll_time = current_time
+            
+            self.last_scroll_time = current_time
             
             # Signal scrolling state to display manager (always scrolling)
             self.display_manager.set_scrolling_state(True)
