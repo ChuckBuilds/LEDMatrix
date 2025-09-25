@@ -7,11 +7,40 @@ from PIL import Image, ImageDraw, ImageFont
 import time
 import pytz
 from src.base_classes.sports import SportsCore
+from src.base_classes.api_extractors import ESPNFootballExtractor
+from src.base_classes.data_sources import ESPNDataSource
 import requests
 
 class Football(SportsCore):
+    """Base class for football sports with common functionality."""
+    
+    # Football sport configuration (moved from sport_configs.py)
+    SPORT_CONFIG = {
+        'update_cadence': 'weekly',
+        'season_length': 17,  # NFL default
+        'games_per_week': 1,
+        'api_endpoints': ['scoreboard', 'standings'],
+        'sport_specific_fields': ['down', 'distance', 'possession', 'timeouts', 'is_redzone'],
+        'update_interval_seconds': 60,
+        'logo_dir': 'assets/sports/nfl_logos',
+        'show_records': True,
+        'show_ranking': True,
+        'show_odds': True,
+        'data_source_type': 'espn',
+        'api_base_url': 'https://site.api.espn.com/apis/site/v2/sports/football'
+    }
+    
     def __init__(self, config: Dict[str, Any], display_manager: DisplayManager, cache_manager: CacheManager, logger: logging.Logger, sport_key: str):
         super().__init__(config, display_manager, cache_manager, logger, sport_key)
+        
+        # Initialize football-specific architecture components
+        self.sport_config = self.get_sport_config()
+        self.api_extractor = ESPNFootballExtractor(logger)
+        self.data_source = ESPNDataSource(logger)
+    
+    def get_sport_config(self) -> Dict[str, Any]:
+        """Get football sport configuration."""
+        return self.SPORT_CONFIG.copy()
 
     def _fetch_game_odds(self, _: Dict) -> None:
         pass

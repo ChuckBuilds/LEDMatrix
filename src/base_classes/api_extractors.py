@@ -360,20 +360,4 @@ class SoccerAPIExtractor(APIDataExtractor):
             return {}
 
 
-def get_extractor_for_sport(sport_key: str, logger: logging.Logger) -> APIDataExtractor:
-    """Factory function to get the appropriate extractor for a sport."""
-    extractors = {
-        'nfl': ESPNFootballExtractor,
-        'ncaa_fb': ESPNFootballExtractor,
-        'mlb': ESPNBaseballExtractor,
-        'nhl': ESPNHockeyExtractor,
-        'ncaam_hockey': ESPNHockeyExtractor,
-        'soccer': SoccerAPIExtractor
-    }
-    
-    extractor_class = extractors.get(sport_key)
-    if not extractor_class:
-        logger.warning(f"No extractor found for sport: {sport_key}, using generic ESPN extractor")
-        return ESPNFootballExtractor(logger)
-    
-    return extractor_class(logger)
+# Factory function removed - sport classes now instantiate extractors directly

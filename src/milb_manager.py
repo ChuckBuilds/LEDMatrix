@@ -14,6 +14,10 @@ from urllib3.util.retry import Retry
 import pytz
 from src.background_data_service import get_background_service
 
+# Import baseball and standard sports classes
+from .base_classes.baseball import Baseball, BaseballLive
+from .base_classes.sports import SportsRecent, SportsUpcoming
+
 # Import API counter function
 try:
     from web_interface_v2 import increment_api_counter
@@ -24,17 +28,16 @@ except ImportError:
 # Get logger
 logger = logging.getLogger(__name__)
 
-class BaseMiLBManager:
-    """Base class for MiLB managers with common functionality."""
+class BaseMiLBManager(Baseball):
+    """Base class for MiLB managers using new baseball architecture."""
     def __init__(self, config: Dict[str, Any], display_manager, cache_manager: CacheManager):
-        self.config = config
-        self.display_manager = display_manager
+        # Initialize with sport_key for MiLB
+        super().__init__(config, display_manager, cache_manager, logger, "milb")
+        
+        # MiLB-specific configuration
         self.milb_config = config.get('milb', {})
         self.favorite_teams = self.milb_config.get('favorite_teams', [])
         self.show_records = self.milb_config.get('show_records', False)
-        self.cache_manager = cache_manager
-        self.logger = logging.getLogger(__name__)
-        self.logger.setLevel(logging.INFO)  # Set logger level to INFO
         
         # Load MiLB team mapping
         self.team_mapping = {}
@@ -896,7 +899,7 @@ class BaseMiLBManager:
             return game_data
         return {}
 
-class MiLBLiveManager(BaseMiLBManager):
+class MiLBLiveManager(BaseMiLBManager, BaseballLive):
     """Manager for displaying live MiLB games."""
     def __init__(self, config: Dict[str, Any], display_manager, cache_manager: CacheManager):
         super().__init__(config, display_manager, cache_manager)
@@ -1424,7 +1427,7 @@ class MiLBLiveManager(BaseMiLBManager):
         except Exception as e:
             logger.error(f"[MiLB] Error displaying live game: {e}", exc_info=True)
 
-class MiLBRecentManager(BaseMiLBManager):
+class MiLBRecentManager(BaseMiLBManager, SportsRecent):
     """Manager for displaying recent MiLB games."""
     def __init__(self, config: Dict[str, Any], display_manager, cache_manager: CacheManager):
         super().__init__(config, display_manager, cache_manager)
@@ -1615,7 +1618,7 @@ class MiLBRecentManager(BaseMiLBManager):
         except Exception as e:
             logger.error(f"[MiLB] Error displaying recent game: {e}", exc_info=True)
 
-class MiLBUpcomingManager(BaseMiLBManager):
+class MiLBUpcomingManager(BaseMiLBManager, SportsUpcoming):
     """Manager for upcoming MiLB games."""
     def __init__(self, config: Dict[str, Any], display_manager, cache_manager: CacheManager):
         super().__init__(config, display_manager, cache_manager)

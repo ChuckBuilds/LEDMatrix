@@ -100,18 +100,18 @@ class BaseNCAAFBManager(Football): # Renamed class
         datestring = f"{season_year}0801-{season_year+1}0201"
         cache_key = f"ncaafb_schedule_{season_year}"
 
-            if use_cache:
+        if use_cache:
             cached_data = self.cache_manager.get(cache_key)
-                if cached_data:
+            if cached_data:
                 # Validate cached data structure
                 if isinstance(cached_data, dict) and 'events' in cached_data:
                     self.logger.info(f"Using cached schedule for {season_year}")
-            return cached_data
+                    return cached_data
                 elif isinstance(cached_data, list):
                     # Handle old cache format (list of events)
                     self.logger.info(f"Using cached schedule for {season_year} (legacy format)")
                     return {'events': cached_data}
-        else:
+                else:
                     self.logger.warning(f"Invalid cached data format for {season_year}: {type(cached_data)}")
                     # Clear invalid cache
                     self.cache_manager.clear_cache(cache_key)
@@ -163,7 +163,7 @@ class BaseNCAAFBManager(Football): # Renamed class
         partial_data = self._get_weeks_data("college-football")
         if partial_data:
             return partial_data
-                return None
+        return None
     
     def _fetch_ncaa_api_data_sync(self, use_cache: bool = True) -> Optional[Dict]:
         """
@@ -187,13 +187,13 @@ class BaseNCAAFBManager(Football): # Renamed class
             return {'events': events}
         except requests.exceptions.RequestException as e:
             self.logger.error(f"[API error fetching full schedule: {e}")
-                 return None
+            return None
 
     def _fetch_data(self) -> Optional[Dict]:
         """Fetch data using shared data mechanism or direct fetch for live."""
         if isinstance(self, NCAAFBLiveManager):
             return self._fetch_todays_games("college-football")
-                else:
+        else:
             return self._fetch_ncaa_fb_api_data(use_cache=True)
 
 

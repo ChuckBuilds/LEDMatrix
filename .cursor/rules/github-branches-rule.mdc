@@ -1,0 +1,213 @@
+---
+description: GitHub branching and pull request best practices for LEDMatrix project
+globs: ["**/*.py", "**/*.md", "**/*.json", "**/*.sh"]
+alwaysApply: true
+---
+
+# GitHub Branching and Pull Request Guidelines
+
+## Branch Naming Conventions
+
+### Feature Branches
+- **Format**: `feature/description-of-feature`
+- **Examples**: 
+  - `feature/weather-forecast-improvements`
+  - `feature/stock-api-integration`
+  - `feature/nba-live-scores`
+
+### Bug Fix Branches
+- **Format**: `fix/description-of-bug`
+- **Examples**:
+  - `fix/leaderboard-scrolling-performance`
+  - `fix/weather-api-timeout`
+  - `fix/display-rendering-issue`
+
+### Hotfix Branches
+- **Format**: `hotfix/critical-issue-description`
+- **Examples**:
+  - `hotfix/display-crash-fix`
+  - `hotfix/api-rate-limit-fix`
+
+### Refactoring Branches
+- **Format**: `refactor/description-of-refactor`
+- **Examples**:
+  - `refactor/sports-manager-architecture`
+  - `refactor/cache-management-system`
+
+## Branch Management Rules
+
+### Main Branch Protection
+- **`main`** branch is protected and requires PR reviews
+- Never commit directly to `main`
+- All changes must go through pull requests
+
+### Branch Lifecycle
+1. **Create** branch from `main` when starting work
+2. **Keep** branch up-to-date with `main` regularly
+3. **Test** thoroughly before creating PR
+4. **Delete** branch after successful merge
+
+### Branch Updates
+```bash
+# Before starting new work
+git checkout main
+git pull origin main
+
+# Create new branch
+git checkout -b feature/your-feature-name
+
+# Keep branch updated during development
+git checkout main
+git pull origin main
+git checkout feature/your-feature-name
+git merge main
+```
+
+## Pull Request Guidelines
+
+### PR Title Format
+- **Feature**: `feat: Add weather forecast improvements`
+- **Fix**: `fix: Resolve leaderboard scrolling performance issue`
+- **Refactor**: `refactor: Improve sports manager architecture`
+- **Docs**: `docs: Update API integration guide`
+- **Test**: `test: Add unit tests for weather manager`
+
+### PR Description Template
+```markdown
+## Description
+Brief description of changes and motivation.
+
+## Type of Change
+- [ ] Bug fix (non-breaking change)
+- [ ] New feature (non-breaking change)
+- [ ] Breaking change (fix or feature that would cause existing functionality to not work as expected)
+- [ ] Documentation update
+- [ ] Performance improvement
+- [ ] Refactoring
+
+## Testing
+- [ ] Tested on Raspberry Pi hardware
+- [ ] Verified display rendering works correctly
+- [ ] Checked API integration functionality
+- [ ] Tested error handling scenarios
+
+## Screenshots/Videos
+(If applicable, add screenshots or videos of the changes)
+
+## Checklist
+- [ ] Code follows project style guidelines
+- [ ] Self-review completed
+- [ ] Comments added for complex logic
+- [ ] No hardcoded values or API keys
+- [ ] Error handling implemented
+- [ ] Logging added where appropriate
+```
+
+### PR Review Requirements
+
+#### For Reviewers
+- **Code Quality**: Check for proper error handling, logging, and type hints
+- **Architecture**: Ensure changes follow project patterns and don't break existing functionality
+- **Performance**: Verify changes don't negatively impact display performance
+- **Testing**: Confirm changes work on Raspberry Pi hardware
+- **Documentation**: Check if documentation needs updates
+
+#### For Authors
+- **Self-Review**: Review your own PR before requesting review
+- **Testing**: Test thoroughly on Pi hardware before submitting
+- **Documentation**: Update relevant documentation if needed
+- **Clean History**: Squash commits if necessary for clean history
+
+## Commit Message Guidelines
+
+### Format
+```
+type(scope): description
+
+[optional body]
+
+[optional footer]
+```
+
+### Types
+- **feat**: New feature
+- **fix**: Bug fix
+- **docs**: Documentation changes
+- **style**: Code style changes (formatting, etc.)
+- **refactor**: Code refactoring
+- **test**: Adding or updating tests
+- **chore**: Maintenance tasks
+
+### Examples
+```
+feat(weather): Add hourly forecast display
+fix(nba): Resolve live score update issue
+docs(api): Update ESPN API integration guide
+refactor(sports): Improve base class architecture
+```
+
+## Merge Strategies
+
+### Squash and Merge (Preferred)
+- Use for feature branches and bug fixes
+- Creates clean, linear history
+- Combines all commits into single commit
+
+### Merge Commit
+- Use for complex features with multiple logical commits
+- Preserves commit history
+- Use when commit messages are meaningful
+
+### Rebase and Merge
+- Use sparingly for simple, single-commit changes
+- Creates linear history without merge commits
+
+## Release Management
+
+### Version Tags
+- Use semantic versioning: `v1.2.3`
+- Tag releases on `main` branch
+- Create release notes with technical details
+
+### Release Branches
+- **Format**: `release/v1.2.3`
+- Use for release preparation
+- Include version bumps and final testing
+
+## Emergency Procedures
+
+### Hotfix Process
+1. Create `hotfix/` branch from `main`
+2. Make minimal fix
+3. Test thoroughly
+4. Create PR with expedited review
+5. Merge to `main` and tag release
+6. Cherry-pick to other branches if needed
+
+### Rollback Process
+1. Identify last known good commit
+2. Create revert PR if possible
+3. Use `git revert` for clean rollback
+4. Tag rollback release
+5. Document issue and resolution
+
+## Best Practices
+
+### Before Creating PR
+- [ ] Run all tests locally
+- [ ] Test on Raspberry Pi hardware
+- [ ] Check for linting errors
+- [ ] Update documentation if needed
+- [ ] Ensure commit messages are clear
+
+### During Development
+- [ ] Keep branches small and focused
+- [ ] Commit frequently with meaningful messages
+- [ ] Update branch regularly with main
+- [ ] Test changes incrementally
+
+### After PR Approval
+- [ ] Delete feature branch after merge
+- [ ] Update local main branch
+- [ ] Verify changes work in production
+- [ ] Update any related documentation

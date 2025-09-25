@@ -13,27 +13,31 @@ from urllib3.util.retry import Retry
 from src.odds_manager import OddsManager
 import pytz
 
+# Import baseball and standard sports classes
+from .base_classes.baseball import Baseball, BaseballLive
+from .base_classes.sports import SportsRecent, SportsUpcoming
+
 # Get logger
 logger = logging.getLogger(__name__)
 
 # Constants for NCAA Baseball API URL
 ESPN_NCAABB_SCOREBOARD_URL = "https://site.api.espn.com/apis/site/v2/sports/baseball/college-baseball/scoreboard"
 
-class BaseNCAABaseballManager:
-    """Base class for NCAA Baseball managers with common functionality."""
+class BaseNCAABaseballManager(Baseball):
+    """Base class for NCAA Baseball managers using new baseball architecture."""
     def __init__(self, config: Dict[str, Any], display_manager, cache_manager: CacheManager):
-        self.config = config
-        self.display_manager = display_manager
-        # Store reference to config instead of creating new ConfigManager
-        self.config_manager = None  # Not used in this class
+        # Initialize with sport_key for NCAA Baseball
+        super().__init__(config, display_manager, cache_manager, logger, "ncaa_baseball")
+        
+        # NCAA Baseball-specific configuration
         self.ncaa_baseball_config = config.get('ncaa_baseball_scoreboard', {})
         self.show_odds = self.ncaa_baseball_config.get('show_odds', False)
         self.show_records = self.ncaa_baseball_config.get('show_records', False)
         self.favorite_teams = self.ncaa_baseball_config.get('favorite_teams', [])
-        self.cache_manager = cache_manager
+        
+        # Store reference to config instead of creating new ConfigManager
+        self.config_manager = None  # Not used in this class
         self.odds_manager = OddsManager(self.cache_manager, self.config_manager)
-        self.logger = logging.getLogger(__name__)
-        self.logger.setLevel(logging.DEBUG)  # Set logger level to DEBUG
         
         # Logo handling
         self.logo_dir = self.ncaa_baseball_config.get('logo_dir', os.path.join('assets', 'sports', 'ncaa_logos'))
@@ -549,7 +553,7 @@ class BaseNCAABaseballManager:
             self.logger.error(f"[NCAABaseball] Error fetching NCAA Baseball data from ESPN API: {e}", exc_info=True)
             return {}
 
-class NCAABaseballLiveManager(BaseNCAABaseballManager):
+class NCAABaseballLiveManager(BaseNCAABaseballManager, BaseballLive):
     """Manager for displaying live NCAA Baseball games."""
     def __init__(self, config: Dict[str, Any], display_manager, cache_manager: CacheManager):
         super().__init__(config, display_manager, cache_manager)
@@ -850,7 +854,7 @@ class NCAABaseballLiveManager(BaseNCAABaseballManager):
         except Exception as e:
             logger.error(f"[NCAABaseball] Error displaying live game: {e}", exc_info=True)
 
-class NCAABaseballRecentManager(BaseNCAABaseballManager):
+class NCAABaseballRecentManager(BaseNCAABaseballManager, SportsRecent):
     """Manager for displaying recent NCAA Baseball games."""
     def __init__(self, config: Dict[str, Any], display_manager, cache_manager: CacheManager):
         super().__init__(config, display_manager, cache_manager)
@@ -974,7 +978,7 @@ class NCAABaseballRecentManager(BaseNCAABaseballManager):
         except Exception as e:
             logger.error(f"[NCAABaseball] Error displaying recent game: {e}", exc_info=True)
 
-class NCAABaseballUpcomingManager(BaseNCAABaseballManager):
+class NCAABaseballUpcomingManager(BaseNCAABaseballManager, SportsUpcoming):
     """Manager for displaying upcoming NCAA Baseball games."""
     def __init__(self, config: Dict[str, Any], display_manager, cache_manager: CacheManager):
         super().__init__(config, display_manager, cache_manager)

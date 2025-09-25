@@ -285,17 +285,4 @@ class SoccerAPIDataSource(DataSource):
             return {}
 
 
-def get_data_source_for_sport(sport_key: str, data_source_type: str, logger: logging.Logger, **kwargs) -> DataSource:
-    """Factory function to get the appropriate data source for a sport."""
-    data_sources = {
-        'espn': ESPNDataSource,
-        'mlb_api': MLBAPIDataSource,
-        'soccer_api': SoccerAPIDataSource
-    }
-    
-    data_source_class = data_sources.get(data_source_type)
-    if not data_source_class:
-        logger.warning(f"No data source found for type: {data_source_type}, using ESPN")
-        return ESPNDataSource(logger)
-    
-    return data_source_class(logger, **kwargs)
+# Factory function removed - sport classes now instantiate data sources directly

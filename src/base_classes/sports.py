@@ -15,10 +15,9 @@ from src.background_data_service import get_background_service
 from src.logo_downloader import download_missing_logo, LogoDownloader
 from pathlib import Path
 
-# Import new architecture components
-from .api_extractors import get_extractor_for_sport
-from .sport_configs import get_sport_config
-from .data_sources import get_data_source_for_sport
+# Import new architecture components (individual classes will import what they need)
+from .api_extractors import ESPNFootballExtractor, ESPNBaseballExtractor, ESPNHockeyExtractor
+from .data_sources import ESPNDataSource, MLBAPIDataSource
 
 class SportsCore:
     def __init__(self, config: Dict[str, Any], display_manager: DisplayManager, cache_manager: CacheManager, logger: logging.Logger, sport_key: str):
@@ -34,14 +33,10 @@ class SportsCore:
 
         self.sport_key = sport_key
         
-        # Initialize new architecture components
-        self.sport_config = get_sport_config(sport_key, logger)
-        self.api_extractor = get_extractor_for_sport(sport_key, logger)
-        self.data_source = get_data_source_for_sport(
-            sport_key, 
-            self.sport_config.data_source_type, 
-            logger
-        )
+        # Initialize new architecture components (will be overridden by sport-specific classes)
+        self.sport_config = None
+        self.api_extractor = None
+        self.data_source = None
         self.mode_config = config.get(f"{sport_key}_scoreboard", {})  # Changed config key
         self.is_enabled = self.mode_config.get("enabled", False)
         self.show_odds = self.mode_config.get("show_odds", False)

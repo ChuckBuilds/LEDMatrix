@@ -14,6 +14,10 @@ import pytz
 from src.odds_manager import OddsManager
 from src.background_data_service import get_background_service
 
+# Import baseball and standard sports classes
+from .base_classes.baseball import Baseball, BaseballLive
+from .base_classes.sports import SportsRecent, SportsUpcoming
+
 # Import the API counter function from web interface
 try:
     from web_interface_v2 import increment_api_counter
@@ -25,20 +29,21 @@ except ImportError:
 # Get logger
 logger = logging.getLogger(__name__)
 
-class BaseMLBManager:
-    """Base class for MLB managers with common functionality."""
+class BaseMLBManager(Baseball):
+    """Base class for MLB managers using new baseball architecture."""
     def __init__(self, config: Dict[str, Any], display_manager, cache_manager: CacheManager):
-        self.config = config
-        self.display_manager = display_manager
-        # Store reference to config instead of creating new ConfigManager
-        self.config_manager = None  # Not used in this class
+        # Initialize with sport_key for MLB
+        super().__init__(config, display_manager, cache_manager, logger, "mlb")
+        
+        # MLB-specific configuration
         self.mlb_config = config.get('mlb', {})
         self.show_odds = self.mlb_config.get("show_odds", False)
         self.favorite_teams = self.mlb_config.get('favorite_teams', [])
         self.show_records = self.mlb_config.get('show_records', False)
-        self.cache_manager = cache_manager
+        
+        # Store reference to config instead of creating new ConfigManager
+        self.config_manager = None  # Not used in this class
         self.odds_manager = OddsManager(self.cache_manager, self.config_manager)
-        self.logger = logging.getLogger(__name__)
         
         # Logo handling
         self.logo_dir = self.mlb_config.get('logo_dir', os.path.join('assets', 'sports', 'mlb_logos'))
@@ -744,7 +749,7 @@ class BaseMLBManager:
             
             self._draw_text_with_outline(draw, ou_text, (ou_x, ou_y), font, fill=(0, 255, 0))
 
-class MLBLiveManager(BaseMLBManager):
+class MLBLiveManager(BaseMLBManager, BaseballLive):
     """Manager for displaying live MLB games."""
     def __init__(self, config: Dict[str, Any], display_manager, cache_manager: CacheManager):
         super().__init__(config, display_manager, cache_manager)
@@ -1157,7 +1162,7 @@ class MLBLiveManager(BaseMLBManager):
         except Exception as e:
             logger.error(f"[MLB] Error displaying live game: {e}", exc_info=True)
 
-class MLBRecentManager(BaseMLBManager):
+class MLBRecentManager(BaseMLBManager, SportsRecent):
     """Manager for displaying recent MLB games."""
     def __init__(self, config: Dict[str, Any], display_manager, cache_manager: CacheManager):
         super().__init__(config, display_manager, cache_manager)
@@ -1318,7 +1323,7 @@ class MLBRecentManager(BaseMLBManager):
         except Exception as e:
             logger.error(f"[MLB] Error displaying recent game: {e}", exc_info=True)
 
-class MLBUpcomingManager(BaseMLBManager):
+class MLBUpcomingManager(BaseMLBManager, SportsUpcoming):
     """Manager for displaying upcoming MLB games."""
     def __init__(self, config: Dict[str, Any], display_manager, cache_manager: CacheManager):
         super().__init__(config, display_manager, cache_manager)
