@@ -63,6 +63,9 @@ class LeaderboardManager:
         self.progress_log_interval = 5.0  # Log progress every 5 seconds instead of every 50 pixels
         self.last_progress_log_time = 0
         
+        # End reached logging throttling
+        self._end_reached_logged = False
+        
         # Initialize managers
         self.cache_manager = CacheManager()
         # Store reference to config instead of creating new ConfigManager
@@ -1265,6 +1268,8 @@ class LeaderboardManager:
             self.last_update = current_time
             # Reset progress logging timer when updating data
             self.last_progress_log_time = 0
+            # Reset end reached logging flag when updating data
+            self._end_reached_logged = False
             
             if self.leaderboard_data:
                 self._create_leaderboard_image()
@@ -1321,6 +1326,8 @@ class LeaderboardManager:
             self.scroll_position = 0
             # Reset progress logging timer
             self.last_progress_log_time = 0
+            # Reset end reached logging flag
+            self._end_reached_logged = False
         else:
             # Check if the display start time is too old (more than 2x the dynamic duration)
             current_time = time.time()
@@ -1331,6 +1338,8 @@ class LeaderboardManager:
                 self.scroll_position = 0
                 # Reset progress logging timer
                 self.last_progress_log_time = 0
+                # Reset end reached logging flag
+                self._end_reached_logged = False
         
         logger.debug(f"Number of leagues in data at start of display method: {len(self.leaderboard_data)}")
         if not self.leaderboard_data:
@@ -1392,11 +1401,17 @@ class LeaderboardManager:
             else:
                 # Stop scrolling when we reach the end
                 if self.scroll_position >= self.leaderboard_image.width - width:
-                    logger.info(f"Leaderboard reached end: scroll_position {self.scroll_position} >= {self.leaderboard_image.width - width}")
+                    # Only log this message once per display session to avoid spam
+                    if not self._end_reached_logged:
+                        logger.info(f"Leaderboard reached end: scroll_position {self.scroll_position} >= {self.leaderboard_image.width - width}")
+                        logger.info("Leaderboard scrolling stopped - reached end of content")
+                        self._end_reached_logged = True
+                    else:
+                        logger.debug(f"Leaderboard reached end (throttled): scroll_position {self.scroll_position} >= {self.leaderboard_image.width - width}")
+                    
                     self.scroll_position = self.leaderboard_image.width - width
                     # Signal that scrolling has stopped
                     self.display_manager.set_scrolling_state(False)
-                    logger.info("Leaderboard scrolling stopped - reached end of content")
                     if self.time_over == 0:
                         self.time_over = time.time()
                     elif time.time() - self.time_over >= 2:
