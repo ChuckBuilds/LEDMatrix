@@ -308,8 +308,15 @@ class OnDemandRunner:
             try:
                 # Suppress the startup test pattern to avoid random lines flash during on-demand
                 display_manager = DisplayManager(self.config, suppress_test_pattern=True)
-            except Exception:
-                display_manager = DisplayManager({'display': {'hardware': {}}}, force_fallback=True, suppress_test_pattern=True)
+                logger.info("DisplayManager initialized successfully for on-demand")
+            except Exception as e:
+                logger.warning(f"Failed to initialize DisplayManager with config, using fallback: {e}")
+                try:
+                    display_manager = DisplayManager({'display': {'hardware': {}}}, force_fallback=True, suppress_test_pattern=True)
+                    logger.info("DisplayManager initialized in fallback mode for on-demand")
+                except Exception as fallback_error:
+                    logger.error(f"Failed to initialize DisplayManager even in fallback mode: {fallback_error}")
+                    raise RuntimeError(f"Cannot initialize display manager for on-demand: {fallback_error}")
             display_monitor.start()
 
     def _is_service_active(self) -> bool:
@@ -326,17 +333,26 @@ class OnDemandRunner:
 
         # If already running same mode, no-op
         if self.running and self.mode == mode:
+            logger.info(f"On-demand mode {mode} is already running")
             return
         # Switch from previous
         if self.running:
+            logger.info(f"Stopping previous on-demand mode {self.mode} to start {mode}")
             self.stop()
 
-        self._ensure_infra()
-        self.mode = mode
-        self.running = True
-        self.force_clear_next = True
-        # Use SocketIO bg task for cooperative sleeping
-        self.thread = socketio.start_background_task(self._run_loop)
+        try:
+            self._ensure_infra()
+            self.mode = mode
+            self.running = True
+            self.force_clear_next = True
+            # Use SocketIO bg task for cooperative sleeping
+            self.thread = socketio.start_background_task(self._run_loop)
+            logger.info(f"On-demand mode {mode} started successfully")
+        except Exception as e:
+            logger.error(f"Failed to start on-demand mode {mode}: {e}")
+            self.running = False
+            self.mode = None
+            raise RuntimeError(f"Failed to start on-demand mode: {e}")
 
     def stop(self):
         """Stop on-demand display and clear the screen."""
@@ -468,9 +484,15 @@ class OnDemandRunner:
         
         try:
             manager, display_fn, update_fn, update_interval = self._build_manager(mode)
+            logger.info(f"On-demand manager for {mode} initialized successfully")
         except Exception as e:
             logger.error(f"Failed to initialize on-demand manager for mode {mode}: {e}")
             self.running = False
+            # Emit error to client
+            try:
+                socketio.emit('ondemand_error', {'mode': mode, 'error': str(e)})
+            except Exception:
+                pass
             return
 
         last_update = 0.0
@@ -509,6 +531,11 @@ class OnDemandRunner:
                     
             except Exception as loop_err:
                 logger.error(f"Error in on-demand loop for {mode}: {loop_err}")
+                # Emit error to client
+                try:
+                    socketio.emit('ondemand_error', {'mode': mode, 'error': str(loop_err)})
+                except Exception:
+                    pass
                 # small backoff to avoid tight error loop
                 try:
                     socketio.sleep(0.5)
@@ -937,14 +964,23 @@ def api_ondemand_start():
         mode = (data or {}).get('mode')
         if not mode:
             return jsonify({'status': 'error', 'message': 'Missing mode'}), 400
+        
+        # Validate mode format
+        if not isinstance(mode, str) or not mode.strip():
+            return jsonify({'status': 'error', 'message': 'Invalid mode format'}), 400
+            
         # Refuse if service is running
         if on_demand_runner._is_service_active():
             return jsonify({'status': 'error', 'message': 'Service is active. Stop it first to use On-Demand.'}), 400
+        
+        logger.info(f"Starting on-demand mode: {mode}")
         on_demand_runner.start(mode)
         return jsonify({'status': 'success', 'message': f'On-Demand started: {mode}', 'on_demand': on_demand_runner.status()})
     except RuntimeError as rte:
+        logger.error(f"Runtime error starting on-demand {mode}: {rte}")
         return jsonify({'status': 'error', 'message': str(rte)}), 400
     except Exception as e:
+        logger.error(f"Unexpected error starting on-demand {mode}: {e}")
         return jsonify({'status': 'error', 'message': f'Error starting on-demand: {e}'}), 500
 
 @app.route('/api/ondemand/stop', methods=['POST'])

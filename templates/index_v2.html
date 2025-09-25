@@ -2132,7 +2132,11 @@
                     body: JSON.stringify({ mode })
                 });
                 const data = await res.json();
-                showNotification(data.message || 'Requested on-demand start', data.status || 'success');
+                if(data.status === 'success'){
+                    showNotification(data.message || 'On-demand started successfully', 'success');
+                } else {
+                    showNotification(data.message || 'Failed to start on-demand', 'error');
+                }
                 refreshOnDemandStatus();
             }catch(err){
                 showNotification('Error starting on-demand: ' + err, 'error');
@@ -2268,9 +2272,14 @@
                 startPreviewPolling();
             });
             
-            socket.on('display_update', function(data) {
-                updateDisplayPreview(data);
-            });
+        socket.on('display_update', function(data) {
+            updateDisplayPreview(data);
+        });
+        
+        socket.on('ondemand_error', function(data) {
+            showNotification(`On-demand error: ${data.error}`, 'error');
+            refreshOnDemandStatus();
+        });
         }
 
         async function updateApiMetrics(){
