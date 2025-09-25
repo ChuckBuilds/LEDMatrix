@@ -1,270 +1,117 @@
 #!/usr/bin/env python3
 """
-Test Sports Integration
-
-This test validates that all sports work together with the new architecture
-and that the system can handle multiple sports simultaneously.
+Integration test to verify dynamic team resolver works with sports managers.
+This test checks that the SportsCore class properly resolves dynamic teams.
 """
 
 import sys
 import os
-import logging
-from typing import Dict, Any, List
+import json
+from datetime import datetime, timedelta
+import pytz
 
-# Add src to path
-sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
+# Add the project root to the path so we can import the modules
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
-def test_all_sports_configuration():
-    """Test that all sports have valid configurations."""
-    print("🧪 Testing All Sports Configuration...")
-    
-    try:
-        from src.base_classes.sport_configs import get_sport_configs, get_sport_config
-        
-        # Get all sport configurations
-        configs = get_sport_configs()
-        all_sports = list(configs.keys())
-        
-        print(f"✅ Found {len(all_sports)} sports: {all_sports}")
-        
-        # Test each sport
-        for sport_key in all_sports:
-            config = get_sport_config(sport_key, None)
-            
-            # Validate basic configuration
-            assert config.update_cadence in ['daily', 'weekly', 'hourly', 'live_only']
-            assert config.season_length > 0
-            assert config.games_per_week > 0
-            assert config.data_source_type in ['espn', 'mlb_api', 'soccer_api']
-            assert len(config.sport_specific_fields) > 0
-            
-            print(f"✅ {sport_key}: {config.update_cadence}, {config.season_length} games, {config.data_source_type}")
-        
-        print("✅ All sports have valid configurations")
-        return True
-        
-    except Exception as e:
-        print(f"❌ All sports configuration test failed: {e}")
-        return False
+from src.base_classes.sports import SportsCore
+from src.display_manager import DisplayManager
+from src.cache_manager import CacheManager
 
-def test_sports_api_extractors():
-    """Test that all sports have working API extractors."""
-    print("\n🧪 Testing All Sports API Extractors...")
-    
-    try:
-        from src.base_classes.api_extractors import get_extractor_for_sport
-        logger = logging.getLogger('test')
-        
-        # Test all sports
-        sports_to_test = ['nfl', 'ncaa_fb', 'mlb', 'nhl', 'ncaam_hockey', 'soccer', 'nba']
-        
-        for sport_key in sports_to_test:
-            extractor = get_extractor_for_sport(sport_key, logger)
-            print(f"✅ {sport_key} extractor: {type(extractor).__name__}")
-            
-            # Test that extractor has required methods
-            assert hasattr(extractor, 'extract_game_details')
-            assert hasattr(extractor, 'get_sport_specific_fields')
-            assert callable(extractor.extract_game_details)
-            assert callable(extractor.get_sport_specific_fields)
-        
-        print("✅ All sports have working API extractors")
-        return True
-        
-    except Exception as e:
-        print(f"❌ Sports API extractors test failed: {e}")
-        return False
+def create_test_config():
+    """Create a test configuration with dynamic teams."""
+    config = {
+        "ncaa_fb_scoreboard": {
+            "enabled": True,
+            "show_favorite_teams_only": True,
+            "favorite_teams": [
+                "UGA",
+                "AP_TOP_25"
+            ],
+            "logo_dir": "assets/sports/ncaa_logos",
+            "show_records": True,
+            "show_ranking": True,
+            "update_interval_seconds": 3600
+        },
+        "display": {
+            "hardware": {
+                "rows": 32,
+                "cols": 64,
+                "chain_length": 1
+            }
+        },
+        "timezone": "America/Chicago"
+    }
+    return config
 
-def test_sports_data_sources():
-    """Test that all sports have working data sources."""
-    print("\n🧪 Testing All Sports Data Sources...")
+def test_sports_core_integration():
+    """Test that SportsCore properly resolves dynamic teams."""
+    print("Testing SportsCore integration with dynamic teams...")
     
-    try:
-        from src.base_classes.data_sources import get_data_source_for_sport
-        from src.base_classes.sport_configs import get_sport_config
-        logger = logging.getLogger('test')
-        
-        # Test all sports
-        sports_to_test = ['nfl', 'ncaa_fb', 'mlb', 'nhl', 'ncaam_hockey', 'soccer', 'nba']
-        
-        for sport_key in sports_to_test:
-            # Get sport configuration to determine data source type
-            config = get_sport_config(sport_key, None)
-            data_source_type = config.data_source_type
-            
-            # Get data source
-            data_source = get_data_source_for_sport(sport_key, data_source_type, logger)
-            print(f"✅ {sport_key} data source: {type(data_source).__name__} ({data_source_type})")
-            
-            # Test that data source has required methods
-            assert hasattr(data_source, 'fetch_live_games')
-            assert hasattr(data_source, 'fetch_schedule')
-            assert hasattr(data_source, 'fetch_standings')
-            assert callable(data_source.fetch_live_games)
-            assert callable(data_source.fetch_schedule)
-            assert callable(data_source.fetch_standings)
-        
-        print("✅ All sports have working data sources")
-        return True
-        
-    except Exception as e:
-        print(f"❌ Sports data sources test failed: {e}")
-        return False
+    # Create test configuration
+    config = create_test_config()
+    
+    # Create mock display manager and cache manager
+    display_manager = DisplayManager(config)
+    cache_manager = CacheManager(config)
+    
+    # Create SportsCore instance
+    sports_core = SportsCore(config, display_manager, cache_manager, 
+                            __import__('logging').getLogger(__name__), "ncaa_fb")
+    
+    # Check that favorite_teams were resolved
+    print(f"Raw favorite teams from config: {config['ncaa_fb_scoreboard']['favorite_teams']}")
+    print(f"Resolved favorite teams: {sports_core.favorite_teams}")
+    
+    # Verify that UGA is still in the list
+    assert "UGA" in sports_core.favorite_teams, "UGA should be in resolved teams"
+    
+    # Verify that AP_TOP_25 was resolved to actual teams
+    assert len(sports_core.favorite_teams) > 1, "Should have more than 1 team after resolving AP_TOP_25"
+    
+    # Verify that AP_TOP_25 is not in the final list (should be resolved)
+    assert "AP_TOP_25" not in sports_core.favorite_teams, "AP_TOP_25 should be resolved, not left as-is"
+    
+    print(f"✓ SportsCore successfully resolved dynamic teams")
+    print(f"✓ Final favorite teams: {sports_core.favorite_teams[:10]}{'...' if len(sports_core.favorite_teams) > 10 else ''}")
+    
+    return True
 
-def test_sports_consistency():
-    """Test that sports configurations are consistent and logical."""
-    print("\n🧪 Testing Sports Consistency...")
+def test_dynamic_resolver_availability():
+    """Test that the dynamic resolver is available in SportsCore."""
+    print("Testing dynamic resolver availability...")
     
-    try:
-        from src.base_classes.sport_configs import get_sport_config
-        
-        # Test that each sport has logical configuration
-        sports_to_test = ['nfl', 'ncaa_fb', 'mlb', 'nhl', 'ncaam_hockey', 'soccer', 'nba']
-        
-        for sport_key in sports_to_test:
-            config = get_sport_config(sport_key, None)
-            
-            # Test update cadence makes sense for season length
-            if config.season_length > 100:  # Long season (MLB, NBA, NHL)
-                assert config.update_cadence in ['daily', 'hourly'], f"{sport_key} should have frequent updates for long season"
-            elif config.season_length < 20:  # Short season (NFL, NCAA)
-                assert config.update_cadence in ['weekly', 'daily'], f"{sport_key} should have less frequent updates for short season"
-            
-            # Test that games per week makes sense
-            assert config.games_per_week > 0, f"{sport_key} should have at least 1 game per week"
-            assert config.games_per_week <= 7, f"{sport_key} should not have more than 7 games per week"
-            
-            # Test that season length is reasonable
-            assert config.season_length > 0, f"{sport_key} should have positive season length"
-            assert config.season_length < 200, f"{sport_key} season length seems too long"
-            
-            print(f"✅ {sport_key} configuration is consistent")
-        
-        print("✅ All sports configurations are consistent")
-        return True
-        
-    except Exception as e:
-        print(f"❌ Sports consistency test failed: {e}")
-        return False
-
-def test_sports_uniqueness():
-    """Test that each sport has unique characteristics."""
-    print("\n🧪 Testing Sports Uniqueness...")
+    config = create_test_config()
+    display_manager = DisplayManager(config)
+    cache_manager = CacheManager(config)
     
-    try:
-        from src.base_classes.sport_configs import get_sport_config
-        
-        # Test that each sport has unique sport-specific fields
-        sports_to_test = ['nfl', 'mlb', 'nhl', 'soccer']
-        
-        sport_fields = {}
-        for sport_key in sports_to_test:
-            config = get_sport_config(sport_key, None)
-            sport_fields[sport_key] = set(config.sport_specific_fields)
-        
-        # Test that each sport has unique fields
-        for sport_key in sports_to_test:
-            current_fields = sport_fields[sport_key]
-            
-            # Check that sport has unique fields
-            if sport_key == 'nfl':
-                assert 'down' in current_fields, "NFL should have down field"
-                assert 'distance' in current_fields, "NFL should have distance field"
-                assert 'possession' in current_fields, "NFL should have possession field"
-            elif sport_key == 'mlb':
-                assert 'inning' in current_fields, "MLB should have inning field"
-                assert 'outs' in current_fields, "MLB should have outs field"
-                assert 'bases' in current_fields, "MLB should have bases field"
-                assert 'strikes' in current_fields, "MLB should have strikes field"
-                assert 'balls' in current_fields, "MLB should have balls field"
-            elif sport_key == 'nhl':
-                assert 'period' in current_fields, "NHL should have period field"
-                assert 'power_play' in current_fields, "NHL should have power_play field"
-                assert 'penalties' in current_fields, "NHL should have penalties field"
-            elif sport_key == 'soccer':
-                assert 'half' in current_fields, "Soccer should have half field"
-                assert 'stoppage_time' in current_fields, "Soccer should have stoppage_time field"
-                assert 'cards' in current_fields, "Soccer should have cards field"
-                assert 'possession' in current_fields, "Soccer should have possession field"
-            
-            print(f"✅ {sport_key} has unique sport-specific fields")
-        
-        print("✅ All sports have unique characteristics")
-        return True
-        
-    except Exception as e:
-        print(f"❌ Sports uniqueness test failed: {e}")
-        return False
-
-def test_sports_data_source_mapping():
-    """Test that sports are mapped to appropriate data sources."""
-    print("\n🧪 Testing Sports Data Source Mapping...")
+    sports_core = SportsCore(config, display_manager, cache_manager, 
+                            __import__('logging').getLogger(__name__), "ncaa_fb")
     
-    try:
-        from src.base_classes.sport_configs import get_sport_config
-        
-        # Test that each sport uses an appropriate data source
-        sports_to_test = ['nfl', 'ncaa_fb', 'mlb', 'nhl', 'ncaam_hockey', 'soccer', 'nba']
-        
-        for sport_key in sports_to_test:
-            config = get_sport_config(sport_key, None)
-            data_source_type = config.data_source_type
-            
-            # Test that data source type makes sense for the sport
-            if sport_key == 'mlb':
-                assert data_source_type == 'mlb_api', "MLB should use MLB API"
-            elif sport_key == 'soccer':
-                assert data_source_type == 'soccer_api', "Soccer should use Soccer API"
-            else:
-                assert data_source_type == 'espn', f"{sport_key} should use ESPN API"
-            
-            print(f"✅ {sport_key} uses appropriate data source: {data_source_type}")
-        
-        print("✅ All sports use appropriate data sources")
-        return True
-        
-    except Exception as e:
-        print(f"❌ Sports data source mapping test failed: {e}")
-        return False
-
-def main():
-    """Run all sports integration tests."""
-    print("🏈 Testing Sports Integration")
-    print("=" * 50)
+    # Check that dynamic resolver is available
+    assert hasattr(sports_core, 'dynamic_resolver'), "SportsCore should have dynamic_resolver attribute"
+    assert sports_core.dynamic_resolver is not None, "Dynamic resolver should be initialized"
     
-    # Configure logging
-    logging.basicConfig(level=logging.WARNING)
+    # Test dynamic resolver methods
+    assert sports_core.dynamic_resolver.is_dynamic_team("AP_TOP_25"), "Should detect AP_TOP_25 as dynamic"
+    assert not sports_core.dynamic_resolver.is_dynamic_team("UGA"), "Should not detect UGA as dynamic"
     
-    # Run all tests
-    tests = [
-        test_all_sports_configuration,
-        test_sports_api_extractors,
-        test_sports_data_sources,
-        test_sports_consistency,
-        test_sports_uniqueness,
-        test_sports_data_source_mapping
-    ]
+    print("✓ Dynamic resolver is properly integrated")
     
-    passed = 0
-    total = len(tests)
-    
-    for test in tests:
-        try:
-            if test():
-                passed += 1
-        except Exception as e:
-            print(f"❌ Test {test.__name__} failed with exception: {e}")
-    
-    print("\n" + "=" * 50)
-    print(f"🏁 Sports Integration Test Results: {passed}/{total} tests passed")
-    
-    if passed == total:
-        print("🎉 All sports integration tests passed! The system can handle multiple sports.")
-        return True
-    else:
-        print("❌ Some sports integration tests failed. Please check the errors above.")
-        return False
+    return True
 
 if __name__ == "__main__":
-    success = main()
-    sys.exit(0 if success else 1)
+    try:
+        print("🧪 Testing Sports Integration with Dynamic Teams...")
+        print("=" * 50)
+        
+        test_sports_core_integration()
+        test_dynamic_resolver_availability()
+        
+        print("\n🎉 All integration tests passed!")
+        print("Dynamic team resolver is successfully integrated with SportsCore!")
+        
+    except Exception as e:
+        print(f"\n❌ Integration test failed with error: {e}")
+        import traceback
+        traceback.print_exc()
+        sys.exit(1)

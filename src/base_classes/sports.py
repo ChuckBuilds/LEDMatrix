@@ -18,6 +18,7 @@ from pathlib import Path
 # Import new architecture components (individual classes will import what they need)
 from .api_extractors import ESPNFootballExtractor, ESPNBaseballExtractor, ESPNHockeyExtractor
 from .data_sources import ESPNDataSource, MLBAPIDataSource
+from src.dynamic_team_resolver import DynamicTeamResolver
 
 class SportsCore:
     def __init__(self, config: Dict[str, Any], display_manager: DisplayManager, cache_manager: CacheManager, logger: logging.Logger, sport_key: str):
@@ -77,7 +78,18 @@ class SportsCore:
         self.last_update = 0
         self.current_game = None
         self.fonts = self._load_fonts()
-        self.favorite_teams = self.mode_config.get("favorite_teams", [])
+        
+        # Initialize dynamic team resolver and resolve favorite teams
+        self.dynamic_resolver = DynamicTeamResolver()
+        raw_favorite_teams = self.mode_config.get("favorite_teams", [])
+        self.favorite_teams = self.dynamic_resolver.resolve_teams(raw_favorite_teams, sport_key)
+        
+        # Log dynamic team resolution
+        if raw_favorite_teams != self.favorite_teams:
+            self.logger.info(f"Resolved dynamic teams: {raw_favorite_teams} -> {self.favorite_teams}")
+        else:
+            self.logger.info(f"Favorite teams: {self.favorite_teams}")
+            
         self.logger.setLevel(logging.INFO)
         
         # Initialize team rankings cache

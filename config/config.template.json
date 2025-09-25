@@ -333,7 +333,8 @@
         "show_favorite_teams_only": true,
         "favorite_teams": [
             "UGA",
-            "AUB"
+            "AUB",
+            "AP_TOP_25"
         ],
         "logo_dir": "assets/sports/ncaa_logos",
         "show_records": true,
