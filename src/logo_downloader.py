@@ -140,7 +140,23 @@ class LogoDownloader:
         """Ensure the logo directory exists, create if necessary."""
         try:
             os.makedirs(logo_dir, exist_ok=True)
-            return True
+            
+            # Check if we can actually write to the directory
+            test_file = os.path.join(logo_dir, '.write_test')
+            try:
+                with open(test_file, 'w') as f:
+                    f.write('test')
+                os.remove(test_file)
+                logger.debug(f"Directory {logo_dir} is writable")
+                return True
+            except PermissionError:
+                logger.error(f"Permission denied: Cannot write to directory {logo_dir}")
+                logger.error(f"Please run: sudo ./fix_assets_permissions.sh")
+                return False
+            except Exception as e:
+                logger.error(f"Failed to test write access to directory {logo_dir}: {e}")
+                return False
+                
         except Exception as e:
             logger.error(f"Failed to create logo directory {logo_dir}: {e}")
             return False
@@ -187,6 +203,10 @@ class LogoDownloader:
                     pass
                 return False
             
+        except PermissionError as e:
+            logger.error(f"Permission denied downloading logo for {team_abbreviation}: {e}")
+            logger.error(f"Please run: sudo ./fix_assets_permissions.sh")
+            return False
         except requests.exceptions.RequestException as e:
             logger.error(f"Failed to download logo for {team_abbreviation}: {e}")
             return False
@@ -496,6 +516,12 @@ class LogoDownloader:
     def download_missing_logo_for_team(self, league: str, team_id: str, team_abbreviation: str, logo_path: Path) -> bool:
         """Download a specific team's logo if it's missing."""
         
+        # Ensure the logo directory exists and is writable
+        logo_dir = str(logo_path.parent)
+        if not self.ensure_logo_directory(logo_dir):
+            logger.error(f"Cannot download logo for {team_abbreviation}: directory {logo_dir} is not writable")
+            return False
+        
         # Fetch team data to find the logo URL
         data = self.fetch_single_team(league, team_id)
         if not data:
@@ -660,7 +686,9 @@ def download_missing_logo(league: str, team_id: str, team_abbreviation: str, log
     
     # Check if logo already exists
     logo_dir = downloader.get_logo_directory(league)
-    downloader.ensure_logo_directory(logo_dir)
+    if not downloader.ensure_logo_directory(logo_dir):
+        logger.error(f"Cannot download logo for {team_abbreviation}: directory {logo_dir} is not writable")
+        return False
     filename = f"{downloader.normalize_abbreviation(team_abbreviation)}.png"
     filepath = Path(logo_dir) / filename
     

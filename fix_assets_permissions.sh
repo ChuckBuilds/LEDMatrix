@@ -53,7 +53,7 @@ fi
 
 # Specifically ensure the sports logos directories are writable
 SPORTS_DIRS=(
-    "sports/ncaa_fbs_logos"
+    "sports/ncaa_logos"
     "sports/nfl_logos"
     "sports/nba_logos"
     "sports/nhl_logos"
@@ -99,21 +99,21 @@ for SPORTS_DIR in "${SPORTS_DIRS[@]}"; do
 done
 
 echo ""
-echo "Testing write access to ncaa_fbs_logos directory specifically..."
-NCAA_DIR="$ASSETS_DIR/sports/ncaa_fbs_logos"
+echo "Testing write access to ncaa_logos directory specifically..."
+NCAA_DIR="$ASSETS_DIR/sports/ncaa_logos"
 if [ -d "$NCAA_DIR" ]; then
     # Create a test file to verify write access
     TEST_FILE="$NCAA_DIR/.permission_test"
     if sudo -u "$REAL_USER" touch "$TEST_FILE" 2>/dev/null; then
-        echo "✓ Successfully created test file in ncaa_fbs_logos directory"
+        echo "✓ Successfully created test file in ncaa_logos directory"
         sudo -u "$REAL_USER" rm -f "$TEST_FILE"
         echo "✓ Successfully removed test file"
     else
-        echo "✗ Failed to create test file in ncaa_fbs_logos directory"
+        echo "✗ Failed to create test file in ncaa_logos directory"
         echo "  This indicates the permission fix did not work properly"
     fi
 else
-    echo "✗ ncaa_fbs_logos directory does not exist"
+    echo "✗ ncaa_logos directory does not exist"
 fi
 
 echo ""
