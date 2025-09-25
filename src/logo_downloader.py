@@ -101,6 +101,11 @@ class LogoDownloader:
         """Normalize team abbreviation for consistent filename usage."""
         # Handle special characters that can cause filesystem issues
         normalized = abbreviation.upper()
+        
+        # Special case for Texas A&M - keep as TA&M since that's how the file is named
+        if normalized == 'TA&M':
+            return 'TA&M'
+        
         # Replace problematic characters with safe alternatives
         normalized = normalized.replace('&', 'AND')
         normalized = normalized.replace('/', '_')
