@@ -138,7 +138,7 @@ class BaseScrollController:
         self.enable_metrics = self.config.get('enable_scroll_metrics', False)
         
         # State tracking
-        self.mode = ScrollMode(self.config.get('scroll_mode', 'continuous_loop'))
+        self.mode = ScrollMode(self.config.get('scroll_mode', 'one_shot'))
         self.direction = ScrollDirection(self.config.get('scroll_direction', 'left'))
         self._update_direction_multiplier()
         
@@ -471,8 +471,9 @@ class BaseScrollController:
             return True
         
         if self.mode == ScrollMode.CONTINUOUS_LOOP:
-            # Continuous loop never completes
-            return False
+            # Continuous loop never completes - it should loop indefinitely
+            # Only return True if scrolling is not active (e.g., no content to scroll)
+            return not self.should_scroll()
         
         if self.mode == ScrollMode.ONE_SHOT:
             # Complete when we've scrolled to the end

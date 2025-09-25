@@ -358,7 +358,7 @@ class OddsTickerManager(ScrollMixin):
         scroll_config = {
             'pixels_per_second': self.odds_ticker_config.get('scroll_pixels_per_second', 20.0),
             'target_fps': self.odds_ticker_config.get('scroll_target_fps', 100.0),
-            'mode': self.odds_ticker_config.get('scroll_mode', 'continuous_loop'),
+            'mode': self.odds_ticker_config.get('scroll_mode', 'one_shot'),
             'direction': self.odds_ticker_config.get('scroll_direction', 'left'),
             'enable_metrics': self.odds_ticker_config.get('enable_scroll_metrics', False)
         }
@@ -1832,6 +1832,9 @@ class OddsTickerManager(ScrollMixin):
                     self._content_width = self.ticker_image.width
                     self._content_height = self.ticker_image.height
                     self._ensure_scroll_controller()
+                    logger.debug(f"OddsTickerManager: Set content dimensions to {self._content_width}x{self._content_height}")
+                else:
+                    logger.warning("OddsTickerManager: Failed to create ticker image, cannot set content dimensions")
                     
             except Exception as e:
                 logger.error(f"Error during image creation: {e}")
@@ -1846,11 +1849,15 @@ class OddsTickerManager(ScrollMixin):
             
             # Ensure scroll controller is initialized
             if self._scroll_controller is None and self._content_width > 0:
+                logger.debug(f"OddsTickerManager: Initializing scroll controller with dimensions {self._content_width}x{self._content_height}")
                 self._ensure_scroll_controller()
             elif self._scroll_controller is None:
                 # Debug: Log why scroll controller isn't being initialized
                 if not hasattr(self, '_scroll_debug_logged'):
                     logger.warning(f"OddsTickerManager: Cannot initialize scroll controller - content dimensions: {self._content_width}x{self._content_height}")
+                    logger.warning(f"OddsTickerManager: Ticker image exists: {self.ticker_image is not None}")
+                    if self.ticker_image:
+                        logger.warning(f"OddsTickerManager: Ticker image dimensions: {self.ticker_image.width}x{self.ticker_image.height}")
                     self._scroll_debug_logged = True
             
             # Use new scroll system if available, otherwise fallback to old system
@@ -1860,6 +1867,10 @@ class OddsTickerManager(ScrollMixin):
                 # Only log warning once per session to avoid spam
                 if not hasattr(self, '_scroll_fallback_logged') or not self._scroll_fallback_logged:
                     logger.warning("OddsTickerManager: Scroll controller not available, using fallback display")
+                    logger.warning(f"OddsTickerManager: Content dimensions: {self._content_width}x{self._content_height}")
+                    logger.warning(f"OddsTickerManager: Ticker image: {self.ticker_image is not None}")
+                    if self.ticker_image:
+                        logger.warning(f"OddsTickerManager: Ticker image size: {self.ticker_image.width}x{self.ticker_image.height}")
                     self._scroll_fallback_logged = True
                 self._display_fallback_message()
                 return

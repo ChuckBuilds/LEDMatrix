@@ -254,7 +254,7 @@ class LeaderboardManager(ScrollMixin):
         scroll_config = {
             'pixels_per_second': self.leaderboard_config.get('scroll_pixels_per_second', 20.0),
             'target_fps': self.leaderboard_config.get('scroll_target_fps', 100.0),
-            'mode': self.leaderboard_config.get('scroll_mode', 'continuous_loop'),
+            'mode': self.leaderboard_config.get('scroll_mode', 'one_shot'),
             'direction': self.leaderboard_config.get('scroll_direction', 'left'),
             'enable_metrics': self.leaderboard_config.get('enable_scroll_metrics', False)
         }

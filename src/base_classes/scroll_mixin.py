@@ -325,7 +325,7 @@ class LegacyScrollAdapter:
         
         # Set reasonable defaults
         new_config.setdefault('scroll_target_fps', 100.0)
-        new_config.setdefault('scroll_mode', 'continuous_loop')
+        new_config.setdefault('scroll_mode', 'one_shot')
         new_config.setdefault('scroll_direction', 'left')
         new_config.setdefault('enable_scroll_metrics', False)
         

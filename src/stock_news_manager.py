@@ -121,7 +121,7 @@ class StockNewsManager(ScrollMixin):
         scroll_config = {
             'pixels_per_second': self.stock_news_config.get('scroll_pixels_per_second', 20.0),
             'target_fps': self.stock_news_config.get('scroll_target_fps', 100.0),
-            'mode': self.stock_news_config.get('scroll_mode', 'continuous_loop'),
+            'mode': self.stock_news_config.get('scroll_mode', 'one_shot'),
             'direction': self.stock_news_config.get('scroll_direction', 'left'),
             'enable_metrics': self.stock_news_config.get('enable_scroll_metrics', False)
         }

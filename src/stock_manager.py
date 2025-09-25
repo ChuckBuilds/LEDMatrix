@@ -123,7 +123,7 @@ class StockManager(ScrollMixin):
         scroll_config = {
             'pixels_per_second': self.stocks_config.get('scroll_pixels_per_second', 20.0),
             'target_fps': self.stocks_config.get('scroll_target_fps', 100.0),
-            'mode': self.stocks_config.get('scroll_mode', 'continuous_loop'),
+            'mode': self.stocks_config.get('scroll_mode', 'one_shot'),
             'direction': self.stocks_config.get('scroll_direction', 'left'),
             'enable_metrics': self.stocks_config.get('enable_scroll_metrics', False)
         }
