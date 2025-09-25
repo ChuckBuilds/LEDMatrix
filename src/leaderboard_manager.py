@@ -39,8 +39,9 @@ class LeaderboardManager:
         self.is_enabled = self.leaderboard_config.get('enabled', False)
         self.enabled_sports = self.leaderboard_config.get('enabled_sports', {})
         self.update_interval = self.leaderboard_config.get('update_interval', 3600)
-        self.scroll_speed = self.leaderboard_config.get('scroll_speed', 2)
-        self.scroll_delay = self.leaderboard_config.get('scroll_delay', 0.01)
+        self.scroll_speed = self.leaderboard_config.get('scroll_speed', 1)  # pixels per frame
+        self.scroll_delay = self.leaderboard_config.get('scroll_delay', 0.01)  # frame rate control
+        self.pixels_per_second = self.leaderboard_config.get('pixels_per_second', None)  # independent scroll speed
         
         # FPS control - allow users to set target FPS instead of scroll_delay
         target_fps = self.leaderboard_config.get('target_fps', None)
@@ -1389,10 +1390,17 @@ class LeaderboardManager:
             
             self.last_frame_time = current_time
             
-            # Simple time-based scrolling (like text_display.py)
+            # Frame-rate independent scrolling
             if self.last_scroll_time > 0:
                 delta_time = current_time - self.last_scroll_time
-                scroll_delta = delta_time * (self.scroll_speed / self.scroll_delay)
+                
+                if self.pixels_per_second is not None:
+                    # Use independent pixels per second (decoupled from FPS)
+                    scroll_delta = delta_time * self.pixels_per_second
+                else:
+                    # Fallback to original method
+                    scroll_delta = delta_time * (self.scroll_speed / self.scroll_delay)
+                
                 self.scroll_position += scroll_delta
             else:
                 # First frame - initialize scroll time

@@ -89,8 +89,9 @@ class OddsTickerManager:
         self.sort_order = self.odds_ticker_config.get('sort_order', 'soonest')
         self.enabled_leagues = self.odds_ticker_config.get('enabled_leagues', ['nfl', 'nba', 'mlb'])
         self.update_interval = self.odds_ticker_config.get('update_interval', 3600)
-        self.scroll_speed = self.odds_ticker_config.get('scroll_speed', 2)
-        self.scroll_delay = self.odds_ticker_config.get('scroll_delay', 0.05)
+        self.scroll_speed = self.odds_ticker_config.get('scroll_speed', 1)  # pixels per frame
+        self.scroll_delay = self.odds_ticker_config.get('scroll_delay', 0.05)  # frame rate control
+        self.pixels_per_second = self.odds_ticker_config.get('pixels_per_second', None)  # independent scroll speed
         
         # FPS control - allow users to set target FPS instead of scroll_delay
         target_fps = self.odds_ticker_config.get('target_fps', None)
@@ -1789,10 +1790,17 @@ class OddsTickerManager:
         try:
             current_time = time.time()
             
-            # Simple time-based scrolling (like text_display.py)
+            # Frame-rate independent scrolling
             if self.last_scroll_time > 0:
                 delta_time = current_time - self.last_scroll_time
-                scroll_delta = delta_time * (self.scroll_speed / self.scroll_delay)
+                
+                if self.pixels_per_second is not None:
+                    # Use independent pixels per second (decoupled from FPS)
+                    scroll_delta = delta_time * self.pixels_per_second
+                else:
+                    # Fallback to original method
+                    scroll_delta = delta_time * (self.scroll_speed / self.scroll_delay)
+                
                 self.scroll_position += scroll_delta
             else:
                 # First frame - initialize scroll time
