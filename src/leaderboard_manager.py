@@ -1390,23 +1390,32 @@ class LeaderboardManager:
             
             self.last_frame_time = current_time
             
-            # Frame-rate independent scrolling
-            if self.last_scroll_time > 0:
-                delta_time = current_time - self.last_scroll_time
+            # Integer pixel movement with frame rate control
+            if self.pixels_per_second is not None:
+                # Calculate target frame rate based on pixels_per_second
+                # If we want 18.3 px/s and move 1 pixel per frame: 18.3 FPS
+                target_frame_rate = self.pixels_per_second
+                target_frame_delay = 1.0 / target_frame_rate
                 
-                if self.pixels_per_second is not None:
-                    # Use independent pixels per second (decoupled from FPS)
-                    scroll_delta = delta_time * self.pixels_per_second
+                if self.last_scroll_time > 0:
+                    elapsed_time = current_time - self.last_scroll_time
+                    if elapsed_time >= target_frame_delay:
+                        # Move exactly 1 pixel when enough time has passed
+                        self.scroll_position += 1
+                        self.last_scroll_time = current_time
                 else:
-                    # Fallback to original method
-                    scroll_delta = delta_time * (self.scroll_speed / self.scroll_delay)
-                
-                self.scroll_position += scroll_delta
+                    # First frame - initialize
+                    self.last_scroll_time = current_time
             else:
-                # First frame - initialize scroll time
+                # Fallback to original time-based method
+                if self.last_scroll_time > 0:
+                    delta_time = current_time - self.last_scroll_time
+                    scroll_delta = delta_time * (self.scroll_speed / self.scroll_delay)
+                    self.scroll_position += scroll_delta
+                else:
+                    self.last_scroll_time = current_time
+                
                 self.last_scroll_time = current_time
-            
-            self.last_scroll_time = current_time
             
             # Signal scrolling state to display manager (always scrolling)
             self.display_manager.set_scrolling_state(True)
