@@ -30,6 +30,7 @@ from src.nfl_managers import NFLLiveManager, NFLRecentManager, NFLUpcomingManage
 from src.ncaa_fb_managers import NCAAFBLiveManager, NCAAFBRecentManager, NCAAFBUpcomingManager
 from src.ncaa_baseball_managers import NCAABaseballLiveManager, NCAABaseballRecentManager, NCAABaseballUpcomingManager
 from src.ncaam_basketball_managers import NCAAMBasketballLiveManager, NCAAMBasketballRecentManager, NCAAMBasketballUpcomingManager
+from src.ncaam_hockey_managers import NCAAMHockeyLiveManager, NCAAMHockeyRecentManager, NCAAMHockeyUpcomingManager
 from PIL import Image
 import io
 import signal
@@ -436,6 +437,8 @@ class OnDemandRunner:
                 cls = {'live': NCAABaseballLiveManager, 'recent': NCAABaseballRecentManager, 'upcoming': NCAABaseballUpcomingManager}[variant]
             elif kind == 'ncaam_basketball':
                 cls = {'live': NCAAMBasketballLiveManager, 'recent': NCAAMBasketballRecentManager, 'upcoming': NCAAMBasketballUpcomingManager}[variant]
+            elif kind == 'ncaam_hockey':
+                cls = {'live': NCAAMHockeyLiveManager, 'recent': NCAAMHockeyRecentManager, 'upcoming': NCAAMHockeyUpcomingManager}[variant]
             else:
                 raise ValueError(f"Unsupported sport kind: {kind}")
             mgr = cls(cfg, display_manager, self.cache_manager)
