@@ -13,6 +13,7 @@ from src.cache_manager import CacheManager
 from src.odds_manager import OddsManager
 from src.logo_downloader import download_missing_logo
 from src.background_data_service import get_background_service
+from src.dynamic_team_resolver import DynamicTeamResolver
 
 # Import the API counter function from web interface
 try:
@@ -140,6 +141,9 @@ class OddsTickerManager:
         # Font setup
         self.fonts = self._load_fonts()
         
+        # Initialize dynamic team resolver
+        self.dynamic_resolver = DynamicTeamResolver()
+        
         # League configurations
         self.league_configs = {
             'nfl': {
@@ -215,6 +219,21 @@ class OddsTickerManager:
                 'enabled': config.get('soccer_scoreboard', {}).get('enabled', False)
             }
         }
+        
+        # Resolve dynamic teams for each league
+        for league_key, league_config in self.league_configs.items():
+            if league_config.get('enabled', False):
+                raw_favorite_teams = league_config.get('favorite_teams', [])
+                if raw_favorite_teams:
+                    # Resolve dynamic teams for this league
+                    resolved_teams = self.dynamic_resolver.resolve_teams(raw_favorite_teams, league_key)
+                    league_config['favorite_teams'] = resolved_teams
+                    
+                    # Log dynamic team resolution
+                    if raw_favorite_teams != resolved_teams:
+                        logger.info(f"Resolved dynamic teams for {league_key}: {raw_favorite_teams} -> {resolved_teams}")
+                    else:
+                        logger.info(f"Favorite teams for {league_key}: {resolved_teams}")
         
         logger.info(f"OddsTickerManager initialized with enabled leagues: {self.enabled_leagues}")
         logger.info(f"Show favorite teams only: {self.show_favorite_teams_only}")
