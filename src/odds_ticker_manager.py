@@ -1824,8 +1824,8 @@ class OddsTickerManager:
             if self.last_frame_time > 0:
                 frame_time = current_time - self.last_frame_time
                 self.frame_times.append(frame_time)
-                # Keep only last 30 frame times for averaging
-                if len(self.frame_times) > 30:
+                # Keep only last 100 frame times for averaging
+                if len(self.frame_times) > 100:
                     self.frame_times.pop(0)
             
             self.last_frame_time = current_time

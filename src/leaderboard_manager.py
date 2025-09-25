@@ -1377,7 +1377,7 @@ class LeaderboardManager:
             if self.last_frame_time > 0:
                 frame_time = current_time - self.last_frame_time
                 self.frame_times.append(frame_time)
-                if len(self.frame_times) > 30:
+                if len(self.frame_times) > 100:
                     self.frame_times.pop(0)
                 
                 # Log FPS every 10 seconds
