@@ -1240,6 +1240,13 @@ class LeaderboardManager:
         logger.debug(f"get_dynamic_duration called, returning: {self.dynamic_duration}s")
         return self.dynamic_duration
 
+    def get_duration(self) -> int:
+        """Get the display duration for the leaderboard."""
+        if self.dynamic_duration_enabled:
+            return self.get_dynamic_duration()
+        else:
+            return self.display_duration
+
     def update(self) -> None:
         """Update leaderboard data."""
         current_time = time.time()
