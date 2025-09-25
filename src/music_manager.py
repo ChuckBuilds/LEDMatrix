@@ -56,6 +56,11 @@ class MusicManager:
         self.scroll_position_artist = 0
         self.scroll_position_album = 0
         self.title_scroll_tick = 0
+        
+        # Track update logging throttling
+        self.last_track_log_time = 0
+        self.last_logged_track_title = None
+        self.track_log_interval = 5.0  # Log track updates every 5 seconds max
         self.artist_scroll_tick = 0
         self.album_scroll_tick = 0
         self.is_music_display_active = False # New state variable
@@ -212,7 +217,22 @@ class MusicManager:
                     self.album_art_image = None
 
                 display_title = self.current_track_info.get('title', 'None')
-                logger.info(f"({source_description}) Track info updated. Source: {self.current_source.name}. New Track: {display_title}")
+                
+                # Throttle track update logging to reduce spam
+                current_time = time.time()
+                should_log = False
+                
+                # Log if track title changed or if enough time has passed
+                if (display_title != self.last_logged_track_title or 
+                    current_time - self.last_track_log_time >= self.track_log_interval):
+                    should_log = True
+                    self.last_track_log_time = current_time
+                    self.last_logged_track_title = display_title
+                
+                if should_log:
+                    logger.info(f"({source_description}) Track info updated. Source: {self.current_source.name}. New Track: {display_title}")
+                else:
+                    logger.debug(f"({source_description}) Track info updated (throttled). Source: {self.current_source.name}. Track: {display_title}")
             else:
                 # simplified_info IS THE SAME as self.current_track_info
                 processed_a_meaningful_update = False
@@ -223,7 +243,14 @@ class MusicManager:
                     significant_change_detected = True # First load is always significant
                     processed_a_meaningful_update = True
                     self.current_track_info = simplified_info
-                    logger.info(f"({source_description}) First valid track data received (was None), marking significant.")
+                    # Also log first valid track data with throttling
+                    display_title = simplified_info.get('title', 'None')
+                    current_time = time.time()
+                    
+                    # For first valid data, always log but update throttling variables
+                    logger.info(f"({source_description}) First valid track data received (was None), marking significant. Track: {display_title}")
+                    self.last_track_log_time = current_time
+                    self.last_logged_track_title = display_title
 
         # Queueing logic - for events or activate_display syncs, not for polling.
         # Polling updates current_track_info directly; display() picks it up.
