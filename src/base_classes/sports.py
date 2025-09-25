@@ -16,7 +16,7 @@ from pathlib import Path
 
 # Import new architecture components (individual classes will import what they need)
 from .api_extractors import ESPNFootballExtractor, ESPNBaseballExtractor, ESPNHockeyExtractor
-from .data_sources import ESPNDataSource, MLBAPIDataSource
+from .data_sources import ESPNDataSource, MLBAPIDataSource, MILBAPIDataSource
 
 class SportsCore:
     def __init__(self, config: Dict[str, Any], display_manager: DisplayManager, cache_manager: CacheManager, logger: logging.Logger, sport_key: str):

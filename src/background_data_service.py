@@ -29,7 +29,7 @@ import queue
 from concurrent.futures import ThreadPoolExecutor, Future
 import weakref
 from src.cache_manager import CacheManager
-from src.base_classes.data_sources import ESPNDataSource, MLBAPIDataSource, SoccerAPIDataSource
+from src.base_classes.data_sources import ESPNDataSource, MLBAPIDataSource, MILBAPIDataSource, SoccerAPIDataSource
 from src.base_classes.api_extractors import ESPNFootballExtractor, ESPNBaseballExtractor, ESPNHockeyExtractor, SoccerAPIExtractor
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -140,9 +140,10 @@ class BackgroundDataService:
         self.data_sources = {
             'espn': ESPNDataSource(logger),
             'mlb_api': MLBAPIDataSource(logger),
+            'milb_api': MILBAPIDataSource(logger),
             'soccer_api': SoccerAPIDataSource(logger)
         }
-        logger.debug("Initialized data sources for ESPN, MLB API, and Soccer API")
+        logger.debug("Initialized data sources for ESPN, MLB API, MILB API, and Soccer API")
     
     def _initialize_api_extractors(self):
         """Initialize API extractors for different sports."""

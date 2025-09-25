@@ -8,7 +8,7 @@ with baseball-specific logic for innings, outs, bases, strikes, balls, etc.
 from typing import Dict, Any, Optional, List
 from src.base_classes.sports import SportsCore
 from src.base_classes.api_extractors import ESPNBaseballExtractor
-from src.base_classes.data_sources import ESPNDataSource, MLBAPIDataSource
+from src.base_classes.data_sources import ESPNDataSource, MLBAPIDataSource, MILBAPIDataSource
 import logging
 
 class Baseball(SportsCore):
@@ -24,9 +24,11 @@ class Baseball(SportsCore):
         self.sport_config = self.get_sport_config()
         self.api_extractor = ESPNBaseballExtractor(logger)
         
-        # Choose data source based on sport (MLB uses MLB API, others use ESPN)
+        # Choose data source based on sport (MLB uses MLB API, MILB uses MILB API, others use ESPN)
         if sport_key == 'mlb':
             self.data_source = MLBAPIDataSource(logger)
+        elif sport_key == 'milb':
+            self.data_source = MILBAPIDataSource(logger)
         else:
             self.data_source = ESPNDataSource(logger)
         

@@ -206,6 +206,104 @@ class MLBAPIDataSource(DataSource):
             return {}
 
 
+class MILBAPIDataSource(DataSource):
+    """MILB API data source using MLB Stats API with MILB sport IDs."""
+    
+    def __init__(self, logger: logging.Logger):
+        super().__init__(logger)
+        self.base_url = "http://statsapi.mlb.com/api/v1"
+        # MILB sport IDs: 10 (Mexican League), 11 (AAA), 12 (AA), 13 (A+), 14 (A), 15 (Rookie)
+        self.sport_ids = [10, 11, 12, 13, 14, 15]
+    
+    def fetch_live_games(self, sport: str, league: str) -> List[Dict]:
+        """Fetch live games from MILB leagues using MLB Stats API."""
+        try:
+            all_live_games = []
+            today = datetime.now().strftime('%Y-%m-%d')
+            
+            for sport_id in self.sport_ids:
+                url = f"{self.base_url}/schedule"
+                params = {
+                    'sportId': sport_id,
+                    'date': today,
+                    'hydrate': 'game,team,venue,weather'
+                }
+                
+                response = self.session.get(url, headers=self.get_headers(), params=params, timeout=15)
+                response.raise_for_status()
+                
+                data = response.json()
+                games = data.get('dates', [{}])[0].get('games', [])
+                
+                # Filter for live games
+                live_games = [game for game in games 
+                             if game.get('status', {}).get('abstractGameState') == 'Live']
+                all_live_games.extend(live_games)
+            
+            self.logger.debug(f"Fetched {len(all_live_games)} live games from MILB API")
+            return all_live_games
+            
+        except Exception as e:
+            self.logger.error(f"Error fetching live games from MILB API: {e}")
+            return []
+    
+    def fetch_schedule(self, sport: str, league: str, date_range: tuple) -> List[Dict]:
+        """Fetch schedule from MILB leagues using MLB Stats API."""
+        try:
+            start_date, end_date = date_range
+            all_games = []
+            
+            # Generate date range
+            current_date = start_date
+            while current_date <= end_date:
+                date_str = current_date.strftime('%Y-%m-%d')
+                
+                for sport_id in self.sport_ids:
+                    url = f"{self.base_url}/schedule"
+                    params = {
+                        'sportId': sport_id,
+                        'date': date_str,
+                        'hydrate': 'game,team,venue'
+                    }
+                    
+                    response = self.session.get(url, headers=self.get_headers(), params=params, timeout=15)
+                    response.raise_for_status()
+                    
+                    data = response.json()
+                    games = data.get('dates', [{}])[0].get('games', [])
+                    all_games.extend(games)
+                
+                current_date += timedelta(days=1)
+            
+            self.logger.debug(f"Fetched {len(all_games)} scheduled games from MILB API")
+            return all_games
+            
+        except Exception as e:
+            self.logger.error(f"Error fetching schedule from MILB API: {e}")
+            return []
+    
+    def fetch_standings(self, sport: str, league: str) -> Dict:
+        """Fetch standings from MILB leagues (not typically available)."""
+        # MILB standings are not typically available through the public API
+        self.logger.warning("MILB standings not available through MLB Stats API")
+        return {}
+    
+    def fetch_live_game_feed(self, game_pk: str) -> Dict:
+        """Fetch live game feed for a specific MILB game."""
+        try:
+            url = f"{self.base_url}/game/{game_pk}/feed/live"
+            response = self.session.get(url, headers=self.get_headers(), timeout=15)
+            response.raise_for_status()
+            
+            data = response.json()
+            self.logger.debug(f"Fetched live feed for MILB game {game_pk}")
+            return data
+            
+        except Exception as e:
+            self.logger.error(f"Error fetching live feed for MILB game {game_pk}: {e}")
+            return {}
+
+
 class SoccerAPIDataSource(DataSource):
     """Soccer API data source (generic structure)."""
     
