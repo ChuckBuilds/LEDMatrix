@@ -48,10 +48,11 @@ class ScrollMixin:
             content_height: Initial content height
         """
         # Prevent re-initialization if already initialized with same dimensions
-        if (hasattr(self, 'scroll_controller') and 
-            self.scroll_controller is not None and
-            self.scroll_controller.content_width == content_width and
-            self.scroll_controller.content_height == content_height):
+        # Check both possible attribute names for compatibility
+        scroll_controller = getattr(self, 'scroll_controller', None) or getattr(self, '_scroll_controller', None)
+        if (scroll_controller is not None and
+            scroll_controller.content_width == content_width and
+            scroll_controller.content_height == content_height):
             return
             
         # Debug: Log content dimensions
@@ -73,7 +74,8 @@ class ScrollMixin:
         scroll_config = self.config.get(config_section, {})
         
         # Initialize the scroll controller
-        self.scroll_controller = BaseScrollController(
+        # Use the same attribute name that the manager is using
+        scroll_controller = BaseScrollController(
             config=scroll_config,
             display_width=self.display_manager.matrix.width,
             display_height=self.display_manager.matrix.height,
@@ -81,6 +83,10 @@ class ScrollMixin:
             content_height=content_height,
             debug_name=debug_name
         )
+        
+        # Set both possible attribute names for compatibility
+        self.scroll_controller = scroll_controller
+        self._scroll_controller = scroll_controller
         
         # Track last scroll state for change detection
         self._last_scroll_state = None
@@ -97,10 +103,12 @@ class ScrollMixin:
         Returns:
             Dictionary with scroll state information
         """
-        if not hasattr(self, 'scroll_controller'):
+        # Check both possible attribute names for compatibility
+        scroll_controller = getattr(self, 'scroll_controller', None) or getattr(self, '_scroll_controller', None)
+        if scroll_controller is None:
             raise AttributeError("ScrollMixin not initialized. Call init_scroll_controller() first.")
         
-        scroll_state = self.scroll_controller.update(current_time)
+        scroll_state = scroll_controller.update(current_time)
         
         # Notify display manager of scrolling state for deferred updates
         if hasattr(self.display_manager, 'set_scrolling_state'):
@@ -163,7 +171,9 @@ class ScrollMixin:
         Returns:
             Cropped image ready for display
         """
-        if not hasattr(self, 'scroll_controller'):
+        # Check both possible attribute names for compatibility
+        scroll_controller = getattr(self, 'scroll_controller', None) or getattr(self, '_scroll_controller', None)
+        if scroll_controller is None:
             # Fallback: return a crop of the source image
             logger.warning("crop_scrolled_image: No scroll controller available, using fallback crop")
             return source_image.crop((0, 0, 
