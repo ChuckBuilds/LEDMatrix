@@ -9,7 +9,7 @@ import time
 import logging
 from typing import Dict, Any, Optional, Tuple
 from PIL import Image
-from base_classes.scroll_base import BaseScrollController, ScrollMode, ScrollDirection
+from .scroll_base import BaseScrollController, ScrollMode, ScrollDirection
 
 logger = logging.getLogger(__name__)
 

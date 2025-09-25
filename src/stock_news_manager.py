@@ -13,6 +13,7 @@ from PIL import Image, ImageDraw
 from .cache_manager import CacheManager
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
+from src.base_classes.scroll_mixin import ScrollMixin
 
 # Import the API counter function from web interface
 try:
@@ -26,7 +27,7 @@ except ImportError:
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-class StockNewsManager:
+class StockNewsManager(ScrollMixin):
     def __init__(self, config: Dict[str, Any], display_manager):
         self.config = config
         # Store reference to config instead of creating new ConfigManager
@@ -42,7 +43,20 @@ class StockNewsManager:
         self.cached_text = None  # Cache for the text string
         self.cache_manager = CacheManager()
         
-        # Get scroll settings from config with faster defaults
+        # Initialize scroll system
+        self._scroll_config_prefix = "stock_news"
+        self._init_scroll_system(config, display_manager)
+        
+        # Legacy scroll settings (kept for backward compatibility)
+        self._legacy_scroll_speed = self.stock_news_config.get('scroll_speed', 1)
+        self._legacy_scroll_delay = self.stock_news_config.get('scroll_delay', 0.01)
+        
+        # Initialize scroll controller when we have content
+        self._scroll_controller = None
+        self._content_width = 0
+        self._content_height = 0
+        
+        # Legacy scroll settings (kept for backward compatibility)
         self.scroll_speed = self.stock_news_config.get('scroll_speed', 1)
         self.scroll_delay = self.stock_news_config.get('scroll_delay', 0.01)  # Default to 10ms for 100 FPS
         
@@ -101,6 +115,29 @@ class StockNewsManager:
         
         # Initialize with first update
         self.update_news_data()
+        
+    def _init_scroll_system(self, config: Dict[str, Any], display_manager):
+        """Initialize the new scroll system."""
+        scroll_config = {
+            'pixels_per_second': self.stock_news_config.get('scroll_pixels_per_second', 20.0),
+            'target_fps': self.stock_news_config.get('scroll_target_fps', 100.0),
+            'mode': self.stock_news_config.get('scroll_mode', 'continuous_loop'),
+            'direction': self.stock_news_config.get('scroll_direction', 'left'),
+            'enable_metrics': self.stock_news_config.get('enable_scroll_metrics', False)
+        }
+        
+        self._scroll_config = scroll_config
+        self._display_manager = display_manager
+
+    def _ensure_scroll_controller(self):
+        """Ensure scroll controller is initialized with current content dimensions."""
+        if self._scroll_controller is None and self._content_width > 0:
+            self.init_scroll_controller(
+                debug_name="StockNewsManager",
+                config_section="stock_news",
+                content_width=self._content_width,
+                content_height=self._content_height
+            )
         
     def _fetch_news(self, symbol: str) -> List[Dict[str, Any]]:
         """Fetch news data for a stock from Yahoo Finance."""
@@ -175,7 +212,7 @@ class StockNewsManager:
         update_interval = self.stock_news_config.get('update_interval', 3600)
         
         # Check if we're currently scrolling and defer the update if so
-        if self.display_manager.is_currently_scrolling():
+        if self.display_manager.is_currently_scrolling:
             logger.debug("Stock news display is currently scrolling, deferring update")
             self.display_manager.defer_update(self._perform_news_update, priority=2)
             return
@@ -384,6 +421,11 @@ class StockNewsManager:
                 self.scroll_position = 0
                 self.background_image = None  # Clear the background image
                 
+                # Store dimensions for scroll controller
+                self._content_width = self.cached_text_image.width
+                self._content_height = height
+                self._ensure_scroll_controller()
+                
                 # Calculate total scroll width for dynamic duration
                 self.total_scroll_width = self.cached_text_image.width
                 self.calculate_dynamic_duration()
@@ -399,7 +441,7 @@ class StockNewsManager:
                 # Removed sleep delay to improve scrolling performance
                 return True
         
-        # --- Scrolling logic remains the same --- 
+        # Use new scroll system
         if self.cached_text_image is None:
             logger.warning("[StockNews] Cached image is None, cannot scroll.")
             return False
@@ -419,43 +461,76 @@ class StockNewsManager:
             self.cached_text_image = None # Force recreation next cycle
             return True
 
-        # Signal that we're scrolling
-        self.display_manager.set_scrolling_state(True)
+        # Use new scroll system
+        # Update scroll position using new system
+        scroll_metrics = self.update_scroll(time.time())
         
-        # Process any deferred updates (though news is usually always scrolling)
-        self.display_manager.process_deferred_updates()
-
-        # Update scroll position
-        self.scroll_position += self.scroll_speed
-        if self.scroll_position >= total_width:
-            self.scroll_position = 0 # Wrap around
-            # When we wrap around, move to next rotation
-            self.cached_text_image = None
-            return True
-
-        # Calculate the visible portion
-        # Handle wrap-around drawing
-        visible_end = self.scroll_position + width
-        if visible_end <= total_width:
-            # Normal case: Paste single crop
-            visible_portion = self.cached_text_image.crop((
-                self.scroll_position, 0,
-                visible_end, height
-            ))
+        # Get the visible portion using new system
+        visible_portion = self.crop_scrolled_image(self.cached_text_image)
+        
+        if visible_portion:
+            # Copy the visible portion to the display
             self.display_manager.image.paste(visible_portion, (0, 0))
-        else:
-            # Wrap-around case: Paste two parts
-            width1 = total_width - self.scroll_position
-            width2 = width - width1
-            portion1 = self.cached_text_image.crop((self.scroll_position, 0, total_width, height))
-            portion2 = self.cached_text_image.crop((0, 0, width2, height))
-            self.display_manager.image.paste(portion1, (0, 0))
-            self.display_manager.image.paste(portion2, (width1, 0))
+            self.display_manager.update_display()
+            
+            # Log performance metrics if enabled
+            if self.stock_news_config.get('enable_scroll_metrics', False) and scroll_metrics:
+                logger.info(f"News scroll metrics: {scroll_metrics}")
+            
+            # Log frame rate
+            self._log_frame_rate()
+            
+            # Check if scroll is complete
+            if self._scroll_controller and self._scroll_controller.is_complete():
+                # When scroll is complete, move to next rotation
+                self.cached_text_image = None
+                return True
+                
+            return True
+        
+        return False
 
-        self.display_manager.update_display()
-        self._log_frame_rate()
-        time.sleep(self.scroll_delay)
-        return True
+    def get_scroll_performance(self) -> Dict[str, Any]:
+        """Get current scroll performance metrics."""
+        if self._scroll_controller:
+            return self._scroll_controller.get_metrics()
+        return {}
+
+    def reset_scroll(self):
+        """Reset scroll position to beginning."""
+        if self._scroll_controller:
+            self._scroll_controller.reset_scroll()
+
+    def set_scroll_speed(self, pixels_per_second: float):
+        """Set new scroll speed."""
+        if self._scroll_controller:
+            self._scroll_controller.pixels_per_second = pixels_per_second
+
+    def set_target_fps(self, target_fps: float):
+        """Set target FPS."""
+        if self._scroll_controller:
+            self._scroll_controller.target_fps = target_fps
+
+    def is_scroll_complete(self) -> bool:
+        """Check if scroll animation is complete."""
+        if self._scroll_controller:
+            return self._scroll_controller.is_complete()
+        return False
+
+    def get_scroll_position(self) -> float:
+        """Get current scroll position."""
+        if self._scroll_controller:
+            return self._scroll_controller.scroll_position
+        return 0.0
+
+    def get_scroll_progress(self) -> float:
+        """Get scroll progress as percentage (0.0 to 1.0)."""
+        if self._scroll_controller and self._content_width > 0:
+            matrix_width = self.display_manager.matrix.width
+            max_scroll = self._content_width - matrix_width
+            if max_scroll > 0:
+                return min(1.0, self._scroll_controller.scroll_position / max_scroll)
+        return 0.0
 
     def calculate_dynamic_duration(self):
         """Calculate the exact time needed to display all news headlines"""

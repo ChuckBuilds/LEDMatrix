@@ -14,6 +14,7 @@ import hashlib
 from .cache_manager import CacheManager
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
+from src.base_classes.scroll_mixin import ScrollMixin
 
 # Import the API counter function from web interface
 try:
@@ -26,7 +27,7 @@ except ImportError:
 # Get logger without configuring
 logger = logging.getLogger(__name__)
 
-class StockManager:
+class StockManager(ScrollMixin):
     def __init__(self, config: Dict[str, Any], display_manager):
         self.config = config
         self.display_manager = display_manager
@@ -40,7 +41,20 @@ class StockManager:
         self.cached_text = None
         self.cache_manager = CacheManager()
         
-        # Get scroll settings from config with faster defaults
+        # Initialize scroll system
+        self._scroll_config_prefix = "stocks"
+        self._init_scroll_system(config, display_manager)
+        
+        # Legacy scroll settings (kept for backward compatibility)
+        self._legacy_scroll_speed = self.stocks_config.get('scroll_speed', 1)
+        self._legacy_scroll_delay = self.stocks_config.get('scroll_delay', 0.01)
+        
+        # Initialize scroll controller when we have content
+        self._scroll_controller = None
+        self._content_width = 0
+        self._content_height = 0
+        
+        # Legacy scroll settings (kept for backward compatibility)
         self.scroll_speed = self.stocks_config.get('scroll_speed', 1)
         self.scroll_delay = self.stocks_config.get('scroll_delay', 0.01)
         
@@ -103,6 +117,29 @@ class StockManager:
         
         # Initialize with first update
         self.update_stock_data()
+        
+    def _init_scroll_system(self, config: Dict[str, Any], display_manager):
+        """Initialize the new scroll system."""
+        scroll_config = {
+            'pixels_per_second': self.stocks_config.get('scroll_pixels_per_second', 20.0),
+            'target_fps': self.stocks_config.get('scroll_target_fps', 100.0),
+            'mode': self.stocks_config.get('scroll_mode', 'continuous_loop'),
+            'direction': self.stocks_config.get('scroll_direction', 'left'),
+            'enable_metrics': self.stocks_config.get('enable_scroll_metrics', False)
+        }
+        
+        self._scroll_config = scroll_config
+        self._display_manager = display_manager
+
+    def _ensure_scroll_controller(self):
+        """Ensure scroll controller is initialized with current content dimensions."""
+        if self._scroll_controller is None and self._content_width > 0:
+            self.init_scroll_controller(
+                debug_name="StockManager",
+                config_section="stocks",
+                content_width=self._content_width,
+                content_height=self._content_height
+            )
         
     def _get_stock_color(self, symbol: str) -> Tuple[int, int, int]:
         """Get color based on stock performance."""
@@ -371,7 +408,7 @@ class StockManager:
         update_interval = self.stocks_config.get('update_interval', 600)
         
         # Check if we're currently scrolling and defer the update if so
-        if self.display_manager.is_currently_scrolling():
+        if self.display_manager.is_currently_scrolling:
             logger.debug("Stock display is currently scrolling, deferring update")
             self.display_manager.defer_update(self._perform_stock_update, priority=2)
             return
@@ -667,6 +704,11 @@ class StockManager:
             element_gap = width // 8  # Reduced gap between elements within a stock
             total_width = sum(width * 2 for _ in symbols) + stock_gap * (len(symbols) - 1) + element_gap * (len(symbols) * 2 - 1)
             
+            # Store dimensions for scroll controller
+            self._content_width = total_width
+            self._content_height = height
+            self._ensure_scroll_controller()
+            
             # Create the full image
             full_image = Image.new('RGB', (total_width, height), (0, 0, 0))
             draw = ImageDraw.Draw(full_image)
@@ -712,43 +754,75 @@ class StockManager:
             self.display_manager.clear()
             self.scroll_position = 0
         
-        # Calculate the visible portion of the image
-        width = self.display_manager.matrix.width
-        total_width = self.cached_text_image.width
-        
-        # Check if we should be scrolling
-        should_scroll = True  # Stock display always scrolls continuously
-        
-        # Signal scrolling state to display manager
-        self.display_manager.set_scrolling_state(True)
-        
-        # Process any deferred updates (though stocks are always scrolling)
-        self.display_manager.process_deferred_updates()
-        
-        # Update scroll position with small increments
-        self.scroll_position = (self.scroll_position + self.scroll_speed) % total_width
-        
-        # Calculate the visible portion
-        visible_portion = self.cached_text_image.crop((
-            self.scroll_position, 0,
-            self.scroll_position + width, self.display_manager.matrix.height
-        ))
-        
-        # Copy the visible portion to the display
-        self.display_manager.image.paste(visible_portion, (0, 0))
-        self.display_manager.update_display()
-        
-        # Log frame rate
-        self._log_frame_rate()
-        
-        # Add a small delay between frames
-        time.sleep(self.scroll_delay)
-        
-        # If we've scrolled through the entire image, reset
-        if self.scroll_position == 0:
-            return True
+        # Use new scroll system
+        if self.cached_text_image:
+            # Update scroll position using new system
+            scroll_metrics = self.update_scroll(time.time())
             
+            # Get the visible portion using new system
+            visible_portion = self.crop_scrolled_image(self.cached_text_image)
+            
+            if visible_portion:
+                # Copy the visible portion to the display
+                self.display_manager.image.paste(visible_portion, (0, 0))
+                self.display_manager.update_display()
+                
+                # Log performance metrics if enabled
+                if self.stocks_config.get('enable_scroll_metrics', False) and scroll_metrics:
+                    logger.info(f"Stock scroll metrics: {scroll_metrics}")
+                
+                # Log frame rate
+                self._log_frame_rate()
+                
+                # Check if scroll is complete
+                if self._scroll_controller and self._scroll_controller.is_complete():
+                    return True
+                    
+                return False
+        
         return False
+
+    def get_scroll_performance(self) -> Dict[str, Any]:
+        """Get current scroll performance metrics."""
+        if self._scroll_controller:
+            return self._scroll_controller.get_metrics()
+        return {}
+
+    def reset_scroll(self):
+        """Reset scroll position to beginning."""
+        if self._scroll_controller:
+            self._scroll_controller.reset_scroll()
+
+    def set_scroll_speed(self, pixels_per_second: float):
+        """Set new scroll speed."""
+        if self._scroll_controller:
+            self._scroll_controller.pixels_per_second = pixels_per_second
+
+    def set_target_fps(self, target_fps: float):
+        """Set target FPS."""
+        if self._scroll_controller:
+            self._scroll_controller.target_fps = target_fps
+
+    def is_scroll_complete(self) -> bool:
+        """Check if scroll animation is complete."""
+        if self._scroll_controller:
+            return self._scroll_controller.is_complete()
+        return False
+
+    def get_scroll_position(self) -> float:
+        """Get current scroll position."""
+        if self._scroll_controller:
+            return self._scroll_controller.scroll_position
+        return 0.0
+
+    def get_scroll_progress(self) -> float:
+        """Get scroll progress as percentage (0.0 to 1.0)."""
+        if self._scroll_controller and self._content_width > 0:
+            matrix_width = self.display_manager.matrix.width
+            max_scroll = self._content_width - matrix_width
+            if max_scroll > 0:
+                return min(1.0, self._scroll_controller.scroll_position / max_scroll)
+        return 0.0
 
     def calculate_dynamic_duration(self):
         """Calculate the exact time needed to display all stocks"""

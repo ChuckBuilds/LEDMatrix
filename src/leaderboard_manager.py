@@ -11,12 +11,14 @@ try:
     from .cache_manager import CacheManager
     from .logo_downloader import download_missing_logo
     from .background_data_service import get_background_service
+    from .base_classes.scroll_mixin import ScrollMixin
 except ImportError:
     # Fallback for direct imports
     from display_manager import DisplayManager
     from cache_manager import CacheManager
     from logo_downloader import download_missing_logo
     from background_data_service import get_background_service
+    from base_classes.scroll_mixin import ScrollMixin
 
 # Import the API counter function from web interface
 try:
@@ -29,7 +31,7 @@ except ImportError:
 # Get logger
 logger = logging.getLogger(__name__)
 
-class LeaderboardManager:
+class LeaderboardManager(ScrollMixin):
     """Manager for displaying scrolling leaderboards for multiple sports leagues."""
     
     def __init__(self, config: Dict[str, Any], display_manager: DisplayManager):
@@ -43,6 +45,19 @@ class LeaderboardManager:
         self.scroll_delay = self.leaderboard_config.get('scroll_delay', 0.01)  # frame rate control
         self.pixels_per_second = self.leaderboard_config.get('pixels_per_second', None)  # independent scroll speed
         self.scroll_speed_scale = self.leaderboard_config.get('scroll_speed_scale', None)  # 1-20 scale based on display width
+        
+        # Initialize scroll system
+        self._scroll_config_prefix = "leaderboard"
+        self._init_scroll_system(config, display_manager)
+        
+        # Legacy scroll settings (kept for backward compatibility)
+        self._legacy_scroll_speed = self.leaderboard_config.get('scroll_speed', 1)
+        self._legacy_scroll_delay = self.leaderboard_config.get('scroll_delay', 0.01)
+        
+        # Initialize scroll controller when we have content
+        self._scroll_controller = None
+        self._content_width = 0
+        self._content_height = 0
         
         # FPS control - allow users to set target FPS instead of scroll_delay
         target_fps = self.leaderboard_config.get('target_fps', None)
@@ -233,6 +248,29 @@ class LeaderboardManager:
             logger.info("Cleared all leaderboard cache data")
         except Exception as e:
             logger.error(f"Error clearing leaderboard cache: {e}")
+
+    def _init_scroll_system(self, config: Dict[str, Any], display_manager):
+        """Initialize the new scroll system."""
+        scroll_config = {
+            'pixels_per_second': self.leaderboard_config.get('scroll_pixels_per_second', 20.0),
+            'target_fps': self.leaderboard_config.get('scroll_target_fps', 100.0),
+            'mode': self.leaderboard_config.get('scroll_mode', 'continuous_loop'),
+            'direction': self.leaderboard_config.get('scroll_direction', 'left'),
+            'enable_metrics': self.leaderboard_config.get('enable_scroll_metrics', False)
+        }
+        
+        self._scroll_config = scroll_config
+        self._display_manager = display_manager
+
+    def _ensure_scroll_controller(self):
+        """Ensure scroll controller is initialized with current content dimensions."""
+        if self._scroll_controller is None and self._content_width > 0:
+            self.init_scroll_controller(
+                debug_name="LeaderboardManager",
+                config_section="leaderboard",
+                content_width=self._content_width,
+                content_height=self._content_height
+            )
 
     def _load_fonts(self) -> Dict[str, ImageFont.FreeTypeFont]:
         """Load fonts for the leaderboard display with pixel-perfect rendering."""
@@ -1372,6 +1410,13 @@ class LeaderboardManager:
         if self.leaderboard_image is None:
             logger.warning("Leaderboard image is not available. Attempting to create it.")
             self._create_leaderboard_image()
+            
+            # Store dimensions for scroll controller
+            if self.leaderboard_image:
+                self._content_width = self.leaderboard_image.width
+                self._content_height = self.leaderboard_image.height
+                self._ensure_scroll_controller()
+            
             if self.leaderboard_image is None:
                 logger.error("Failed to create leaderboard image.")
                 self._display_fallback_message()
@@ -1397,49 +1442,8 @@ class LeaderboardManager:
             
             self.last_frame_time = current_time
             
-            # Integer pixel movement with frame rate control
-            if self.scroll_speed_scale is not None:
-                # Calculate target frame rate based on scroll_speed_scale (1-20)
-                # Scale 1 = very slow (2.5 seconds to cross display), Scale 20 = very fast (0.125 seconds)
-                display_width = self.display_manager.matrix.width
-                # Scale 10 = 1 second to cross display (most intuitive)
-                pixels_per_second = display_width * self.scroll_speed_scale / 10.0
-                target_frame_delay = 1.0 / pixels_per_second
-                
-                if self.last_scroll_time > 0:
-                    elapsed_time = current_time - self.last_scroll_time
-                    if elapsed_time >= target_frame_delay:
-                        # Move exactly 1 pixel when enough time has passed
-                        self.scroll_position += 1
-                        self.last_scroll_time = current_time
-                else:
-                    # First frame - initialize
-                    self.last_scroll_time = current_time
-            elif self.pixels_per_second is not None:
-                # Calculate target frame rate based on pixels_per_second
-                # If we want 18.3 px/s and move 1 pixel per frame: 18.3 FPS
-                target_frame_rate = self.pixels_per_second
-                target_frame_delay = 1.0 / target_frame_rate
-                
-                if self.last_scroll_time > 0:
-                    elapsed_time = current_time - self.last_scroll_time
-                    if elapsed_time >= target_frame_delay:
-                        # Move exactly 1 pixel when enough time has passed
-                        self.scroll_position += 1
-                        self.last_scroll_time = current_time
-                else:
-                    # First frame - initialize
-                    self.last_scroll_time = current_time
-            else:
-                # Fallback to original time-based method
-                if self.last_scroll_time > 0:
-                    delta_time = current_time - self.last_scroll_time
-                    scroll_delta = delta_time * (self.scroll_speed / self.scroll_delay)
-                    self.scroll_position += scroll_delta
-                else:
-                    self.last_scroll_time = current_time
-                
-                self.last_scroll_time = current_time
+            # Use new scroll system
+            scroll_metrics = self.update_scroll(current_time)
             
             # Signal scrolling state to display manager (always scrolling)
             self.display_manager.set_scrolling_state(True)
@@ -1451,22 +1455,21 @@ class LeaderboardManager:
             # Handle looping based on configuration
             if self.loop:
                 # Reset position when we've scrolled past the end for a continuous loop
-                if self.scroll_position >= self.leaderboard_image.width:
-                    logger.info(f"Leaderboard loop reset: scroll_position {self.scroll_position} >= image width {self.leaderboard_image.width}")
-                    self.scroll_position = 0
+                if self._scroll_controller and self._scroll_controller.is_complete():
+                    logger.info(f"Leaderboard loop reset: scroll complete")
+                    self._scroll_controller.reset_scroll()
                     logger.info("Leaderboard starting new loop cycle")
             else:
                 # Stop scrolling when we reach the end
-                if self.scroll_position >= self.leaderboard_image.width - width:
+                if self._scroll_controller and self._scroll_controller.is_complete():
                     # Only log this message once per display session to avoid spam
                     if not self._end_reached_logged:
-                        logger.info(f"Leaderboard reached end: scroll_position {self.scroll_position} >= {self.leaderboard_image.width - width}")
+                        logger.info(f"Leaderboard reached end: scroll complete")
                         logger.info("Leaderboard scrolling stopped - reached end of content")
                         self._end_reached_logged = True
                     else:
-                        logger.debug(f"Leaderboard reached end (throttled): scroll_position {self.scroll_position} >= {self.leaderboard_image.width - width}")
+                        logger.debug(f"Leaderboard reached end (throttled): scroll complete")
                     
-                    self.scroll_position = self.leaderboard_image.width - width
                     # Signal that scrolling has stopped
                     self.display_manager.set_scrolling_state(False)
                     if self.time_over == 0:
@@ -1514,23 +1517,67 @@ class LeaderboardManager:
                         logger.debug(f"Resetting scroll position for clean transition (insufficient time warning already logged)")
                     self.scroll_position = 0
             
-            # Create the visible part of the image by cropping from the leaderboard_image
-            # Use rounded scroll position for smooth movement without artifacts
-            scroll_x = round(self.scroll_position)
-            visible_image = self.leaderboard_image.crop((
-                scroll_x,
-                0,
-                scroll_x + width,
-                height
-            ))
+            # Use new scroll system for image cropping
+            visible_image = self.crop_scrolled_image(self.leaderboard_image)
             
-            # Display the visible portion
-            self.display_manager.image = visible_image
-            self.display_manager.draw = ImageDraw.Draw(self.display_manager.image)
-            self.display_manager.update_display()
+            if visible_image:
+                # Display the visible portion
+                self.display_manager.image = visible_image
+                self.display_manager.draw = ImageDraw.Draw(self.display_manager.image)
+                self.display_manager.update_display()
+                
+                # Log performance metrics if enabled
+                if self.leaderboard_config.get('enable_scroll_metrics', False) and scroll_metrics:
+                    logger.info(f"Leaderboard scroll metrics: {scroll_metrics}")
+            else:
+                logger.warning("Failed to crop scrolled image")
+                self._display_fallback_message()
+                return
             
         except StopIteration as e:
             raise e
         except Exception as e:
             logger.error(f"Error in leaderboard display: {e}")
             self._display_fallback_message()
+
+    def get_scroll_performance(self) -> Dict[str, Any]:
+        """Get current scroll performance metrics."""
+        if self._scroll_controller:
+            return self._scroll_controller.get_metrics()
+        return {}
+
+    def reset_scroll(self):
+        """Reset scroll position to beginning."""
+        if self._scroll_controller:
+            self._scroll_controller.reset_scroll()
+
+    def set_scroll_speed(self, pixels_per_second: float):
+        """Set new scroll speed."""
+        if self._scroll_controller:
+            self._scroll_controller.pixels_per_second = pixels_per_second
+
+    def set_target_fps(self, target_fps: float):
+        """Set target FPS."""
+        if self._scroll_controller:
+            self._scroll_controller.target_fps = target_fps
+
+    def is_scroll_complete(self) -> bool:
+        """Check if scroll animation is complete."""
+        if self._scroll_controller:
+            return self._scroll_controller.is_complete()
+        return False
+
+    def get_scroll_position(self) -> float:
+        """Get current scroll position."""
+        if self._scroll_controller:
+            return self._scroll_controller.scroll_position
+        return 0.0
+
+    def get_scroll_progress(self) -> float:
+        """Get scroll progress as percentage (0.0 to 1.0)."""
+        if self._scroll_controller and self._content_width > 0:
+            matrix_width = self.display_manager.matrix.width
+            max_scroll = self._content_width - matrix_width
+            if max_scroll > 0:
+                return min(1.0, self._scroll_controller.scroll_position / max_scroll)
+        return 0.0

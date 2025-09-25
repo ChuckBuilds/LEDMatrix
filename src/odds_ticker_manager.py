@@ -13,6 +13,7 @@ from src.cache_manager import CacheManager
 from src.odds_manager import OddsManager
 from src.logo_downloader import download_missing_logo
 from src.background_data_service import get_background_service
+from src.base_classes.scroll_mixin import ScrollMixin
 
 # Import the API counter function from web interface
 try:
@@ -25,7 +26,7 @@ except ImportError:
 # Get logger
 logger = logging.getLogger(__name__)
 
-class OddsTickerManager:
+class OddsTickerManager(ScrollMixin):
     """Manager for displaying scrolling odds ticker for multiple sports leagues."""
     
     BROADCAST_LOGO_MAP = {
@@ -93,6 +94,19 @@ class OddsTickerManager:
         self.scroll_delay = self.odds_ticker_config.get('scroll_delay', 0.05)  # frame rate control
         self.pixels_per_second = self.odds_ticker_config.get('pixels_per_second', None)  # independent scroll speed
         self.scroll_speed_scale = self.odds_ticker_config.get('scroll_speed_scale', None)  # 1-20 scale based on display width
+        
+        # Initialize scroll system
+        self._scroll_config_prefix = "odds_ticker"
+        self._init_scroll_system(config, display_manager)
+        
+        # Legacy scroll settings (kept for backward compatibility)
+        self._legacy_scroll_speed = self.odds_ticker_config.get('scroll_speed', 1)
+        self._legacy_scroll_delay = self.odds_ticker_config.get('scroll_delay', 0.05)
+        
+        # Initialize scroll controller when we have content
+        self._scroll_controller = None
+        self._content_width = 0
+        self._content_height = 0
         
         # FPS control - allow users to set target FPS instead of scroll_delay
         target_fps = self.odds_ticker_config.get('target_fps', None)
@@ -338,6 +352,29 @@ class OddsTickerManager:
         except Exception as e:
             logger.error(f"Error fetching team rankings: {e}")
             return {}
+
+    def _init_scroll_system(self, config: Dict[str, Any], display_manager):
+        """Initialize the new scroll system."""
+        scroll_config = {
+            'pixels_per_second': self.odds_ticker_config.get('scroll_pixels_per_second', 20.0),
+            'target_fps': self.odds_ticker_config.get('scroll_target_fps', 100.0),
+            'mode': self.odds_ticker_config.get('scroll_mode', 'continuous_loop'),
+            'direction': self.odds_ticker_config.get('scroll_direction', 'left'),
+            'enable_metrics': self.odds_ticker_config.get('enable_scroll_metrics', False)
+        }
+        
+        self._scroll_config = scroll_config
+        self._display_manager = display_manager
+
+    def _ensure_scroll_controller(self):
+        """Ensure scroll controller is initialized with current content dimensions."""
+        if self._scroll_controller is None and self._content_width > 0:
+            self.init_scroll_controller(
+                debug_name="OddsTickerManager",
+                config_section="odds_ticker",
+                content_width=self._content_width,
+                content_height=self._content_height
+            )
 
     def convert_image(self, logo_path: Path) -> Optional[Image.Image]:
         if logo_path.exists():
@@ -1691,7 +1728,7 @@ class OddsTickerManager:
             return
             
         # Check if we're currently scrolling and defer the update if so
-        if self.display_manager.is_currently_scrolling():
+        if self.display_manager.is_currently_scrolling:
             logger.debug("Odds ticker is currently scrolling, deferring update")
             self.display_manager.defer_update(self._perform_update, priority=1)
             return
@@ -1783,6 +1820,13 @@ class OddsTickerManager:
             try:
                 # Direct image creation call - threading bottleneck eliminated
                 self._create_ticker_image()
+                
+                # Store dimensions for scroll controller
+                if self.ticker_image:
+                    self._content_width = self.ticker_image.width
+                    self._content_height = self.ticker_image.height
+                    self._ensure_scroll_controller()
+                    
             except Exception as e:
                 logger.error(f"Error during image creation: {e}")
             
@@ -1794,49 +1838,8 @@ class OddsTickerManager:
         try:
             current_time = time.time()
             
-            # Integer pixel movement with frame rate control
-            if self.scroll_speed_scale is not None:
-                # Calculate target frame rate based on scroll_speed_scale (1-20)
-                # Scale 1 = very slow (2.5 seconds to cross display), Scale 20 = very fast (0.125 seconds)
-                display_width = self.display_manager.matrix.width
-                # Scale 10 = 1 second to cross display (most intuitive)
-                pixels_per_second = display_width * self.scroll_speed_scale / 10.0
-                target_frame_delay = 1.0 / pixels_per_second
-                
-                if self.last_scroll_time > 0:
-                    elapsed_time = current_time - self.last_scroll_time
-                    if elapsed_time >= target_frame_delay:
-                        # Move exactly 1 pixel when enough time has passed
-                        self.scroll_position += 1
-                        self.last_scroll_time = current_time
-                else:
-                    # First frame - initialize
-                    self.last_scroll_time = current_time
-            elif self.pixels_per_second is not None:
-                # Calculate target frame rate based on pixels_per_second
-                # If we want 18.3 px/s and move 1 pixel per frame: 18.3 FPS
-                target_frame_rate = self.pixels_per_second
-                target_frame_delay = 1.0 / target_frame_rate
-                
-                if self.last_scroll_time > 0:
-                    elapsed_time = current_time - self.last_scroll_time
-                    if elapsed_time >= target_frame_delay:
-                        # Move exactly 1 pixel when enough time has passed
-                        self.scroll_position += 1
-                        self.last_scroll_time = current_time
-                else:
-                    # First frame - initialize
-                    self.last_scroll_time = current_time
-            else:
-                # Fallback to original time-based method
-                if self.last_scroll_time > 0:
-                    delta_time = current_time - self.last_scroll_time
-                    scroll_delta = delta_time * (self.scroll_speed / self.scroll_delay)
-                    self.scroll_position += scroll_delta
-                else:
-                    self.last_scroll_time = current_time
-                
-                self.last_scroll_time = current_time
+            # Use new scroll system
+            scroll_metrics = self.update_scroll(current_time)
             
             # Signal scrolling state to display manager (always scrolling)
             self.display_manager.set_scrolling_state(True)
@@ -1858,17 +1861,16 @@ class OddsTickerManager:
             # Handle looping based on configuration
             if self.loop:
                 # Reset position when we've scrolled past the end for a continuous loop
-                if self.scroll_position >= self.ticker_image.width:
-                    logger.debug(f"Odds ticker loop reset: scroll_position {self.scroll_position} >= image width {self.ticker_image.width}")
-                    self.scroll_position = 0
+                if self._scroll_controller and self._scroll_controller.is_complete():
+                    logger.debug(f"Odds ticker loop reset: scroll complete")
+                    self._scroll_controller.reset_scroll()
             else:
                 # Stop scrolling when we reach the end
-                if self.scroll_position >= self.ticker_image.width - width:
+                if self._scroll_controller and self._scroll_controller.is_complete():
                     if not self._end_reached_logged:
-                        logger.info(f"Odds ticker reached end: scroll_position {self.scroll_position} >= {self.ticker_image.width - width}")
+                        logger.info(f"Odds ticker reached end: scroll complete")
                         logger.info("Odds ticker scrolling stopped - reached end of content")
                         self._end_reached_logged = True
-                    self.scroll_position = self.ticker_image.width - width
                     # Signal that scrolling has stopped
                     self.display_manager.set_scrolling_state(False)
             
@@ -1921,23 +1923,21 @@ class OddsTickerManager:
                         logger.debug(f"Resetting scroll position for clean transition (insufficient time warning already logged)")
                     self.scroll_position = 0
             
-            # Create the visible part of the image by pasting from the ticker_image
-            # Use rounded scroll position for smooth movement without artifacts
-            scroll_x = round(self.scroll_position)
-            visible_image = Image.new('RGB', (width, height))
+            # Use new scroll system for image cropping
+            visible_image = self.crop_scrolled_image(self.ticker_image)
             
-            # Main part
-            visible_image.paste(self.ticker_image, (-scroll_x, 0))
-
-            # Handle wrap-around for continuous scroll
-            if scroll_x + width > self.ticker_image.width:
-                wrap_around_width = (scroll_x + width) - self.ticker_image.width
-                wrap_around_image = self.ticker_image.crop((0, 0, wrap_around_width, height))
-                visible_image.paste(wrap_around_image, (self.ticker_image.width - scroll_x, 0))
-            
-            # Display the cropped image
-            self.display_manager.image = visible_image
-            self.display_manager.draw = ImageDraw.Draw(self.display_manager.image)
+            if visible_image:
+                # Display the cropped image
+                self.display_manager.image = visible_image
+                self.display_manager.draw = ImageDraw.Draw(self.display_manager.image)
+                
+                # Log performance metrics if enabled
+                if self.odds_ticker_config.get('enable_scroll_metrics', False) and scroll_metrics:
+                    logger.info(f"Odds ticker scroll metrics: {scroll_metrics}")
+            else:
+                logger.warning("Failed to crop scrolled image")
+                self._display_fallback_message()
+                return
             
             # Direct display update call - threading bottleneck eliminated
             try:
@@ -1948,6 +1948,48 @@ class OddsTickerManager:
         except Exception as e:
             logger.error(f"Error displaying odds ticker: {e}", exc_info=True)
             self._display_fallback_message()
+
+    def get_scroll_performance(self) -> Dict[str, Any]:
+        """Get current scroll performance metrics."""
+        if self._scroll_controller:
+            return self._scroll_controller.get_metrics()
+        return {}
+
+    def reset_scroll(self):
+        """Reset scroll position to beginning."""
+        if self._scroll_controller:
+            self._scroll_controller.reset_scroll()
+
+    def set_scroll_speed(self, pixels_per_second: float):
+        """Set new scroll speed."""
+        if self._scroll_controller:
+            self._scroll_controller.pixels_per_second = pixels_per_second
+
+    def set_target_fps(self, target_fps: float):
+        """Set target FPS."""
+        if self._scroll_controller:
+            self._scroll_controller.target_fps = target_fps
+
+    def is_scroll_complete(self) -> bool:
+        """Check if scroll animation is complete."""
+        if self._scroll_controller:
+            return self._scroll_controller.is_complete()
+        return False
+
+    def get_scroll_position(self) -> float:
+        """Get current scroll position."""
+        if self._scroll_controller:
+            return self._scroll_controller.scroll_position
+        return 0.0
+
+    def get_scroll_progress(self) -> float:
+        """Get scroll progress as percentage (0.0 to 1.0)."""
+        if self._scroll_controller and self._content_width > 0:
+            matrix_width = self.display_manager.matrix.width
+            max_scroll = self._content_width - matrix_width
+            if max_scroll > 0:
+                return min(1.0, self._scroll_controller.scroll_position / max_scroll)
+        return 0.0
 
     def _display_fallback_message(self):
         """Display a fallback message when no games data is available."""
