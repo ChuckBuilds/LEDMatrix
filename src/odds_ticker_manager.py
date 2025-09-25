@@ -1529,6 +1529,9 @@ class OddsTickerManager:
 
         self.ticker_image = Image.new('RGB', (total_width, height), color=(0, 0, 0))
         
+        # Reset warning flag for new ticker session
+        self._insufficient_time_warning_logged = False
+        
         current_x = display_width  # Start after the black space
         for idx, img in enumerate(game_images):
             self.ticker_image.paste(img, (current_x, 0))

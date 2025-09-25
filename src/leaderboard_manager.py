@@ -61,10 +61,13 @@ class LeaderboardManager:
         self.total_scroll_width = 0  # Track total width for dynamic duration calculation
         
         # FPS tracking variables
-        self.frame_times = []  # Store last 30 frame times for averaging
+        self.frame_times = []  # Store last 100 frame times for averaging
         self.last_frame_time = 0
         self.fps_log_interval = 30.0  # Log FPS every 30 seconds (increased from 10s)
         self.last_fps_log_time = 0
+        
+        # Warning throttling
+        self._insufficient_time_warning_logged = False
         
         # Progress logging throttling
         self.progress_log_interval = 5.0  # Log progress every 5 seconds instead of every 50 pixels
@@ -975,6 +978,9 @@ class LeaderboardManager:
             self.leaderboard_image = Image.new('RGB', (total_width, height), (0, 0, 0))
             draw = ImageDraw.Draw(self.leaderboard_image)
             
+            # Reset warning flag for new leaderboard session
+            self._insufficient_time_warning_logged = False
+            
             current_x = 0
             for league_idx, league_data in enumerate(self.leaderboard_data):
                 league_key = league_data['league']
@@ -1481,8 +1487,13 @@ class LeaderboardManager:
                     logger.debug(f"Sufficient time remaining ({remaining_time:.1f}s) to complete scroll ({time_to_complete:.1f}s)")
                 else:
                     # Not enough time, reset to beginning for clean transition
-                    logger.warning(f"Not enough time to complete content display - remaining: {remaining_time:.1f}s, needed: {time_to_complete:.1f}s")
-                    logger.debug(f"Resetting scroll position for clean transition")
+                    # Only log this warning once per display session to avoid spam
+                    if not self._insufficient_time_warning_logged:
+                        logger.warning(f"Not enough time to complete content display - remaining: {remaining_time:.1f}s, needed: {time_to_complete:.1f}s")
+                        logger.debug(f"Resetting scroll position for clean transition")
+                        self._insufficient_time_warning_logged = True
+                    else:
+                        logger.debug(f"Resetting scroll position for clean transition (insufficient time warning already logged)")
                     self.scroll_position = 0
             
             # Create the visible part of the image by cropping from the leaderboard_image
