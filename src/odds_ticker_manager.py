@@ -99,9 +99,9 @@ class OddsTickerManager(ScrollMixin):
         self._scroll_config_prefix = "odds_ticker"
         self._init_scroll_system(config, display_manager)
         
-        # Legacy scroll settings (kept for backward compatibility)
-        self._legacy_scroll_speed = self.odds_ticker_config.get('scroll_speed', 1)
-        self._legacy_scroll_delay = self.odds_ticker_config.get('scroll_delay', 0.05)
+        # Legacy scroll settings (deprecated - use _scroll_controller instead)
+        self._legacy_scroll_speed = self.odds_ticker_config.get('scroll_speed', 1)  # DEPRECATED
+        self._legacy_scroll_delay = self.odds_ticker_config.get('scroll_delay', 0.05)  # DEPRECATED
         
         # Initialize scroll controller when we have content
         self._scroll_controller = None
@@ -150,8 +150,9 @@ class OddsTickerManager(ScrollMixin):
         
         # State variables
         self.last_update = 0
-        self.scroll_position = 0
-        self.last_scroll_time = 0
+        # Legacy scroll variables (deprecated - use _scroll_controller instead)
+        self.scroll_position = 0  # DEPRECATED: Use _scroll_controller.scroll_position
+        self.last_scroll_time = 0  # DEPRECATED: Use _scroll_controller timing
         self.games_data = []
         self.current_game_index = 0
         self.ticker_image = None # This will hold the single, wide image
@@ -1797,8 +1798,10 @@ class OddsTickerManager(ScrollMixin):
         if force_clear or not hasattr(self, '_display_start_time'):
             self._display_start_time = time.time()
             logger.debug(f"Reset/initialized display start time: {self._display_start_time}")
-            # Also reset scroll position for clean start
-            self.scroll_position = 0
+            # Also reset scroll position for clean start (both old and new systems)
+            self.scroll_position = 0  # DEPRECATED
+            if self._scroll_controller:
+                self._scroll_controller.reset_scroll()
             # Reset the end reached logging flag
             self._end_reached_logged = False
             # Reset the insufficient time warning logging flag
@@ -1810,7 +1813,9 @@ class OddsTickerManager(ScrollMixin):
             if elapsed_time > (self.dynamic_duration * 2):
                 logger.debug(f"Display start time is too old ({elapsed_time:.1f}s), resetting")
                 self._display_start_time = current_time
-                self.scroll_position = 0
+                self.scroll_position = 0  # DEPRECATED
+                if self._scroll_controller:
+                    self._scroll_controller.reset_scroll()
                 # Reset the end reached logging flag
                 self._end_reached_logged = False
                 # Reset the insufficient time warning logging flag
@@ -1872,6 +1877,9 @@ class OddsTickerManager(ScrollMixin):
             # Use new scroll system if available, otherwise fallback to old system
             if self._scroll_controller is not None:
                 scroll_metrics = self.update_scroll(current_time)
+                # Debug: Log scroll controller state
+                if current_time - self.last_progress_log_time >= self.progress_log_interval:
+                    logger.debug(f"Odds ticker scroll controller: is_scrolling={self._scroll_controller.is_scrolling_active}, position={self._scroll_controller.scroll_position}, mode={self._scroll_controller.mode}")
             else:
                 # Only log warning once per session to avoid spam
                 if not hasattr(self, '_scroll_fallback_logged') or not self._scroll_fallback_logged:
@@ -1925,7 +1933,12 @@ class OddsTickerManager(ScrollMixin):
             
             # Log scroll progress every 5 seconds (throttled) to help debug
             if current_time - self.last_progress_log_time >= self.progress_log_interval:
-                logger.info(f"Odds ticker progress: elapsed={elapsed_time:.1f}s, remaining={remaining_time:.1f}s, scroll_pos={self.scroll_position}/{self.ticker_image.width}px")
+                # Use scroll controller position if available, otherwise fall back to old position
+                if self._scroll_controller:
+                    scroll_pos = self._scroll_controller.scroll_position
+                else:
+                    scroll_pos = self.scroll_position
+                logger.info(f"Odds ticker progress: elapsed={elapsed_time:.1f}s, remaining={remaining_time:.1f}s, scroll_pos={scroll_pos}/{self.ticker_image.width}px")
                 self.last_progress_log_time = current_time
             
             # FPS logging with throttling (every 30 seconds)
@@ -1964,7 +1977,9 @@ class OddsTickerManager(ScrollMixin):
                         self._insufficient_time_warning_logged = True
                     else:
                         logger.debug(f"Resetting scroll position for clean transition (insufficient time warning already logged)")
-                    self.scroll_position = 0
+                    self.scroll_position = 0  # DEPRECATED
+                    if self._scroll_controller:
+                        self._scroll_controller.reset_scroll()
             
             # Use new scroll system for image cropping
             visible_image = self.crop_scrolled_image(self.ticker_image)

@@ -264,13 +264,19 @@ class LeaderboardManager(ScrollMixin):
 
     def _ensure_scroll_controller(self):
         """Ensure scroll controller is initialized with current content dimensions."""
+        logger.debug(f"LeaderboardManager: _ensure_scroll_controller called - _scroll_controller={self._scroll_controller is not None}, _content_width={self._content_width}, _content_height={self._content_height}")
+        
         if self._scroll_controller is None and self._content_width > 0:
+            logger.debug(f"LeaderboardManager: Initializing scroll controller with dimensions {self._content_width}x{self._content_height}")
             self.init_scroll_controller(
                 debug_name="LeaderboardManager",
                 config_section="leaderboard",
                 content_width=self._content_width,
                 content_height=self._content_height
             )
+            logger.debug(f"LeaderboardManager: Scroll controller initialized: {self._scroll_controller is not None}")
+        elif self._scroll_controller is None:
+            logger.warning(f"LeaderboardManager: Cannot initialize scroll controller - content dimensions are zero: {self._content_width}x{self._content_height}")
 
     def _load_fonts(self) -> Dict[str, ImageFont.FreeTypeFont]:
         """Load fonts for the leaderboard display with pixel-perfect rendering."""
@@ -1444,7 +1450,16 @@ class LeaderboardManager(ScrollMixin):
             
             # Ensure scroll controller is initialized
             if self._scroll_controller is None and self._content_width > 0:
+                logger.debug(f"LeaderboardManager: Initializing scroll controller with dimensions {self._content_width}x{self._content_height}")
                 self._ensure_scroll_controller()
+            elif self._scroll_controller is None:
+                # Debug: Log why scroll controller isn't being initialized
+                if not hasattr(self, '_scroll_debug_logged'):
+                    logger.warning(f"LeaderboardManager: Cannot initialize scroll controller - content dimensions: {self._content_width}x{self._content_height}")
+                    logger.warning(f"LeaderboardManager: Leaderboard image exists: {self.leaderboard_image is not None}")
+                    if self.leaderboard_image:
+                        logger.warning(f"LeaderboardManager: Leaderboard image dimensions: {self.leaderboard_image.width}x{self.leaderboard_image.height}")
+                    self._scroll_debug_logged = True
             
             # Use new scroll system if available
             if self._scroll_controller is not None:
@@ -1453,6 +1468,10 @@ class LeaderboardManager(ScrollMixin):
                 # Only log warning once per session to avoid spam
                 if not hasattr(self, '_scroll_fallback_logged') or not self._scroll_fallback_logged:
                     logger.warning("LeaderboardManager: Scroll controller not available, using fallback display")
+                    logger.warning(f"LeaderboardManager: Content dimensions: {self._content_width}x{self._content_height}")
+                    logger.warning(f"LeaderboardManager: Leaderboard image: {self.leaderboard_image is not None}")
+                    if self.leaderboard_image:
+                        logger.warning(f"LeaderboardManager: Leaderboard image size: {self.leaderboard_image.width}x{self.leaderboard_image.height}")
                     self._scroll_fallback_logged = True
                 self._display_fallback_message()
                 return
