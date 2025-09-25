@@ -42,6 +42,7 @@ class LeaderboardManager:
         self.scroll_speed = self.leaderboard_config.get('scroll_speed', 1)  # pixels per frame
         self.scroll_delay = self.leaderboard_config.get('scroll_delay', 0.01)  # frame rate control
         self.pixels_per_second = self.leaderboard_config.get('pixels_per_second', None)  # independent scroll speed
+        self.scroll_speed_scale = self.leaderboard_config.get('scroll_speed_scale', None)  # 1-20 scale based on display width
         
         # FPS control - allow users to set target FPS instead of scroll_delay
         target_fps = self.leaderboard_config.get('target_fps', None)
@@ -1397,7 +1398,24 @@ class LeaderboardManager:
             self.last_frame_time = current_time
             
             # Integer pixel movement with frame rate control
-            if self.pixels_per_second is not None:
+            if self.scroll_speed_scale is not None:
+                # Calculate target frame rate based on scroll_speed_scale (1-20)
+                # Scale 1 = very slow (2.5 seconds to cross display), Scale 20 = very fast (0.125 seconds)
+                display_width = self.display_manager.matrix.width
+                # Scale 10 = 1 second to cross display (most intuitive)
+                pixels_per_second = display_width * self.scroll_speed_scale / 10.0
+                target_frame_delay = 1.0 / pixels_per_second
+                
+                if self.last_scroll_time > 0:
+                    elapsed_time = current_time - self.last_scroll_time
+                    if elapsed_time >= target_frame_delay:
+                        # Move exactly 1 pixel when enough time has passed
+                        self.scroll_position += 1
+                        self.last_scroll_time = current_time
+                else:
+                    # First frame - initialize
+                    self.last_scroll_time = current_time
+            elif self.pixels_per_second is not None:
                 # Calculate target frame rate based on pixels_per_second
                 # If we want 18.3 px/s and move 1 pixel per frame: 18.3 FPS
                 target_frame_rate = self.pixels_per_second
