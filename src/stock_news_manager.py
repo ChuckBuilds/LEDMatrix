@@ -131,13 +131,19 @@ class StockNewsManager(ScrollMixin):
 
     def _ensure_scroll_controller(self):
         """Ensure scroll controller is initialized with current content dimensions."""
+        logger.debug(f"StockNewsManager: _ensure_scroll_controller called - _scroll_controller={self._scroll_controller is not None}, _content_width={self._content_width}, _content_height={self._content_height}")
+        
         if self._scroll_controller is None and self._content_width > 0:
+            logger.debug(f"StockNewsManager: Initializing scroll controller with dimensions {self._content_width}x{self._content_height}")
             self.init_scroll_controller(
                 debug_name="StockNewsManager",
                 config_section="stock_news",
                 content_width=self._content_width,
                 content_height=self._content_height
             )
+            logger.debug(f"StockNewsManager: Scroll controller initialized: {self._scroll_controller is not None}")
+        elif self._scroll_controller is None:
+            logger.warning(f"StockNewsManager: Cannot initialize scroll controller - content dimensions are zero: {self._content_width}x{self._content_height}")
         
     def _fetch_news(self, symbol: str) -> List[Dict[str, Any]]:
         """Fetch news data for a stock from Yahoo Finance."""
@@ -463,21 +469,26 @@ class StockNewsManager(ScrollMixin):
 
         # Use new scroll system
         # Ensure scroll controller is initialized
+        logger.debug(f"StockNewsManager: Before scroll controller check - _scroll_controller={self._scroll_controller is not None}, _content_width={self._content_width}")
+        
         if self._scroll_controller is None and self._content_width > 0:
             self._ensure_scroll_controller()
         
         # Update scroll position using new system if available
         if self._scroll_controller is not None:
+            logger.debug("StockNewsManager: Using new scroll system")
             scroll_metrics = self.update_scroll(time.time())
         else:
             # Only log warning once per session to avoid spam
             if not hasattr(self, '_scroll_fallback_logged') or not self._scroll_fallback_logged:
-                logger.warning("StockNewsManager: Scroll controller not available, skipping display")
+                logger.warning(f"StockNewsManager: Scroll controller not available, skipping display - _scroll_controller={self._scroll_controller is not None}, _content_width={self._content_width}")
                 self._scroll_fallback_logged = True
             return
         
         # Get the visible portion using new system
         visible_portion = self.crop_scrolled_image(self.cached_text_image)
+        
+        logger.debug(f"StockNewsManager: crop_scrolled_image result - visible_portion={visible_portion is not None}, size={visible_portion.size if visible_portion else 'None'}")
         
         if visible_portion:
             # Copy the visible portion to the display
