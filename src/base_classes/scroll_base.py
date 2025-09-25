@@ -453,6 +453,57 @@ class BaseScrollController:
         self.last_update_time = 0.0
         logger.debug(f"{self.debug_name}: Reset scroll position")
     
+    def reset_scroll(self):
+        """Reset scroll position to start (alias for reset)."""
+        self.reset()
+    
+    def is_complete(self) -> bool:
+        """
+        Check if scroll animation is complete.
+        
+        Returns:
+            True if scrolling is complete, False otherwise
+        """
+        if not self.is_scrolling_active:
+            return True
+        
+        if self.mode == ScrollMode.STATIC:
+            return True
+        
+        if self.mode == ScrollMode.CONTINUOUS_LOOP:
+            # Continuous loop never completes
+            return False
+        
+        if self.mode == ScrollMode.ONE_SHOT:
+            # Complete when we've scrolled to the end
+            max_position = max(0, self.content_width - self.display_width)
+            return self.scroll_position >= max_position
+        
+        if self.mode == ScrollMode.BOUNCE:
+            # Bounce mode completes when it reaches the end in forward direction
+            max_position = max(0, self.content_width - self.display_width)
+            return (self.scroll_position >= max_position and 
+                    self.bounce_direction > 0)
+        
+        return False
+    
+    def get_metrics(self) -> Dict[str, Any]:
+        """Get current scroll performance metrics."""
+        if not self.enable_metrics:
+            return {}
+        
+        return {
+            'current_fps': self.metrics.get_current_fps(),
+            'overall_fps': self.metrics.get_overall_fps(),
+            'average_scroll_speed': self.metrics.get_average_scroll_speed(),
+            'total_frames': self.metrics.total_frames,
+            'total_pixels_scrolled': self.metrics.total_pixels_scrolled,
+            'target_fps': self.target_fps,
+            'pixels_per_second': self.pixels_per_second,
+            'scroll_position': self.scroll_position,
+            'is_scrolling_active': self.is_scrolling_active
+        }
+    
     def get_debug_info(self) -> Dict[str, Any]:
         """Get comprehensive debug information."""
         return {
