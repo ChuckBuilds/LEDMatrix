@@ -31,8 +31,8 @@ def test_config_values():
         ("NCAA Football", config.get('ncaa_fb_scoreboard', {})),
         ("NCAA Baseball", config.get('ncaa_baseball_scoreboard', {})),
         ("NCAA Basketball", config.get('ncaam_basketball_scoreboard', {})),
-        ("MLB", config.get('mlb', {})),
-        ("MiLB", config.get('milb', {})),
+        ("MLB", config.get('mlb_scoreboard', {})),
+        ("MiLB", config.get('milb_scoreboard', {})),
         ("Soccer", config.get('soccer_scoreboard', {}))
     ]
     
@@ -84,8 +84,8 @@ def test_config_consistency():
         ("NCAA Football", config.get('ncaa_fb_scoreboard', {})),
         ("NCAA Baseball", config.get('ncaa_baseball_scoreboard', {})),
         ("NCAA Basketball", config.get('ncaam_basketball_scoreboard', {})),
-        ("MLB", config.get('mlb', {})),
-        ("MiLB", config.get('milb', {})),
+        ("MLB", config.get('mlb_scoreboard', {})),
+        ("MiLB", config.get('milb_scoreboard', {})),
         ("Soccer", config.get('soccer_scoreboard', {}))
     ]
     

@@ -428,7 +428,7 @@
         "enabled": false,
         "update_interval": 3600
     },
-    "mlb": {
+    "mlb_scoreboard": {
         "enabled": false,
         "live_priority": false,
         "live_game_duration": 30,
@@ -455,7 +455,7 @@
             "mlb_upcoming": true
         }
     },
-    "milb": {
+    "milb_scoreboard": {
         "enabled": false,
         "live_priority": false,
         "live_game_duration": 30,

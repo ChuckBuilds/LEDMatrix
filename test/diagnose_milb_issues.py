@@ -184,7 +184,7 @@ def test_configuration():
         with open(config_path, 'r') as f:
             config = json.load(f)
         
-        milb_config = config.get('milb', {})
+        milb_config = config.get('milb_scoreboard', {})
         
         print(f"✅ Configuration file loaded successfully")
         print(f"MiLB enabled: {milb_config.get('enabled', False)}")

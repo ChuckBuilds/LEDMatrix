@@ -36,7 +36,7 @@ class BaseMLBManager(Baseball):
         super().__init__(config, display_manager, cache_manager, logger, "mlb")
         
         # MLB-specific configuration
-        self.mlb_config = config.get('mlb', {})
+        self.mlb_config = config.get('mlb_scoreboard', {})
         self.show_odds = self.mlb_config.get("show_odds", False)
         self.favorite_teams = self.mlb_config.get('favorite_teams', [])
         self.show_records = self.mlb_config.get('show_records', False)

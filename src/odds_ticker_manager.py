@@ -162,8 +162,8 @@ class OddsTickerManager:
                 'league': 'mlb',
                 'logo_league': 'mlb',  # ESPN API league identifier for logo downloading
                 'logo_dir': 'assets/sports/mlb_logos',
-                'favorite_teams': config.get('mlb', {}).get('favorite_teams', []),
-                'enabled': config.get('mlb', {}).get('enabled', False)
+                'favorite_teams': config.get('mlb_scoreboard', {}).get('favorite_teams', []),
+                'enabled': config.get('mlb_scoreboard', {}).get('enabled', False)
             },
             'ncaa_fb': {
                 'sport': 'football',
@@ -178,8 +178,8 @@ class OddsTickerManager:
                 'league': 'milb',
                 'logo_league': 'milb',  # ESPN API league identifier for logo downloading (if supported)
                 'logo_dir': 'assets/sports/milb_logos',
-                'favorite_teams': config.get('milb', {}).get('favorite_teams', []),
-                'enabled': config.get('milb', {}).get('enabled', False)
+                'favorite_teams': config.get('milb_scoreboard', {}).get('favorite_teams', []),
+                'enabled': config.get('milb_scoreboard', {}).get('enabled', False)
             },
             'nhl': {
                 'sport': 'hockey',

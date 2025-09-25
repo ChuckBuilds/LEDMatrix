@@ -23,7 +23,7 @@ def test_milb_api_accuracy():
     try:
         with open('config/config.json', 'r') as f:
             config = json.load(f)
-        milb_config = config.get('milb', {})
+        milb_config = config.get('milb_scoreboard', {})
         favorite_teams = milb_config.get('favorite_teams', [])
         print(f"Favorite teams: {favorite_teams}")
     except Exception as e:
