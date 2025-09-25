@@ -66,6 +66,11 @@ class LeaderboardManager:
         # End reached logging throttling
         self._end_reached_logged = False
         
+        # Image processing optimizations
+        self._last_visible_image = None
+        self._cached_draw = None
+        self._last_crop_position = -1  # Track last crop position for optimization
+        
         # Initialize managers
         self.cache_manager = CacheManager()
         # Store reference to config instead of creating new ConfigManager
@@ -1378,14 +1383,22 @@ class LeaderboardManager:
             
             self.last_frame_time = current_time
             
+            # Check if we should be scrolling based on time
+            should_scroll = current_time - self.last_scroll_time >= self.scroll_delay
+            
             # Signal scrolling state to display manager
-            self.display_manager.set_scrolling_state(True)
+            if should_scroll:
+                self.display_manager.set_scrolling_state(True)
+            else:
+                # If we're not scrolling, check if we should process deferred updates
+                self.display_manager.process_deferred_updates()
             
-            # Scroll the image every frame for smooth animation
-            self.scroll_position += self.scroll_speed
-            
-            # Add scroll delay like other managers for consistent timing
-            time.sleep(self.scroll_delay)
+            # Scroll the image with time-based control
+            if should_scroll:
+                self.scroll_position += self.scroll_speed
+                self.last_scroll_time = current_time
+                # Ensure scroll position is integer to prevent unnecessary image cropping
+                self.scroll_position = int(self.scroll_position)
             
             # Calculate crop region
             width = self.display_manager.matrix.width
@@ -1452,17 +1465,34 @@ class LeaderboardManager:
                     logger.debug(f"Resetting scroll position for clean transition")
                     self.scroll_position = 0
             
-            # Create the visible part of the image by cropping from the leaderboard_image
-            visible_image = self.leaderboard_image.crop((
-                self.scroll_position,
-                0,
-                self.scroll_position + width,
-                height
-            ))
+            # Optimized image cropping with caching
+            # Only recrop when scroll position changes significantly
+            if self.scroll_position != self._last_crop_position or self._last_visible_image is None:
+                # Create the visible part of the image by cropping from the leaderboard_image
+                visible_image = self.leaderboard_image.crop((
+                    self.scroll_position,
+                    0,
+                    self.scroll_position + width,
+                    height
+                ))
+                
+                # Cache the image and draw object
+                self._last_visible_image = visible_image
+                self._cached_draw = ImageDraw.Draw(visible_image)
+                self._last_crop_position = self.scroll_position
+            else:
+                # Use cached image with fallback handling
+                visible_image = self._last_visible_image
+                self._cached_draw = self._cached_draw
+                
+                # Fallback if cached image is None
+                if visible_image is None:
+                    visible_image = Image.new('RGB', (width, height), color=(0, 0, 0))
+                    self._cached_draw = ImageDraw.Draw(visible_image)
             
-            # Display the visible portion
+            # Display the visible portion (cached or new)
             self.display_manager.image = visible_image
-            self.display_manager.draw = ImageDraw.Draw(self.display_manager.image)
+            self.display_manager.draw = self._cached_draw if self._cached_draw else ImageDraw.Draw(visible_image)
             self.display_manager.update_display()
             
         except StopIteration as e:
