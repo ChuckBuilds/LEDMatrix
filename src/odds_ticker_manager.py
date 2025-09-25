@@ -12,7 +12,6 @@ from src.display_manager import DisplayManager
 from src.cache_manager import CacheManager
 from src.odds_manager import OddsManager
 from src.logo_downloader import download_missing_logo
-from src.background_data_service import get_background_service
 
 # Import the API counter function from web interface
 try:
@@ -116,7 +115,8 @@ class OddsTickerManager:
         background_config = self.odds_ticker_config.get("background_service", {})
         if background_config.get("enabled", True):  # Default to enabled
             max_workers = background_config.get("max_workers", 3)
-            self.background_service = get_background_service(self.cache_manager, max_workers)
+            from src.background_data_service import BackgroundDataService
+            self.background_service = BackgroundDataService(self.cache_manager, max_workers)
             self.background_fetch_requests = {}  # Track background fetch requests
             self.background_enabled = True
             logger.info(f"[Odds Ticker] Background service enabled with {max_workers} workers")

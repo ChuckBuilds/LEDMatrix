@@ -10,13 +10,11 @@ try:
     from .display_manager import DisplayManager
     from .cache_manager import CacheManager
     from .logo_downloader import download_missing_logo
-    from .background_data_service import get_background_service
 except ImportError:
     # Fallback for direct imports
     from display_manager import DisplayManager
     from cache_manager import CacheManager
     from logo_downloader import download_missing_logo
-    from background_data_service import get_background_service
 
 # Import the API counter function from web interface
 try:
@@ -75,7 +73,8 @@ class LeaderboardManager:
         background_config = self.leaderboard_config.get("background_service", {})
         if background_config.get("enabled", True):  # Default to enabled
             max_workers = background_config.get("max_workers", 3)
-            self.background_service = get_background_service(self.cache_manager, max_workers)
+            from src.background_data_service import BackgroundDataService
+            self.background_service = BackgroundDataService(self.cache_manager, max_workers)
             self.background_fetch_requests = {}  # Track background fetch requests
             self.background_enabled = True
             logger.info(f"[Leaderboard] Background service enabled with {max_workers} workers")

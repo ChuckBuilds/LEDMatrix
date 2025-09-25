@@ -11,7 +11,6 @@ from urllib3.util.retry import Retry
 from PIL import Image, ImageDraw, ImageFont
 import pytz
 import time
-from src.background_data_service import get_background_service
 from src.logo_downloader import download_missing_logo, LogoDownloader
 from pathlib import Path
 
@@ -89,7 +88,8 @@ class SportsCore:
         background_config = self.mode_config.get("background_service", {})
         if background_config.get("enabled", True):  # Default to enabled
             max_workers = background_config.get("max_workers", 3)
-            self.background_service = get_background_service(self.cache_manager, max_workers)
+            from src.background_data_service import BackgroundDataService
+            self.background_service = BackgroundDataService(self.cache_manager, max_workers)
             self.background_fetch_requests = {}  # Track background fetch requests
             self.background_enabled = True
             self.logger.info(f"Background service enabled with {max_workers} workers")

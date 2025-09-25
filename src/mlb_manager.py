@@ -12,7 +12,6 @@ from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 import pytz
 from src.odds_manager import OddsManager
-from src.background_data_service import get_background_service
 
 # Import baseball and standard sports classes
 from .base_classes.baseball import Baseball, BaseballLive
@@ -73,7 +72,8 @@ class BaseMLBManager(Baseball):
         background_config = self.mlb_config.get("background_service", {})
         if background_config.get("enabled", True):  # Default to enabled
             max_workers = background_config.get("max_workers", 3)
-            self.background_service = get_background_service(self.cache_manager, max_workers)
+            from src.background_data_service import BackgroundDataService
+            self.background_service = BackgroundDataService(self.cache_manager, max_workers)
             self.background_fetch_requests = {}  # Track background fetch requests
             self.background_enabled = True
             self.logger.info(f"[MLB] Background service enabled with {max_workers} workers")

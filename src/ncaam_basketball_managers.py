@@ -11,6 +11,7 @@ from src.display_manager import DisplayManager
 from src.cache_manager import CacheManager
 from src.config_manager import ConfigManager
 from src.odds_manager import OddsManager
+from src.background_cache_mixin import BackgroundCacheMixin
 import pytz
 
 # Import the API counter function from web interface
@@ -31,7 +32,7 @@ logging.basicConfig(
     datefmt='%Y-%m-%d %H:%M:%S'
 )
 
-class BaseNCAAMBasketballManager:
+class BaseNCAAMBasketballManager(BackgroundCacheMixin):
     """Base class for NCAA MB managers with common functionality."""
     # Class variables for warning tracking
     _no_data_warning_logged = False
@@ -70,6 +71,21 @@ class BaseNCAAMBasketballManager:
         
         # Cache for loaded logos
         self._logo_cache = {}
+        
+        # Initialize background data service
+        background_config = self.ncaam_basketball_config.get("background_service", {})
+        if background_config.get("enabled", True):  # Default to enabled
+            max_workers = background_config.get("max_workers", 3)
+            from src.background_data_service import BackgroundDataService
+            self.background_service = BackgroundDataService(self.cache_manager, max_workers)
+            self.background_fetch_requests = {}  # Track background fetch requests
+            self.background_enabled = True
+            self.logger.info(f"[NCAAMBasketball] Background service enabled with {max_workers} workers")
+        else:
+            self.background_service = None
+            self.background_fetch_requests = {}
+            self.background_enabled = False
+            self.logger.info("[NCAAMBasketball] Background service disabled")
         
         self.logger.info(f"Initialized NCAAMBasketball manager with display dimensions: {self.display_width}x{self.display_height}")
         self.logger.info(f"Logo directory: {self.logo_dir}")
@@ -352,25 +368,12 @@ class BaseNCAAMBasketballManager:
         This eliminates redundant caching and ensures Recent/Upcoming managers
         use the same data source as the background service.
         """
-        # For Live managers, always fetch fresh data
-        if isinstance(self, NCAAMBasketballLiveManager):
-            return self._fetch_ncaam_basketball_api_data(use_cache=False)
-        
-        # For Recent/Upcoming managers, try to use background service cache first
-        from datetime import datetime
-        import pytz
-        cache_key = f"ncaam_basketball_{datetime.now(pytz.utc).strftime('%Y%m%d')}"
-        
-        # Check if background service has fresh data
-        if self.cache_manager.is_background_data_available(cache_key, 'ncaam_basketball'):
-            cached_data = self.cache_manager.get_background_cached_data(cache_key, 'ncaam_basketball')
-            if cached_data:
-                self.logger.info(f"[NCAAMBasketball] Using background service cache for {cache_key}")
-                return cached_data
-        
-        # Fallback to direct API call if background data not available
-        self.logger.info(f"[NCAAMBasketball] Background data not available, fetching directly for {cache_key}")
-        return self._fetch_ncaam_basketball_api_data(use_cache=True)
+        return self._fetch_data_with_background_cache(
+            sport_key='ncaam_basketball',
+            api_fetch_method=self._fetch_ncaam_basketball_api_data,
+            live_manager_class=NCAAMBasketballLiveManager,
+            use_new_extractor_system=True
+        )
 
     def _extract_game_details(self, game_event: Dict) -> Optional[Dict]:
         """Extract relevant game details from ESPN API response."""
