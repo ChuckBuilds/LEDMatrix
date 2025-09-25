@@ -14,21 +14,8 @@ import requests
 class Football(SportsCore):
     """Base class for football sports with common functionality."""
     
-    # Football sport configuration (moved from sport_configs.py)
-    SPORT_CONFIG = {
-        'update_cadence': 'weekly',
-        'season_length': 17,  # NFL default
-        'games_per_week': 1,
-        'api_endpoints': ['scoreboard', 'standings'],
-        'sport_specific_fields': ['down', 'distance', 'possession', 'timeouts', 'is_redzone'],
-        'update_interval_seconds': 60,
-        'logo_dir': 'assets/sports/nfl_logos',
-        'show_records': True,
-        'show_ranking': True,
-        'show_odds': True,
-        'data_source_type': 'espn',
-        'api_base_url': 'https://site.api.espn.com/apis/site/v2/sports/football'
-    }
+    # Football sport configuration - now uses centralized data source system
+    # Configuration is handled by data sources and API extractors
     
     def __init__(self, config: Dict[str, Any], display_manager: DisplayManager, cache_manager: CacheManager, logger: logging.Logger, sport_key: str):
         super().__init__(config, display_manager, cache_manager, logger, sport_key)
@@ -39,8 +26,13 @@ class Football(SportsCore):
         self.data_source = ESPNDataSource(logger)
     
     def get_sport_config(self) -> Dict[str, Any]:
-        """Get football sport configuration."""
-        return self.SPORT_CONFIG.copy()
+        """Get football sport configuration - now handled by data source system."""
+        # Return basic configuration - detailed config is handled by data sources
+        return {
+            'sport': 'football',
+            'data_source_type': 'espn',
+            'logo_dir': 'assets/sports/nfl_logos' if self.sport_key == 'nfl' else 'assets/sports/ncaa_logos'
+        }
 
     def _fetch_game_odds(self, _: Dict) -> None:
         pass

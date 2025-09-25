@@ -24,7 +24,8 @@ class BackgroundCacheMixin:
     def _fetch_data_with_background_cache(self, 
                                         sport_key: str, 
                                         api_fetch_method: Callable,
-                                        live_manager_class: type = None) -> Optional[Dict]:
+                                        live_manager_class: type = None,
+                                        use_new_extractor_system: bool = True) -> Optional[Dict]:
         """
         Common logic for fetching data with background service cache support.
         
@@ -37,6 +38,7 @@ class BackgroundCacheMixin:
             sport_key: Sport identifier (e.g., 'nba', 'nfl', 'ncaa_fb')
             api_fetch_method: Method to call for direct API fetch
             live_manager_class: Class to check if this is a live manager
+            use_new_extractor_system: Whether to use the new API extractor system
             
         Returns:
             Cached or fresh data from API
@@ -49,8 +51,13 @@ class BackgroundCacheMixin:
             # For Live managers, always fetch fresh data
             if live_manager_class and isinstance(self, live_manager_class):
                 self.logger.info(f"[{sport_key.upper()}] Live manager - fetching fresh data")
-                result = api_fetch_method(use_cache=False)
-                cache_source = "live_fresh"
+                if use_new_extractor_system and hasattr(self, 'background_service'):
+                    # Use new extractor system for live managers
+                    result = self._fetch_with_new_extractor_system(sport_key, 'live_games')
+                    cache_source = "live_extractor"
+                else:
+                    result = api_fetch_method(use_cache=False)
+                    cache_source = "live_fresh"
             else:
                 # For Recent/Upcoming managers, try background service cache first
                 cache_key = self.cache_manager.generate_sport_cache_key(sport_key)
@@ -74,9 +81,14 @@ class BackgroundCacheMixin:
                 
                 # Fallback to direct API call if background data not available
                 if result is None:
-                    self.logger.info(f"[{sport_key.upper()}] Fetching directly from API for {cache_key}")
-                    result = api_fetch_method(use_cache=True)
-                    cache_source = "api_fallback"
+                    if use_new_extractor_system and hasattr(self, 'background_service'):
+                        self.logger.info(f"[{sport_key.upper()}] Fetching with new extractor system for {cache_key}")
+                        result = self._fetch_with_new_extractor_system(sport_key, 'schedule')
+                        cache_source = "extractor_fallback"
+                    else:
+                        self.logger.info(f"[{sport_key.upper()}] Fetching directly from API for {cache_key}")
+                        result = api_fetch_method(use_cache=True)
+                        cache_source = "api_fallback"
             
             # Record performance metrics
             duration = time.time() - start_time
@@ -132,3 +144,71 @@ class BackgroundCacheMixin:
     def log_cache_performance(self):
         """Log current cache performance metrics."""
         self.cache_manager.log_cache_metrics()
+    
+    def _fetch_with_new_extractor_system(self, sport_key: str, fetch_type: str) -> Optional[Dict]:
+        """
+        Fetch data using the new API extractor system.
+        
+        Args:
+            sport_key: Sport identifier
+            fetch_type: Type of data to fetch ('live_games', 'schedule', 'standings')
+            
+        Returns:
+            Fetched and processed data
+        """
+        try:
+            # Map sport key to sport type and league
+            sport_mapping = {
+                'nfl': ('football', 'nfl'),
+                'ncaa_fb': ('football', 'college-football'),
+                'mlb': ('baseball', 'mlb'),
+                'nhl': ('hockey', 'nhl'),
+                'ncaam_hockey': ('hockey', 'mens-college-hockey'),
+                'nba': ('basketball', 'nba'),  # Note: basketball extractor not implemented yet
+                'soccer': ('soccer', 'soccer')
+            }
+            
+            if sport_key not in sport_mapping:
+                self.logger.warning(f"[{sport_key.upper()}] No extractor mapping available for {sport_key}")
+                return None
+            
+            sport_type, league = sport_mapping[sport_key]
+            
+            # Determine data source type based on sport
+            data_source_type = 'espn'  # Default
+            if sport_key == 'mlb':
+                data_source_type = 'mlb_api'
+            elif sport_key == 'soccer':
+                data_source_type = 'soccer_api'
+            
+            # Submit extractor-based fetch request
+            request_id = self.background_service.submit_extractor_fetch_request(
+                sport=sport_type,
+                league=league,
+                data_source_type=data_source_type,
+                fetch_type=fetch_type,
+                priority=1
+            )
+            
+            # Wait for result (with timeout)
+            max_wait_time = 10  # seconds
+            wait_start = time.time()
+            
+            while time.time() - wait_start < max_wait_time:
+                if request_id in self.background_service.completed_requests:
+                    result = self.background_service.completed_requests[request_id]
+                    if result.success and result.data:
+                        self.logger.info(f"[{sport_key.upper()}] Successfully fetched data using extractor system")
+                        return result.data
+                    else:
+                        self.logger.error(f"[{sport_key.upper()}] Extractor fetch failed: {result.error}")
+                        return None
+                
+                time.sleep(0.1)  # Short wait before checking again
+            
+            self.logger.warning(f"[{sport_key.upper()}] Extractor fetch timed out after {max_wait_time}s")
+            return None
+            
+        except Exception as e:
+            self.logger.error(f"[{sport_key.upper()}] Error in extractor system fetch: {e}")
+            return None

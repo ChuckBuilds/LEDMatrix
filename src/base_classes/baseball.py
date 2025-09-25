@@ -14,21 +14,8 @@ import logging
 class Baseball(SportsCore):
     """Base class for baseball sports with common functionality."""
     
-    # Baseball sport configuration (moved from sport_configs.py)
-    SPORT_CONFIG = {
-        'update_cadence': 'daily',
-        'season_length': 162,
-        'games_per_week': 6,
-        'api_endpoints': ['scoreboard', 'standings', 'stats'],
-        'sport_specific_fields': ['inning', 'outs', 'bases', 'strikes', 'balls', 'pitcher', 'batter'],
-        'update_interval_seconds': 30,
-        'logo_dir': 'assets/sports/mlb_logos',
-        'show_records': True,
-        'show_ranking': True,
-        'show_odds': True,
-        'data_source_type': 'espn',  # Can be overridden for MLB API
-        'api_base_url': 'https://site.api.espn.com/apis/site/v2/sports/baseball'
-    }
+    # Baseball sport configuration - now uses centralized data source system
+    # Configuration is handled by data sources and API extractors
     
     def __init__(self, config: Dict[str, Any], display_manager, cache_manager, logger: logging.Logger, sport_key: str):
         super().__init__(config, display_manager, cache_manager, logger, sport_key)
@@ -51,8 +38,13 @@ class Baseball(SportsCore):
         self.show_pitcher_batter = self.mode_config.get("show_pitcher_batter", False)
     
     def get_sport_config(self) -> Dict[str, Any]:
-        """Get baseball sport configuration."""
-        return self.SPORT_CONFIG.copy()
+        """Get baseball sport configuration - now handled by data source system."""
+        # Return basic configuration - detailed config is handled by data sources
+        return {
+            'sport': 'baseball',
+            'data_source_type': 'mlb_api' if self.sport_key == 'mlb' else 'espn',
+            'logo_dir': 'assets/sports/mlb_logos'
+        }
     
     def _get_baseball_display_text(self, game: Dict) -> str:
         """Get baseball-specific display text."""
