@@ -1789,18 +1789,18 @@ class OddsTickerManager:
         try:
             current_time = time.time()
             
-            # Smooth time-based scrolling - always scroll based on elapsed time
+            # Smooth time-based scrolling with frame rate control
             if self.last_scroll_time > 0:
                 elapsed_scroll_time = current_time - self.last_scroll_time
-                # Calculate smooth scroll increment based on actual elapsed time
-                scroll_increment = elapsed_scroll_time * (self.scroll_speed / self.scroll_delay)
-                self.scroll_position += scroll_increment
+                # Only scroll if enough time has passed (frame rate limiting)
+                if elapsed_scroll_time >= self.scroll_delay:
+                    # Calculate scroll increment based on target frame time
+                    scroll_increment = elapsed_scroll_time * (self.scroll_speed / self.scroll_delay)
+                    self.scroll_position += scroll_increment
+                    self.last_scroll_time = current_time
             else:
                 # First frame - initialize scroll time
                 self.last_scroll_time = current_time
-            
-            # Update scroll time for next frame
-            self.last_scroll_time = current_time
             
             # Signal scrolling state to display manager (always scrolling)
             self.display_manager.set_scrolling_state(True)
@@ -1886,18 +1886,18 @@ class OddsTickerManager:
                     self.scroll_position = 0
             
             # Create the visible part of the image by pasting from the ticker_image
-            # Use integer scroll position for pasting to avoid sub-pixel artifacts
-            int_scroll_position = int(self.scroll_position)
+            # Use rounded scroll position for smooth movement without artifacts
+            scroll_x = round(self.scroll_position)
             visible_image = Image.new('RGB', (width, height))
             
             # Main part
-            visible_image.paste(self.ticker_image, (-int_scroll_position, 0))
+            visible_image.paste(self.ticker_image, (-scroll_x, 0))
 
             # Handle wrap-around for continuous scroll
-            if int_scroll_position + width > self.ticker_image.width:
-                wrap_around_width = (int_scroll_position + width) - self.ticker_image.width
+            if scroll_x + width > self.ticker_image.width:
+                wrap_around_width = (scroll_x + width) - self.ticker_image.width
                 wrap_around_image = self.ticker_image.crop((0, 0, wrap_around_width, height))
-                visible_image.paste(wrap_around_image, (self.ticker_image.width - int_scroll_position, 0))
+                visible_image.paste(wrap_around_image, (self.ticker_image.width - scroll_x, 0))
             
             # Display the cropped image
             self.display_manager.image = visible_image
