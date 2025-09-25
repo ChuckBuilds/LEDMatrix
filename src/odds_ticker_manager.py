@@ -135,6 +135,7 @@ class OddsTickerManager:
         self.ticker_image = None # This will hold the single, wide image
         self.last_display_time = 0
         self._end_reached_logged = False  # Track if we've already logged reaching the end
+        self._insufficient_time_warning_logged = False  # Track if we've already logged insufficient time warning
         
         # Font setup
         self.fonts = self._load_fonts()
@@ -1708,6 +1709,9 @@ class OddsTickerManager:
             self.last_update = current_time
             self.scroll_position = 0
             self.current_game_index = 0
+            # Reset logging flags when updating data
+            self._end_reached_logged = False
+            self._insufficient_time_warning_logged = False
             self._create_ticker_image() # Create the composite image
             
             if self.games_data:
@@ -1740,6 +1744,8 @@ class OddsTickerManager:
             self.scroll_position = 0
             # Reset the end reached logging flag
             self._end_reached_logged = False
+            # Reset the insufficient time warning logging flag
+            self._insufficient_time_warning_logged = False
         else:
             # Check if the display start time is too old (more than 2x the dynamic duration)
             current_time = time.time()
@@ -1750,6 +1756,8 @@ class OddsTickerManager:
                 self.scroll_position = 0
                 # Reset the end reached logging flag
                 self._end_reached_logged = False
+                # Reset the insufficient time warning logging flag
+                self._insufficient_time_warning_logged = False
         
         logger.debug(f"Number of games in data at start of display method: {len(self.games_data)}")
         if not self.games_data:
@@ -1892,8 +1900,13 @@ class OddsTickerManager:
                     logger.debug(f"Sufficient time remaining ({remaining_time:.1f}s) to complete scroll ({time_to_complete:.1f}s)")
                 else:
                     # Not enough time, reset to beginning for clean transition
-                    logger.warning(f"Not enough time to complete content display - remaining: {remaining_time:.1f}s, needed: {time_to_complete:.1f}s")
-                    logger.debug(f"Resetting scroll position for clean transition")
+                    # Only log this warning once per display session to avoid spam
+                    if not self._insufficient_time_warning_logged:
+                        logger.warning(f"Not enough time to complete content display - remaining: {remaining_time:.1f}s, needed: {time_to_complete:.1f}s")
+                        logger.debug(f"Resetting scroll position for clean transition")
+                        self._insufficient_time_warning_logged = True
+                    else:
+                        logger.debug(f"Resetting scroll position for clean transition (insufficient time warning already logged)")
                     self.scroll_position = 0
             
             # Create the visible part of the image by pasting from the ticker_image
