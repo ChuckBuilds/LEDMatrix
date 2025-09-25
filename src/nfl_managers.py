@@ -26,9 +26,8 @@ class BaseNFLManager(Football): # Renamed class
         self.logger = logging.getLogger('NFL') # Changed logger name
         super().__init__(config=config, display_manager=display_manager, cache_manager=cache_manager, logger=self.logger, sport_key="nfl")
         
-        # Override configuration with sport-specific settings
-        self.logo_dir = Path(self.sport_config.logo_dir)
-        self.update_interval = self.sport_config.get_update_interval()
+        # Configuration is already set in base class
+        # self.logo_dir and self.update_interval are already configured
 
         # Check display modes to determine what data to fetch
         display_modes = self.mode_config.get("display_modes", {})
