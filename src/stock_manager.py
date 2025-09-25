@@ -704,6 +704,14 @@ class StockManager(ScrollMixin):
             element_gap = width // 8  # Reduced gap between elements within a stock
             total_width = sum(width * 2 for _ in symbols) + stock_gap * (len(symbols) - 1) + element_gap * (len(symbols) * 2 - 1)
             
+            # Ensure minimum content width for meaningful scrolling
+            min_content_width = width * 3  # At least 3 display widths worth of content
+            if total_width < min_content_width:
+                logger.warning(f"Stock content width too small ({total_width}px), extending to minimum ({min_content_width}px)")
+                total_width = min_content_width
+            
+            logger.info(f"StockManager: Creating content with {len(symbols)} symbols, total width: {total_width}px")
+            
             # Store dimensions for scroll controller
             self._content_width = total_width
             self._content_height = height
@@ -787,6 +795,7 @@ class StockManager(ScrollMixin):
                 
                 # Check if scroll is complete
                 if self._scroll_controller and self._scroll_controller.is_complete():
+                    logger.info(f"StockManager: Scroll complete - content width: {self._content_width}px, scroll position: {self._scroll_controller.scroll_position}")
                     return True
                     
                 return False

@@ -1589,6 +1589,14 @@ class OddsTickerManager(ScrollMixin):
             
         # Calculate total scroll width for dynamic duration (only the content width, not including display width)
         self.total_scroll_width = content_width
+        
+        # Set content dimensions for scroll controller
+        self._content_width = self.ticker_image.width
+        self._content_height = self.ticker_image.height
+        
+        # Initialize scroll controller now that we have content dimensions
+        self._ensure_scroll_controller()
+        
         logger.debug(f"Odds ticker image creation:")
         logger.debug(f"  Display width: {display_width}px (added at start and end)")
         logger.debug(f"  Content width: {content_width}px")
@@ -1596,6 +1604,7 @@ class OddsTickerManager(ScrollMixin):
         logger.debug(f"  Number of games: {len(game_images)}")
         logger.debug(f"  Gap width: {gap_width}px")
         logger.debug(f"  Set total_scroll_width to: {self.total_scroll_width}px")
+        logger.debug(f"  Set content dimensions to: {self._content_width}x{self._content_height}")
         self.calculate_dynamic_duration()
 
     def _draw_text_with_outline(self, draw: ImageDraw.Draw, text: str, position: tuple, font: ImageFont.FreeTypeFont, 
