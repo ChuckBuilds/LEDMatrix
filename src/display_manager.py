@@ -45,6 +45,8 @@ class DisplayManager:
             'deferred_update_ttl': 300.0  # 5 minutes TTL for deferred updates
         }
         
+        # Performance caching (logo caching handled by individual managers)
+        
         self._setup_matrix()
         logger.info("Matrix setup completed in %.3f seconds", time.time() - start_time)
         
@@ -397,7 +399,7 @@ class DisplayManager:
             # Fallback for TTF font if getmetrics() fails, or for other font types.
             if hasattr(font, 'size'):
                 return font.size
-            return 8 # A reasonable default for an 8px font.
+            return 8  # A reasonable default for an 8px font.
 
     def draw_text(self, text: str, x: int = None, y: int = None, color: tuple = (255, 255, 255), 
                  small_font: bool = False, font: ImageFont = None):

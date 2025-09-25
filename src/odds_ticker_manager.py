@@ -137,6 +137,21 @@ class OddsTickerManager:
         self._end_reached_logged = False  # Track if we've already logged reaching the end
         self._insufficient_time_warning_logged = False  # Track if we've already logged insufficient time warning
         
+        # FPS tracking variables
+        self.frame_times = []  # Store last 30 frame times for averaging
+        self.last_frame_time = 0
+        self.fps_log_interval = 30.0  # Log FPS every 30 seconds (increased from 10s)
+        self.last_fps_log_time = 0
+        
+        # Progress logging throttling
+        self.progress_log_interval = 5.0  # Log progress every 5 seconds instead of every 50 pixels
+        self.last_progress_log_time = 0
+        
+        # Image processing optimizations
+        self._last_visible_image = None
+        self._cached_draw = None
+        self._last_crop_position = -1  # Track last crop position for optimization
+        
         # Font setup
         self.fonts = self._load_fonts()
         
@@ -578,41 +593,20 @@ class OddsTickerManager:
                                 
                                 logger.debug(f"Game {game_id} starts in {time_until_game}. Setting odds update interval to {update_interval_seconds}s.")
                                 
-                                # Fetch odds with timeout protection to prevent freezing (if enabled)
+                                # Fetch odds directly - threading bottleneck eliminated (if enabled)
                                 if self.fetch_odds:
                                     try:
-                                        import threading
-                                        import queue
-                                        
-                                        result_queue = queue.Queue()
-                                        
-                                        def fetch_odds():
-                                            try:
-                                                odds_result = self.odds_manager.get_odds(
-                                                    sport=sport,
-                                                    league=league,
-                                                    event_id=game_id,
-                                                    update_interval_seconds=update_interval_seconds
-                                                )
-                                                result_queue.put(('success', odds_result))
-                                            except Exception as e:
-                                                result_queue.put(('error', e))
-                                        
-                                        # Start odds fetch in a separate thread
-                                        odds_thread = threading.Thread(target=fetch_odds)
-                                        odds_thread.daemon = True
-                                        odds_thread.start()
-                                        
-                                        # Wait for result with 3-second timeout
-                                        try:
-                                            result_type, result_data = result_queue.get(timeout=3)
-                                            if result_type == 'success':
-                                                odds_data = result_data
-                                            else:
-                                                logger.warning(f"Odds fetch failed for game {game_id}: {result_data}")
-                                                odds_data = None
-                                        except queue.Empty:
-                                            logger.warning(f"Odds fetch timed out for game {game_id}")
+                                        # Direct odds fetch call - threading bottleneck eliminated
+                                        odds_result = self.odds_manager.get_odds(
+                                            sport=sport,
+                                            league=league,
+                                            event_id=game_id,
+                                            update_interval_seconds=update_interval_seconds
+                                        )
+                                        if odds_result:
+                                            odds_data = odds_result
+                                        else:
+                                            logger.warning(f"Odds fetch returned no data for game {game_id}")
                                             odds_data = None
                                         
                                     except Exception as e:
@@ -1763,30 +1757,8 @@ class OddsTickerManager:
         if not self.games_data:
             logger.warning("Odds ticker has no games data. Attempting to update...")
             try:
-                import threading
-                import queue
-                
-                update_queue = queue.Queue()
-                
-                def perform_update():
-                    try:
-                        self.update()
-                        update_queue.put(('success', None))
-                    except Exception as e:
-                        update_queue.put(('error', e))
-                
-                # Start update in a separate thread with 10-second timeout
-                update_thread = threading.Thread(target=perform_update)
-                update_thread.daemon = True
-                update_thread.start()
-                
-                try:
-                    result_type, result_data = update_queue.get(timeout=10)
-                    if result_type == 'error':
-                        logger.error(f"Update failed: {result_data}")
-                except queue.Empty:
-                    logger.warning("Update timed out after 10 seconds, using fallback")
-                
+                # Direct update call - threading bottleneck eliminated
+                self.update()
             except Exception as e:
                 logger.error(f"Error during update: {e}")
             
@@ -1798,30 +1770,8 @@ class OddsTickerManager:
         if self.ticker_image is None:
             logger.warning("Ticker image is not available. Attempting to create it.")
             try:
-                import threading
-                import queue
-                
-                image_queue = queue.Queue()
-                
-                def create_image():
-                    try:
-                        self._create_ticker_image()
-                        image_queue.put(('success', None))
-                    except Exception as e:
-                        image_queue.put(('error', e))
-                
-                # Start image creation in a separate thread with 5-second timeout
-                image_thread = threading.Thread(target=create_image)
-                image_thread.daemon = True
-                image_thread.start()
-                
-                try:
-                    result_type, result_data = image_queue.get(timeout=5)
-                    if result_type == 'error':
-                        logger.error(f"Image creation failed: {result_data}")
-                except queue.Empty:
-                    logger.warning("Image creation timed out after 5 seconds")
-                
+                # Direct image creation call - threading bottleneck eliminated
+                self._create_ticker_image()
             except Exception as e:
                 logger.error(f"Error during image creation: {e}")
             
@@ -1843,10 +1793,22 @@ class OddsTickerManager:
                 # If we're not scrolling, check if we should process deferred updates
                 self.display_manager.process_deferred_updates()
             
-            # Scroll the image
+            # Scroll the image with integer position optimization
             if should_scroll:
                 self.scroll_position += self.scroll_speed
                 self.last_scroll_time = current_time
+                # Ensure scroll position is integer to prevent unnecessary image cropping
+                self.scroll_position = int(self.scroll_position)
+                
+                # FPS tracking with circular buffer
+                if self.last_frame_time > 0:
+                    frame_time = current_time - self.last_frame_time
+                    self.frame_times.append(frame_time)
+                    # Keep only last 30 frame times for averaging
+                    if len(self.frame_times) > 30:
+                        self.frame_times.pop(0)
+                
+                self.last_frame_time = current_time
             
             # Calculate crop region
             width = self.display_manager.matrix.width
@@ -1875,9 +1837,18 @@ class OddsTickerManager:
             elapsed_time = current_time - self._display_start_time
             remaining_time = self.dynamic_duration - elapsed_time
             
-            # Log scroll progress every 50 pixels to help debug (less verbose)
-            if self.scroll_position % 50 == 0 and self.scroll_position > 0:
+            # Log scroll progress every 5 seconds (throttled) to help debug
+            if current_time - self.last_progress_log_time >= self.progress_log_interval:
                 logger.info(f"Odds ticker progress: elapsed={elapsed_time:.1f}s, remaining={remaining_time:.1f}s, scroll_pos={self.scroll_position}/{self.ticker_image.width}px")
+                self.last_progress_log_time = current_time
+            
+            # FPS logging with throttling (every 30 seconds)
+            if current_time - self.last_fps_log_time >= self.fps_log_interval:
+                if len(self.frame_times) > 0:
+                    avg_frame_time = sum(self.frame_times) / len(self.frame_times)
+                    fps = 1.0 / avg_frame_time if avg_frame_time > 0 else 0
+                    logger.info(f"Odds ticker FPS: {fps:.1f} (avg frame time: {avg_frame_time*1000:.1f}ms, samples: {len(self.frame_times)})")
+                self.last_fps_log_time = current_time
             
             # If we have less than 2 seconds remaining, check if we can complete the content display
             if remaining_time < 2.0 and self.scroll_position > 0:
@@ -1909,50 +1880,44 @@ class OddsTickerManager:
                         logger.debug(f"Resetting scroll position for clean transition (insufficient time warning already logged)")
                     self.scroll_position = 0
             
-            # Create the visible part of the image by pasting from the ticker_image
-            visible_image = Image.new('RGB', (width, height))
-            
-            # Main part
-            visible_image.paste(self.ticker_image, (-self.scroll_position, 0))
+            # Optimized image cropping with caching
+            # Only recrop when scroll position changes significantly
+            if self.scroll_position != self._last_crop_position or self._last_visible_image is None:
+                # Create the visible part of the image by pasting from the ticker_image
+                visible_image = Image.new('RGB', (width, height))
+                
+                # Main part
+                visible_image.paste(self.ticker_image, (-self.scroll_position, 0))
 
-            # Handle wrap-around for continuous scroll
-            if self.scroll_position + width > self.ticker_image.width:
-                wrap_around_width = (self.scroll_position + width) - self.ticker_image.width
-                wrap_around_image = self.ticker_image.crop((0, 0, wrap_around_width, height))
-                visible_image.paste(wrap_around_image, (self.ticker_image.width - self.scroll_position, 0))
+                # Handle wrap-around for continuous scroll
+                if self.scroll_position + width > self.ticker_image.width:
+                    wrap_around_width = (self.scroll_position + width) - self.ticker_image.width
+                    wrap_around_image = self.ticker_image.crop((0, 0, wrap_around_width, height))
+                    visible_image.paste(wrap_around_image, (self.ticker_image.width - self.scroll_position, 0))
+                
+                # Cache the image and draw object
+                self._last_visible_image = visible_image
+                self._cached_draw = ImageDraw.Draw(visible_image)
+                self._last_crop_position = self.scroll_position
+            else:
+                # Use cached image with fallback handling
+                visible_image = self._last_visible_image
+                self._cached_draw = self._cached_draw
+                
+                # Fallback if cached image is None
+                if visible_image is None:
+                    visible_image = Image.new('RGB', (width, height), color=(0, 0, 0))
+                    self._cached_draw = ImageDraw.Draw(visible_image)
             
-            # Display the cropped image
+            # Display the cropped image (cached or new)
             self.display_manager.image = visible_image
-            self.display_manager.draw = ImageDraw.Draw(self.display_manager.image)
+            self.display_manager.draw = self._cached_draw if self._cached_draw else ImageDraw.Draw(visible_image)
             
-            # Add timeout protection for display update to prevent hanging
+            # Direct display update call - threading bottleneck eliminated
             try:
-                import threading
-                import queue
-                
-                display_queue = queue.Queue()
-                
-                def update_display():
-                    try:
-                        self.display_manager.update_display()
-                        display_queue.put(('success', None))
-                    except Exception as e:
-                        display_queue.put(('error', e))
-                
-                # Start display update in a separate thread with 1-second timeout
-                display_thread = threading.Thread(target=update_display)
-                display_thread.daemon = True
-                display_thread.start()
-                
-                try:
-                    result_type, result_data = display_queue.get(timeout=1)
-                    if result_type == 'error':
-                        logger.error(f"Display update failed: {result_data}")
-                except queue.Empty:
-                    logger.warning("Display update timed out after 1 second")
-                
+                self.display_manager.update_display()
             except Exception as e:
-                logger.error(f"Error during display update: {e}")
+                logger.error(f"Display update failed: {e}")
             
         except Exception as e:
             logger.error(f"Error displaying odds ticker: {e}", exc_info=True)
