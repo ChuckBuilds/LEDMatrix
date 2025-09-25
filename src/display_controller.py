@@ -37,6 +37,7 @@ from src.text_display import TextDisplay
 from src.music_manager import MusicManager
 from src.of_the_day_manager import OfTheDayManager
 from src.news_manager import NewsManager
+from src.mqtt_manager import MQTTManager
 
 # Get logger without configuring
 logger = logging.getLogger(__name__)
@@ -68,10 +69,12 @@ class DisplayController:
         self.text_display = TextDisplay(self.display_manager, self.config) if self.config.get('text_display', {}).get('enabled', False) else None
         self.of_the_day = OfTheDayManager(self.display_manager, self.config) if self.config.get('of_the_day', {}).get('enabled', False) else None
         self.news_manager = NewsManager(self.config, self.display_manager, self.config_manager) if self.config.get('news_manager', {}).get('enabled', False) else None
+        self.mqtt_manager = MQTTManager(self.config, self.display_manager, self.cache_manager) if self.config.get('mqtt', {}).get('enabled', False) else None
         logger.info(f"Calendar Manager initialized: {'Object' if self.calendar else 'None'}")
         logger.info(f"Text Display initialized: {'Object' if self.text_display else 'None'}")
         logger.info(f"OfTheDay Manager initialized: {'Object' if self.of_the_day else 'None'}")
         logger.info(f"News Manager initialized: {'Object' if self.news_manager else 'None'}")
+        logger.info(f"MQTT Manager initialized: {'Object' if self.mqtt_manager else 'None'}")
         logger.info("Display modes initialized in %.3f seconds", time.time() - init_time)
         
         self.force_change = False
@@ -284,6 +287,12 @@ class DisplayController:
         if self.text_display: self.available_modes.append('text_display')
         if self.of_the_day: self.available_modes.append('of_the_day')
         if self.news_manager: self.available_modes.append('news_manager')
+        # Add MQTT rotation displays
+        if self.mqtt_manager:
+            rotation_displays = self.mqtt_manager.get_rotation_displays()
+            for display in rotation_displays:
+                display_name = f"mqtt_{display.get('name', 'display').lower().replace(' ', '_')}"
+                self.available_modes.append(display_name)
         if self.music_manager:
             self.available_modes.append('music')
         # Add NHL display modes if enabled
@@ -601,6 +610,7 @@ class DisplayController:
             if self.youtube: self.youtube.update()
             if self.text_display: self.text_display.update()
             if self.of_the_day: self.of_the_day.update(time.time())
+            if self.mqtt_manager: self.mqtt_manager.update()
         else:
             # Not scrolling, perform all updates normally
             if self.weather: self.weather.get_weather()
@@ -611,6 +621,7 @@ class DisplayController:
             if self.youtube: self.youtube.update()
             if self.text_display: self.text_display.update()
             if self.of_the_day: self.of_the_day.update(time.time())
+            if self.mqtt_manager: self.mqtt_manager.update()
             
             # Update sports managers for leaderboard data
             if self.leaderboard: self.leaderboard.update()
@@ -1044,6 +1055,23 @@ class DisplayController:
                 # Update live modes in rotation if needed
                 self._update_live_modes_in_rotation()
 
+                # Check for MQTT on-demand displays (highest priority)
+                mqtt_ondemand_active = False
+                if self.mqtt_manager and self.mqtt_manager.is_ondemand_active():
+                    mqtt_ondemand_active = True
+                    # MQTT on-demand takes priority over everything
+                    manager_to_display = self.mqtt_manager
+                    current_display = self.mqtt_manager.get_current_ondemand_display()
+                    if current_display:
+                        logger.info(f"MQTT on-demand display active: {current_display.get('name', 'Unknown')}")
+                        # Update MQTT manager
+                        self.mqtt_manager.update()
+                        # Display the on-demand content
+                        self.mqtt_manager.display(current_display, force_clear=self.force_clear)
+                        self.force_clear = False
+                        time.sleep(0.1)  # Small delay to prevent overwhelming the display
+                        continue
+                
                 # Check for live games and live_priority
                 has_live_games, live_sport_type = self._check_live_games()
                 is_currently_live = self.current_display_mode.endswith('_live')
@@ -1212,6 +1240,16 @@ class DisplayController:
                                 manager_to_display = self.of_the_day
                             elif self.current_display_mode == 'news_manager' and self.news_manager:
                                 manager_to_display = self.news_manager
+                            # Handle MQTT rotation displays
+                            elif self.current_display_mode.startswith('mqtt_') and self.mqtt_manager:
+                                # Find the corresponding MQTT display
+                                display_name = self.current_display_mode[5:]  # Remove 'mqtt_' prefix
+                                rotation_displays = self.mqtt_manager.get_rotation_displays()
+                                for display in rotation_displays:
+                                    if display.get('name', '').lower().replace(' ', '_') == display_name:
+                                        manager_to_display = self.mqtt_manager
+                                        self._current_mqtt_display = display  # Store current display
+                                        break
                             elif self.current_display_mode == 'nhl_recent' and self.nhl_recent:
                                 manager_to_display = self.nhl_recent
                             elif self.current_display_mode == 'nhl_upcoming' and self.nhl_upcoming:
@@ -1292,6 +1330,11 @@ class DisplayController:
                         # Call MusicManager's display method
                         self.music_manager.display(force_clear=self.force_clear)
                         # Reset force_clear if it was true for this mode
+                        if self.force_clear:
+                            self.force_clear = False
+                    elif self.current_display_mode.startswith('mqtt_') and self.mqtt_manager and hasattr(self, '_current_mqtt_display'):
+                        # Handle MQTT rotation displays
+                        self.mqtt_manager.display(self._current_mqtt_display, force_clear=self.force_clear)
                         if self.force_clear:
                             self.force_clear = False
                     elif manager_to_display:

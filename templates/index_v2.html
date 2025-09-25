@@ -893,6 +893,9 @@
                     <button class="tab-btn" onclick="showTab('news')">
                         <i class="fas fa-newspaper"></i> News
                     </button>
+                    <button class="tab-btn" onclick="showTab('mqtt')">
+                        <i class="fas fa-broadcast-tower"></i> MQTT
+                    </button>
                     <button class="tab-btn" onclick="showTab('secrets')">
                         <i class="fas fa-key"></i> API Keys
                     </button>
@@ -1896,6 +1899,196 @@
                             <div class="form-group"><label for="news_separator_color">Separator Color</label><input type="color" id="news_separator_color" class="form-control" data-rgb='{{ safe_config_get(main_config, 'news_manager', 'separator_color', default=[255, 0, 0]) | tojson }}'></div>
                         </div>
                         <button class="btn btn-success" type="button" onclick="saveNewsAdvancedSettings()">Save Advanced News Settings</button>
+                    </div>
+                </div>
+
+                <!-- MQTT Tab -->
+                <div id="mqtt" class="tab-content">
+                    <div class="config-section">
+                        <h3><i class="fas fa-broadcast-tower"></i> MQTT HomeAssistant Integration</h3>
+                        
+                        <!-- MQTT Connection Status -->
+                        <div class="mqtt-status" style="background: #f8f9fa; padding: 20px; border-radius: 8px; margin-bottom: 20px;">
+                            <h4>Connection Status</h4>
+                            <div style="display: flex; align-items: center; gap: 15px; margin-bottom: 10px;">
+                                <span id="mqtt-status" class="status-badge" style="padding: 5px 10px; border-radius: 4px; font-weight: bold;">Disconnected</span>
+                                <button class="btn btn-primary btn-sm" onclick="testMqttConnection()">
+                                    <i class="fas fa-sync"></i> Test Connection
+                                </button>
+                            </div>
+                            <div id="mqtt-details" style="font-size: 0.9em; color: #666;">
+                                <small>Broker: <span id="mqtt-broker">Not configured</span></small>
+                            </div>
+                        </div>
+
+                        <!-- MQTT Configuration -->
+                        <form id="mqtt-form">
+                            <h4>MQTT Broker Configuration</h4>
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label>
+                                        <input type="checkbox" id="mqtt_enabled" name="mqtt_enabled"> Enable MQTT Integration
+                                    </label>
+                                </div>
+                            </div>
+                            
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label for="mqtt_host">Broker Host:</label>
+                                    <input type="text" class="form-control" id="mqtt_host" name="mqtt_host" placeholder="192.168.1.100">
+                                </div>
+                                <div class="form-group">
+                                    <label for="mqtt_port">Port:</label>
+                                    <input type="number" class="form-control" id="mqtt_port" name="mqtt_port" value="1883">
+                                </div>
+                            </div>
+                            
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label for="mqtt_username">Username:</label>
+                                    <input type="text" class="form-control" id="mqtt_username" name="mqtt_username" placeholder="homeassistant">
+                                </div>
+                                <div class="form-group">
+                                    <label for="mqtt_password">Password:</label>
+                                    <input type="password" class="form-control" id="mqtt_password" name="mqtt_password" placeholder="your_mqtt_password">
+                                </div>
+                            </div>
+                            
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label for="mqtt_client_id">Client ID:</label>
+                                    <input type="text" class="form-control" id="mqtt_client_id" name="mqtt_client_id" value="ledmatrix">
+                                </div>
+                                <div class="form-group">
+                                    <label>
+                                        <input type="checkbox" id="mqtt_ssl" name="mqtt_ssl"> Use SSL/TLS
+                                    </label>
+                                </div>
+                            </div>
+                            
+                            <button type="submit" class="btn btn-success">Save MQTT Configuration</button>
+                        </form>
+
+                        <!-- Display Builder -->
+                        <div class="mqtt-builder" style="margin-top: 30px;">
+                            <h4><i class="fas fa-tools"></i> Display Builder</h4>
+                            
+                            <!-- Display Type Selection -->
+                            <div class="display-type-selector" style="margin-bottom: 20px;">
+                                <label>Display Type:</label>
+                                <select id="display-type" onchange="switchDisplayType()" class="form-control" style="width: 200px; display: inline-block;">
+                                    <option value="rotation">Rotation Display</option>
+                                    <option value="ondemand">On-Demand Display</option>
+                                </select>
+                            </div>
+
+                            <!-- Display List -->
+                            <div class="display-list" style="background: #f8f9fa; padding: 15px; border-radius: 8px; margin-bottom: 20px;">
+                                <h5>Configured Displays</h5>
+                                <div id="display-list-content">
+                                    <p style="color: #666; font-style: italic;">No displays configured yet. Create your first display below.</p>
+                                </div>
+                                <button class="btn btn-success btn-sm" onclick="createNewDisplay()">
+                                    <i class="fas fa-plus"></i> New Display
+                                </button>
+                            </div>
+
+                            <!-- Display Editor (Hidden by default) -->
+                            <div class="display-editor" id="display-editor" style="display: none; background: #fff; padding: 20px; border-radius: 8px; border: 1px solid #ddd;">
+                                <h5>Edit Display: <span id="current-display-name"></span></h5>
+                                
+                                <!-- Display Properties -->
+                                <div class="display-properties" style="margin-bottom: 20px;">
+                                    <div class="form-group">
+                                        <label>Display Name:</label>
+                                        <input type="text" id="display-name" class="form-control" style="width: 300px;">
+                                    </div>
+                                    <div class="form-group" id="trigger-config" style="display: none;">
+                                        <label>Trigger Topic:</label>
+                                        <input type="text" id="trigger-topic" class="form-control" placeholder="homeassistant/binary_sensor/doorbell/state">
+                                        <label>Trigger Value:</label>
+                                        <input type="text" id="trigger-value" class="form-control" placeholder="on">
+                                        <label>Display Duration (seconds):</label>
+                                        <input type="number" id="display-duration" class="form-control" value="10">
+                                    </div>
+                                </div>
+
+                                <!-- Element Palette -->
+                                <div class="element-palette" style="margin-bottom: 20px;">
+                                    <h6>Elements</h6>
+                                    <div class="palette-items" style="display: flex; gap: 10px; flex-wrap: wrap;">
+                                        <div class="palette-item" style="padding: 8px 12px; background: #e9ecef; border-radius: 4px; cursor: pointer; border: 1px solid #ddd;" onclick="addElement('text')">
+                                            <i class="fas fa-font"></i> Text
+                                        </div>
+                                        <div class="palette-item" style="padding: 8px 12px; background: #e9ecef; border-radius: 4px; cursor: pointer; border: 1px solid #ddd;" onclick="addElement('icon')">
+                                            <i class="fas fa-image"></i> Icon
+                                        </div>
+                                        <div class="palette-item" style="padding: 8px 12px; background: #e9ecef; border-radius: 4px; cursor: pointer; border: 1px solid #ddd;" onclick="addElement('rectangle')">
+                                            <i class="fas fa-square"></i> Rectangle
+                                        </div>
+                                        <div class="palette-item" style="padding: 8px 12px; background: #e9ecef; border-radius: 4px; cursor: pointer; border: 1px solid #ddd;" onclick="addElement('line')">
+                                            <i class="fas fa-minus"></i> Line
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- Canvas -->
+                                <div class="mqtt-canvas-container" style="margin-bottom: 20px;">
+                                    <h6>Preview</h6>
+                                    <div class="mqtt-canvas" id="mqtt-canvas" style="border: 1px solid #ddd; background: #000; width: 128px; height: 64px; position: relative;">
+                                        <canvas id="preview-canvas" width="128" height="64" style="width: 100%; height: 100%;"></canvas>
+                                    </div>
+                                    <div class="canvas-controls" style="margin-top: 10px;">
+                                        <button class="btn btn-primary btn-sm" onclick="previewDisplay()">
+                                            <i class="fas fa-eye"></i> Preview
+                                        </button>
+                                        <button class="btn btn-success btn-sm" onclick="saveDisplay()">
+                                            <i class="fas fa-save"></i> Save Display
+                                        </button>
+                                        <button class="btn btn-secondary btn-sm" onclick="cancelEdit()">
+                                            <i class="fas fa-times"></i> Cancel
+                                        </button>
+                                    </div>
+                                </div>
+
+                                <!-- Element Properties Panel -->
+                                <div class="element-properties" id="element-properties" style="background: #f8f9fa; padding: 15px; border-radius: 8px;">
+                                    <h6>Element Properties</h6>
+                                    <div id="element-props-content">
+                                        <p style="color: #666;">Select an element to edit its properties</p>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Icon Management -->
+                        <div class="icon-management" style="margin-top: 30px;">
+                            <h4><i class="fas fa-images"></i> Icon Management</h4>
+                            
+                            <div class="icon-upload" style="background: #f8f9fa; padding: 20px; border-radius: 8px; margin-bottom: 20px;">
+                                <h5>Upload Custom Icons</h5>
+                                <div class="upload-area" id="upload-area" style="border: 2px dashed #ddd; padding: 20px; text-align: center; border-radius: 8px; cursor: pointer;" onclick="document.getElementById('icon-upload').click()">
+                                    <i class="fas fa-cloud-upload-alt" style="font-size: 2em; color: #666;"></i>
+                                    <p style="margin: 10px 0;">Drag and drop icon files here or click to browse</p>
+                                    <input type="file" id="icon-upload" multiple accept="image/*" style="display: none;">
+                                </div>
+                                <div class="upload-info" style="margin-top: 10px;">
+                                    <small style="color: #666;">Supported formats: PNG, JPG, GIF. Recommended size: 32x32 pixels</small>
+                                </div>
+                            </div>
+
+                            <div class="icon-library">
+                                <h5>Icon Library</h5>
+                                <div class="icon-categories" style="margin-bottom: 15px;">
+                                    <button class="btn btn-sm btn-outline-primary active" onclick="filterIcons('all')">All</button>
+                                    <button class="btn btn-sm btn-outline-primary" onclick="filterIcons('user')">User Uploads</button>
+                                    <button class="btn btn-sm btn-outline-primary" onclick="filterIcons('preset')">Presets</button>
+                                </div>
+                                <div class="icon-grid" id="icon-grid" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(80px, 1fr)); gap: 10px;">
+                                    <!-- Icons will be populated here -->
+                                </div>
+                            </div>
+                        </div>
                     </div>
                 </div>
 
@@ -3744,6 +3937,465 @@
             }
             showNotification('Sports configuration saved', 'success');
         }
+
+        // MQTT Functions
+        let currentElements = [];
+        let selectedElement = null;
+        let currentDisplayType = 'rotation';
+        let currentDisplay = null;
+
+        async function testMqttConnection() {
+            try {
+                const response = await fetch('/api/mqtt/test', {
+                    method: 'POST'
+                });
+                const result = await response.json();
+                showNotification(result.message, result.status);
+                updateMqttStatus(result.status, result.details);
+            } catch (error) {
+                showNotification('Error testing MQTT connection: ' + error.message, 'error');
+            }
+        }
+
+        function updateMqttStatus(status, details) {
+            const statusElement = document.getElementById('mqtt-status');
+            const brokerElement = document.getElementById('mqtt-broker');
+            
+            statusElement.textContent = status === 'success' ? 'Connected' : 'Disconnected';
+            statusElement.style.background = status === 'success' ? '#28a745' : '#dc3545';
+            statusElement.style.color = 'white';
+            
+            if (details && details.broker) {
+                brokerElement.textContent = details.broker;
+            }
+        }
+
+        function switchDisplayType() {
+            currentDisplayType = document.getElementById('display-type').value;
+            const triggerConfig = document.getElementById('trigger-config');
+            if (currentDisplayType === 'ondemand') {
+                triggerConfig.style.display = 'block';
+            } else {
+                triggerConfig.style.display = 'none';
+            }
+        }
+
+        function createNewDisplay() {
+            currentDisplay = {
+                name: `New ${currentDisplayType} Display`,
+                type: currentDisplayType,
+                elements: [],
+                priority: 1,
+                duration: currentDisplayType === 'ondemand' ? 10 : 15
+            };
+            
+            if (currentDisplayType === 'ondemand') {
+                currentDisplay.trigger_topic = '';
+                currentDisplay.trigger_value = '';
+            }
+            
+            currentElements = [];
+            selectedElement = null;
+            
+            document.getElementById('display-editor').style.display = 'block';
+            document.getElementById('current-display-name').textContent = currentDisplay.name;
+            document.getElementById('display-name').value = currentDisplay.name;
+            
+            if (currentDisplayType === 'ondemand') {
+                document.getElementById('trigger-topic').value = currentDisplay.trigger_topic || '';
+                document.getElementById('trigger-value').value = currentDisplay.trigger_value || '';
+                document.getElementById('display-duration').value = currentDisplay.duration || 10;
+            }
+            
+            updatePreview();
+            updatePropertiesPanel();
+        }
+
+        function addElement(type) {
+            const element = {
+                type: type,
+                x: 10,
+                y: 10,
+                id: Date.now()
+            };
+            
+            switch (type) {
+                case 'text':
+                    element.text = 'Sample Text';
+                    element.font_size = 12;
+                    element.color = [255, 255, 255];
+                    element.mqtt_topic = '';
+                    element.format = '{value}';
+                    break;
+                case 'icon':
+                    element.width = 24;
+                    element.height = 24;
+                    element.path = '';
+                    element.fallback_text = '?';
+                    break;
+                case 'rectangle':
+                    element.width = 20;
+                    element.height = 10;
+                    element.color = [255, 255, 255];
+                    element.fill = true;
+                    break;
+                case 'line':
+                    element.x1 = 0;
+                    element.y1 = 0;
+                    element.x2 = 20;
+                    element.y2 = 10;
+                    element.color = [255, 255, 255];
+                    break;
+            }
+            
+            currentElements.push(element);
+            updatePreview();
+            updatePropertiesPanel();
+        }
+
+        function updatePreview() {
+            const canvas = document.getElementById('preview-canvas');
+            const ctx = canvas.getContext('2d');
+            
+            // Clear canvas
+            ctx.fillStyle = '#000';
+            ctx.fillRect(0, 0, 128, 64);
+            
+            // Draw elements
+            currentElements.forEach(element => {
+                drawElement(ctx, element);
+            });
+        }
+
+        function drawElement(ctx, element) {
+            ctx.fillStyle = `rgb(${element.color.join(',')})`;
+            
+            switch (element.type) {
+                case 'text':
+                    ctx.font = `${element.font_size}px Arial`;
+                    const text = element.mqtt_topic ? 'Sample Data' : element.text;
+                    ctx.fillText(text, element.x, element.y + element.font_size);
+                    break;
+                case 'icon':
+                    // Draw a placeholder rectangle for icon
+                    ctx.fillRect(element.x, element.y, element.width, element.height);
+                    ctx.fillStyle = '#fff';
+                    ctx.font = '12px Arial';
+                    ctx.fillText(element.fallback_text || '?', element.x + 5, element.y + 15);
+                    break;
+                case 'rectangle':
+                    if (element.fill) {
+                        ctx.fillRect(element.x, element.y, element.width, element.height);
+                    } else {
+                        ctx.strokeRect(element.x, element.y, element.width, element.height);
+                    }
+                    break;
+                case 'line':
+                    ctx.beginPath();
+                    ctx.moveTo(element.x1, element.y1);
+                    ctx.lineTo(element.x2, element.y2);
+                    ctx.stroke();
+                    break;
+            }
+        }
+
+        function updatePropertiesPanel() {
+            const content = document.getElementById('element-props-content');
+            
+            if (selectedElement) {
+                const element = currentElements.find(e => e.id === selectedElement);
+                if (element) {
+                    content.innerHTML = `
+                        <h6>${element.type.charAt(0).toUpperCase() + element.type.slice(1)} Properties</h6>
+                        ${getElementPropertiesHTML(element)}
+                    `;
+                }
+            } else {
+                content.innerHTML = '<p style="color: #666;">Select an element to edit its properties</p>';
+            }
+        }
+
+        function getElementPropertiesHTML(element) {
+            let html = '';
+            
+            switch (element.type) {
+                case 'text':
+                    html = `
+                        <div class="form-group">
+                            <label>Text:</label>
+                            <input type="text" value="${element.text}" onchange="updateElementProperty('text', this.value)">
+                        </div>
+                        <div class="form-group">
+                            <label>MQTT Topic:</label>
+                            <input type="text" value="${element.mqtt_topic}" placeholder="homeassistant/sensor/temp/state" onchange="updateElementProperty('mqtt_topic', this.value)">
+                        </div>
+                        <div class="form-group">
+                            <label>Format:</label>
+                            <input type="text" value="${element.format}" placeholder="{value}°F" onchange="updateElementProperty('format', this.value)">
+                        </div>
+                        <div class="form-group">
+                            <label>Font Size:</label>
+                            <input type="number" value="${element.font_size}" onchange="updateElementProperty('font_size', parseInt(this.value))">
+                        </div>
+                        <div class="form-group">
+                            <label>Position X:</label>
+                            <input type="number" value="${element.x}" onchange="updateElementProperty('x', parseInt(this.value))">
+                        </div>
+                        <div class="form-group">
+                            <label>Position Y:</label>
+                            <input type="number" value="${element.y}" onchange="updateElementProperty('y', parseInt(this.value))">
+                        </div>
+                        <div class="form-group">
+                            <label>Color:</label>
+                            <input type="color" value="#${element.color.map(c => c.toString(16).padStart(2, '0')).join('')}" onchange="updateElementColor(this.value)">
+                        </div>
+                    `;
+                    break;
+                case 'icon':
+                    html = `
+                        <div class="form-group">
+                            <label>Icon Path:</label>
+                            <input type="text" value="${element.path}" onchange="updateElementProperty('path', this.value)">
+                        </div>
+                        <div class="form-group">
+                            <label>Width:</label>
+                            <input type="number" value="${element.width}" onchange="updateElementProperty('width', parseInt(this.value))">
+                        </div>
+                        <div class="form-group">
+                            <label>Height:</label>
+                            <input type="number" value="${element.height}" onchange="updateElementProperty('height', parseInt(this.value))">
+                        </div>
+                        <div class="form-group">
+                            <label>Position X:</label>
+                            <input type="number" value="${element.x}" onchange="updateElementProperty('x', parseInt(this.value))">
+                        </div>
+                        <div class="form-group">
+                            <label>Position Y:</label>
+                            <input type="number" value="${element.y}" onchange="updateElementProperty('y', parseInt(this.value))">
+                        </div>
+                    `;
+                    break;
+            }
+            
+            return html;
+        }
+
+        function updateElementProperty(property, value) {
+            if (selectedElement) {
+                const element = currentElements.find(e => e.id === selectedElement);
+                if (element) {
+                    element[property] = value;
+                    updatePreview();
+                }
+            }
+        }
+
+        function updateElementColor(colorHex) {
+            if (selectedElement) {
+                const element = currentElements.find(e => e.id === selectedElement);
+                if (element) {
+                    const hex = colorHex.replace('#', '');
+                    element.color = [
+                        parseInt(hex.substr(0, 2), 16),
+                        parseInt(hex.substr(2, 2), 16),
+                        parseInt(hex.substr(4, 2), 16)
+                    ];
+                    updatePreview();
+                }
+            }
+        }
+
+        function previewDisplay() {
+            updatePreview();
+            showNotification('Preview updated', 'success');
+        }
+
+        async function saveDisplay() {
+            if (!currentDisplay) return;
+            
+            try {
+                currentDisplay.name = document.getElementById('display-name').value;
+                currentDisplay.elements = currentElements;
+                
+                if (currentDisplayType === 'ondemand') {
+                    currentDisplay.trigger_topic = document.getElementById('trigger-topic').value;
+                    currentDisplay.trigger_value = document.getElementById('trigger-value').value;
+                    currentDisplay.duration = parseInt(document.getElementById('display-duration').value);
+                }
+                
+                const response = await fetch('/api/mqtt/display/save', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(currentDisplay)
+                });
+                
+                const result = await response.json();
+                showNotification(result.message, result.status);
+                
+                if (result.status === 'success') {
+                    cancelEdit();
+                    loadDisplayList();
+                }
+            } catch (error) {
+                showNotification('Error saving display: ' + error.message, 'error');
+            }
+        }
+
+        function cancelEdit() {
+            document.getElementById('display-editor').style.display = 'none';
+            currentDisplay = null;
+            currentElements = [];
+            selectedElement = null;
+        }
+
+        function loadDisplayList() {
+            // This would load the list of configured displays
+            // Implementation depends on backend API
+        }
+
+        function filterIcons(category) {
+            // Implementation for filtering icons by category
+            showNotification('Icon filtering not yet implemented', 'info');
+        }
+
+        // Initialize MQTT tab when shown
+        function showTab(tabName) {
+            // Hide all tab contents
+            const contents = document.querySelectorAll('.tab-content');
+            contents.forEach(content => content.classList.remove('active'));
+
+            // Remove active class from all tab buttons
+            const buttons = document.querySelectorAll('.tab-btn');
+            buttons.forEach(btn => btn.classList.remove('active'));
+
+            // Show selected tab content
+            const selectedContent = document.getElementById(tabName);
+            if (selectedContent) {
+                selectedContent.classList.add('active');
+            }
+
+            // Add active class to clicked button
+            event.target.classList.add('active');
+
+            // Initialize MQTT tab if it's being shown
+            if (tabName === 'mqtt') {
+                loadMqttConfig();
+                loadDisplayList();
+                loadIconLibrary();
+            }
+        }
+
+        async function loadMqttConfig() {
+            try {
+                const response = await fetch('/api/mqtt/config');
+                const config = await response.json();
+                
+                if (config.status === 'success') {
+                    const mqttConfig = config.data;
+                    document.getElementById('mqtt_enabled').checked = mqttConfig.enabled || false;
+                    document.getElementById('mqtt_host').value = mqttConfig.broker?.host || '';
+                    document.getElementById('mqtt_port').value = mqttConfig.broker?.port || 1883;
+                    document.getElementById('mqtt_username').value = mqttConfig.broker?.username || '';
+                    document.getElementById('mqtt_client_id').value = mqttConfig.broker?.client_id || 'ledmatrix';
+                    document.getElementById('mqtt_ssl').checked = mqttConfig.broker?.ssl || false;
+                    
+                    updateMqttStatus('success', {broker: `${mqttConfig.broker?.host}:${mqttConfig.broker?.port}`});
+                }
+            } catch (error) {
+                console.error('Error loading MQTT config:', error);
+            }
+        }
+
+        async function loadIconLibrary() {
+            try {
+                const response = await fetch('/api/mqtt/icons');
+                const icons = await response.json();
+                
+                if (icons.status === 'success') {
+                    const grid = document.getElementById('icon-grid');
+                    grid.innerHTML = icons.data.map(icon => `
+                        <div class="icon-item" style="text-align: center; padding: 5px; border: 1px solid #ddd; border-radius: 4px; cursor: pointer;" onclick="selectIcon('${icon.path}')">
+                            <img src="/api/mqtt/icons/${icon.filename}" style="width: 32px; height: 32px;" alt="${icon.original_name}">
+                            <div style="font-size: 10px; margin-top: 2px;">${icon.original_name}</div>
+                        </div>
+                    `).join('');
+                }
+            } catch (error) {
+                console.error('Error loading icon library:', error);
+            }
+        }
+
+        function selectIcon(path) {
+            if (selectedElement) {
+                const element = currentElements.find(e => e.id === selectedElement);
+                if (element && element.type === 'icon') {
+                    element.path = path;
+                    updatePreview();
+                    updatePropertiesPanel();
+                }
+            }
+        }
+
+        // Handle form submission
+        document.getElementById('mqtt-form').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            
+            const formData = new FormData(e.target);
+            const config = {
+                enabled: formData.get('mqtt_enabled') === 'on',
+                broker: {
+                    host: formData.get('mqtt_host'),
+                    port: parseInt(formData.get('mqtt_port')),
+                    username: formData.get('mqtt_username'),
+                    password: formData.get('mqtt_password'),
+                    client_id: formData.get('mqtt_client_id'),
+                    ssl: formData.get('mqtt_ssl') === 'on'
+                }
+            };
+            
+            try {
+                const response = await fetch('/api/mqtt/config', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(config)
+                });
+                
+                const result = await response.json();
+                showNotification(result.message, result.status);
+                
+                if (result.status === 'success') {
+                    updateMqttStatus('success', {broker: `${config.broker.host}:${config.broker.port}`});
+                }
+            } catch (error) {
+                showNotification('Error saving MQTT configuration: ' + error.message, 'error');
+            }
+        });
+
+        // Handle icon upload
+        document.getElementById('icon-upload').addEventListener('change', async function(e) {
+            const files = Array.from(e.target.files);
+            
+            for (const file of files) {
+                const formData = new FormData();
+                formData.append('icon', file);
+                
+                try {
+                    const response = await fetch('/api/mqtt/icons/upload', {
+                        method: 'POST',
+                        body: formData
+                    });
+                    
+                    const result = await response.json();
+                    showNotification(result.message, result.status);
+                    
+                    if (result.status === 'success') {
+                        loadIconLibrary();
+                    }
+                } catch (error) {
+                    showNotification('Error uploading icon: ' + error.message, 'error');
+                }
+            }
+        });
     </script>
 </body>
 </html>
