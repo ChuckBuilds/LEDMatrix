@@ -56,8 +56,12 @@ class LeaderboardManager:
         # FPS tracking variables
         self.frame_times = []  # Store last 30 frame times for averaging
         self.last_frame_time = 0
-        self.fps_log_interval = 10.0  # Log FPS every 10 seconds
+        self.fps_log_interval = 30.0  # Log FPS every 30 seconds (increased from 10s)
         self.last_fps_log_time = 0
+        
+        # Progress logging throttling
+        self.progress_log_interval = 5.0  # Log progress every 5 seconds instead of every 50 pixels
+        self.last_progress_log_time = 0
         
         # Initialize managers
         self.cache_manager = CacheManager()
@@ -1259,6 +1263,8 @@ class LeaderboardManager:
         try:
             self.leaderboard_data = self._fetch_all_standings()
             self.last_update = current_time
+            # Reset progress logging timer when updating data
+            self.last_progress_log_time = 0
             
             if self.leaderboard_data:
                 self._create_leaderboard_image()
@@ -1313,6 +1319,8 @@ class LeaderboardManager:
             logger.debug(f"Reset/initialized display start time: {self._display_start_time}")
             # Also reset scroll position for clean start
             self.scroll_position = 0
+            # Reset progress logging timer
+            self.last_progress_log_time = 0
         else:
             # Check if the display start time is too old (more than 2x the dynamic duration)
             current_time = time.time()
@@ -1321,6 +1329,8 @@ class LeaderboardManager:
                 logger.debug(f"Display start time is too old ({elapsed_time:.1f}s), resetting")
                 self._display_start_time = current_time
                 self.scroll_position = 0
+                # Reset progress logging timer
+                self.last_progress_log_time = 0
         
         logger.debug(f"Number of leagues in data at start of display method: {len(self.leaderboard_data)}")
         if not self.leaderboard_data:
@@ -1397,9 +1407,10 @@ class LeaderboardManager:
             elapsed_time = current_time - self._display_start_time
             remaining_time = self.dynamic_duration - elapsed_time
             
-            # Log scroll progress every 50 pixels to help debug (less verbose)
-            if self.scroll_position % 50 == 0 and self.scroll_position > 0:
+            # Log scroll progress every 5 seconds to help debug (throttled to reduce spam)
+            if current_time - self.last_progress_log_time >= self.progress_log_interval and self.scroll_position > 0:
                 logger.info(f"Leaderboard progress: elapsed={elapsed_time:.1f}s, remaining={remaining_time:.1f}s, scroll_pos={self.scroll_position}/{self.leaderboard_image.width}px")
+                self.last_progress_log_time = current_time
             
             # If we have less than 2 seconds remaining, check if we can complete the content display
             if remaining_time < 2.0 and self.scroll_position > 0:
