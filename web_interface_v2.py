@@ -1521,6 +1521,36 @@ def view_logs():
 def get_current_display():
     """Get current display image as base64."""
     try:
+        # Get display dimensions from config if not available in current_display_data
+        if not current_display_data or not current_display_data.get('width') or not current_display_data.get('height'):
+            try:
+                config = config_manager.load_config()
+                display_config = config.get('display', {}).get('hardware', {})
+                rows = display_config.get('rows', 32)
+                cols = display_config.get('cols', 64)
+                chain_length = display_config.get('chain_length', 1)
+                parallel = display_config.get('parallel', 1)
+                
+                # Calculate total display dimensions
+                total_width = cols * chain_length
+                total_height = rows * parallel
+                
+                # Update current_display_data with config dimensions if missing
+                if not current_display_data:
+                    current_display_data = {}
+                if not current_display_data.get('width'):
+                    current_display_data['width'] = total_width
+                if not current_display_data.get('height'):
+                    current_display_data['height'] = total_height
+            except Exception as config_error:
+                # Fallback to default dimensions if config fails
+                if not current_display_data:
+                    current_display_data = {}
+                if not current_display_data.get('width'):
+                    current_display_data['width'] = 128
+                if not current_display_data.get('height'):
+                    current_display_data['height'] = 32
+        
         return jsonify(current_display_data)
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e), 'image': None}), 500

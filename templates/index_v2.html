@@ -2381,19 +2381,25 @@
                 img.src = `data:image/png;base64,${data.image}`;
                 const meta = document.getElementById('previewMeta');
                 if (meta) {
-                    meta.textContent = `${data.width || 128} x ${data.height || 32} @ ${scale}x`;
+                    // Use config dimensions as fallback instead of hardcoded values
+                    const configWidth = {{ main_config.get('display', {}).get('hardware', {}).get('cols', 64) * main_config.get('display', {}).get('hardware', {}).get('chain_length', 1) }};
+                    const configHeight = {{ main_config.get('display', {}).get('hardware', {}).get('rows', 32) * main_config.get('display', {}).get('hardware', {}).get('parallel', 1) }};
+                    meta.textContent = `${data.width || configWidth} x ${data.height || configHeight} @ ${scale}x`;
                 }
 
                 // Once image loads, size the canvas to match
-                const width = (data.width || 128) * scale;
-                const height = (data.height || 32) * scale;
+                // Use config dimensions as fallback instead of hardcoded values
+                const configWidth = {{ main_config.get('display', {}).get('hardware', {}).get('cols', 64) * main_config.get('display', {}).get('hardware', {}).get('chain_length', 1) }};
+                const configHeight = {{ main_config.get('display', {}).get('hardware', {}).get('rows', 32) * main_config.get('display', {}).get('hardware', {}).get('parallel', 1) }};
+                const width = (data.width || configWidth) * scale;
+                const height = (data.height || configHeight) * scale;
                 img.style.width = width + 'px';
                 img.style.height = height + 'px';
                 ledCanvas.width = width;
                 ledCanvas.height = height;
                 canvas.width = width;
                 canvas.height = height;
-                drawGrid(canvas, data.width || 128, data.height || 32, scale);
+                drawGrid(canvas, data.width || configWidth, data.height || configHeight, scale);
                 renderLedDots();
             } else {
                 stage.style.display = 'none';
