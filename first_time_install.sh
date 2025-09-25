@@ -240,7 +240,7 @@ else
     
     # Specifically ensure the sports logos directories are writable
     SPORTS_DIRS=(
-        "sports/ncaa_fbs_logos"
+        "sports/ncaa_logos"
         "sports/nfl_logos"
         "sports/nba_logos"
         "sports/nhl_logos"
