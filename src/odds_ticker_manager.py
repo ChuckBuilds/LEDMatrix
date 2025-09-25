@@ -1794,8 +1794,8 @@ class OddsTickerManager:
                 elapsed_scroll_time = current_time - self.last_scroll_time
                 # Only scroll if enough time has passed (frame rate limiting)
                 if elapsed_scroll_time >= self.scroll_delay:
-                    # Calculate scroll increment based on target frame time
-                    scroll_increment = elapsed_scroll_time * (self.scroll_speed / self.scroll_delay)
+                    # Calculate scroll increment: scroll_speed pixels per scroll_delay seconds
+                    scroll_increment = self.scroll_speed
                     self.scroll_position += scroll_increment
                     self.last_scroll_time = current_time
             else:
