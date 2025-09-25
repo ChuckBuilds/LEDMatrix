@@ -466,8 +466,13 @@ class StockNewsManager(ScrollMixin):
         if self._scroll_controller is None and self._content_width > 0:
             self._ensure_scroll_controller()
         
-        # Update scroll position using new system
-        scroll_metrics = self.update_scroll(time.time())
+        # Update scroll position using new system if available
+        if self._scroll_controller is not None:
+            scroll_metrics = self.update_scroll(time.time())
+        else:
+            logger.warning("StockNewsManager: Scroll controller not available, using fallback display")
+            self._display_fallback_message()
+            return
         
         # Get the visible portion using new system
         visible_portion = self.crop_scrolled_image(self.cached_text_image)

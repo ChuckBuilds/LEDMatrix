@@ -1446,8 +1446,13 @@ class LeaderboardManager(ScrollMixin):
             if self._scroll_controller is None and self._content_width > 0:
                 self._ensure_scroll_controller()
             
-            # Use new scroll system
-            scroll_metrics = self.update_scroll(current_time)
+            # Use new scroll system if available
+            if self._scroll_controller is not None:
+                scroll_metrics = self.update_scroll(current_time)
+            else:
+                logger.warning("LeaderboardManager: Scroll controller not available, using fallback display")
+                self._display_fallback_message()
+                return
             
             # Signal scrolling state to display manager (always scrolling)
             self.display_manager.set_scrolling_state(True)

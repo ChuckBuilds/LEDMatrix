@@ -47,6 +47,19 @@ class ScrollMixin:
             content_width: Initial content width
             content_height: Initial content height
         """
+        # Prevent re-initialization if already initialized with same dimensions
+        if (hasattr(self, 'scroll_controller') and 
+            self.scroll_controller is not None and
+            self.scroll_controller.content_width == content_width and
+            self.scroll_controller.content_height == content_height):
+            return
+            
+        # Debug: Log content dimensions
+        if content_width == 0 or content_height == 0:
+            logger.warning(f"{debug_name}: Initializing scroll controller with zero dimensions - width: {content_width}, height: {content_height}")
+        else:
+            logger.debug(f"{debug_name}: Initializing scroll controller with dimensions - width: {content_width}, height: {content_height}")
+            
         if not hasattr(self, 'display_manager'):
             raise AttributeError("ScrollMixin requires display_manager attribute to be set")
         
@@ -152,6 +165,7 @@ class ScrollMixin:
         """
         if not hasattr(self, 'scroll_controller'):
             # Fallback: return a crop of the source image
+            logger.warning("crop_scrolled_image: No scroll controller available, using fallback crop")
             return source_image.crop((0, 0, 
                                     self.display_manager.matrix.width, 
                                     self.display_manager.matrix.height))
@@ -159,6 +173,9 @@ class ScrollMixin:
         crop_info = self.get_scroll_crop_region(wrap_around)
         display_width = self.display_manager.matrix.width
         display_height = self.display_manager.matrix.height
+        
+        # Debug: Log crop information
+        logger.debug(f"crop_scrolled_image: source_image={source_image.size}, display={display_width}x{display_height}, crop_info={crop_info}")
         
         if not crop_info['needs_wrap']:
             # Simple crop

@@ -368,13 +368,19 @@ class OddsTickerManager(ScrollMixin):
 
     def _ensure_scroll_controller(self):
         """Ensure scroll controller is initialized with current content dimensions."""
+        logger.debug(f"OddsTickerManager: _ensure_scroll_controller called - _scroll_controller={self._scroll_controller is not None}, _content_width={self._content_width}, _content_height={self._content_height}")
+        
         if self._scroll_controller is None and self._content_width > 0:
+            logger.debug(f"OddsTickerManager: Initializing scroll controller with dimensions {self._content_width}x{self._content_height}")
             self.init_scroll_controller(
                 debug_name="OddsTickerManager",
                 config_section="odds_ticker",
                 content_width=self._content_width,
                 content_height=self._content_height
             )
+            logger.debug(f"OddsTickerManager: Scroll controller initialized: {self._scroll_controller is not None}")
+        elif self._scroll_controller is None:
+            logger.warning(f"OddsTickerManager: Cannot initialize scroll controller - content dimensions are zero: {self._content_width}x{self._content_height}")
 
     def convert_image(self, logo_path: Path) -> Optional[Image.Image]:
         if logo_path.exists():
@@ -1842,8 +1848,13 @@ class OddsTickerManager(ScrollMixin):
             if self._scroll_controller is None and self._content_width > 0:
                 self._ensure_scroll_controller()
             
-            # Use new scroll system
-            scroll_metrics = self.update_scroll(current_time)
+            # Use new scroll system if available, otherwise fallback to old system
+            if self._scroll_controller is not None:
+                scroll_metrics = self.update_scroll(current_time)
+            else:
+                logger.warning("OddsTickerManager: Scroll controller not available, using fallback display")
+                self._display_fallback_message()
+                return
             
             # Signal scrolling state to display manager (always scrolling)
             self.display_manager.set_scrolling_state(True)

@@ -145,9 +145,9 @@ class BaseScrollController:
         # Bounce mode state
         self.bounce_direction = 1  # 1 for forward, -1 for backward
         
-        logger.info(f"{self.debug_name}: Initialized scroll controller - "
-                   f"Mode: {self.mode.value}, Speed: {self.pixels_per_second}px/s, "
-                   f"Direction: {self.direction.value}, Display: {display_width}x{display_height}")
+        logger.debug(f"{self.debug_name}: Initialized scroll controller - "
+                    f"Mode: {self.mode.value}, Speed: {self.pixels_per_second}px/s, "
+                    f"Direction: {self.direction.value}, Display: {display_width}x{display_height}")
     
     def _load_config(self):
         """Load and validate configuration with smart defaults."""
