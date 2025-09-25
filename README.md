@@ -439,7 +439,7 @@ The ticker displays team logos alongside the text:
   - `assets/sports/nfl_logos/`
   - `assets/sports/nba_logos/`
   - `assets/sports/mlb_logos/`
-  - `assets/sports/ncaa_fbs_logos/`
+  - `assets/sports/ncaa_logos/`
 
 ### Troubleshooting
 

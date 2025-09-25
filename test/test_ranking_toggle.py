@@ -164,7 +164,7 @@ def test_ncaa_fb_ranking_toggle():
                     'enabled': True,
                     'show_records': True,
                     'show_ranking': True,
-                    'logo_dir': 'assets/sports/ncaa_fbs_logos',
+                    'logo_dir': 'assets/sports/ncaa_logos',
                     'display_modes': {
                         'ncaa_fb_live': True,
                         'ncaa_fb_recent': True,
@@ -180,7 +180,7 @@ def test_ncaa_fb_ranking_toggle():
                     'enabled': True,
                     'show_records': False,
                     'show_ranking': True,
-                    'logo_dir': 'assets/sports/ncaa_fbs_logos',
+                    'logo_dir': 'assets/sports/ncaa_logos',
                     'display_modes': {
                         'ncaa_fb_live': True,
                         'ncaa_fb_recent': True,
@@ -196,7 +196,7 @@ def test_ncaa_fb_ranking_toggle():
                     'enabled': True,
                     'show_records': True,
                     'show_ranking': False,
-                    'logo_dir': 'assets/sports/ncaa_fbs_logos',
+                    'logo_dir': 'assets/sports/ncaa_logos',
                     'display_modes': {
                         'ncaa_fb_live': True,
                         'ncaa_fb_recent': True,
@@ -212,7 +212,7 @@ def test_ncaa_fb_ranking_toggle():
                     'enabled': True,
                     'show_records': False,
                     'show_ranking': False,
-                    'logo_dir': 'assets/sports/ncaa_fbs_logos',
+                    'logo_dir': 'assets/sports/ncaa_logos',
                     'display_modes': {
                         'ncaa_fb_live': True,
                         'ncaa_fb_recent': True,

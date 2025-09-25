@@ -185,8 +185,8 @@ def test_logo_loading():
         "assets/sports/nba_logos/nba.png",
         "assets/sports/mlb_logos/mlb.png",
         "assets/sports/nhl_logos/nhl.png",
-        "assets/sports/ncaa_fbs_logos/ncaa_fb.png",
-        "assets/sports/ncaa_fbs_logos/ncaam.png"
+        "assets/sports/ncaa_logos/ncaa_fb.png",
+        "assets/sports/ncaa_logos/ncaam.png"
     ]
     
     for logo_path in league_logos:

@@ -15,7 +15,7 @@ def save_missing_teams():
         'nba_logos': 'NBA', 
         'nfl_logos': 'NFL',
         'nhl_logos': 'NHL',
-        'ncaa_fbs_logos': ['NCAAF', 'NCAA Conferences/Divisions', 'NCAA_big10', 'NCAA_big12', 'NCAA_acc', 'NCAA_sec', 'NCAA_pac12', 'NCAA_american', 'NCAA_cusa', 'NCAA_mac', 'NCAA_mwc', 'NCAA_sunbelt', 'NCAA_ind', 'NCAA_ovc', 'NCAA_col', 'NCAA_usa', 'NCAA_bigw'],
+        'ncaa_logos': ['NCAAF', 'NCAA Conferences/Divisions', 'NCAA_big10', 'NCAA_big12', 'NCAA_acc', 'NCAA_sec', 'NCAA_pac12', 'NCAA_american', 'NCAA_cusa', 'NCAA_mac', 'NCAA_mwc', 'NCAA_sunbelt', 'NCAA_ind', 'NCAA_ovc', 'NCAA_col', 'NCAA_usa', 'NCAA_bigw'],
         'soccer_logos': ['Soccer - Premier League (England)', 'Soccer - La Liga (Spain)', 'Soccer - Bundesliga (Germany)', 'Soccer - Serie A (Italy)', 'Soccer - Ligue 1 (France)', 'Soccer - Champions League', 'Soccer - Other Teams'],
         'milb_logos': 'MiLB'
     }
@@ -143,7 +143,7 @@ def save_missing_teams():
             elif 'NHL' in section:
                 dir_name = 'nhl_logos'
             elif 'NCAA' in section:
-                dir_name = 'ncaa_fbs_logos'
+                dir_name = 'ncaa_logos'
             elif 'Soccer' in section:
                 dir_name = 'soccer_logos'
             elif 'MiLB' in section:
