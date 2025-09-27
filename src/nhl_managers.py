@@ -12,6 +12,8 @@ from src.cache_manager import CacheManager
 from src.config_manager import ConfigManager
 from src.odds_manager import OddsManager
 from src.background_data_service import get_background_service
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 import pytz
 
 # Import the API counter function from web interface
@@ -23,7 +25,7 @@ except ImportError:
         pass
 
 # Constants
-NHL_API_BASE_URL = "https://api-web.nhle.com/v1/schedule/"
+ESPN_NHL_SCOREBOARD_URL = "https://site.api.espn.com/apis/site/v2/sports/hockey/nhl/scoreboard"
 
 # Configure logging to match main configuration
 logging.basicConfig(
@@ -71,6 +73,19 @@ class BaseNHLManager:
         
         # Cache for loaded logos
         self._logo_cache = {}
+        
+        # Set up HTTP session with retry strategy
+        self.session = requests.Session()
+        retry_strategy = Retry(
+            total=3,
+            backoff_factor=1,
+            status_forcelist=[429, 500, 502, 503, 504],
+        )
+        adapter = HTTPAdapter(max_retries=retry_strategy)
+        self.session.mount("https://", adapter)
+        self.headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        }
         
         # Initialize background data service
         background_config = self.nhl_config.get("background_service", {})
@@ -125,68 +140,111 @@ class BaseNHLManager:
             return pytz.utc
 
     def _fetch_nhl_api_data(self, use_cache: bool = True) -> Optional[Dict]:
-        """Fetch and cache data from the NHL API."""
-        current_time = time.time()
-        
-        # Use today's date for the request
-        date_str = datetime.now(self._get_timezone()).strftime('%Y-%m-%d')
-        cache_key = f"nhl_api_data_{date_str}"
+        """
+        Fetches NHL data using background threading.
+        Returns cached data immediately if available, otherwise starts background fetch.
+        """
+        now = datetime.now(pytz.utc)
+        current_year = now.year
+        cache_key = f"nhl_api_data_{current_year}"
 
-        # If using cache, try to load from cache first
+        # Check cache first
         if use_cache:
-            cached_data = self.cache_manager.get(cache_key, max_age=300)
+            cached_data = self.cache_manager.get(cache_key)
             if cached_data:
-                self.logger.info(f"[NHL] Using cached data for {date_str}")
-                return cached_data
-                
-        try:
-            # If not in cache or stale, or if cache is disabled, fetch from API
-            url = f"{NHL_API_BASE_URL}{date_str}"
-            self.logger.info(f"Fetching data from URL: {url}")
+                # Validate cached data structure
+                if isinstance(cached_data, dict) and 'events' in cached_data:
+                    self.logger.info(f"[NHL] Using cached data for {current_year}")
+                    return cached_data
+                elif isinstance(cached_data, list):
+                    # Handle old cache format (list of events)
+                    self.logger.info(f"[NHL] Using cached data for {current_year} (legacy format)")
+                    return {'events': cached_data}
+                else:
+                    self.logger.warning(f"[NHL] Invalid cached data format for {current_year}: {type(cached_data)}")
+                    # Clear invalid cache
+                    self.cache_manager.clear_cache(cache_key)
+        
+        # If background service is disabled, fall back to synchronous fetch
+        if not self.background_enabled or not self.background_service:
+            return self._fetch_nhl_api_data_sync(use_cache)
+        
+        # Start background fetch
+        self.logger.info(f"[NHL] Starting background fetch for {current_year} season schedule...")
+        
+        def fetch_callback(result):
+            """Callback when background fetch completes."""
+            if result.success:
+                self.logger.info(f"Background fetch completed for {current_year}: {len(result.data.get('events'))} events")
+            else:
+                self.logger.error(f"Background fetch failed for {current_year}: {result.error}")
             
-            response = requests.get(url)
+            # Clean up request tracking
+            if current_year in self.background_fetch_requests:
+                del self.background_fetch_requests[current_year]
+        
+        # Get background service configuration
+        background_config = self.nhl_config.get("background_service", {})
+        timeout = background_config.get("request_timeout", 30)
+        max_retries = background_config.get("max_retries", 3)
+        priority = background_config.get("priority", 2)
+        
+        # Submit background fetch request
+        request_id = self.background_service.submit_fetch_request(
+            sport="nhl",
+            year=current_year,
+            url=ESPN_NHL_SCOREBOARD_URL,
+            cache_key=cache_key,
+            params={"limit": 1000},
+            headers=self.headers,
+            timeout=timeout,
+            max_retries=max_retries,
+            priority=priority,
+            callback=fetch_callback
+        )
+        
+        # Track the request
+        self.background_fetch_requests[current_year] = request_id
+        
+        # For immediate response, try to get partial data from cache
+        partial_data = self.cache_manager.get(cache_key)
+        if partial_data:
+            return partial_data
+        
+        return None
+    
+    def _fetch_nhl_api_data_sync(self, use_cache: bool = True) -> Optional[Dict]:
+        """
+        Synchronous fallback for fetching NHL data when background service is disabled.
+        """
+        now = datetime.now(pytz.utc)
+        current_year = now.year
+        cache_key = f"nhl_api_data_{current_year}"
+
+        self.logger.info(f"[NHL] Fetching NHL data from ESPN API (sync mode)...")
+        try:
+            response = self.session.get(ESPN_NHL_SCOREBOARD_URL, params={"limit": 1000}, headers=self.headers, timeout=15)
             response.raise_for_status()
             data = response.json()
+            events = data.get('events', [])
             
-            # Increment API counter for sports data call
-            increment_api_counter('sports', 1)
-            
-            self.logger.info(f"[NHL] Successfully fetched data from NHL API for {date_str}")
-            
-            # Save to cache if caching is enabled
             if use_cache:
                 self.cache_manager.set(cache_key, data)
             
+            self.logger.info(f"[NHL] Successfully fetched {len(events)} events from ESPN API.")
             return data
         except requests.exceptions.RequestException as e:
-            self.logger.error(f"[NHL] Error fetching data from NHL API: {e}")
+            self.logger.error(f"[NHL] API error fetching NHL data: {e}")
             return None
 
     def _fetch_data(self, date_str: str = None) -> Optional[Dict]:
-        """
-        Fetch data using background service cache first, fallback to direct API call.
-        This eliminates redundant caching and ensures Recent/Upcoming managers
-        use the same data source as the background service.
-        """
-        # For Live managers, always fetch fresh data
+        """Fetch data using shared data mechanism or direct fetch for live."""
         if isinstance(self, NHLLiveManager):
+            # Live games should fetch only current games, not entire season
             return self._fetch_nhl_api_data(use_cache=False)
-        
-        # For Recent/Upcoming managers, try to use background service cache first
-        from datetime import datetime
-        import pytz
-        cache_key = f"nhl_{datetime.now(pytz.utc).strftime('%Y%m%d')}"
-        
-        # Check if background service has fresh data
-        if self.cache_manager.is_background_data_available(cache_key, 'nhl'):
-            cached_data = self.cache_manager.get_background_cached_data(cache_key, 'nhl')
-            if cached_data:
-                self.logger.info(f"[NHL] Using background service cache for {cache_key}")
-                return cached_data
-        
-        # Fallback to direct API call if background data not available
-        self.logger.info(f"[NHL] Background data not available, fetching directly for {cache_key}")
-        return self._fetch_nhl_api_data(use_cache=True)
+        else:
+            # Recent and Upcoming managers should use cached season data
+            return self._fetch_nhl_api_data(use_cache=True)
 
     def _load_fonts(self):
         """Load fonts used by the scoreboard."""
