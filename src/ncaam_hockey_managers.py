@@ -105,7 +105,7 @@ class BaseNCAAMHockeyManager(Hockey): # Renamed class
         return False
 
     def _fetch_odds(self, game: Dict) -> None:
-        super()._fetch_odds(game, "mens-college-hockey")
+        super()._fetch_odds_with_params(game, "hockey", "mens-college-hockey")
     
     def _fetch_ncaa_fb_api_data(self, use_cache: bool = True) -> Optional[Dict]:
         """

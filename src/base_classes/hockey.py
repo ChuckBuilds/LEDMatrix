@@ -40,8 +40,10 @@ class Hockey(SportsCore):
         """Get hockey sport configuration."""
         return self.SPORT_CONFIG.copy()
 
-    def _fetch_odds(self, game: Dict, league: str) -> None:
-        super()._fetch_odds(game, "hockey", league)
+    def _fetch_odds(self, game: Dict) -> None:
+        # Hockey base class - should be overridden by specific leagues (NHL, NCAA Hockey)
+        self.logger.warning(f"_fetch_odds not implemented for hockey sport: {self.sport_key}")
+        pass
 
 
     def _extract_game_details(self, game_event: Dict) -> Optional[Dict]:

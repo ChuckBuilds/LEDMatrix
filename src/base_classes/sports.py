@@ -324,7 +324,7 @@ class SportsCore:
                     
                     # Fetch odds if enabled
                     if self.show_odds:
-                        self._fetch_odds(game_details, self.sport_key, self.sport_key)
+                        self._fetch_odds(game_details)
                     
                     processed_games.append(game_details)
             
@@ -442,8 +442,22 @@ class SportsCore:
         except Exception as e:
             self.logger.error(f"Error fetching odds for game {game.get('id', 'N/A')}: {e}")
 
-    def _fetch_odds(self, game: Dict, sport: str, league: str) -> None:
-        """Fetch odds for a specific game if conditions are met."""
+    def _fetch_odds(self, game: Dict) -> None:
+        """Fetch odds for a specific game if conditions are met.
+        
+        This method should be overridden by sport-specific classes to provide
+        the correct sport and league parameters for odds fetching.
+        """
+        # Default implementation - should be overridden by sport-specific classes
+        self.logger.warning(f"_fetch_odds not implemented for sport: {self.sport_key}")
+        pass
+
+    def _fetch_odds_with_params(self, game: Dict, sport: str, league: str) -> None:
+        """Helper method to fetch odds with specific sport and league parameters.
+        
+        This method can be used by sport-specific classes to fetch odds with
+        the correct parameters.
+        """
         # Check if odds should be shown for this sport
         if not self.show_odds:
             return

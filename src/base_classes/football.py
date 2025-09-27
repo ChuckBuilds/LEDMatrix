@@ -45,8 +45,10 @@ class Football(SportsCore):
     def _fetch_game_odds(self, _: Dict) -> None:
         pass
 
-    def _fetch_odds(self, game: Dict, league: str) -> None:
-        super()._fetch_odds(game, "football", league)
+    def _fetch_odds(self, game: Dict) -> None:
+        # Football base class - should be overridden by specific leagues (NFL, NCAA FB)
+        self.logger.warning(f"_fetch_odds not implemented for football sport: {self.sport_key}")
+        pass
 
     def _extract_game_details(self, game_event: Dict) -> Optional[Dict]:
         """Extract relevant game details from ESPN NCAA FB API response."""

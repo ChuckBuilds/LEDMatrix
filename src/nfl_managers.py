@@ -40,8 +40,8 @@ class BaseNFLManager(Football): # Renamed class
         self.logger.info(f"Display modes - Recent: {self.recent_enabled}, Upcoming: {self.upcoming_enabled}, Live: {self.live_enabled}")
 
 
-    def _fetch_football_odds(self, game: Dict) -> None:
-        super()._fetch_odds(game, "nfl")
+    def _fetch_odds(self, game: Dict) -> None:
+        super()._fetch_odds_with_params(game, "football", "nfl")
     
     def _fetch_nfl_api_data(self, use_cache: bool = True) -> Optional[Dict]:
         """
