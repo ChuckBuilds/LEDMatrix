@@ -16,8 +16,8 @@ from src.logo_downloader import download_missing_logo, LogoDownloader
 from pathlib import Path
 
 # Import new architecture components (individual classes will import what they need)
-from .api_extractors import ESPNFootballExtractor, ESPNBaseballExtractor, ESPNHockeyExtractor
-from .data_sources import ESPNDataSource, MLBAPIDataSource
+from src.base_classes.api_extractors import APIDataExtractor
+from src.base_classes.data_sources import DataSource
 from src.dynamic_team_resolver import DynamicTeamResolver
 
 class SportsCore:
@@ -38,8 +38,8 @@ class SportsCore:
         
         # Initialize new architecture components (will be overridden by sport-specific classes)
         self.sport_config = None
-        self.api_extractor = None
-        self.data_source = None
+        self.api_extractor: APIDataExtractor
+        self.data_source: DataSource
         self.mode_config = config.get(f"{sport_key}_scoreboard", {})  # Changed config key
         self.is_enabled = self.mode_config.get("enabled", False)
         self.show_odds = self.mode_config.get("show_odds", False)
@@ -359,24 +359,41 @@ class SportsCore:
 
     def _fetch_team_rankings(self) -> Dict[str, int]:
         """Fetch team rankings using the new architecture components."""
+        current_time = time.time()
+        
+        # Check if we have cached rankings that are still valid
+        if (self._team_rankings_cache and 
+            current_time - self._rankings_cache_timestamp < self._rankings_cache_duration):
+            return self._team_rankings_cache
+        
         try:
-            # Use the data source to fetch standings
-            standings_data = self.data_source.fetch_standings(self.sport, self.league)
+            data = self.data_source.fetch_standings(self.sport, self.league)
             
-            if not standings_data:
-                self.logger.debug(f"No standings data found for {self.sport_key}")
-                return {}
-            
-            # Extract rankings from standings data
             rankings = {}
-            # This would need to be implemented based on the specific data structure
-            # returned by each data source
+            rankings_data = data.get('rankings', [])
             
-            self.logger.debug(f"Successfully fetched rankings for {self.sport_key}")
+            if rankings_data:
+                # Use the first ranking (usually AP Top 25)
+                first_ranking = rankings_data[0]
+                teams = first_ranking.get('ranks', [])
+                
+                for team_data in teams:
+                    team_info = team_data.get('team', {})
+                    team_abbr = team_info.get('abbreviation', '')
+                    current_rank = team_data.get('current', 0)
+                    
+                    if team_abbr and current_rank > 0:
+                        rankings[team_abbr] = current_rank
+            
+            # Cache the results
+            self._team_rankings_cache = rankings
+            self._rankings_cache_timestamp = current_time
+            
+            self.logger.debug(f"Fetched rankings for {len(rankings)} teams")
             return rankings
             
         except Exception as e:
-            self.logger.error(f"Error fetching team rankings for {self.sport_key}: {e}")
+            self.logger.error(f"Error fetching team rankings: {e}")
             return {}
 
     def _extract_game_details_common(self, game_event: Dict) -> tuple[Dict | None, Dict | None, Dict | None, Dict | None, Dict | None]:
@@ -788,8 +805,7 @@ class SportsUpcoming(SportsCore):
                 if away_abbr:
                     if self.show_ranking and self.show_records:
                         # When both rankings and records are enabled, rankings replace records completely
-                        rankings = self._fetch_team_rankings()
-                        away_rank = rankings.get(away_abbr, 0)
+                        away_rank = self._team_rankings_cache.get(away_abbr, 0)
                         if away_rank > 0:
                             away_text = f"#{away_rank}"
                         else:
@@ -797,8 +813,7 @@ class SportsUpcoming(SportsCore):
                             away_text = ''
                     elif self.show_ranking:
                         # Show ranking only if available
-                        rankings = self._fetch_team_rankings()
-                        away_rank = rankings.get(away_abbr, 0)
+                        away_rank = rankself._team_rankings_cacheings.get(away_abbr, 0)
                         if away_rank > 0:
                             away_text = f"#{away_rank}"
                         else:
@@ -818,8 +833,7 @@ class SportsUpcoming(SportsCore):
                 if home_abbr:
                     if self.show_ranking and self.show_records:
                         # When both rankings and records are enabled, rankings replace records completely
-                        rankings = self._fetch_team_rankings()
-                        home_rank = rankings.get(home_abbr, 0)
+                        home_rank = self._team_rankings_cache.get(home_abbr, 0)
                         if home_rank > 0:
                             home_text = f"#{home_rank}"
                         else:
@@ -827,8 +841,7 @@ class SportsUpcoming(SportsCore):
                             home_text = ''
                     elif self.show_ranking:
                         # Show ranking only if available
-                        rankings = self._fetch_team_rankings()
-                        home_rank = rankings.get(home_abbr, 0)
+                        home_rank = self._team_rankings_cache.get(home_abbr, 0)
                         if home_rank > 0:
                             home_text = f"#{home_rank}"
                         else:
@@ -1089,8 +1102,7 @@ class SportsRecent(SportsCore):
                 if away_abbr:
                     if self.show_ranking and self.show_records:
                         # When both rankings and records are enabled, rankings replace records completely
-                        rankings = self._fetch_team_rankings()
-                        away_rank = rankings.get(away_abbr, 0)
+                        away_rank = self._team_rankings_cache.get(away_abbr, 0)
                         if away_rank > 0:
                             away_text = f"#{away_rank}"
                         else:
@@ -1098,8 +1110,7 @@ class SportsRecent(SportsCore):
                             away_text = ''
                     elif self.show_ranking:
                         # Show ranking only if available
-                        rankings = self._fetch_team_rankings()
-                        away_rank = rankings.get(away_abbr, 0)
+                        away_rank = self._team_rankings_cache.get(away_abbr, 0)
                         if away_rank > 0:
                             away_text = f"#{away_rank}"
                         else:
@@ -1119,8 +1130,7 @@ class SportsRecent(SportsCore):
                 if home_abbr:
                     if self.show_ranking and self.show_records:
                         # When both rankings and records are enabled, rankings replace records completely
-                        rankings = self._fetch_team_rankings()
-                        home_rank = rankings.get(home_abbr, 0)
+                        home_rank = self._team_rankings_cache.get(home_abbr, 0)
                         if home_rank > 0:
                             home_text = f"#{home_rank}"
                         else:
@@ -1128,8 +1138,7 @@ class SportsRecent(SportsCore):
                             home_text = ''
                     elif self.show_ranking:
                         # Show ranking only if available
-                        rankings = self._fetch_team_rankings()
-                        home_rank = rankings.get(home_abbr, 0)
+                        home_rank = self._team_rankings_cache.get(home_abbr, 0)
                         if home_rank > 0:
                             home_text = f"#{home_rank}"
                         else:

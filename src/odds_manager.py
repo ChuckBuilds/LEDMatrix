@@ -22,7 +22,9 @@ class OddsManager:
         self.logger = logging.getLogger(__name__)
         self.base_url = "https://sports.core.api.espn.com/v2/sports"
 
-    def get_odds(self, sport: str, league: str, event_id: str, update_interval_seconds=3600):
+    def get_odds(self, sport: str | None, league: str | None, event_id: str, update_interval_seconds=3600):
+        if sport is None or league is None:
+            raise ValueError("Sport and League cannot be None")
         cache_key = f"odds_espn_{sport}_{league}_{event_id}"
 
         # Check cache first

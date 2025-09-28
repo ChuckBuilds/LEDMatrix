@@ -42,48 +42,6 @@ class BaseNCAAFBManager(Football): # Renamed class
         self.logger.info(f"Initialized NCAAFB manager with display dimensions: {self.display_width}x{self.display_height}")
         self.logger.info(f"Logo directory: {self.logo_dir}")
         self.logger.info(f"Display modes - Recent: {self.recent_enabled}, Upcoming: {self.upcoming_enabled}, Live: {self.live_enabled}")
-    
-    def _fetch_team_rankings(self) -> Dict[str, int]:
-        """Fetch current team rankings from ESPN API."""
-        current_time = time.time()
-        
-        # Check if we have cached rankings that are still valid
-        if (self._team_rankings_cache and 
-            current_time - self._rankings_cache_timestamp < self._rankings_cache_duration):
-            return self._team_rankings_cache
-        
-        try:
-            rankings_url = "https://site.api.espn.com/apis/site/v2/sports/football/college-football/rankings"
-            response = self.session.get(rankings_url, headers=self.headers, timeout=30)
-            response.raise_for_status()
-            data = response.json()
-            
-            rankings = {}
-            rankings_data = data.get('rankings', [])
-            
-            if rankings_data:
-                # Use the first ranking (usually AP Top 25)
-                first_ranking = rankings_data[0]
-                teams = first_ranking.get('ranks', [])
-                
-                for team_data in teams:
-                    team_info = team_data.get('team', {})
-                    team_abbr = team_info.get('abbreviation', '')
-                    current_rank = team_data.get('current', 0)
-                    
-                    if team_abbr and current_rank > 0:
-                        rankings[team_abbr] = current_rank
-            
-            # Cache the results
-            self._team_rankings_cache = rankings
-            self._rankings_cache_timestamp = current_time
-            
-            self.logger.debug(f"Fetched rankings for {len(rankings)} teams")
-            return rankings
-            
-        except Exception as e:
-            self.logger.error(f"Error fetching team rankings: {e}")
-            return {}
 
     def _fetch_ncaa_fb_api_data(self, use_cache: bool = True) -> Optional[Dict]:
         """

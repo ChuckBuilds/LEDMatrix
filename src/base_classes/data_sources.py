@@ -112,7 +112,7 @@ class ESPNDataSource(DataSource):
     def fetch_standings(self, sport: str, league: str) -> Dict:
         """Fetch standings from ESPN API."""
         try:
-            url = f"{self.base_url}/{sport}/{league}/standings"
+            url = f"{self.base_url}/{sport}/{league}/rankings"
             response = self.session.get(url, headers=self.get_headers(), timeout=15)
             response.raise_for_status()
             

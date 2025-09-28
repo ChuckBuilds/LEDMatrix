@@ -122,17 +122,6 @@ class Football(SportsCore):
             logging.error(f"Error extracting game details: {e} from event: {game_event.get('id')}", exc_info=True)
             return None
 
-    # def _fetch_todays_games(self, league: str) -> Optional[Dict]:
-    #     """Fetch only today's games for live updates (not entire season)."""
-    #     return super()._fetch_todays_games("football", league)
-        
-    # def _get_weeks_data(self, league: str) -> Optional[Dict]:
-    #     """
-    #     Get partial data for immediate display while background fetch is in progress.
-    #     This fetches current/recent games only for quick response.
-    #     """
-    #     return super()._get_weeks_data("football", league)
-
 class FootballLive(Football):
     def __init__(self, config: Dict[str, Any], display_manager: DisplayManager, cache_manager: CacheManager, logger: logging.Logger, sport_key: str):
         super().__init__(config, display_manager, cache_manager, logger, sport_key)
@@ -469,8 +458,7 @@ class FootballLive(Football):
                 if away_abbr:
                     if self.show_ranking and self.show_records:
                         # When both rankings and records are enabled, rankings replace records completely
-                        rankings = self._fetch_team_rankings()
-                        away_rank = rankings.get(away_abbr, 0)
+                        away_rank = self._team_rankings_cache.get(away_abbr, 0)
                         if away_rank > 0:
                             away_text = f"#{away_rank}"
                         else:
@@ -478,8 +466,7 @@ class FootballLive(Football):
                             away_text = ''
                     elif self.show_ranking:
                         # Show ranking only if available
-                        rankings = self._fetch_team_rankings()
-                        away_rank = rankings.get(away_abbr, 0)
+                        away_rank = self._team_rankings_cache.get(away_abbr, 0)
                         if away_rank > 0:
                             away_text = f"#{away_rank}"
                         else:
@@ -499,8 +486,7 @@ class FootballLive(Football):
                 if home_abbr:
                     if self.show_ranking and self.show_records:
                         # When both rankings and records are enabled, rankings replace records completely
-                        rankings = self._fetch_team_rankings()
-                        home_rank = rankings.get(home_abbr, 0)
+                        home_rank = self._team_rankings_cache.get(home_abbr, 0)
                         if home_rank > 0:
                             home_text = f"#{home_rank}"
                         else:
@@ -508,8 +494,7 @@ class FootballLive(Football):
                             home_text = ''
                     elif self.show_ranking:
                         # Show ranking only if available
-                        rankings = self._fetch_team_rankings()
-                        home_rank = rankings.get(home_abbr, 0)
+                        home_rank = self._team_rankings_cache.get(home_abbr, 0)
                         if home_rank > 0:
                             home_text = f"#{home_rank}"
                         else:

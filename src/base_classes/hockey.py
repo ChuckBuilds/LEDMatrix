@@ -30,7 +30,7 @@ class Hockey(SportsCore):
         try:
             competition = game_event["competitions"][0]
             status = competition["status"]
-            powerplay = false
+            powerplay = False
             penalties = ""
             shots_on_goal = {"home": 0, "away": 0}
 
@@ -107,6 +107,9 @@ class HockeyLive(Hockey):
         if current_time - self.last_update >= interval:
             self.last_update = current_time
             
+            if self.show_ranking:
+                self._fetch_team_rankings()
+
             if self.test_mode:
                 # For testing, we'll just update the clock to show it's working
                 if self.current_game:
@@ -276,8 +279,7 @@ class HockeyLive(Hockey):
                 if away_abbr:
                     if self.show_ranking and self.show_records:
                         # When both rankings and records are enabled, rankings replace records completely
-                        rankings = self._fetch_team_rankings()
-                        away_rank = rankings.get(away_abbr, 0)
+                        away_rank = self._team_rankings_cache.get(away_abbr, 0)
                         if away_rank > 0:
                             away_text = f"#{away_rank}"
                         else:
@@ -285,8 +287,7 @@ class HockeyLive(Hockey):
                             away_text = ''
                     elif self.show_ranking:
                         # Show ranking only if available
-                        rankings = self._fetch_team_rankings()
-                        away_rank = rankings.get(away_abbr, 0)
+                        away_rank = self._team_rankings_cache.get(away_abbr, 0)
                         if away_rank > 0:
                             away_text = f"#{away_rank}"
                         else:
@@ -306,8 +307,7 @@ class HockeyLive(Hockey):
                 if home_abbr:
                     if self.show_ranking and self.show_records:
                         # When both rankings and records are enabled, rankings replace records completely
-                        rankings = self._fetch_team_rankings()
-                        home_rank = rankings.get(home_abbr, 0)
+                        home_rank = self._team_rankings_cache.get(home_abbr, 0)
                         if home_rank > 0:
                             home_text = f"#{home_rank}"
                         else:
@@ -315,8 +315,7 @@ class HockeyLive(Hockey):
                             home_text = ''
                     elif self.show_ranking:
                         # Show ranking only if available
-                        rankings = self._fetch_team_rankings()
-                        home_rank = rankings.get(home_abbr, 0)
+                        home_rank = self._team_rankings_cache.get(home_abbr, 0)
                         if home_rank > 0:
                             home_text = f"#{home_rank}"
                         else:
