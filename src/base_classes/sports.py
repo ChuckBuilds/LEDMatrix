@@ -16,12 +16,13 @@ from src.logo_downloader import download_missing_logo, LogoDownloader
 from pathlib import Path
 
 # Import new architecture components (individual classes will import what they need)
-from .api_extractors import ESPNFootballExtractor, ESPNBaseballExtractor, ESPNHockeyExtractor
-from .data_sources import ESPNDataSource, MLBAPIDataSource
+from src.base_classes.api_extractors import ESPNFootballExtractor, ESPNBaseballExtractor, ESPNHockeyExtractor
+from src.base_classes.data_sources import ESPNDataSource, MLBAPIDataSource
 from src.dynamic_team_resolver import DynamicTeamResolver
+from src.config.config_models import RootConfig, ScoreboardBaseConfig
 
 class SportsCore:
-    def __init__(self, config: Dict[str, Any], display_manager: DisplayManager, cache_manager: CacheManager, logger: logging.Logger, sport_key: str):
+    def __init__(self, config: RootConfig, display_manager: DisplayManager, cache_manager: CacheManager, logger: logging.Logger, sport_key: str):
         self.logger = logger
         self.config = config
         self.cache_manager = cache_manager
@@ -38,20 +39,17 @@ class SportsCore:
         self.sport_config = None
         self.api_extractor = None
         self.data_source = None
-        self.mode_config = config.get(f"{sport_key}_scoreboard", {})  # Changed config key
-        self.is_enabled = self.mode_config.get("enabled", False)
-        self.show_odds = self.mode_config.get("show_odds", False)
-        self.test_mode = self.mode_config.get("test_mode", False)
-        self.logo_dir = Path(self.mode_config.get("logo_dir", "assets/sports/ncaa_logos")) # Changed logo dir
-        self.update_interval = self.mode_config.get(
-            "update_interval_seconds", 60)
-        self.show_records = self.mode_config.get('show_records', False)
-        self.show_ranking = self.mode_config.get('show_ranking', False)
+        self.mode_config: ScoreboardBaseConfig = config.__getattribute__(f"{sport_key}_scoreboard")  # Changed config key
+        self.is_enabled = self.mode_config.enabled
+        self.show_odds = self.mode_config.show_odds
+        self.test_mode = self.mode_config.test_mode
+        self.logo_dir = Path(self.mode_config.logo_dir) # Changed logo dir
+        self.update_interval = self.mode_config.update_interval_seconds
+        self.show_records = self.mode_config.show_records
+        self.show_ranking = self.mode_config.show_ranking
         # Number of games to show (instead of time-based windows)
-        self.recent_games_to_show = self.mode_config.get(
-            "recent_games_to_show", 5)  # Show last 5 games
-        self.upcoming_games_to_show = self.mode_config.get(
-            "upcoming_games_to_show", 10)  # Show next 10 games
+        self.recent_games_to_show = self.mode_config.recent_games_to_show
+        self.upcoming_games_to_show = self.mode_config.upcoming_games_to_show
 
         self.session = requests.Session()
         retry_strategy = Retry(
@@ -81,7 +79,7 @@ class SportsCore:
         
         # Initialize dynamic team resolver and resolve favorite teams
         self.dynamic_resolver = DynamicTeamResolver()
-        raw_favorite_teams = self.mode_config.get("favorite_teams", [])
+        raw_favorite_teams = self.mode_config.favorite_teams
         self.favorite_teams = self.dynamic_resolver.resolve_teams(raw_favorite_teams, sport_key)
         
         # Log dynamic team resolution
@@ -98,9 +96,9 @@ class SportsCore:
         self._rankings_cache_duration = 3600  # Cache rankings for 1 hour
 
         # Initialize background data service
-        background_config = self.mode_config.get("background_service", {})
-        if background_config.get("enabled", True):  # Default to enabled
-            max_workers = background_config.get("max_workers", 3)
+        background_config = self.mode_config.background_service
+        if background_config and background_config.enabled:  # Default to enabled
+            max_workers = background_config.max_workers
             self.background_service = get_background_service(self.cache_manager, max_workers)
             self.background_fetch_requests = {}  # Track background fetch requests
             self.background_enabled = True
@@ -412,7 +410,7 @@ class SportsCore:
                 return
             
             # Check if we should only fetch for favorite teams
-            is_favorites_only = self.mode_config.get("show_favorite_teams_only", False)
+            is_favorites_only = self.mode_config.show_favorite_teams_only
             if is_favorites_only:
                 home_abbr = game.get('home_abbr')
                 away_abbr = game.get('away_abbr')
@@ -449,7 +447,7 @@ class SportsCore:
             return
 
         # Check if we should only fetch for favorite teams
-        is_favorites_only = self.mode_config.get("show_favorite_teams_only", False)
+        is_favorites_only = self.mode_config.gshow_favorite_teams_only
         if is_favorites_only:
             home_abbr = game.get('home_abbr')
             away_abbr = game.get('away_abbr')
@@ -463,8 +461,8 @@ class SportsCore:
         try:
             # Determine update interval based on game state
             is_live = game.get('status', '').lower() == 'in'
-            update_interval = self.mode_config.get("live_odds_update_interval", 60) if is_live \
-                else self.mode_config.get("odds_update_interval", 3600)
+            update_interval = self.mode_config.live_odds_update_interval if is_live \
+                else self.mode_config.odds_update_interval
 
             odds_data = self.odds_manager.get_odds(
                 sport=sport,
@@ -485,7 +483,7 @@ class SportsCore:
 
     def _get_timezone(self):
         try:
-            timezone_str = self.config.get('timezone', 'UTC')
+            timezone_str = self.config.timezone
             return pytz.timezone(timezone_str)
         except pytz.UnknownTimeZoneError:
             return pytz.utc
@@ -559,7 +557,7 @@ class SportsCore:
                 game_time = local_time.strftime("%I:%M%p").lstrip('0')
                 
                 # Check date format from config
-                use_short_date_format = self.config.get('display', {}).get('use_short_date_format', False)
+                use_short_date_format = self.config.display.use_short_date_format
                 if use_short_date_format:
                     game_date = local_time.strftime("%-m/%-d")
                 else:
@@ -663,13 +661,13 @@ class SportsCore:
         return None
 
 class SportsUpcoming(SportsCore):
-    def __init__(self, config: Dict[str, Any], display_manager: DisplayManager, cache_manager: CacheManager, logger: logging.Logger, sport_key: str):
+    def __init__(self, config: RootConfig, display_manager: DisplayManager, cache_manager: CacheManager, logger: logging.Logger, sport_key: str):
         super().__init__(config, display_manager, cache_manager, logger, sport_key)
         self.upcoming_games = [] # Store all fetched upcoming games initially
         self.games_list = [] # Filtered list for display (favorite teams)
         self.current_game_index = 0
         self.last_update = 0
-        self.update_interval = self.mode_config.get("upcoming_update_interval", 3600) # Check for recent games every hour
+        self.update_interval = self.mode_config.upcoming_update_interval # Check for recent games every hour
         self.last_log_time = 0
         self.log_interval = 300
         self.last_warning_time = 0
@@ -713,7 +711,7 @@ class SportsUpcoming(SportsCore):
                 # Filter criteria: must be upcoming ('pre' state)
                 if game and game['is_upcoming']:
                     # Only fetch odds for games that will be displayed
-                    if self.mode_config.get("show_favorite_teams_only", False):
+                    if self.mode_config.show_favorite_teams_only:
                         if not self.favorite_teams:
                             continue
                         if game['home_abbr'] not in self.favorite_teams and game['away_abbr'] not in self.favorite_teams:
@@ -771,7 +769,7 @@ class SportsUpcoming(SportsCore):
                 self.logger.info(f"Found {favorite_games_found} favorite team upcoming games")
 
             # Filter for favorite teams only if the config is set
-            if self.mode_config.get("show_favorite_teams_only", False):
+            if self.mode_config.show_favorite_teams_only:
                 # Get all games involving favorite teams
                 favorite_team_games = [game for game in processed_games
                                       if game['home_abbr'] in self.favorite_teams or
@@ -1035,13 +1033,13 @@ class SportsUpcoming(SportsCore):
 
 class SportsRecent(SportsCore):
 
-    def __init__(self, config: Dict[str, Any], display_manager: DisplayManager, cache_manager: CacheManager, logger: logging.Logger, sport_key: str):
+    def __init__(self, config: RootConfig, display_manager: DisplayManager, cache_manager: CacheManager, logger: logging.Logger, sport_key: str):
         super().__init__(config, display_manager, cache_manager, logger, sport_key)
         self.recent_games = [] # Store all fetched recent games initially
         self.games_list = [] # Filtered list for display (favorite teams)
         self.current_game_index = 0
         self.last_update = 0
-        self.update_interval = self.mode_config.get("recent_update_interval", 3600) # Check for recent games every hour
+        self.update_interval = self.mode_config.recent_update_interval # Check for recent games every hour
         self.last_game_switch = 0
         self.game_display_duration = 15 # Display each recent game for 15 seconds
 

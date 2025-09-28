@@ -11,6 +11,7 @@ import math
 from .weather_icons import WeatherIcons
 import os
 import freetype
+from src.config.config_models import RootConfig
 
 # Get logger without configuring
 logger = logging.getLogger(__name__)
@@ -25,7 +26,7 @@ class DisplayManager:
             cls._instance = super(DisplayManager, cls).__new__(cls)
         return cls._instance
 
-    def __init__(self, config: Dict[str, Any] = None, force_fallback: bool = False, suppress_test_pattern: bool = False):
+    def __init__(self, config: RootConfig, force_fallback: bool = False, suppress_test_pattern: bool = False):
         start_time = time.time()
         self.config = config or {}
         self._force_fallback = force_fallback
@@ -66,36 +67,36 @@ class DisplayManager:
             options = RGBMatrixOptions()
             
             # Hardware configuration
-            hardware_config = self.config.get('display', {}).get('hardware', {})
-            runtime_config = self.config.get('display', {}).get('runtime', {})
+            hardware_config = self.config.display.hardware
+            runtime_config = self.config.display.runtime
             
             # Basic hardware settings
-            options.rows = hardware_config.get('rows', 32)
-            options.cols = hardware_config.get('cols', 64)
-            options.chain_length = hardware_config.get('chain_length', 2)
-            options.parallel = hardware_config.get('parallel', 1)
-            options.hardware_mapping = hardware_config.get('hardware_mapping', 'adafruit-hat-pwm')
+            options.rows = hardware_config.rows
+            options.cols = hardware_config.cols
+            options.chain_length = hardware_config.chain_length
+            options.parallel = hardware_config.parallel
+            options.hardware_mapping = hardware_config.hardware_mapping
             
             # Performance and stability settings
-            options.brightness = hardware_config.get('brightness', 90)
-            options.pwm_bits = hardware_config.get('pwm_bits', 10)
-            options.pwm_lsb_nanoseconds = hardware_config.get('pwm_lsb_nanoseconds', 150)
-            options.led_rgb_sequence = hardware_config.get('led_rgb_sequence', 'RGB')
-            options.pixel_mapper_config = hardware_config.get('pixel_mapper_config', '')
-            options.row_address_type = hardware_config.get('row_address_type', 0)
-            options.multiplexing = hardware_config.get('multiplexing', 0)
-            options.disable_hardware_pulsing = hardware_config.get('disable_hardware_pulsing', False)
-            options.show_refresh_rate = hardware_config.get('show_refresh_rate', False)
-            options.limit_refresh_rate_hz = hardware_config.get('limit_refresh_rate_hz', 90)
-            options.gpio_slowdown = runtime_config.get('gpio_slowdown', 2)
+            options.brightness = hardware_config.brightness
+            options.pwm_bits = hardware_config.pwm_bits
+            options.pwm_lsb_nanoseconds = hardware_config.pwm_lsb_nanoseconds
+            # options.led_rgb_sequence = hardware_config.led_rgb_sequence
+            # options.pixel_mapper_config = hardware_config.pixel_mapper_config
+            # options.row_address_type = hardware_config.row_address_type
+            # options.multiplexing = hardware_config.multiplexing
+            options.disable_hardware_pulsing = hardware_config.disable_hardware_pulsing
+            options.show_refresh_rate = hardware_config.show_refresh_rate
+            # options.limit_refresh_rate_hz = hardware_config.glimit_refresh_rate_hz
+            options.gpio_slowdown = runtime_config.gpio_slowdown
             
             # Additional settings from config
-            if 'scan_mode' in hardware_config:
-                options.scan_mode = hardware_config.get('scan_mode')
-            if 'pwm_dither_bits' in hardware_config:
-                options.pwm_dither_bits = hardware_config.get('pwm_dither_bits')
-            if 'inverse_colors' in hardware_config:
-                options.inverse_colors = hardware_config.get('inverse_colors')
+            if hardware_config.scan_mode:
+                options.scan_mode = hardware_config.scan_mode
+            if hardware_config.pwm_dither_bits:
+                options.pwm_dither_bits = hardware_config.pwm_dither_bits
+            if hardware_config.inverse_colors:
+                options.inverse_colors = hardware_config.inverse_colors
             
             logger.info(f"Initializing RGB Matrix with settings: rows={options.rows}, cols={options.cols}, chain_length={options.chain_length}, parallel={options.parallel}, hardware_mapping={options.hardware_mapping}")
             
@@ -130,10 +131,10 @@ class DisplayManager:
             # Create a fallback image for web preview using configured dimensions when available
             self.matrix = None
             try:
-                hardware_config = self.config.get('display', {}).get('hardware', {}) if self.config else {}
-                rows = int(hardware_config.get('rows', 32))
-                cols = int(hardware_config.get('cols', 64))
-                chain_length = int(hardware_config.get('chain_length', 2))
+                hardware_config = self.config.display.hardware
+                rows = hardware_config.rows
+                cols = hardware_config.cols
+                chain_length = hardware_config.chain_length
                 fallback_width = max(1, cols * chain_length)
                 fallback_height = max(1, rows)
             except Exception:

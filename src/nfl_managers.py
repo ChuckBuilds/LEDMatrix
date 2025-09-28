@@ -7,6 +7,7 @@ from datetime import datetime, timedelta
 from src.display_manager import DisplayManager
 from src.cache_manager import CacheManager
 import pytz
+from src.config.config_models import RootConfig
 from src.base_classes.sports import SportsRecent, SportsUpcoming
 from src.base_classes.football import Football, FootballLive
 
@@ -22,7 +23,7 @@ class BaseNFLManager(Football): # Renamed class
     _shared_data = None
     _last_shared_update = 0
     
-    def __init__(self, config: Dict[str, Any], display_manager: DisplayManager, cache_manager: CacheManager):
+    def __init__(self, config: RootConfig, display_manager: DisplayManager, cache_manager: CacheManager):
         self.logger = logging.getLogger('NFL') # Changed logger name
         super().__init__(config=config, display_manager=display_manager, cache_manager=cache_manager, logger=self.logger, sport_key="nfl")
         
@@ -30,7 +31,7 @@ class BaseNFLManager(Football): # Renamed class
         # self.logo_dir and self.update_interval are already configured
 
         # Check display modes to determine what data to fetch
-        display_modes = self.mode_config.get("display_modes", {})
+        display_modes = self.mode_config.display_modes
         self.recent_enabled = display_modes.get("nfl_recent", False)
         self.upcoming_enabled = display_modes.get("nfl_upcoming", False)
         self.live_enabled = display_modes.get("nfl_live", False)
@@ -91,27 +92,28 @@ class BaseNFLManager(Football): # Renamed class
                 del self.background_fetch_requests[season_year]
         
         # Get background service configuration
-        background_config = self.mode_config.get("background_service", {})
-        timeout = background_config.get("request_timeout", 30)
-        max_retries = background_config.get("max_retries", 3)
-        priority = background_config.get("priority", 2)
-        
-        # Submit background fetch request
-        request_id = self.background_service.submit_fetch_request(
-            sport="nfl",
-            year=season_year,
-            url=ESPN_NFL_SCOREBOARD_URL,
-            cache_key=cache_key,
-            params={"dates": datestring, "limit": 1000},
-            headers=self.headers,
-            timeout=timeout,
-            max_retries=max_retries,
-            priority=priority,
-            callback=fetch_callback
-        )
-        
-        # Track the request
-        self.background_fetch_requests[season_year] = request_id
+        background_config = self.mode_config.background_service
+        if background_config:
+            timeout = background_config.request_timeout
+            max_retries = background_config.max_retries
+            priority = background_config.priority
+            
+            # Submit background fetch request
+            request_id = self.background_service.submit_fetch_request(
+                sport="nfl",
+                year=season_year,
+                url=ESPN_NFL_SCOREBOARD_URL,
+                cache_key=cache_key,
+                params={"dates": datestring, "limit": 1000},
+                headers=self.headers,
+                timeout=timeout,
+                max_retries=max_retries,
+                priority=priority,
+                callback=fetch_callback
+            )
+            
+            # Track the request
+            self.background_fetch_requests[season_year] = request_id
         
         # For immediate response, try to get partial data
         partial_data = self._get_weeks_data("nfl")
@@ -155,7 +157,7 @@ class BaseNFLManager(Football): # Renamed class
 
 class NFLLiveManager(BaseNFLManager, FootballLive): # Renamed class
     """Manager for live NFL games."""
-    def __init__(self, config: Dict[str, Any], display_manager: DisplayManager, cache_manager: CacheManager):
+    def __init__(self, config: RootConfig, display_manager: DisplayManager, cache_manager: CacheManager):
         super().__init__(config, display_manager, cache_manager)
         self.logger = logging.getLogger('NFLLiveManager') # Changed logger name
 
@@ -183,14 +185,14 @@ class NFLLiveManager(BaseNFLManager, FootballLive): # Renamed class
 
 class NFLRecentManager(BaseNFLManager, SportsRecent): # Renamed class
     """Manager for recently completed NFL games."""
-    def __init__(self, config: Dict[str, Any], display_manager: DisplayManager, cache_manager: CacheManager):
+    def __init__(self, config: RootConfig, display_manager: DisplayManager, cache_manager: CacheManager):
         super().__init__(config, display_manager, cache_manager)
         self.logger = logging.getLogger('NFLRecentManager') # Changed logger name
         self.logger.info(f"Initialized NFLRecentManager with {len(self.favorite_teams)} favorite teams")
 
 class NFLUpcomingManager(BaseNFLManager, SportsUpcoming): # Renamed class
     """Manager for upcoming NFL games."""
-    def __init__(self, config: Dict[str, Any], display_manager: DisplayManager, cache_manager: CacheManager):
+    def __init__(self, config: RootConfig, display_manager: DisplayManager, cache_manager: CacheManager):
         super().__init__(config, display_manager, cache_manager)
         self.logger = logging.getLogger('NFLUpcomingManager') # Changed logger name
         self.logger.info(f"Initialized NFLUpcomingManager with {len(self.favorite_teams)} favorite teams")

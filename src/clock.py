@@ -5,25 +5,19 @@ import pytz
 from typing import Dict, Any
 from src.config_manager import ConfigManager
 from src.display_manager import DisplayManager
+from src.config.config_models import RootConfig
 
 # Get logger without configuring
 logger = logging.getLogger(__name__)
 
 class Clock:
-    def __init__(self, display_manager: DisplayManager = None, config: Dict[str, Any] = None):
-        if config is not None:
-            # Use provided config
-            self.config = config
-            self.config_manager = None  # Not needed when config is provided
-        else:
-            # Fallback: create ConfigManager and load config (for standalone usage)
-            self.config_manager = ConfigManager()
-            self.config = self.config_manager.load_config()
+    def __init__(self, display_manager: DisplayManager, config: RootConfig):
         # Use the provided display_manager or create a new one if none provided
-        self.display_manager = display_manager or DisplayManager(self.config.get('display', {}))
+        self.config = config
+        self.display_manager = display_manager
         logger.info("Clock initialized with display_manager: %s", id(self.display_manager))
-        self.location = self.config.get('location', {})
-        self.clock_config = self.config.get('clock', {})
+        self.location = self.config.location
+        self.clock_config = self.config.clock
         # Use configured timezone if available, otherwise try to determine it
         self.timezone = self._get_timezone()
         self.last_time = None
@@ -37,7 +31,7 @@ class Clock:
 
     def _get_timezone(self) -> pytz.timezone:
         """Get timezone from the config file."""
-        config_timezone = self.config.get('timezone', 'UTC')
+        config_timezone = self.config.timezone
         try:
             return pytz.timezone(config_timezone)
         except pytz.exceptions.UnknownTimeZoneError:
@@ -137,7 +131,7 @@ if __name__ == "__main__":
     try:
         while True:
             clock.display_time()
-            time.sleep(clock.clock_config.get('update_interval', 1))
+            time.sleep(clock.clock_config.update_interval)
     except KeyboardInterrupt:
         print("\nClock stopped by user")
     finally:

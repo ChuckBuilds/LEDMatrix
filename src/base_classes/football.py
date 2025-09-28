@@ -6,6 +6,7 @@ import logging
 from PIL import Image, ImageDraw, ImageFont
 import time
 import pytz
+from src.config.config_models import RootConfig
 from src.base_classes.sports import SportsCore
 from src.base_classes.api_extractors import ESPNFootballExtractor
 from src.base_classes.data_sources import ESPNDataSource
@@ -30,7 +31,7 @@ class Football(SportsCore):
         'api_base_url': 'https://site.api.espn.com/apis/site/v2/sports/football'
     }
     
-    def __init__(self, config: Dict[str, Any], display_manager: DisplayManager, cache_manager: CacheManager, logger: logging.Logger, sport_key: str):
+    def __init__(self, config: RootConfig, display_manager: DisplayManager, cache_manager: CacheManager, logger: logging.Logger, sport_key: str):
         super().__init__(config, display_manager, cache_manager, logger, sport_key)
         
         # Initialize football-specific architecture components
@@ -167,15 +168,15 @@ class Football(SportsCore):
         return super()._get_weeks_data("football", league)
 
 class FootballLive(Football):
-    def __init__(self, config: Dict[str, Any], display_manager: DisplayManager, cache_manager: CacheManager, logger: logging.Logger, sport_key: str):
+    def __init__(self, config: RootConfig, display_manager: DisplayManager, cache_manager: CacheManager, logger: logging.Logger, sport_key: str):
         super().__init__(config, display_manager, cache_manager, logger, sport_key)
-        self.update_interval = self.mode_config.get("live_update_interval", 15)
+        self.update_interval = self.mode_config.live_update_interval
         self.no_data_interval = 300
         self.last_update = 0
         self.live_games = []
         self.current_game_index = 0
         self.last_game_switch = 0
-        self.game_display_duration = self.mode_config.get("live_game_duration", 20)
+        self.game_display_duration = self.mode_config.live_game_duration
         self.last_display_update = 0
         self.last_log_time = 0
         self.log_interval = 300
@@ -255,7 +256,7 @@ class FootballLive(Football):
                         if details and (details["is_live"] or details["is_halftime"]):
                             # If show_favorite_teams_only is true, only add if it's a favorite.
                             # Otherwise, add all games.
-                            if self.mode_config.get("show_favorite_teams_only", False):
+                            if self.mode_config.show_favorite_teams_only:
                                 if details["home_abbr"] in self.favorite_teams or details["away_abbr"] in self.favorite_teams:
                                     if self.show_odds:
                                         self._fetch_game_odds(details)
@@ -276,12 +277,12 @@ class FootballLive(Football):
 
                     if should_log:
                         if new_live_games:
-                            filter_text = "favorite teams" if self.mode_config.get("show_favorite_teams_only", False) else "all teams"
+                            filter_text = "favorite teams" if self.mode_config.show_favorite_teams_only else "all teams"
                             self.logger.info(f"Found {len(new_live_games)} live/halftime games for {filter_text}.")
                             for game_info in new_live_games: # Renamed game to game_info
                                 self.logger.info(f"  - {game_info['away_abbr']}@{game_info['home_abbr']} ({game_info.get('status_text', 'N/A')})")
                         else:
-                            filter_text = "favorite teams" if self.mode_config.get("show_favorite_teams_only", False) else "criteria"
+                            filter_text = "favorite teams" if self.mode_config.show_favorite_teams_only else "criteria"
                             self.logger.info(f"No live/halftime games found for {filter_text}.")
                         self.last_log_time = current_time_for_log
 

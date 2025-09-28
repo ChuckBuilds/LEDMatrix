@@ -48,16 +48,17 @@ class DisplayController:
         
         self.config_manager = ConfigManager()
         self.config = self.config_manager.load_config()
+        self.new_config, self.secrets_config = self.config_manager.load_new_config()
         self.cache_manager = CacheManager()
         logger.info("Config loaded in %.3f seconds", time.time() - start_time)
         
         config_time = time.time()
-        self.display_manager = DisplayManager(self.config)
+        self.display_manager = DisplayManager(self.new_config)
         logger.info("DisplayManager initialized in %.3f seconds", time.time() - config_time)
         
         # Initialize display modes
         init_time = time.time()
-        self.clock = Clock(self.display_manager, self.config) if self.config.get('clock', {}).get('enabled', True) else None
+        self.clock = Clock(self.display_manager, self.new_config) if self.new_config.clock.enabled else None
         self.weather = WeatherManager(self.config, self.display_manager) if self.config.get('weather', {}).get('enabled', False) else None
         self.stocks = StockManager(self.config, self.display_manager) if self.config.get('stocks', {}).get('enabled', False) else None
         self.news = StockNewsManager(self.config, self.display_manager) if self.config.get('stock_news', {}).get('enabled', False) else None
@@ -184,9 +185,9 @@ class DisplayController:
         nfl_display_modes = self.config.get('nfl_scoreboard', {}).get('display_modes', {})
         
         if nfl_enabled:
-            self.nfl_live = NFLLiveManager(self.config, self.display_manager, self.cache_manager) if nfl_display_modes.get('nfl_live', True) else None
-            self.nfl_recent = NFLRecentManager(self.config, self.display_manager, self.cache_manager) if nfl_display_modes.get('nfl_recent', True) else None
-            self.nfl_upcoming = NFLUpcomingManager(self.config, self.display_manager, self.cache_manager) if nfl_display_modes.get('nfl_upcoming', True) else None
+            self.nfl_live = NFLLiveManager(self.new_config, self.display_manager, self.cache_manager) if nfl_display_modes.get('nfl_live', True) else None
+            self.nfl_recent = NFLRecentManager(self.new_config, self.display_manager, self.cache_manager) if nfl_display_modes.get('nfl_recent', True) else None
+            self.nfl_upcoming = NFLUpcomingManager(self.new_config, self.display_manager, self.cache_manager) if nfl_display_modes.get('nfl_upcoming', True) else None
         else:
             self.nfl_live = None
             self.nfl_recent = None
