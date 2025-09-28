@@ -40,7 +40,7 @@ class BaseMLBManager(Baseball):
         self.show_odds = self.mlb_config.get("show_odds", False)
         self.favorite_teams = self.mlb_config.get('favorite_teams', [])
         self.show_records = self.mlb_config.get('show_records', False)
-        
+        self.league = "mlb"
         # Store reference to config instead of creating new ConfigManager
         self.config_manager = None  # Not used in this class
         self.odds_manager = OddsManager(self.cache_manager, self.config_manager)
@@ -82,58 +82,6 @@ class BaseMLBManager(Baseball):
             self.background_fetch_requests = {}
             self.background_enabled = False
             self.logger.info("[MLB] Background service disabled")
-
-    def _fetch_odds(self, game: Dict) -> None:
-        """Fetch odds for a game and attach it to the game dictionary."""
-        # Check if odds should be shown for this sport
-        if not self.show_odds:
-            return
-
-        # Check if we should only fetch for favorite teams
-        is_favorites_only = self.mlb_config.get("show_favorite_teams_only", False)
-        if is_favorites_only:
-            home_team = game.get('home_team')
-            away_team = game.get('away_team')
-            if not (home_team in self.favorite_teams or away_team in self.favorite_teams):
-                self.logger.debug(f"Skipping odds fetch for non-favorite game in favorites-only mode: {away_team}@{home_team}")
-                return
-
-        self.logger.debug(f"Proceeding with odds fetch for game: {game.get('id', 'N/A')}")
-            
-        # Skip if odds are already attached to this game
-        if 'odds' in game and game['odds']:
-            return
-        
-        try:
-            game_id = game.get('id', 'N/A')
-            self.logger.info(f"Requesting odds for game ID: {game_id}")
-            
-            odds_data = self.odds_manager.get_odds(
-                sport="baseball",
-                league="mlb",
-                event_id=game_id
-            )
-            if odds_data:
-                game['odds'] = odds_data
-                self.logger.info(f"Successfully attached odds to game {game_id}")
-                
-                # Check if the odds data has any non-null values
-                has_odds = False
-                if odds_data.get('spread') is not None:
-                    has_odds = True
-                if odds_data.get('home_team_odds', {}).get('spread_odds') is not None:
-                    has_odds = True
-                if odds_data.get('away_team_odds', {}).get('spread_odds') is not None:
-                    has_odds = True
-                
-                if not has_odds:
-                    self.logger.warning(f"Odds data returned for game {game_id} but all values are null")
-                else:
-                    self.logger.info(f"Found actual odds data for game {game_id}")
-            else:
-                self.logger.warning(f"No odds data returned for game {game_id}")
-        except Exception as e:
-            self.logger.error(f"Error fetching odds for game {game.get('id', 'N/A')}: {e}")
 
     def _get_team_logo(self, team_abbr: str) -> Optional[Image.Image]:
         """Get team logo from the configured directory."""

@@ -33,6 +33,8 @@ class SportsCore:
         self.display_height = self.display_manager.matrix.height
 
         self.sport_key = sport_key
+        self.sport = None
+        self.league = None
         
         # Initialize new architecture components (will be overridden by sport-specific classes)
         self.sport_config = None
@@ -302,110 +304,8 @@ class SportsCore:
         except Exception as e:
             self.logger.error(f"Error loading logo for {team_abbrev}: {e}", exc_info=True)
             return None
-        
-    def _fetch_data(self) -> Optional[Dict]:
-        """Fetch data using the new architecture components."""
-        try:
-            # Use the data source to fetch live games
-            live_games = self.data_source.fetch_live_games(self.sport_key, self.sport_key)
-            
-            if not live_games:
-                self.logger.debug(f"No live games found for {self.sport_key}")
-                return None
-            
-            # Use the API extractor to process each game
-            processed_games = []
-            for game_event in live_games:
-                game_details = self.api_extractor.extract_game_details(game_event)
-                if game_details:
-                    # Add sport-specific fields
-                    sport_fields = self.api_extractor.get_sport_specific_fields(game_event)
-                    game_details.update(sport_fields)
-                    
-                    # Fetch odds if enabled
-                    if self.show_odds:
-                        self._fetch_odds(game_details)
-                    
-                    processed_games.append(game_details)
-            
-            if processed_games:
-                self.logger.debug(f"Successfully processed {len(processed_games)} games for {self.sport_key}")
-                return {
-                    'games': processed_games,
-                    'sport': self.sport_key,
-                    'timestamp': time.time()
-                }
-            else:
-                self.logger.debug(f"No valid games processed for {self.sport_key}")
-                return None
-                
-        except Exception as e:
-            self.logger.error(f"Error fetching data for {self.sport_key}: {e}")
-            return None
 
-    def _get_partial_schedule_data(self, year: int) -> List[Dict]:
-        """Get schedule data using the new architecture components."""
-        try:
-            # Calculate date range for the year
-            start_date = datetime(year, 1, 1)
-            end_date = datetime(year, 12, 31)
-            
-            # Use the data source to fetch schedule
-            schedule_games = self.data_source.fetch_schedule(
-                self.sport_key, 
-                self.sport_key, 
-                (start_date, end_date)
-            )
-            
-            if not schedule_games:
-                self.logger.debug(f"No schedule data found for {self.sport_key} in {year}")
-                return []
-            
-            # Use the API extractor to process each game
-            processed_games = []
-            for game_event in schedule_games:
-                game_details = self.api_extractor.extract_game_details(game_event)
-                if game_details:
-                    # Add sport-specific fields
-                    sport_fields = self.api_extractor.get_sport_specific_fields(game_event)
-                    game_details.update(sport_fields)
-                    processed_games.append(game_details)
-            
-            self.logger.debug(f"Successfully processed {len(processed_games)} schedule games for {self.sport_key} in {year}")
-            return processed_games
-            
-        except Exception as e:
-            self.logger.error(f"Error fetching schedule data for {self.sport_key} in {year}: {e}")
-            return []
-
-    def _fetch_immediate_games(self) -> List[Dict]:
-        """Fetch immediate games using the new architecture components."""
-        try:
-            # Use the data source to fetch live games
-            live_games = self.data_source.fetch_live_games(self.sport_key, self.sport_key)
-            
-            if not live_games:
-                self.logger.debug(f"No immediate games found for {self.sport_key}")
-                return []
-            
-            # Use the API extractor to process each game
-            processed_games = []
-            for game_event in live_games:
-                game_details = self.api_extractor.extract_game_details(game_event)
-                if game_details:
-                    # Add sport-specific fields
-                    sport_fields = self.api_extractor.get_sport_specific_fields(game_event)
-                    game_details.update(sport_fields)
-                    processed_games.append(game_details)
-            
-            self.logger.debug(f"Successfully processed {len(processed_games)} immediate games for {self.sport_key}")
-            return processed_games
-            
-        except Exception as e:
-            self.logger.error(f"Error fetching immediate games for {self.sport_key}: {e}")
-            return []
-
-    def _fetch_game_odds(self, game: Dict) -> None:
+    def _fetch_odds(self, game: Dict) -> None:
         """Fetch odds for a specific game using the new architecture."""
         try:
             if not self.show_odds:
@@ -427,8 +327,8 @@ class SportsCore:
             
             # Fetch odds using OddsManager
             odds_data = self.odds_manager.get_odds(
-                sport=self.sport_key,
-                league=self.sport_key,
+                sport=self.sport,
+                league=self.league,
                 event_id=game['id'],
                 update_interval_seconds=update_interval
             )
@@ -441,61 +341,6 @@ class SportsCore:
                 
         except Exception as e:
             self.logger.error(f"Error fetching odds for game {game.get('id', 'N/A')}: {e}")
-
-    def _fetch_odds(self, game: Dict) -> None:
-        """Fetch odds for a specific game if conditions are met.
-        
-        This method should be overridden by sport-specific classes to provide
-        the correct sport and league parameters for odds fetching.
-        """
-        # Default implementation - should be overridden by sport-specific classes
-        self.logger.warning(f"_fetch_odds not implemented for sport: {self.sport_key}")
-        pass
-
-    def _fetch_odds_with_params(self, game: Dict, sport: str, league: str) -> None:
-        """Helper method to fetch odds with specific sport and league parameters.
-        
-        This method can be used by sport-specific classes to fetch odds with
-        the correct parameters.
-        """
-        # Check if odds should be shown for this sport
-        if not self.show_odds:
-            return
-
-        # Check if we should only fetch for favorite teams
-        is_favorites_only = self.mode_config.get("show_favorite_teams_only", False)
-        if is_favorites_only:
-            home_abbr = game.get('home_abbr')
-            away_abbr = game.get('away_abbr')
-            if not (home_abbr in self.favorite_teams or away_abbr in self.favorite_teams):
-                self.logger.debug(f"Skipping odds fetch for non-favorite game in favorites-only mode: {away_abbr}@{home_abbr}")
-                return
-
-        self.logger.debug(f"Proceeding with odds fetch for game: {game.get('id', 'N/A')}")
-        
-        # Fetch odds using OddsManager (ESPN API)
-        try:
-            # Determine update interval based on game state
-            is_live = game.get('status', '').lower() == 'in'
-            update_interval = self.mode_config.get("live_odds_update_interval", 60) if is_live \
-                else self.mode_config.get("odds_update_interval", 3600)
-
-            odds_data = self.odds_manager.get_odds(
-                sport=sport,
-                league=league,
-                event_id=game['id'],
-                update_interval_seconds=update_interval
-            )
-            
-            if odds_data:
-                game['odds'] = odds_data
-                self.logger.debug(f"Successfully fetched and attached odds for game {game['id']}")
-            else:
-                self.logger.debug(f"No odds data returned for game {game['id']}")
-
-        except Exception as e:
-            self.logger.error(f"Error fetching odds for game {game.get('id', 'N/A')}: {e}")
-            
 
     def _get_timezone(self):
         try:
@@ -516,7 +361,7 @@ class SportsCore:
         """Fetch team rankings using the new architecture components."""
         try:
             # Use the data source to fetch standings
-            standings_data = self.data_source.fetch_standings(self.sport_key, self.sport_key)
+            standings_data = self.data_source.fetch_standings(self.sport, self.league)
             
             if not standings_data:
                 self.logger.debug(f"No standings data found for {self.sport_key}")
@@ -631,25 +476,28 @@ class SportsCore:
     # def display(self, force_clear=False):
     #     pass
 
-    def _fetch_todays_games(self, sport: str, league: str) -> Optional[Dict]:
+    def _fetch_data(self) -> Optional[Dict]:
+        pass
+
+    def _fetch_todays_games(self) -> Optional[Dict]:
         """Fetch only today's games for live updates (not entire season)."""
         try:
             now = datetime.now()
             formatted_date = now.strftime("%Y%m%d")
             # Fetch todays games only
-            url = f"https://site.api.espn.com/apis/site/v2/sports/{sport}/{league}/scoreboard"
+            url = f"https://site.api.espn.com/apis/site/v2/sports/{self.sport}/{self.league}/scoreboard"
             response = self.session.get(url, params={"dates": formatted_date, "limit": 1000}, headers=self.headers, timeout=10)
             response.raise_for_status()
             data = response.json()
             events = data.get('events', [])
             
-            self.logger.info(f"Fetched {len(events)} todays games for {sport} - {league}")
+            self.logger.info(f"Fetched {len(events)} todays games for {self.sport} - {self.league}")
             return {'events': events}
         except requests.exceptions.RequestException as e:
-            self.logger.error(f"API error fetching todays games for {sport} - {league}: {e}")
+            self.logger.error(f"API error fetching todays games for {self.sport} - {self.league}: {e}")
             return None
         
-    def _get_weeks_data(self, sport: str, league: str) -> Optional[Dict]:
+    def _get_weeks_data(self) -> Optional[Dict]:
         """
         Get partial data for immediate display while background fetch is in progress.
         This fetches current/recent games only for quick response.
@@ -662,7 +510,7 @@ class SportsCore:
             start_date = now + timedelta(weeks=-2)
             end_date = now + timedelta(weeks=1)
             date_str = f"{start_date.strftime('%Y%m%d')}-{end_date.strftime('%Y%m%d')}"
-            url = f"https://site.api.espn.com/apis/site/v2/sports/{sport}/{league}/scoreboard"
+            url = f"https://site.api.espn.com/apis/site/v2/sports/{self.sport}/{self.league}/scoreboard"
             response = self.session.get(url, params={"dates": date_str, "limit": 1000},headers=self.headers, timeout=10)
             response.raise_for_status()
             data = response.json()
@@ -673,7 +521,7 @@ class SportsCore:
                 return {'events': immediate_events}
                 
         except requests.exceptions.RequestException as e:
-            self.logger.warning(f"Error fetching this weeks games for {sport} - {league} - {date_str}: {e}")
+            self.logger.warning(f"Error fetching this weeks games for {self.sport} - {self.league} - {date_str}: {e}")
         return None
 
 class SportsUpcoming(SportsCore):
@@ -738,7 +586,7 @@ class SportsUpcoming(SportsCore):
                         game['away_abbr'] in self.favorite_teams):
                         favorite_games_found += 1
                     if self.show_odds:
-                        self._fetch_game_odds(game)
+                        self._fetch_odds(game)
 
             # Enhanced logging for debugging
             self.logger.info(f"Found {all_upcoming_games} total upcoming games in data")

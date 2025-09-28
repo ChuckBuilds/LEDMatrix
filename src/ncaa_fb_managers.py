@@ -37,7 +37,7 @@ class BaseNCAAFBManager(Football): # Renamed class
         self.recent_enabled = display_modes.get("ncaa_fb_recent", False)
         self.upcoming_enabled = display_modes.get("ncaa_fb_upcoming", False)
         self.live_enabled = display_modes.get("ncaa_fb_live", False)
-
+        self.league = "college-football"
 
         self.logger.info(f"Initialized NCAAFB manager with display dimensions: {self.display_width}x{self.display_height}")
         self.logger.info(f"Logo directory: {self.logo_dir}")
@@ -159,7 +159,7 @@ class BaseNCAAFBManager(Football): # Renamed class
         self.background_fetch_requests[season_year] = request_id
         
         # For immediate response, try to get partial data
-        partial_data = self._get_weeks_data("college-football")
+        partial_data = self._get_weeks_data()
         if partial_data:
             return partial_data
         return None
@@ -191,13 +191,9 @@ class BaseNCAAFBManager(Football): # Renamed class
     def _fetch_data(self) -> Optional[Dict]:
         """Fetch data using shared data mechanism or direct fetch for live."""
         if isinstance(self, NCAAFBLiveManager):
-            return self._fetch_todays_games("college-football")
+            return self._fetch_todays_games()
         else:
             return self._fetch_ncaa_fb_api_data(use_cache=True)
-
-
-    def _fetch_odds(self, game: Dict) -> None:
-        super()._fetch_odds_with_params(game, "football", "college-football")
 
 class NCAAFBLiveManager(BaseNCAAFBManager, FootballLive): # Renamed class
     """Manager for live NCAA FB games.""" # Updated docstring

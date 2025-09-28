@@ -38,10 +38,7 @@ class BaseNFLManager(Football): # Renamed class
         self.logger.info(f"Initialized NFL manager with display dimensions: {self.display_width}x{self.display_height}")
         self.logger.info(f"Logo directory: {self.logo_dir}")
         self.logger.info(f"Display modes - Recent: {self.recent_enabled}, Upcoming: {self.upcoming_enabled}, Live: {self.live_enabled}")
-
-
-    def _fetch_odds(self, game: Dict) -> None:
-        super()._fetch_odds_with_params(game, "football", "nfl")
+        self.league = "nfl"
     
     def _fetch_nfl_api_data(self, use_cache: bool = True) -> Optional[Dict]:
         """
@@ -114,7 +111,7 @@ class BaseNFLManager(Football): # Renamed class
         self.background_fetch_requests[season_year] = request_id
         
         # For immediate response, try to get partial data
-        partial_data = self._get_weeks_data("nfl")
+        partial_data = self._get_weeks_data()
         if partial_data:
             return partial_data
         
@@ -148,7 +145,7 @@ class BaseNFLManager(Football): # Renamed class
         """Fetch data using shared data mechanism or direct fetch for live."""
         if isinstance(self, NFLLiveManager):
             # Live games should fetch only current games, not entire season
-            return self._fetch_todays_games("nfl")
+            return self._fetch_todays_games()
         else:
             # Recent and Upcoming managers should use cached season data
             return self._fetch_nfl_api_data(use_cache=True)

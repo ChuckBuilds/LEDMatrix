@@ -42,6 +42,7 @@ class BaseNCAAMHockeyManager(Hockey): # Renamed class
         self.recent_enabled = display_modes.get("ncaam_hockey_recent", False)
         self.upcoming_enabled = display_modes.get("ncaam_hockey_upcoming", False)
         self.live_enabled = display_modes.get("ncaam_hockey_live", False)
+        self.league = "mens-college-hockey"
 
         self.logger.info(f"Initialized NCAAMHockey manager with display dimensions: {self.display_width}x{self.display_height}")
         self.logger.info(f"Logo directory: {self.logo_dir}")
@@ -103,9 +104,6 @@ class BaseNCAAMHockeyManager(Hockey): # Renamed class
             self._last_warning_time = current_time
             return True
         return False
-
-    def _fetch_odds(self, game: Dict) -> None:
-        super()._fetch_odds_with_params(game, "hockey", "mens-college-hockey")
     
     def _fetch_ncaa_fb_api_data(self, use_cache: bool = True) -> Optional[Dict]:
         """

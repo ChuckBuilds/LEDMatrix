@@ -65,8 +65,10 @@ class ESPNDataSource(DataSource):
     def fetch_live_games(self, sport: str, league: str) -> List[Dict]:
         """Fetch live games from ESPN API."""
         try:
+            now = datetime.now()
+            formatted_date = now.strftime("%Y%m%d")
             url = f"{self.base_url}/{sport}/{league}/scoreboard"
-            response = self.session.get(url, headers=self.get_headers(), timeout=15)
+            response = self.session.get(url, params={"dates": formatted_date, "limit": 1000}, headers=self.get_headers(), timeout=15)
             response.raise_for_status()
             
             data = response.json()
@@ -90,7 +92,8 @@ class ESPNDataSource(DataSource):
             url = f"{self.base_url}/{sport}/{league}/scoreboard"
             
             params = {
-                'dates': f"{start_date.strftime('%Y%m%d')}-{end_date.strftime('%Y%m%d')}"
+                'dates': f"{start_date.strftime('%Y%m%d')}-{end_date.strftime('%Y%m%d')}",
+                "limit": 1000
             }
             
             response = self.session.get(url, headers=self.get_headers(), params=params, timeout=15)

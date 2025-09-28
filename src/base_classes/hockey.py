@@ -12,38 +12,13 @@ from src.base_classes.data_sources import ESPNDataSource
 class Hockey(SportsCore):
     """Base class for hockey sports with common functionality."""
     
-    # Hockey sport configuration (moved from sport_configs.py)
-    SPORT_CONFIG = {
-        'update_cadence': 'daily',
-        'season_length': 82,  # NHL default
-        'games_per_week': 3,
-        'api_endpoints': ['scoreboard', 'standings'],
-        'sport_specific_fields': ['period', 'power_play', 'penalties', 'shots_on_goal'],
-        'update_interval_seconds': 30,
-        'logo_dir': 'assets/sports/nhl_logos',
-        'show_records': True,
-        'show_ranking': True,
-        'show_odds': True,
-        'data_source_type': 'espn',
-        'api_base_url': 'https://site.api.espn.com/apis/site/v2/sports/hockey'
-    }
-    
     def __init__(self, config: Dict[str, Any], display_manager: DisplayManager, cache_manager: CacheManager, logger: logging.Logger, sport_key: str):
         super().__init__(config, display_manager, cache_manager, logger, sport_key)
         
         # Initialize hockey-specific architecture components
-        self.sport_config = self.get_sport_config()
         self.api_extractor = ESPNHockeyExtractor(logger)
         self.data_source = ESPNDataSource(logger)
-    
-    def get_sport_config(self) -> Dict[str, Any]:
-        """Get hockey sport configuration."""
-        return self.SPORT_CONFIG.copy()
-
-    def _fetch_odds(self, game: Dict) -> None:
-        # Hockey base class - should be overridden by specific leagues (NHL, NCAA Hockey)
-        self.logger.warning(f"_fetch_odds not implemented for hockey sport: {self.sport_key}")
-        pass
+        self.sport = "hockey"
 
 
     def _extract_game_details(self, game_event: Dict) -> Optional[Dict]:

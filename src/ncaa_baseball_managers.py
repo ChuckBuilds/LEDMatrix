@@ -34,7 +34,8 @@ class BaseNCAABaseballManager(Baseball):
         self.show_odds = self.ncaa_baseball_config.get('show_odds', False)
         self.show_records = self.ncaa_baseball_config.get('show_records', False)
         self.favorite_teams = self.ncaa_baseball_config.get('favorite_teams', [])
-        
+        self.league = "college-baseball"
+
         # Store reference to config instead of creating new ConfigManager
         self.config_manager = None  # Not used in this class
         self.odds_manager = OddsManager(self.cache_manager, self.config_manager)
@@ -62,34 +63,6 @@ class BaseNCAABaseballManager(Baseball):
         self.headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
         }
-
-    def _fetch_odds(self, game: Dict) -> None:
-        """Fetch odds for a game and attach it to the game dictionary."""
-        # Check if odds should be shown for this sport
-        if not self.show_odds:
-            return
-
-        # Check if we should only fetch for favorite teams
-        is_favorites_only = self.ncaa_baseball_config.get("show_favorite_teams_only", False)
-        if is_favorites_only:
-            home_team = game.get('home_team')
-            away_team = game.get('away_team')
-            if not (home_team in self.favorite_teams or away_team in self.favorite_teams):
-                self.logger.debug(f"Skipping odds fetch for non-favorite game in favorites-only mode: {away_team}@{home_team}")
-                return
-
-        self.logger.debug(f"Proceeding with odds fetch for game: {game.get('id', 'N/A')}")
-        
-        try:
-            odds_data = self.odds_manager.get_odds(
-                sport="baseball",
-                league="college-baseball",
-                event_id=game["id"]
-            )
-            if odds_data:
-                game['odds'] = odds_data
-        except Exception as e:
-            self.logger.error(f"Error fetching odds for game {game.get('id', 'N/A')}: {e}")
 
     def _get_team_logo(self, team_abbr: str) -> Optional[Image.Image]:
         """Get team logo from the configured directory or generate a fallback."""

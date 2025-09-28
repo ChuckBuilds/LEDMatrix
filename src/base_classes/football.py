@@ -14,41 +14,13 @@ import requests
 class Football(SportsCore):
     """Base class for football sports with common functionality."""
     
-    # Football sport configuration (moved from sport_configs.py)
-    SPORT_CONFIG = {
-        'update_cadence': 'weekly',
-        'season_length': 17,  # NFL default
-        'games_per_week': 1,
-        'api_endpoints': ['scoreboard', 'standings'],
-        'sport_specific_fields': ['down', 'distance', 'possession', 'timeouts', 'is_redzone'],
-        'update_interval_seconds': 60,
-        'logo_dir': 'assets/sports/nfl_logos',
-        'show_records': True,
-        'show_ranking': True,
-        'show_odds': True,
-        'data_source_type': 'espn',
-        'api_base_url': 'https://site.api.espn.com/apis/site/v2/sports/football'
-    }
-    
     def __init__(self, config: Dict[str, Any], display_manager: DisplayManager, cache_manager: CacheManager, logger: logging.Logger, sport_key: str):
         super().__init__(config, display_manager, cache_manager, logger, sport_key)
         
         # Initialize football-specific architecture components
-        self.sport_config = self.get_sport_config()
         self.api_extractor = ESPNFootballExtractor(logger)
         self.data_source = ESPNDataSource(logger)
-    
-    def get_sport_config(self) -> Dict[str, Any]:
-        """Get football sport configuration."""
-        return self.SPORT_CONFIG.copy()
-
-    def _fetch_game_odds(self, _: Dict) -> None:
-        pass
-
-    def _fetch_odds(self, game: Dict) -> None:
-        # Football base class - should be overridden by specific leagues (NFL, NCAA FB)
-        self.logger.warning(f"_fetch_odds not implemented for football sport: {self.sport_key}")
-        pass
+        self.sport = "football"
 
     def _extract_game_details(self, game_event: Dict) -> Optional[Dict]:
         """Extract relevant game details from ESPN NCAA FB API response."""
@@ -124,13 +96,6 @@ class Football(SportsCore):
             elif status["type"]["state"] == "pre":
                 period_text = details.get("game_time", "") # Show time for upcoming
 
-            # Timeouts (assuming max 3 per half, not carried over well in standard API)
-            # API often provides 'timeouts' directly under team, but reset logic is tricky
-            # We might need to simplify this or just use a fixed display if API is unreliable
-            # For upcoming games, we'll show based on number of games, not time window
-            # For recent games, we'll show based on number of games, not time window
-            is_within_window = True  # Always include games, let the managers filter by count
-
             details.update({
                 "period": period,
                 "period_text": period_text, # Formatted quarter/status
@@ -157,16 +122,16 @@ class Football(SportsCore):
             logging.error(f"Error extracting game details: {e} from event: {game_event.get('id')}", exc_info=True)
             return None
 
-    def _fetch_todays_games(self, league: str) -> Optional[Dict]:
-        """Fetch only today's games for live updates (not entire season)."""
-        return super()._fetch_todays_games("football", league)
+    # def _fetch_todays_games(self, league: str) -> Optional[Dict]:
+    #     """Fetch only today's games for live updates (not entire season)."""
+    #     return super()._fetch_todays_games("football", league)
         
-    def _get_weeks_data(self, league: str) -> Optional[Dict]:
-        """
-        Get partial data for immediate display while background fetch is in progress.
-        This fetches current/recent games only for quick response.
-        """
-        return super()._get_weeks_data("football", league)
+    # def _get_weeks_data(self, league: str) -> Optional[Dict]:
+    #     """
+    #     Get partial data for immediate display while background fetch is in progress.
+    #     This fetches current/recent games only for quick response.
+    #     """
+    #     return super()._get_weeks_data("football", league)
 
 class FootballLive(Football):
     def __init__(self, config: Dict[str, Any], display_manager: DisplayManager, cache_manager: CacheManager, logger: logging.Logger, sport_key: str):
@@ -252,21 +217,19 @@ class FootballLive(Football):
                 data = self._fetch_data()
                 new_live_games = []
                 if data and "events" in data:
-                    for event in data["events"]:
-                        details = self._extract_game_details(event)
+                    for game in data["events"]:
+                        details = self._extract_game_details(game)
                         if details and (details["is_live"] or details["is_halftime"]):
                             # If show_favorite_teams_only is true, only add if it's a favorite.
                             # Otherwise, add all games.
                             if self.mode_config.get("show_favorite_teams_only", False):
                                 if details["home_abbr"] in self.favorite_teams or details["away_abbr"] in self.favorite_teams:
-                                    if self.show_odds:
-                                        self._fetch_game_odds(details)
                                     new_live_games.append(details)
                             else:
-                                if self.show_odds:
-                                    self._fetch_game_odds(details)
                                 new_live_games.append(details)
-
+                    for game in new_live_games:
+                        if self.show_odds:
+                            self._fetch_odds(game)
                     # Log changes or periodically
                     current_time_for_log = time.time() # Use a consistent time for logging comparison
                     should_log = (
