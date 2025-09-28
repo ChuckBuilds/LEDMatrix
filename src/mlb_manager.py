@@ -15,8 +15,8 @@ from src.odds_manager import OddsManager
 from src.background_data_service import get_background_service
 
 # Import baseball and standard sports classes
-from .base_classes.baseball import Baseball, BaseballLive
-from .base_classes.sports import SportsRecent, SportsUpcoming
+from src.base_classes.baseball import Baseball, BaseballLive
+from src.base_classes.sports import SportsRecent, SportsUpcoming
 
 # Import the API counter function from web interface
 try:
