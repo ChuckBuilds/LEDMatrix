@@ -54,6 +54,7 @@ class SportsCore:
             "recent_games_to_show", 5)  # Show last 5 games
         self.upcoming_games_to_show = self.mode_config.get(
             "upcoming_games_to_show", 10)  # Show next 10 games
+        self.show_favorite_teams_only = self.mode_config.get("show_favorite_teams_only", False)
 
         self.session = requests.Session()
         retry_strategy = Retry(
@@ -314,8 +315,7 @@ class SportsCore:
                 return
             
             # Check if we should only fetch for favorite teams
-            is_favorites_only = self.mode_config.get("show_favorite_teams_only", False)
-            if is_favorites_only:
+            if self.show_favorite_teams_only:
                 home_abbr = game.get('home_abbr')
                 away_abbr = game.get('away_abbr')
                 if not (home_abbr in self.favorite_teams or away_abbr in self.favorite_teams):
@@ -594,7 +594,7 @@ class SportsUpcoming(SportsCore):
                 # Filter criteria: must be upcoming ('pre' state)
                 if game and game['is_upcoming']:
                     # Only fetch odds for games that will be displayed
-                    if self.mode_config.get("show_favorite_teams_only", False):
+                    if self.show_favorite_teams_only:
                         if not self.favorite_teams:
                             continue
                         if game['home_abbr'] not in self.favorite_teams and game['away_abbr'] not in self.favorite_teams:
@@ -652,7 +652,7 @@ class SportsUpcoming(SportsCore):
                 self.logger.info(f"Found {favorite_games_found} favorite team upcoming games")
 
             # Filter for favorite teams only if the config is set
-            if self.mode_config.get("show_favorite_teams_only", False):
+            if self.show_favorite_teams_only:
                 # Get all games involving favorite teams
                 favorite_team_games = [game for game in processed_games
                                       if game['home_abbr'] in self.favorite_teams or

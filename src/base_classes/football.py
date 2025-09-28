@@ -211,7 +211,7 @@ class FootballLive(Football):
                         if details and (details["is_live"] or details["is_halftime"]):
                             # If show_favorite_teams_only is true, only add if it's a favorite.
                             # Otherwise, add all games.
-                            if self.mode_config.get("show_favorite_teams_only", False):
+                            if self.show_favorite_teams_only:
                                 if details["home_abbr"] in self.favorite_teams or details["away_abbr"] in self.favorite_teams:
                                     new_live_games.append(details)
                             else:
@@ -230,12 +230,12 @@ class FootballLive(Football):
 
                     if should_log:
                         if new_live_games:
-                            filter_text = "favorite teams" if self.mode_config.get("show_favorite_teams_only", False) else "all teams"
+                            filter_text = "favorite teams" if self.show_favorite_teams_only else "all teams"
                             self.logger.info(f"Found {len(new_live_games)} live/halftime games for {filter_text}.")
                             for game_info in new_live_games: # Renamed game to game_info
                                 self.logger.info(f"  - {game_info['away_abbr']}@{game_info['home_abbr']} ({game_info.get('status_text', 'N/A')})")
                         else:
-                            filter_text = "favorite teams" if self.mode_config.get("show_favorite_teams_only", False) else "criteria"
+                            filter_text = "favorite teams" if self.show_favorite_teams_only else "criteria"
                             self.logger.info(f"No live/halftime games found for {filter_text}.")
                         self.last_log_time = current_time_for_log
 

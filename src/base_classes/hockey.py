@@ -141,7 +141,7 @@ class HockeyLive(Hockey):
                             new_live_games.append(details)
                     
                     # Filter for favorite teams only if the config is set
-                    if self.mode_config.get("show_favorite_teams_only", False):
+                    if self.show_favorite_teams_only:
                         new_live_games = [game for game in new_live_games 
                                          if game['home_abbr'] in self.favorite_teams or 
                                             game['away_abbr'] in self.favorite_teams]
@@ -155,12 +155,12 @@ class HockeyLive(Hockey):
                     
                     if should_log:
                         if new_live_games:
-                            filter_text = "favorite teams" if self.mode_config.get("show_favorite_teams_only", False) else "all teams"
+                            filter_text = "favorite teams" if self.show_favorite_teams_only else "all teams"
                             self.logger.info(f"[NCAAMH] Found {len(new_live_games)} live games involving {filter_text}")
                             for game in new_live_games:
                                 self.logger.info(f"[NCAAMH] Live game: {game['away_abbr']} vs {game['home_abbr']} - Period {game['period']}, {game['clock']}")
                         else:
-                            filter_text = "favorite teams" if self.mode_config.get("show_favorite_teams_only", False) else "criteria"
+                            filter_text = "favorite teams" if self.show_favorite_teams_only else "criteria"
                             self.logger.info(f"[NCAAMH] No live games found matching {filter_text}")
                         self.last_log_time = current_time
                     
