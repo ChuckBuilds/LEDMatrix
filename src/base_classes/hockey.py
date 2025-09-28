@@ -30,11 +30,20 @@ class Hockey(SportsCore):
         try:
             competition = game_event["competitions"][0]
             status = competition["status"]
+            powerplay = false
+            penalties = ""
+            shots_on_goal = {"home": 0, "away": 0}
 
             if situation and status["type"]["state"] == "in":
                 # Detect scoring events from status detail
                 status_detail = status["type"].get("detail", "").lower()
                 status_short = status["type"].get("shortDetail", "").lower()
+                powerplay = situation.get("isPowerPlay", False)
+                penalties = situation.get("penalties", "")
+                shots_on_goal = {
+                    "home": situation.get("homeShots", 0),
+                    "away": situation.get("awayShots", 0)
+                }
 
             # Format period/quarter
             period = status.get("period", 0)
@@ -56,7 +65,10 @@ class Hockey(SportsCore):
             details.update({
                 "period": period,
                 "period_text": period_text, # Formatted quarter/status
-                "clock": status.get("displayClock", "0:00")
+                "clock": status.get("displayClock", "0:00"),
+                "power_play": powerplay,
+                "penalties": penalties,
+                "shots_on_goal": shots_on_goal
             })
 
             # Basic validation (can be expanded)
