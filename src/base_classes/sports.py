@@ -259,8 +259,10 @@ class SportsCore:
 
     def _load_and_resize_logo(self, team_id: str, team_abbrev: str, logo_path: Path, logo_url: str | None ) -> Optional[Image.Image]:
         """Load and resize a team logo, with caching and automatic download if missing."""
-
         self.logger.debug(f"Logo path: {logo_path}")
+        if team_abbrev in self._logo_cache:
+            self.logger.debug(f"Using cached logo for {team_abbrev}")
+            return self._logo_cache[team_abbrev]
 
         try:
             # Try different filename variations first (for cases like TA&M vs TAANDM)
