@@ -760,6 +760,7 @@ class NHLRecentManager(BaseNHLManager):
     def __init__(self, config: Dict[str, Any], display_manager: DisplayManager, cache_manager: CacheManager):
         super().__init__(config, display_manager, cache_manager)
         self.recent_games = []
+        self.games_list = []  # Filtered list for display (favorite teams)
         self.current_game_index = 0
         self.last_update = 0
         self.update_interval = self.nhl_config.get("recent_update_interval", 3600)  # Use config, default 1 hour
