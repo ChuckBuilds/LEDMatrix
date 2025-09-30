@@ -1,0 +1,38 @@
+---
+globs: *.py
+---
+
+# Python Coding Standards
+
+## Code Quality Principles
+- **Simplicity First**: Prefer clear, readable code over clever optimizations
+- **Explicit over Implicit**: Make intentions clear through naming and structure
+- **Fail Fast**: Validate inputs and handle errors early
+- **Documentation**: Use docstrings for classes and complex functions
+
+## Naming Conventions
+- **Classes**: PascalCase (e.g., `NHLRecentManager`)
+- **Functions/Variables**: snake_case (e.g., `fetch_game_data`)
+- **Constants**: UPPER_SNAKE_CASE (e.g., `ESPN_NHL_SCOREBOARD_URL`)
+- **Private methods**: Leading underscore (e.g., `_fetch_data`)
+
+## Error Handling
+- **Logging**: Use structured logging with context (e.g., `[NHL Recent]`)
+- **Exceptions**: Catch specific exceptions, not bare `except:`
+- **User-friendly messages**: Explain what went wrong and potential solutions
+- **Graceful degradation**: Continue operation when non-critical features fail
+
+## Manager Pattern
+All sports managers should follow this structure:
+```python
+class BaseManager:
+    def __init__(self, config, display_manager, cache_manager)
+    def update(self)  # Fetch and process data
+    def display(self, force_clear=False)  # Render to display
+```
+
+## Configuration Management
+- **Type hints**: Use for function parameters and return values
+- **Configuration validation**: Check required fields on initialization
+- **Default values**: Provide sensible defaults in code, not config
+- **Environment awareness**: Handle different deployment contexts

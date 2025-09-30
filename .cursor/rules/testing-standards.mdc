@@ -1,0 +1,51 @@
+---
+globs: test/*.py,src/*.py
+---
+
+# Testing Standards
+
+## Test Organization
+- **Test directory**: [test/](mdc:test/) - All test files
+- **Unit tests**: Test individual components in isolation
+- **Integration tests**: Test component interactions
+- **Hardware tests**: Validate on Raspberry Pi with actual LED matrix
+
+## Testing Principles
+- **Test behavior, not implementation**: Focus on what the code does, not how
+- **Mock external dependencies**: Use mocks for APIs, display managers, cache
+- **Test edge cases**: Empty data, API failures, configuration errors
+- **Pi-specific testing**: Validate hardware integration
+
+## Test Structure
+```python
+def test_manager_initialization():
+    """Test that manager initializes with valid config"""
+    config = {"sport_scoreboard": {"enabled": True}}
+    manager = ManagerClass(config, mock_display, mock_cache)
+    assert manager.enabled == True
+
+def test_api_failure_handling():
+    """Test graceful handling of API failures"""
+    # Test that system continues when API fails
+    # Verify fallback to cached data
+    # Check appropriate error logging
+```
+
+## Mock Patterns
+- **Display Manager**: Mock for testing without hardware
+- **Cache Manager**: Mock for testing data persistence
+- **API responses**: Mock for consistent test data
+- **Configuration**: Use test-specific configs
+
+## Test Categories
+- **Unit tests**: Individual manager methods
+- **Integration tests**: Manager interactions with services
+- **Configuration tests**: Validate config loading and validation
+- **Error handling tests**: API failures, invalid data, edge cases
+
+## Testing Best Practices
+- **Descriptive names**: Test names should explain what they test
+- **Single responsibility**: Each test should verify one thing
+- **Independent tests**: Tests should not depend on each other
+- **Clean setup/teardown**: Reset state between tests
+- **Pi compatibility**: Ensure tests work in Pi environment

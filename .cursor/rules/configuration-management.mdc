@@ -1,0 +1,42 @@
+---
+globs: config/*.json,src/*.py
+---
+
+# Configuration Management
+
+## Configuration Structure
+- **Main config**: [config/config.json](mdc:config/config.json) - Primary configuration
+- **Secrets**: [config/config_secrets.json](mdc:config/config_secrets.json) - API keys and sensitive data
+- **Templates**: [config/config.template.json](mdc:config/config.template.json) - Default values
+
+## Configuration Principles
+- **Validation**: Check required fields and data types on startup
+- **Defaults**: Provide sensible defaults in code, not just config
+- **Environment awareness**: Handle development vs production differences
+- **Security**: Never commit secrets to version control
+
+## Manager Configuration Pattern
+```python
+def __init__(self, config, display_manager, cache_manager):
+    self.mode_config = config.get("sport_scoreboard", {})
+    self.favorite_teams = self.mode_config.get("favorite_teams", [])
+    self.show_favorite_only = self.mode_config.get("show_favorite_teams_only", False)
+```
+
+## Required Configuration Sections
+- **Display settings**: Update intervals, display durations
+- **API settings**: Timeouts, retry logic, rate limiting
+- **Background service**: Threading, caching, priority settings
+- **Team preferences**: Favorite teams, filtering options
+
+## Configuration Validation
+- **Type checking**: Ensure numeric values are numbers, lists are lists
+- **Range validation**: Check that intervals are reasonable
+- **Dependency checking**: Verify required services are available
+- **Fallback values**: Provide defaults when config is missing or invalid
+
+## Best Practices
+- **Documentation**: Comment complex configuration options
+- **Examples**: Provide working examples in templates
+- **Migration**: Handle configuration changes between versions
+- **Testing**: Validate configuration in test environments

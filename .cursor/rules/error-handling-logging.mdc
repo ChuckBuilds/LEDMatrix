@@ -1,0 +1,50 @@
+---
+globs: src/*.py
+---
+
+# Error Handling and Logging
+
+## Logging Standards
+- **Structured prefixes**: Use consistent tags like `[NHL Recent]`, `[NFL Live]`
+- **Context information**: Include relevant details (team names, game status, dates)
+- **Appropriate levels**: 
+  - `info`: Normal operations and status updates
+  - `debug`: Detailed information for troubleshooting
+  - `warning`: Non-critical issues that should be noted
+  - `error`: Problems that need attention
+
+## Error Handling Patterns
+```python
+try:
+    data = self._fetch_data()
+    if not data or 'events' not in data:
+        self.logger.warning("[Manager] No events found in API response")
+        return
+except requests.exceptions.RequestException as e:
+    self.logger.error(f"[Manager] API error: {e}")
+    return None
+```
+
+## User-Friendly Messages
+- **Explain the situation**: "No games available during off-season"
+- **Provide context**: "NHL season typically runs October-June"
+- **Suggest solutions**: "Check back when season starts"
+- **Distinguish issues**: API problems vs no data vs filtering results
+
+## Graceful Degradation
+- **Fallback content**: Show alternative games when favorites unavailable
+- **Cached data**: Use cached data when API fails
+- **Service continuity**: Continue operation when non-critical features fail
+- **Clear communication**: Explain what's happening to users
+
+## Debugging Support
+- **Comprehensive logging**: Log API responses, filtering results, display updates
+- **State tracking**: Log current state and transitions
+- **Performance monitoring**: Track timing and resource usage
+- **Error context**: Include stack traces for debugging
+
+## Off-Season Awareness
+- **Seasonal messaging**: Different messages for different times of year
+- **Helpful context**: Explain why no games are available
+- **Future planning**: Mention when season starts
+- **Realistic expectations**: Set appropriate expectations during off-season

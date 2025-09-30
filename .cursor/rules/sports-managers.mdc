@@ -1,0 +1,42 @@
+---
+globs: src/*_managers.py
+---
+
+# Sports Manager Development
+
+## Manager Architecture
+All sports managers inherit from base classes and follow consistent patterns:
+- **Base classes**: [src/nhl_managers.py](mdc:src/nhl_managers.py), [src/nfl_managers.py](mdc:src/nfl_managers.py)
+- **Common functionality**: Data fetching, caching, display rendering
+- **Configuration-driven**: Behavior controlled via config sections
+
+## Required Methods
+```python
+def __init__(self, config, display_manager, cache_manager)
+def update(self)  # Fetch fresh data
+def display(self, force_clear=False)  # Render current data
+```
+
+## Data Flow Pattern
+1. **Fetch**: Get data from API (with caching)
+2. **Process**: Extract relevant game information
+3. **Filter**: Apply favorite team preferences
+4. **Display**: Render to LED matrix
+
+## Logging Standards
+- **Structured prefixes**: `[NHL Recent]`, `[NFL Live]`, etc.
+- **Context information**: Include team names, game status, dates
+- **Debug levels**: Use appropriate log levels (info, debug, warning, error)
+- **User-friendly messages**: Explain what's happening and why
+
+## Error Handling
+- **API failures**: Log and continue with cached data if available
+- **No data scenarios**: Distinguish between API issues vs no games available
+- **Off-season awareness**: Provide helpful context during non-active periods
+- **Fallback behavior**: Show alternative content when preferred content unavailable
+
+## Configuration Integration
+- **Required settings**: Validate on initialization
+- **Optional settings**: Provide sensible defaults
+- **Background service**: Use for non-blocking data fetching
+- **Caching strategy**: Implement intelligent cache management

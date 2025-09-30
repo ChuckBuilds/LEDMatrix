@@ -1,0 +1,51 @@
+---
+alwaysApply: true
+---
+
+# Git Workflow and Branching
+
+## Branch Naming Conventions
+- **Features**: `feature/description-of-feature` (e.g., `feature/weather-forecast-improvements`)
+- **Bug fixes**: `fix/description-of-bug` (e.g., `fix/nhl-manager-improvements`)
+- **Hotfixes**: `hotfix/critical-issue-description`
+- **Refactoring**: `refactor/description-of-refactor`
+
+## Commit Message Format
+```
+type(scope): description
+
+[optional body]
+
+[optional footer]
+```
+
+**Types**: feat, fix, docs, style, refactor, test, chore
+**Examples**:
+- `feat(nhl): Add enhanced logging for data visibility`
+- `fix(display): Resolve rendering performance issue`
+- `docs(api): Update ESPN API integration guide`
+
+## Pull Request Guidelines
+- **Self-review**: Review your own PR before requesting review
+- **Testing**: Test thoroughly on Raspberry Pi hardware
+- **Documentation**: Update relevant documentation if needed
+- **Clean history**: Squash commits if necessary for clean history
+
+## Code Review Checklist
+- **Code Quality**: Proper error handling, logging, type hints
+- **Architecture**: Follows project patterns, doesn't break existing functionality
+- **Performance**: No negative impact on display performance
+- **Testing**: Works on Raspberry Pi hardware
+- **Documentation**: Comments added for complex logic
+
+## Merge Strategies
+- **Squash and Merge**: Preferred for feature branches and bug fixes
+- **Merge Commit**: For complex features with multiple logical commits
+- **Rebase and Merge**: For simple, single-commit changes
+
+## Best Practices
+- **Keep branches small and focused**
+- **Commit frequently with meaningful messages**
+- **Update branch regularly with main**
+- **Test changes incrementally**
+- **Delete feature branches after merge**

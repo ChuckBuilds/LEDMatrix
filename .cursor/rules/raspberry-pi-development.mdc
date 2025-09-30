@@ -1,0 +1,41 @@
+---
+alwaysApply: true
+---
+
+# Raspberry Pi Development Guidelines
+
+## Hardware Constraints
+- **Pi-only execution**: Code must run on Raspberry Pi, not Windows development machine
+- **LED matrix library**: Uses [rpi-rgb-led-matrix-master/](mdc:rpi-rgb-led-matrix-master/) for hardware control
+- **Memory limitations**: Optimize for Pi's limited RAM
+- **Performance**: Consider Pi's CPU capabilities in design
+
+## Development Workflow
+- **Local development**: Write and test code on Windows
+- **Pi deployment**: Deploy and test on actual Pi hardware
+- **SSH access**: Use SSH for Pi-based testing and debugging
+- **Service management**: Use systemd services for production deployment
+
+## Testing Strategy
+- **Unit tests**: Test logic without hardware dependencies
+- **Integration tests**: Test with mock display managers
+- **Hardware tests**: Validate on actual Pi with LED matrix
+- **Performance tests**: Monitor memory and CPU usage
+
+## Deployment Considerations
+- **Service files**: [ledmatrix.service](mdc:ledmatrix.service), [ledmatrix-web.service](mdc:ledmatrix-web.service)
+- **Installation scripts**: [first_time_install.sh](mdc:first_time_install.sh), [install_service.sh](mdc:install_service.sh)
+- **Dependencies**: [requirements.txt](mdc:requirements.txt) for Pi environment
+- **Permissions**: Handle file permissions for Pi user
+
+## Performance Optimization
+- **Caching**: Use [src/cache_manager.py](mdc:src/cache_manager.py) for data persistence
+- **Background services**: Non-blocking data fetching
+- **Memory management**: Clean up resources regularly
+- **Display optimization**: Minimize unnecessary redraws
+
+## Debugging on Pi
+- **Logging**: Comprehensive logging for remote debugging
+- **Error reporting**: Clear error messages for troubleshooting
+- **Status monitoring**: Health checks and status reporting
+- **Remote access**: Web interface for configuration and monitoring

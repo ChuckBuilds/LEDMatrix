@@ -1,0 +1,23 @@
+---
+alwaysApply: true
+---
+
+# LEDMatrix Project Structure
+
+## Core Architecture
+- **Main entry point**: [run.py](mdc:run.py) - Primary application launcher
+- **Configuration**: [config/config.json](mdc:config/config.json) - Main configuration file
+- **Display management**: [src/display_controller.py](mdc:src/display_controller.py) - Core display logic
+- **Web interface**: [web_interface_v2.py](mdc:web_interface_v2.py) - Modern web UI
+
+## Source Code Organization
+- **Managers**: [src/](mdc:src/) - All sports/weather/stock managers
+- **Assets**: [assets/](mdc:assets/) - Logos, fonts, and static resources
+- **Tests**: [test/](mdc:test/) - Unit and integration tests
+- **Documentation**: [LEDMatrix.wiki/](mdc:LEDMatrix.wiki/) - Comprehensive guides
+
+## Key Design Principles
+- **Single Responsibility**: Each manager handles one sport/domain
+- **Consistent Patterns**: All managers follow similar structure
+- **Configuration-Driven**: Behavior controlled via [config/config.json](mdc:config/config.json)
+- **Raspberry Pi Focus**: Optimized for Pi hardware, not Windows development
