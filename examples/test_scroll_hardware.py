@@ -227,8 +227,8 @@ def main():
             config['test_scroll'] = {
                 'enabled': True,
                 'scroll_speed': 50.0,  # pixels per second
-                'max_fps': 100.0,  # target 100 fps (lowered for consistency)
-                'target_fps': 100.0,
+                'max_fps': 60.0,  # Lower target for more consistent timing
+                'target_fps': 60.0,
                 'enable_throttling': True,
                 'loop_mode': 'continuous',
                 'enable_wrap_around': True,
@@ -238,9 +238,10 @@ def main():
                 'duration_buffer': 0.1,
                 'enable_fps_logging': True,
                 'fps_log_interval': 10.0,
-                # Delta time smoothing to handle FPS variance
+                # Anti-stutter settings
                 'enable_delta_smoothing': True,
-                'delta_smoothing_window': 5  # Average over 5 frames
+                'delta_smoothing_window': 5,  # Average over 5 frames
+                'max_delta_time': 0.025  # Clamp to 40fps minimum (25ms max)
             }
         
         # Initialize DisplayManager with real hardware

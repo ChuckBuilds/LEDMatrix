@@ -73,7 +73,8 @@ while True:
     "fps_log_interval": 10.0,    // log every N seconds
     // Anti-stutter settings
     "enable_delta_smoothing": true,  // smooth FPS variance
-    "delta_smoothing_window": 5      // average over N frames
+    "delta_smoothing_window": 5,     // average over N frames
+    "max_delta_time": 0.033          // clamp max frame time (prevents jumps)
   }
 }
 ```
@@ -199,15 +200,24 @@ config['fps_log_interval'] = 5.0
 
 **Symptoms:**
 - "Rubber banding" - text seems to lag then jump ahead
+- Visible "jumps" every few seconds
 - Uneven motion despite good average FPS
 - Wide FPS range (e.g., 55-190 fps)
 
 **Root Cause:**
-FPS variance causes inconsistent frame times. Even with 100 fps average, if some frames are 5ms and others are 18ms, the motion looks jerky.
+FPS variance causes inconsistent frame times. When a frame takes too long (e.g., 18ms), the system tries to "catch up" causing a visible jump.
 
 **Solutions:**
 
-1. **Enable delta time smoothing** (enabled by default):
+1. **Use delta time clamping** (enabled by default):
+```json
+{
+  "max_delta_time": 0.025  // Clamp to 40fps minimum (25ms max)
+}
+```
+This prevents large jumps when frames take too long. Lower values = smoother but slower on lag spikes.
+
+2. **Enable delta time smoothing** (enabled by default):
 ```json
 {
   "enable_delta_smoothing": true,
@@ -215,24 +225,27 @@ FPS variance causes inconsistent frame times. Even with 100 fps average, if some
 }
 ```
 
-2. **Lower and cap FPS** for consistency:
+3. **Lower target FPS** for consistency:
 ```json
 {
-  "max_fps": 80,  // Lower target = more consistent
+  "max_fps": 60,  // Lower target = more consistent timing
   "enable_throttling": true
 }
 ```
+60fps is often smoother than 100fps due to more consistent frame times.
 
-3. **Check FPS range in logs**:
+4. **Check FPS range in logs**:
 ```
 FPS range: 78.1 - 137.2  ← BAD (too wide)
 FPS range: 95.0 - 105.0  ← GOOD (narrow range)
 ```
 
-4. **Increase smoothing window** if still stuttering:
+5. **Adjust both settings together**:
 ```json
 {
-  "delta_smoothing_window": 10  // Smooth over more frames
+  "max_fps": 60,
+  "max_delta_time": 0.020,  // 20ms max (50fps min)
+  "delta_smoothing_window": 7
 }
 ```
 

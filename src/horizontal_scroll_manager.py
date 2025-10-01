@@ -73,6 +73,10 @@ class HorizontalScrollManager(ABC):
         self.delta_smoothing_window = self.scroll_config.get('delta_smoothing_window', 5)
         self.delta_times = []  # Rolling window of delta times for smoothing
         
+        # Max delta clamp to prevent large jumps when frames take too long
+        # This prevents "catch-up" behavior that causes visible jumping
+        self.max_delta_time = self.scroll_config.get('max_delta_time', 0.033)  # 30fps minimum (33ms max)
+        
         # ===== Loop Configuration =====
         self.loop_mode = self.scroll_config.get('loop_mode', 'continuous')
         # Options:
@@ -166,7 +170,7 @@ class HorizontalScrollManager(ABC):
         Update scroll position based on elapsed time.
         
         Uses time-based scrolling for consistent speed regardless of frame rate.
-        Applies delta time smoothing to handle FPS variance and prevent stuttering.
+        Applies delta time smoothing and clamping to handle FPS variance and prevent stuttering.
         
         Args:
             delta_time: Time elapsed since last update (in seconds)
@@ -177,11 +181,15 @@ class HorizontalScrollManager(ABC):
         if not self._is_scrolling or self.total_content_width == 0:
             return False
         
+        # Clamp delta time to prevent large jumps when frames take too long
+        # This prevents "catch-up" behavior that causes visible jumping
+        clamped_delta = min(delta_time, self.max_delta_time)
+        
         # Apply delta time smoothing to handle FPS variance
         if self.enable_delta_smoothing:
-            smoothed_delta = self._get_smoothed_delta_time(delta_time)
+            smoothed_delta = self._get_smoothed_delta_time(clamped_delta)
         else:
-            smoothed_delta = delta_time
+            smoothed_delta = clamped_delta
         
         # Calculate pixels to move based on smoothed time elapsed
         pixels_to_move = self.scroll_speed_pixels_per_second * smoothed_delta
@@ -532,14 +540,24 @@ class HorizontalScrollManager(ABC):
             delta_time = 0.0
         else:
             delta_time = current_time - self.last_update_time
-            self.last_update_time = current_time
         
         # Optional FPS throttling (prevents excessive CPU usage)
-        if self.enable_throttling and delta_time < self.min_frame_time:
-            sleep_time = self.min_frame_time - delta_time
-            time.sleep(sleep_time)
-            current_time = time.time()
-            delta_time = current_time - (self.last_update_time - delta_time)
+        # Do this BEFORE updating last_update_time for more consistent timing
+        if self.enable_throttling and self.min_frame_time > 0:
+            # Calculate how long this frame took so far
+            frame_time_so_far = current_time - self.last_update_time
+            
+            # If we're ahead of schedule, sleep to maintain target FPS
+            if frame_time_so_far < self.min_frame_time:
+                sleep_time = self.min_frame_time - frame_time_so_far
+                time.sleep(sleep_time)
+                
+                # Recalculate current time and delta after sleep
+                current_time = time.time()
+                delta_time = current_time - self.last_update_time
+        
+        # Update last_update_time for next frame
+        self.last_update_time = current_time
         
         # Start scrolling if not already
         if not self._is_scrolling:
