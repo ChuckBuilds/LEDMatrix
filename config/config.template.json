@@ -233,6 +233,8 @@
         "recent_games_to_show": 1,
         "upcoming_games_to_show": 1,
         "show_favorite_teams_only": true,
+        "show_all_live": false,
+        "show_shots_on_goal": false,
         "favorite_teams": [
             "TB"
         ],
@@ -299,6 +301,7 @@
         "recent_games_to_show": 1,
         "upcoming_games_to_show": 1,
         "show_favorite_teams_only": true,
+        "show_all_live": false,
         "favorite_teams": [
             "TB",
             "DAL"
@@ -331,6 +334,7 @@
         "recent_games_to_show": 1,
         "upcoming_games_to_show": 1,
         "show_favorite_teams_only": true,
+        "show_all_live": false,
         "favorite_teams": [
             "UGA",
             "AUB",
@@ -365,6 +369,7 @@
         "recent_games_to_show": 1,
         "upcoming_games_to_show": 1,
         "show_favorite_teams_only": true,
+        "show_all_live": false,
         "favorite_teams": [
             "UGA",
             "AUB"
@@ -413,6 +418,8 @@
         "recent_games_to_show": 1,
         "upcoming_games_to_show": 1,
         "show_favorite_teams_only": true,
+        "show_all_live": false,
+        "show_shots_on_goal": false,
         "favorite_teams": [
             "RIT"
         ],
@@ -444,6 +451,7 @@
         "recent_games_to_show": 1,
         "upcoming_games_to_show": 1,
         "show_favorite_teams_only": true,
+        "show_all_live": false,
         "favorite_teams": [
             "TB",
             "TEX"

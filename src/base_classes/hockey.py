@@ -25,6 +25,7 @@ class Hockey(SportsCore):
         super().__init__(config, display_manager, cache_manager, logger, sport_key)
         self.data_source = ESPNDataSource(logger)
         self.sport = "hockey"
+        self.show_shots_on_goal = self.mode_config.get("show_shots_on_goal", False)
 
     def _extract_game_details(self, game_event: Dict) -> Optional[Dict]:
         """Extract relevant game details from ESPN NCAA FB API response."""
@@ -256,18 +257,19 @@ class HockeyLive(Hockey, SportsLive):
             )
 
             # Shots on Goal
-            shots_font = ImageFont.truetype("assets/fonts/4x6-font.ttf", 6)
-            home_shots = str(game.get("home_shots", "0"))
-            away_shots = str(game.get("away_shots", "0"))
-            shots_text = f"{away_shots}   SHOTS   {home_shots}"
-            shots_bbox = draw_overlay.textbbox((0, 0), shots_text, font=shots_font)
-            shots_height = shots_bbox[3] - shots_bbox[1]
-            shots_y = self.display_height - shots_height - 1
-            shots_width = draw_overlay.textlength(shots_text, font=shots_font)
-            shots_x = (self.display_width - shots_width) // 2
-            self._draw_text_with_outline(
-                draw_overlay, shots_text, (shots_x, shots_y), shots_font
-            )
+            if self.show_shots_on_goal:
+                shots_font = ImageFont.truetype("assets/fonts/4x6-font.ttf", 6)
+                home_shots = str(game.get("home_shots", "0"))
+                away_shots = str(game.get("away_shots", "0"))
+                shots_text = f"{away_shots}   SHOTS   {home_shots}"
+                shots_bbox = draw_overlay.textbbox((0, 0), shots_text, font=shots_font)
+                shots_height = shots_bbox[3] - shots_bbox[1]
+                shots_y = self.display_height - shots_height - 1
+                shots_width = draw_overlay.textlength(shots_text, font=shots_font)
+                shots_x = (self.display_width - shots_width) // 2
+                self._draw_text_with_outline(
+                    draw_overlay, shots_text, (shots_x, shots_y), shots_font
+                )
 
             # Draw odds if available
             if "odds" in game and game["odds"]:
