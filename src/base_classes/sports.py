@@ -1,16 +1,16 @@
 import logging
 import os
 import time
+from abc import ABC, abstractmethod
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional
-from typing import Callable
+from typing import Any, Callable, Dict, List, Optional
+
 import pytz
 import requests
 from PIL import Image, ImageDraw, ImageFont
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
-from abc import ABC, abstractmethod
 
 from src.background_data_service import get_background_service
 
@@ -1172,6 +1172,8 @@ class SportsLive(SportsCore):
         self.last_display_update = 0
         self.last_log_time = 0
         self.log_interval = 300
+        self.last_count_log_time = 0  # Track when we last logged count data
+        self.count_log_interval = 5  # Only log count data every 5 seconds
 
     @abstractmethod
     def _test_mode_update(self) -> None:

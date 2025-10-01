@@ -342,14 +342,25 @@ class BaseballLive(Baseball, SportsLive):
             # self.current_game["balls"] = random.choice([1, 2, 3])
             # self.current_game["strikes"] = random.choice([1, 2])
             # self.current_game["outs"] = random.choice([1, 2])
-            if self.current_game["inning_half"] == "top": self.current_game["inning_half"] = "bottom"
-            else: self.current_game["inning_half"] = "top"; self.current_game["inning"] += 1
+            if self.current_game["inning_half"] == "top":
+                self.current_game["inning_half"] = "bottom"
+            else:
+                self.current_game["inning_half"] = "top"
+                self.current_game["inning"] += 1
             self.current_game["balls"] = (self.current_game["balls"] + 1) % 4
             self.current_game["strikes"] = (self.current_game["strikes"] + 1) % 3
             self.current_game["outs"] = (self.current_game["outs"] + 1) % 3
-            self.current_game["bases_occupied"] = [not b for b in self.current_game["bases_occupied"]]
-            if self.current_game["inning"] % 2 == 0: self.current_game["home_score"] = str(int(self.current_game["home_score"]) + 1)
-            else: self.current_game["away_score"] = str(int(self.current_game["away_score"]) + 1)
+            self.current_game["bases_occupied"] = [
+                not b for b in self.current_game["bases_occupied"]
+            ]
+            if self.current_game["inning"] % 2 == 0:
+                self.current_game["home_score"] = str(
+                    int(self.current_game["home_score"]) + 1
+                )
+            else:
+                self.current_game["away_score"] = str(
+                    int(self.current_game["away_score"]) + 1
+                )
 
     def _draw_scorebug_layout(self, game: Dict, force_clear: bool = False) -> None:
         """Draw the detailed scorebug layout for a live NCAA FB game."""  # Updated docstring
@@ -676,5 +687,5 @@ class BaseballLive(Baseball, SportsLive):
 
         except Exception as e:
             self.logger.error(
-                f"Error displaying live Football game: {e}", exc_info=True
+                f"Error displaying live Baseball game: {e}", exc_info=True
             )  # Changed log prefix

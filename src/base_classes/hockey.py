@@ -114,6 +114,8 @@ class Hockey(SportsCore):
                     "penalties": penalties,
                     "home_shots": home_shots,
                     "away_shots": away_shots,
+                    "is_period_break": status["type"]["name"] == "STATUS_END_PERIOD",
+                    "status_short": status_short,
                 }
             )
 
@@ -225,8 +227,8 @@ class HockeyLive(Hockey, SportsLive):
             period_clock_text = (
                 f"{game.get('period_text', '')} {game.get('clock', '')}".strip()
             )
-            if game.get("is_halftime"):
-                period_clock_text = "Halftime"  # Override for halftime
+            if game.get("is_period_break"):
+                period_clock_text = game.get("status_short", "Period Break")
 
             status_width = draw_overlay.textlength(
                 period_clock_text, font=self.fonts["time"]
