@@ -249,7 +249,14 @@ def main():
                 # Anti-stutter settings
                 'enable_delta_smoothing': True,
                 'delta_smoothing_window': 5,  # Average over 5 frames
-                'max_delta_time': 0.020  # Clamp to 50fps minimum (20ms max)
+                'max_delta_time': 0.020,  # Clamp to 50fps minimum (20ms max)
+                
+                # PERFORMANCE OPTIMIZATION for Raspberry Pi
+                # Update display every N frames to reduce LED matrix overhead
+                # 1 = every frame (smoothest, highest CPU) - ~100fps
+                # 2 = every 2nd frame (still smooth, lower CPU) - ~50fps display
+                # 3 = every 3rd frame (good balance) - ~33fps display
+                'display_update_interval': 2  # Recommended for Pi: update every 2nd frame
             }
         
         # Initialize DisplayManager with real hardware

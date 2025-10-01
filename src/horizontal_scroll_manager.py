@@ -108,6 +108,14 @@ class HorizontalScrollManager(ABC):
         self.frame_times = []  # Rolling window of frame times for FPS calculation
         self.max_frame_samples = 100  # Keep last 100 frames for averaging
         
+        # ===== Performance Optimization =====
+        # Update display every N frames to reduce LED matrix overhead
+        self.display_update_interval = self.scroll_config.get('display_update_interval', 1)
+        # 1 = every frame (smoothest but highest CPU)
+        # 2 = every other frame (still smooth, much lower CPU)
+        # 3 = every 3rd frame (acceptable smoothness, lowest CPU)
+        self.frame_counter = 0
+        
         # ===== Wrap-Around Rendering =====
         self.enable_wrap_around = self.scroll_config.get('enable_wrap_around', True)
         # When enabled, seamlessly wraps content when looping (no gap)
@@ -125,6 +133,11 @@ class HorizontalScrollManager(ABC):
         logger.info(f"  - Loop mode: {self.loop_mode}")
         logger.info(f"  - Dynamic duration: {self.dynamic_duration_enabled}")
         logger.info(f"  - Delta smoothing: {self.enable_delta_smoothing} (window: {self.delta_smoothing_window})")
+        logger.info(f"  - Display update interval: {self.display_update_interval} (every {self.display_update_interval} frame(s))")
+        
+        if self.display_update_interval > 1:
+            effective_display_fps = self.target_fps / self.display_update_interval
+            logger.info(f"  - Effective display FPS: ~{effective_display_fps:.0f} (scroll calculation: {self.target_fps})")
     
     # ===== Abstract Methods (Must be implemented by subclasses) =====
     
@@ -566,25 +579,34 @@ class HorizontalScrollManager(ABC):
             self._is_scrolling = True
             self.display_manager.set_scrolling_state(True)
         
-        # Update scroll position based on elapsed time
+        # Update scroll position based on elapsed time (always update for accuracy)
         cycle_completed = self.update_scroll_position(delta_time)
         
-        # Extract visible portion
-        visible_image = self.extract_visible_portion()
-        if visible_image is None:
-            logger.error(f"[{self.__class__.__name__}] Failed to extract visible portion")
-            return False
+        # Increment frame counter
+        self.frame_counter += 1
         
-        # Update display
-        try:
-            self.display_manager.image = visible_image
-            self.display_manager.draw = ImageDraw.Draw(self.display_manager.image)
-            self.display_manager.update_display()
-        except Exception as e:
-            logger.error(f"[{self.__class__.__name__}] Error updating display: {e}", exc_info=True)
-            return False
+        # Only update display every Nth frame to reduce LED matrix overhead
+        # This significantly reduces CPU/GPU load while maintaining smooth scrolling
+        # (scroll position still updates every frame for accuracy)
+        should_update_display = (self.frame_counter % self.display_update_interval == 0)
         
-        # Update FPS tracking
+        if should_update_display:
+            # Extract visible portion
+            visible_image = self.extract_visible_portion()
+            if visible_image is None:
+                logger.error(f"[{self.__class__.__name__}] Failed to extract visible portion")
+                return False
+            
+            # Update display
+            try:
+                self.display_manager.image = visible_image
+                self.display_manager.draw = ImageDraw.Draw(self.display_manager.image)
+                self.display_manager.update_display()
+            except Exception as e:
+                logger.error(f"[{self.__class__.__name__}] Error updating display: {e}", exc_info=True)
+                return False
+        
+        # Update FPS tracking (track all frames, not just display updates)
         self._update_fps_tracking(current_time)
         
         return cycle_completed
