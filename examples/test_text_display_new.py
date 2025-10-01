@@ -34,22 +34,22 @@ def main():
         logger.info("Initializing DisplayManager...")
         display_manager = DisplayManager()
         
-        # Create test configuration
+        # Create test configuration (using same optimized settings as hardware test)
         config = {
             'text_display': {
                 'enabled': True,
                 'text': 'Hello from the new TextDisplayScrollManager! This uses the HorizontalScrollManager base class for high-performance scrolling with sub-pixel accuracy and time-based animation.',
-                'font_path': 'assets/fonts/PressStart2P-Regular.ttf',
+                'font_path': 'assets/fonts/PressStart2P-Regular.ttf',  # Make sure this font exists
                 'font_size': 8,
                 'text_color': [0, 255, 255],  # Cyan text
                 'background_color': [0, 0, 0],  # Black background
                 'scroll_gap_width': 64,  # Gap between loops
                 
-                # HorizontalScrollManager settings
+                # OPTIMIZED SETTINGS (same as test_scroll_hardware.py)
                 'scroll_speed': 50.0,  # pixels per second
-                'max_fps': 100.0,  # Soft FPS limit
-                'target_fps': 100.0,
-                'enable_throttling': False,  # DISABLED - causes jitter!
+                'max_fps': 100.0,  # Soft FPS limit (was 200.0)
+                'target_fps': 100.0,  # Target for monitoring
+                'enable_throttling': False,  # DISABLED - sleep-based throttling causes jitter!
                 'loop_mode': 'continuous',
                 'enable_wrap_around': True,
                 'dynamic_duration': True,
@@ -57,14 +57,14 @@ def main():
                 'enable_fps_logging': True,
                 'fps_log_interval': 5.0,
                 
-                # Anti-stutter settings
-                'enable_delta_smoothing': True,
-                'delta_smoothing_window': 5,
-                'max_delta_time': 0.020,
+                # Anti-stutter settings (same as hardware test)
+                'enable_delta_smoothing': True,  # Smooth FPS variance
+                'delta_smoothing_window': 5,     # Average over 5 frames
+                'max_delta_time': 0.020,         # Clamp to 50fps minimum (20ms max)
                 
-                # Performance optimization
-                'display_update_interval': 2,  # Update display every 2nd frame
-                'gc_optimization': True
+                # Performance optimization (same as hardware test)
+                'display_update_interval': 2,    # Update display every 2nd frame
+                'gc_optimization': True          # Optimize garbage collection
             }
         }
         
@@ -76,9 +76,14 @@ def main():
         logger.info(f"Text: '{text_display.text[:50]}...'")
         logger.info(f"Scroll speed: {text_display.scroll_speed_pixels_per_second} px/s")
         logger.info(f"Max FPS: {text_display.max_fps}")
+        logger.info(f"Target FPS: {text_display.target_fps}")
         logger.info(f"Loop mode: {text_display.loop_mode}")
         logger.info(f"Content width: {text_display.total_content_width}px")
         logger.info(f"Duration: {text_display.get_duration():.1f}s")
+        logger.info(f"Delta smoothing: {text_display.enable_delta_smoothing}")
+        logger.info(f"Max delta time: {text_display.max_delta_time}")
+        logger.info(f"Display update interval: {text_display.display_update_interval}")
+        logger.info(f"GC optimization: {text_display.scroll_config.get('gc_optimization', False)}")
         
         # Test scrolling
         logger.info("")

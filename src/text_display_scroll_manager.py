@@ -77,19 +77,12 @@ class TextDisplayScrollManager(HorizontalScrollManager):
             
             # Draw the text at the beginning of the image
             if isinstance(self.font, freetype.Face):
-                # BDF font - use display manager's draw_text method
-                # Create a temporary image for BDF drawing
-                temp_img = Image.new('RGB', (text_width, matrix_height), self.bg_color)
-                temp_draw = ImageDraw.Draw(temp_img)
-                self.display_manager.draw_text(
-                    text=self.text, x=0, y=y_pos,
-                    color=self.text_color, font=self.font,
-                    draw=temp_draw, image=temp_img
-                )
-                # Paste the BDF-rendered text onto our composite image
-                image.paste(temp_img, (0, 0))
+                # BDF font - simplified approach
+                logger.warning("[TextDisplayScrollManager] BDF font support in composite image is limited. Consider using TTF fonts for better performance.")
+                # For now, fall back to regular font
+                draw.text((0, y_pos), self.text, font=self.display_manager.regular_font, fill=self.text_color)
             else:
-                # TTF font - direct drawing
+                # TTF font - direct drawing (preferred for performance)
                 draw.text((0, y_pos), self.text, font=self.font, fill=self.text_color)
             
             # Set the total content width for the base class
