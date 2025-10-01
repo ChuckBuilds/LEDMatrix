@@ -68,6 +68,11 @@ class HorizontalScrollManager(ABC):
         self.last_update_time = 0.0  # Timestamp of last scroll update
         self.last_frame_time = 0.0  # Timestamp of last frame (for FPS calculation)
         
+        # Delta time smoothing to handle FPS variance
+        self.enable_delta_smoothing = self.scroll_config.get('enable_delta_smoothing', True)
+        self.delta_smoothing_window = self.scroll_config.get('delta_smoothing_window', 5)
+        self.delta_times = []  # Rolling window of delta times for smoothing
+        
         # ===== Loop Configuration =====
         self.loop_mode = self.scroll_config.get('loop_mode', 'continuous')
         # Options:
@@ -113,6 +118,7 @@ class HorizontalScrollManager(ABC):
         logger.info(f"  - Max FPS: {self.max_fps}")
         logger.info(f"  - Loop mode: {self.loop_mode}")
         logger.info(f"  - Dynamic duration: {self.dynamic_duration_enabled}")
+        logger.info(f"  - Delta smoothing: {self.enable_delta_smoothing} (window: {self.delta_smoothing_window})")
     
     # ===== Abstract Methods (Must be implemented by subclasses) =====
     
@@ -160,6 +166,7 @@ class HorizontalScrollManager(ABC):
         Update scroll position based on elapsed time.
         
         Uses time-based scrolling for consistent speed regardless of frame rate.
+        Applies delta time smoothing to handle FPS variance and prevent stuttering.
         
         Args:
             delta_time: Time elapsed since last update (in seconds)
@@ -170,14 +177,46 @@ class HorizontalScrollManager(ABC):
         if not self._is_scrolling or self.total_content_width == 0:
             return False
         
-        # Calculate pixels to move based on time elapsed
-        pixels_to_move = self.scroll_speed_pixels_per_second * delta_time
+        # Apply delta time smoothing to handle FPS variance
+        if self.enable_delta_smoothing:
+            smoothed_delta = self._get_smoothed_delta_time(delta_time)
+        else:
+            smoothed_delta = delta_time
+        
+        # Calculate pixels to move based on smoothed time elapsed
+        pixels_to_move = self.scroll_speed_pixels_per_second * smoothed_delta
         
         # Update position (floating point for sub-pixel accuracy)
         self.scroll_position += pixels_to_move
         
         # Handle boundaries based on loop mode
         return self._handle_boundaries()
+    
+    def _get_smoothed_delta_time(self, delta_time: float) -> float:
+        """
+        Smooth delta time over a rolling window to handle FPS variance.
+        
+        This prevents stuttering caused by inconsistent frame times by averaging
+        delta_time over several frames.
+        
+        Args:
+            delta_time: Raw time elapsed since last frame
+            
+        Returns:
+            Smoothed delta time
+        """
+        # Add current delta to window
+        self.delta_times.append(delta_time)
+        
+        # Keep only recent samples
+        if len(self.delta_times) > self.delta_smoothing_window:
+            self.delta_times.pop(0)
+        
+        # Return average of window
+        if len(self.delta_times) > 0:
+            return sum(self.delta_times) / len(self.delta_times)
+        else:
+            return delta_time
     
     def _handle_boundaries(self) -> bool:
         """

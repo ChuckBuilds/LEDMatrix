@@ -70,7 +70,10 @@ while True:
     "max_duration": 300,         // seconds
     "duration_buffer": 0.1,      // 10% extra time
     "enable_fps_logging": true,  // log performance
-    "fps_log_interval": 10.0     // log every N seconds
+    "fps_log_interval": 10.0,    // log every N seconds
+    // Anti-stutter settings
+    "enable_delta_smoothing": true,  // smooth FPS variance
+    "delta_smoothing_window": 5      // average over N frames
   }
 }
 ```
@@ -194,17 +197,42 @@ config['fps_log_interval'] = 5.0
 
 ### Issue: Stuttering/Jerky Motion
 
-**Causes:**
-- Variable frame times
-- Display update blocking
-- Slow image creation
+**Symptoms:**
+- "Rubber banding" - text seems to lag then jump ahead
+- Uneven motion despite good average FPS
+- Wide FPS range (e.g., 55-190 fps)
+
+**Root Cause:**
+FPS variance causes inconsistent frame times. Even with 100 fps average, if some frames are 5ms and others are 18ms, the motion looks jerky.
 
 **Solutions:**
+
+1. **Enable delta time smoothing** (enabled by default):
 ```json
 {
-  "enable_throttling": true,
-  "max_fps": 100,
-  "loop_mode": "modulo"
+  "enable_delta_smoothing": true,
+  "delta_smoothing_window": 5  // Increase for more smoothing
+}
+```
+
+2. **Lower and cap FPS** for consistency:
+```json
+{
+  "max_fps": 80,  // Lower target = more consistent
+  "enable_throttling": true
+}
+```
+
+3. **Check FPS range in logs**:
+```
+FPS range: 78.1 - 137.2  ← BAD (too wide)
+FPS range: 95.0 - 105.0  ← GOOD (narrow range)
+```
+
+4. **Increase smoothing window** if still stuttering:
+```json
+{
+  "delta_smoothing_window": 10  // Smooth over more frames
 }
 ```
 
