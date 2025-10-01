@@ -4,8 +4,12 @@ Example Scroll Manager - Demonstration of HorizontalScrollManager usage
 This example shows how to create a simple scrolling manager using the
 high-performance HorizontalScrollManager base class.
 
+⚠️  NOTE: This uses a MOCK display manager for testing WITHOUT hardware.
+    To test on actual LED matrix hardware, use:
+        sudo python examples/test_scroll_hardware.py
+
 Usage:
-    python examples/example_scroll_manager.py
+    python examples/example_scroll_manager.py  (no hardware needed)
 """
 
 import sys
