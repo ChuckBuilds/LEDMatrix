@@ -260,11 +260,11 @@ class HockeyLive(Hockey, SportsLive):
             home_shots = str(game.get("home_shots", "0"))
             away_shots = str(game.get("away_shots", "0"))
             shots_text = f"{away_shots}   SHOTS   {home_shots}"
+            shots_bbox = draw_overlay.textbbox((0, 0), shots_text, font=shots_font)
+            shots_height = shots_bbox[3] - shots_bbox[1]
+            shots_y = self.display_height - shots_height - 1
             shots_width = draw_overlay.textlength(shots_text, font=shots_font)
             shots_x = (self.display_width - shots_width) // 2
-            shots_y = (
-                self.display_height - 10
-            )  # centered #from 14 # Position score higher
             self._draw_text_with_outline(
                 draw_overlay, shots_text, (shots_x, shots_y), shots_font
             )
@@ -292,7 +292,7 @@ class HockeyLive(Hockey, SportsLive):
 
                 record_bbox = draw_overlay.textbbox((0, 0), "0-0", font=record_font)
                 record_height = record_bbox[3] - record_bbox[1]
-                record_y = self.display_height - record_height - 4
+                record_y = self.display_height - record_height - 1
                 self.logger.debug(
                     f"Record positioning: height={record_height}, record_y={record_y}, display_height={self.display_height}"
                 )
