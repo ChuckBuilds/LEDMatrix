@@ -112,9 +112,11 @@ class HorizontalScrollManager(ABC):
         self.enable_wrap_around = self.scroll_config.get('enable_wrap_around', True)
         # When enabled, seamlessly wraps content when looping (no gap)
         
-        # ===== Throttling (Optional) =====
-        self.enable_throttling = self.scroll_config.get('enable_throttling', True)
-        # When enabled, limits frame rate to max_fps to prevent excessive CPU usage
+        # ===== Throttling (Optional - NOT RECOMMENDED) =====
+        # WARNING: Throttling uses time.sleep() which causes jitter!
+        # Better to control speed via scroll_speed_pixels_per_second and let FPS run free
+        self.enable_throttling = self.scroll_config.get('enable_throttling', False)  # Disabled by default
+        # When enabled, limits frame rate to max_fps (causes jitter, not recommended)
         
         logger.info(f"[{self.__class__.__name__}] Initialized with:")
         logger.info(f"  - Scroll speed: {self.scroll_speed_pixels_per_second} px/s")

@@ -14,9 +14,12 @@ scroll_delay = 0.01  # sleep between frames
 
 # NEW WAY (Good - independent speed and frame rate)
 scroll_speed = 50.0  # pixels per SECOND
-max_fps = 200.0  # target frame rate
-# Result: 200 fps smooth motion, speed adjustable independently
+max_fps = 0  # unlimited - let it run as fast as possible!
+enable_throttling = False  # NO sleep delays!
+# Result: Natural FPS, smooth motion, speed controlled by scroll_speed only
 ```
+
+**IMPORTANT:** Do NOT use throttling (`enable_throttling: false`)! The `time.sleep()` causes jitter. Control speed via `scroll_speed` and let FPS run free.
 
 ---
 
@@ -59,10 +62,15 @@ while True:
 {
   "my_scroll": {
     "enabled": true,
-    "scroll_speed": 50.0,        // pixels per SECOND
-    "max_fps": 200.0,            // cap frame rate (0 = unlimited)
-    "target_fps": 100.0,         // monitoring target
-    "enable_throttling": true,   // limit to max_fps
+    
+    // SCROLL SPEED - Adjust this to control speed!
+    "scroll_speed": 50.0,        // pixels per SECOND (increase for faster)
+    
+    // FPS SETTINGS - Do NOT use for speed control!
+    "max_fps": 0,                // 0 = unlimited (recommended!)
+    "target_fps": 100.0,         // monitoring target only
+    "enable_throttling": false,  // DISABLE - causes jitter!
+    
     "loop_mode": "continuous",   // continuous|single|modulo
     "enable_wrap_around": true,  // seamless loop wrapping
     "dynamic_duration": true,    // auto-calculate time
@@ -71,10 +79,11 @@ while True:
     "duration_buffer": 0.1,      // 10% extra time
     "enable_fps_logging": true,  // log performance
     "fps_log_interval": 10.0,    // log every N seconds
+    
     // Anti-stutter settings
     "enable_delta_smoothing": true,  // smooth FPS variance
     "delta_smoothing_window": 5,     // average over N frames
-    "max_delta_time": 0.033          // clamp max frame time (prevents jumps)
+    "max_delta_time": 0.020          // clamp max frame time (prevents jumps)
   }
 }
 ```
@@ -147,12 +156,30 @@ def update_data(self, new_data):
 
 ## Scroll Speed Guidelines
 
+**HOW TO CONTROL SPEED:**
+```json
+{
+  "scroll_speed": 50.0  // ADJUST THIS VALUE ONLY!
+}
+```
+**Do NOT try to control speed with FPS settings!** They cause jitter.
+
 | Speed (px/s) | Visual Effect | Best For |
 |--------------|---------------|----------|
 | 20-30 | Very slow | Long text, detailed reading |
 | 40-60 | Moderate | General purpose |
 | 70-100 | Fast | Quick updates, short messages |
 | 100+ | Very fast | Attention grabbing |
+
+**To make scrolling faster:**
+```json
+{"scroll_speed": 100.0}  // Double the speed!
+```
+
+**To make scrolling slower:**
+```json
+{"scroll_speed": 25.0}  // Half the speed!
+```
 
 **Formula to convert old config:**
 ```python
@@ -164,14 +191,25 @@ new_scroll_speed = old_speed * (1.0 / old_delay)
 
 ## FPS Settings by Hardware
 
-| LED Matrix Type | Recommended max_fps | enable_throttling |
-|-----------------|---------------------|-------------------|
-| Basic (Adafruit) | 60-100 | true |
-| Standard RGB | 100-150 | true |
-| High-end RGB | 150-200 | true |
-| Professional | 200+ | false |
+**IMPORTANT:** Let FPS run at natural speed! Do NOT throttle.
 
-**Rule of thumb:** Start with 100 fps, increase if smooth, decrease if CPU high.
+| LED Matrix Type | Natural FPS Range | CPU Usage |
+|-----------------|-------------------|-----------|
+| Basic (Adafruit) | 50-100 | Low-Medium |
+| Standard RGB | 80-150 | Medium |
+| High-end RGB | 100-200+ | Medium-High |
+| Professional | 150-300+ | High |
+
+**Configuration for all hardware:**
+```json
+{
+  "max_fps": 0,              // Unlimited - let it run free!
+  "enable_throttling": false // Never enable - causes jitter!
+}
+```
+
+**To control speed:** Use `scroll_speed` only!  
+**FPS will be:** Whatever your hardware can naturally sustain
 
 ---
 
@@ -225,14 +263,14 @@ This prevents large jumps when frames take too long. Lower values = smoother but
 }
 ```
 
-3. **Lower target FPS** for consistency:
+3. **Disable throttling** (should already be disabled):
 ```json
 {
-  "max_fps": 60,  // Lower target = more consistent timing
-  "enable_throttling": true
+  "enable_throttling": false,  // IMPORTANT - throttling causes jitter!
+  "max_fps": 0  // Let it run at natural speed
 }
 ```
-60fps is often smoother than 100fps due to more consistent frame times.
+Throttling uses `time.sleep()` which is imprecise and causes consistent jitter.
 
 4. **Check FPS range in logs**:
 ```
@@ -251,14 +289,28 @@ FPS range: 95.0 - 105.0  ← GOOD (narrow range)
 
 ### Issue: High CPU Usage
 
-**Solutions:**
+**Note:** High CPU is expected for smooth scrolling! The system runs as fast as possible.
+
+**If CPU is a concern:**
+
+1. **Reduce scroll speed** (fewer updates needed):
 ```json
 {
-  "enable_throttling": true,  // ENABLE THIS
-  "max_fps": 60,              // Lower target
-  "loop_mode": "modulo"       // Most efficient
+  "scroll_speed": 30.0  // Slower = less CPU
 }
 ```
+
+2. **Simplify content** (faster rendering):
+- Fewer logos/images
+- Smaller composite image
+- Simpler fonts
+
+3. **Optimize image creation**:
+- Cache reusable elements
+- Use smaller logo sizes
+- Pre-process images
+
+**DO NOT enable throttling** - it causes jitter and doesn't help!
 
 ---
 

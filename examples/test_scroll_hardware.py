@@ -226,10 +226,17 @@ def main():
         if 'test_scroll' not in config:
             config['test_scroll'] = {
                 'enabled': True,
-                'scroll_speed': 50.0,  # pixels per second
-                'max_fps': 60.0,  # Lower target for more consistent timing
-                'target_fps': 60.0,
-                'enable_throttling': True,
+                
+                # SCROLL SPEED - This controls how fast content moves
+                # Adjust this value to change speed (NOT the FPS settings!)
+                'scroll_speed': 50.0,  # pixels per second (increase for faster)
+                
+                # FPS SETTINGS - These are for monitoring only
+                # Let the system run at its natural speed for smoothest motion
+                'max_fps': 0,  # 0 = unlimited (let it run free!)
+                'target_fps': 100.0,  # Just for monitoring/logging
+                'enable_throttling': False,  # DISABLED - throttling causes jitter!
+                
                 'loop_mode': 'continuous',
                 'enable_wrap_around': True,
                 'dynamic_duration': True,
@@ -238,10 +245,11 @@ def main():
                 'duration_buffer': 0.1,
                 'enable_fps_logging': True,
                 'fps_log_interval': 10.0,
+                
                 # Anti-stutter settings
                 'enable_delta_smoothing': True,
                 'delta_smoothing_window': 5,  # Average over 5 frames
-                'max_delta_time': 0.025  # Clamp to 40fps minimum (25ms max)
+                'max_delta_time': 0.020  # Clamp to 50fps minimum (20ms max)
             }
         
         # Initialize DisplayManager with real hardware
