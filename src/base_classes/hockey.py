@@ -82,8 +82,8 @@ class Hockey(SportsCore):
 
             if situation and status["type"]["state"] == "in":
                 # Detect scoring events from status detail
-                status_detail = status["type"].get("detail", "").lower()
-                status_short = status["type"].get("shortDetail", "").lower()
+                # status_detail = status["type"].get("detail", "")
+                status_short = status["type"].get("shortDetail", "")
                 powerplay = situation.get("isPowerPlay", False)
                 penalties = situation.get("penalties", "")
 
