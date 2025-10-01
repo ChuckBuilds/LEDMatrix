@@ -74,7 +74,7 @@ class Hockey(SportsCore):
 
             home_shots = 0
             away_shots = 0
-
+            status_short = ""
             if home_team_saves_per > 0:
                 away_shots = round(home_team_saves / home_team_saves_per)
             if away_team_saves_per > 0:
