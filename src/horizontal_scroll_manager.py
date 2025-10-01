@@ -14,6 +14,7 @@ Key Design Principles:
 
 import time
 import logging
+import gc
 from typing import Dict, Any, Optional, Tuple
 from PIL import Image, ImageDraw
 from abc import ABC, abstractmethod
@@ -115,6 +116,22 @@ class HorizontalScrollManager(ABC):
         # 2 = every other frame (still smooth, much lower CPU)
         # 3 = every 3rd frame (acceptable smoothness, lowest CPU)
         self.frame_counter = 0
+        
+        # Pre-allocate reusable objects to reduce GC pressure
+        self._reusable_image = None  # Reuse for visible portion
+        self._last_crop_region = None  # Cache last crop to detect changes
+        
+        # Optimize garbage collection to reduce pauses during scrolling
+        # Increase GC thresholds to reduce collection frequency (fewer interruptions)
+        gc_optimization = self.scroll_config.get('gc_optimization', True)
+        if gc_optimization:
+            # Get current thresholds
+            gen0, gen1, gen2 = gc.get_threshold()
+            # Increase thresholds to delay GC (reduce pauses during scrolling)
+            gc.set_threshold(gen0 * 3, gen1 * 3, gen2 * 3)
+            logger.debug(f"  - GC thresholds increased: {gc.get_threshold()} (from {gen0}, {gen1}, {gen2})")
+            # Collect now to start fresh
+            gc.collect()
         
         # ===== Wrap-Around Rendering =====
         self.enable_wrap_around = self.scroll_config.get('enable_wrap_around', True)
@@ -296,6 +313,7 @@ class HorizontalScrollManager(ABC):
         Extract the currently visible portion of the composite image.
         
         Handles wrap-around rendering for seamless looping when enabled.
+        Optimized to reuse image objects and reduce allocations.
         
         Returns:
             PIL Image of the visible portion, or None on error
@@ -317,7 +335,13 @@ class HorizontalScrollManager(ABC):
         
         if needs_wrap and self.enable_wrap_around and self.loop_mode in ['continuous', 'modulo']:
             # Seamless wrap-around rendering
-            visible_image = Image.new('RGB', (display_width, display_height), (0, 0, 0))
+            # Reuse image object to reduce allocations
+            if self._reusable_image is None or self._reusable_image.size != (display_width, display_height):
+                self._reusable_image = Image.new('RGB', (display_width, display_height), (0, 0, 0))
+            else:
+                # Clear the reusable image by pasting black rectangle
+                draw = ImageDraw.Draw(self._reusable_image)
+                draw.rectangle([(0, 0), (display_width, display_height)], fill=(0, 0, 0))
             
             # Paste main portion (from scroll position to end of content)
             main_width = self.total_content_width - scroll_pos_int
@@ -326,7 +350,7 @@ class HorizontalScrollManager(ABC):
                     scroll_pos_int, 0,
                     self.total_content_width, display_height
                 ))
-                visible_image.paste(main_portion, (0, 0))
+                self._reusable_image.paste(main_portion, (0, 0))
             
             # Paste wrapped portion (from beginning of content)
             wrap_width = display_width - main_width
@@ -335,15 +359,16 @@ class HorizontalScrollManager(ABC):
                     0, 0,
                     min(wrap_width, self.total_content_width), display_height
                 ))
-                visible_image.paste(wrap_portion, (main_width, 0))
+                self._reusable_image.paste(wrap_portion, (main_width, 0))
             
-            return visible_image
+            return self._reusable_image
         
         else:
             # Simple crop (no wrap-around needed)
-            # Ensure we don't crop beyond image boundaries
+            # This is the fast path - just return a view of the composite image
             crop_end = min(scroll_pos_int + display_width, self.total_content_width)
             
+            # Use crop which returns a view, not a copy (very fast!)
             visible_image = self.composite_image.crop((
                 scroll_pos_int, 0,
                 crop_end, display_height
@@ -351,9 +376,16 @@ class HorizontalScrollManager(ABC):
             
             # If cropped image is smaller than display (at the end), pad with black
             if visible_image.width < display_width:
-                padded = Image.new('RGB', (display_width, display_height), (0, 0, 0))
-                padded.paste(visible_image, (0, 0))
-                return padded
+                # Reuse padding image
+                if self._reusable_image is None or self._reusable_image.size != (display_width, display_height):
+                    self._reusable_image = Image.new('RGB', (display_width, display_height), (0, 0, 0))
+                else:
+                    # Clear for reuse
+                    draw = ImageDraw.Draw(self._reusable_image)
+                    draw.rectangle([(0, 0), (display_width, display_height)], fill=(0, 0, 0))
+                
+                self._reusable_image.paste(visible_image, (0, 0))
+                return self._reusable_image
             
             return visible_image
     
@@ -444,7 +476,7 @@ class HorizontalScrollManager(ABC):
             self.last_fps_log_time = current_time
     
     def _log_fps_stats(self) -> None:
-        """Log FPS statistics."""
+        """Log FPS statistics with frame time spike detection."""
         if not self.frame_times:
             return
         
@@ -457,11 +489,24 @@ class HorizontalScrollManager(ABC):
         max_fps = 1.0 / min_frame_time if min_frame_time > 0 else 0
         min_fps = 1.0 / max_frame_time if max_frame_time > 0 else 0
         
+        # Detect frame time spikes (frames that took much longer than average)
+        spike_threshold = avg_frame_time * 2.0  # Spikes are 2x average
+        spikes = [ft for ft in self.frame_times if ft > spike_threshold]
+        spike_count = len(spikes)
+        spike_percentage = (spike_count / len(self.frame_times)) * 100 if self.frame_times else 0
+        
         logger.info(f"[{self.__class__.__name__}] Performance stats:")
         logger.info(f"  - Average FPS: {avg_fps:.1f} (target: {self.target_fps})")
         logger.info(f"  - FPS range: {min_fps:.1f} - {max_fps:.1f}")
         logger.info(f"  - Avg frame time: {avg_frame_time*1000:.2f}ms")
+        logger.info(f"  - Max frame time: {max_frame_time*1000:.2f}ms")
+        logger.info(f"  - Frame time spikes: {spike_count}/{len(self.frame_times)} ({spike_percentage:.1f}%)")
         logger.info(f"  - Scroll position: {self.scroll_position:.1f}px / {self.total_content_width}px")
+        
+        # Warn if spike rate is high
+        if spike_percentage > 5.0:
+            logger.warning(f"  ⚠ High spike rate ({spike_percentage:.1f}%) - may cause visible shuddering")
+            logger.warning(f"  Consider: reducing scroll_speed, simplifying content, or increasing display_update_interval")
     
     def get_current_fps(self) -> float:
         """
@@ -591,7 +636,7 @@ class HorizontalScrollManager(ABC):
         should_update_display = (self.frame_counter % self.display_update_interval == 0)
         
         if should_update_display:
-            # Extract visible portion
+            # Extract visible portion (optimized to reuse objects)
             visible_image = self.extract_visible_portion()
             if visible_image is None:
                 logger.error(f"[{self.__class__.__name__}] Failed to extract visible portion")
@@ -600,7 +645,14 @@ class HorizontalScrollManager(ABC):
             # Update display
             try:
                 self.display_manager.image = visible_image
-                self.display_manager.draw = ImageDraw.Draw(self.display_manager.image)
+                # Only create draw if needed (display_manager will create if needed)
+                # Avoid unnecessary object allocation every frame
+                if hasattr(self.display_manager, 'draw') and self.display_manager.draw is not None:
+                    # Reuse existing draw object
+                    pass
+                else:
+                    # Create draw object only if doesn't exist
+                    self.display_manager.draw = ImageDraw.Draw(self.display_manager.image)
                 self.display_manager.update_display()
             except Exception as e:
                 logger.error(f"[{self.__class__.__name__}] Error updating display: {e}", exc_info=True)

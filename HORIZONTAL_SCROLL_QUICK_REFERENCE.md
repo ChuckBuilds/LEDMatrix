@@ -86,10 +86,12 @@ while True:
     "max_delta_time": 0.020,         // clamp max frame time (prevents jumps)
     
     // PERFORMANCE OPTIMIZATION (Raspberry Pi)
-    "display_update_interval": 2     // update display every N frames
+    "display_update_interval": 2,    // update display every N frames
     // 1 = every frame (smoothest, highest CPU)
     // 2 = every 2nd frame (recommended - still smooth, much lower CPU)
     // 3 = every 3rd frame (good for slower Pis)
+    
+    "gc_optimization": true           // optimize garbage collection (reduces pauses)
   }
 }
 ```
@@ -350,6 +352,16 @@ Low CPU:
 }
 ```
 
+**Check logs for frame time spikes:**
+```
+Frame time spikes: 3/100 (3.0%)  ← GOOD (occasional is normal)
+Frame time spikes: 15/100 (15.0%) ← BAD (too many spikes = shudders)
+```
+
+If spike rate is high, look at:
+- Max frame time (should be <20ms for smooth)
+- Spike percentage (should be <5%)
+
 **Other optimizations:**
 
 1. **Simplify content** (faster rendering):
@@ -362,7 +374,21 @@ Low CPU:
 - Use smaller logo sizes
 - Pre-process images
 
+3. **System-level**:
+- Close other applications
+- Disable desktop environment (use lite OS)
+- Use dedicated Pi for display
+
 **DO NOT enable throttling** - it causes jitter and doesn't help!
+
+**Note on "rare shudders":**
+Even with all optimizations, you may see occasional shudders due to:
+- OS background tasks (unavoidable)
+- Python garbage collection (minimized but not eliminated)
+- Hardware interrupts
+- Network activity
+
+If shudders are <5% of the time, this is normal and acceptable!
 
 ---
 
