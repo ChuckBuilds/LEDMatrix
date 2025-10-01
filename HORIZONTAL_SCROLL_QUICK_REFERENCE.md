@@ -14,12 +14,12 @@ scroll_delay = 0.01  # sleep between frames
 
 # NEW WAY (Good - independent speed and frame rate)
 scroll_speed = 50.0  # pixels per SECOND
-max_fps = 0  # unlimited - let it run as fast as possible!
+max_fps = 100.0  # soft limit (skips frames, NO sleep!)
 enable_throttling = False  # NO sleep delays!
-# Result: Natural FPS, smooth motion, speed controlled by scroll_speed only
+# Result: Consistent 100fps, smooth motion, speed controlled by scroll_speed only
 ```
 
-**IMPORTANT:** Do NOT use throttling (`enable_throttling: false`)! The `time.sleep()` causes jitter. Control speed via `scroll_speed` and let FPS run free.
+**IMPORTANT:** Do NOT use sleep-based throttling (`enable_throttling: false`)! The `time.sleep()` causes jitter. Use `max_fps` for soft limiting (skips frames without sleep).
 
 ---
 
@@ -67,9 +67,9 @@ while True:
     "scroll_speed": 50.0,        // pixels per SECOND (increase for faster)
     
     // FPS SETTINGS - Do NOT use for speed control!
-    "max_fps": 0,                // 0 = unlimited (recommended!)
-    "target_fps": 100.0,         // monitoring target only
-    "enable_throttling": false,  // DISABLE - causes jitter!
+    "max_fps": 100.0,            // Soft FPS limit (0 = unlimited)
+    "target_fps": 100.0,         // monitoring target
+    "enable_throttling": false,  // DISABLE - sleep-based throttling causes jitter!
     
     "loop_mode": "continuous",   // continuous|single|modulo
     "enable_wrap_around": true,  // seamless loop wrapping
@@ -217,7 +217,33 @@ new_scroll_speed = old_speed * (1.0 / old_delay)
 ```
 
 **To control speed:** Use `scroll_speed` only!  
-**FPS will be:** Whatever your hardware can naturally sustain
+**FPS limiting:** Use `max_fps` for soft limiting (skips frames, no sleep)
+
+### How Soft FPS Limiting Works
+
+Unlike sleep-based throttling (which causes jitter), soft limiting simply **skips frames** when running too fast:
+
+```python
+# Check if enough time passed since last frame
+if time_since_last_frame < target_frame_time:
+    return  # Skip this frame, try again next loop iteration
+
+# Otherwise, process and display frame
+```
+
+**Benefits:**
+- ✅ No sleep() calls = no jitter
+- ✅ Consistent frame pacing
+- ✅ Lower CPU usage
+- ✅ Reduced frame time spikes
+
+**Example:**
+```json
+{
+  "max_fps": 100.0  // Soft limit to 100fps
+}
+```
+System tries to run fast, but skips frames to maintain ~100fps average.
 
 ---
 

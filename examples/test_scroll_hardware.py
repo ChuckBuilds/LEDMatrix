@@ -231,11 +231,11 @@ def main():
                 # Adjust this value to change speed (NOT the FPS settings!)
                 'scroll_speed': 50.0,  # pixels per second (increase for faster)
                 
-                # FPS SETTINGS - These are for monitoring only
-                # Let the system run at its natural speed for smoothest motion
-                'max_fps': 0,  # 0 = unlimited (let it run free!)
-                'target_fps': 100.0,  # Just for monitoring/logging
-                'enable_throttling': False,  # DISABLED - throttling causes jitter!
+                # FPS SETTINGS
+                # Soft FPS limit (skips frames without sleep - no jitter!)
+                'max_fps': 100.0,  # Soft limit to 100fps (0 = unlimited)
+                'target_fps': 100.0,  # Target for monitoring
+                'enable_throttling': False,  # DISABLED - sleep-based throttling causes jitter!
                 
                 'loop_mode': 'continuous',
                 'enable_wrap_around': True,

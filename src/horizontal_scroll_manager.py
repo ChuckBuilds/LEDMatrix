@@ -58,10 +58,12 @@ class HorizontalScrollManager(ABC):
         self.target_fps = self.scroll_config.get('target_fps', 100.0)
         
         # Optional maximum FPS cap to prevent excessive CPU usage
-        self.max_fps = self.scroll_config.get('max_fps', 200.0)
+        # 0 = unlimited, >0 = soft limit (skips frames if too fast)
+        self.max_fps = self.scroll_config.get('max_fps', 100.0)
         
-        # Minimum frame time based on max FPS (used for optional throttling)
+        # Minimum frame time based on max FPS (for soft limiting without sleep)
         self.min_frame_time = 1.0 / self.max_fps if self.max_fps > 0 else 0
+        self.last_frame_start_time = 0.0  # Track frame start for soft limiting
         
         # ===== Scroll Position & Timing =====
         # Use floating point for sub-pixel accuracy (prevents stuttering)
@@ -578,6 +580,17 @@ class HorizontalScrollManager(ABC):
             True if scroll cycle completed, False otherwise
         """
         current_time = time.time()
+        
+        # Soft FPS limiting (without sleep to avoid jitter)
+        # Skip frame if we're running too fast
+        if self.max_fps > 0 and self.last_frame_start_time > 0:
+            time_since_last_frame = current_time - self.last_frame_start_time
+            if time_since_last_frame < self.min_frame_time:
+                # Running too fast, skip this frame
+                return False
+        
+        # Record frame start time for FPS limiting
+        self.last_frame_start_time = current_time
         
         # Handle force clear / reset
         if force_clear or self._display_start_time == 0:
