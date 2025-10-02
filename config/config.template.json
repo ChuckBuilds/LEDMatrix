@@ -130,7 +130,7 @@
         "duration_buffer": 0.1
     },
     "odds_ticker": {
-        "enabled": true,
+        "enabled": false,
         "show_favorite_teams_only": true,
         "games_per_favorite_team": 1,
         "max_games_per_league": 5,
@@ -406,7 +406,7 @@
         }
     },
     "ncaam_hockey_scoreboard": {
-        "enabled": true,
+        "enabled": false,
         "live_priority": true,
         "live_game_duration": 20,
         "show_odds": true,

@@ -429,7 +429,8 @@ class BaseSoccerManager:
                             break
                             
             except (OSError, PermissionError) as e:
-                self.logger.warning(f"Error listing directory {self.logo_dir}: {e}")
+                self.logger.warning(f"Permission denied listing directory {self.logo_dir}: {e}")
+                self.logger.warning(f"Please run: sudo ./fix_assets_permissions.sh")
         
         if logo_path is None:
             logo_path = expected_path  # Use original path for creation attempts
@@ -453,7 +454,7 @@ class BaseSoccerManager:
                         soccer_league_key = get_soccer_league_key(league_code)
                         self.logger.debug(f"Attempting to download {team_abbrev} logo from {league_code} ({soccer_league_key})")
                         
-                        success = download_missing_logo(team_abbrev, soccer_league_key, team_abbrev)
+                        success = download_missing_logo(soccer_league_key, team_abbrev, team_abbrev, Path(logo_path))
                         if success:
                             self.logger.info(f"Successfully downloaded logo for {team_abbrev} from {league_code}")
                             download_success = True
@@ -494,7 +495,8 @@ class BaseSoccerManager:
                             # No cache directory available, just use in-memory placeholder
                             raise PermissionError("No writable cache directory available")
                     except (PermissionError, OSError) as pe:
-                        self.logger.debug(f"Could not create placeholder logo file for {team_abbrev}: {pe}")
+                        self.logger.warning(f"Permission denied creating placeholder logo for {team_abbrev}: {pe}")
+                        self.logger.warning(f"Please run: sudo ./fix_assets_permissions.sh")
                         # Return a simple in-memory placeholder instead
                         logo = Image.new('RGBA', (36, 36), (random.randint(50, 200), random.randint(50, 200), random.randint(50, 200), 255))
                         self._logo_cache[team_abbrev] = logo
@@ -523,6 +525,7 @@ class BaseSoccerManager:
                     return logo
                 except PermissionError as pe:
                     self.logger.warning(f"Permission denied accessing logo for {team_abbrev}: {pe}")
+                    self.logger.warning(f"Please run: sudo ./fix_assets_permissions.sh")
                     # Return a simple in-memory placeholder instead
                     logo = Image.new('RGBA', (36, 36), (random.randint(50, 200), random.randint(50, 200), random.randint(50, 200), 255))
                     self._logo_cache[team_abbrev] = logo
