@@ -370,6 +370,7 @@
         "upcoming_games_to_show": 1,
         "show_favorite_teams_only": true,
         "show_all_live": false,
+        "show_series_summary": false,
         "favorite_teams": [
             "UGA",
             "AUB"
@@ -452,6 +453,7 @@
         "upcoming_games_to_show": 1,
         "show_favorite_teams_only": true,
         "show_all_live": false,
+        "show_series_summary": false,
         "favorite_teams": [
             "TB",
             "TEX"

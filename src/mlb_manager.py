@@ -6,10 +6,11 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 import pytz
+from PIL import ImageDraw
 
 # Import baseball and standard sports classes
-from src.base_classes.baseball import Baseball, BaseballLive
-from src.base_classes.sports import SportsRecent, SportsUpcoming
+from src.base_classes.baseball import Baseball, BaseballLive, BaseballRecent
+from src.base_classes.sports import SportsUpcoming
 from src.cache_manager import CacheManager
 from src.display_manager import DisplayManager
 
@@ -180,7 +181,7 @@ class MLBLiveManager(BaseMLBManager, BaseballLive):
             self.logger.info("Initialized MLBLiveManager in live mode")
 
 
-class MLBRecentManager(BaseMLBManager, SportsRecent):
+class MLBRecentManager(BaseMLBManager, BaseballRecent):
     """Manager for displaying recent MLB games."""
 
     def __init__(
@@ -194,7 +195,6 @@ class MLBRecentManager(BaseMLBManager, SportsRecent):
         self.logger.info(
             f"Initialized MLBRecentManager with {len(self.favorite_teams)} favorite teams"
         )  # Changed log prefix
-
 
 class MLBUpcomingManager(BaseMLBManager, SportsUpcoming):
     """Manager for displaying upcoming MLB games."""

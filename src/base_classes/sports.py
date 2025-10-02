@@ -539,6 +539,9 @@ class SportsCore(ABC):
             self.logger.warning(f"Error fetching this weeks games for {self.sport} - {self.league} - {date_str}: {e}")
         return None
 
+    def _custom_scorebug_layout(self, game: dict, draw_overlay: ImageDraw.ImageDraw):
+        pass
+
 class SportsUpcoming(SportsCore):
     def __init__(self, config: Dict[str, Any], display_manager: DisplayManager, cache_manager: CacheManager, logger: logging.Logger, sport_key: str):
         super().__init__(config, display_manager, cache_manager, logger, sport_key)
@@ -718,11 +721,14 @@ class SportsUpcoming(SportsCore):
             # Note: Rankings are now handled in the records/rankings section below
 
             # "Next Game" at the top (use smaller status font)
+            status_font = self.fonts['status']
+            if self.display_width > 128:
+                status_font = self.fonts['time']
             status_text = "Next Game"
-            status_width = draw_overlay.textlength(status_text, font=self.fonts['status'])
+            status_width = draw_overlay.textlength(status_text, font=status_font)
             status_x = (self.display_width - status_width) // 2
             status_y = 1 # Changed from 2
-            self._draw_text_with_outline(draw_overlay, status_text, (status_x, status_y), self.fonts['status'])
+            self._draw_text_with_outline(draw_overlay, status_text, (status_x, status_y), status_font)
 
             # Date text (centered, below "Next Game")
             date_width = draw_overlay.textlength(game_date, font=self.fonts['time'])
@@ -1114,6 +1120,7 @@ class SportsRecent(SportsCore):
                         self.logger.debug(f"Drawing home ranking '{home_text}' at ({home_record_x}, {record_y}) with font size {record_font.size if hasattr(record_font, 'size') else 'unknown'}")
                         self._draw_text_with_outline(draw_overlay, home_text, (home_record_x, record_y), record_font)
 
+            self._custom_scorebug_layout(game, draw_overlay)
             # Composite and display
             main_img = Image.alpha_composite(main_img, overlay)
             main_img = main_img.convert('RGB')
