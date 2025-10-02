@@ -1,22 +1,15 @@
-import os
-import time
 import logging
-import requests
-import json
-from typing import Dict, Any, Optional, List
-from PIL import Image, ImageDraw, ImageFont
+from datetime import datetime
 from pathlib import Path
-from datetime import datetime, timedelta, timezone
-from src.display_manager import DisplayManager
-from src.cache_manager import CacheManager
-from src.config_manager import ConfigManager
-from src.odds_manager import OddsManager
-from src.background_data_service import get_background_service
-from requests.adapters import HTTPAdapter
-from urllib3.util.retry import Retry
+from typing import Any, Dict, Optional
+
 import pytz
-from src.base_classes.sports import SportsRecent, SportsUpcoming
+import requests
+
 from src.base_classes.hockey import Hockey, HockeyLive
+from src.base_classes.sports import SportsRecent, SportsUpcoming
+from src.cache_manager import CacheManager
+from src.display_manager import DisplayManager
 
 # Import the API counter function from web interface
 try:
@@ -73,14 +66,14 @@ class BaseNHLManager(Hockey):
             if cached_data:
                 # Validate cached data structure
                 if isinstance(cached_data, dict) and 'events' in cached_data:
-                    self.logger.info(f"[NHL] Using cached data for {season_year}")
+                    self.logger.info(f"Using cached data for {season_year}")
                     return cached_data
                 elif isinstance(cached_data, list):
                     # Handle old cache format (list of events)
-                    self.logger.info(f"[NHL] Using cached data for {season_year} (legacy format)")
+                    self.logger.info(f"Using cached data for {season_year} (legacy format)")
                     return {'events': cached_data}
                 else:
-                    self.logger.warning(f"[NHL] Invalid cached data format for {season_year}: {type(cached_data)}")
+                    self.logger.warning(f"Invalid cached data format for {season_year}: {type(cached_data)}")
                     # Clear invalid cache
                     self.cache_manager.clear_cache(cache_key)
         
@@ -89,7 +82,7 @@ class BaseNHLManager(Hockey):
             return self._fetch_nhl_api_data_sync(use_cache)
         
         # Start background fetch
-        self.logger.info(f"[NHL] Starting background fetch for {season_year} season schedule...")
+        self.logger.info(f"Starting background fetch for {season_year} season schedule...")
         
         def fetch_callback(result):
             """Callback when background fetch completes."""
@@ -131,6 +124,30 @@ class BaseNHLManager(Hockey):
             return partial_data
         
         return None
+    
+    def _fetch_nhl_api_data_sync(self, use_cache: bool = True) -> Optional[Dict]:
+        """
+        Synchronous fallback for fetching NFL data when background service is disabled.
+        """
+        now = datetime.now(pytz.utc)
+        current_year = now.year
+        cache_key = f"nhl_schedule_{current_year}"
+
+        self.logger.info(f"Fetching full {current_year} season schedule from ESPN API (sync mode)...")
+        try:
+            response = self.session.get(ESPN_NHL_SCOREBOARD_URL, params={"dates": current_year, "limit":1000}, headers=self.headers, timeout=15)
+            response.raise_for_status()
+            data = response.json()
+            events = data.get('events', [])
+            
+            if use_cache:
+                self.cache_manager.set(cache_key, events)
+            
+            self.logger.info(f"Successfully fetched {len(events)} events for the {current_year} season.")
+            return {'events': events}
+        except requests.exceptions.RequestException as e:
+            self.logger.error(f"API error fetching full schedule: {e}")
+            return None
 
     def _fetch_data(self, date_str: str = None) -> Optional[Dict]:
         """Fetch data using shared data mechanism or direct fetch for live."""
@@ -184,37 +201,3 @@ class NHLUpcomingManager(BaseNHLManager, SportsUpcoming):
         super().__init__(config, display_manager, cache_manager)
         self.logger = logging.getLogger('NHLUpcomingManager') # Changed logger name
         self.logger.info(f"Initialized NHLUpcomingManager with {len(self.favorite_teams)} favorite teams")
-        
-        """Display upcoming games."""
-        if not self.upcoming_games:
-            current_time = time.time()
-            if current_time - self.last_warning_time > self.warning_cooldown:
-                self.logger.info("[NHL] No upcoming games to display")
-                self.last_warning_time = current_time
-            return  # Skip display update entirely
-            
-        try:
-            current_time = time.time()
-            
-            # Check if it's time to switch games
-            if len(self.upcoming_games) > 1 and current_time - self.last_game_switch >= self.game_display_duration:
-                # Move to next game
-                self.current_game_index = (self.current_game_index + 1) % len(self.upcoming_games)
-                self.current_game = self.upcoming_games[self.current_game_index]
-                self.last_game_switch = current_time
-                force_clear = True  # Force clear when switching games
-                
-                # Log team switching
-                if self.current_game:
-                    away_abbr = self.current_game.get('away_abbr', 'UNK')
-                    home_abbr = self.current_game.get('home_abbr', 'UNK')
-                    self.logger.info(f"[NHL Upcoming] Showing {away_abbr} vs {home_abbr}")
-            
-            # Draw the scorebug layout
-            self._draw_scorebug_layout(self.current_game, force_clear)
-            
-            # Update display
-            self.display_manager.update_display()
-            
-        except Exception as e:
-            self.logger.error(f"[NHL] Error displaying upcoming game: {e}", exc_info=True) 
