@@ -605,6 +605,7 @@
     "static_image": {
         "enabled": false,
         "image_path": "assets/static_images/default.png",
+        "fit_to_display": true,
         "zoom_scale": 1.0,
         "preserve_aspect_ratio": true,
         "background_color": [

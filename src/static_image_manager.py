@@ -24,7 +24,8 @@ class StaticImageManager:
         self.image_path = self.config.get('image_path', '')
         # Get display duration from main display_durations block
         self.display_duration = config.get('display', {}).get('display_durations', {}).get('static_image', 10)
-        self.zoom_scale = self.config.get('zoom_scale', 1.0)  # 1.0 = fit to display
+        self.fit_to_display = self.config.get('fit_to_display', True)  # Auto-fit to display dimensions
+        self.zoom_scale = self.config.get('zoom_scale', 1.0)  # Only used when fit_to_display is False
         self.preserve_aspect_ratio = self.config.get('preserve_aspect_ratio', True)
         self.background_color = tuple(self.config.get('background_color', [0, 0, 0]))
         
@@ -58,12 +59,12 @@ class StaticImageManager:
             display_width = self.display_manager.matrix.width
             display_height = self.display_manager.matrix.height
             
-            # Calculate target size based on zoom scale
-            if self.zoom_scale == 1.0:
-                # Fit to display while preserving aspect ratio
+            # Calculate target size based on fit_to_display option
+            if self.fit_to_display:
+                # Auto-fit to display while preserving aspect ratio
                 target_size = self._calculate_fit_size(img.size, (display_width, display_height))
             else:
-                # Apply zoom scale
+                # Use manual zoom scale
                 original_size = img.size
                 scaled_width = int(original_size[0] * self.zoom_scale)
                 scaled_height = int(original_size[1] * self.zoom_scale)
@@ -79,7 +80,7 @@ class StaticImageManager:
             canvas = Image.new('RGB', (display_width, display_height), self.background_color)
             
             # Calculate position to center the image
-            if self.zoom_scale == 1.0 or self.preserve_aspect_ratio:
+            if self.fit_to_display or self.preserve_aspect_ratio:
                 # Center the image
                 paste_x = (display_width - img.width) // 2
                 paste_y = (display_height - img.height) // 2
@@ -161,6 +162,15 @@ class StaticImageManager:
         self.image_path = image_path
         return self._load_image()
     
+    def set_fit_to_display(self, fit_to_display: bool):
+        """
+        Set the fit to display option and reload the image.
+        """
+        self.fit_to_display = fit_to_display
+        if self.image_path:
+            self._load_image()
+        logger.info(f"[Static Image] Fit to display set to: {self.fit_to_display}")
+    
     def set_zoom_scale(self, zoom_scale: float):
         """
         Set the zoom scale and reload the image.
@@ -197,6 +207,7 @@ class StaticImageManager:
             "loaded": True,
             "path": self.image_path,
             "display_size": self.current_image.size,
+            "fit_to_display": self.fit_to_display,
             "zoom_scale": self.zoom_scale,
             "display_duration": self.display_duration,
             "background_color": self.background_color
