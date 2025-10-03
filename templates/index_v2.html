@@ -875,6 +875,9 @@
                     <button class="tab-btn" onclick="showTab('text')">
                         <i class="fas fa-font"></i> Text
                     </button>
+                    <button class="tab-btn" onclick="showTab('static_image')">
+                        <i class="fas fa-image"></i> Static Image
+                    </button>
                     <button class="tab-btn" onclick="showTab('features')">
                         <i class="fas fa-star"></i> Features
                     </button>
@@ -1633,6 +1636,38 @@
                                 <div class="form-group"><label for="text_background_color">Background Color</label><input type="color" id="text_background_color" class="form-control" data-rgb='{{ safe_config_get(main_config, 'text_display', 'background_color', default=[0, 0, 0]) | tojson }}'></div>
                             </div>
                             <button type="submit" class="btn btn-success">Save Text Settings</button>
+                        </form>
+                    </div>
+                </div>
+
+                <!-- Static Image Tab -->
+                <div id="static_image" class="tab-content">
+                    <div class="config-section">
+                        <div style="display:flex; justify-content: space-between; align-items:center;">
+                            <h3>Static Image Display</h3>
+                            <div style="display:flex; gap:8px;">
+                                <button type="button" class="btn btn-info" onclick="startOnDemand('static_image')"><i class="fas fa-bolt"></i> On-Demand</button>
+                            </div>
+                        </div>
+                        <form id="static_image-form">
+                            <div class="form-group"><label><input type="checkbox" id="static_image_enabled" {% if safe_config_get(main_config, 'static_image', 'enabled', default=False) %}checked{% endif %}> Enable</label></div>
+                            <div class="form-group">
+                                <label for="static_image_path">Image Path</label>
+                                <div style="display:flex; gap:8px;">
+                                    <input type="text" id="static_image_path" class="form-control" value="{{ safe_config_get(main_config, 'static_image', 'image_path', default='assets/static_images/default.png') }}">
+                                    <button type="button" class="btn btn-secondary" onclick="document.getElementById('image_upload').click()"><i class="fas fa-upload"></i> Upload</button>
+                                </div>
+                                <input type="file" id="image_upload" accept="image/*" style="display:none" onchange="handleImageUpload(this)">
+                            </div>
+                            <div class="form-row">
+                                <div class="form-group"><label for="static_image_display_duration">Display Duration (seconds)</label><input type="number" id="static_image_display_duration" class="form-control" value="{{ safe_config_get(main_config, 'static_image', 'display_duration', default=10) }}" min="1"></div>
+                                <div class="form-group"><label for="static_image_zoom_scale">Zoom Scale</label><input type="number" id="static_image_zoom_scale" class="form-control" value="{{ safe_config_get(main_config, 'static_image', 'zoom_scale', default=1.0) }}" min="0.1" max="5.0" step="0.1"></div>
+                            </div>
+                            <div class="form-row">
+                                <div class="form-group"><label><input type="checkbox" id="static_image_preserve_aspect_ratio" {% if safe_config_get(main_config, 'static_image', 'preserve_aspect_ratio', default=True) %}checked{% endif %}> Preserve Aspect Ratio</label></div>
+                                <div class="form-group"><label for="static_image_background_color">Background Color</label><input type="color" id="static_image_background_color" class="form-control" data-rgb='{{ safe_config_get(main_config, 'static_image', 'background_color', default=[0, 0, 0]) | tojson }}'></div>
+                            </div>
+                            <button type="submit" class="btn btn-success">Save Static Image Settings</button>
                         </form>
                     </div>
                 </div>
@@ -3113,6 +3148,55 @@
                 await saveConfigJson(payload);
             });
         })();
+
+        // Static Image form submit
+        (function augmentStaticImageForm(){
+            const form = document.getElementById('static_image-form');
+            const initColor = (input) => {
+                try { const rgb = JSON.parse(input.dataset.rgb || '[255,255,255]'); input.value = rgbToHex(rgb); } catch {}
+            };
+            initColor(document.getElementById('static_image_background_color'));
+            form.addEventListener('submit', async function(e){
+                e.preventDefault();
+                const payload = {
+                    static_image: {
+                        enabled: document.getElementById('static_image_enabled').checked,
+                        image_path: document.getElementById('static_image_path').value,
+                        display_duration: parseInt(document.getElementById('static_image_display_duration').value),
+                        zoom_scale: parseFloat(document.getElementById('static_image_zoom_scale').value),
+                        preserve_aspect_ratio: document.getElementById('static_image_preserve_aspect_ratio').checked,
+                        background_color: hexToRgbArray(document.getElementById('static_image_background_color').value)
+                    }
+                };
+                await saveConfigJson(payload);
+            });
+        })();
+
+        // Image upload handler
+        function handleImageUpload(input) {
+            const file = input.files[0];
+            if (file) {
+                const formData = new FormData();
+                formData.append('image', file);
+                
+                fetch('/upload_image', {
+                    method: 'POST',
+                    body: formData
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        document.getElementById('static_image_path').value = data.path;
+                        showNotification('Image uploaded successfully!', 'success');
+                    } else {
+                        showNotification('Failed to upload image: ' + data.error, 'error');
+                    }
+                })
+                .catch(error => {
+                    showNotification('Error uploading image: ' + error, 'error');
+                });
+            }
+        }
 
         // YouTube form submit
         (function augmentYouTubeForm(){

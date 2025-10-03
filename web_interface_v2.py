@@ -20,7 +20,9 @@ from src.odds_ticker_manager import OddsTickerManager
 from src.calendar_manager import CalendarManager
 from src.youtube_display import YouTubeDisplay
 from src.text_display import TextDisplay
+from src.static_image_manager import StaticImageManager
 from src.news_manager import NewsManager
+from werkzeug.utils import secure_filename
 from src.nhl_managers import NHLLiveManager, NHLRecentManager, NHLUpcomingManager
 from src.nba_managers import NBALiveManager, NBARecentManager, NBAUpcomingManager
 from src.mlb_manager import MLBLiveManager, MLBRecentManager, MLBUpcomingManager
@@ -421,6 +423,10 @@ class OnDemandRunner:
             mgr = TextDisplay(display_manager, cfg)
             self._force_enable(mgr)
             return mgr, lambda fc=False: mgr.display(), lambda: getattr(mgr, 'update', lambda: None)(), 5.0
+        if mode == 'static_image':
+            mgr = StaticImageManager(display_manager, cfg)
+            self._force_enable(mgr)
+            return mgr, lambda fc=False: mgr.display(force_clear=fc), lambda: mgr.update(), float(cfg.get('static_image', {}).get('display_duration', 10))
         if mode == 'of_the_day':
             from src.of_the_day_manager import OfTheDayManager  # local import to avoid circulars
             mgr = OfTheDayManager(display_manager, cfg)
@@ -1593,6 +1599,42 @@ def get_current_display():
         return jsonify(current_display_data)
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e), 'image': None}), 500
+
+@app.route('/upload_image', methods=['POST'])
+def upload_image():
+    """Upload an image for static image display."""
+    try:
+        if 'image' not in request.files:
+            return jsonify({'success': False, 'error': 'No image file provided'})
+        
+        file = request.files['image']
+        if file.filename == '':
+            return jsonify({'success': False, 'error': 'No image file selected'})
+        
+        if file:
+            # Secure the filename
+            filename = secure_filename(file.filename)
+            # Ensure we have a valid extension
+            if not filename.lower().endswith(('.png', '.jpg', '.jpeg', '.gif', '.bmp')):
+                return jsonify({'success': False, 'error': 'Invalid file type. Only image files are allowed.'})
+            
+            # Create the static images directory if it doesn't exist
+            static_images_dir = os.path.join(os.path.dirname(__file__), 'assets', 'static_images')
+            os.makedirs(static_images_dir, exist_ok=True)
+            
+            # Save the file
+            file_path = os.path.join(static_images_dir, filename)
+            file.save(file_path)
+            
+            # Return the relative path for the config
+            relative_path = f"assets/static_images/{filename}"
+            
+            logger.info(f"Image uploaded successfully: {relative_path}")
+            return jsonify({'success': True, 'path': relative_path})
+        
+    except Exception as e:
+        logger.error(f"Error uploading image: {e}")
+        return jsonify({'success': False, 'error': str(e)})
 
 @app.route('/api/editor/layouts', methods=['GET'])
 def get_custom_layouts():

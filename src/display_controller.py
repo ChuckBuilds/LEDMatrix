@@ -34,6 +34,7 @@ from src.ncaam_hockey_managers import NCAAMHockeyLiveManager, NCAAMHockeyRecentM
 from src.youtube_display import YouTubeDisplay
 from src.calendar_manager import CalendarManager
 from src.text_display import TextDisplay
+from src.static_image_manager import StaticImageManager
 from src.music_manager import MusicManager
 from src.of_the_day_manager import OfTheDayManager
 from src.news_manager import NewsManager
@@ -66,10 +67,12 @@ class DisplayController:
         self.calendar = CalendarManager(self.display_manager, self.config) if self.config.get('calendar', {}).get('enabled', False) else None
         self.youtube = YouTubeDisplay(self.display_manager, self.config) if self.config.get('youtube', {}).get('enabled', False) else None
         self.text_display = TextDisplay(self.display_manager, self.config) if self.config.get('text_display', {}).get('enabled', False) else None
+        self.static_image = StaticImageManager(self.display_manager, self.config) if self.config.get('static_image', {}).get('enabled', False) else None
         self.of_the_day = OfTheDayManager(self.display_manager, self.config) if self.config.get('of_the_day', {}).get('enabled', False) else None
         self.news_manager = NewsManager(self.config, self.display_manager, self.config_manager) if self.config.get('news_manager', {}).get('enabled', False) else None
         logger.info(f"Calendar Manager initialized: {'Object' if self.calendar else 'None'}")
         logger.info(f"Text Display initialized: {'Object' if self.text_display else 'None'}")
+        logger.info(f"Static Image Manager initialized: {'Object' if self.static_image else 'None'}")
         logger.info(f"OfTheDay Manager initialized: {'Object' if self.of_the_day else 'None'}")
         logger.info(f"News Manager initialized: {'Object' if self.news_manager else 'None'}")
         logger.info("Display modes initialized in %.3f seconds", time.time() - init_time)
@@ -282,6 +285,7 @@ class DisplayController:
         if self.calendar: self.available_modes.append('calendar')
         if self.youtube: self.available_modes.append('youtube')
         if self.text_display: self.available_modes.append('text_display')
+        if self.static_image: self.available_modes.append('static_image')
         if self.of_the_day: self.available_modes.append('of_the_day')
         if self.news_manager: self.available_modes.append('news_manager')
         if self.music_manager:
@@ -600,6 +604,7 @@ class DisplayController:
             if self.calendar: self.calendar.update(time.time())
             if self.youtube: self.youtube.update()
             if self.text_display: self.text_display.update()
+            if self.static_image: self.static_image.update()
             if self.of_the_day: self.of_the_day.update(time.time())
         else:
             # Not scrolling, perform all updates normally
@@ -610,6 +615,7 @@ class DisplayController:
             if self.calendar: self.calendar.update(time.time())
             if self.youtube: self.youtube.update()
             if self.text_display: self.text_display.update()
+            if self.static_image: self.static_image.update()
             if self.of_the_day: self.of_the_day.update(time.time())
             
             # Update sports managers for leaderboard data
@@ -1208,6 +1214,8 @@ class DisplayController:
                                 manager_to_display = self.youtube
                             elif self.current_display_mode == 'text_display' and self.text_display:
                                 manager_to_display = self.text_display
+                            elif self.current_display_mode == 'static_image' and self.static_image:
+                                manager_to_display = self.static_image
                             elif self.current_display_mode == 'of_the_day' and self.of_the_day:
                                 manager_to_display = self.of_the_day
                             elif self.current_display_mode == 'news_manager' and self.news_manager:
@@ -1321,6 +1329,8 @@ class DisplayController:
                              manager_to_display.display(force_clear=self.force_clear)
                         elif self.current_display_mode == 'text_display':
                              manager_to_display.display() # Assumes internal clearing
+                        elif self.current_display_mode == 'static_image':
+                             manager_to_display.display(force_clear=self.force_clear)
                         elif self.current_display_mode == 'of_the_day':
                              manager_to_display.display(force_clear=self.force_clear)
                         elif self.current_display_mode == 'news_manager':

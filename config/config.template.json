@@ -72,7 +72,8 @@
             "ncaam_basketball_upcoming": 30,
             "music": 30,
             "of_the_day": 40,
-            "news_manager": 60
+            "news_manager": 60,
+            "static_image": 10
         },
         "use_short_date_format": true
     },
@@ -130,7 +131,7 @@
         "duration_buffer": 0.1
     },
     "odds_ticker": {
-        "enabled": false,
+        "enabled": true,
         "show_favorite_teams_only": true,
         "games_per_favorite_team": 1,
         "max_games_per_league": 5,
@@ -233,8 +234,6 @@
         "recent_games_to_show": 1,
         "upcoming_games_to_show": 1,
         "show_favorite_teams_only": true,
-        "show_all_live": false,
-        "show_shots_on_goal": false,
         "favorite_teams": [
             "TB"
         ],
@@ -301,7 +300,6 @@
         "recent_games_to_show": 1,
         "upcoming_games_to_show": 1,
         "show_favorite_teams_only": true,
-        "show_all_live": false,
         "favorite_teams": [
             "TB",
             "DAL"
@@ -334,11 +332,9 @@
         "recent_games_to_show": 1,
         "upcoming_games_to_show": 1,
         "show_favorite_teams_only": true,
-        "show_all_live": false,
         "favorite_teams": [
             "UGA",
-            "AUB",
-            "AP_TOP_25"
+            "AUB"
         ],
         "logo_dir": "assets/sports/ncaa_logos",
         "show_records": true,
@@ -369,8 +365,6 @@
         "recent_games_to_show": 1,
         "upcoming_games_to_show": 1,
         "show_favorite_teams_only": true,
-        "show_all_live": false,
-        "show_series_summary": false,
         "favorite_teams": [
             "UGA",
             "AUB"
@@ -419,8 +413,6 @@
         "recent_games_to_show": 1,
         "upcoming_games_to_show": 1,
         "show_favorite_teams_only": true,
-        "show_all_live": false,
-        "show_shots_on_goal": false,
         "favorite_teams": [
             "RIT"
         ],
@@ -452,8 +444,6 @@
         "recent_games_to_show": 1,
         "upcoming_games_to_show": 1,
         "show_favorite_teams_only": true,
-        "show_all_live": false,
-        "show_series_summary": false,
         "favorite_teams": [
             "TB",
             "TEX"
@@ -608,6 +598,18 @@
         ],
         "separator_color": [
             255,
+            0,
+            0
+        ]
+    },
+    "static_image": {
+        "enabled": false,
+        "image_path": "assets/static_images/default.png",
+        "display_duration": 10,
+        "zoom_scale": 1.0,
+        "preserve_aspect_ratio": true,
+        "background_color": [
+            0,
             0,
             0
         ]
