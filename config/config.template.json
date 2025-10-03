@@ -433,6 +433,32 @@
             "ncaam_hockey_upcoming": true
         }
     },
+    "ncaaw_hockey_scoreboard": {
+        "enabled": false,
+        "live_priority": true,
+        "live_game_duration": 20,
+        "show_odds": true,
+        "test_mode": false,
+        "update_interval_seconds": 3600,
+        "live_update_interval": 30,
+        "live_odds_update_interval": 3600,
+        "odds_update_interval": 3600,
+        "recent_games_to_show": 1,
+        "upcoming_games_to_show": 1,
+        "show_favorite_teams_only": true,
+        "show_all_live": false,
+        "favorite_teams": [
+            "RIT"
+        ],
+        "logo_dir": "assets/sports/ncaa_logos",
+        "show_records": false,
+        "show_ranking": false,
+        "display_modes": {
+            "ncaaw_hockey_live": true,
+            "ncaaw_hockey_recent": true ,
+            "ncaaw_hockey_upcoming": true
+        }
+    },
     "youtube": {
         "enabled": false,
         "update_interval": 3600

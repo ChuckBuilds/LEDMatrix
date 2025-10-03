@@ -58,6 +58,7 @@ class LogoDownloader:
         'ncaam_basketball': 'assets/sports/ncaa_logos',
         'ncaa_baseball': 'assets/sports/ncaa_logos',
         'ncaam_hockey': 'assets/sports/ncaa_logos',
+        'ncaaw_hockey': 'assets/sports/ncaa_logos',
         # Soccer leagues - all use the same soccer_logos directory
         'soccer_eng.1': 'assets/sports/soccer_logos',
         'soccer_esp.1': 'assets/sports/soccer_logos',
