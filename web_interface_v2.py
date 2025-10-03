@@ -426,7 +426,7 @@ class OnDemandRunner:
         if mode == 'static_image':
             mgr = StaticImageManager(display_manager, cfg)
             self._force_enable(mgr)
-            return mgr, lambda fc=False: mgr.display(force_clear=fc), lambda: mgr.update(), float(cfg.get('static_image', {}).get('display_duration', 10))
+            return mgr, lambda fc=False: mgr.display(force_clear=fc), lambda: mgr.update(), float(cfg.get('display', {}).get('display_durations', {}).get('static_image', 10))
         if mode == 'of_the_day':
             from src.of_the_day_manager import OfTheDayManager  # local import to avoid circulars
             mgr = OfTheDayManager(display_manager, cfg)

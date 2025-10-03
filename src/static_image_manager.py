@@ -22,7 +22,8 @@ class StaticImageManager:
         # Configuration
         self.enabled = self.config.get('enabled', False)
         self.image_path = self.config.get('image_path', '')
-        self.display_duration = self.config.get('display_duration', 10)  # seconds
+        # Get display duration from main display_durations block
+        self.display_duration = config.get('display', {}).get('display_durations', {}).get('static_image', 10)
         self.zoom_scale = self.config.get('zoom_scale', 1.0)  # 1.0 = fit to display
         self.preserve_aspect_ratio = self.config.get('preserve_aspect_ratio', True)
         self.background_color = tuple(self.config.get('background_color', [0, 0, 0]))

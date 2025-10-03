@@ -1660,7 +1660,6 @@
                                 <input type="file" id="image_upload" accept="image/*" style="display:none" onchange="handleImageUpload(this)">
                             </div>
                             <div class="form-row">
-                                <div class="form-group"><label for="static_image_display_duration">Display Duration (seconds)</label><input type="number" id="static_image_display_duration" class="form-control" value="{{ safe_config_get(main_config, 'static_image', 'display_duration', default=10) }}" min="1"></div>
                                 <div class="form-group"><label for="static_image_zoom_scale">Zoom Scale</label><input type="number" id="static_image_zoom_scale" class="form-control" value="{{ safe_config_get(main_config, 'static_image', 'zoom_scale', default=1.0) }}" min="0.1" max="5.0" step="0.1"></div>
                             </div>
                             <div class="form-row">
@@ -3162,7 +3161,6 @@
                     static_image: {
                         enabled: document.getElementById('static_image_enabled').checked,
                         image_path: document.getElementById('static_image_path').value,
-                        display_duration: parseInt(document.getElementById('static_image_display_duration').value),
                         zoom_scale: parseFloat(document.getElementById('static_image_zoom_scale').value),
                         preserve_aspect_ratio: document.getElementById('static_image_preserve_aspect_ratio').checked,
                         background_color: hexToRgbArray(document.getElementById('static_image_background_color').value)
