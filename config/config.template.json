@@ -268,6 +268,7 @@
         "recent_games_to_show": 1,
         "upcoming_games_to_show": 1,
         "show_favorite_teams_only": true,
+        "show_all_live": false,
         "favorite_teams": [
             "DAL"
         ],
@@ -284,6 +285,40 @@
             "nba_live": true,
             "nba_recent": true,
             "nba_upcoming": true
+        }
+    },
+    "wnba_scoreboard": {
+        "enabled": false,
+        "live_priority": true,
+        "live_game_duration": 20,
+        "show_odds": true,
+        "test_mode": false,
+        "update_interval_seconds": 3600,
+        "live_update_interval": 30,
+        "live_odds_update_interval": 3600,
+        "odds_update_interval": 3600,
+        "recent_update_interval": 3600,
+        "upcoming_update_interval": 3600,
+        "recent_games_to_show": 1,
+        "upcoming_games_to_show": 1,
+        "show_favorite_teams_only": true,
+        "show_all_live": false,
+        "favorite_teams": [
+            "CHI"
+        ],
+        "logo_dir": "assets/sports/wnba_logos",
+        "show_records": true,
+        "background_service": {
+            "enabled": true,
+            "max_workers": 3,
+            "request_timeout": 30,
+            "max_retries": 3,
+            "priority": 2
+        },
+        "display_modes": {
+            "wnba_live": true,
+            "wnba_recent": true,
+            "wnba_upcoming": true
         }
     },
     "nfl_scoreboard": {
@@ -394,6 +429,7 @@
         "recent_games_to_show": 1,
         "upcoming_games_to_show": 1,
         "show_favorite_teams_only": true,
+        "show_all_live": false,
         "favorite_teams": [
             "UGA",
             "AUB"
@@ -404,6 +440,30 @@
             "ncaam_basketball_live": true,
             "ncaam_basketball_recent": true,
             "ncaam_basketball_upcoming": true
+        }
+    },
+    "ncaaw_basketball_scoreboard": {
+        "enabled": false,
+        "live_priority": true,
+        "live_game_duration": 20,
+        "show_odds": true,
+        "test_mode": false,
+        "update_interval_seconds": 3600,
+        "live_update_interval": 30,
+        "recent_games_to_show": 1,
+        "upcoming_games_to_show": 1,
+        "show_favorite_teams_only": true,
+        "show_all_live": false,
+        "favorite_teams": [
+            "UGA",
+            "AUB"
+        ],
+        "logo_dir": "assets/sports/ncaa_logos",
+        "show_records": true,
+        "display_modes": {
+            "ncaaw_basketball_live": true,
+            "ncaaw_basketball_recent": true,
+            "ncaaw_basketball_upcoming": true
         }
     },
     "ncaam_hockey_scoreboard": {

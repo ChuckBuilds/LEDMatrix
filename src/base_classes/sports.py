@@ -420,8 +420,14 @@ class SportsCore(ABC):
                 self.logger.warning(f"Could not find home or away team in event: {game_event.get('id')}")
                 return None, None, None, None, None
 
-            home_abbr = home_team["team"]["abbreviation"]
-            away_abbr = away_team["team"]["abbreviation"]
+            try:
+                home_abbr = home_team["team"]["abbreviation"]
+            except KeyError:
+                home_abbr = home_team["team"]["name"][:3]
+            try:
+                away_abbr = away_team["team"]["abbreviation"]
+            except KeyError:
+                away_abbr = away_team["team"]["name"][:3]
             
             # Check if this is a favorite team game BEFORE doing expensive logging
             is_favorite_game = (home_abbr in self.favorite_teams or away_abbr in self.favorite_teams)

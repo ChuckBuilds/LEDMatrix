@@ -23,13 +23,10 @@ class BaseNFLManager(Football): # Renamed class
     _warning_cooldown = 60  # Only log warnings once per minute
     _shared_data = None
     _last_shared_update = 0
-    
+
     def __init__(self, config: Dict[str, Any], display_manager: DisplayManager, cache_manager: CacheManager):
         self.logger = logging.getLogger('NFL') # Changed logger name
         super().__init__(config=config, display_manager=display_manager, cache_manager=cache_manager, logger=self.logger, sport_key="nfl")
-        
-        # Configuration is already set in base class
-        # self.logo_dir and self.update_interval are already configured
 
         # Check display modes to determine what data to fetch
         display_modes = self.mode_config.get("display_modes", {})

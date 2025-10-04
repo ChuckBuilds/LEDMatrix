@@ -49,6 +49,7 @@ class LogoDownloader:
     LOGO_DIRECTORIES = {
         'nfl': 'assets/sports/nfl_logos',
         'nba': 'assets/sports/nba_logos', 
+        'wnba': 'assets/sports/wnba_logos', 
         'mlb': 'assets/sports/mlb_logos',
         'nhl': 'assets/sports/nhl_logos',
         # NCAA sports use same directory

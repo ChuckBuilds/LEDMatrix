@@ -1,4 +1,5 @@
 import logging
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -21,11 +22,13 @@ except ImportError:
 
 
 # Constants
-ESPN_NCAAMB_SCOREBOARD_URL = "https://site.api.espn.com/apis/site/v2/sports/basketball/mens-college-basketball/scoreboard"
+ESPN_WNBA_SCOREBOARD_URL = (
+    "https://site.api.espn.com/apis/site/v2/sports/basketball/wnba/scoreboard"
+)
 
 
-class BaseNCAAMBasketballManager(Basketball):
-    """Base class for NCAA MB managers with common functionality."""
+class BaseWNBAManager(Basketball):
+    """Base class for WNBA managers with common functionality."""
 
     # Class variables for warning tracking
     _no_data_warning_logged = False
@@ -41,39 +44,40 @@ class BaseNCAAMBasketballManager(Basketball):
         display_manager: DisplayManager,
         cache_manager: CacheManager,
     ):
-        self.logger = logging.getLogger("NCAAMB")  # Changed logger name
+        self.logger = logging.getLogger("WNBA")  # Changed logger name
         super().__init__(
             config=config,
             display_manager=display_manager,
             cache_manager=cache_manager,
             logger=self.logger,
-            sport_key="ncaam_basketball",
+            sport_key="wnba",
         )
 
         # Check display modes to determine what data to fetch
         display_modes = self.mode_config.get("display_modes", {})
-        self.recent_enabled = display_modes.get("ncaam_basketball_recent", False)
-        self.upcoming_enabled = display_modes.get("ncaam_basketball_upcoming", False)
-        self.live_enabled = display_modes.get("ncaam_basketball_live", False)
+        self.recent_enabled = display_modes.get("wnba_recent", False)
+        self.upcoming_enabled = display_modes.get("wnba_upcoming", False)
+        self.live_enabled = display_modes.get("wnba_live", False)
 
         self.logger.info(
-            f"Initialized NCAA Mens Basketball manager with display dimensions: {self.display_width}x{self.display_height}"
+            f"Initialized WNBA manager with display dimensions: {self.display_width}x{self.display_height}"
         )
         self.logger.info(f"Logo directory: {self.logo_dir}")
         self.logger.info(
             f"Display modes - Recent: {self.recent_enabled}, Upcoming: {self.upcoming_enabled}, Live: {self.live_enabled}"
         )
-        self.league = "mens-college-basketball"
+        self.league = "wnba"
 
-    def _fetch_ncaam_basketball_api_data(
-        self, use_cache: bool = True
-    ) -> Optional[Dict]:
+    def _fetch_wnba_api_data(self, use_cache: bool = True) -> Optional[Dict]:
         """
-        Fetches the full season schedule for NCAA Mens Basketball using background threading.
+        Fetches the full season schedule for WNBA using background threading.
         Returns cached data immediately if available, otherwise starts background fetch.
         """
         now = datetime.now(pytz.utc)
         season_year = now.year
+        if now.month < 2:
+            season_year = now.year - 1
+        datestring = f"{season_year}0401-{season_year+1}1101"
         cache_key = f"{self.sport_key}_schedule_{season_year}"
 
         # Check cache first
@@ -99,7 +103,7 @@ class BaseNCAAMBasketballManager(Basketball):
 
         # If background service is disabled, fall back to synchronous fetch
         if not self.background_enabled or not self.background_service:
-            return self._fetch_ncaam_basketball_api_data_sync(use_cache)
+            return self._fetch_wnba_api_data_sync(use_cache)
 
         # Start background fetch
         self.logger.info(
@@ -129,11 +133,11 @@ class BaseNCAAMBasketballManager(Basketball):
 
         # Submit background fetch request
         request_id = self.background_service.submit_fetch_request(
-            sport="ncaa_mens_basketball",
+            sport="nba",
             year=season_year,
-            url=ESPN_NCAAMB_SCOREBOARD_URL,
+            url=ESPN_WNBA_SCOREBOARD_URL,
             cache_key=cache_key,
-            params={"dates": season_year, "limit": 1000},
+            params={"dates": datestring, "limit": 1000},
             headers=self.headers,
             timeout=timeout,
             max_retries=max_retries,
@@ -151,22 +155,20 @@ class BaseNCAAMBasketballManager(Basketball):
 
         return None
 
-    def _fetch_ncaam_basketball_api_data_sync(
-        self, use_cache: bool = True
-    ) -> Optional[Dict]:
+    def _fetch_wnba_api_data_sync(self, use_cache: bool = True) -> Optional[Dict]:
         """
-        Synchronous fallback for fetching NFL data when background service is disabled.
+        Synchronous fallback for fetching WNBA data when background service is disabled.
         """
         now = datetime.now(pytz.utc)
         current_year = now.year
-        cache_key = f"ncaa_mens_basketball_schedule_{current_year}"
+        cache_key = f"nba_schedule_{current_year}"
 
         self.logger.info(
             f"Fetching full {current_year} season schedule from ESPN API (sync mode)..."
         )
         try:
             response = self.session.get(
-                ESPN_NCAAMB_SCOREBOARD_URL,
+                ESPN_WNBA_SCOREBOARD_URL,
                 params={"dates": current_year, "limit": 1000},
                 headers=self.headers,
                 timeout=15,
@@ -188,16 +190,16 @@ class BaseNCAAMBasketballManager(Basketball):
 
     def _fetch_data(self) -> Optional[Dict]:
         """Fetch data using shared data mechanism or direct fetch for live."""
-        if isinstance(self, NCAAMBasketballLiveManager):
+        if isinstance(self, WNBALiveManager):
             # Live games should fetch only current games, not entire season
             return self._fetch_todays_games()
         else:
             # Recent and Upcoming managers should use cached season data
-            return self._fetch_ncaam_basketball_api_data(use_cache=True)
+            return self._fetch_wnba_api_data(use_cache=True)
 
 
-class NCAAMBasketballLiveManager(BaseNCAAMBasketballManager, BasketballLive):
-    """Manager for live NCAA MB games."""
+class WNBALiveManager(BaseWNBAManager, BasketballLive):
+    """Manager for live NBA games."""
 
     def __init__(
         self,
@@ -206,58 +208,36 @@ class NCAAMBasketballLiveManager(BaseNCAAMBasketballManager, BasketballLive):
         cache_manager: CacheManager,
     ):
         super().__init__(config, display_manager, cache_manager)
-        self.logger = logging.getLogger(
-            "NCAAMBasketballLiveManager"
-        )  # Changed logger name
+        self.logger = logging.getLogger("WNBALiveManager")  # Changed logger name
 
         if self.test_mode:
-            # More detailed test game for NCAA MB
+            # More detailed test game for NBA
             self.current_game = {
                 "id": "test001",
-                "home_abbr": "AUB",
+                "home_abbr": "CHI",
                 "home_id": "123",
-                "away_abbr": "GT",
+                "away_abbr": "ATL",
                 "away_id": "asdf",
                 "home_score": "21",
                 "away_score": "17",
                 "period": 3,
                 "period_text": "Q3",
                 "clock": "5:24",
-                "home_logo_path": Path(self.logo_dir, "AUB.png"),
-                "away_logo_path": Path(self.logo_dir, "GT.png"),
+                "home_logo_path": Path(self.logo_dir, "CHI.png"),
+                "away_logo_path": Path(self.logo_dir, "ATL.png"),
                 "is_live": True,
                 "is_final": False,
                 "is_upcoming": False,
                 "is_halftime": False,
             }
             self.live_games = [self.current_game]
-            self.logger.info(
-                "Initialized NCAAMBasketballLiveManager with test game: GT vs AUB"
-            )
+            self.logger.info("Initialized WNBALiveManager with test game: BUF vs KC")
         else:
-            self.logger.info(" Initialized NCAAMBasketballLiveManager in live mode")
+            self.logger.info(" Initialized WNBALiveManager in live mode")
 
 
-class NCAAMBasketballRecentManager(BaseNCAAMBasketballManager, SportsRecent):
-    """Manager for recently completed NCAA MB games."""
-
-    def __init__(
-        self,
-        config: Dict[str, Any],
-        display_manager: DisplayManager,
-        cache_manager: CacheManager,
-    ):
-        super().__init__(config, display_manager, cache_manager)
-        self.logger = logging.getLogger(
-            "NCAAMBasketballRecentManager"
-        )  # Changed logger name
-        self.logger.info(
-            f"Initialized NCAAMBasketballRecentManager with {len(self.favorite_teams)} favorite teams"
-        )
-
-
-class NCAAMBasketballUpcomingManager(BaseNCAAMBasketballManager, SportsUpcoming):
-    """Manager for upcoming NCAA MB games."""
+class WNBARecentManager(BaseWNBAManager, SportsRecent):
+    """Manager for recently completed WNBA games."""
 
     def __init__(
         self,
@@ -266,9 +246,59 @@ class NCAAMBasketballUpcomingManager(BaseNCAAMBasketballManager, SportsUpcoming)
         cache_manager: CacheManager,
     ):
         super().__init__(config, display_manager, cache_manager)
-        self.logger = logging.getLogger(
-            "NCAAMBasketballUpcomingManager"
-        )  # Changed logger name
+        self.logger = logging.getLogger("WNBARecentManager")  # Changed logger name
         self.logger.info(
-            f"Initialized NCAAMBasketballUpcomingManager with {len(self.favorite_teams)} favorite teams"
+            f"Initialized WNBARecentManager with {len(self.favorite_teams)} favorite teams"
         )
+
+
+class WNBAUpcomingManager(BaseWNBAManager, SportsUpcoming):
+    """Manager for upcoming WNBA games."""
+
+    def __init__(
+        self,
+        config: Dict[str, Any],
+        display_manager: DisplayManager,
+        cache_manager: CacheManager,
+    ):
+        super().__init__(config, display_manager, cache_manager)
+        self.logger = logging.getLogger("WNBAUpcomingManager")  # Changed logger name
+        self.logger.info(
+            f"Initialized WNBAUpcomingManager with {len(self.favorite_teams)} favorite teams"
+        )
+
+        """Display upcoming games."""
+        if not self.upcoming_games:
+            return
+
+        try:
+            current_time = time.time()
+
+            # Check if it's time to switch games
+            if (
+                len(self.upcoming_games) > 1
+                and current_time - self.last_game_switch >= self.game_display_duration
+            ):
+                # Move to next game
+                self.current_game_index = (self.current_game_index + 1) % len(
+                    self.upcoming_games
+                )
+                self.current_game = self.upcoming_games[self.current_game_index]
+                self.last_game_switch = current_time
+                force_clear = True
+
+                # Log team switching
+                if self.current_game:
+                    away_abbr = self.current_game.get("away_abbr", "UNK")
+                    home_abbr = self.current_game.get("home_abbr", "UNK")
+                    self.logger.info(
+                        f"[NBA Upcoming] Showing {away_abbr} vs {home_abbr}"
+                    )
+
+            # Draw the scorebug layout
+            self._draw_scorebug_layout(self.current_game, force_clear)
+
+        except Exception as e:
+            self.logger.error(
+                f"[NBA] Error displaying upcoming game: {e}", exc_info=True
+            )
