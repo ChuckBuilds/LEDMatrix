@@ -266,7 +266,7 @@ class SportsCore(ABC):
         # Show the negative spread on the appropriate side
         if favored_spread is not None:
             spread_text = str(favored_spread)
-            font = self.fonts['detail']  # Use detail font for odds
+            font = self.fonts['odds']  # Use odds font for odds
             
             if favored_side == 'home':
                 # Home team is favored, show spread on right side
@@ -286,7 +286,7 @@ class SportsCore(ABC):
         over_under = odds.get('over_under')
         if over_under is not None:
             ou_text = f"O/U: {over_under}"
-            font = self.fonts['detail']  # Use detail font for odds
+            font = self.fonts['odds']  # Use odds font for odds
             ou_width = draw.textlength(ou_text, font=font)
             
             if favored_side == 'home':

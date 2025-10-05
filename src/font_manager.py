@@ -130,18 +130,21 @@ class FontManager:
             'nfl.live.status': {'family': 'four_by_six', 'size_token': 'xs'},     # 6px - use 4x6 font
             'nfl.live.record': {'family': 'four_by_six', 'size_token': 'xs'},     # 6px - use 4x6 font
             'nfl.live.odds': {'family': 'four_by_six', 'size_token': 'xs'},       # 6px - use 4x6 font
+            'nfl.live.detail': {'family': 'four_by_six', 'size_token': 'xs'},     # 6px - use 4x6 font (down & distance)
             'nfl.recent.score': {'family': 'press_start', 'size_token': 'lg'},    # 12px
             'nfl.recent.time': {'family': 'press_start', 'size_token': 'sm'},     # 8px
             'nfl.recent.team': {'family': 'press_start', 'size_token': 'sm'},     # 8px
             'nfl.recent.status': {'family': 'four_by_six', 'size_token': 'xs'},   # 6px - use 4x6 font
             'nfl.recent.record': {'family': 'four_by_six', 'size_token': 'xs'},   # 6px - use 4x6 font
             'nfl.recent.odds': {'family': 'four_by_six', 'size_token': 'xs'},     # 6px - use 4x6 font
+            'nfl.recent.detail': {'family': 'four_by_six', 'size_token': 'xs'},   # 6px - use 4x6 font (down & distance)
             'nfl.upcoming.score': {'family': 'press_start', 'size_token': 'lg'},  # 12px
             'nfl.upcoming.time': {'family': 'press_start', 'size_token': 'sm'},   # 8px
             'nfl.upcoming.team': {'family': 'press_start', 'size_token': 'sm'},   # 8px
             'nfl.upcoming.status': {'family': 'four_by_six', 'size_token': 'xs'}, # 6px - use 4x6 font
             'nfl.upcoming.record': {'family': 'four_by_six', 'size_token': 'xs'}, # 6px - use 4x6 font
             'nfl.upcoming.odds': {'family': 'four_by_six', 'size_token': 'xs'},   # 6px - use 4x6 font
+            'nfl.upcoming.detail': {'family': 'four_by_six', 'size_token': 'xs'}, # 6px - use 4x6 font (down & distance)
             
             # NHL elements
             'nhl.live.score': {'family': 'press_start', 'size_token': 'md'},      # 10px
@@ -150,6 +153,7 @@ class FontManager:
             'nhl.live.status': {'family': 'four_by_six', 'size_token': 'xs'},     # 6px - use 4x6 font
             'nhl.live.record': {'family': 'four_by_six', 'size_token': 'xs'},     # 6px - use 4x6 font
             'nhl.live.odds': {'family': 'four_by_six', 'size_token': 'xs'},       # 6px - use 4x6 font
+            'nhl.live.detail': {'family': 'four_by_six', 'size_token': 'xs'},     # 6px - use 4x6 font
             'nhl.recent.score': {'family': 'press_start', 'size_token': 'md'},    # 10px
             'nhl.recent.time': {'family': 'press_start', 'size_token': 'sm'},     # 8px
             'nhl.recent.team': {'family': 'press_start', 'size_token': 'sm'},     # 8px
@@ -157,12 +161,14 @@ class FontManager:
             'nhl.recent.record': {'family': 'four_by_six', 'size_token': 'xs'},   # 6px - use 4x6 font
             'nhl.recent.shots': {'family': 'four_by_six', 'size_token': 'xs'},    # 6px - use 4x6 font
             'nhl.recent.odds': {'family': 'four_by_six', 'size_token': 'xs'},     # 6px - use 4x6 font
+            'nhl.recent.detail': {'family': 'four_by_six', 'size_token': 'xs'},   # 6px - use 4x6 font
             'nhl.upcoming.score': {'family': 'press_start', 'size_token': 'md'},  # 10px
             'nhl.upcoming.time': {'family': 'press_start', 'size_token': 'sm'},   # 8px
             'nhl.upcoming.team': {'family': 'press_start', 'size_token': 'sm'},   # 8px
             'nhl.upcoming.status': {'family': 'four_by_six', 'size_token': 'xs'}, # 6px - use 4x6 font
             'nhl.upcoming.record': {'family': 'four_by_six', 'size_token': 'xs'}, # 6px - use 4x6 font
             'nhl.upcoming.odds': {'family': 'four_by_six', 'size_token': 'xs'},   # 6px - use 4x6 font
+            'nhl.upcoming.detail': {'family': 'four_by_six', 'size_token': 'xs'}, # 6px - use 4x6 font
             
             # NBA elements
             'nba.live.score': {'family': 'press_start', 'size_token': 'md'},      # 10px
@@ -171,18 +177,21 @@ class FontManager:
             'nba.live.status': {'family': 'four_by_six', 'size_token': 'xs'},     # 6px - use 4x6 font
             'nba.live.record': {'family': 'four_by_six', 'size_token': 'xs'},     # 6px - use 4x6 font
             'nba.live.odds': {'family': 'four_by_six', 'size_token': 'xs'},       # 6px - use 4x6 font
+            'nba.live.detail': {'family': 'four_by_six', 'size_token': 'xs'},     # 6px - use 4x6 font
             'nba.recent.score': {'family': 'press_start', 'size_token': 'lg'},    # 12px
             'nba.recent.time': {'family': 'press_start', 'size_token': 'sm'},     # 8px
             'nba.recent.team': {'family': 'press_start', 'size_token': 'sm'},     # 8px
             'nba.recent.status': {'family': 'four_by_six', 'size_token': 'xs'},   # 6px - use 4x6 font
             'nba.recent.record': {'family': 'four_by_six', 'size_token': 'xs'},   # 6px - use 4x6 font
             'nba.recent.odds': {'family': 'four_by_six', 'size_token': 'xs'},     # 6px - use 4x6 font
+            'nba.recent.detail': {'family': 'four_by_six', 'size_token': 'xs'},   # 6px - use 4x6 font
             'nba.upcoming.score': {'family': 'press_start', 'size_token': 'lg'},  # 12px
             'nba.upcoming.time': {'family': 'press_start', 'size_token': 'sm'},   # 8px
             'nba.upcoming.team': {'family': 'press_start', 'size_token': 'sm'},   # 8px
             'nba.upcoming.status': {'family': 'four_by_six', 'size_token': 'xs'}, # 6px - use 4x6 font
             'nba.upcoming.record': {'family': 'four_by_six', 'size_token': 'xs'}, # 6px - use 4x6 font
             'nba.upcoming.odds': {'family': 'four_by_six', 'size_token': 'xs'},   # 6px - use 4x6 font
+            'nba.upcoming.detail': {'family': 'four_by_six', 'size_token': 'xs'}, # 6px - use 4x6 font
             
             # NCAA Basketball elements
             'ncaam.live.score': {'family': 'press_start', 'size_token': 'md'},    # 10px
@@ -191,18 +200,21 @@ class FontManager:
             'ncaam.live.status': {'family': 'four_by_six', 'size_token': 'xs'},   # 6px - use 4x6 font
             'ncaam.live.record': {'family': 'four_by_six', 'size_token': 'xs'},   # 6px - use 4x6 font
             'ncaam.live.odds': {'family': 'four_by_six', 'size_token': 'xs'},     # 6px - use 4x6 font
+            'ncaam.live.detail': {'family': 'four_by_six', 'size_token': 'xs'},   # 6px - use 4x6 font
             'ncaam.recent.score': {'family': 'press_start', 'size_token': 'lg'},  # 12px
             'ncaam.recent.time': {'family': 'press_start', 'size_token': 'sm'},   # 8px
             'ncaam.recent.team': {'family': 'press_start', 'size_token': 'sm'},   # 8px
             'ncaam.recent.status': {'family': 'four_by_six', 'size_token': 'xs'}, # 6px - use 4x6 font
             'ncaam.recent.record': {'family': 'four_by_six', 'size_token': 'xs'}, # 6px - use 4x6 font
             'ncaam.recent.odds': {'family': 'four_by_six', 'size_token': 'xs'},   # 6px - use 4x6 font
+            'ncaam.recent.detail': {'family': 'four_by_six', 'size_token': 'xs'}, # 6px - use 4x6 font
             'ncaam.upcoming.score': {'family': 'press_start', 'size_token': 'lg'}, # 12px
             'ncaam.upcoming.time': {'family': 'press_start', 'size_token': 'sm'}, # 8px
             'ncaam.upcoming.team': {'family': 'press_start', 'size_token': 'sm'}, # 8px
             'ncaam.upcoming.status': {'family': 'four_by_six', 'size_token': 'xs'}, # 6px - use 4x6 font
             'ncaam.upcoming.record': {'family': 'four_by_six', 'size_token': 'xs'}, # 6px - use 4x6 font
             'ncaam.upcoming.odds': {'family': 'four_by_six', 'size_token': 'xs'}, # 6px - use 4x6 font
+            'ncaam.upcoming.detail': {'family': 'four_by_six', 'size_token': 'xs'}, # 6px - use 4x6 font
             
             # Soccer elements (special case - smaller team fonts)
             'soccer.live.score': {'family': 'press_start', 'size_token': 'md'},   # 10px
@@ -211,18 +223,21 @@ class FontManager:
             'soccer.live.status': {'family': 'four_by_six', 'size_token': 'xs'},  # 6px - use 4x6 font
             'soccer.live.record': {'family': 'four_by_six', 'size_token': 'xs'},  # 6px - use 4x6 font
             'soccer.live.odds': {'family': 'four_by_six', 'size_token': 'xs'},    # 6px - use 4x6 font
+            'soccer.live.detail': {'family': 'four_by_six', 'size_token': 'xs'},  # 6px - use 4x6 font
             'soccer.recent.score': {'family': 'press_start', 'size_token': 'lg'}, # 12px
             'soccer.recent.time': {'family': 'press_start', 'size_token': 'sm'},  # 8px
             'soccer.recent.team': {'family': 'press_start', 'size_token': 'xs'},  # 6px (special case)
             'soccer.recent.status': {'family': 'four_by_six', 'size_token': 'xs'}, # 6px - use 4x6 font
             'soccer.recent.record': {'family': 'four_by_six', 'size_token': 'xs'}, # 6px - use 4x6 font
             'soccer.recent.odds': {'family': 'four_by_six', 'size_token': 'xs'},  # 6px - use 4x6 font
+            'soccer.recent.detail': {'family': 'four_by_six', 'size_token': 'xs'}, # 6px - use 4x6 font
             'soccer.upcoming.score': {'family': 'press_start', 'size_token': 'lg'}, # 12px
             'soccer.upcoming.time': {'family': 'press_start', 'size_token': 'sm'}, # 8px
             'soccer.upcoming.team': {'family': 'press_start', 'size_token': 'xs'}, # 6px (special case)
             'soccer.upcoming.status': {'family': 'four_by_six', 'size_token': 'xs'}, # 6px - use 4x6 font
             'soccer.upcoming.record': {'family': 'four_by_six', 'size_token': 'xs'}, # 6px - use 4x6 font
             'soccer.upcoming.odds': {'family': 'four_by_six', 'size_token': 'xs'}, # 6px - use 4x6 font
+            'soccer.upcoming.detail': {'family': 'four_by_six', 'size_token': 'xs'}, # 6px - use 4x6 font
             
             # MiLB elements
             'milb.live.score': {'family': 'press_start', 'size_token': 'md'},     # 10px
@@ -231,18 +246,21 @@ class FontManager:
             'milb.live.status': {'family': 'four_by_six', 'size_token': 'xs'},    # 6px - use 4x6 font
             'milb.live.record': {'family': 'four_by_six', 'size_token': 'xs'},    # 6px - use 4x6 font
             'milb.live.odds': {'family': 'four_by_six', 'size_token': 'xs'},      # 6px - use 4x6 font
+            'milb.live.detail': {'family': 'four_by_six', 'size_token': 'xs'},    # 6px - use 4x6 font
             'milb.recent.score': {'family': 'press_start', 'size_token': 'lg'},   # 12px
             'milb.recent.time': {'family': 'press_start', 'size_token': 'sm'},    # 8px
             'milb.recent.team': {'family': 'press_start', 'size_token': 'sm'},    # 8px
             'milb.recent.status': {'family': 'four_by_six', 'size_token': 'xs'},  # 6px - use 4x6 font
             'milb.recent.record': {'family': 'four_by_six', 'size_token': 'xs'},  # 6px - use 4x6 font
             'milb.recent.odds': {'family': 'four_by_six', 'size_token': 'xs'},    # 6px - use 4x6 font
+            'milb.recent.detail': {'family': 'four_by_six', 'size_token': 'xs'},  # 6px - use 4x6 font
             'milb.upcoming.score': {'family': 'press_start', 'size_token': 'lg'}, # 12px
             'milb.upcoming.time': {'family': 'press_start', 'size_token': 'sm'},  # 8px
             'milb.upcoming.team': {'family': 'press_start', 'size_token': 'sm'},  # 8px
             'milb.upcoming.status': {'family': 'four_by_six', 'size_token': 'xs'}, # 6px - use 4x6 font
             'milb.upcoming.record': {'family': 'four_by_six', 'size_token': 'xs'}, # 6px - use 4x6 font
             'milb.upcoming.odds': {'family': 'four_by_six', 'size_token': 'xs'},  # 6px - use 4x6 font
+            'milb.upcoming.detail': {'family': 'four_by_six', 'size_token': 'xs'}, # 6px - use 4x6 font
             
             # Clock elements
             'clock.time': {'family': 'press_start', 'size_token': 'sm'},          # 8px
