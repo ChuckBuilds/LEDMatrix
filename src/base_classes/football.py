@@ -27,6 +27,7 @@ class Football(SportsCore):
 
             # --- Football Specific Details (Likely same for NFL/NCAAFB) ---
             down_distance_text = ""
+            down_distance_text_long = ""
             possession_indicator = None # Default to None
             scoring_event = ""  # Track scoring events
             home_timeouts = 0
@@ -37,7 +38,7 @@ class Football(SportsCore):
             if situation and status["type"]["state"] == "in":
                 # down = situation.get("down")
                 down_distance_text = situation.get("shortDownDistanceText")
-                # long_text = situation.get("downDistanceText")
+                down_distance_text_long = situation.get("downDistanceText")
                 # distance = situation.get("distance")
                 
                 # Detect scoring events from status detail
@@ -97,6 +98,7 @@ class Football(SportsCore):
                 "home_timeouts": home_timeouts,
                 "away_timeouts": away_timeouts,
                 "down_distance_text": down_distance_text, # Added Down/Distance
+                "down_distance_text_long": down_distance_text_long,
                 "is_redzone": is_redzone,
                 "possession": posession, # ID of team with possession
                 "possession_indicator": possession_indicator, # Added for easy home/away check
@@ -203,7 +205,10 @@ class FootballLive(Football, SportsLive):
 
             # Period/Quarter and Clock (Top center)
             period_clock_text = f"{game.get('period_text', '')} {game.get('clock', '')}".strip()
-            if game.get("is_halftime"): period_clock_text = "Halftime" # Override for halftime
+            if game.get("is_halftime"): \
+                period_clock_text = "Halftime" # Override for halftime
+            elif game.get("is_period_break"):
+                period_clock_text = game.get("status_text", "Period Break")
 
             status_width = draw_overlay.textlength(period_clock_text, font=self.fonts['time'])
             status_x = (self.display_width - status_width) // 2
@@ -213,6 +218,8 @@ class FootballLive(Football, SportsLive):
             # Down & Distance or Scoring Event (Below Period/Clock)
             scoring_event = game.get("scoring_event", "")
             down_distance = game.get("down_distance_text", "")
+            if self.display_width > 128:
+                down_distance = game.get("down_distance_text_long", "")
             
             # Show scoring event if detected, otherwise show down & distance
             if scoring_event and game.get("is_live"):

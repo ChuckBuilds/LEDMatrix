@@ -23,6 +23,7 @@ from src.odds_ticker_manager import OddsTickerManager
 from src.leaderboard_manager import LeaderboardManager
 from src.nhl_managers import NHLLiveManager, NHLRecentManager, NHLUpcomingManager
 from src.nba_managers import NBALiveManager, NBARecentManager, NBAUpcomingManager
+from src.wnba_managers import WNBALiveManager, WNBARecentManager, WNBAUpcomingManager
 from src.mlb_manager import MLBLiveManager, MLBRecentManager, MLBUpcomingManager
 from src.milb_manager import MiLBLiveManager, MiLBRecentManager, MiLBUpcomingManager
 from src.soccer_managers import SoccerLiveManager, SoccerRecentManager, SoccerUpcomingManager
@@ -30,10 +31,13 @@ from src.nfl_managers import NFLLiveManager, NFLRecentManager, NFLUpcomingManage
 from src.ncaa_fb_managers import NCAAFBLiveManager, NCAAFBRecentManager, NCAAFBUpcomingManager
 from src.ncaa_baseball_managers import NCAABaseballLiveManager, NCAABaseballRecentManager, NCAABaseballUpcomingManager
 from src.ncaam_basketball_managers import NCAAMBasketballLiveManager, NCAAMBasketballRecentManager, NCAAMBasketballUpcomingManager
+from src.ncaaw_basketball_managers import NCAAWBasketballLiveManager, NCAAWBasketballRecentManager, NCAAWBasketballUpcomingManager
 from src.ncaam_hockey_managers import NCAAMHockeyLiveManager, NCAAMHockeyRecentManager, NCAAMHockeyUpcomingManager
+from src.ncaaw_hockey_managers import NCAAWHockeyLiveManager, NCAAWHockeyRecentManager, NCAAWHockeyUpcomingManager
 from src.youtube_display import YouTubeDisplay
 from src.calendar_manager import CalendarManager
 from src.text_display import TextDisplay
+from src.static_image_manager import StaticImageManager
 from src.music_manager import MusicManager
 from src.of_the_day_manager import OfTheDayManager
 from src.news_manager import NewsManager
@@ -66,10 +70,12 @@ class DisplayController:
         self.calendar = CalendarManager(self.display_manager, self.config) if self.config.get('calendar', {}).get('enabled', False) else None
         self.youtube = YouTubeDisplay(self.display_manager, self.config) if self.config.get('youtube', {}).get('enabled', False) else None
         self.text_display = TextDisplay(self.display_manager, self.config) if self.config.get('text_display', {}).get('enabled', False) else None
+        self.static_image = StaticImageManager(self.display_manager, self.config) if self.config.get('static_image', {}).get('enabled', False) else None
         self.of_the_day = OfTheDayManager(self.display_manager, self.config) if self.config.get('of_the_day', {}).get('enabled', False) else None
         self.news_manager = NewsManager(self.config, self.display_manager, self.config_manager) if self.config.get('news_manager', {}).get('enabled', False) else None
         logger.info(f"Calendar Manager initialized: {'Object' if self.calendar else 'None'}")
         logger.info(f"Text Display initialized: {'Object' if self.text_display else 'None'}")
+        logger.info(f"Static Image Manager initialized: {'Object' if self.static_image else 'None'}")
         logger.info(f"OfTheDay Manager initialized: {'Object' if self.of_the_day else 'None'}")
         logger.info(f"News Manager initialized: {'Object' if self.news_manager else 'None'}")
         logger.info("Display modes initialized in %.3f seconds", time.time() - init_time)
@@ -130,6 +136,21 @@ class DisplayController:
             self.nba_recent = None
             self.nba_upcoming = None
         logger.info("NBA managers initialized in %.3f seconds", time.time() - nba_time)
+            
+        # Initialize WNBA managers if enabled
+        wnba_time = time.time()
+        wnba_enabled = self.config.get('wnba_scoreboard', {}).get('enabled', False)
+        wnba_display_modes = self.config.get('wnba_scoreboard', {}).get('display_modes', {})
+        
+        if wnba_enabled:
+            self.wnba_live = WNBALiveManager(self.config, self.display_manager, self.cache_manager) if wnba_display_modes.get('wnba_live', True) else None
+            self.wnba_recent = WNBARecentManager(self.config, self.display_manager, self.cache_manager) if wnba_display_modes.get('wnba_recent', True) else None
+            self.wnba_upcoming = WNBAUpcomingManager(self.config, self.display_manager, self.cache_manager) if wnba_display_modes.get('wnba_upcoming', True) else None
+        else:
+            self.wnba_live = None
+            self.wnba_recent = None
+            self.wnba_upcoming = None
+        logger.info("WNBA managers initialized in %.3f seconds", time.time() - wnba_time)
 
         # Initialize MLB managers if enabled
         mlb_time = time.time()
@@ -238,6 +259,21 @@ class DisplayController:
             self.ncaam_basketball_upcoming = None
         logger.info("NCAA Men's Basketball managers initialized in %.3f seconds", time.time() - ncaam_basketball_time)
 
+        # Initialize NCAA Womens's Basketball managers if enabled
+        ncaaw_basketball_time = time.time()
+        ncaaw_basketball_enabled = self.config.get('ncaaw_basketball_scoreboard', {}).get('enabled', False)
+        ncaaw_basketball_display_modes = self.config.get('ncaaw_basketball_scoreboard', {}).get('display_modes', {})
+        
+        if ncaaw_basketball_enabled:
+            self.ncaaw_basketball_live = NCAAWBasketballLiveManager(self.config, self.display_manager, self.cache_manager) if ncaaw_basketball_display_modes.get('ncaaw_basketball_live', True) else None
+            self.ncaaw_basketball_recent = NCAAWBasketballRecentManager(self.config, self.display_manager, self.cache_manager) if ncaaw_basketball_display_modes.get('ncaaw_basketball_recent', True) else None
+            self.ncaaw_basketball_upcoming = NCAAWBasketballUpcomingManager(self.config, self.display_manager, self.cache_manager) if ncaaw_basketball_display_modes.get('ncaaw_basketball_upcoming', True) else None
+        else:
+            self.ncaaw_basketball_live = None
+            self.ncaaw_basketball_recent = None
+            self.ncaaw_basketball_upcoming = None
+        logger.info("NCAA Womens's Basketball managers initialized in %.3f seconds", time.time() - ncaaw_basketball_time)
+
         # Initialize NCAA Men's Hockey managers if enabled
         ncaam_hockey_time = time.time()
         ncaam_hockey_enabled = self.config.get('ncaam_hockey_scoreboard', {}).get('enabled', False)
@@ -252,6 +288,21 @@ class DisplayController:
             self.ncaam_hockey_recent = None
             self.ncaam_hockey_upcoming = None
         logger.info("NCAA Men's Hockey managers initialized in %.3f seconds", time.time() - ncaam_hockey_time)
+
+        # Initialize NCAA Men's Hockey managers if enabled
+        ncaaw_hockey_time = time.time()
+        ncaaw_hockey_enabled = self.config.get('ncaaw_hockey_scoreboard', {}).get('enabled', False)
+        ncaaw_hockey_display_modes = self.config.get('ncaaw_hockey_scoreboard', {}).get('display_modes', {})
+        
+        if ncaaw_hockey_enabled:
+            self.ncaaw_hockey_live = NCAAWHockeyLiveManager(self.config, self.display_manager, self.cache_manager) if ncaaw_hockey_display_modes.get('ncaaw_hockey_live', True) else None
+            self.ncaaw_hockey_recent = NCAAWHockeyRecentManager(self.config, self.display_manager, self.cache_manager) if ncaaw_hockey_display_modes.get('ncaaw_hockey_recent', True) else None
+            self.ncaaw_hockey_upcoming = NCAAWHockeyUpcomingManager(self.config, self.display_manager, self.cache_manager) if ncaaw_hockey_display_modes.get('ncaaw_hockey_upcoming', True) else None
+        else:
+            self.ncaaw_hockey_live = None
+            self.ncaaw_hockey_recent = None
+            self.ncaaw_hockey_upcoming = None
+        logger.info("NCAA Men's Hockey managers initialized in %.3f seconds", time.time() - ncaaw_hockey_time)
         
         # Track MLB rotation state
         self.mlb_current_team_index = 0
@@ -262,6 +313,7 @@ class DisplayController:
         # Read live_priority flags for all sports
         self.nhl_live_priority = self.config.get('nhl_scoreboard', {}).get('live_priority', True)
         self.nba_live_priority = self.config.get('nba_scoreboard', {}).get('live_priority', True)
+        self.wnba_live_priority = self.config.get('wnba_scoreboard', {}).get('live_priority', True)
         self.mlb_live_priority = self.config.get('mlb_scoreboard', {}).get('live_priority', True)
         self.milb_live_priority = self.config.get('milb_scoreboard', {}).get('live_priority', True)
         self.soccer_live_priority = self.config.get('soccer_scoreboard', {}).get('live_priority', True)
@@ -269,7 +321,9 @@ class DisplayController:
         self.ncaa_fb_live_priority = self.config.get('ncaa_fb_scoreboard', {}).get('live_priority', True)
         self.ncaa_baseball_live_priority = self.config.get('ncaa_baseball_scoreboard', {}).get('live_priority', True)
         self.ncaam_basketball_live_priority = self.config.get('ncaam_basketball_scoreboard', {}).get('live_priority', True)
+        self.ncaaw_basketball_live_priority = self.config.get('ncaaw_basketball_scoreboard', {}).get('live_priority', True)
         self.ncaam_hockey_live_priority = self.config.get('ncaam_hockey_scoreboard', {}).get('live_priority', True)
+        self.ncaaw_hockey_live_priority = self.config.get('ncaaw_hockey_scoreboard', {}).get('live_priority', True)
         
         # List of available display modes (adjust order as desired)
         self.available_modes = []
@@ -282,6 +336,7 @@ class DisplayController:
         if self.calendar: self.available_modes.append('calendar')
         if self.youtube: self.available_modes.append('youtube')
         if self.text_display: self.available_modes.append('text_display')
+        if self.static_image: self.available_modes.append('static_image')
         if self.of_the_day: self.available_modes.append('of_the_day')
         if self.news_manager: self.available_modes.append('news_manager')
         if self.music_manager:
@@ -294,6 +349,9 @@ class DisplayController:
         if nba_enabled:
             if self.nba_recent: self.available_modes.append('nba_recent')
             if self.nba_upcoming: self.available_modes.append('nba_upcoming')
+        if wnba_enabled:
+            if self.wnba_recent: self.available_modes.append('wnba_recent')
+            if self.wnba_upcoming: self.available_modes.append('wnba_upcoming')
         if mlb_enabled:
             if self.mlb_recent: self.available_modes.append('mlb_recent')
             if self.mlb_upcoming: self.available_modes.append('mlb_upcoming')
@@ -315,9 +373,15 @@ class DisplayController:
         if ncaam_basketball_enabled:
             if self.ncaam_basketball_recent: self.available_modes.append('ncaam_basketball_recent')
             if self.ncaam_basketball_upcoming: self.available_modes.append('ncaam_basketball_upcoming')
+        if ncaaw_basketball_enabled:
+            if self.ncaaw_basketball_recent: self.available_modes.append('ncaaw_basketball_recent')
+            if self.ncaaw_basketball_upcoming: self.available_modes.append('ncaaw_basketball_upcoming')
         if ncaam_hockey_enabled:
             if self.ncaam_hockey_recent: self.available_modes.append('ncaam_hockey_recent')
             if self.ncaam_hockey_upcoming: self.available_modes.append('ncaam_hockey_upcoming')
+        if ncaaw_hockey_enabled:
+            if self.ncaaw_hockey_recent: self.available_modes.append('ncaaw_hockey_recent')
+            if self.ncaaw_hockey_upcoming: self.available_modes.append('ncaaw_hockey_upcoming')
         # Add live modes to rotation if live_priority is False and there are live games
         self._update_live_modes_in_rotation()
         
@@ -341,6 +405,11 @@ class DisplayController:
         self.nba_showing_recent = True
         self.nba_favorite_teams = self.config.get('nba_scoreboard', {}).get('favorite_teams', [])
         self.in_nba_rotation = False
+        
+        self.wnba_current_team_index = 0
+        self.wnba_showing_recent = True
+        self.wnba_favorite_teams = self.config.get('wnba_scoreboard', {}).get('favorite_teams', [])
+        self.in_wnba_rotation = False
         
         self.soccer_current_team_index = 0 # Soccer rotation state
         self.soccer_showing_recent = True
@@ -370,6 +439,12 @@ class DisplayController:
         self.ncaam_basketball_showing_recent = True
         self.ncaam_basketball_favorite_teams = self.config.get('ncaam_basketball_scoreboard', {}).get('favorite_teams', [])
         self.in_ncaam_basketball_rotation = False
+
+        # Add NCAA Womens's Basketball rotation state
+        self.ncaaw_basketball_current_team_index = 0
+        self.ncaaw_basketball_showing_recent = True
+        self.ncaaw_basketball_favorite_teams = self.config.get('ncaaw_basketball_scoreboard', {}).get('favorite_teams', [])
+        self.in_ncaaw_basketball_rotation = False
         
         # Update display durations to include all modes
         self.display_durations = self.config['display'].get('display_durations', {})
@@ -399,6 +474,9 @@ class DisplayController:
             'nba_live': 30,
             'nba_recent': 20,
             'nba_upcoming': 20,
+            'wnba_live': 30,
+            'wnba_recent': 20,
+            'wnba_upcoming': 20,
             'mlb_live': 30,
             'mlb_recent': 20,
             'mlb_upcoming': 20,
@@ -421,9 +499,15 @@ class DisplayController:
             'ncaam_basketball_live': 30, # Added NCAA Men's Basketball durations
             'ncaam_basketball_recent': 15,
             'ncaam_basketball_upcoming': 15,
+            'ncaaw_basketball_live': 30, # Added NCAA Womens's Basketball durations
+            'ncaaw_basketball_recent': 15,
+            'ncaaw_basketball_upcoming': 15,
             'ncaam_hockey_live': 30, # Added NCAA Men's Hockey durations
             'ncaam_hockey_recent': 15,
-            'ncaam_hockey_upcoming': 15
+            'ncaam_hockey_upcoming': 15,
+            'ncaaw_hockey_live': 30, # Added NCAA Men's Hockey durations
+            'ncaaw_hockey_recent': 15,
+            'ncaaw_hockey_upcoming': 15
         }
         # Merge loaded durations with defaults
         for key, value in default_durations.items():
@@ -435,6 +519,8 @@ class DisplayController:
             logger.info(f"NHL Favorite teams: {self.nhl_favorite_teams}")
         if nba_enabled:
             logger.info(f"NBA Favorite teams: {self.nba_favorite_teams}")
+        if wnba_enabled:
+            logger.info(f"WNBA Favorite teams: {self.wnba_favorite_teams}")
         if mlb_enabled:
             logger.info(f"MLB Favorite teams: {self.mlb_favorite_teams}")
         if milb_enabled:
@@ -449,6 +535,8 @@ class DisplayController:
             logger.info(f"NCAA Baseball Favorite teams: {self.ncaa_baseball_favorite_teams}")
         if ncaam_basketball_enabled: # Check if NCAA Men's Basketball is enabled
             logger.info(f"NCAA Men's Basketball Favorite teams: {self.ncaam_basketball_favorite_teams}")
+        if ncaaw_basketball_enabled: # Check if NCAA Womens's Basketball is enabled
+            logger.info(f"NCAA Womens's Basketball Favorite teams: {self.ncaaw_basketball_favorite_teams}")
 
         logger.info(f"Available display modes: {self.available_modes}")
         logger.info(f"Initial display mode: {self.current_display_mode}")
@@ -600,6 +688,7 @@ class DisplayController:
             if self.calendar: self.calendar.update(time.time())
             if self.youtube: self.youtube.update()
             if self.text_display: self.text_display.update()
+            if self.static_image: self.static_image.update()
             if self.of_the_day: self.of_the_day.update(time.time())
         else:
             # Not scrolling, perform all updates normally
@@ -610,6 +699,7 @@ class DisplayController:
             if self.calendar: self.calendar.update(time.time())
             if self.youtube: self.youtube.update()
             if self.text_display: self.text_display.update()
+            if self.static_image: self.static_image.update()
             if self.of_the_day: self.of_the_day.update(time.time())
             
             # Update sports managers for leaderboard data
@@ -645,6 +735,10 @@ class DisplayController:
             if self.nba_live: self.nba_live.update()
             if self.nba_recent: self.nba_recent.update()
             if self.nba_upcoming: self.nba_upcoming.update()
+        elif current_sport == 'wnba':
+            if self.wnba_live: self.wnba_live.update()
+            if self.wnba_recent: self.wnba_recent.update()
+            if self.wnba_upcoming: self.wnba_upcoming.update()
         elif current_sport == 'mlb':
             if self.mlb_live: self.mlb_live.update()
             if self.mlb_recent: self.mlb_recent.update()
@@ -673,10 +767,18 @@ class DisplayController:
             if self.ncaam_basketball_live: self.ncaam_basketball_live.update()
             if self.ncaam_basketball_recent: self.ncaam_basketball_recent.update()
             if self.ncaam_basketball_upcoming: self.ncaam_basketball_upcoming.update()
+        elif current_sport == 'ncaaw_basketball':
+            if self.ncaaw_basketball_live: self.ncaaw_basketball_live.update()
+            if self.ncaaw_basketball_recent: self.ncaaw_basketball_recent.update()
+            if self.ncaaw_basketball_upcoming: self.ncaaw_basketball_upcoming.update()
         elif current_sport == 'ncaam_hockey':
             if self.ncaam_hockey_live: self.ncaam_hockey_live.update()
             if self.ncaam_hockey_recent: self.ncaam_hockey_recent.update()
             if self.ncaam_hockey_upcoming: self.ncaam_hockey_upcoming.update()
+        elif current_sport == 'ncaaw_hockey':
+            if self.ncaaw_hockey_live: self.ncaaw_hockey_live.update()
+            if self.ncaaw_hockey_recent: self.ncaaw_hockey_recent.update()
+            if self.ncaaw_hockey_upcoming: self.ncaaw_hockey_upcoming.update()
         else:
             # If no specific sport is active, update all managers (fallback behavior)
             # This ensures data is available when switching to a sport
@@ -687,6 +789,10 @@ class DisplayController:
             if self.nba_live: self.nba_live.update()
             if self.nba_recent: self.nba_recent.update()
             if self.nba_upcoming: self.nba_upcoming.update()
+            
+            if self.wnba_live: self.wnba_live.update()
+            if self.wnba_recent: self.wnba_recent.update()
+            if self.wnba_upcoming: self.wnba_upcoming.update()
             
             if self.mlb_live: self.mlb_live.update()
             if self.mlb_recent: self.mlb_recent.update()
@@ -716,9 +822,17 @@ class DisplayController:
             if self.ncaam_basketball_recent: self.ncaam_basketball_recent.update()
             if self.ncaam_basketball_upcoming: self.ncaam_basketball_upcoming.update()
 
+            if self.ncaaw_basketball_live: self.ncaaw_basketball_live.update()
+            if self.ncaaw_basketball_recent: self.ncaaw_basketball_recent.update()
+            if self.ncaaw_basketball_upcoming: self.ncaaw_basketball_upcoming.update()
+
             if self.ncaam_hockey_live: self.ncaam_hockey_live.update()
             if self.ncaam_hockey_recent: self.ncaam_hockey_recent.update()
             if self.ncaam_hockey_upcoming: self.ncaam_hockey_upcoming.update()
+
+            if self.ncaaw_hockey_live: self.ncaaw_hockey_live.update()
+            if self.ncaaw_hockey_recent: self.ncaaw_hockey_recent.update()
+            if self.ncaaw_hockey_upcoming: self.ncaaw_hockey_upcoming.update()
 
     def _check_live_games(self) -> tuple:
         """
@@ -733,6 +847,8 @@ class DisplayController:
             live_checks['nhl'] = self.nhl_live and self.nhl_live.live_games
         if 'nba_scoreboard' in self.config and self.config['nba_scoreboard'].get('enabled', False):
             live_checks['nba'] = self.nba_live and self.nba_live.live_games
+        if 'wnba_scoreboard' in self.config and self.config['wnba_scoreboard'].get('enabled', False):
+            live_checks['wnba'] = self.wnba_live and self.wnba_live.live_games
         if 'mlb' in self.config and self.config['mlb'].get('enabled', False):
             live_checks['mlb'] = self.mlb_live and self.mlb_live.live_games
         if 'milb' in self.config and self.config['milb'].get('enabled', False):
@@ -747,8 +863,12 @@ class DisplayController:
             live_checks['ncaa_baseball'] = self.ncaa_baseball_live and self.ncaa_baseball_live.live_games
         if 'ncaam_basketball_scoreboard' in self.config and self.config['ncaam_basketball_scoreboard'].get('enabled', False):
             live_checks['ncaam_basketball'] = self.ncaam_basketball_live and self.ncaam_basketball_live.live_games
+        if 'ncaaw_basketball_scoreboard' in self.config and self.config['ncaaw_basketball_scoreboard'].get('enabled', False):
+            live_checks['ncaaw_basketball'] = self.ncaaw_basketball_live and self.ncaaw_basketball_live.live_games
         if 'ncaam_hockey_scoreboard' in self.config and self.config['ncaam_hockey_scoreboard'].get('enabled', False):
             live_checks['ncaam_hockey'] = self.ncaam_hockey_live and self.ncaam_hockey_live.live_games
+        if 'ncaaw_hockey_scoreboard' in self.config and self.config['ncaaw_hockey_scoreboard'].get('enabled', False):
+            live_checks['ncaaw_hockey'] = self.ncaaw_hockey_live and self.ncaaw_hockey_live.live_games
 
         for sport, has_live_games in live_checks.items():
             if has_live_games:
@@ -779,6 +899,9 @@ class DisplayController:
         elif sport == 'nba':
             manager_recent = self.nba_recent
             manager_upcoming = self.nba_upcoming
+        elif sport == 'wnba':
+            manager_recent = self.wnba_recent
+            manager_upcoming = self.wnba_upcoming
         elif sport == 'mlb':
             manager_recent = self.mlb_recent
             manager_upcoming = self.mlb_upcoming
@@ -833,6 +956,10 @@ class DisplayController:
             favorite_teams = self.nba_favorite_teams
             manager_recent = self.nba_recent
             manager_upcoming = self.nba_upcoming
+        elif sport == 'wnba':
+            favorite_teams = self.wnba_favorite_teams
+            manager_recent = self.wnba_recent
+            manager_upcoming = self.wnba_upcoming
         elif sport == 'mlb':
             favorite_teams = self.mlb_favorite_teams
             manager_recent = self.mlb_recent
@@ -855,73 +982,6 @@ class DisplayController:
             manager_upcoming = self.ncaa_fb_upcoming
             
         return bool(favorite_teams and (manager_recent or manager_upcoming))
-
-    def _rotate_team_games(self, sport: str = 'nhl') -> None:
-        """Rotate through games for favorite teams. (No longer used directly in loop)"""
-        # This logic is now mostly handled within each manager's display/update
-        # Keeping the structure in case direct rotation is needed later.
-        if not self._has_team_games(sport):
-            return
-
-        if sport == 'nhl':
-            if not self.nhl_favorite_teams: return
-            current_team = self.nhl_favorite_teams[self.nhl_current_team_index]
-            # ... (rest of NHL rotation logic - now less relevant)
-        elif sport == 'nba':
-             if not self.nba_favorite_teams: return
-             current_team = self.nba_favorite_teams[self.nba_current_team_index]
-             # ... (rest of NBA rotation logic)
-        elif sport == 'mlb':
-            if not self.mlb_favorite_teams: return
-            current_team = self.mlb_favorite_teams[self.mlb_current_team_index]
-            # ... (rest of MLB rotation logic)
-        elif sport == 'milb':
-            if not self.config.get('milb_scoreboard', {}).get('favorite_teams', []): return
-            current_team = self.config['milb_scoreboard']['favorite_teams'][self.milb_current_team_index]
-            # ... (rest of MiLB rotation logic)
-        elif sport == 'soccer':
-            if not self.soccer_favorite_teams: return
-            current_team = self.soccer_favorite_teams[self.soccer_current_team_index]
-            # Try to find games for current team (recent first)
-            found_games = self._get_team_games(current_team, 'soccer', self.soccer_showing_recent)
-            if not found_games:
-                # Try opposite type (upcoming/recent)
-                self.soccer_showing_recent = not self.soccer_showing_recent
-                found_games = self._get_team_games(current_team, 'soccer', self.soccer_showing_recent)
-            
-            if not found_games:
-                # Move to next team if no games found for current one
-                self.soccer_current_team_index = (self.soccer_current_team_index + 1) % len(self.soccer_favorite_teams)
-                self.soccer_showing_recent = True # Reset to recent for the new team
-                # Maybe try finding game for the *new* team immediately? Optional.
-        elif sport == 'nfl':
-            if not self.nfl_favorite_teams: return
-            current_team = self.nfl_favorite_teams[self.nfl_current_team_index]
-            # Try to find games for current team (recent first)
-            found_games = self._get_team_games(current_team, 'nfl', self.nfl_showing_recent)
-            if not found_games:
-                # Try opposite type (upcoming/recent)
-                self.nfl_showing_recent = not self.nfl_showing_recent
-                found_games = self._get_team_games(current_team, 'nfl', self.nfl_showing_recent)
-            
-            if not found_games:
-                # Move to next team if no games found for current one
-                self.nfl_current_team_index = (self.nfl_current_team_index + 1) % len(self.nfl_favorite_teams)
-                self.nfl_showing_recent = True # Reset to recent for the new team
-        elif sport == 'ncaa_fb': # Add NCAA FB case
-            if not self.ncaa_fb_favorite_teams: return
-            current_team = self.ncaa_fb_favorite_teams[self.ncaa_fb_current_team_index]
-            # Try to find games for current team (recent first)
-            found_games = self._get_team_games(current_team, 'ncaa_fb', self.ncaa_fb_showing_recent)
-            if not found_games:
-                # Try opposite type (upcoming/recent)
-                self.ncaa_fb_showing_recent = not self.ncaa_fb_showing_recent
-                found_games = self._get_team_games(current_team, 'ncaa_fb', self.ncaa_fb_showing_recent)
-            
-            if not found_games:
-                # Move to next team if no games found for current one
-                self.ncaa_fb_current_team_index = (self.ncaa_fb_current_team_index + 1) % len(self.ncaa_fb_favorite_teams)
-                self.ncaa_fb_showing_recent = True # Reset to recent for the new team
 
     # --- SCHEDULING METHODS ---
     def _load_schedule_config(self):
@@ -992,6 +1052,7 @@ class DisplayController:
         # Check if each sport is enabled before processing
         nhl_enabled = self.config.get('nhl_scoreboard', {}).get('enabled', False)
         nba_enabled = self.config.get('nba_scoreboard', {}).get('enabled', False)
+        wnba_enabled = self.config.get('wnba_scoreboard', {}).get('enabled', False)
         mlb_enabled = self.config.get('mlb_scoreboard', {}).get('enabled', False)
         milb_enabled = self.config.get('milb_scoreboard', {}).get('enabled', False)
         soccer_enabled = self.config.get('soccer_scoreboard', {}).get('enabled', False)
@@ -999,10 +1060,13 @@ class DisplayController:
         ncaa_fb_enabled = self.config.get('ncaa_fb_scoreboard', {}).get('enabled', False)
         ncaa_baseball_enabled = self.config.get('ncaa_baseball_scoreboard', {}).get('enabled', False)
         ncaam_basketball_enabled = self.config.get('ncaam_basketball_scoreboard', {}).get('enabled', False)
+        ncaaw_basketball_enabled = self.config.get('ncaaw_basketball_scoreboard', {}).get('enabled', False)
         ncaam_hockey_enabled = self.config.get('ncaam_hockey_scoreboard', {}).get('enabled', False)
+        ncaaw_hockey_enabled = self.config.get('ncaaw_hockey_scoreboard', {}).get('enabled', False)
         
         update_mode('nhl_live', getattr(self, 'nhl_live', None), self.nhl_live_priority, nhl_enabled)
         update_mode('nba_live', getattr(self, 'nba_live', None), self.nba_live_priority, nba_enabled)
+        update_mode('wnba_live', getattr(self, 'wnba_live', None), self.wnba_live_priority, wnba_enabled)
         update_mode('mlb_live', getattr(self, 'mlb_live', None), self.mlb_live_priority, mlb_enabled)
         update_mode('milb_live', getattr(self, 'milb_live', None), self.milb_live_priority, milb_enabled)
         update_mode('soccer_live', getattr(self, 'soccer_live', None), self.soccer_live_priority, soccer_enabled)
@@ -1010,7 +1074,9 @@ class DisplayController:
         update_mode('ncaa_fb_live', getattr(self, 'ncaa_fb_live', None), self.ncaa_fb_live_priority, ncaa_fb_enabled)
         update_mode('ncaa_baseball_live', getattr(self, 'ncaa_baseball_live', None), self.ncaa_baseball_live_priority, ncaa_baseball_enabled)
         update_mode('ncaam_basketball_live', getattr(self, 'ncaam_basketball_live', None), self.ncaam_basketball_live_priority, ncaam_basketball_enabled)
+        update_mode('ncaaw_basketball_live', getattr(self, 'ncaaw_basketball_live', None), self.ncaaw_basketball_live_priority, ncaaw_basketball_enabled)
         update_mode('ncaam_hockey_live', getattr(self, 'ncaam_hockey_live', None), self.ncaam_hockey_live_priority, ncaam_hockey_enabled)
+        update_mode('ncaaw_hockey_live', getattr(self, 'ncaaw_hockey_live', None), self.ncaaw_hockey_live_priority, ncaaw_hockey_enabled)
 
     def run(self):
         """Run the display controller, switching between displays."""
@@ -1053,6 +1119,7 @@ class DisplayController:
                 for sport, attr, priority in [
                     ('nhl', 'nhl_live', self.nhl_live_priority),
                     ('nba', 'nba_live', self.nba_live_priority),
+                    ('wnba', 'wnba_live', self.wnba_live_priority),
                     ('mlb', 'mlb_live', self.mlb_live_priority),
                     ('milb', 'milb_live', self.milb_live_priority),
                     ('soccer', 'soccer_live', self.soccer_live_priority),
@@ -1060,7 +1127,9 @@ class DisplayController:
                     ('ncaa_fb', 'ncaa_fb_live', self.ncaa_fb_live_priority),
                     ('ncaa_baseball', 'ncaa_baseball_live', self.ncaa_baseball_live_priority),
                     ('ncaam_basketball', 'ncaam_basketball_live', self.ncaam_basketball_live_priority),
-                    ('ncaam_hockey', 'ncaam_hockey_live', self.ncaam_hockey_live_priority)
+                    ('ncaaw_basketball', 'ncaaw_basketball_live', self.ncaaw_basketball_live_priority),
+                    ('ncaam_hockey', 'ncaam_hockey_live', self.ncaam_hockey_live_priority),
+                    ('ncaaw_hockey', 'ncaaw_hockey_live', self.ncaaw_hockey_live_priority)
                 ]:
                     manager = getattr(self, attr, None)
                     # Only consider sports that are enabled (manager is not None) and have actual live games
@@ -1208,6 +1277,8 @@ class DisplayController:
                                 manager_to_display = self.youtube
                             elif self.current_display_mode == 'text_display' and self.text_display:
                                 manager_to_display = self.text_display
+                            elif self.current_display_mode == 'static_image' and self.static_image:
+                                manager_to_display = self.static_image
                             elif self.current_display_mode == 'of_the_day' and self.of_the_day:
                                 manager_to_display = self.of_the_day
                             elif self.current_display_mode == 'news_manager' and self.news_manager:
@@ -1220,6 +1291,10 @@ class DisplayController:
                                 manager_to_display = self.nba_recent
                             elif self.current_display_mode == 'nba_upcoming' and self.nba_upcoming:
                                 manager_to_display = self.nba_upcoming
+                            elif self.current_display_mode == 'wnba_recent' and self.wnba_recent:
+                                manager_to_display = self.wnba_recent
+                            elif self.current_display_mode == 'wnba_upcoming' and self.wnba_upcoming:
+                                manager_to_display = self.wnba_upcoming
                             elif self.current_display_mode == 'nfl_recent' and self.nfl_recent:
                                 manager_to_display = self.nfl_recent
                             elif self.current_display_mode == 'nfl_upcoming' and self.nfl_upcoming:
@@ -1236,6 +1311,10 @@ class DisplayController:
                                 manager_to_display = self.ncaam_basketball_recent
                             elif self.current_display_mode == 'ncaam_basketball_upcoming' and self.ncaam_basketball_upcoming:
                                 manager_to_display = self.ncaam_basketball_upcoming
+                            elif self.current_display_mode == 'ncaaw_basketball_recent' and self.ncaaw_basketball_recent:
+                                manager_to_display = self.ncaaw_basketball_recent
+                            elif self.current_display_mode == 'ncaaw_basketball_upcoming' and self.ncaaw_basketball_upcoming:
+                                manager_to_display = self.ncaaw_basketball_upcoming
                             elif self.current_display_mode == 'mlb_recent' and self.mlb_recent:
                                 manager_to_display = self.mlb_recent
                             elif self.current_display_mode == 'mlb_upcoming' and self.mlb_upcoming:
@@ -1254,6 +1333,8 @@ class DisplayController:
                                 manager_to_display = self.nhl_live
                             elif self.current_display_mode == 'nba_live' and self.nba_live:
                                 manager_to_display = self.nba_live
+                            elif self.current_display_mode == 'wnba_live' and self.wnba_live:
+                                manager_to_display = self.wnba_live
                             elif self.current_display_mode == 'nfl_live' and self.nfl_live:
                                 manager_to_display = self.nfl_live
                             elif self.current_display_mode == 'ncaa_fb_live' and self.ncaa_fb_live:
@@ -1262,12 +1343,20 @@ class DisplayController:
                                 manager_to_display = self.ncaa_baseball_live
                             elif self.current_display_mode == 'ncaam_basketball_live' and self.ncaam_basketball_live:
                                 manager_to_display = self.ncaam_basketball_live
+                            elif self.current_display_mode == 'ncaaw_basketball_live' and self.ncaaw_basketball_live:
+                                manager_to_display = self.ncaaw_basketball_live
                             elif self.current_display_mode == 'ncaam_hockey_live' and self.ncaam_hockey_live:
                                 manager_to_display = self.ncaam_hockey_live
                             elif self.current_display_mode == 'ncaam_hockey_recent' and self.ncaam_hockey_recent:
                                 manager_to_display = self.ncaam_hockey_recent
                             elif self.current_display_mode == 'ncaam_hockey_upcoming' and self.ncaam_hockey_upcoming:
                                 manager_to_display = self.ncaam_hockey_upcoming
+                            elif self.current_display_mode == 'ncaaw_hockey_live' and self.ncaaw_hockey_live:
+                                manager_to_display = self.ncaaw_hockey_live
+                            elif self.current_display_mode == 'ncaaw_hockey_recent' and self.ncaaw_hockey_recent:
+                                manager_to_display = self.ncaaw_hockey_recent
+                            elif self.current_display_mode == 'ncaaw_hockey_upcoming' and self.ncaaw_hockey_upcoming:
+                                manager_to_display = self.ncaaw_hockey_upcoming
                             elif self.current_display_mode == 'mlb_live' and self.mlb_live:
                                 manager_to_display = self.mlb_live
                             elif self.current_display_mode == 'milb_live' and self.milb_live:
@@ -1321,6 +1410,8 @@ class DisplayController:
                              manager_to_display.display(force_clear=self.force_clear)
                         elif self.current_display_mode == 'text_display':
                              manager_to_display.display() # Assumes internal clearing
+                        elif self.current_display_mode == 'static_image':
+                             manager_to_display.display(force_clear=self.force_clear)
                         elif self.current_display_mode == 'of_the_day':
                              manager_to_display.display(force_clear=self.force_clear)
                         elif self.current_display_mode == 'news_manager':
@@ -1331,6 +1422,10 @@ class DisplayController:
                             self.ncaam_basketball_recent.display(force_clear=self.force_clear)
                         elif self.current_display_mode == 'ncaam_basketball_upcoming' and self.ncaam_basketball_upcoming:
                             self.ncaam_basketball_upcoming.display(force_clear=self.force_clear)
+                        elif self.current_display_mode == 'ncaaw_basketball_recent' and self.ncaaw_basketball_recent:
+                            self.ncaaw_basketball_recent.display(force_clear=self.force_clear)
+                        elif self.current_display_mode == 'ncaaw_basketball_upcoming' and self.ncaaw_basketball_upcoming:
+                            self.ncaaw_basketball_upcoming.display(force_clear=self.force_clear)
                         elif self.current_display_mode == 'ncaa_baseball_recent' and self.ncaa_baseball_recent:
                             self.ncaa_baseball_recent.display(force_clear=self.force_clear)
                         elif self.current_display_mode == 'ncaa_baseball_upcoming' and self.ncaa_baseball_upcoming:
@@ -1339,6 +1434,10 @@ class DisplayController:
                             self.ncaam_hockey_recent.display(force_clear=self.force_clear)
                         elif self.current_display_mode == 'ncaam_hockey_upcoming' and self.ncaam_hockey_upcoming:
                             self.ncaam_hockey_upcoming.display(force_clear=self.force_clear)
+                        elif self.current_display_mode == 'ncaaw_hockey_recent' and self.ncaaw_hockey_recent:
+                            self.ncaaw_hockey_recent.display(force_clear=self.force_clear)
+                        elif self.current_display_mode == 'ncaaw_hockey_upcoming' and self.ncaaw_hockey_upcoming:
+                            self.ncaaw_hockey_upcoming.display(force_clear=self.force_clear)
                         elif self.current_display_mode == 'milb_live' and self.milb_live and len(self.milb_live.live_games) > 0:
                             logger.debug(f"[DisplayController] Calling MiLB live display with {len(self.milb_live.live_games)} live games")
                             # Update data before displaying for live managers

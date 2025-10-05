@@ -468,8 +468,14 @@ class SportsCore(ABC):
                 self.logger.warning(f"Could not find home or away team in event: {game_event.get('id')}")
                 return None, None, None, None, None
 
-            home_abbr = home_team["team"]["abbreviation"]
-            away_abbr = away_team["team"]["abbreviation"]
+            try:
+                home_abbr = home_team["team"]["abbreviation"]
+            except KeyError:
+                home_abbr = home_team["team"]["name"][:3]
+            try:
+                away_abbr = away_team["team"]["abbreviation"]
+            except KeyError:
+                away_abbr = away_team["team"]["name"][:3]
             
             # Check if this is a favorite team game BEFORE doing expensive logging
             is_favorite_game = (home_abbr in self.favorite_teams or away_abbr in self.favorite_teams)
@@ -512,6 +518,7 @@ class SportsCore(ABC):
                 "is_upcoming": (status["type"]["state"] == "pre" or 
                                status["type"]["name"].lower() in ['scheduled', 'pre-game', 'status_scheduled']),
                 "is_halftime": status["type"]["state"] == "halftime" or status["type"]["name"] == "STATUS_HALFTIME", # Added halftime check
+                "is_period_break": status["type"]["name"] == "STATUS_END_PERIOD", # Added Period Break check
                 "home_abbr": home_abbr,
                 "home_id": home_team["id"],
                 "home_score": home_team.get("score", "0"),
