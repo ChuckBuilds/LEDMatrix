@@ -4,6 +4,7 @@ import requests
 from typing import Dict, Any, Optional
 from pathlib import Path
 from datetime import datetime
+from PIL import Image, ImageFont
 from src.display_manager import DisplayManager
 from src.cache_manager import CacheManager
 from src.base_classes.basketball import Basketball, BasketballLive
