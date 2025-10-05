@@ -155,23 +155,42 @@ class LayoutManager:
             logger.error(f"Error rendering element {element_type}: {e}")
     
     def _render_text_element(self, x: int, y: int, properties: Dict, data_context: Dict) -> None:
-        """Render a text element."""
+        """Render a text element with unified font system support."""
         text = properties.get('text', 'Sample Text')
         color = tuple(properties.get('color', [255, 255, 255]))
-        font_size = properties.get('font_size', 'normal')
         
         # Support template variables in text
         text = self._process_template_text(text, data_context)
         
-        # Select font
-        if font_size == 'small':
-            font = self.display_manager.small_font
-        elif font_size == 'large':
-            font = self.display_manager.regular_font
-        else:
-            font = self.display_manager.regular_font
+        # Get font parameters from properties
+        element_key = properties.get('element_key')
+        font_family = properties.get('font_family')
+        font_size_px = properties.get('font_size_px')
+        font_size_token = properties.get('font_size_token')
+        outline_color = properties.get('outline_color')
         
-        self.display_manager.draw_text(text, x, y, color, font=font)
+        # Legacy font_size support for backward compatibility
+        font_size = properties.get('font_size', 'normal')
+        if not element_key and not font_family and not font_size_px and not font_size_token:
+            # Use legacy font selection
+            if font_size == 'small':
+                font = self.display_manager.small_font
+            elif font_size == 'large':
+                font = self.display_manager.regular_font
+            else:
+                font = self.display_manager.regular_font
+            self.display_manager.draw_text(text, x, y, color, font=font)
+        else:
+            # Use new unified font system
+            outline = tuple(outline_color) if outline_color else None
+            self.display_manager.draw_text(
+                text, x, y, color,
+                element_key=element_key,
+                family=font_family,
+                size_px=font_size_px,
+                size_token=font_size_token,
+                outline=outline
+            )
     
     def _render_weather_icon_element(self, x: int, y: int, properties: Dict, data_context: Dict) -> None:
         """Render a weather icon element."""

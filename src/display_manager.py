@@ -5,10 +5,11 @@ else:
     from rgbmatrix import RGBMatrix, RGBMatrixOptions
 from PIL import Image, ImageDraw, ImageFont
 import time
-from typing import Dict, Any, List, Tuple
+from typing import Dict, Any, List, Tuple, Optional, Union
 import logging
 import math
 from .weather_icons import WeatherIcons
+from .font_manager import FontManager
 import os
 import freetype
 
@@ -49,6 +50,8 @@ class DisplayManager:
         logger.info("Matrix setup completed in %.3f seconds", time.time() - start_time)
         
         font_time = time.time()
+        # Initialize FontManager first
+        self.font_manager = FontManager(self.config)
         self._load_fonts()
         logger.info("Font loading completed in %.3f seconds", time.time() - font_time)
         
@@ -363,20 +366,24 @@ class DisplayManager:
                 self.bdf_5x7_font = self.regular_font
 
 
+    def measure_text(self, text: str, font: Union[ImageFont.FreeTypeFont, freetype.Face]) -> Tuple[int, int, int]:
+        """
+        Measure text dimensions and baseline using FontManager.
+        
+        Args:
+            text: Text to measure
+            font: Font to use for measurement
+            
+        Returns:
+            Tuple of (width, height, baseline_offset)
+        """
+        return self.font_manager.measure_text(text, font)
+    
     def get_text_width(self, text, font):
-        """Get the width of text when rendered with the given font."""
+        """Get the width of text when rendered with the given font (legacy method)."""
         try:
-            if isinstance(font, freetype.Face):
-                # For FreeType faces, calculate width using freetype
-                width = 0
-                for char in text:
-                    font.load_char(char)
-                    width += font.glyph.advance.x >> 6
-                return width
-            else:
-                # For PIL fonts, use textbbox
-                bbox = self.draw.textbbox((0, 0), text, font=font)
-                return bbox[2] - bbox[0]
+            width, _, _ = self.measure_text(text, font)
+            return width
         except Exception as e:
             logger.error(f"Error getting text width: {e}")
             return 0  # Return 0 as fallback
@@ -400,35 +407,93 @@ class DisplayManager:
             return 8 # A reasonable default for an 8px font.
 
     def draw_text(self, text: str, x: int = None, y: int = None, color: tuple = (255, 255, 255), 
-                 small_font: bool = False, font: ImageFont = None):
-        """Draw text on the canvas with optional font selection."""
+                 small_font: bool = False, font: ImageFont = None, element_key: str = None,
+                 family: str = None, size_px: int = None, size_token: str = None, 
+                 outline: tuple = None):
+        """
+        Draw text on the canvas with unified font selection.
+        
+        Args:
+            text: Text to draw
+            x: X position (None for center)
+            y: Y position (None for top)
+            color: Text color (R, G, B)
+            small_font: Use small font (legacy parameter)
+            font: Direct font object (legacy parameter)
+            element_key: Element key for font overrides (e.g., 'nfl.live.score')
+            family: Font family name
+            size_px: Font size in pixels
+            size_token: Size token (e.g., 'sm', 'lg')
+            outline: Outline color (R, G, B) for better readability
+        """
         try:
-            # Select font based on parameters
+            # Resolve font using FontManager or legacy parameters
             if font:
+                # Legacy direct font parameter
                 current_font = font
+            elif element_key or family or size_px or size_token:
+                # Use FontManager for new unified font system
+                current_font = self.font_manager.resolve(
+                    element_key=element_key,
+                    family=family,
+                    size_px=size_px,
+                    size_token=size_token
+                )
             else:
+                # Legacy small_font parameter
                 current_font = self.small_font if small_font else self.regular_font
             
             # Calculate x position if not provided (center text)
             if x is None:
-                text_width = self.get_text_width(text, current_font)
+                text_width, _, _ = self.measure_text(text, current_font)
                 x = (self.width - text_width) // 2
             
             # Set default y position if not provided
             if y is None:
                 y = 0  # Default to top of display
             
-            # Draw the text
-            if isinstance(current_font, freetype.Face):
-                # For BDF fonts, _draw_bdf_text will compute the baseline from the
-                # provided top-left y using the font ascender. Do not adjust here.
-                self._draw_bdf_text(text, x, y, color, current_font)
+            # Draw outline if specified
+            if outline:
+                self._draw_text_with_outline(text, x, y, current_font, color, outline)
             else:
-                # For TTF fonts, use PIL's text drawing which expects top-left.
-                self.draw.text((x, y), text, font=current_font, fill=color)
+                # Draw the text
+                if isinstance(current_font, freetype.Face):
+                    # For BDF fonts, _draw_bdf_text will compute the baseline from the
+                    # provided top-left y using the font ascender. Do not adjust here.
+                    self._draw_bdf_text(text, x, y, color, current_font)
+                else:
+                    # For TTF fonts, use PIL's text drawing which expects top-left.
+                    self.draw.text((x, y), text, font=current_font, fill=color)
             
         except Exception as e:
             logger.error(f"Error drawing text: {e}", exc_info=True)
+
+    def _draw_text_with_outline(self, text: str, x: int, y: int, font: Union[ImageFont.FreeTypeFont, freetype.Face], 
+                               fill_color: tuple, outline_color: tuple):
+        """Draw text with an outline for better readability."""
+        try:
+            # Draw outline by drawing text in outline color at 8 positions around the text
+            offsets = [(-1, -1), (-1, 0), (-1, 1), (0, -1), (0, 1), (1, -1), (1, 0), (1, 1)]
+            
+            for dx, dy in offsets:
+                if isinstance(font, freetype.Face):
+                    self._draw_bdf_text(text, x + dx, y + dy, outline_color, font)
+                else:
+                    self.draw.text((x + dx, y + dy), text, font=font, fill=outline_color)
+            
+            # Draw the main text in fill color
+            if isinstance(font, freetype.Face):
+                self._draw_bdf_text(text, x, y, fill_color, font)
+            else:
+                self.draw.text((x, y), text, font=font, fill=fill_color)
+                
+        except Exception as e:
+            logger.error(f"Error drawing text with outline: {e}", exc_info=True)
+            # Fallback to regular text drawing
+            if isinstance(font, freetype.Face):
+                self._draw_bdf_text(text, x, y, fill_color, font)
+            else:
+                self.draw.text((x, y), text, font=font, fill=fill_color)
 
     def draw_sun(self, x: int, y: int, size: int = 16):
         """Draw a sun icon using yellow circles and lines."""

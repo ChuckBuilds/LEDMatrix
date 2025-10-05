@@ -14,8 +14,17 @@ class TextDisplay:
         self.config = config.get('text_display', {})
         
         self.text = self.config.get('text', "Hello, World!")
+        
+        # Support new unified font system
+        self.element_key = self.config.get('element_key')
+        self.font_family = self.config.get('font_family')
+        self.font_size_px = self.config.get('font_size_px')
+        self.font_size_token = self.config.get('font_size_token')
+        
+        # Legacy font support
         self.font_path = self.config.get('font_path', "assets/fonts/PressStart2P-Regular.ttf")
         self.font_size = self.config.get('font_size', 8)
+        
         self.scroll_enabled = self.config.get('scroll', False)
         self.text_color = tuple(self.config.get('text_color', [255, 255, 255]))
         self.bg_color = tuple(self.config.get('background_color', [0, 0, 0]))
@@ -43,7 +52,7 @@ class TextDisplay:
             return
 
         try:
-            self.text_content_width = self.display_manager.get_text_width(self.text, self.font)
+            self.text_content_width, _, _ = self.display_manager.measure_text(self.text, self.font)
         except Exception as e:
             logger.error(f"Error calculating text content width: {e}")
             self.text_content_width = 0
@@ -94,7 +103,23 @@ class TextDisplay:
             self.cached_total_scroll_width = 0
 
     def _load_font(self):
-        """Load the specified font file (TTF or BDF)."""
+        """Load the specified font using the unified font system or legacy method."""
+        # Use new unified font system if configured
+        if self.element_key or self.font_family or self.font_size_px or self.font_size_token:
+            try:
+                font = self.display_manager.font_manager.resolve(
+                    element_key=self.element_key,
+                    family=self.font_family,
+                    size_px=self.font_size_px,
+                    size_token=self.font_size_token
+                )
+                logger.info(f"Loaded font via FontManager: element_key={self.element_key}, family={self.font_family}, size_px={self.font_size_px}, size_token={self.font_size_token}")
+                return font
+            except Exception as e:
+                logger.error(f"Failed to load font via FontManager: {e}", exc_info=True)
+                return self.display_manager.regular_font
+        
+        # Legacy font loading
         font_path = self.font_path
         # Resolve relative paths against project root based on this file location
         if not os.path.isabs(font_path):
@@ -234,9 +259,30 @@ class TextDisplay:
         self.text = new_text
         self._regenerate_renderings()
 
-    def set_font(self, font_path: str, font_size: int):
-        self.font_path = font_path
-        self.font_size = font_size
+    def set_font(self, font_path: str = None, font_size: int = None, 
+                 element_key: str = None, family: str = None, size_px: int = None, size_token: str = None):
+        """Set font using legacy or new unified font system."""
+        if element_key or family or size_px or size_token:
+            # Use new unified font system
+            self.element_key = element_key
+            self.font_family = family
+            self.font_size_px = size_px
+            self.font_size_token = size_token
+            # Clear legacy parameters
+            self.font_path = None
+            self.font_size = None
+        else:
+            # Use legacy font system
+            if font_path is not None:
+                self.font_path = font_path
+            if font_size is not None:
+                self.font_size = font_size
+            # Clear new parameters
+            self.element_key = None
+            self.font_family = None
+            self.font_size_px = None
+            self.font_size_token = None
+        
         self.font = self._load_font()
         self._regenerate_renderings()
 

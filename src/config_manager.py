@@ -272,3 +272,91 @@ class ConfigManager:
         except Exception as e:
             print(f"An unexpected error occurred while saving {file_type} configuration: {str(e)}")
             raise 
+
+    def validate_fonts_config(self) -> bool:
+        """Validate the fonts configuration section."""
+        if 'fonts' not in self.config:
+            print("Warning: No 'fonts' section found in configuration. Using defaults.")
+            return True
+        
+        fonts_config = self.config['fonts']
+        errors = []
+        
+        # Validate families
+        if 'families' in fonts_config:
+            families = fonts_config['families']
+            if not isinstance(families, dict):
+                errors.append("fonts.families must be a dictionary")
+            else:
+                for family_name, font_path in families.items():
+                    if not isinstance(font_path, str):
+                        errors.append(f"fonts.families.{family_name} must be a string path")
+                    elif not os.path.exists(font_path):
+                        errors.append(f"Font file not found: {font_path}")
+                    elif not font_path.lower().endswith(('.ttf', '.bdf')):
+                        errors.append(f"Unsupported font type: {font_path} (only .ttf and .bdf supported)")
+        
+        # Validate tokens
+        if 'tokens' in fonts_config:
+            tokens = fonts_config['tokens']
+            if not isinstance(tokens, dict):
+                errors.append("fonts.tokens must be a dictionary")
+            else:
+                for token_name, token_size in tokens.items():
+                    if not isinstance(token_size, (int, float)):
+                        errors.append(f"fonts.tokens.{token_name} must be a number")
+                    elif token_size <= 0:
+                        errors.append(f"fonts.tokens.{token_name} must be positive")
+        
+        # Validate defaults
+        if 'defaults' in fonts_config:
+            defaults = fonts_config['defaults']
+            if not isinstance(defaults, dict):
+                errors.append("fonts.defaults must be a dictionary")
+            else:
+                # Check family reference
+                if 'family' in defaults:
+                    family_name = defaults['family']
+                    if 'families' in fonts_config and family_name not in fonts_config['families']:
+                        errors.append(f"fonts.defaults.family '{family_name}' not found in fonts.families")
+                
+                # Check size_token reference
+                if 'size_token' in defaults:
+                    token_name = defaults['size_token']
+                    if 'tokens' in fonts_config and token_name not in fonts_config['tokens']:
+                        errors.append(f"fonts.defaults.size_token '{token_name}' not found in fonts.tokens")
+        
+        # Validate overrides
+        if 'overrides' in fonts_config:
+            overrides = fonts_config['overrides']
+            if not isinstance(overrides, dict):
+                errors.append("fonts.overrides must be a dictionary")
+            else:
+                for element_key, override_config in overrides.items():
+                    if not isinstance(override_config, dict):
+                        errors.append(f"fonts.overrides.{element_key} must be a dictionary")
+                    else:
+                        # Check family reference
+                        if 'family' in override_config:
+                            family_name = override_config['family']
+                            if 'families' in fonts_config and family_name not in fonts_config['families']:
+                                errors.append(f"fonts.overrides.{element_key}.family '{family_name}' not found in fonts.families")
+                        
+                        # Check size_token reference
+                        if 'size_token' in override_config:
+                            token_name = override_config['size_token']
+                            if 'tokens' in fonts_config and token_name not in fonts_config['tokens']:
+                                errors.append(f"fonts.overrides.{element_key}.size_token '{token_name}' not found in fonts.tokens")
+        
+        if errors:
+            print("Font configuration validation errors:")
+            for error in errors:
+                print(f"  - {error}")
+            return False
+        
+        print("Font configuration validation passed")
+        return True
+    
+    def get_fonts_config(self) -> Dict[str, Any]:
+        """Get the fonts configuration section."""
+        return self.config.get('fonts', {})
