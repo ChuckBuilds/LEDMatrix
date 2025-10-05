@@ -28,10 +28,6 @@
             "xl": 14,
             "xxl": 16
         },
-        "defaults": {
-            "family": "press_start",
-            "size_token": "sm"
-        },
         "overrides": {
             "nfl.live.score": {
                 "size_token": "xl"
