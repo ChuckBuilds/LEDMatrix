@@ -1076,6 +1076,7 @@ def api_fonts_set_overrides():
         
         # Validate the configuration
         if not config_manager.validate_fonts_config():
+            logger.error(f"Font configuration validation failed. Data: {data}")
             return jsonify({'status': 'error', 'message': 'Invalid font configuration'}), 400
         
         # Save the configuration

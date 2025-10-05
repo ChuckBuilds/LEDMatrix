@@ -4285,16 +4285,25 @@
                 return;
             }
 
-            if (!family && !size && !color) {
+            if (!family && !size && (!color || color.trim() === '')) {
                 showNotification('Please specify at least a font family, size, or color', 'warning');
                 return;
+            }
+
+            // Validate color format if provided
+            if (color && color.trim() !== '') {
+                const colorValue = color.trim();
+                if (!colorValue.match(/^#[0-9A-Fa-f]{6}$/)) {
+                    showNotification('Please enter a valid hex color (e.g., #ffffff)', 'warning');
+                    return;
+                }
             }
 
             try {
                 const overrideData = {};
                 if (family) overrideData.family = family;
                 if (size) overrideData.size_token = size;
-                if (color) overrideData.color = color;
+                if (color && color.trim() !== '') overrideData.color = color;
 
                 const response = await fetch('/api/fonts/overrides', {
                     method: 'POST',
