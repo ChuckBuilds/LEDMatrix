@@ -113,8 +113,25 @@ display_running = False
 editor_mode = False
 current_display_data = {}
 
+# Standalone font manager for API endpoints
+font_manager = None
+
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
+
+def get_font_manager():
+    """Get or create the standalone font manager for API endpoints."""
+    global font_manager
+    if font_manager is None:
+        try:
+            from src.font_manager import FontManager
+            config = config_manager.load_config()
+            font_manager = FontManager(config)
+            logger.info("Standalone font manager initialized")
+        except Exception as e:
+            logger.error(f"Failed to initialize standalone font manager: {e}")
+            return None
+    return font_manager
 
 class DictWrapper:
     """Wrapper to make dictionary accessible via dot notation for Jinja2 templates."""
@@ -1022,10 +1039,11 @@ def api_ondemand_status():
 def api_fonts_catalog():
     """Get available font families and their paths."""
     try:
-        if not display_manager or not hasattr(display_manager, 'font_manager'):
-            return jsonify({'status': 'error', 'message': 'Display manager or font manager not available. Please start the display first.'}), 500
+        font_mgr = get_font_manager()
+        if not font_mgr:
+            return jsonify({'status': 'error', 'message': 'Font manager not available. Please check configuration.'}), 500
         
-        catalog = display_manager.font_manager.get_font_catalog()
+        catalog = font_mgr.get_font_catalog()
         return jsonify({'status': 'success', 'catalog': catalog})
     except Exception as e:
         logger.error(f"Error getting font catalog: {e}")
@@ -1035,10 +1053,11 @@ def api_fonts_catalog():
 def api_fonts_tokens():
     """Get available font size tokens."""
     try:
-        if not display_manager or not hasattr(display_manager, 'font_manager'):
-            return jsonify({'status': 'error', 'message': 'Display manager or font manager not available. Please start the display first.'}), 500
+        font_mgr = get_font_manager()
+        if not font_mgr:
+            return jsonify({'status': 'error', 'message': 'Font manager not available. Please check configuration.'}), 500
         
-        tokens = display_manager.font_manager.get_tokens()
+        tokens = font_mgr.get_tokens()
         return jsonify({'status': 'success', 'tokens': tokens})
     except Exception as e:
         logger.error(f"Error getting font tokens: {e}")
@@ -1048,10 +1067,11 @@ def api_fonts_tokens():
 def api_fonts_defaults():
     """Get current font defaults."""
     try:
-        if not hasattr(display_manager, 'font_manager'):
-            return jsonify({'status': 'error', 'message': 'Font manager not available'}), 500
+        font_mgr = get_font_manager()
+        if not font_mgr:
+            return jsonify({'status': 'error', 'message': 'Font manager not available. Please check configuration.'}), 500
         
-        defaults = display_manager.font_manager.get_defaults()
+        defaults = font_mgr.get_defaults()
         return jsonify({'status': 'success', 'defaults': defaults})
     except Exception as e:
         logger.error(f"Error getting font defaults: {e}")
@@ -1061,10 +1081,11 @@ def api_fonts_defaults():
 def api_fonts_overrides():
     """Get current font overrides."""
     try:
-        if not display_manager or not hasattr(display_manager, 'font_manager'):
-            return jsonify({'status': 'error', 'message': 'Display manager or font manager not available. Please start the display first.'}), 500
+        font_mgr = get_font_manager()
+        if not font_mgr:
+            return jsonify({'status': 'error', 'message': 'Font manager not available. Please check configuration.'}), 500
         
-        overrides = display_manager.font_manager.get_overrides()
+        overrides = font_mgr.get_overrides()
         return jsonify({'status': 'success', 'overrides': overrides})
     except Exception as e:
         logger.error(f"Error getting font overrides: {e}")
@@ -1101,6 +1122,11 @@ def api_fonts_set_defaults():
         # Reload font manager if available
         if hasattr(display_manager, 'font_manager'):
             display_manager.font_manager.reload_config(config)
+        
+        # Also reload standalone font manager
+        global font_manager
+        if font_manager:
+            font_manager.reload_config(config)
         
         return jsonify({'status': 'success', 'message': 'Font defaults updated'})
     except Exception as e:
@@ -1139,6 +1165,11 @@ def api_fonts_set_overrides():
         if display_manager and hasattr(display_manager, 'font_manager'):
             display_manager.font_manager.reload_config(config)
         
+        # Also reload standalone font manager
+        global font_manager
+        if font_manager:
+            font_manager.reload_config(config)
+        
         return jsonify({'status': 'success', 'message': 'Font overrides updated'})
     except Exception as e:
         logger.error(f"Error updating font overrides: {e}")
@@ -1162,6 +1193,11 @@ def api_fonts_delete_override(element_key):
                 # Reload font manager if available
                 if display_manager and hasattr(display_manager, 'font_manager'):
                     display_manager.font_manager.reload_config(config)
+                
+                # Also reload standalone font manager
+                global font_manager
+                if font_manager:
+                    font_manager.reload_config(config)
                 
                 return jsonify({'status': 'success', 'message': f'Override for {element_key} deleted'})
             else:
@@ -1241,6 +1277,11 @@ def api_fonts_upload():
         if display_manager and hasattr(display_manager, 'font_manager'):
             display_manager.font_manager.reload_config(config)
         
+        # Also reload standalone font manager
+        global font_manager
+        if font_manager:
+            font_manager.reload_config(config)
+        
         return jsonify({
             'status': 'success', 
             'message': f'Font "{font_family}" uploaded successfully',
@@ -1288,6 +1329,11 @@ def api_fonts_delete(font_family):
         # Reload font manager if available
         if display_manager and hasattr(display_manager, 'font_manager'):
             display_manager.font_manager.reload_config(config)
+        
+        # Also reload standalone font manager
+        global font_manager
+        if font_manager:
+            font_manager.reload_config(config)
         
         return jsonify({'status': 'success', 'message': f'Font family "{font_family}" deleted successfully'})
         
