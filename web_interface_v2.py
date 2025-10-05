@@ -1016,8 +1016,8 @@ def api_ondemand_status():
 def api_fonts_catalog():
     """Get available font families and their paths."""
     try:
-        if not hasattr(display_manager, 'font_manager'):
-            return jsonify({'status': 'error', 'message': 'Font manager not available'}), 500
+        if not display_manager or not hasattr(display_manager, 'font_manager'):
+            return jsonify({'status': 'error', 'message': 'Display manager or font manager not available. Please start the display first.'}), 500
         
         catalog = display_manager.font_manager.get_font_catalog()
         return jsonify({'status': 'success', 'catalog': catalog})
@@ -1029,8 +1029,8 @@ def api_fonts_catalog():
 def api_fonts_tokens():
     """Get available font size tokens."""
     try:
-        if not hasattr(display_manager, 'font_manager'):
-            return jsonify({'status': 'error', 'message': 'Font manager not available'}), 500
+        if not display_manager or not hasattr(display_manager, 'font_manager'):
+            return jsonify({'status': 'error', 'message': 'Display manager or font manager not available. Please start the display first.'}), 500
         
         tokens = display_manager.font_manager.get_tokens()
         return jsonify({'status': 'success', 'tokens': tokens})
@@ -1082,7 +1082,7 @@ def api_fonts_set_overrides():
         config_manager.save_config(config)
         
         # Reload font manager if available
-        if hasattr(display_manager, 'font_manager'):
+        if display_manager and hasattr(display_manager, 'font_manager'):
             display_manager.font_manager.reload_config(config)
         
         return jsonify({'status': 'success', 'message': 'Font overrides updated'})
@@ -1106,7 +1106,7 @@ def api_fonts_delete_override(element_key):
                 config_manager.save_config(config)
                 
                 # Reload font manager if available
-                if hasattr(display_manager, 'font_manager'):
+                if display_manager and hasattr(display_manager, 'font_manager'):
                     display_manager.font_manager.reload_config(config)
                 
                 return jsonify({'status': 'success', 'message': f'Override for {element_key} deleted'})
@@ -1184,7 +1184,7 @@ def api_fonts_upload():
         config_manager.save_config(config)
         
         # Reload font manager if available
-        if hasattr(display_manager, 'font_manager'):
+        if display_manager and hasattr(display_manager, 'font_manager'):
             display_manager.font_manager.reload_config(config)
         
         return jsonify({
@@ -1232,7 +1232,7 @@ def api_fonts_delete(font_family):
         config_manager.save_config(config)
         
         # Reload font manager if available
-        if hasattr(display_manager, 'font_manager'):
+        if display_manager and hasattr(display_manager, 'font_manager'):
             display_manager.font_manager.reload_config(config)
         
         return jsonify({'status': 'success', 'message': f'Font family "{font_family}" deleted successfully'})
