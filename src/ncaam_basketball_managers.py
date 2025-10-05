@@ -5,6 +5,7 @@ from typing import Any, Dict, Optional
 
 import pytz
 import requests
+from PIL import Image
 
 from src.base_classes.basketball import Basketball, BasketballLive
 from src.base_classes.sports import SportsRecent, SportsUpcoming
