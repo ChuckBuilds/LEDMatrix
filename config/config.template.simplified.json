@@ -641,7 +641,37 @@
             "size_token": "sm"
         },
         "overrides": {
-            "_comment": "All font sizes are now baked into the FontManager as smart defaults. This section is empty by default but can be used for custom overrides via the web UI or manual configuration."
+            "_comment": "Minimal overrides - only for elements that need different sizes than the smart defaults",
+            
+            "_comment_scores": "Live scores need 10px, recent/upcoming scores need 12px",
+            "nfl.recent.score": {"size_token": "lg"},
+            "nfl.upcoming.score": {"size_token": "lg"},
+            "nhl.recent.score": {"size_token": "md"},
+            "nhl.upcoming.score": {"size_token": "md"},
+            "nba.recent.score": {"size_token": "lg"},
+            "nba.upcoming.score": {"size_token": "lg"},
+            "ncaam.recent.score": {"size_token": "lg"},
+            "ncaam.upcoming.score": {"size_token": "lg"},
+            "soccer.recent.score": {"size_token": "lg"},
+            "soccer.upcoming.score": {"size_token": "lg"},
+            "milb.recent.score": {"size_token": "lg"},
+            "milb.upcoming.score": {"size_token": "lg"},
+            
+            "_comment_soccer_teams": "Soccer uses smaller team fonts (6px instead of 8px)",
+            "soccer.live.team": {"size_token": "xs"},
+            "soccer.recent.team": {"size_token": "xs"},
+            "soccer.upcoming.team": {"size_token": "xs"},
+            
+            "_comment_leaderboard": "Leaderboard has specific size requirements",
+            "leaderboard.medium": {"size_token": "md"},
+            "leaderboard.large": {"size_token": "lg"},
+            "leaderboard.xlarge": {"size_token": "xl"},
+            
+            "_comment_music": "Music titles are larger than default",
+            "music.title": {"size_token": "lg"},
+            
+            "_comment_titles": "Titles need to be larger than default",
+            "leaderboard.title": {"size_token": "lg"}
         }
     }
 }

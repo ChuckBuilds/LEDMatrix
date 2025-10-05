@@ -110,6 +110,183 @@ class FontManager:
         """Get per-element font overrides."""
         return self.fonts_config.get("overrides", {}).copy()
     
+    def _get_smart_default_token(self, element_key: str) -> Optional[str]:
+        """
+        Get smart default size token based on complete baseline mapping.
+        
+        This implements the complete baseline font sizes that were previously in overrides.
+        Now all font sizes are baked into the font manager as smart defaults.
+        """
+        # Complete baseline mapping - all font sizes from the original hardcoded values
+        baseline_defaults = {
+            # NFL elements
+            'nfl.live.score': 'md',      # 10px
+            'nfl.live.time': 'sm',       # 8px
+            'nfl.live.team': 'sm',       # 8px
+            'nfl.live.status': 'xs',     # 6px
+            'nfl.live.record': 'xs',     # 6px
+            'nfl.live.odds': 'xs',       # 6px
+            'nfl.recent.score': 'lg',    # 12px
+            'nfl.recent.time': 'sm',     # 8px
+            'nfl.recent.team': 'sm',     # 8px
+            'nfl.recent.status': 'xs',   # 6px
+            'nfl.recent.record': 'xs',   # 6px
+            'nfl.recent.odds': 'xs',     # 6px
+            'nfl.upcoming.score': 'lg',  # 12px
+            'nfl.upcoming.time': 'sm',   # 8px
+            'nfl.upcoming.team': 'sm',   # 8px
+            'nfl.upcoming.status': 'xs', # 6px
+            'nfl.upcoming.record': 'xs', # 6px
+            'nfl.upcoming.odds': 'xs',   # 6px
+            
+            # NHL elements
+            'nhl.live.score': 'md',      # 10px
+            'nhl.live.time': 'sm',       # 8px
+            'nhl.live.team': 'sm',       # 8px
+            'nhl.live.status': 'xs',     # 6px
+            'nhl.live.record': 'xs',     # 6px
+            'nhl.live.odds': 'xs',       # 6px
+            'nhl.recent.score': 'md',    # 10px
+            'nhl.recent.time': 'sm',     # 8px
+            'nhl.recent.team': 'sm',     # 8px
+            'nhl.recent.status': 'xs',   # 6px
+            'nhl.recent.record': 'xs',   # 6px
+            'nhl.recent.shots': 'xs',    # 6px
+            'nhl.recent.odds': 'xs',     # 6px
+            'nhl.upcoming.score': 'md',  # 10px
+            'nhl.upcoming.time': 'sm',   # 8px
+            'nhl.upcoming.team': 'sm',   # 8px
+            'nhl.upcoming.status': 'xs', # 6px
+            'nhl.upcoming.record': 'xs', # 6px
+            'nhl.upcoming.odds': 'xs',   # 6px
+            
+            # NBA elements
+            'nba.live.score': 'md',      # 10px
+            'nba.live.time': 'sm',       # 8px
+            'nba.live.team': 'sm',       # 8px
+            'nba.live.status': 'xs',     # 6px
+            'nba.live.record': 'xs',     # 6px
+            'nba.live.odds': 'xs',       # 6px
+            'nba.recent.score': 'lg',    # 12px
+            'nba.recent.time': 'sm',     # 8px
+            'nba.recent.team': 'sm',     # 8px
+            'nba.recent.status': 'xs',   # 6px
+            'nba.recent.record': 'xs',   # 6px
+            'nba.recent.odds': 'xs',     # 6px
+            'nba.upcoming.score': 'lg',  # 12px
+            'nba.upcoming.time': 'sm',   # 8px
+            'nba.upcoming.team': 'sm',   # 8px
+            'nba.upcoming.status': 'xs', # 6px
+            'nba.upcoming.record': 'xs', # 6px
+            'nba.upcoming.odds': 'xs',   # 6px
+            
+            # NCAA Basketball elements
+            'ncaam.live.score': 'md',    # 10px
+            'ncaam.live.time': 'sm',     # 8px
+            'ncaam.live.team': 'sm',     # 8px
+            'ncaam.live.status': 'xs',   # 6px
+            'ncaam.live.record': 'xs',   # 6px
+            'ncaam.live.odds': 'xs',     # 6px
+            'ncaam.recent.score': 'lg',  # 12px
+            'ncaam.recent.time': 'sm',   # 8px
+            'ncaam.recent.team': 'sm',   # 8px
+            'ncaam.recent.status': 'xs', # 6px
+            'ncaam.recent.record': 'xs', # 6px
+            'ncaam.recent.odds': 'xs',   # 6px
+            'ncaam.upcoming.score': 'lg', # 12px
+            'ncaam.upcoming.time': 'sm', # 8px
+            'ncaam.upcoming.team': 'sm', # 8px
+            'ncaam.upcoming.status': 'xs', # 6px
+            'ncaam.upcoming.record': 'xs', # 6px
+            'ncaam.upcoming.odds': 'xs', # 6px
+            
+            # Soccer elements (special case - smaller team fonts)
+            'soccer.live.score': 'md',   # 10px
+            'soccer.live.time': 'sm',    # 8px
+            'soccer.live.team': 'xs',    # 6px (special case)
+            'soccer.live.status': 'xs',  # 6px
+            'soccer.live.record': 'xs',  # 6px
+            'soccer.live.odds': 'xs',    # 6px
+            'soccer.recent.score': 'lg', # 12px
+            'soccer.recent.time': 'sm',  # 8px
+            'soccer.recent.team': 'xs',  # 6px (special case)
+            'soccer.recent.status': 'xs', # 6px
+            'soccer.recent.record': 'xs', # 6px
+            'soccer.recent.odds': 'xs',  # 6px
+            'soccer.upcoming.score': 'lg', # 12px
+            'soccer.upcoming.time': 'sm', # 8px
+            'soccer.upcoming.team': 'xs', # 6px (special case)
+            'soccer.upcoming.status': 'xs', # 6px
+            'soccer.upcoming.record': 'xs', # 6px
+            'soccer.upcoming.odds': 'xs', # 6px
+            
+            # MiLB elements
+            'milb.live.score': 'md',     # 10px
+            'milb.live.time': 'sm',      # 8px
+            'milb.live.team': 'sm',      # 8px
+            'milb.live.status': 'xs',    # 6px
+            'milb.live.record': 'xs',    # 6px
+            'milb.live.odds': 'xs',      # 6px
+            'milb.recent.score': 'lg',   # 12px
+            'milb.recent.time': 'sm',    # 8px
+            'milb.recent.team': 'sm',    # 8px
+            'milb.recent.status': 'xs',  # 6px
+            'milb.recent.record': 'xs',  # 6px
+            'milb.recent.odds': 'xs',    # 6px
+            'milb.upcoming.score': 'lg', # 12px
+            'milb.upcoming.time': 'sm',  # 8px
+            'milb.upcoming.team': 'sm',  # 8px
+            'milb.upcoming.status': 'xs', # 6px
+            'milb.upcoming.record': 'xs', # 6px
+            'milb.upcoming.odds': 'xs',  # 6px
+            
+            # Clock elements
+            'clock.time': 'sm',          # 8px
+            'clock.ampm': 'sm',          # 8px
+            'clock.weekday': 'sm',       # 8px
+            'clock.date': 'sm',          # 8px
+            
+            # Calendar elements
+            'calendar.datetime': 'sm',   # 8px
+            'calendar.title': 'sm',      # 8px
+            
+            # Leaderboard elements
+            'leaderboard.title': 'lg',   # 12px
+            'leaderboard.rank': 'xs',    # 6px
+            'leaderboard.team': 'sm',    # 8px
+            'leaderboard.record': 'sm',  # 8px
+            'leaderboard.medium': 'md',  # 10px
+            'leaderboard.large': 'lg',   # 12px
+            'leaderboard.xlarge': 'xl',  # 14px
+            
+            # Weather elements
+            'weather.condition': 'sm',   # 8px
+            'weather.temperature': 'sm', # 8px
+            'weather.high_low': 'xs',    # 6px
+            'weather.uv': 'xs',          # 6px
+            'weather.humidity': 'xs',    # 6px
+            'weather.wind': 'xs',        # 6px
+            'weather.hourly.time': 'xs', # 6px
+            'weather.hourly.temp': 'xs', # 6px
+            'weather.daily.day': 'xs',   # 6px
+            'weather.daily.temp': 'xs',  # 6px
+            
+            # Stock elements
+            'stock.symbol': 'sm',        # 8px
+            'stock.price': 'sm',         # 8px
+            'stock.change': 'sm',        # 8px
+            'stock.news.title': 'sm',    # 8px
+            'stock.news.summary': 'xs',  # 6px
+            
+            # Music elements
+            'music.artist': 'sm',        # 8px
+            'music.title': 'lg',         # 12px (special case)
+            'music.album': 'sm',         # 8px
+        }
+        
+        # Return the exact baseline token for this element
+        return baseline_defaults.get(element_key)
+    
     def resolve(self, *, element_key: Optional[str] = None, family: Optional[str] = None, 
                 size_px: Optional[int] = None, size_token: Optional[str] = None) -> Union[ImageFont.FreeTypeFont, freetype.Face]:
         """
@@ -130,7 +307,7 @@ class FontManager:
             resolved_size = size_px
             
             if element_key:
-                # Check for element-specific overrides
+                # Check for element-specific overrides first
                 overrides = self.get_overrides()
                 element_config = overrides.get(element_key, {})
                 
@@ -141,6 +318,12 @@ class FontManager:
                     size_token = element_config['size_token']
                 if 'size_px' in element_config:
                     resolved_size = element_config['size_px']
+                
+                # If no override found, try smart defaults based on element type
+                if 'size_token' not in element_config and not resolved_size:
+                    smart_token = self._get_smart_default_token(element_key)
+                    if smart_token:
+                        size_token = smart_token
             
             # Apply defaults if not specified
             if not resolved_family:
