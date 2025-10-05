@@ -11,6 +11,51 @@
         "state": "Texas",
         "country": "US"
     },
+    "fonts": {
+        "families": {
+            "press_start": "assets/fonts/PressStart2P-Regular.ttf",
+            "four_by_six": "assets/fonts/4x6-font.ttf",
+            "cozette_bdf": "assets/fonts/cozette.bdf",
+            "matrix_light_6": "assets/fonts/MatrixLight6.bdf",
+            "matrix_chunky_8": "assets/fonts/MatrixChunky8.bdf",
+            "five_by_seven": "assets/fonts/5by7.regular.ttf"
+        },
+        "tokens": {
+            "xs": 6,
+            "sm": 8,
+            "md": 10,
+            "lg": 12,
+            "xl": 14,
+            "xxl": 16
+        },
+        "defaults": {
+            "family": "press_start",
+            "size_token": "sm"
+        },
+        "overrides": {
+            "nfl.live.score": {
+                "size_token": "xl"
+            },
+            "nfl.recent.score": {
+                "size_token": "lg"
+            },
+            "nhl.recent.score": {
+                "size_token": "md"
+            },
+            "nba.live.score": {
+                "size_token": "xl"
+            },
+            "ncaam.live.score": {
+                "size_token": "xl"
+            },
+            "generic.title": {
+                "size_token": "lg"
+            },
+            "generic.body": {
+                "size_token": "sm"
+            }
+        }
+    },
     "display": {
         "hardware": {
             "rows": 32,

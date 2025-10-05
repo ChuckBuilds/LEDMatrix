@@ -1044,26 +1044,74 @@ def api_fonts_tokens():
         logger.error(f"Error getting font tokens: {e}")
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
+@app.route('/api/fonts/defaults', methods=['GET'])
+def api_fonts_defaults():
+    """Get current font defaults."""
+    try:
+        if not hasattr(display_manager, 'font_manager'):
+            return jsonify({'status': 'error', 'message': 'Font manager not available'}), 500
+        
+        defaults = display_manager.font_manager.get_defaults()
+        return jsonify({'status': 'success', 'defaults': defaults})
+    except Exception as e:
+        logger.error(f"Error getting font defaults: {e}")
+        return jsonify({'status': 'error', 'message': str(e)}), 500
 
 @app.route('/api/fonts/overrides', methods=['GET'])
 def api_fonts_overrides():
     """Get current font overrides."""
     try:
-        # Get overrides directly from config instead of font manager
-        config = config_manager.load_config()
-        overrides = config.get('fonts', {}).get('overrides', {})
+        if not display_manager or not hasattr(display_manager, 'font_manager'):
+            return jsonify({'status': 'error', 'message': 'Display manager or font manager not available. Please start the display first.'}), 500
+        
+        overrides = display_manager.font_manager.get_overrides()
         return jsonify({'status': 'success', 'overrides': overrides})
     except Exception as e:
         logger.error(f"Error getting font overrides: {e}")
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
+@app.route('/api/fonts/defaults', methods=['POST'])
+def api_fonts_set_defaults():
+    """Update font defaults."""
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({'status': 'error', 'message': 'No data provided'}), 400
+        
+        # Get current config
+        config = config_manager.load_config()
+        
+        # Ensure fonts section exists
+        if 'fonts' not in config:
+            config['fonts'] = {}
+        
+        # Update defaults
+        if 'defaults' not in config['fonts']:
+            config['fonts']['defaults'] = {}
+        
+        config['fonts']['defaults'].update(data)
+        
+        # Validate the configuration
+        if not config_manager.validate_fonts_config():
+            return jsonify({'status': 'error', 'message': 'Invalid font configuration'}), 400
+        
+        # Save the configuration
+        config_manager.save_config(config)
+        
+        # Reload font manager if available
+        if hasattr(display_manager, 'font_manager'):
+            display_manager.font_manager.reload_config(config)
+        
+        return jsonify({'status': 'success', 'message': 'Font defaults updated'})
+    except Exception as e:
+        logger.error(f"Error updating font defaults: {e}")
+        return jsonify({'status': 'error', 'message': str(e)}), 500
 
 @app.route('/api/fonts/overrides', methods=['POST'])
 def api_fonts_set_overrides():
     """Update font overrides."""
     try:
         data = request.get_json()
-        
         if not data:
             return jsonify({'status': 'error', 'message': 'No data provided'}), 400
         

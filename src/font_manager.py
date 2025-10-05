@@ -22,7 +22,8 @@ class FontManager:
         # Default configuration
         self.default_families = {
             "press_start": "assets/fonts/PressStart2P-Regular.ttf",
-            "four_by_six": "assets/fonts/4x6-font.ttf"
+            "four_by_six": "assets/fonts/4x6-font.ttf",
+            "cozette_bdf": "assets/fonts/cozette.bdf"
         }
         
         self.default_tokens = {
