@@ -159,18 +159,37 @@ class SportsCore(ABC):
 
 
     def _load_fonts(self):
-        """Load fonts used by the scoreboard."""
+        """Load fonts using the unified font system with element keys."""
         fonts = {}
         try:
-            fonts['score'] = ImageFont.truetype("assets/fonts/PressStart2P-Regular.ttf", 10)
-            fonts['time'] = ImageFont.truetype("assets/fonts/PressStart2P-Regular.ttf", 8)
-            fonts['team'] = ImageFont.truetype("assets/fonts/PressStart2P-Regular.ttf", 8)
-            fonts['status'] = ImageFont.truetype("assets/fonts/4x6-font.ttf", 6) # Using 4x6 for status
-            fonts['detail'] = ImageFont.truetype("assets/fonts/4x6-font.ttf", 6) # Added detail font
-            fonts['rank'] = ImageFont.truetype("assets/fonts/PressStart2P-Regular.ttf", 10)
-            logging.info("Successfully loaded fonts") # Changed log prefix
-        except IOError:
-            logging.warning("Fonts not found, using default PIL font.") # Changed log prefix
+            # Use FontManager if available, otherwise fall back to direct loading
+            if hasattr(self.display_manager, 'font_manager'):
+                # Map font types to element keys for unified font system
+                element_key_mapping = {
+                    'score': f"{self.sport_key}.live.score",
+                    'time': f"{self.sport_key}.live.time", 
+                    'team': f"{self.sport_key}.live.team",
+                    'status': f"{self.sport_key}.live.status",
+                    'detail': f"{self.sport_key}.live.detail",
+                    'rank': f"{self.sport_key}.live.rank"
+                }
+                
+                # Load fonts using element keys
+                for font_type, element_key in element_key_mapping.items():
+                    fonts[font_type] = self.display_manager.font_manager.resolve(element_key=element_key)
+                
+                logging.info(f"Successfully loaded fonts via FontManager for {self.sport_key}")
+            else:
+                # Fallback to direct font loading for backward compatibility
+                fonts['score'] = ImageFont.truetype("assets/fonts/PressStart2P-Regular.ttf", 10)
+                fonts['time'] = ImageFont.truetype("assets/fonts/PressStart2P-Regular.ttf", 8)
+                fonts['team'] = ImageFont.truetype("assets/fonts/PressStart2P-Regular.ttf", 8)
+                fonts['status'] = ImageFont.truetype("assets/fonts/4x6-font.ttf", 6) # Using 4x6 for status
+                fonts['detail'] = ImageFont.truetype("assets/fonts/4x6-font.ttf", 6) # Added detail font
+                fonts['rank'] = ImageFont.truetype("assets/fonts/PressStart2P-Regular.ttf", 10)
+                logging.info("Successfully loaded fonts via direct loading (fallback)")
+        except Exception as e:
+            logging.warning(f"Fonts not found, using default PIL font: {e}")
             fonts['score'] = ImageFont.load_default()
             fonts['time'] = ImageFont.load_default()
             fonts['team'] = ImageFont.load_default()
@@ -750,9 +769,18 @@ class SportsUpcoming(SportsCore):
             # Draw records or rankings if enabled
             if self.show_records or self.show_ranking:
                 try:
-                    record_font = ImageFont.truetype("assets/fonts/4x6-font.ttf", 6)
-                    self.logger.debug(f"Loaded 6px record font successfully")
-                except IOError:
+                    # Use unified font system if available
+                    if hasattr(self.display_manager, 'font_manager'):
+                        record_font = self.display_manager.font_manager.resolve(
+                            element_key=f"{self.sport_key}.recent.record"
+                        )
+                        self.logger.debug(f"Loaded record font via FontManager for {self.sport_key}")
+                    else:
+                        # Fallback to direct loading
+                        record_font = ImageFont.truetype("assets/fonts/4x6-font.ttf", 6)
+                        self.logger.debug(f"Loaded 6px record font successfully (fallback)")
+                except Exception as e:
+                    self.logger.warning(f"Failed to load record font: {e}")
                     record_font = ImageFont.load_default()
                     self.logger.warning(f"Failed to load 6px font, using default font (size: {record_font.size})")
                 
@@ -1047,9 +1075,18 @@ class SportsRecent(SportsCore):
             # Draw records or rankings if enabled
             if self.show_records or self.show_ranking:
                 try:
-                    record_font = ImageFont.truetype("assets/fonts/4x6-font.ttf", 6)
-                    self.logger.debug(f"Loaded 6px record font successfully")
-                except IOError:
+                    # Use unified font system if available
+                    if hasattr(self.display_manager, 'font_manager'):
+                        record_font = self.display_manager.font_manager.resolve(
+                            element_key=f"{self.sport_key}.recent.record"
+                        )
+                        self.logger.debug(f"Loaded record font via FontManager for {self.sport_key}")
+                    else:
+                        # Fallback to direct loading
+                        record_font = ImageFont.truetype("assets/fonts/4x6-font.ttf", 6)
+                        self.logger.debug(f"Loaded 6px record font successfully (fallback)")
+                except Exception as e:
+                    self.logger.warning(f"Failed to load record font: {e}")
                     record_font = ImageFont.load_default()
                     self.logger.warning(f"Failed to load 6px font, using default font (size: {record_font.size})")
                 

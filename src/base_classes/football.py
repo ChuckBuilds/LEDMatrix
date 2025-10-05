@@ -302,7 +302,14 @@ class FootballLive(Football, SportsLive):
             # Draw records or rankings if enabled
             if self.show_records or self.show_ranking:
                 try:
-                    record_font = ImageFont.truetype("assets/fonts/4x6-font.ttf", 6)
+                    # Use unified font system if available
+                    if hasattr(self.display_manager, 'font_manager'):
+                        record_font = self.display_manager.font_manager.resolve(
+                            element_key=f"{self.sport_key}.recent.record"
+                        )
+                    else:
+                        # Fallback to direct loading
+                        record_font = ImageFont.truetype("assets/fonts/4x6-font.ttf", 6)
                     self.logger.debug(f"Loaded 6px record font successfully")
                 except IOError:
                     record_font = ImageFont.load_default()

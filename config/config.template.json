@@ -36,17 +36,59 @@
             "nfl.live.score": {
                 "size_token": "xl"
             },
+            "nfl.live.time": {
+                "size_token": "sm"
+            },
+            "nfl.live.team": {
+                "size_token": "md"
+            },
+            "nfl.live.status": {
+                "size_token": "xs"
+            },
             "nfl.recent.score": {
                 "size_token": "lg"
+            },
+            "nfl.recent.record": {
+                "size_token": "xs"
+            },
+            "nhl.live.score": {
+                "size_token": "xl"
+            },
+            "nhl.live.time": {
+                "size_token": "sm"
             },
             "nhl.recent.score": {
                 "size_token": "md"
             },
+            "nhl.recent.record": {
+                "size_token": "xs"
+            },
+            "nhl.recent.shots": {
+                "size_token": "xs"
+            },
             "nba.live.score": {
                 "size_token": "xl"
             },
+            "nba.live.time": {
+                "size_token": "sm"
+            },
+            "nba.recent.score": {
+                "size_token": "lg"
+            },
+            "nba.recent.record": {
+                "size_token": "xs"
+            },
             "ncaam.live.score": {
                 "size_token": "xl"
+            },
+            "ncaam.live.time": {
+                "size_token": "sm"
+            },
+            "ncaam.recent.score": {
+                "size_token": "lg"
+            },
+            "ncaam.recent.record": {
+                "size_token": "xs"
             },
             "generic.title": {
                 "size_token": "lg"
