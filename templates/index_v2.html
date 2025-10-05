@@ -375,6 +375,95 @@
             margin-bottom: 15px;
         }
 
+        .config-subsection {
+            background: #f0f0f0;
+            padding: 15px;
+            margin-bottom: 15px;
+            border-radius: var(--border-radius);
+            border-left: 3px solid var(--accent-color);
+        }
+
+        .config-subsection h4 {
+            color: var(--accent-color);
+            margin-bottom: 10px;
+            font-size: 1.1rem;
+        }
+
+        .config-subsection h5 {
+            color: var(--primary-color);
+            margin-bottom: 8px;
+            font-size: 1rem;
+        }
+
+        .overrides-list {
+            margin-top: 15px;
+        }
+
+        .override-item {
+            background: #ffffff;
+            padding: 10px;
+            margin: 5px 0;
+            border-radius: 5px;
+            border: 1px solid var(--border-color);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .override-item .override-info {
+            flex: 1;
+        }
+
+        .override-item .override-label {
+            font-weight: bold;
+            color: var(--primary-color);
+        }
+
+        .override-item .override-settings {
+            font-size: 0.9rem;
+            color: #666;
+        }
+
+        .override-item .btn-delete {
+            background: var(--accent-color);
+            color: white;
+            border: none;
+            padding: 5px 10px;
+            border-radius: 3px;
+            cursor: pointer;
+            font-size: 0.8rem;
+        }
+
+        .override-item .btn-delete:hover {
+            background: #c0392b;
+        }
+
+        .font-preview {
+            margin-top: 15px;
+        }
+
+        .preview-controls {
+            display: flex;
+            gap: 10px;
+            margin-top: 10px;
+            flex-wrap: wrap;
+        }
+
+        .preview-controls .form-control {
+            flex: 1;
+            min-width: 120px;
+        }
+
+        .empty-overrides {
+            text-align: center;
+            color: #666;
+            font-style: italic;
+            padding: 20px;
+            background: #f9f9f9;
+            border-radius: 5px;
+            border: 2px dashed var(--border-color);
+        }
+
         .toggle-switch {
             position: relative;
             display: inline-block;
@@ -848,6 +937,9 @@
                     <button class="tab-btn" onclick="showTab('display')">
                         <i class="fas fa-cog"></i> Display
                     </button>
+                    <button class="tab-btn" onclick="showTab('fonts')">
+                        <i class="fas fa-font"></i> Fonts
+                    </button>
                     <button class="tab-btn" onclick="showTab('clock')">
                         <i class="fas fa-clock"></i> Clock
                     </button>
@@ -1143,6 +1235,168 @@
                             
                             <button type="submit" class="btn btn-success">Save Display Settings</button>
                         </form>
+                    </div>
+                </div>
+
+                <!-- Fonts Tab -->
+                <div id="fonts" class="tab-content">
+                    <div class="config-section">
+                        <h3>Font Configuration</h3>
+                        <p class="description">Configure global font defaults and per-element overrides for your LED matrix display.</p>
+                        
+                        <!-- Global Font Defaults -->
+                        <div class="config-subsection">
+                            <h4>Global Defaults</h4>
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label for="default-font-family">Default Font Family:</label>
+                                    <select class="form-control" id="default-font-family">
+                                        <option value="press_start">Press Start 2P</option>
+                                        <option value="four_by_six">4x6 Font</option>
+                                        <option value="cozette_bdf">Cozette BDF</option>
+                                        <option value="matrix_light_6">Matrix Light 6</option>
+                                        <option value="matrix_chunky_8">Matrix Chunky 8</option>
+                                        <option value="five_by_seven">5x7 Font</option>
+                                    </select>
+                                    <div class="description">Default font family for all elements</div>
+                                </div>
+                                <div class="form-group">
+                                    <label for="default-font-size">Default Font Size:</label>
+                                    <select class="form-control" id="default-font-size">
+                                        <option value="xs">Extra Small (6px)</option>
+                                        <option value="sm">Small (8px)</option>
+                                        <option value="md">Medium (10px)</option>
+                                        <option value="lg">Large (12px)</option>
+                                        <option value="xl">Extra Large (14px)</option>
+                                        <option value="xxl">XX Large (16px)</option>
+                                    </select>
+                                    <div class="description">Default font size for all elements</div>
+                                </div>
+                            </div>
+                            <button type="button" class="btn btn-primary" onclick="saveFontDefaults()">
+                                <i class="fas fa-save"></i> Save Defaults
+                            </button>
+                        </div>
+
+                        <!-- Font Overrides -->
+                        <div class="config-subsection">
+                            <h4>Element Overrides</h4>
+                            <p class="description">Override fonts for specific display elements. Changes take effect immediately.</p>
+                            
+                            <!-- Add New Override -->
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label for="override-element">Element:</label>
+                                    <select class="form-control" id="override-element">
+                                        <option value="">Select an element...</option>
+                                        <optgroup label="NFL">
+                                            <option value="nfl.live.score">NFL Live Score</option>
+                                            <option value="nfl.live.time">NFL Live Time</option>
+                                            <option value="nfl.live.team">NFL Live Team</option>
+                                            <option value="nfl.live.status">NFL Live Status</option>
+                                            <option value="nfl.recent.score">NFL Recent Score</option>
+                                            <option value="nfl.recent.record">NFL Recent Record</option>
+                                        </optgroup>
+                                        <optgroup label="NHL">
+                                            <option value="nhl.live.score">NHL Live Score</option>
+                                            <option value="nhl.live.time">NHL Live Time</option>
+                                            <option value="nhl.live.team">NHL Live Team</option>
+                                            <option value="nhl.live.status">NHL Live Status</option>
+                                            <option value="nhl.recent.score">NHL Recent Score</option>
+                                            <option value="nhl.recent.record">NHL Recent Record</option>
+                                            <option value="nhl.recent.shots">NHL Recent Shots</option>
+                                        </optgroup>
+                                        <optgroup label="NBA">
+                                            <option value="nba.live.score">NBA Live Score</option>
+                                            <option value="nba.live.time">NBA Live Time</option>
+                                            <option value="nba.live.team">NBA Live Team</option>
+                                            <option value="nba.live.status">NBA Live Status</option>
+                                            <option value="nba.recent.score">NBA Recent Score</option>
+                                            <option value="nba.recent.record">NBA Recent Record</option>
+                                        </optgroup>
+                                        <optgroup label="NCAA Men's Basketball">
+                                            <option value="ncaam.live.score">NCAAM Live Score</option>
+                                            <option value="ncaam.live.time">NCAAM Live Time</option>
+                                            <option value="ncaam.live.team">NCAAM Live Team</option>
+                                            <option value="ncaam.live.status">NCAAM Live Status</option>
+                                            <option value="ncaam.recent.score">NCAAM Recent Score</option>
+                                            <option value="ncaam.recent.record">NCAAM Recent Record</option>
+                                        </optgroup>
+                                        <optgroup label="Generic">
+                                            <option value="generic.title">Generic Title</option>
+                                            <option value="generic.body">Generic Body</option>
+                                        </optgroup>
+                                    </select>
+                                </div>
+                                <div class="form-group">
+                                    <label for="override-family">Font Family:</label>
+                                    <select class="form-control" id="override-family">
+                                        <option value="">Use default</option>
+                                        <option value="press_start">Press Start 2P</option>
+                                        <option value="four_by_six">4x6 Font</option>
+                                        <option value="cozette_bdf">Cozette BDF</option>
+                                        <option value="matrix_light_6">Matrix Light 6</option>
+                                        <option value="matrix_chunky_8">Matrix Chunky 8</option>
+                                        <option value="five_by_seven">5x7 Font</option>
+                                    </select>
+                                </div>
+                                <div class="form-group">
+                                    <label for="override-size">Font Size:</label>
+                                    <select class="form-control" id="override-size">
+                                        <option value="">Use default</option>
+                                        <option value="xs">Extra Small (6px)</option>
+                                        <option value="sm">Small (8px)</option>
+                                        <option value="md">Medium (10px)</option>
+                                        <option value="lg">Large (12px)</option>
+                                        <option value="xl">Extra Large (14px)</option>
+                                        <option value="xxl">XX Large (16px)</option>
+                                    </select>
+                                </div>
+                                <div class="form-group">
+                                    <button type="button" class="btn btn-secondary" onclick="addFontOverride()">
+                                        <i class="fas fa-plus"></i> Add Override
+                                    </button>
+                                </div>
+                            </div>
+
+                            <!-- Current Overrides List -->
+                            <div class="overrides-list">
+                                <h5>Current Overrides</h5>
+                                <div id="overrides-container">
+                                    <!-- Overrides will be populated by JavaScript -->
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Font Preview -->
+                        <div class="config-subsection">
+                            <h4>Font Preview</h4>
+                            <div class="font-preview">
+                                <canvas id="font-preview-canvas" width="400" height="100" style="border: 1px solid #ccc; background: #000;"></canvas>
+                                <div class="preview-controls">
+                                    <input type="text" id="preview-text" class="form-control" placeholder="Preview text..." value="Sample Text">
+                                    <select id="preview-family" class="form-control">
+                                        <option value="press_start">Press Start 2P</option>
+                                        <option value="four_by_six">4x6 Font</option>
+                                        <option value="cozette_bdf">Cozette BDF</option>
+                                        <option value="matrix_light_6">Matrix Light 6</option>
+                                        <option value="matrix_chunky_8">Matrix Chunky 8</option>
+                                        <option value="five_by_seven">5x7 Font</option>
+                                    </select>
+                                    <select id="preview-size" class="form-control">
+                                        <option value="xs">Extra Small (6px)</option>
+                                        <option value="sm">Small (8px)</option>
+                                        <option value="md">Medium (10px)</option>
+                                        <option value="lg">Large (12px)</option>
+                                        <option value="xl">Extra Large (14px)</option>
+                                        <option value="xxl">XX Large (16px)</option>
+                                    </select>
+                                    <button type="button" class="btn btn-secondary" onclick="updateFontPreview()">
+                                        <i class="fas fa-eye"></i> Preview
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
                     </div>
                 </div>
 
@@ -2507,6 +2761,8 @@
                 refreshSportsConfig();
             } else if (tabName === 'logs') {
                 fetchLogs();
+            } else if (tabName === 'fonts') {
+                initializeFontManagement();
             } else if (tabName === 'raw-json') {
                 setTimeout(() => {
                     validateJson('main-config-json', 'main-config-validation');
@@ -3761,6 +4017,284 @@
             }
             showNotification('Sports configuration saved', 'success');
         }
+
+        // Font Management Functions
+        let fontCatalog = {};
+        let fontTokens = {};
+        let fontDefaults = {};
+        let fontOverrides = {};
+
+        // Initialize font management
+        async function initializeFontManagement() {
+            try {
+                await loadFontData();
+                populateFontSelects();
+                displayCurrentOverrides();
+                updateFontPreview();
+            } catch (error) {
+                console.error('Error initializing font management:', error);
+                showNotification('Error loading font configuration', 'error');
+            }
+        }
+
+        // Load font data from server
+        async function loadFontData() {
+            try {
+                const [catalogRes, tokensRes, defaultsRes, overridesRes] = await Promise.all([
+                    fetch('/api/fonts/catalog'),
+                    fetch('/api/fonts/tokens'),
+                    fetch('/api/fonts/defaults'),
+                    fetch('/api/fonts/overrides')
+                ]);
+
+                fontCatalog = (await catalogRes.json()).catalog || {};
+                fontTokens = (await tokensRes.json()).tokens || {};
+                fontDefaults = (await defaultsRes.json()).defaults || {};
+                fontOverrides = (await overridesRes.json()).overrides || {};
+            } catch (error) {
+                console.error('Error loading font data:', error);
+                throw error;
+            }
+        }
+
+        // Populate font select options
+        function populateFontSelects() {
+            // Update default font selects
+            const defaultFamilySelect = document.getElementById('default-font-family');
+            const defaultSizeSelect = document.getElementById('default-font-size');
+            
+            if (defaultFamilySelect) {
+                defaultFamilySelect.value = fontDefaults.family || 'press_start';
+            }
+            if (defaultSizeSelect) {
+                defaultSizeSelect.value = fontDefaults.size_token || 'sm';
+            }
+        }
+
+        // Save font defaults
+        async function saveFontDefaults() {
+            try {
+                const family = document.getElementById('default-font-family').value;
+                const sizeToken = document.getElementById('default-font-size').value;
+
+                const response = await fetch('/api/fonts/defaults', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        family: family,
+                        size_token: sizeToken
+                    })
+                });
+
+                const data = await response.json();
+                if (data.status === 'success') {
+                    showNotification('Font defaults saved successfully', 'success');
+                    await loadFontData();
+                    populateFontSelects();
+                } else {
+                    showNotification('Error saving font defaults: ' + data.message, 'error');
+                }
+            } catch (error) {
+                console.error('Error saving font defaults:', error);
+                showNotification('Error saving font defaults: ' + error, 'error');
+            }
+        }
+
+        // Add font override
+        async function addFontOverride() {
+            const element = document.getElementById('override-element').value;
+            const family = document.getElementById('override-family').value;
+            const size = document.getElementById('override-size').value;
+
+            if (!element) {
+                showNotification('Please select an element', 'warning');
+                return;
+            }
+
+            if (!family && !size) {
+                showNotification('Please specify at least a font family or size', 'warning');
+                return;
+            }
+
+            try {
+                const overrideData = {};
+                if (family) overrideData.family = family;
+                if (size) overrideData.size_token = size;
+
+                const response = await fetch('/api/fonts/overrides', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        [element]: overrideData
+                    })
+                });
+
+                const data = await response.json();
+                if (data.status === 'success') {
+                    showNotification('Font override added successfully', 'success');
+                    await loadFontData();
+                    displayCurrentOverrides();
+                    // Clear form
+                    document.getElementById('override-element').value = '';
+                    document.getElementById('override-family').value = '';
+                    document.getElementById('override-size').value = '';
+                } else {
+                    showNotification('Error adding font override: ' + data.message, 'error');
+                }
+            } catch (error) {
+                console.error('Error adding font override:', error);
+                showNotification('Error adding font override: ' + error, 'error');
+            }
+        }
+
+        // Delete font override
+        async function deleteFontOverride(elementKey) {
+            if (!confirm(`Are you sure you want to remove the font override for "${elementKey}"?`)) {
+                return;
+            }
+
+            try {
+                const response = await fetch(`/api/fonts/overrides/${elementKey}`, {
+                    method: 'DELETE'
+                });
+
+                const data = await response.json();
+                if (data.status === 'success') {
+                    showNotification('Font override removed successfully', 'success');
+                    await loadFontData();
+                    displayCurrentOverrides();
+                } else {
+                    showNotification('Error removing font override: ' + data.message, 'error');
+                }
+            } catch (error) {
+                console.error('Error deleting font override:', error);
+                showNotification('Error removing font override: ' + error, 'error');
+            }
+        }
+
+        // Display current overrides
+        function displayCurrentOverrides() {
+            const container = document.getElementById('overrides-container');
+            if (!container) return;
+
+            if (Object.keys(fontOverrides).length === 0) {
+                container.innerHTML = '<div class="empty-overrides">No font overrides configured</div>';
+                return;
+            }
+
+            container.innerHTML = Object.entries(fontOverrides).map(([elementKey, override]) => {
+                const elementName = getElementDisplayName(elementKey);
+                const settings = [];
+                
+                if (override.family) {
+                    const familyName = getFontDisplayName(override.family);
+                    settings.push(`Family: ${familyName}`);
+                }
+                
+                if (override.size_token) {
+                    const sizeName = getSizeDisplayName(override.size_token);
+                    settings.push(`Size: ${sizeName}`);
+                }
+
+                return `
+                    <div class="override-item">
+                        <div class="override-info">
+                            <div class="override-label">${elementName}</div>
+                            <div class="override-settings">${settings.join(', ')}</div>
+                        </div>
+                        <button class="btn-delete" onclick="deleteFontOverride('${elementKey}')">
+                            <i class="fas fa-trash"></i> Remove
+                        </button>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        // Helper functions
+        function getElementDisplayName(elementKey) {
+            const names = {
+                'nfl.live.score': 'NFL Live Score',
+                'nfl.live.time': 'NFL Live Time',
+                'nfl.live.team': 'NFL Live Team',
+                'nfl.live.status': 'NFL Live Status',
+                'nfl.recent.score': 'NFL Recent Score',
+                'nfl.recent.record': 'NFL Recent Record',
+                'nhl.live.score': 'NHL Live Score',
+                'nhl.live.time': 'NHL Live Time',
+                'nhl.live.team': 'NHL Live Team',
+                'nhl.live.status': 'NHL Live Status',
+                'nhl.recent.score': 'NHL Recent Score',
+                'nhl.recent.record': 'NHL Recent Record',
+                'nhl.recent.shots': 'NHL Recent Shots',
+                'nba.live.score': 'NBA Live Score',
+                'nba.live.time': 'NBA Live Time',
+                'nba.live.team': 'NBA Live Team',
+                'nba.live.status': 'NBA Live Status',
+                'nba.recent.score': 'NBA Recent Score',
+                'nba.recent.record': 'NBA Recent Record',
+                'ncaam.live.score': 'NCAAM Live Score',
+                'ncaam.live.time': 'NCAAM Live Time',
+                'ncaam.live.team': 'NCAAM Live Team',
+                'ncaam.live.status': 'NCAAM Live Status',
+                'ncaam.recent.score': 'NCAAM Recent Score',
+                'ncaam.recent.record': 'NCAAM Recent Record',
+                'generic.title': 'Generic Title',
+                'generic.body': 'Generic Body'
+            };
+            return names[elementKey] || elementKey;
+        }
+
+        function getFontDisplayName(fontKey) {
+            const names = {
+                'press_start': 'Press Start 2P',
+                'four_by_six': '4x6 Font',
+                'cozette_bdf': 'Cozette BDF',
+                'matrix_light_6': 'Matrix Light 6',
+                'matrix_chunky_8': 'Matrix Chunky 8',
+                'five_by_seven': '5x7 Font'
+            };
+            return names[fontKey] || fontKey;
+        }
+
+        function getSizeDisplayName(sizeKey) {
+            const names = {
+                'xs': 'Extra Small (6px)',
+                'sm': 'Small (8px)',
+                'md': 'Medium (10px)',
+                'lg': 'Large (12px)',
+                'xl': 'Extra Large (14px)',
+                'xxl': 'XX Large (16px)'
+            };
+            return names[sizeKey] || sizeKey;
+        }
+
+        // Font preview functionality
+        function updateFontPreview() {
+            const canvas = document.getElementById('font-preview-canvas');
+            const text = document.getElementById('preview-text').value || 'Sample Text';
+            const family = document.getElementById('preview-family').value;
+            const size = document.getElementById('preview-size').value;
+
+            if (!canvas) return;
+
+            const ctx = canvas.getContext('2d');
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            // Set background
+            ctx.fillStyle = '#000000';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            // Set font properties
+            const fontSize = fontTokens[size] || 8;
+            ctx.fillStyle = '#ffffff';
+            ctx.font = `${fontSize}px monospace`;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+
+            // Draw text in center
+            ctx.fillText(text, canvas.width / 2, canvas.height / 2);
+        }
+
     </script>
 </body>
 </html>
