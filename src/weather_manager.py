@@ -325,7 +325,7 @@ class WeatherManager:
             
             # --- Top Right: Condition Text ---
             condition_text = condition
-            condition_font = self.display_manager.small_font
+            condition_font = self.display_manager.font_manager.resolve(element_key="weather.condition")
             condition_text_width = draw.textlength(condition_text, font=condition_font)
             condition_x = self.display_manager.matrix.width - condition_text_width - 1 # Align right
             condition_y = 1 # Align top
@@ -337,8 +337,8 @@ class WeatherManager:
             # --- Right Side (Below Condition): Current Temp ---
             temp = round(weather_data['main']['temp'])
             temp_text = f"{temp}°"
-            # Use the small font from DisplayManager as before
-            temp_font = self.display_manager.small_font
+            # Use unified font system
+            temp_font = self.display_manager.font_manager.resolve(element_key="weather.temperature")
             temp_text_width = draw.textlength(temp_text, font=temp_font)
             temp_x = self.display_manager.matrix.width - temp_text_width - 1 # Align right
             temp_y = condition_y + 8 # Position below condition text (adjust 8 based on font size)
@@ -351,7 +351,7 @@ class WeatherManager:
             temp_max = round(weather_data['main']['temp_max'])
             temp_min = round(weather_data['main']['temp_min'])
             high_low_text = f"{temp_min}°/{temp_max}°"
-            high_low_font = self.display_manager.small_font # Using small font
+            high_low_font = self.display_manager.font_manager.resolve(element_key="weather.high_low")
             high_low_width = draw.textlength(high_low_text, font=high_low_font)
             high_low_x = self.display_manager.matrix.width - high_low_width - 1 # Align right
             high_low_y = temp_y + 8 # Position below current temp text (adjust 8 based on font size)
@@ -364,15 +364,15 @@ class WeatherManager:
             display_width = self.display_manager.matrix.width
             section_width = display_width // 3
             y_pos = self.display_manager.matrix.height - 7 # Position near bottom for 6px font
-            font = self.display_manager.extra_small_font # The 4x6 font
 
             # --- UV Index (Section 1) ---
             uv_index = weather_data['main'].get('uvi', 0)
             uv_prefix = "UV:"
             uv_value_text = f"{uv_index:.0f}"
             
-            prefix_width = draw.textlength(uv_prefix, font=font)
-            value_width = draw.textlength(uv_value_text, font=font)
+            uv_font = self.display_manager.font_manager.resolve(element_key="weather.uv")
+            prefix_width = draw.textlength(uv_prefix, font=uv_font)
+            value_width = draw.textlength(uv_value_text, font=uv_font)
             total_width = prefix_width + value_width
             
             start_x = (section_width - total_width) // 2
@@ -380,24 +380,25 @@ class WeatherManager:
             # Draw "UV:" prefix
             draw.text((start_x, y_pos),
                         uv_prefix,
-                        font=font,
+                        font=uv_font,
                         fill=self.COLORS['dim'])
 
             # Draw UV value with color
             uv_color = self._get_uv_color(uv_index)
             draw.text((start_x + prefix_width, y_pos),
                         uv_value_text,
-                        font=font,
+                        font=uv_font,
                         fill=uv_color)
             
             # --- Humidity (Section 2) ---
             humidity = weather_data['main']['humidity']
             humidity_text = f"H:{humidity}%"
-            humidity_width = draw.textlength(humidity_text, font=font)
+            humidity_font = self.display_manager.font_manager.resolve(element_key="weather.humidity")
+            humidity_width = draw.textlength(humidity_text, font=humidity_font)
             humidity_x = section_width + (section_width - humidity_width) // 2 # Center in second third
             draw.text((humidity_x, y_pos),
                      humidity_text,
-                     font=font,
+                     font=humidity_font,
                      fill=self.COLORS['dim'])
 
             # --- Wind (Section 3) ---
@@ -405,11 +406,12 @@ class WeatherManager:
             wind_deg = weather_data['wind']['deg']
             wind_dir = self._get_wind_direction(wind_deg)
             wind_text = f"W:{wind_speed:.0f}{wind_dir}"
-            wind_width = draw.textlength(wind_text, font=font)
+            wind_font = self.display_manager.font_manager.resolve(element_key="weather.wind")
+            wind_width = draw.textlength(wind_text, font=wind_font)
             wind_x = (2 * section_width) + (section_width - wind_width) // 2 # Center in third third
             draw.text((wind_x, y_pos),
                      wind_text,
-                     font=font,
+                     font=wind_font,
                      fill=self.COLORS['dim'])
             
             # Update the display
@@ -472,10 +474,11 @@ class WeatherManager:
                 # Draw hour at top
                 hour_text = forecast['hour']
                 hour_text = hour_text.replace(":00 ", "").replace("PM", "p").replace("AM", "a")
-                hour_width = draw.textlength(hour_text, font=self.display_manager.small_font)
+                hour_font = self.display_manager.font_manager.resolve(element_key="weather.hourly.time")
+                hour_width = draw.textlength(hour_text, font=hour_font)
                 draw.text((center_x - hour_width // 2, 1),
                          hour_text,
-                         font=self.display_manager.small_font,
+                         font=hour_font,
                          fill=self.COLORS['text'])
                 
                 # Draw weather icon centered vertically between top/bottom text
@@ -491,11 +494,12 @@ class WeatherManager:
                 
                 # Draw temperature at bottom
                 temp_text = f"{forecast['temp']}°"
-                temp_width = draw.textlength(temp_text, font=self.display_manager.small_font)
+                temp_font = self.display_manager.font_manager.resolve(element_key="weather.hourly.temp")
+                temp_width = draw.textlength(temp_text, font=temp_font)
                 temp_y = self.display_manager.matrix.height - 8  # Position at bottom with small margin
                 draw.text((center_x - temp_width // 2, temp_y),
                          temp_text,
-                         font=self.display_manager.small_font,
+                         font=temp_font,
                          fill=self.COLORS['text'])
             
             # Update the display
@@ -529,7 +533,8 @@ class WeatherManager:
             days_to_show = min(3, len(self.daily_forecast)) # Changed from 4 to 3
             if days_to_show == 0:
                 # Handle case where there's no forecast data after filtering
-                draw.text((2, 2), "No daily forecast", font=self.display_manager.small_font, fill=self.COLORS['dim'])
+                no_forecast_font = self.display_manager.font_manager.resolve(element_key="weather.daily.day")
+                draw.text((2, 2), "No daily forecast", font=no_forecast_font, fill=self.COLORS['dim'])
             else:
                 total_width = self.display_manager.matrix.width
                 section_width = total_width // days_to_show # Divide by 3 (or fewer if less data)
@@ -542,10 +547,11 @@ class WeatherManager:
                     
                     # Draw day name at top
                     day_text = forecast['date']
-                    day_width = draw.textlength(day_text, font=self.display_manager.small_font)
+                    day_font = self.display_manager.font_manager.resolve(element_key="weather.daily.day")
+                    day_width = draw.textlength(day_text, font=day_font)
                     draw.text((center_x - day_width // 2, 1),
                              day_text,
-                             font=self.display_manager.small_font,
+                             font=day_font,
                              fill=self.COLORS['text'])
                     
                     # Draw weather icon centered vertically between top/bottom text
@@ -561,11 +567,12 @@ class WeatherManager:
                     
                     # Draw high/low temperatures at bottom (without degree symbol)
                     temp_text = f"{forecast['temp_low']} / {forecast['temp_high']}" # Removed degree symbols
-                    temp_width = draw.textlength(temp_text, font=self.display_manager.extra_small_font)
+                    temp_font = self.display_manager.font_manager.resolve(element_key="weather.daily.temp")
+                    temp_width = draw.textlength(temp_text, font=temp_font)
                     temp_y = self.display_manager.matrix.height - 8  # Position at bottom with small margin
                     draw.text((center_x - temp_width // 2, temp_y),
                              temp_text,
-                             font=self.display_manager.extra_small_font,
+                             font=temp_font,
                              fill=self.COLORS['text'])
             
             # Update the display

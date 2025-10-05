@@ -293,12 +293,12 @@ class StockManager:
         # Clear the display
         self.display_manager.clear()
         
-        # Draw the symbol at the top with small font
+        # Draw the symbol at the top with unified font system
         self.display_manager.draw_text(
             symbol,
             y=1,  # Moved up slightly
             color=(255, 255, 255),
-            small_font=True  # Use small font
+            element_key="stock.symbol"
         )
         
         # Calculate chart dimensions
@@ -332,13 +332,13 @@ class StockManager:
             x2, y2 = points[i + 1]
             self.display_manager.draw.line([x1, y1, x2, y2], fill=color, width=1)
             
-        # Draw current price at the bottom with small font
+        # Draw current price at the bottom with unified font system
         price_text = f"${data['price']:.2f} ({data['change']:+.1f}%)"
         self.display_manager.draw_text(
             price_text,
             y=28,  # Moved down slightly from 30 to give more space
             color=color,
-            small_font=True  # Use small font
+            element_key="stock.price"
         )
         
         # Update the display
@@ -483,15 +483,10 @@ class StockManager:
             image.paste(logo, (logo_x, logo_y), logo)
         
         # Draw symbol, price, and change in a centered column
-        # Use the fonts from display_manager
-        regular_font = self.display_manager.regular_font
-        small_font = self.display_manager.small_font
-        
-        # Create smaller versions of the fonts for symbol and price
-        symbol_font = ImageFont.truetype(self.display_manager.regular_font.path, 
-                                       int(self.display_manager.regular_font.size))
-        price_font = ImageFont.truetype(self.display_manager.regular_font.path, 
-                                      int(self.display_manager.regular_font.size))
+        # Use unified font system
+        symbol_font = self.display_manager.font_manager.resolve(element_key="stock.symbol")
+        price_font = self.display_manager.font_manager.resolve(element_key="stock.price")
+        change_font = self.display_manager.font_manager.resolve(element_key="stock.change")
         
         # Calculate text dimensions for proper spacing
         display_symbol = symbol.replace('-USD', '') if is_crypto else symbol
@@ -502,7 +497,7 @@ class StockManager:
         # Get the height of each text element
         symbol_bbox = draw.textbbox((0, 0), symbol_text, font=symbol_font)
         price_bbox = draw.textbbox((0, 0), price_text, font=price_font)
-        change_bbox = draw.textbbox((0, 0), change_text, font=small_font)
+        change_bbox = draw.textbbox((0, 0), change_text, font=change_font)
         
         # Calculate total height needed - adjust gaps based on chart toggle
         text_gap = 2 if self.toggle_chart else 1  # Reduced gap when no chart
@@ -538,7 +533,7 @@ class StockManager:
         change_x = column_x - (change_width // 2)
         change_y = price_y + (price_bbox[3] - price_bbox[1]) + text_gap  # Adjusted gap
         change_color = (0, 255, 0) if change >= 0 else (255, 0, 0)
-        draw.text((change_x, change_y), change_text, font=small_font, fill=change_color)
+        draw.text((change_x, change_y), change_text, font=change_font, fill=change_color)
         
         # Draw mini chart on the right only if toggle_chart is enabled
         if self.toggle_chart and symbol in self.stock_data and 'price_history' in self.stock_data[symbol]:

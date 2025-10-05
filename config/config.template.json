@@ -11,36 +11,6 @@
         "state": "Texas",
         "country": "US"
     },
-    "fonts": {
-        "families": {
-            "press_start": "assets/fonts/PressStart2P-Regular.ttf",
-            "four_by_six": "assets/fonts/4x6-font.ttf",
-            "five_by_seven": "assets/fonts/5by7.regular.ttf",
-            "matrix_light_6": "assets/fonts/MatrixLight6.bdf",
-            "matrix_light_6x": "assets/fonts/MatrixLight6X.bdf",
-            "matrix_light_8x": "assets/fonts/MatrixLight8X.bdf",
-            "matrix_chunky_8": "assets/fonts/MatrixChunky8.bdf",
-            "matrix_chunky_8x": "assets/fonts/MatrixChunky8X.bdf",
-            "ic8x8u": "assets/fonts/ic8x8u.bdf",
-            "four_by_six_bdf": "assets/fonts/4x6.bdf",
-            "five_by_seven_bdf": "assets/fonts/5x7.bdf",
-            "five_by_eight_bdf": "assets/fonts/5x8.bdf",
-            "six_by_nine_bdf": "assets/fonts/6x9.bdf"
-        },
-        "tokens": {
-            "xs": 6,
-            "sm": 8,
-            "md": 10,
-            "lg": 12,
-            "xl": 14,
-            "xxl": 16
-        },
-        "defaults": {
-            "family": "press_start",
-            "size_token": "sm"
-        },
-        "overrides": {}
-    },
     "display": {
         "hardware": {
             "rows": 32,
@@ -672,13 +642,13 @@
         },
         "overrides": {
             "nfl.live.score": {
-                "size_token": "xl"
+                "size_token": "md"
             },
             "nfl.live.time": {
                 "size_token": "sm"
             },
             "nfl.live.team": {
-                "size_token": "md"
+                "size_token": "sm"
             },
             "nfl.live.status": {
                 "size_token": "xs"
@@ -696,7 +666,7 @@
                 "size_token": "sm"
             },
             "nfl.recent.team": {
-                "size_token": "md"
+                "size_token": "sm"
             },
             "nfl.recent.status": {
                 "size_token": "xs"
@@ -714,7 +684,7 @@
                 "size_token": "sm"
             },
             "nfl.upcoming.team": {
-                "size_token": "md"
+                "size_token": "sm"
             },
             "nfl.upcoming.status": {
                 "size_token": "xs"
@@ -726,13 +696,13 @@
                 "size_token": "xs"
             },
             "nhl.live.score": {
-                "size_token": "xl"
+                "size_token": "md"
             },
             "nhl.live.time": {
                 "size_token": "sm"
             },
             "nhl.live.team": {
-                "size_token": "md"
+                "size_token": "sm"
             },
             "nhl.live.status": {
                 "size_token": "xs"
@@ -750,7 +720,7 @@
                 "size_token": "sm"
             },
             "nhl.recent.team": {
-                "size_token": "md"
+                "size_token": "sm"
             },
             "nhl.recent.status": {
                 "size_token": "xs"
@@ -771,7 +741,7 @@
                 "size_token": "sm"
             },
             "nhl.upcoming.team": {
-                "size_token": "md"
+                "size_token": "sm"
             },
             "nhl.upcoming.status": {
                 "size_token": "xs"
@@ -783,13 +753,13 @@
                 "size_token": "xs"
             },
             "nba.live.score": {
-                "size_token": "xl"
+                "size_token": "md"
             },
             "nba.live.time": {
                 "size_token": "sm"
             },
             "nba.live.team": {
-                "size_token": "md"
+                "size_token": "sm"
             },
             "nba.live.status": {
                 "size_token": "xs"
@@ -807,7 +777,7 @@
                 "size_token": "sm"
             },
             "nba.recent.team": {
-                "size_token": "md"
+                "size_token": "sm"
             },
             "nba.recent.status": {
                 "size_token": "xs"
@@ -825,7 +795,7 @@
                 "size_token": "sm"
             },
             "nba.upcoming.team": {
-                "size_token": "md"
+                "size_token": "sm"
             },
             "nba.upcoming.status": {
                 "size_token": "xs"
@@ -837,13 +807,13 @@
                 "size_token": "xs"
             },
             "ncaam.live.score": {
-                "size_token": "xl"
+                "size_token": "md"
             },
             "ncaam.live.time": {
                 "size_token": "sm"
             },
             "ncaam.live.team": {
-                "size_token": "md"
+                "size_token": "sm"
             },
             "ncaam.live.status": {
                 "size_token": "xs"
@@ -861,7 +831,7 @@
                 "size_token": "sm"
             },
             "ncaam.recent.team": {
-                "size_token": "md"
+                "size_token": "sm"
             },
             "ncaam.recent.status": {
                 "size_token": "xs"
@@ -879,7 +849,7 @@
                 "size_token": "sm"
             },
             "ncaam.upcoming.team": {
-                "size_token": "md"
+                "size_token": "sm"
             },
             "ncaam.upcoming.status": {
                 "size_token": "xs"
@@ -891,13 +861,13 @@
                 "size_token": "xs"
             },
             "soccer.live.score": {
-                "size_token": "xl"
+                "size_token": "md"
             },
             "soccer.live.time": {
                 "size_token": "sm"
             },
             "soccer.live.team": {
-                "size_token": "md"
+                "size_token": "sm"
             },
             "soccer.live.status": {
                 "size_token": "xs"
@@ -915,7 +885,7 @@
                 "size_token": "sm"
             },
             "soccer.recent.team": {
-                "size_token": "md"
+                "size_token": "sm"
             },
             "soccer.recent.status": {
                 "size_token": "xs"
@@ -933,7 +903,7 @@
                 "size_token": "sm"
             },
             "soccer.upcoming.team": {
-                "size_token": "md"
+                "size_token": "sm"
             },
             "soccer.upcoming.status": {
                 "size_token": "xs"
@@ -945,7 +915,7 @@
                 "size_token": "xs"
             },
             "clock.time": {
-                "size_token": "lg"
+                "size_token": "sm"
             },
             "clock.ampm": {
                 "size_token": "sm"
@@ -957,7 +927,7 @@
                 "size_token": "sm"
             },
             "calendar.datetime": {
-                "size_token": "md"
+                "size_token": "sm"
             },
             "calendar.title": {
                 "size_token": "sm"
@@ -969,10 +939,118 @@
                 "size_token": "xs"
             },
             "leaderboard.team": {
-                "size_token": "md"
+                "size_token": "sm"
             },
             "leaderboard.record": {
                 "size_token": "sm"
+            },
+            "weather.condition": {
+                "size_token": "sm"
+            },
+            "weather.temperature": {
+                "size_token": "sm"
+            },
+            "weather.high_low": {
+                "size_token": "xs"
+            },
+            "weather.uv": {
+                "size_token": "xs"
+            },
+            "weather.humidity": {
+                "size_token": "xs"
+            },
+            "weather.wind": {
+                "size_token": "xs"
+            },
+            "weather.hourly.time": {
+                "size_token": "xs"
+            },
+            "weather.hourly.temp": {
+                "size_token": "xs"
+            },
+            "weather.daily.day": {
+                "size_token": "xs"
+            },
+            "weather.daily.temp": {
+                "size_token": "xs"
+            },
+            "stock.symbol": {
+                "size_token": "sm"
+            },
+            "stock.price": {
+                "size_token": "sm"
+            },
+            "stock.change": {
+                "size_token": "sm"
+            },
+            "stock.news.title": {
+                "size_token": "sm"
+            },
+            "stock.news.summary": {
+                "size_token": "xs"
+            },
+            "music.artist": {
+                "size_token": "sm"
+            },
+            "music.title": {
+                "size_token": "lg"
+            },
+            "music.album": {
+                "size_token": "sm"
+            },
+            "milb.live.score": {
+                "size_token": "md"
+            },
+            "milb.live.time": {
+                "size_token": "sm"
+            },
+            "milb.live.team": {
+                "size_token": "sm"
+            },
+            "milb.live.status": {
+                "size_token": "xs"
+            },
+            "milb.live.record": {
+                "size_token": "xs"
+            },
+            "milb.live.odds": {
+                "size_token": "xs"
+            },
+            "milb.recent.score": {
+                "size_token": "lg"
+            },
+            "milb.recent.time": {
+                "size_token": "sm"
+            },
+            "milb.recent.team": {
+                "size_token": "sm"
+            },
+            "milb.recent.status": {
+                "size_token": "xs"
+            },
+            "milb.recent.record": {
+                "size_token": "xs"
+            },
+            "milb.recent.odds": {
+                "size_token": "xs"
+            },
+            "milb.upcoming.score": {
+                "size_token": "lg"
+            },
+            "milb.upcoming.time": {
+                "size_token": "sm"
+            },
+            "milb.upcoming.team": {
+                "size_token": "sm"
+            },
+            "milb.upcoming.status": {
+                "size_token": "xs"
+            },
+            "milb.upcoming.record": {
+                "size_token": "xs"
+            },
+            "milb.upcoming.odds": {
+                "size_token": "xs"
             }
         }
     }

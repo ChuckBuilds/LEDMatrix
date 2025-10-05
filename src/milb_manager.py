@@ -301,8 +301,8 @@ class BaseMiLBManager(Baseball):
                     self.display_manager.draw = draw
                     self.display_manager._draw_bdf_text(status_text, status_x, status_y, color=(255, 255, 255), font=self.display_manager.calendar_font)
                 else:
-                    # Fallback to small TTF font
-                    fallback_font = self.display_manager.small_font
+                    # Fallback to unified font system
+                    fallback_font = self.display_manager.font_manager.resolve(element_key="milb.live.status")
                     status_width = self.display_manager.get_text_width(status_text, fallback_font)
                     status_x = (width - status_width) // 2
                     status_y = 2

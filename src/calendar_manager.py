@@ -148,7 +148,7 @@ class CalendarManager:
 
             # Measurements
             matrix_width = self.display_manager.width
-            date_font = self.display_manager.regular_font
+            date_font = self.display_manager.font_manager.resolve(element_key="calendar.datetime")
             title_font = self.display_manager.calendar_font
             date_line_height = self.display_manager.get_font_height(date_font)
             title_line_height = self.display_manager.get_font_height(title_font)

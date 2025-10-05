@@ -219,8 +219,11 @@ class StockNewsManager:
             
     def _create_text_image(self, text: str, color: Tuple[int, int, int] = (255, 255, 255)) -> Image.Image:
         """Create an image containing the text for efficient scrolling."""
+        # Use unified font system
+        news_font = self.display_manager.font_manager.resolve(element_key="stock.news.title")
+        
         # Get text dimensions
-        bbox = self.display_manager.draw.textbbox((0, 0), text, font=self.display_manager.small_font)
+        bbox = self.display_manager.draw.textbbox((0, 0), text, font=news_font)
         text_width = bbox[2] - bbox[0]
         text_height = bbox[3] - bbox[1]
         
@@ -230,7 +233,7 @@ class StockNewsManager:
         
         # Draw the text centered vertically
         y = (self.display_manager.matrix.height - text_height) // 2
-        text_draw.text((0, y), text, font=self.display_manager.small_font, fill=color)
+        text_draw.text((0, y), text, font=news_font, fill=color)
         
         return text_image
             
@@ -394,7 +397,8 @@ class StockNewsManager:
                 # If still generating or failed, show a simple message
                 self.display_manager.image.paste(Image.new('RGB', (width, height), (0, 0, 0)), (0, 0))
                 draw = ImageDraw.Draw(self.display_manager.image)
-                draw.text((width//4, height//2), "Loading news...", font=self.display_manager.small_font, fill=(255, 255, 255))
+                loading_font = self.display_manager.font_manager.resolve(element_key="stock.news.summary")
+                draw.text((width//4, height//2), "Loading news...", font=loading_font, fill=(255, 255, 255))
                 self.display_manager.update_display()
                 # Removed sleep delay to improve scrolling performance
                 return True
