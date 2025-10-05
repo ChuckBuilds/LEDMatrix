@@ -1446,48 +1446,6 @@
                             </div>
                         </div>
 
-                        <!-- Font Upload -->
-                        <div class="config-subsection">
-                            <h4>Upload Custom Fonts</h4>
-                            <p class="description">Upload your own TTF or BDF font files to use in your LED matrix display.</p>
-                            
-                            <div class="font-upload-area" id="font-upload-area">
-                                <div class="upload-dropzone" id="upload-dropzone">
-                                    <i class="fas fa-cloud-upload-alt"></i>
-                                    <p>Drag and drop font files here, or click to select</p>
-                                    <p class="upload-hint">Supports .ttf and .bdf files</p>
-                                    <input type="file" id="font-file-input" accept=".ttf,.bdf" style="display: none;" multiple>
-                                </div>
-                            </div>
-                            
-                            <div class="upload-form" id="upload-form" style="display: none;">
-                                <div class="form-row">
-                                    <div class="form-group">
-                                        <label for="upload-font-family">Font Family Name:</label>
-                                        <input type="text" class="form-control" id="upload-font-family" placeholder="e.g., my_custom_font">
-                                        <div class="description">Custom name for this font (letters, numbers, underscores only)</div>
-                                    </div>
-                                    <div class="form-group">
-                                        <label>&nbsp;</label>
-                                        <button type="button" class="btn btn-success" onclick="uploadSelectedFonts()">
-                                            <i class="fas fa-upload"></i> Upload Font
-                                        </button>
-                                        <button type="button" class="btn btn-secondary" onclick="cancelFontUpload()">
-                                            <i class="fas fa-times"></i> Cancel
-                                        </button>
-                                    </div>
-                                </div>
-                            </div>
-
-                            <!-- Current Fonts List -->
-                            <div class="current-fonts">
-                                <h5>Current Fonts</h5>
-                                <div id="fonts-list-container">
-                                    <!-- Fonts list will be populated by JavaScript -->
-                                </div>
-                            </div>
-                        </div>
-
                         <!-- Font Overrides -->
                         <div class="config-subsection">
                             <h4>Element Overrides</h4>
