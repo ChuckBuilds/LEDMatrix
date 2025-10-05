@@ -4305,12 +4305,17 @@
                 if (size) overrideData.size_token = size;
                 if (color && color.trim() !== '') overrideData.color = color;
 
+                const requestData = { [element]: overrideData };
+                console.log('DEBUG: Sending font override request:', requestData);
+                console.log('DEBUG: Element:', element);
+                console.log('DEBUG: Family:', family);
+                console.log('DEBUG: Size:', size);
+                console.log('DEBUG: Color:', color);
+
                 const response = await fetch('/api/fonts/overrides', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        [element]: overrideData
-                    })
+                    body: JSON.stringify(requestData)
                 });
 
                 const data = await response.json();
