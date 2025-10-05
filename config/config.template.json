@@ -15,10 +15,17 @@
         "families": {
             "press_start": "assets/fonts/PressStart2P-Regular.ttf",
             "four_by_six": "assets/fonts/4x6-font.ttf",
-            "cozette_bdf": "assets/fonts/cozette.bdf",
+            "five_by_seven": "assets/fonts/5by7.regular.ttf",
             "matrix_light_6": "assets/fonts/MatrixLight6.bdf",
+            "matrix_light_6x": "assets/fonts/MatrixLight6X.bdf",
+            "matrix_light_8x": "assets/fonts/MatrixLight8X.bdf",
             "matrix_chunky_8": "assets/fonts/MatrixChunky8.bdf",
-            "five_by_seven": "assets/fonts/5by7.regular.ttf"
+            "matrix_chunky_8x": "assets/fonts/MatrixChunky8X.bdf",
+            "ic8x8u": "assets/fonts/ic8x8u.bdf",
+            "four_by_six_bdf": "assets/fonts/4x6.bdf",
+            "five_by_seven_bdf": "assets/fonts/5x7.bdf",
+            "five_by_eight_bdf": "assets/fonts/5x8.bdf",
+            "six_by_nine_bdf": "assets/fonts/6x9.bdf"
         },
         "tokens": {
             "xs": 6,
@@ -28,137 +35,11 @@
             "xl": 14,
             "xxl": 16
         },
-        "overrides": {
-            "nfl.live.score": {
-                "size_token": "xl"
-            },
-            "nfl.live.time": {
-                "size_token": "sm"
-            },
-            "nfl.live.team": {
-                "size_token": "md"
-            },
-            "nfl.live.status": {
-                "size_token": "xs"
-            },
-            "nfl.recent.score": {
-                "size_token": "lg"
-            },
-            "nfl.recent.record": {
-                "size_token": "xs"
-            },
-            "nhl.live.score": {
-                "size_token": "xl"
-            },
-            "nhl.live.time": {
-                "size_token": "sm"
-            },
-            "nhl.recent.score": {
-                "size_token": "md"
-            },
-            "nhl.recent.record": {
-                "size_token": "xs"
-            },
-            "nhl.recent.shots": {
-                "size_token": "xs"
-            },
-            "nba.live.score": {
-                "size_token": "xl"
-            },
-            "nba.live.time": {
-                "size_token": "sm"
-            },
-            "nba.recent.score": {
-                "size_token": "lg"
-            },
-            "nba.recent.record": {
-                "size_token": "xs"
-            },
-            "ncaam.live.score": {
-                "size_token": "xl"
-            },
-            "ncaam.live.time": {
-                "size_token": "sm"
-            },
-            "ncaam.recent.score": {
-                "size_token": "lg"
-            },
-            "ncaam.recent.record": {
-                "size_token": "xs"
-            },
-            "generic.title": {
-                "size_token": "lg"
-            },
-            "generic.body": {
-                "size_token": "sm"
-            },
-            "nhl.live.team": {
-                "size_token": "md"
-            },
-            "nhl.live.status": {
-                "size_token": "xs"
-            },
-            "nba.live.team": {
-                "size_token": "md"
-            },
-            "nba.live.status": {
-                "size_token": "xs"
-            },
-            "ncaam.live.team": {
-                "size_token": "md"
-            },
-            "ncaam.live.status": {
-                "size_token": "xs"
-            },
-            "soccer.live.score": {
-                "size_token": "xl"
-            },
-            "soccer.live.time": {
-                "size_token": "sm"
-            },
-            "soccer.live.team": {
-                "size_token": "md"
-            },
-            "soccer.live.status": {
-                "size_token": "xs"
-            },
-            "soccer.recent.score": {
-                "size_token": "lg"
-            },
-            "soccer.recent.record": {
-                "size_token": "xs"
-            },
-            "clock.time": {
-                "size_token": "lg"
-            },
-            "clock.ampm": {
-                "size_token": "sm"
-            },
-            "clock.weekday": {
-                "size_token": "sm"
-            },
-            "clock.date": {
-                "size_token": "sm"
-            },
-            "calendar.datetime": {
-                "size_token": "md"
-            },
-            "calendar.title": {
-                "size_token": "sm"
-            },
-            "leaderboard.title": {
-                "size_token": "lg"
-            },
-            "leaderboard.rank": {
-                "size_token": "xs"
-            },
-            "leaderboard.team": {
-                "size_token": "md"
-            },
-            "leaderboard.record": {
-                "size_token": "sm"
-            }
-        }
+        "defaults": {
+            "family": "press_start",
+            "size_token": "sm"
+        },
+        "overrides": {}
     },
     "display": {
         "hardware": {

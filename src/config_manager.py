@@ -347,6 +347,16 @@ class ConfigManager:
                             token_name = override_config['size_token']
                             if 'tokens' in fonts_config and token_name not in fonts_config['tokens']:
                                 errors.append(f"fonts.overrides.{element_key}.size_token '{token_name}' not found in fonts.tokens")
+                        
+                        # Check color format
+                        if 'color' in override_config:
+                            color_value = override_config['color']
+                            if not isinstance(color_value, str):
+                                errors.append(f"fonts.overrides.{element_key}.color must be a string")
+                            elif not color_value.startswith('#') or len(color_value) != 7:
+                                errors.append(f"fonts.overrides.{element_key}.color must be a valid hex color (e.g., #ffffff)")
+                            elif not all(c in '0123456789ABCDEFabcdef' for c in color_value[1:]):
+                                errors.append(f"fonts.overrides.{element_key}.color contains invalid hex characters")
         
         if errors:
             print("Font configuration validation errors:")

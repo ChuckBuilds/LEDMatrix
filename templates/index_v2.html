@@ -697,6 +697,26 @@
             margin-top: 10px;
         }
 
+        .color-input-group {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+
+        .color-input-group .color-picker {
+            width: 50px;
+            height: 40px;
+            border: 2px solid var(--border-color);
+            border-radius: var(--border-radius);
+            cursor: pointer;
+            margin: 0;
+        }
+
+        .color-input-group .color-text {
+            flex: 1;
+            min-width: 100px;
+        }
+
         .color-option {
             width: 30px;
             height: 30px;
@@ -1503,7 +1523,6 @@
                                         <option value="">Use default</option>
                                         <option value="press_start">Press Start 2P</option>
                                         <option value="four_by_six">4x6 Font</option>
-                                        <option value="cozette_bdf">Cozette BDF</option>
                                         <option value="matrix_light_6">Matrix Light 6</option>
                                         <option value="matrix_chunky_8">Matrix Chunky 8</option>
                                         <option value="five_by_seven">5x7 Font</option>
@@ -1520,6 +1539,14 @@
                                         <option value="xl">Extra Large (14px)</option>
                                         <option value="xxl">XX Large (16px)</option>
                                     </select>
+                                </div>
+                                <div class="form-group">
+                                    <label for="override-color">Text Color:</label>
+                                    <div class="color-input-group">
+                                        <input type="color" class="form-control color-picker" id="override-color" value="#ffffff">
+                                        <input type="text" class="form-control color-text" id="override-color-text" placeholder="#ffffff" pattern="^#[0-9A-Fa-f]{6}$">
+                                    </div>
+                                    <small class="form-text text-muted">Choose a color for the text. Leave empty to use default.</small>
                                 </div>
                                 <div class="form-group">
                                     <button type="button" class="btn btn-secondary" onclick="addFontOverride()">
@@ -1547,7 +1574,6 @@
                                     <select id="preview-family" class="form-control">
                                         <option value="press_start">Press Start 2P</option>
                                         <option value="four_by_six">4x6 Font</option>
-                                        <option value="cozette_bdf">Cozette BDF</option>
                                         <option value="matrix_light_6">Matrix Light 6</option>
                                         <option value="matrix_chunky_8">Matrix Chunky 8</option>
                                         <option value="five_by_seven">5x7 Font</option>
@@ -4200,9 +4226,30 @@
                 displayCurrentFonts();
                 updateFontPreview();
                 initializeFontUpload();
+                initializeColorSync();
             } catch (error) {
                 console.error('Error initializing font management:', error);
                 showNotification('Error loading font configuration', 'error');
+            }
+        }
+
+        // Initialize color picker synchronization
+        function initializeColorSync() {
+            const colorPicker = document.getElementById('override-color');
+            const colorText = document.getElementById('override-color-text');
+            
+            if (colorPicker && colorText) {
+                // Sync color picker to text input
+                colorPicker.addEventListener('input', function() {
+                    colorText.value = this.value;
+                });
+                
+                // Sync text input to color picker
+                colorText.addEventListener('input', function() {
+                    if (this.value.match(/^#[0-9A-Fa-f]{6}$/)) {
+                        colorPicker.value = this.value;
+                    }
+                });
             }
         }
 
@@ -4231,14 +4278,15 @@
             const element = document.getElementById('override-element').value;
             const family = document.getElementById('override-family').value;
             const size = document.getElementById('override-size').value;
+            const color = document.getElementById('override-color-text').value;
 
             if (!element) {
                 showNotification('Please select an element', 'warning');
                 return;
             }
 
-            if (!family && !size) {
-                showNotification('Please specify at least a font family or size', 'warning');
+            if (!family && !size && !color) {
+                showNotification('Please specify at least a font family, size, or color', 'warning');
                 return;
             }
 
@@ -4246,6 +4294,7 @@
                 const overrideData = {};
                 if (family) overrideData.family = family;
                 if (size) overrideData.size_token = size;
+                if (color) overrideData.color = color;
 
                 const response = await fetch('/api/fonts/overrides', {
                     method: 'POST',
@@ -4264,6 +4313,8 @@
                     document.getElementById('override-element').value = '';
                     document.getElementById('override-family').value = '';
                     document.getElementById('override-size').value = '';
+                    document.getElementById('override-color').value = '#ffffff';
+                    document.getElementById('override-color-text').value = '';
                 } else {
                     showNotification('Error adding font override: ' + data.message, 'error');
                 }
@@ -4320,6 +4371,10 @@
                 if (override.size_token) {
                     const sizeName = getSizeDisplayName(override.size_token);
                     settings.push(`Size: ${sizeName}`);
+                }
+                
+                if (override.color) {
+                    settings.push(`Color: ${override.color}`);
                 }
 
                 return `
@@ -4390,7 +4445,6 @@
             const names = {
                 'press_start': 'Press Start 2P',
                 'four_by_six': '4x6 Font',
-                'cozette_bdf': 'Cozette BDF',
                 'matrix_light_6': 'Matrix Light 6',
                 'matrix_chunky_8': 'Matrix Chunky 8',
                 'five_by_seven': '5x7 Font'
