@@ -2328,7 +2328,7 @@
         function drawGrid(canvas, logicalWidth, logicalHeight, scale) {
             const show = document.getElementById('toggleGrid')?.checked;
             if (!canvas || !show) return;
-            const ctx = canvas.getContext('2d');
+            const ctx = canvas.getContext('2d', { willReadFrequently: true });
             ctx.clearRect(0, 0, canvas.width, canvas.height);
             ctx.strokeStyle = 'rgba(255,255,255,0.12)';
             ctx.lineWidth = 1;
@@ -2432,7 +2432,7 @@
             const scale = parseInt(document.getElementById('scaleRange').value || '8');
             const fillPct = parseInt(document.getElementById('dotFillRange').value || '75');
             const dotRadius = Math.max(1, Math.floor((scale * fillPct) / 200)); // radius in px
-            const ctx = ledCanvas.getContext('2d');
+            const ctx = ledCanvas.getContext('2d', { willReadFrequently: true });
             ctx.clearRect(0, 0, ledCanvas.width, ledCanvas.height);
 
             // Clear previous overlay; do not forcibly black-out if sampling fails
@@ -2444,7 +2444,7 @@
             const logicalHeight = Math.floor(ledCanvas.height / scale);
             off.width = logicalWidth;
             off.height = logicalHeight;
-            const offCtx = off.getContext('2d');
+            const offCtx = off.getContext('2d', { willReadFrequently: true });
             // Draw the current image scaled down to logical LEDs to sample colors
             try {
                 offCtx.drawImage(img, 0, 0, logicalWidth, logicalHeight);
