@@ -670,6 +670,310 @@
             "family": "press_start",
             "size_token": "sm"
         },
-        "overrides": {}
+        "overrides": {
+            "nfl.live.score": {
+                "size_token": "xl"
+            },
+            "nfl.live.time": {
+                "size_token": "sm"
+            },
+            "nfl.live.team": {
+                "size_token": "md"
+            },
+            "nfl.live.status": {
+                "size_token": "xs"
+            },
+            "nfl.live.record": {
+                "size_token": "xs"
+            },
+            "nfl.live.odds": {
+                "size_token": "xs"
+            },
+            "nfl.recent.score": {
+                "size_token": "lg"
+            },
+            "nfl.recent.time": {
+                "size_token": "sm"
+            },
+            "nfl.recent.team": {
+                "size_token": "md"
+            },
+            "nfl.recent.status": {
+                "size_token": "xs"
+            },
+            "nfl.recent.record": {
+                "size_token": "xs"
+            },
+            "nfl.recent.odds": {
+                "size_token": "xs"
+            },
+            "nfl.upcoming.score": {
+                "size_token": "lg"
+            },
+            "nfl.upcoming.time": {
+                "size_token": "sm"
+            },
+            "nfl.upcoming.team": {
+                "size_token": "md"
+            },
+            "nfl.upcoming.status": {
+                "size_token": "xs"
+            },
+            "nfl.upcoming.record": {
+                "size_token": "xs"
+            },
+            "nfl.upcoming.odds": {
+                "size_token": "xs"
+            },
+            "nhl.live.score": {
+                "size_token": "xl"
+            },
+            "nhl.live.time": {
+                "size_token": "sm"
+            },
+            "nhl.live.team": {
+                "size_token": "md"
+            },
+            "nhl.live.status": {
+                "size_token": "xs"
+            },
+            "nhl.live.record": {
+                "size_token": "xs"
+            },
+            "nhl.live.odds": {
+                "size_token": "xs"
+            },
+            "nhl.recent.score": {
+                "size_token": "md"
+            },
+            "nhl.recent.time": {
+                "size_token": "sm"
+            },
+            "nhl.recent.team": {
+                "size_token": "md"
+            },
+            "nhl.recent.status": {
+                "size_token": "xs"
+            },
+            "nhl.recent.record": {
+                "size_token": "xs"
+            },
+            "nhl.recent.shots": {
+                "size_token": "xs"
+            },
+            "nhl.recent.odds": {
+                "size_token": "xs"
+            },
+            "nhl.upcoming.score": {
+                "size_token": "md"
+            },
+            "nhl.upcoming.time": {
+                "size_token": "sm"
+            },
+            "nhl.upcoming.team": {
+                "size_token": "md"
+            },
+            "nhl.upcoming.status": {
+                "size_token": "xs"
+            },
+            "nhl.upcoming.record": {
+                "size_token": "xs"
+            },
+            "nhl.upcoming.odds": {
+                "size_token": "xs"
+            },
+            "nba.live.score": {
+                "size_token": "xl"
+            },
+            "nba.live.time": {
+                "size_token": "sm"
+            },
+            "nba.live.team": {
+                "size_token": "md"
+            },
+            "nba.live.status": {
+                "size_token": "xs"
+            },
+            "nba.live.record": {
+                "size_token": "xs"
+            },
+            "nba.live.odds": {
+                "size_token": "xs"
+            },
+            "nba.recent.score": {
+                "size_token": "lg"
+            },
+            "nba.recent.time": {
+                "size_token": "sm"
+            },
+            "nba.recent.team": {
+                "size_token": "md"
+            },
+            "nba.recent.status": {
+                "size_token": "xs"
+            },
+            "nba.recent.record": {
+                "size_token": "xs"
+            },
+            "nba.recent.odds": {
+                "size_token": "xs"
+            },
+            "nba.upcoming.score": {
+                "size_token": "lg"
+            },
+            "nba.upcoming.time": {
+                "size_token": "sm"
+            },
+            "nba.upcoming.team": {
+                "size_token": "md"
+            },
+            "nba.upcoming.status": {
+                "size_token": "xs"
+            },
+            "nba.upcoming.record": {
+                "size_token": "xs"
+            },
+            "nba.upcoming.odds": {
+                "size_token": "xs"
+            },
+            "ncaam.live.score": {
+                "size_token": "xl"
+            },
+            "ncaam.live.time": {
+                "size_token": "sm"
+            },
+            "ncaam.live.team": {
+                "size_token": "md"
+            },
+            "ncaam.live.status": {
+                "size_token": "xs"
+            },
+            "ncaam.live.record": {
+                "size_token": "xs"
+            },
+            "ncaam.live.odds": {
+                "size_token": "xs"
+            },
+            "ncaam.recent.score": {
+                "size_token": "lg"
+            },
+            "ncaam.recent.time": {
+                "size_token": "sm"
+            },
+            "ncaam.recent.team": {
+                "size_token": "md"
+            },
+            "ncaam.recent.status": {
+                "size_token": "xs"
+            },
+            "ncaam.recent.record": {
+                "size_token": "xs"
+            },
+            "ncaam.recent.odds": {
+                "size_token": "xs"
+            },
+            "ncaam.upcoming.score": {
+                "size_token": "lg"
+            },
+            "ncaam.upcoming.time": {
+                "size_token": "sm"
+            },
+            "ncaam.upcoming.team": {
+                "size_token": "md"
+            },
+            "ncaam.upcoming.status": {
+                "size_token": "xs"
+            },
+            "ncaam.upcoming.record": {
+                "size_token": "xs"
+            },
+            "ncaam.upcoming.odds": {
+                "size_token": "xs"
+            },
+            "soccer.live.score": {
+                "size_token": "xl"
+            },
+            "soccer.live.time": {
+                "size_token": "sm"
+            },
+            "soccer.live.team": {
+                "size_token": "md"
+            },
+            "soccer.live.status": {
+                "size_token": "xs"
+            },
+            "soccer.live.record": {
+                "size_token": "xs"
+            },
+            "soccer.live.odds": {
+                "size_token": "xs"
+            },
+            "soccer.recent.score": {
+                "size_token": "lg"
+            },
+            "soccer.recent.time": {
+                "size_token": "sm"
+            },
+            "soccer.recent.team": {
+                "size_token": "md"
+            },
+            "soccer.recent.status": {
+                "size_token": "xs"
+            },
+            "soccer.recent.record": {
+                "size_token": "xs"
+            },
+            "soccer.recent.odds": {
+                "size_token": "xs"
+            },
+            "soccer.upcoming.score": {
+                "size_token": "lg"
+            },
+            "soccer.upcoming.time": {
+                "size_token": "sm"
+            },
+            "soccer.upcoming.team": {
+                "size_token": "md"
+            },
+            "soccer.upcoming.status": {
+                "size_token": "xs"
+            },
+            "soccer.upcoming.record": {
+                "size_token": "xs"
+            },
+            "soccer.upcoming.odds": {
+                "size_token": "xs"
+            },
+            "clock.time": {
+                "size_token": "lg"
+            },
+            "clock.ampm": {
+                "size_token": "sm"
+            },
+            "clock.weekday": {
+                "size_token": "sm"
+            },
+            "clock.date": {
+                "size_token": "sm"
+            },
+            "calendar.datetime": {
+                "size_token": "md"
+            },
+            "calendar.title": {
+                "size_token": "sm"
+            },
+            "leaderboard.title": {
+                "size_token": "lg"
+            },
+            "leaderboard.rank": {
+                "size_token": "xs"
+            },
+            "leaderboard.team": {
+                "size_token": "md"
+            },
+            "leaderboard.record": {
+                "size_token": "sm"
+            }
+        }
     }
 }

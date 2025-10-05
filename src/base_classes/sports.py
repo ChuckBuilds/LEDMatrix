@@ -165,14 +165,43 @@ class SportsCore(ABC):
             # Use FontManager if available, otherwise fall back to direct loading
             if hasattr(self.display_manager, 'font_manager'):
                 # Map font types to element keys for unified font system
-                element_key_mapping = {
-                    'score': f"{self.sport_key}.live.score",
-                    'time': f"{self.sport_key}.live.time", 
-                    'team': f"{self.sport_key}.live.team",
-                    'status': f"{self.sport_key}.live.status",
-                    'detail': f"{self.sport_key}.live.detail",
-                    'rank': f"{self.sport_key}.live.rank"
-                }
+                # Determine the appropriate element key based on manager type
+                if hasattr(self, '__class__') and 'Recent' in self.__class__.__name__:
+                    # Recent managers use recent element keys
+                    element_key_mapping = {
+                        'score': f"{self.sport_key}.recent.score",
+                        'time': f"{self.sport_key}.recent.time", 
+                        'team': f"{self.sport_key}.recent.team",
+                        'status': f"{self.sport_key}.recent.status",
+                        'detail': f"{self.sport_key}.recent.detail",
+                        'rank': f"{self.sport_key}.recent.rank",
+                        'record': f"{self.sport_key}.recent.record",
+                        'odds': f"{self.sport_key}.recent.odds"
+                    }
+                elif hasattr(self, '__class__') and 'Upcoming' in self.__class__.__name__:
+                    # Upcoming managers use upcoming element keys
+                    element_key_mapping = {
+                        'score': f"{self.sport_key}.upcoming.score",
+                        'time': f"{self.sport_key}.upcoming.time", 
+                        'team': f"{self.sport_key}.upcoming.team",
+                        'status': f"{self.sport_key}.upcoming.status",
+                        'detail': f"{self.sport_key}.upcoming.detail",
+                        'rank': f"{self.sport_key}.upcoming.rank",
+                        'record': f"{self.sport_key}.upcoming.record",
+                        'odds': f"{self.sport_key}.upcoming.odds"
+                    }
+                else:
+                    # Live managers use live element keys
+                    element_key_mapping = {
+                        'score': f"{self.sport_key}.live.score",
+                        'time': f"{self.sport_key}.live.time", 
+                        'team': f"{self.sport_key}.live.team",
+                        'status': f"{self.sport_key}.live.status",
+                        'detail': f"{self.sport_key}.live.detail",
+                        'rank': f"{self.sport_key}.live.rank",
+                        'record': f"{self.sport_key}.live.record",
+                        'odds': f"{self.sport_key}.live.odds"
+                    }
                 
                 # Load fonts using element keys
                 for font_type, element_key in element_key_mapping.items():

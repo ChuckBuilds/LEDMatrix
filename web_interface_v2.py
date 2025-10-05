@@ -1043,10 +1043,9 @@ def api_fonts_tokens():
 def api_fonts_overrides():
     """Get current font overrides."""
     try:
-        if not hasattr(display_manager, 'font_manager'):
-            return jsonify({'status': 'error', 'message': 'Font manager not available'}), 500
-        
-        overrides = display_manager.font_manager.get_overrides()
+        # Get overrides directly from config instead of font manager
+        config = config_manager.load_config()
+        overrides = config.get('fonts', {}).get('overrides', {})
         return jsonify({'status': 'success', 'overrides': overrides})
     except Exception as e:
         logger.error(f"Error getting font overrides: {e}")
