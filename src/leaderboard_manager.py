@@ -219,33 +219,29 @@ class LeaderboardManager:
             logger.error(f"Error clearing leaderboard cache: {e}")
 
     def _load_fonts(self) -> Dict[str, ImageFont.FreeTypeFont]:
-        """Load fonts for the leaderboard display with pixel-perfect rendering."""
+        """Load fonts using the unified font system."""
         fonts = {}
         try:
-            # Try to load the Press Start 2P font first
-            fonts['small'] = ImageFont.truetype("assets/fonts/PressStart2P-Regular.ttf", 6)
-            fonts['medium'] = ImageFont.truetype("assets/fonts/PressStart2P-Regular.ttf", 10)
-            fonts['large'] = ImageFont.truetype("assets/fonts/PressStart2P-Regular.ttf", 12)
-            fonts['xlarge'] = ImageFont.truetype("assets/fonts/PressStart2P-Regular.ttf", 14)
-            logger.info("[Leaderboard] Successfully loaded Press Start 2P font for all text elements")
-        except IOError:
-            logger.warning("[Leaderboard] Press Start 2P font not found, trying 4x6 font for pixel-perfect rendering.")
-            try:
-                # Try to load the 4x6 font as a fallback for pixel-perfect rendering
-                fonts['small'] = ImageFont.truetype("assets/fonts/4x6-font.ttf", 6)
-                fonts['medium'] = ImageFont.truetype("assets/fonts/4x6-font.ttf", 8)
-                fonts['large'] = ImageFont.truetype("assets/fonts/4x6-font.ttf", 10)
-                fonts['xlarge'] = ImageFont.truetype("assets/fonts/4x6-font.ttf", 12)
-                logger.info("[Leaderboard] Successfully loaded 4x6 font for pixel-perfect rendering")
-            except IOError:
-                logger.warning("[Leaderboard] 4x6 font not found, using default PIL font.")
-                # Use default PIL font as a last resort
-                fonts['small'] = ImageFont.load_default()
-                fonts['medium'] = ImageFont.load_default()
-                fonts['large'] = ImageFont.load_default()
-                fonts['xlarge'] = ImageFont.load_default()
+            if hasattr(self.display_manager, 'font_manager'):
+                # Use unified font system with element keys
+                element_key_mapping = {
+                    'small': 'leaderboard.rank',
+                    'medium': 'leaderboard.team', 
+                    'large': 'leaderboard.record',
+                    'xlarge': 'leaderboard.title'
+                }
+                for font_type, element_key in element_key_mapping.items():
+                    fonts[font_type] = self.display_manager.font_manager.resolve(element_key=element_key)
+                logger.info("Successfully loaded fonts via FontManager for leaderboard")
+            else:
+                # Fallback to direct font loading
+                fonts['small'] = ImageFont.truetype("assets/fonts/PressStart2P-Regular.ttf", 6)
+                fonts['medium'] = ImageFont.truetype("assets/fonts/PressStart2P-Regular.ttf", 10)
+                fonts['large'] = ImageFont.truetype("assets/fonts/PressStart2P-Regular.ttf", 12)
+                fonts['xlarge'] = ImageFont.truetype("assets/fonts/PressStart2P-Regular.ttf", 14)
+                logger.info("[Leaderboard] Fallback: Successfully loaded Press Start 2P font for all text elements")
         except Exception as e:
-            logger.error(f"Error loading fonts: {e}")
+            logger.warning(f"Fonts not found, using default PIL font: {e}")
             fonts = {
                 'small': ImageFont.load_default(),
                 'medium': ImageFont.load_default(),

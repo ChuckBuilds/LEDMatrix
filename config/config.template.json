@@ -95,6 +95,72 @@
             },
             "generic.body": {
                 "size_token": "sm"
+            },
+            "nhl.live.team": {
+                "size_token": "md"
+            },
+            "nhl.live.status": {
+                "size_token": "xs"
+            },
+            "nba.live.team": {
+                "size_token": "md"
+            },
+            "nba.live.status": {
+                "size_token": "xs"
+            },
+            "ncaam.live.team": {
+                "size_token": "md"
+            },
+            "ncaam.live.status": {
+                "size_token": "xs"
+            },
+            "soccer.live.score": {
+                "size_token": "xl"
+            },
+            "soccer.live.time": {
+                "size_token": "sm"
+            },
+            "soccer.live.team": {
+                "size_token": "md"
+            },
+            "soccer.live.status": {
+                "size_token": "xs"
+            },
+            "soccer.recent.score": {
+                "size_token": "lg"
+            },
+            "soccer.recent.record": {
+                "size_token": "xs"
+            },
+            "clock.time": {
+                "size_token": "lg"
+            },
+            "clock.ampm": {
+                "size_token": "sm"
+            },
+            "clock.weekday": {
+                "size_token": "sm"
+            },
+            "clock.date": {
+                "size_token": "sm"
+            },
+            "calendar.datetime": {
+                "size_token": "md"
+            },
+            "calendar.title": {
+                "size_token": "sm"
+            },
+            "leaderboard.title": {
+                "size_token": "lg"
+            },
+            "leaderboard.rank": {
+                "size_token": "xs"
+            },
+            "leaderboard.team": {
+                "size_token": "md"
+            },
+            "leaderboard.record": {
+                "size_token": "sm"
             }
         }
     },

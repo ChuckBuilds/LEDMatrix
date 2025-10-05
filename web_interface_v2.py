@@ -1167,6 +1167,181 @@ def api_fonts_delete_override(element_key):
         logger.error(f"Error deleting font override: {e}")
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
+@app.route('/api/fonts/upload', methods=['POST'])
+def api_fonts_upload():
+    """Upload a new font file."""
+    try:
+        if 'font_file' not in request.files:
+            return jsonify({'status': 'error', 'message': 'No font file provided'}), 400
+        
+        file = request.files['font_file']
+        if file.filename == '':
+            return jsonify({'status': 'error', 'message': 'No file selected'}), 400
+        
+        # Validate file extension
+        if not (file.filename.lower().endswith('.ttf') or file.filename.lower().endswith('.bdf')):
+            return jsonify({'status': 'error', 'message': 'Only .ttf and .bdf files are supported'}), 400
+        
+        # Get font family name from form data
+        font_family = request.form.get('font_family', '').strip()
+        if not font_family:
+            # Generate family name from filename
+            font_family = os.path.splitext(file.filename)[0].lower().replace('-', '_').replace(' ', '_')
+        
+        # Ensure fonts directory exists
+        fonts_dir = "assets/fonts"
+        os.makedirs(fonts_dir, exist_ok=True)
+        
+        # Create safe filename
+        safe_filename = f"{font_family}{os.path.splitext(file.filename)[1]}"
+        font_path = os.path.join(fonts_dir, safe_filename)
+        
+        # Check if file already exists
+        if os.path.exists(font_path):
+            return jsonify({'status': 'error', 'message': f'Font family "{font_family}" already exists'}), 400
+        
+        # Save the file
+        file.save(font_path)
+        
+        # Verify the file was saved and is valid
+        if not os.path.exists(font_path):
+            return jsonify({'status': 'error', 'message': 'Failed to save font file'}), 500
+        
+        # Test font loading
+        try:
+            if safe_filename.lower().endswith('.ttf'):
+                from PIL import ImageFont
+                test_font = ImageFont.truetype(font_path, 12)
+            elif safe_filename.lower().endswith('.bdf'):
+                import freetype
+                test_face = freetype.Face(font_path)
+                test_face.set_pixel_sizes(0, 12)
+        except Exception as font_error:
+            # Remove invalid font file
+            os.remove(font_path)
+            return jsonify({'status': 'error', 'message': f'Invalid font file: {str(font_error)}'}), 400
+        
+        # Add font to configuration
+        config = config_manager.load_config()
+        if 'fonts' not in config:
+            config['fonts'] = {}
+        if 'families' not in config['fonts']:
+            config['fonts']['families'] = {}
+        
+        config['fonts']['families'][font_family] = font_path
+        config_manager.save_config(config)
+        
+        # Reload font manager if available
+        if hasattr(display_manager, 'font_manager'):
+            display_manager.font_manager.reload_config(config)
+        
+        return jsonify({
+            'status': 'success', 
+            'message': f'Font "{font_family}" uploaded successfully',
+            'font_family': font_family,
+            'font_path': font_path
+        })
+        
+    except Exception as e:
+        logger.error(f"Error uploading font: {e}")
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+@app.route('/api/fonts/delete/<font_family>', methods=['DELETE'])
+def api_fonts_delete(font_family):
+    """Delete a font family and its file."""
+    try:
+        # Get current config
+        config = config_manager.load_config()
+        
+        if 'fonts' not in config or 'families' not in config['fonts']:
+            return jsonify({'status': 'error', 'message': 'No fonts configured'}), 404
+        
+        if font_family not in config['fonts']['families']:
+            return jsonify({'status': 'error', 'message': f'Font family "{font_family}" not found'}), 404
+        
+        font_path = config['fonts']['families'][font_family]
+        
+        # Check if font is being used in defaults
+        if config['fonts'].get('defaults', {}).get('family') == font_family:
+            return jsonify({'status': 'error', 'message': f'Cannot delete font "{font_family}" - it is set as the default font'}), 400
+        
+        # Check if font is being used in overrides
+        overrides = config['fonts'].get('overrides', {})
+        for element_key, override_config in overrides.items():
+            if override_config.get('family') == font_family:
+                return jsonify({'status': 'error', 'message': f'Cannot delete font "{font_family}" - it is used in override for "{element_key}"'}), 400
+        
+        # Remove font file
+        if os.path.exists(font_path):
+            os.remove(font_path)
+        
+        # Remove from configuration
+        del config['fonts']['families'][font_family]
+        config_manager.save_config(config)
+        
+        # Reload font manager if available
+        if hasattr(display_manager, 'font_manager'):
+            display_manager.font_manager.reload_config(config)
+        
+        return jsonify({'status': 'success', 'message': f'Font family "{font_family}" deleted successfully'})
+        
+    except Exception as e:
+        logger.error(f"Error deleting font: {e}")
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+@app.route('/api/fonts/validate', methods=['POST'])
+def api_fonts_validate():
+    """Validate a font file without saving it."""
+    try:
+        if 'font_file' not in request.files:
+            return jsonify({'status': 'error', 'message': 'No font file provided'}), 400
+        
+        file = request.files['font_file']
+        if file.filename == '':
+            return jsonify({'status': 'error', 'message': 'No file selected'}), 400
+        
+        # Validate file extension
+        if not (file.filename.lower().endswith('.ttf') or file.filename.lower().endswith('.bdf')):
+            return jsonify({'status': 'error', 'message': 'Only .ttf and .bdf files are supported'}), 400
+        
+        # Save to temporary file for validation
+        import tempfile
+        with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(file.filename)[1]) as temp_file:
+            file.save(temp_file.name)
+            temp_path = temp_file.name
+        
+        try:
+            # Test font loading
+            if file.filename.lower().endswith('.ttf'):
+                from PIL import ImageFont
+                test_font = ImageFont.truetype(temp_path, 12)
+                font_type = 'TTF'
+            elif file.filename.lower().endswith('.bdf'):
+                import freetype
+                test_face = freetype.Face(temp_path)
+                test_face.set_pixel_sizes(0, 12)
+                font_type = 'BDF'
+            
+            # Get file size
+            file_size = os.path.getsize(temp_path)
+            
+            return jsonify({
+                'status': 'success',
+                'message': 'Font file is valid',
+                'font_type': font_type,
+                'file_size': file_size,
+                'filename': file.filename
+            })
+            
+        finally:
+            # Clean up temporary file
+            if os.path.exists(temp_path):
+                os.remove(temp_path)
+        
+    except Exception as e:
+        logger.error(f"Error validating font: {e}")
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
 # --- API Call Metrics (simple in-memory counters) ---
 api_counters = {
     'weather': {'used': 0},

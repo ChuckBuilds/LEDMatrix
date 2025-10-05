@@ -37,6 +37,15 @@ class FontManager:
         
         self._initialize_fonts()
     
+    def reload_config(self, new_config: Dict[str, Any]):
+        """Reload configuration and refresh font catalog."""
+        self.config = new_config
+        self.fonts_config = new_config.get("fonts", {})
+        self.font_cache.clear()  # Clear cache to force reload
+        self.metrics_cache.clear()  # Clear metrics cache
+        self._initialize_fonts()
+        logger.info("FontManager configuration reloaded successfully")
+    
     def _initialize_fonts(self):
         """Initialize font catalog and validate configuration."""
         try:

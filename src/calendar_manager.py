@@ -161,7 +161,7 @@ class CalendarManager:
                 datetime_x,
                 y_position,
                 color=self.time_color,
-                font=date_font,
+                element_key="calendar.datetime"
             )
 
             # Wrap summary to fit width with margins
@@ -179,7 +179,7 @@ class CalendarManager:
                     line_x,
                     line_y,
                     color=self.text_color,
-                    font=title_font,
+                    element_key="calendar.title"
                 )
 
             return True

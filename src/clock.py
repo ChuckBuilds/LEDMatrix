@@ -95,18 +95,18 @@ class Clock:
                 time_str,
                 y=4,  # Move up slightly to make room for two lines of date
                 color=self.COLORS['time'],
-                small_font=True
+                element_key="clock.time"
             )
             
             # Draw AM/PM (small, next to time)
-            time_width = self.display_manager.font.getlength(time_str)
+            time_width = self.display_manager.measure_text(time_str, self.display_manager.font_manager.resolve(element_key="clock.time"))[0]
             ampm_x = (display_width + time_width) // 2 + 4
             self.display_manager.draw_text(
                 ampm,
                 x=ampm_x,
                 y=4,  # Align with time
                 color=self.COLORS['ampm'],
-                small_font=True
+                element_key="clock.ampm"
             )
             
             # Draw weekday on first line (small font)
@@ -114,7 +114,7 @@ class Clock:
                 weekday,
                 y=display_height - 18,  # First line of date
                 color=self.COLORS['date'],
-                small_font=True
+                element_key="clock.weekday"
             )
             
             # Draw month and day on second line (small font)
@@ -122,7 +122,7 @@ class Clock:
                 date_str,
                 y=display_height - 9,  # Second line of date
                 color=self.COLORS['date'],
-                small_font=True
+                element_key="clock.date"
             )
             
             # Update the display after drawing everything

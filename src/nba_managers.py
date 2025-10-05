@@ -204,31 +204,34 @@ class BaseNBAManager(BackgroundCacheMixin):
         return {"events": events}
 
     def _load_fonts(self):
-        """Load fonts used by the scoreboard."""
+        """Load fonts using the unified font system."""
         fonts = {}
         try:
-            # Try to load the Press Start 2P font first
-            fonts['score'] = ImageFont.truetype("assets/fonts/PressStart2P-Regular.ttf", 10)
-            fonts['time'] = ImageFont.truetype("assets/fonts/PressStart2P-Regular.ttf", 8)
-            fonts['team'] = ImageFont.truetype("assets/fonts/PressStart2P-Regular.ttf", 8)
-            fonts['status'] = ImageFont.truetype("assets/fonts/4x6-font.ttf", 6)
-            logging.info("[NBA] Successfully loaded Press Start 2P font for all text elements")
-        except IOError:
-            logging.warning("[NBA] Press Start 2P font not found, trying 4x6 font.")
-            try:
-                # Try to load the 4x6 font as a fallback
-                fonts['score'] = ImageFont.truetype("assets/fonts/4x6-font.ttf", 12)
-                fonts['time'] = ImageFont.truetype("assets/fonts/4x6-font.ttf", 8)
-                fonts['team'] = ImageFont.truetype("assets/fonts/4x6-font.ttf", 8)
-                fonts['status'] = ImageFont.truetype("assets/fonts/4x6-font.ttf", 9)
-                logging.info("[NBA] Successfully loaded 4x6 font for all text elements")
-            except IOError:
-                logging.warning("[NBA] 4x6 font not found, using default PIL font.")
-                # Use default PIL font as a last resort
-                fonts['score'] = ImageFont.load_default()
-                fonts['time'] = ImageFont.load_default()
-                fonts['team'] = ImageFont.load_default()
-                fonts['status'] = ImageFont.load_default()
+            if hasattr(self.display_manager, 'font_manager'):
+                # Use unified font system with element keys
+                element_key_mapping = {
+                    'score': f"{self.sport_key}.live.score",
+                    'time': f"{self.sport_key}.live.time", 
+                    'team': f"{self.sport_key}.live.team",
+                    'status': f"{self.sport_key}.live.status"
+                }
+                for font_type, element_key in element_key_mapping.items():
+                    fonts[font_type] = self.display_manager.font_manager.resolve(element_key=element_key)
+                logging.info(f"Successfully loaded fonts via FontManager for {self.sport_key}")
+            else:
+                # Fallback to direct font loading
+                fonts['score'] = ImageFont.truetype("assets/fonts/PressStart2P-Regular.ttf", 10)
+                fonts['time'] = ImageFont.truetype("assets/fonts/PressStart2P-Regular.ttf", 8)
+                fonts['team'] = ImageFont.truetype("assets/fonts/PressStart2P-Regular.ttf", 8)
+                fonts['status'] = ImageFont.truetype("assets/fonts/4x6-font.ttf", 6)
+                logging.info("[NBA] Fallback: Successfully loaded Press Start 2P font for all text elements")
+        except Exception as e:
+            logging.warning(f"[NBA] Fonts not found, using default PIL font: {e}")
+            # Use default PIL font as a last resort
+            fonts['score'] = ImageFont.load_default()
+            fonts['time'] = ImageFont.load_default()
+            fonts['team'] = ImageFont.load_default()
+            fonts['status'] = ImageFont.load_default()
         return fonts
 
     def _load_and_resize_logo(self, team_abbrev: str) -> Optional[Image.Image]:
