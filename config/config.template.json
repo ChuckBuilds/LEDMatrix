@@ -641,5 +641,35 @@
             0,
             0
         ]
+    },
+    "fonts": {
+        "families": {
+            "press_start": "assets/fonts/PressStart2P-Regular.ttf",
+            "four_by_six": "assets/fonts/4x6-font.ttf",
+            "five_by_seven": "assets/fonts/5by7.regular.ttf",
+            "matrix_light_6": "assets/fonts/MatrixLight6.bdf",
+            "matrix_light_6x": "assets/fonts/MatrixLight6X.bdf",
+            "matrix_light_8x": "assets/fonts/MatrixLight8X.bdf",
+            "matrix_chunky_8": "assets/fonts/MatrixChunky8.bdf",
+            "matrix_chunky_8x": "assets/fonts/MatrixChunky8X.bdf",
+            "ic8x8u": "assets/fonts/ic8x8u.bdf",
+            "four_by_six_bdf": "assets/fonts/4x6.bdf",
+            "five_by_seven_bdf": "assets/fonts/5x7.bdf",
+            "five_by_eight_bdf": "assets/fonts/5x8.bdf",
+            "six_by_nine_bdf": "assets/fonts/6x9.bdf"
+        },
+        "tokens": {
+            "xs": 6,
+            "sm": 8,
+            "md": 10,
+            "lg": 12,
+            "xl": 14,
+            "xxl": 16
+        },
+        "defaults": {
+            "family": "press_start",
+            "size_token": "sm"
+        },
+        "overrides": {}
     }
 }
