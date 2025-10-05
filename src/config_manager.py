@@ -275,14 +275,11 @@ class ConfigManager:
 
     def validate_fonts_config(self) -> bool:
         """Validate the fonts configuration section."""
-        print(f"DEBUG: Starting font validation. Config keys: {list(self.config.keys())}")
-        
         if 'fonts' not in self.config:
             print("Warning: No 'fonts' section found in configuration. Using defaults.")
             return True
         
         fonts_config = self.config['fonts']
-        print(f"DEBUG: Fonts config structure: {fonts_config}")
         errors = []
         
         # Validate families
@@ -332,12 +329,10 @@ class ConfigManager:
         # Validate overrides
         if 'overrides' in fonts_config:
             overrides = fonts_config['overrides']
-            print(f"DEBUG: Validating overrides: {overrides}")
             if not isinstance(overrides, dict):
                 errors.append("fonts.overrides must be a dictionary")
             else:
                 for element_key, override_config in overrides.items():
-                    print(f"DEBUG: Validating override for {element_key}: {override_config}")
                     if not isinstance(override_config, dict):
                         errors.append(f"fonts.overrides.{element_key} must be a dictionary")
                     else:
@@ -356,15 +351,11 @@ class ConfigManager:
                         # Check color format
                         if 'color' in override_config:
                             color_value = override_config['color']
-                            print(f"DEBUG: Validating color '{color_value}' for {element_key}")
                             if not isinstance(color_value, str):
-                                print(f"DEBUG: Color is not a string: {type(color_value)}")
                                 errors.append(f"fonts.overrides.{element_key}.color must be a string")
                             elif not color_value.startswith('#') or len(color_value) != 7:
-                                print(f"DEBUG: Color format invalid - starts with #: {color_value.startswith('#')}, length: {len(color_value)}")
                                 errors.append(f"fonts.overrides.{element_key}.color must be a valid hex color (e.g., #ffffff)")
                             elif not all(c in '0123456789ABCDEFabcdef' for c in color_value[1:]):
-                                print(f"DEBUG: Color contains invalid hex characters: {color_value}")
                                 errors.append(f"fonts.overrides.{element_key}.color contains invalid hex characters")
         
         if errors:

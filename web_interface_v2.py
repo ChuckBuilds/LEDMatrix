@@ -1058,38 +1058,25 @@ def api_fonts_set_overrides():
     """Update font overrides."""
     try:
         data = request.get_json()
-        logger.info(f"Received font override request: {data}")
         
         if not data:
-            logger.error("No data provided in font override request")
             return jsonify({'status': 'error', 'message': 'No data provided'}), 400
         
         # Get current config
         config = config_manager.load_config()
-        logger.info(f"Current config fonts section: {config.get('fonts', {})}")
         
         # Ensure fonts section exists
         if 'fonts' not in config:
-            logger.info("Creating fonts section in config")
             config['fonts'] = {}
         
         # Update overrides
         if 'overrides' not in config['fonts']:
-            logger.info("Creating overrides section in fonts config")
             config['fonts']['overrides'] = {}
         
-        logger.info(f"Before update - current overrides: {config['fonts']['overrides']}")
         config['fonts']['overrides'].update(data)
-        logger.info(f"After update - new overrides: {config['fonts']['overrides']}")
         
         # Validate the configuration
-        logger.info("Starting font configuration validation...")
-        validation_result = config_manager.validate_fonts_config()
-        logger.info(f"Font configuration validation result: {validation_result}")
-        
-        if not validation_result:
-            logger.error(f"Font configuration validation failed. Data: {data}")
-            logger.error(f"Current fonts config: {config.get('fonts', {})}")
+        if not config_manager.validate_fonts_config():
             return jsonify({'status': 'error', 'message': 'Invalid font configuration'}), 400
         
         # Save the configuration
