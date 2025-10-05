@@ -4279,6 +4279,9 @@
             const family = document.getElementById('override-family').value;
             const size = document.getElementById('override-size').value;
             const color = document.getElementById('override-color-text').value;
+            console.log('DEBUG: Raw color value from form:', `"${color}"`);
+            console.log('DEBUG: Color length:', color.length);
+            console.log('DEBUG: Color trimmed:', `"${color.trim()}"`);
 
             if (!element) {
                 showNotification('Please select an element', 'warning');
@@ -4303,7 +4306,10 @@
                 const overrideData = {};
                 if (family) overrideData.family = family;
                 if (size) overrideData.size_token = size;
-                if (color && color.trim() !== '') overrideData.color = color;
+                // Only include color if it's not empty
+                if (color && color.trim() !== '') {
+                    overrideData.color = color.trim();
+                }
 
                 const requestData = { [element]: overrideData };
                 console.log('DEBUG: Sending font override request:', requestData);
