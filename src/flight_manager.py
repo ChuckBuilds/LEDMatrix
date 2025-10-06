@@ -428,7 +428,8 @@ class FlightMapManager(BaseFlightManager):
             draw.text((2, 2), info_text, fill=(200, 200, 200), font=self.fonts['small'])
         
         # Display the image
-        self.display_manager.set_image(img)
+        self.display_manager.image = img.copy()
+        self.display_manager.update_display()
 
 
 class FlightOverheadManager(BaseFlightManager):
@@ -462,7 +463,8 @@ class FlightOverheadManager(BaseFlightManager):
             draw = ImageDraw.Draw(img)
             draw.text((self.display_width // 2 - 30, self.display_height // 2 - 4), 
                      "No Aircraft", fill=(200, 200, 200), font=self.fonts['medium'])
-            self.display_manager.set_image(img)
+            self.display_manager.image = img.copy()
+        self.display_manager.update_display()
             return
         
         # Create image
@@ -541,7 +543,8 @@ class FlightOverheadManager(BaseFlightManager):
                      fill=(150, 150, 150), font=self.fonts['medium'])
         
         # Display the image
-        self.display_manager.set_image(img)
+        self.display_manager.image = img.copy()
+        self.display_manager.update_display()
 
 
 class FlightStatsManager(BaseFlightManager):
@@ -565,7 +568,8 @@ class FlightStatsManager(BaseFlightManager):
             draw = ImageDraw.Draw(img)
             draw.text((self.display_width // 2 - 30, self.display_height // 2 - 4), 
                      "No Aircraft", fill=(200, 200, 200), font=self.fonts['medium'])
-            self.display_manager.set_image(img)
+            self.display_manager.image = img.copy()
+        self.display_manager.update_display()
             return
         
         # Rotate stats every 10 seconds
@@ -670,5 +674,6 @@ class FlightStatsManager(BaseFlightManager):
                          fill=(150, 150, 150), font=self.fonts['medium'])
         
         # Display the image
-        self.display_manager.set_image(img)
+        self.display_manager.image = img.copy()
+        self.display_manager.update_display()
 
