@@ -896,6 +896,9 @@
                     <button class="tab-btn" onclick="showTab('news')">
                         <i class="fas fa-newspaper"></i> News
                     </button>
+                    <button class="tab-btn" onclick="showTab('flight')">
+                        <i class="fas fa-plane"></i> Flight Tracker
+                    </button>
                     <button class="tab-btn" onclick="showTab('secrets')">
                         <i class="fas fa-key"></i> API Keys
                     </button>
@@ -1930,6 +1933,138 @@
                             <div class="form-group"><label for="news_separator_color">Separator Color</label><input type="color" id="news_separator_color" class="form-control" data-rgb='{{ safe_config_get(main_config, 'news_manager', 'separator_color', default=[255, 0, 0]) | tojson }}'></div>
                         </div>
                         <button class="btn btn-success" type="button" onclick="saveNewsAdvancedSettings()">Save Advanced News Settings</button>
+                    </div>
+                </div>
+
+                <!-- Flight Tracker Tab -->
+                <div id="flight" class="tab-content">
+                    <div class="config-section">
+                        <div style="display:flex; justify-content: space-between; align-items:center;">
+                            <h3>Flight Tracker Configuration</h3>
+                            <div style="display:flex; gap:8px;">
+                                <button type="button" class="btn btn-info" onclick="startOnDemand('flight_map')"><i class="fas fa-bolt"></i> Map View</button>
+                                <button type="button" class="btn btn-info" onclick="startOnDemand('flight_overhead')"><i class="fas fa-bolt"></i> Overhead</button>
+                                <button type="button" class="btn btn-info" onclick="startOnDemand('flight_stats')"><i class="fas fa-bolt"></i> Stats</button>
+                            </div>
+                        </div>
+                        <p>Configure flight tracking from local ADS-B feeds with altitude-based color coding and proximity alerts.</p>
+                        
+                        <form id="flight-form">
+                            <div class="form-group">
+                                <label>
+                                    <input type="checkbox" id="flight_enabled" name="flight_enabled" {% if safe_config_get(main_config, 'flight_tracker', 'enabled', default=False) %}checked{% endif %}>
+                                    Enable Flight Tracker
+                                </label>
+                            </div>
+                            
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label for="flight_center_lat">Center Latitude:</label>
+                                    <input type="number" step="0.0001" class="form-control" id="flight_center_lat" name="flight_center_lat" value="{{ safe_config_get(main_config, 'flight_tracker', 'center_latitude', default=27.9506) }}">
+                                    <div class="description">Your location latitude</div>
+                                </div>
+                                <div class="form-group">
+                                    <label for="flight_center_lon">Center Longitude:</label>
+                                    <input type="number" step="0.0001" class="form-control" id="flight_center_lon" name="flight_center_lon" value="{{ safe_config_get(main_config, 'flight_tracker', 'center_longitude', default=-82.4572) }}">
+                                    <div class="description">Your location longitude</div>
+                                </div>
+                                <div class="form-group">
+                                    <label for="flight_radius">Coverage Radius (miles):</label>
+                                    <input type="number" class="form-control" id="flight_radius" name="flight_radius" value="{{ safe_config_get(main_config, 'flight_tracker', 'map_radius_miles', default=50) }}" min="1" max="200">
+                                    <div class="description">Aircraft detection radius</div>
+                                </div>
+                            </div>
+                            
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label for="flight_skyaware_url">SkyAware URL:</label>
+                                    <input type="text" class="form-control" id="flight_skyaware_url" name="flight_skyaware_url" value="{{ safe_config_get(main_config, 'flight_tracker', 'skyaware_url', default='http://192.168.86.30/skyaware/data/aircraft.json') }}">
+                                    <div class="description">Local PiAware SkyAware JSON endpoint</div>
+                                </div>
+                                <div class="form-group">
+                                    <label for="flight_update_interval">Update Interval (seconds):</label>
+                                    <input type="number" class="form-control" id="flight_update_interval" name="flight_update_interval" value="{{ safe_config_get(main_config, 'flight_tracker', 'update_interval', default=5) }}" min="1" max="60">
+                                    <div class="description">How often to fetch aircraft data</div>
+                                </div>
+                            </div>
+                            
+                            <h4>Display Modes</h4>
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label>
+                                        <input type="checkbox" id="flight_map_enabled" name="flight_map_enabled" {% if safe_config_get(main_config, 'flight_tracker', 'display_modes', 'flight_map', default=True) %}checked{% endif %}>
+                                        Enable Map View
+                                    </label>
+                                    <div class="description">Show aircraft on area map with altitude colors</div>
+                                </div>
+                                <div class="form-group">
+                                    <label>
+                                        <input type="checkbox" id="flight_overhead_enabled" name="flight_overhead_enabled" {% if safe_config_get(main_config, 'flight_tracker', 'display_modes', 'flight_overhead', default=True) %}checked{% endif %}>
+                                        Enable Overhead View
+                                    </label>
+                                    <div class="description">Detailed aircraft information display</div>
+                                </div>
+                                <div class="form-group">
+                                    <label>
+                                        <input type="checkbox" id="flight_stats_enabled" name="flight_stats_enabled" {% if safe_config_get(main_config, 'flight_tracker', 'display_modes', 'flight_stats', default=True) %}checked{% endif %}>
+                                        Enable Statistics View
+                                    </label>
+                                    <div class="description">Closest, fastest, highest aircraft stats</div>
+                                </div>
+                            </div>
+                            
+                            <h4>Area Outline</h4>
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label for="flight_area_outline">Area Outline Mode:</label>
+                                    <select class="form-control" id="flight_area_outline" name="flight_area_outline">
+                                        <option value="auto" {% if safe_config_get(main_config, 'flight_tracker', 'area_outline', default='auto') == 'auto' %}selected{% endif %}>Auto (Rectangle)</option>
+                                        <option value="custom" {% if safe_config_get(main_config, 'flight_tracker', 'area_outline', default='auto') == 'custom' %}selected{% endif %}>Custom Coordinates</option>
+                                        <option value="none" {% if safe_config_get(main_config, 'flight_tracker', 'area_outline', default='auto') == 'none' %}selected{% endif %}>None</option>
+                                    </select>
+                                    <div class="description">How to draw the area outline</div>
+                                </div>
+                            </div>
+                            
+                            <h4>Trail Settings</h4>
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label>
+                                        <input type="checkbox" id="flight_show_trails" name="flight_show_trails" {% if safe_config_get(main_config, 'flight_tracker', 'show_trails', default=False) %}checked{% endif %}>
+                                        Show Aircraft Trails
+                                    </label>
+                                    <div class="description">Display flight paths behind aircraft</div>
+                                </div>
+                                <div class="form-group">
+                                    <label for="flight_trail_length">Trail Length:</label>
+                                    <input type="number" class="form-control" id="flight_trail_length" name="flight_trail_length" value="{{ safe_config_get(main_config, 'flight_tracker', 'trail_length', default=10) }}" min="1" max="50">
+                                    <div class="description">Number of trail points per aircraft</div>
+                                </div>
+                            </div>
+                            
+                            <h4>Proximity Alerts</h4>
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label>
+                                        <input type="checkbox" id="flight_proximity_enabled" name="flight_proximity_enabled" {% if safe_config_get(main_config, 'flight_tracker', 'proximity_alert', 'enabled', default=True) %}checked{% endif %}>
+                                        Enable Proximity Alerts
+                                    </label>
+                                    <div class="description">Switch to overhead view when aircraft is nearby</div>
+                                </div>
+                                <div class="form-group">
+                                    <label for="flight_proximity_distance">Alert Distance (miles):</label>
+                                    <input type="number" step="0.1" class="form-control" id="flight_proximity_distance" name="flight_proximity_distance" value="{{ safe_config_get(main_config, 'flight_tracker', 'proximity_alert', 'distance_miles', default=0.1) }}" min="0.01" max="5.0">
+                                    <div class="description">Distance threshold for alerts</div>
+                                </div>
+                                <div class="form-group">
+                                    <label for="flight_proximity_duration">Alert Duration (seconds):</label>
+                                    <input type="number" class="form-control" id="flight_proximity_duration" name="flight_proximity_duration" value="{{ safe_config_get(main_config, 'flight_tracker', 'proximity_alert', 'duration_seconds', default=30) }}" min="5" max="300">
+                                    <div class="description">How long to show overhead view</div>
+                                </div>
+                            </div>
+                            
+                            <button type="submit" class="btn btn-success">Save Flight Tracker Settings</button>
+                        </form>
                     </div>
                 </div>
 
@@ -3223,6 +3358,38 @@
                         preferred_source: document.getElementById('music_preferred_source').value,
                         YTM_COMPANION_URL: document.getElementById('ytm_companion_url').value,
                         POLLING_INTERVAL_SECONDS: parseInt(document.getElementById('music_polling_interval').value)
+                    }
+                };
+                await saveConfigJson(payload);
+            });
+        })();
+
+        // Flight Tracker form submit
+        (function augmentFlightForm(){
+            const form = document.getElementById('flight-form');
+            form.addEventListener('submit', async function(e){
+                e.preventDefault();
+                const payload = {
+                    flight_tracker: {
+                        enabled: document.getElementById('flight_enabled').checked,
+                        center_latitude: parseFloat(document.getElementById('flight_center_lat').value),
+                        center_longitude: parseFloat(document.getElementById('flight_center_lon').value),
+                        map_radius_miles: parseInt(document.getElementById('flight_radius').value),
+                        skyaware_url: document.getElementById('flight_skyaware_url').value,
+                        update_interval: parseInt(document.getElementById('flight_update_interval').value),
+                        display_modes: {
+                            flight_map: document.getElementById('flight_map_enabled').checked,
+                            flight_overhead: document.getElementById('flight_overhead_enabled').checked,
+                            flight_stats: document.getElementById('flight_stats_enabled').checked
+                        },
+                        area_outline: document.getElementById('flight_area_outline').value,
+                        show_trails: document.getElementById('flight_show_trails').checked,
+                        trail_length: parseInt(document.getElementById('flight_trail_length').value),
+                        proximity_alert: {
+                            enabled: document.getElementById('flight_proximity_enabled').checked,
+                            distance_miles: parseFloat(document.getElementById('flight_proximity_distance').value),
+                            duration_seconds: parseInt(document.getElementById('flight_proximity_duration').value)
+                        }
                     }
                 };
                 await saveConfigJson(payload);
