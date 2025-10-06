@@ -78,23 +78,47 @@ class BaseFlightManager:
         logger.info(f"[Flight Tracker] Area outline: {self.area_outline} mode with {len(self.area_coords)} points")
     
     def _load_fonts(self) -> Dict[str, Any]:
-        """Load fonts for text rendering."""
+        """Load fonts for text rendering with better readability."""
         fonts = {}
         try:
+            # Use PressStart2P font for better readability, similar to other managers
             if self.display_height >= 64:
-                fonts['small'] = ImageFont.truetype('assets/fonts/4x6-font.ttf', 6)
-                fonts['medium'] = ImageFont.truetype('assets/fonts/4x6-font.ttf', 8)
-                fonts['large'] = ImageFont.truetype('assets/fonts/4x6-font.ttf', 10)
+                fonts['small'] = ImageFont.truetype('assets/fonts/PressStart2P-Regular.ttf', 6)
+                fonts['medium'] = ImageFont.truetype('assets/fonts/PressStart2P-Regular.ttf', 8)
+                fonts['large'] = ImageFont.truetype('assets/fonts/PressStart2P-Regular.ttf', 10)
             else:
-                fonts['small'] = ImageFont.truetype('assets/fonts/4x6-font.ttf', 5)
-                fonts['medium'] = ImageFont.truetype('assets/fonts/4x6-font.ttf', 6)
-                fonts['large'] = ImageFont.truetype('assets/fonts/4x6-font.ttf', 7)
+                fonts['small'] = ImageFont.truetype('assets/fonts/PressStart2P-Regular.ttf', 5)
+                fonts['medium'] = ImageFont.truetype('assets/fonts/PressStart2P-Regular.ttf', 6)
+                fonts['large'] = ImageFont.truetype('assets/fonts/PressStart2P-Regular.ttf', 7)
+            logger.info("[Flight Tracker] Successfully loaded PressStart2P fonts for better readability")
         except Exception as e:
-            logger.warning(f"[Flight Tracker] Failed to load custom fonts: {e}, using default")
-            fonts['small'] = ImageFont.load_default()
-            fonts['medium'] = ImageFont.load_default()
-            fonts['large'] = ImageFont.load_default()
+            logger.warning(f"[Flight Tracker] Failed to load PressStart2P fonts: {e}, trying 4x6 fallback")
+            try:
+                # Fallback to 4x6 font if PressStart2P fails
+                if self.display_height >= 64:
+                    fonts['small'] = ImageFont.truetype('assets/fonts/4x6-font.ttf', 6)
+                    fonts['medium'] = ImageFont.truetype('assets/fonts/4x6-font.ttf', 8)
+                    fonts['large'] = ImageFont.truetype('assets/fonts/4x6-font.ttf', 10)
+                else:
+                    fonts['small'] = ImageFont.truetype('assets/fonts/4x6-font.ttf', 5)
+                    fonts['medium'] = ImageFont.truetype('assets/fonts/4x6-font.ttf', 6)
+                    fonts['large'] = ImageFont.truetype('assets/fonts/4x6-font.ttf', 7)
+                logger.info("[Flight Tracker] Using 4x6 font fallback")
+            except Exception as e2:
+                logger.warning(f"[Flight Tracker] All custom fonts failed: {e2}, using default")
+                fonts['small'] = ImageFont.load_default()
+                fonts['medium'] = ImageFont.load_default()
+                fonts['large'] = ImageFont.load_default()
         return fonts
+    
+    def _draw_text_with_outline(self, draw, text, position, font, fill=(255, 255, 255), outline_color=(0, 0, 0)):
+        """Draw text with a black outline for better readability."""
+        x, y = position
+        # Draw outline
+        for dx, dy in [(-1, -1), (-1, 0), (-1, 1), (0, -1), (0, 1), (1, -1), (1, 0), (1, 1)]:
+            draw.text((x + dx, y + dy), text, font=font, fill=outline_color)
+        # Draw text
+        draw.text((x, y), text, font=font, fill=fill)
     
     def _fetch_aircraft_data(self) -> Optional[Dict]:
         """Fetch aircraft data from SkyAware API."""
@@ -422,10 +446,11 @@ class FlightMapManager(BaseFlightManager):
                     # No heading data, draw single pixel
                     draw.point((x, y), fill=color)
         
-        # Draw info text
+        # Draw info text with outline for better readability
         if len(self.aircraft_data) > 0:
             info_text = f"{len(self.aircraft_data)} aircraft"
-            draw.text((2, 2), info_text, fill=(200, 200, 200), font=self.fonts['small'])
+            self._draw_text_with_outline(draw, info_text, (2, 2), self.fonts['small'], 
+                                       fill=(200, 200, 200), outline_color=(0, 0, 0))
         
         # Display the image
         self.display_manager.image = img.copy()
@@ -461,8 +486,9 @@ class FlightOverheadManager(BaseFlightManager):
             # No aircraft to display
             img = Image.new('RGB', (self.display_width, self.display_height), (0, 0, 0))
             draw = ImageDraw.Draw(img)
-            draw.text((self.display_width // 2 - 30, self.display_height // 2 - 4), 
-                     "No Aircraft", fill=(200, 200, 200), font=self.fonts['medium'])
+            self._draw_text_with_outline(draw, "No Aircraft", 
+                                       (self.display_width // 2 - 30, self.display_height // 2 - 4), 
+                                       self.fonts['medium'], fill=(200, 200, 200), outline_color=(0, 0, 0))
             self.display_manager.image = img.copy()
             self.display_manager.update_display()
             return
@@ -480,67 +506,67 @@ class FlightOverheadManager(BaseFlightManager):
             line_height = 6
             
             # Line 1: Callsign
-            draw.text((2, y_offset), f"{closest['callsign']}", 
-                     fill=(255, 255, 255), font=self.fonts['medium'])
+            self._draw_text_with_outline(draw, f"{closest['callsign']}", (2, y_offset), 
+                                       self.fonts['medium'], fill=(255, 255, 255), outline_color=(0, 0, 0))
             y_offset += line_height
             
             # Line 2: Altitude and Speed
-            draw.text((2, y_offset), f"ALT:{int(closest['altitude'])}ft", 
-                     fill=closest['color'], font=self.fonts['small'])
-            draw.text((self.display_width // 2, y_offset), f"SPD:{int(closest['speed'])}kt", 
-                     fill=(200, 200, 200), font=self.fonts['small'])
+            self._draw_text_with_outline(draw, f"ALT:{int(closest['altitude'])}ft", (2, y_offset), 
+                                       self.fonts['small'], fill=closest['color'], outline_color=(0, 0, 0))
+            self._draw_text_with_outline(draw, f"SPD:{int(closest['speed'])}kt", (self.display_width // 2, y_offset), 
+                                       self.fonts['small'], fill=(200, 200, 200), outline_color=(0, 0, 0))
             y_offset += line_height
             
             # Line 3: Distance and Heading
-            draw.text((2, y_offset), f"DIST:{closest['distance_miles']:.2f}mi", 
-                     fill=(200, 200, 200), font=self.fonts['small'])
+            self._draw_text_with_outline(draw, f"DIST:{closest['distance_miles']:.2f}mi", (2, y_offset), 
+                                       self.fonts['small'], fill=(200, 200, 200), outline_color=(0, 0, 0))
             if closest['heading']:
-                draw.text((self.display_width // 2, y_offset), f"HDG:{int(closest['heading'])}°", 
-                         fill=(200, 200, 200), font=self.fonts['small'])
+                self._draw_text_with_outline(draw, f"HDG:{int(closest['heading'])}°", (self.display_width // 2, y_offset), 
+                                           self.fonts['small'], fill=(200, 200, 200), outline_color=(0, 0, 0))
             y_offset += line_height
             
             # Line 4: Type
-            draw.text((2, y_offset), f"TYPE:{closest['aircraft_type']}", 
-                     fill=(150, 150, 150), font=self.fonts['small'])
+            self._draw_text_with_outline(draw, f"TYPE:{closest['aircraft_type']}", (2, y_offset), 
+                                       self.fonts['small'], fill=(150, 150, 150), outline_color=(0, 0, 0))
         else:
             # Large display layout (192x96 or bigger)
             y_offset = 4
             line_height = 10
             
             # Title
-            draw.text((self.display_width // 2 - 40, y_offset), "OVERHEAD AIRCRAFT", 
-                     fill=(255, 200, 0), font=self.fonts['large'])
+            self._draw_text_with_outline(draw, "OVERHEAD AIRCRAFT", (self.display_width // 2 - 40, y_offset), 
+                                       self.fonts['large'], fill=(255, 200, 0), outline_color=(0, 0, 0))
             y_offset += line_height + 4
             
             # Callsign (large)
-            draw.text((4, y_offset), f"Callsign: {closest['callsign']}", 
-                     fill=(255, 255, 255), font=self.fonts['large'])
+            self._draw_text_with_outline(draw, f"Callsign: {closest['callsign']}", (4, y_offset), 
+                                       self.fonts['large'], fill=(255, 255, 255), outline_color=(0, 0, 0))
             y_offset += line_height
             
             # Altitude (with color)
-            draw.text((4, y_offset), f"Altitude: {int(closest['altitude'])} ft", 
-                     fill=closest['color'], font=self.fonts['medium'])
+            self._draw_text_with_outline(draw, f"Altitude: {int(closest['altitude'])} ft", (4, y_offset), 
+                                       self.fonts['medium'], fill=closest['color'], outline_color=(0, 0, 0))
             y_offset += line_height
             
             # Speed
-            draw.text((4, y_offset), f"Speed: {int(closest['speed'])} knots", 
-                     fill=(200, 200, 200), font=self.fonts['medium'])
+            self._draw_text_with_outline(draw, f"Speed: {int(closest['speed'])} knots", (4, y_offset), 
+                                       self.fonts['medium'], fill=(200, 200, 200), outline_color=(0, 0, 0))
             y_offset += line_height
             
             # Distance
-            draw.text((4, y_offset), f"Distance: {closest['distance_miles']:.2f} miles", 
-                     fill=(255, 150, 0), font=self.fonts['medium'])
+            self._draw_text_with_outline(draw, f"Distance: {closest['distance_miles']:.2f} miles", (4, y_offset), 
+                                       self.fonts['medium'], fill=(255, 150, 0), outline_color=(0, 0, 0))
             y_offset += line_height
             
             # Heading
             if closest['heading']:
-                draw.text((4, y_offset), f"Heading: {int(closest['heading'])}°", 
-                         fill=(200, 200, 200), font=self.fonts['medium'])
+                self._draw_text_with_outline(draw, f"Heading: {int(closest['heading'])}°", (4, y_offset), 
+                                           self.fonts['medium'], fill=(200, 200, 200), outline_color=(0, 0, 0))
                 y_offset += line_height
             
             # Aircraft type
-            draw.text((4, y_offset), f"Type: {closest['aircraft_type']}", 
-                     fill=(150, 150, 150), font=self.fonts['medium'])
+            self._draw_text_with_outline(draw, f"Type: {closest['aircraft_type']}", (4, y_offset), 
+                                       self.fonts['medium'], fill=(150, 150, 150), outline_color=(0, 0, 0))
         
         # Display the image
         self.display_manager.image = img.copy()
@@ -566,8 +592,9 @@ class FlightStatsManager(BaseFlightManager):
             # No aircraft to display
             img = Image.new('RGB', (self.display_width, self.display_height), (0, 0, 0))
             draw = ImageDraw.Draw(img)
-            draw.text((self.display_width // 2 - 30, self.display_height // 2 - 4), 
-                     "No Aircraft", fill=(200, 200, 200), font=self.fonts['medium'])
+            self._draw_text_with_outline(draw, "No Aircraft", 
+                                       (self.display_width // 2 - 30, self.display_height // 2 - 4), 
+                                       self.fonts['medium'], fill=(200, 200, 200), outline_color=(0, 0, 0))
             self.display_manager.image = img.copy()
             self.display_manager.update_display()
             return
@@ -608,11 +635,13 @@ class FlightStatsManager(BaseFlightManager):
             line_height = 6
             
             # Title
-            draw.text((2, y_offset), title, fill=title_color, font=self.fonts['medium'])
+            self._draw_text_with_outline(draw, title, (2, y_offset), 
+                                       self.fonts['medium'], fill=title_color, outline_color=(0, 0, 0))
             y_offset += line_height
             
             # Callsign
-            draw.text((2, y_offset), aircraft['callsign'], fill=(255, 255, 255), font=self.fonts['small'])
+            self._draw_text_with_outline(draw, aircraft['callsign'], (2, y_offset), 
+                                       self.fonts['small'], fill=(255, 255, 255), outline_color=(0, 0, 0))
             y_offset += line_height
             
             # Key stat
@@ -623,55 +652,56 @@ class FlightStatsManager(BaseFlightManager):
             else:
                 stat_text = f"{int(aircraft['altitude'])}ft"
             
-            draw.text((2, y_offset), stat_text, fill=aircraft['color'], font=self.fonts['medium'])
+            self._draw_text_with_outline(draw, stat_text, (2, y_offset), 
+                                       self.fonts['medium'], fill=aircraft['color'], outline_color=(0, 0, 0))
             y_offset += line_height + 1
             
             # Additional info
-            draw.text((2, y_offset), f"ALT:{int(aircraft['altitude'])} SPD:{int(aircraft['speed'])}", 
-                     fill=(150, 150, 150), font=self.fonts['small'])
+            self._draw_text_with_outline(draw, f"ALT:{int(aircraft['altitude'])} SPD:{int(aircraft['speed'])}", (2, y_offset), 
+                                       self.fonts['small'], fill=(150, 150, 150), outline_color=(0, 0, 0))
         else:
             # Large display layout
             y_offset = 4
             line_height = 10
             
             # Title
-            draw.text((self.display_width // 2 - 30, y_offset), title, 
-                     fill=title_color, font=self.fonts['large'])
+            self._draw_text_with_outline(draw, title, (self.display_width // 2 - 30, y_offset), 
+                                       self.fonts['large'], fill=title_color, outline_color=(0, 0, 0))
             y_offset += line_height + 4
             
             # Callsign
-            draw.text((4, y_offset), f"Callsign: {aircraft['callsign']}", 
-                     fill=(255, 255, 255), font=self.fonts['large'])
+            self._draw_text_with_outline(draw, f"Callsign: {aircraft['callsign']}", (4, y_offset), 
+                                       self.fonts['large'], fill=(255, 255, 255), outline_color=(0, 0, 0))
             y_offset += line_height
             
             # Key statistic (large)
             if self.current_stat == 0:
-                draw.text((4, y_offset), f"Distance: {aircraft['distance_miles']:.2f} miles", 
-                         fill=title_color, font=self.fonts['large'])
+                self._draw_text_with_outline(draw, f"Distance: {aircraft['distance_miles']:.2f} miles", (4, y_offset), 
+                                           self.fonts['large'], fill=title_color, outline_color=(0, 0, 0))
             elif self.current_stat == 1:
-                draw.text((4, y_offset), f"Speed: {int(aircraft['speed'])} knots", 
-                         fill=title_color, font=self.fonts['large'])
+                self._draw_text_with_outline(draw, f"Speed: {int(aircraft['speed'])} knots", (4, y_offset), 
+                                           self.fonts['large'], fill=title_color, outline_color=(0, 0, 0))
             else:
-                draw.text((4, y_offset), f"Altitude: {int(aircraft['altitude'])} ft", 
-                         fill=title_color, font=self.fonts['large'])
+                self._draw_text_with_outline(draw, f"Altitude: {int(aircraft['altitude'])} ft", (4, y_offset), 
+                                           self.fonts['large'], fill=title_color, outline_color=(0, 0, 0))
             y_offset += line_height + 2
             
             # Other stats
-            draw.text((4, y_offset), f"Altitude: {int(aircraft['altitude'])} ft", 
-                     fill=aircraft['color'], font=self.fonts['medium'])
+            self._draw_text_with_outline(draw, f"Altitude: {int(aircraft['altitude'])} ft", (4, y_offset), 
+                                       self.fonts['medium'], fill=aircraft['color'], outline_color=(0, 0, 0))
             y_offset += line_height - 2
             
-            draw.text((4, y_offset), f"Speed: {int(aircraft['speed'])} knots", 
-                     fill=(200, 200, 200), font=self.fonts['medium'])
+            self._draw_text_with_outline(draw, f"Speed: {int(aircraft['speed'])} knots", (4, y_offset), 
+                                       self.fonts['medium'], fill=(200, 200, 200), outline_color=(0, 0, 0))
             y_offset += line_height - 2
             
-            draw.text((4, y_offset), f"Distance: {aircraft['distance_miles']:.2f} miles", 
-                     fill=(200, 200, 200), font=self.fonts['medium'])
+            self._draw_text_with_outline(draw, f"Distance: {aircraft['distance_miles']:.2f} miles", (4, y_offset), 
+                                       self.fonts['medium'], fill=(200, 200, 200), outline_color=(0, 0, 0))
             y_offset += line_height - 2
             
             if aircraft['heading']:
-                draw.text((4, y_offset), f"Heading: {int(aircraft['heading'])}°", 
-                         fill=(150, 150, 150), font=self.fonts['medium'])
+                self._draw_text_with_outline(draw, f"Heading: {int(aircraft['heading'])}°", (4, y_offset), 
+                                           self.fonts['medium'], fill=(150, 150, 150), outline_color=(0, 0, 0))
         
         # Display the image
         self.display_manager.image = img.copy()
