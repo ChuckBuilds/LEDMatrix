@@ -228,8 +228,9 @@ class HockeyLive(Hockey, SportsLive):
             if game.get("is_period_break"):
                 period_clock_text = game.get("status_text", "Period Break")
 
-            status_width = draw_overlay.textlength(
-                period_clock_text, font=self.fonts["time"]
+            # Use FontManager's measure_text for proper font type handling
+            status_width, _, _ = self.display_manager.font_manager.measure_text(
+                period_clock_text, self.fonts["time"]
             )
             status_x = (self.display_width - status_width) // 2
             status_y = 1  # Position at top
@@ -244,7 +245,8 @@ class HockeyLive(Hockey, SportsLive):
             home_score = str(game.get("home_score", "0"))
             away_score = str(game.get("away_score", "0"))
             score_text = f"{away_score}-{home_score}"
-            score_width = draw_overlay.textlength(score_text, font=self.fonts["score"])
+            # Use FontManager's measure_text for proper font type handling
+            score_width, _, _ = self.display_manager.font_manager.measure_text(score_text, self.fonts["score"])
             score_x = (self.display_width - score_width) // 2
             score_y = (
                 self.display_height // 2
@@ -269,7 +271,8 @@ class HockeyLive(Hockey, SportsLive):
                 shots_bbox = draw_overlay.textbbox((0, 0), shots_text, font=shots_font)
                 shots_height = shots_bbox[3] - shots_bbox[1]
                 shots_y = self.display_height - shots_height - 1
-                shots_width = draw_overlay.textlength(shots_text, font=shots_font)
+                # Use FontManager's measure_text for proper font type handling
+                shots_width, _, _ = self.display_manager.font_manager.measure_text(shots_text, shots_font)
                 shots_x = (self.display_width - shots_width) // 2
                 self._draw_text_with_outline(
                     draw_overlay, shots_text, (shots_x, shots_y), shots_font

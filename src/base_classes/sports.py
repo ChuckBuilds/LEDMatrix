@@ -270,7 +270,8 @@ class SportsCore(ABC):
             
             if favored_side == 'home':
                 # Home team is favored, show spread on right side
-                spread_width = draw.textlength(spread_text, font=font)
+                # Use FontManager's measure_text for proper font type handling
+                spread_width, _, _ = self.display_manager.font_manager.measure_text(spread_text, font)
                 spread_x = width - spread_width  # Top right
                 spread_y = 0
                 self._draw_text_with_outline(draw, spread_text, (spread_x, spread_y), font, fill=(0, 255, 0))
@@ -287,7 +288,8 @@ class SportsCore(ABC):
         if over_under is not None:
             ou_text = f"O/U: {over_under}"
             font = self.fonts['odds']  # Use odds font for odds
-            ou_width = draw.textlength(ou_text, font=font)
+            # Use FontManager's measure_text for proper font type handling
+            ou_width, _, _ = self.display_manager.font_manager.measure_text(ou_text, font)
             
             if favored_side == 'home':
                 # Home team is favored, show O/U on left side (opposite of spread)
@@ -780,20 +782,23 @@ class SportsUpcoming(SportsCore):
             if self.display_width > 128:
                 status_font = self.fonts['time']
             status_text = "Next Game"
-            status_width = draw_overlay.textlength(status_text, font=status_font)
+            # Use FontManager's measure_text for proper font type handling
+            status_width, _, _ = self.display_manager.font_manager.measure_text(status_text, status_font)
             status_x = (self.display_width - status_width) // 2
             status_y = 1 # Changed from 2
             self._draw_text_with_outline(draw_overlay, status_text, (status_x, status_y), status_font)
 
             # Date text (centered, below "Next Game")
-            date_width = draw_overlay.textlength(game_date, font=self.fonts['time'])
+            # Use FontManager's measure_text for proper font type handling
+            date_width, _, _ = self.display_manager.font_manager.measure_text(game_date, self.fonts['time'])
             date_x = (self.display_width - date_width) // 2
             # Adjust Y position to stack date and time nicely
             date_y = center_y - 7 # Raise date slightly
             self._draw_text_with_outline(draw_overlay, game_date, (date_x, date_y), self.fonts['time'])
 
             # Time text (centered, below Date)
-            time_width = draw_overlay.textlength(game_time, font=self.fonts['time'])
+            # Use FontManager's measure_text for proper font type handling
+            time_width, _, _ = self.display_manager.font_manager.measure_text(game_time, self.fonts['time'])
             time_x = (self.display_width - time_width) // 2
             time_y = date_y + 9 # Place time below date
             self._draw_text_with_outline(draw_overlay, game_time, (time_x, time_y), self.fonts['time'])
@@ -1092,14 +1097,16 @@ class SportsRecent(SportsCore):
             home_score = str(game.get("home_score", "0"))
             away_score = str(game.get("away_score", "0"))
             score_text = f"{away_score}-{home_score}"
-            score_width = draw_overlay.textlength(score_text, font=self.fonts['score'])
+            # Use FontManager's measure_text for proper font type handling
+            score_width, _, _ = self.display_manager.font_manager.measure_text(score_text, self.fonts['score'])
             score_x = (self.display_width - score_width) // 2
             score_y = self.display_height - 14
             self._draw_text_with_outline(draw_overlay, score_text, (score_x, score_y), self.fonts['score'])
 
             # "Final" text (Top center)
             status_text = game.get("period_text", "Final") # Use formatted period text (e.g., "Final/OT") or default "Final"
-            status_width = draw_overlay.textlength(status_text, font=self.fonts['time'])
+            # Use FontManager's measure_text for proper font type handling
+            status_width, _, _ = self.display_manager.font_manager.measure_text(status_text, self.fonts['time'])
             status_x = (self.display_width - status_width) // 2
             status_y = 1
             self._draw_text_with_outline(draw_overlay, status_text, (status_x, status_y), self.fonts['time'])
