@@ -31,7 +31,7 @@ class BaseFlightManager:
         # Location configuration
         self.center_lat = self.flight_config.get('center_latitude', 27.9506)
         self.center_lon = self.flight_config.get('center_longitude', -82.4572)
-        self.map_radius_miles = self.flight_config.get('map_radius_miles', 10)
+        self.map_radius_miles = self.flight_config.get('map_radius_miles', 10)  # Reduced from 50 to 10 miles for better visibility
         
         # Display configuration
         self.display_width = display_manager.matrix.width
@@ -154,6 +154,23 @@ class BaseFlightManager:
             draw.text((x + dx, y + dy), text, font=font, fill=outline_color)
         # Draw text
         draw.text((x, y), text, font=font, fill=fill)
+    
+    def _get_font_height(self, font) -> int:
+        """Get the height of a font for proper spacing calculations."""
+        try:
+            if hasattr(font, 'size'):
+                # For PIL ImageFont
+                return font.size
+            else:
+                # For BDF fonts or other types, estimate based on common sizes
+                return 8  # Default fallback
+        except Exception:
+            return 8  # Safe fallback
+    
+    def _calculate_line_spacing(self, font, padding_factor: float = 1.2) -> int:
+        """Calculate proper line spacing based on font height with padding."""
+        font_height = self._get_font_height(font)
+        return int(font_height * padding_factor)
     
     def _fetch_aircraft_data(self) -> Optional[Dict]:
         """Fetch aircraft data from SkyAware API."""
@@ -321,10 +338,15 @@ class BaseFlightManager:
         x = int((lon - self.center_lon) * lon_scale + self.display_width / 2)
         y = int((self.center_lat - lat) * lat_scale + self.display_height / 2)  # Flip Y axis
         
+        # Debug logging
+        logger.info(f"[Flight Tracker] Converting ({lat:.6f}, {lon:.6f}) to pixel ({x}, {y})")
+        logger.info(f"[Flight Tracker] Scale: lat={lat_scale:.2f}, lon={lon_scale:.2f}, lat_degrees={lat_degrees:.4f}, lon_degrees={lon_degrees:.4f}")
+        
         # Check if within display bounds
         if 0 <= x < self.display_width and 0 <= y < self.display_height:
             return (x, y)
         
+        logger.warning(f"[Flight Tracker] Coordinate ({lat}, {lon}) -> pixel ({x}, {y}) is outside display bounds {self.display_width}x{self.display_height}")
         return None
     
     def _generate_area_outline(self) -> List[Tuple[float, float]]:
@@ -361,7 +383,7 @@ class BaseFlightManager:
                 pixel = self._latlon_to_pixel(lat, lon)
                 if pixel:
                     self.coastline_pixels.append(pixel)
-                    logger.debug(f"[Flight Tracker] Converted ({lat}, {lon}) to pixel {pixel}")
+                    logger.info(f"[Flight Tracker] Converted ({lat}, {lon}) to pixel {pixel}")
                 else:
                     # If coordinate is outside bounds, clamp it to display edges
                     x = int((lon - self.center_lon) * (self.display_width / (self.map_radius_miles * 2 / 69.0 / math.cos(math.radians(self.center_lat)))) + self.display_width / 2)
@@ -371,7 +393,7 @@ class BaseFlightManager:
                     x = max(0, min(self.display_width - 1, x))
                     y = max(0, min(self.display_height - 1, y))
                     self.coastline_pixels.append((x, y))
-                    logger.debug(f"[Flight Tracker] Clamped ({lat}, {lon}) to pixel ({x}, {y})")
+                    logger.info(f"[Flight Tracker] Clamped ({lat}, {lon}) to pixel ({x}, {y})")
             
             self.cached_display_size = current_size
             logger.debug(f"[Flight Tracker] Cached {len(self.coastline_pixels)} area outline pixels: {self.coastline_pixels}")
@@ -425,13 +447,13 @@ class FlightMapManager(BaseFlightManager):
         
         # Draw area outline
         outline_pixels = self._get_area_outline_pixels()
-        logger.debug(f"[Flight Tracker] Drawing area outline with {len(outline_pixels)} pixels")
+        logger.info(f"[Flight Tracker] Drawing area outline with {len(outline_pixels)} pixels: {outline_pixels}")
         if len(outline_pixels) >= 2:
             # Draw lines connecting outline points
             for i in range(len(outline_pixels)):
                 p1 = outline_pixels[i]
                 p2 = outline_pixels[(i + 1) % len(outline_pixels)]
-                logger.debug(f"[Flight Tracker] Drawing outline line from {p1} to {p2}")
+                logger.info(f"[Flight Tracker] Drawing outline line from {p1} to {p2}")
                 draw.line([p1, p2], fill=(255, 255, 255), width=2)  # Make it bright white and visible
         else:
             # Fallback: draw a simple rectangle outline if no pixels generated
@@ -439,6 +461,11 @@ class FlightMapManager(BaseFlightManager):
             margin = 5
             draw.rectangle([margin, margin, self.display_width - margin, self.display_height - margin], 
                           outline=(255, 255, 255), width=2)
+        
+        # Always draw a test rectangle in the center to verify drawing works
+        test_margin = 10
+        draw.rectangle([test_margin, test_margin, self.display_width - test_margin, self.display_height - test_margin], 
+                      outline=(255, 0, 0), width=1)  # Red test rectangle
         
         # Draw aircraft trails if enabled
         if self.show_trails:
@@ -559,21 +586,20 @@ class FlightOverheadManager(BaseFlightManager):
         is_small_display = self.display_width <= 128 and self.display_height <= 32
         
         if is_small_display:
-            # Small display layout (128x32)
+            # Small display layout (128x32) with dynamic spacing
             y_offset = 2
-            line_height = 6
             
             # Line 1: Callsign (using 4x6 for compact data)
             self._draw_text_with_outline(draw, f"{closest['callsign']}", (2, y_offset), 
                                        self.fonts['data_medium'], fill=(255, 255, 255), outline_color=(0, 0, 0))
-            y_offset += line_height
+            y_offset += self._calculate_line_spacing(self.fonts['data_medium'])
             
             # Line 2: Altitude and Speed (using 4x6 for compact data)
             self._draw_text_with_outline(draw, f"ALT:{int(closest['altitude'])}ft", (2, y_offset), 
                                        self.fonts['data_small'], fill=closest['color'], outline_color=(0, 0, 0))
             self._draw_text_with_outline(draw, f"SPD:{int(closest['speed'])}kt", (self.display_width // 2, y_offset), 
                                        self.fonts['data_small'], fill=(200, 200, 200), outline_color=(0, 0, 0))
-            y_offset += line_height
+            y_offset += self._calculate_line_spacing(self.fonts['data_small'])
             
             # Line 3: Distance and Heading (using 4x6 for compact data)
             self._draw_text_with_outline(draw, f"DIST:{closest['distance_miles']:.2f}mi", (2, y_offset), 
@@ -581,50 +607,51 @@ class FlightOverheadManager(BaseFlightManager):
             if closest['heading']:
                 self._draw_text_with_outline(draw, f"HDG:{int(closest['heading'])}°", (self.display_width // 2, y_offset), 
                                            self.fonts['data_small'], fill=(200, 200, 200), outline_color=(0, 0, 0))
-            y_offset += line_height
+            y_offset += self._calculate_line_spacing(self.fonts['data_small'])
             
-            # Line 4: Type (using 4x6 for compact data)
-            self._draw_text_with_outline(draw, f"TYPE:{closest['aircraft_type']}", (2, y_offset), 
-                                       self.fonts['data_small'], fill=(150, 150, 150), outline_color=(0, 0, 0))
+            # Line 4: Type (using 4x6 for compact data) - only if there's space
+            if y_offset + self._calculate_line_spacing(self.fonts['data_small']) <= self.display_height:
+                self._draw_text_with_outline(draw, f"TYPE:{closest['aircraft_type']}", (2, y_offset), 
+                                           self.fonts['data_small'], fill=(150, 150, 150), outline_color=(0, 0, 0))
         else:
-            # Large display layout (192x96 or bigger)
+            # Large display layout (192x96 or bigger) with dynamic spacing
             y_offset = 4
-            line_height = 10
             
             # Title (using PressStart2P for better readability)
             self._draw_text_with_outline(draw, "OVERHEAD AIRCRAFT", (self.display_width // 2 - 40, y_offset), 
                                        self.fonts['title_large'], fill=(255, 200, 0), outline_color=(0, 0, 0))
-            y_offset += line_height + 4
+            y_offset += self._calculate_line_spacing(self.fonts['title_large']) + 4
             
             # Callsign (using 4x6 for compact data)
             self._draw_text_with_outline(draw, f"Callsign: {closest['callsign']}", (4, y_offset), 
                                        self.fonts['data_large'], fill=(255, 255, 255), outline_color=(0, 0, 0))
-            y_offset += line_height
+            y_offset += self._calculate_line_spacing(self.fonts['data_large'])
             
             # Altitude (using 4x6 for compact data)
             self._draw_text_with_outline(draw, f"Altitude: {int(closest['altitude'])} ft", (4, y_offset), 
                                        self.fonts['data_medium'], fill=closest['color'], outline_color=(0, 0, 0))
-            y_offset += line_height
+            y_offset += self._calculate_line_spacing(self.fonts['data_medium'])
             
             # Speed (using 4x6 for compact data)
             self._draw_text_with_outline(draw, f"Speed: {int(closest['speed'])} knots", (4, y_offset), 
                                        self.fonts['data_medium'], fill=(200, 200, 200), outline_color=(0, 0, 0))
-            y_offset += line_height
+            y_offset += self._calculate_line_spacing(self.fonts['data_medium'])
             
             # Distance (using 4x6 for compact data)
             self._draw_text_with_outline(draw, f"Distance: {closest['distance_miles']:.2f} miles", (4, y_offset), 
                                        self.fonts['data_medium'], fill=(255, 150, 0), outline_color=(0, 0, 0))
-            y_offset += line_height
+            y_offset += self._calculate_line_spacing(self.fonts['data_medium'])
             
             # Heading (using 4x6 for compact data)
             if closest['heading']:
                 self._draw_text_with_outline(draw, f"Heading: {int(closest['heading'])}°", (4, y_offset), 
                                            self.fonts['data_medium'], fill=(200, 200, 200), outline_color=(0, 0, 0))
-                y_offset += line_height
+                y_offset += self._calculate_line_spacing(self.fonts['data_medium'])
             
-            # Aircraft type (using 4x6 for compact data)
-            self._draw_text_with_outline(draw, f"Type: {closest['aircraft_type']}", (4, y_offset), 
-                                       self.fonts['data_medium'], fill=(150, 150, 150), outline_color=(0, 0, 0))
+            # Aircraft type (using 4x6 for compact data) - only if there's space
+            if y_offset + self._calculate_line_spacing(self.fonts['data_medium']) <= self.display_height:
+                self._draw_text_with_outline(draw, f"Type: {closest['aircraft_type']}", (4, y_offset), 
+                                           self.fonts['data_medium'], fill=(150, 150, 150), outline_color=(0, 0, 0))
         
         # Display the image
         self.display_manager.image = img.copy()
@@ -688,19 +715,18 @@ class FlightStatsManager(BaseFlightManager):
             title_color = (100, 150, 255)
         
         if is_small_display:
-            # Small display layout
+            # Small display layout with dynamic spacing
             y_offset = 1
-            line_height = 6
             
             # Title (using PressStart2P for better readability)
             self._draw_text_with_outline(draw, title, (2, y_offset), 
                                        self.fonts['title_medium'], fill=title_color, outline_color=(0, 0, 0))
-            y_offset += line_height
+            y_offset += self._calculate_line_spacing(self.fonts['title_medium'])
             
             # Callsign (using 4x6 for compact data)
             self._draw_text_with_outline(draw, aircraft['callsign'], (2, y_offset), 
                                        self.fonts['data_small'], fill=(255, 255, 255), outline_color=(0, 0, 0))
-            y_offset += line_height
+            y_offset += self._calculate_line_spacing(self.fonts['data_small'])
             
             # Key stat (using 4x6 for compact data)
             if self.current_stat == 0:
@@ -712,25 +738,25 @@ class FlightStatsManager(BaseFlightManager):
             
             self._draw_text_with_outline(draw, stat_text, (2, y_offset), 
                                        self.fonts['data_medium'], fill=aircraft['color'], outline_color=(0, 0, 0))
-            y_offset += line_height + 1
+            y_offset += self._calculate_line_spacing(self.fonts['data_medium']) + 1
             
-            # Additional info (using 4x6 for compact data)
-            self._draw_text_with_outline(draw, f"ALT:{int(aircraft['altitude'])} SPD:{int(aircraft['speed'])}", (2, y_offset), 
-                                       self.fonts['data_small'], fill=(150, 150, 150), outline_color=(0, 0, 0))
+            # Additional info (using 4x6 for compact data) - only if there's space
+            if y_offset + self._calculate_line_spacing(self.fonts['data_small']) <= self.display_height:
+                self._draw_text_with_outline(draw, f"ALT:{int(aircraft['altitude'])} SPD:{int(aircraft['speed'])}", (2, y_offset), 
+                                           self.fonts['data_small'], fill=(150, 150, 150), outline_color=(0, 0, 0))
         else:
-            # Large display layout
+            # Large display layout with dynamic spacing
             y_offset = 4
-            line_height = 10
             
             # Title (using PressStart2P for better readability)
             self._draw_text_with_outline(draw, title, (self.display_width // 2 - 30, y_offset), 
                                        self.fonts['title_large'], fill=title_color, outline_color=(0, 0, 0))
-            y_offset += line_height + 4
+            y_offset += self._calculate_line_spacing(self.fonts['title_large']) + 4
             
             # Callsign (using 4x6 for compact data)
             self._draw_text_with_outline(draw, f"Callsign: {aircraft['callsign']}", (4, y_offset), 
                                        self.fonts['data_large'], fill=(255, 255, 255), outline_color=(0, 0, 0))
-            y_offset += line_height
+            y_offset += self._calculate_line_spacing(self.fonts['data_large'])
             
             # Key statistic (using 4x6 for compact data)
             if self.current_stat == 0:
@@ -742,22 +768,25 @@ class FlightStatsManager(BaseFlightManager):
             else:
                 self._draw_text_with_outline(draw, f"Altitude: {int(aircraft['altitude'])} ft", (4, y_offset), 
                                            self.fonts['data_large'], fill=title_color, outline_color=(0, 0, 0))
-            y_offset += line_height + 2
+            y_offset += self._calculate_line_spacing(self.fonts['data_large']) + 2
             
-            # Other stats (using 4x6 for compact data)
-            self._draw_text_with_outline(draw, f"Altitude: {int(aircraft['altitude'])} ft", (4, y_offset), 
-                                       self.fonts['data_medium'], fill=aircraft['color'], outline_color=(0, 0, 0))
-            y_offset += line_height - 2
+            # Other stats (using 4x6 for compact data) - only if there's space
+            if y_offset + self._calculate_line_spacing(self.fonts['data_medium']) <= self.display_height:
+                self._draw_text_with_outline(draw, f"Altitude: {int(aircraft['altitude'])} ft", (4, y_offset), 
+                                           self.fonts['data_medium'], fill=aircraft['color'], outline_color=(0, 0, 0))
+                y_offset += self._calculate_line_spacing(self.fonts['data_medium'])
             
-            self._draw_text_with_outline(draw, f"Speed: {int(aircraft['speed'])} knots", (4, y_offset), 
-                                       self.fonts['data_medium'], fill=(200, 200, 200), outline_color=(0, 0, 0))
-            y_offset += line_height - 2
+            if y_offset + self._calculate_line_spacing(self.fonts['data_medium']) <= self.display_height:
+                self._draw_text_with_outline(draw, f"Speed: {int(aircraft['speed'])} knots", (4, y_offset), 
+                                           self.fonts['data_medium'], fill=(200, 200, 200), outline_color=(0, 0, 0))
+                y_offset += self._calculate_line_spacing(self.fonts['data_medium'])
             
-            self._draw_text_with_outline(draw, f"Distance: {aircraft['distance_miles']:.2f} miles", (4, y_offset), 
-                                       self.fonts['data_medium'], fill=(200, 200, 200), outline_color=(0, 0, 0))
-            y_offset += line_height - 2
+            if y_offset + self._calculate_line_spacing(self.fonts['data_medium']) <= self.display_height:
+                self._draw_text_with_outline(draw, f"Distance: {aircraft['distance_miles']:.2f} miles", (4, y_offset), 
+                                           self.fonts['data_medium'], fill=(200, 200, 200), outline_color=(0, 0, 0))
+                y_offset += self._calculate_line_spacing(self.fonts['data_medium'])
             
-            if aircraft['heading']:
+            if aircraft['heading'] and y_offset + self._calculate_line_spacing(self.fonts['data_medium']) <= self.display_height:
                 self._draw_text_with_outline(draw, f"Heading: {int(aircraft['heading'])}°", (4, y_offset), 
                                            self.fonts['data_medium'], fill=(150, 150, 150), outline_color=(0, 0, 0))
         
