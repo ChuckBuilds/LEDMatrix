@@ -569,7 +569,7 @@ class FlightStatsManager(BaseFlightManager):
             draw.text((self.display_width // 2 - 30, self.display_height // 2 - 4), 
                      "No Aircraft", fill=(200, 200, 200), font=self.fonts['medium'])
             self.display_manager.image = img.copy()
-        self.display_manager.update_display()
+            self.display_manager.update_display()
             return
         
         # Rotate stats every 10 seconds
