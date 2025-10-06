@@ -85,14 +85,14 @@
         "update_interval": 5,
         "center_latitude": 27.9506,
         "center_longitude": -82.4572,
-        "map_radius_miles": 10,
+        "map_radius_miles": 50,
         "display_modes": {
             "flight_map": true,
             "flight_overhead": true,
             "flight_stats": true
         },
         "skyaware_url": "http://192.168.86.30/skyaware/data/aircraft.json",
-        "show_trails": false,
+        "show_trails": true,
         "trail_length": 10,
         "proximity_alert": {
             "enabled": true,
