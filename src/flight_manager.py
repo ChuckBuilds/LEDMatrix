@@ -104,7 +104,7 @@ class BaseFlightManager:
             data = response.json()
             
             # Cache the data
-            self.cache_manager.set('flight_tracker_data', data, ttl=10)
+            self.cache_manager.set('flight_tracker_data', data)
             
             logger.debug(f"[Flight Tracker] Fetched data: {len(data.get('aircraft', []))} aircraft")
             return data
