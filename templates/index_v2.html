@@ -520,6 +520,51 @@
             margin-top: 20px;
         }
 
+        /* Collapsible styles */
+        .collapsible-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            cursor: pointer;
+            padding: 10px 0;
+            border-bottom: 1px solid var(--border-color);
+            transition: all 0.3s ease;
+        }
+
+        .collapsible-header:hover {
+            background-color: rgba(52, 152, 219, 0.05);
+            border-radius: 5px;
+            padding: 10px;
+            margin: 0 -10px;
+        }
+
+        .collapsible-header h5 {
+            margin: 0;
+            color: var(--primary-color);
+            font-weight: 600;
+        }
+
+        .collapsible-icon {
+            transition: transform 0.3s ease;
+            color: var(--secondary-color);
+            font-size: 14px;
+        }
+
+        .collapsible-icon.rotated {
+            transform: rotate(180deg);
+        }
+
+        .collapsible-content {
+            max-height: 0;
+            overflow: hidden;
+            transition: max-height 0.3s ease-out;
+        }
+
+        .collapsible-content.expanded {
+            max-height: 1000px;
+            transition: max-height 0.3s ease-in;
+        }
+
         .font-item {
             background: #ffffff;
             padding: 12px;
@@ -1439,9 +1484,14 @@
 
                             <!-- Current Fonts List -->
                             <div class="current-fonts">
-                                <h5>Current Fonts</h5>
-                                <div id="fonts-list-container">
-                                    <!-- Fonts list will be populated by JavaScript -->
+                                <div class="collapsible-header" onclick="toggleCurrentFonts()">
+                                    <h5>Current Fonts</h5>
+                                    <i class="fas fa-chevron-down collapsible-icon" id="current-fonts-icon"></i>
+                                </div>
+                                <div class="collapsible-content" id="current-fonts-content">
+                                    <div id="fonts-list-container">
+                                        <!-- Fonts list will be populated by JavaScript -->
+                                    </div>
                                 </div>
                             </div>
                         </div>
@@ -4999,6 +5049,20 @@
                 previewFamilySelect.value = fontFamily;
                 updateFontPreview();
                 showNotification(`Preview updated to use "${getFontDisplayName(fontFamily)}"`, 'info');
+            }
+        }
+
+        // Toggle function for Current Fonts collapsible section
+        function toggleCurrentFonts() {
+            const content = document.getElementById('current-fonts-content');
+            const icon = document.getElementById('current-fonts-icon');
+            
+            if (content.classList.contains('expanded')) {
+                content.classList.remove('expanded');
+                icon.classList.remove('rotated');
+            } else {
+                content.classList.add('expanded');
+                icon.classList.add('rotated');
             }
         }
 
