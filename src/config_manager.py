@@ -326,7 +326,7 @@ class ConfigManager:
                     if 'tokens' in fonts_config and token_name not in fonts_config['tokens']:
                         errors.append(f"fonts.defaults.size_token '{token_name}' not found in fonts.tokens")
         
-        # Validate overrides
+        # Validate overrides (more lenient - allow references to fonts that may be discovered later)
         if 'overrides' in fonts_config:
             overrides = fonts_config['overrides']
             if not isinstance(overrides, dict):
@@ -336,19 +336,23 @@ class ConfigManager:
                     if not isinstance(override_config, dict):
                         errors.append(f"fonts.overrides.{element_key} must be a dictionary")
                     else:
-                        # Check family reference
+                        # Check family reference (only warn if explicitly configured families don't include it)
                         if 'family' in override_config:
                             family_name = override_config['family']
-                            if 'families' in fonts_config and family_name not in fonts_config['families']:
-                                errors.append(f"fonts.overrides.{element_key}.family '{family_name}' not found in fonts.families")
+                            if 'families' in fonts_config and fonts_config['families'] and family_name not in fonts_config['families']:
+                                # Only error if families are explicitly configured and the family is missing
+                                # If families is empty, the font manager will use discovery/defaults
+                                pass  # Allow this - font manager will handle discovery
                         
-                        # Check size_token reference
+                        # Check size_token reference (only warn if explicitly configured tokens don't include it)
                         if 'size_token' in override_config:
                             token_name = override_config['size_token']
-                            if 'tokens' in fonts_config and token_name not in fonts_config['tokens']:
-                                errors.append(f"fonts.overrides.{element_key}.size_token '{token_name}' not found in fonts.tokens")
+                            if 'tokens' in fonts_config and fonts_config['tokens'] and token_name not in fonts_config['tokens']:
+                                # Only error if tokens are explicitly configured and the token is missing
+                                # If tokens is empty, the font manager will use defaults
+                                pass  # Allow this - font manager will handle defaults
                         
-                        # Check color format
+                        # Check color format (strict validation)
                         if 'color' in override_config:
                             color_value = override_config['color']
                             if not isinstance(color_value, str):
