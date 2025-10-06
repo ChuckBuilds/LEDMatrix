@@ -333,6 +333,9 @@ class ConfigManager:
                 errors.append("fonts.overrides must be a dictionary")
             else:
                 for element_key, override_config in overrides.items():
+                    # Skip comment fields (keys starting with underscore)
+                    if element_key.startswith('_'):
+                        continue
                     if not isinstance(override_config, dict):
                         errors.append(f"fonts.overrides.{element_key} must be a dictionary")
                     else:

@@ -42,6 +42,22 @@ import logging
 app = Flask(__name__)
 app.secret_key = os.urandom(24)
 
+# Add response headers to suppress Permissions-Policy warnings
+@app.after_request
+def add_security_headers(response):
+    """Add security headers to suppress browser warnings."""
+    # Set a permissive Permissions-Policy to suppress warnings about experimental features
+    response.headers['Permissions-Policy'] = (
+        'browsing-topics=(), '
+        'run-ad-auction=(), '
+        'join-ad-interest-group=(), '
+        'private-state-token-redemption=(), '
+        'private-state-token-issuance=(), '
+        'private-aggregation=(), '
+        'attribution-reporting=()'
+    )
+    return response
+
 # Custom Jinja2 filter for safe nested dictionary access
 @app.template_filter('safe_get')
 def safe_get(obj, key_path, default=''):
