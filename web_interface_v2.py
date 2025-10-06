@@ -46,15 +46,16 @@ app.secret_key = os.urandom(24)
 @app.after_request
 def add_security_headers(response):
     """Add security headers to suppress browser warnings."""
-    # Set a permissive Permissions-Policy to suppress warnings about experimental features
+    # Set a minimal Permissions-Policy with only recognized features
     response.headers['Permissions-Policy'] = (
-        'browsing-topics=(), '
-        'run-ad-auction=(), '
-        'join-ad-interest-group=(), '
-        'private-state-token-redemption=(), '
-        'private-state-token-issuance=(), '
-        'private-aggregation=(), '
-        'attribution-reporting=()'
+        'camera=(), '
+        'microphone=(), '
+        'geolocation=(), '
+        'payment=(), '
+        'usb=(), '
+        'magnetometer=(), '
+        'gyroscope=(), '
+        'accelerometer=()'
     )
     return response
 
@@ -886,6 +887,21 @@ def render_element(display_manager, element):
         y2 = element.get('y2', y)
         color = tuple(element.get('color', [255, 255, 255]))
         display_manager.draw.line([x, y, x2, y2], fill=color)
+
+@app.route('/api/config/main', methods=['GET'])
+def get_main_config():
+    """Get main configuration."""
+    try:
+        config = config_manager.load_config()
+        return jsonify({
+            'status': 'success',
+            'config': config
+        })
+    except Exception as e:
+        return jsonify({
+            'status': 'error',
+            'message': f'Error loading configuration: {e}'
+        }), 500
 
 @app.route('/api/config/save', methods=['POST'])
 def save_config():
