@@ -49,18 +49,12 @@ class BaseFlightManager:
             '40000': [128, 0, 128]   # Purple
         })
         
-        # Tampa Bay coastline coordinates (simplified outline)
-        self.coastline_coords = self.flight_config.get('tampa_coastline', [
-            [28.10, -82.76], [28.08, -82.72], [28.05, -82.68], [28.02, -82.65],
-            [27.98, -82.62], [27.95, -82.59], [27.92, -82.57], [27.88, -82.55],
-            [27.85, -82.54], [27.82, -82.53], [27.78, -82.52], [27.75, -82.51],
-            [27.72, -82.51], [27.68, -82.52], [27.65, -82.54], [27.62, -82.56],
-            [27.60, -82.59], [27.58, -82.62], [27.57, -82.66], [27.56, -82.70],
-            [27.56, -82.74], [27.57, -82.78], [27.59, -82.82], [27.62, -82.85],
-            [27.65, -82.88], [27.69, -82.90], [27.73, -82.91], [27.77, -82.91],
-            [27.81, -82.90], [27.85, -82.88], [27.89, -82.86], [27.93, -82.83],
-            [27.97, -82.80], [28.01, -82.77], [28.05, -82.75], [28.10, -82.76]
-        ])
+        # Area outline configuration - can be custom coordinates or auto-generated
+        self.area_outline = self.flight_config.get('area_outline', 'auto')  # 'auto', 'custom', or 'none'
+        self.custom_coastline = self.flight_config.get('custom_coastline', [])
+        
+        # Auto-generated area outline (lightweight rectangle)
+        self.area_coords = self._generate_area_outline()
         
         # Proximity alert configuration
         self.proximity_config = self.flight_config.get('proximity_alert', {})
@@ -81,6 +75,7 @@ class BaseFlightManager:
         
         logger.info(f"[Flight Tracker] Initialized with center: ({self.center_lat}, {self.center_lon}), radius: {self.map_radius_miles}mi")
         logger.info(f"[Flight Tracker] Display: {self.display_width}x{self.display_height}, SkyAware: {self.skyaware_url}")
+        logger.info(f"[Flight Tracker] Area outline: {self.area_outline} mode with {len(self.area_coords)} points")
     
     def _load_fonts(self) -> Dict[str, Any]:
         """Load fonts for text rendering."""
@@ -273,20 +268,41 @@ class BaseFlightManager:
         
         return None
     
-    def _get_coastline_pixels(self) -> List[Tuple[int, int]]:
-        """Get coastline as pixel coordinates, with caching."""
+    def _generate_area_outline(self) -> List[Tuple[float, float]]:
+        """Generate lightweight area outline based on center point and radius."""
+        if self.area_outline == 'custom' and self.custom_coastline:
+            return self.custom_coastline
+        elif self.area_outline == 'none':
+            return []
+        else:
+            # Auto-generate a simple rectangular outline around the center point
+            # Calculate lat/lon bounds based on radius
+            lat_range = self.map_radius_miles / 69.0  # Approximate miles per degree latitude
+            lon_range = lat_range / math.cos(math.radians(self.center_lat))  # Adjust for longitude convergence
+            
+            # Create a simple rectangle outline (4 corners + close the loop)
+            return [
+                (self.center_lat + lat_range, self.center_lon - lon_range),  # Top-left
+                (self.center_lat + lat_range, self.center_lon + lon_range),  # Top-right
+                (self.center_lat - lat_range, self.center_lon + lon_range),  # Bottom-right
+                (self.center_lat - lat_range, self.center_lon - lon_range),  # Bottom-left
+                (self.center_lat + lat_range, self.center_lon - lon_range),  # Close the loop
+            ]
+    
+    def _get_area_outline_pixels(self) -> List[Tuple[int, int]]:
+        """Get area outline as pixel coordinates, with caching."""
         current_size = (self.display_width, self.display_height)
         
         # Check if we need to recalculate
         if self.coastline_pixels is None or self.cached_display_size != current_size:
             self.coastline_pixels = []
-            for lat, lon in self.coastline_coords:
+            for lat, lon in self.area_coords:
                 pixel = self._latlon_to_pixel(lat, lon)
                 if pixel:
                     self.coastline_pixels.append(pixel)
             
             self.cached_display_size = current_size
-            logger.debug(f"[Flight Tracker] Cached {len(self.coastline_pixels)} coastline pixels")
+            logger.debug(f"[Flight Tracker] Cached {len(self.coastline_pixels)} area outline pixels")
         
         return self.coastline_pixels
     
@@ -333,13 +349,13 @@ class FlightMapManager(BaseFlightManager):
         img = Image.new('RGB', (self.display_width, self.display_height), (0, 0, 0))
         draw = ImageDraw.Draw(img)
         
-        # Draw coastline
-        coastline_pixels = self._get_coastline_pixels()
-        if len(coastline_pixels) >= 2:
-            # Draw lines connecting coastline points
-            for i in range(len(coastline_pixels)):
-                p1 = coastline_pixels[i]
-                p2 = coastline_pixels[(i + 1) % len(coastline_pixels)]
+        # Draw area outline
+        outline_pixels = self._get_area_outline_pixels()
+        if len(outline_pixels) >= 2:
+            # Draw lines connecting outline points
+            for i in range(len(outline_pixels)):
+                p1 = outline_pixels[i]
+                p2 = outline_pixels[(i + 1) % len(outline_pixels)]
                 draw.line([p1, p2], fill=(80, 80, 80), width=1)
         
         # Draw aircraft trails if enabled
