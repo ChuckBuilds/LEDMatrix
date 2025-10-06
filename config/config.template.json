@@ -73,9 +73,51 @@
             "music": 30,
             "of_the_day": 40,
             "news_manager": 60,
-            "static_image": 10
+            "static_image": 10,
+            "flight_map": 30,
+            "flight_overhead": 20,
+            "flight_stats": 25
         },
         "use_short_date_format": true
+    },
+    "flight_tracker": {
+        "enabled": false,
+        "update_interval": 5,
+        "center_latitude": 27.9506,
+        "center_longitude": -82.4572,
+        "map_radius_miles": 10,
+        "display_modes": {
+            "flight_map": true,
+            "flight_overhead": true,
+            "flight_stats": true
+        },
+        "skyaware_url": "http://192.168.86.30/skyaware/data/aircraft.json",
+        "show_trails": false,
+        "trail_length": 10,
+        "proximity_alert": {
+            "enabled": true,
+            "distance_miles": 0.1,
+            "duration_seconds": 30
+        },
+        "altitude_colors": {
+            "0": [255, 165, 0],
+            "4000": [255, 255, 0],
+            "8000": [0, 255, 0],
+            "20000": [135, 206, 250],
+            "30000": [0, 0, 139],
+            "40000": [128, 0, 128]
+        },
+        "tampa_coastline": [
+            [28.10, -82.76], [28.08, -82.72], [28.05, -82.68], [28.02, -82.65],
+            [27.98, -82.62], [27.95, -82.59], [27.92, -82.57], [27.88, -82.55],
+            [27.85, -82.54], [27.82, -82.53], [27.78, -82.52], [27.75, -82.51],
+            [27.72, -82.51], [27.68, -82.52], [27.65, -82.54], [27.62, -82.56],
+            [27.60, -82.59], [27.58, -82.62], [27.57, -82.66], [27.56, -82.70],
+            [27.56, -82.74], [27.57, -82.78], [27.59, -82.82], [27.62, -82.85],
+            [27.65, -82.88], [27.69, -82.90], [27.73, -82.91], [27.77, -82.91],
+            [27.81, -82.90], [27.85, -82.88], [27.89, -82.86], [27.93, -82.83],
+            [27.97, -82.80], [28.01, -82.77], [28.05, -82.75], [28.10, -82.76]
+        ]
     },
     "clock": {
         "enabled": true,

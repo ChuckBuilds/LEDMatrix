@@ -41,6 +41,7 @@ from src.static_image_manager import StaticImageManager
 from src.music_manager import MusicManager
 from src.of_the_day_manager import OfTheDayManager
 from src.news_manager import NewsManager
+from src.flight_manager import FlightMapManager, FlightOverheadManager, FlightStatsManager
 
 # Get logger without configuring
 logger = logging.getLogger(__name__)
@@ -304,6 +305,21 @@ class DisplayController:
             self.ncaaw_hockey_upcoming = None
         logger.info("NCAA Men's Hockey managers initialized in %.3f seconds", time.time() - ncaaw_hockey_time)
         
+        # Initialize Flight Tracker managers if enabled
+        flight_time = time.time()
+        flight_enabled = self.config.get('flight_tracker', {}).get('enabled', False)
+        flight_display_modes = self.config.get('flight_tracker', {}).get('display_modes', {})
+        
+        if flight_enabled:
+            self.flight_map = FlightMapManager(self.config, self.display_manager, self.cache_manager) if flight_display_modes.get('flight_map', True) else None
+            self.flight_overhead = FlightOverheadManager(self.config, self.display_manager, self.cache_manager) if flight_display_modes.get('flight_overhead', True) else None
+            self.flight_stats = FlightStatsManager(self.config, self.display_manager, self.cache_manager) if flight_display_modes.get('flight_stats', True) else None
+        else:
+            self.flight_map = None
+            self.flight_overhead = None
+            self.flight_stats = None
+        logger.info("Flight Tracker managers initialized in %.3f seconds", time.time() - flight_time)
+        
         # Track MLB rotation state
         self.mlb_current_team_index = 0
         self.mlb_showing_recent = True
@@ -382,6 +398,11 @@ class DisplayController:
         if ncaaw_hockey_enabled:
             if self.ncaaw_hockey_recent: self.available_modes.append('ncaaw_hockey_recent')
             if self.ncaaw_hockey_upcoming: self.available_modes.append('ncaaw_hockey_upcoming')
+        # Add Flight Tracker display modes if enabled
+        if flight_enabled:
+            if self.flight_map: self.available_modes.append('flight_map')
+            if self.flight_stats: self.available_modes.append('flight_stats')
+            # flight_overhead handled separately for proximity alerts
         # Add live modes to rotation if live_priority is False and there are live games
         self._update_live_modes_in_rotation()
         
@@ -833,6 +854,11 @@ class DisplayController:
             if self.ncaaw_hockey_live: self.ncaaw_hockey_live.update()
             if self.ncaaw_hockey_recent: self.ncaaw_hockey_recent.update()
             if self.ncaaw_hockey_upcoming: self.ncaaw_hockey_upcoming.update()
+            
+            # Update Flight Tracker managers
+            if self.flight_map: self.flight_map.update()
+            if self.flight_overhead: self.flight_overhead.update()
+            if self.flight_stats: self.flight_stats.update()
 
     def _check_live_games(self) -> tuple:
         """
@@ -1109,6 +1135,18 @@ class DisplayController:
                 
                 # Update live modes in rotation if needed
                 self._update_live_modes_in_rotation()
+                
+                # Check for proximity alerts (flight overhead) - don't interrupt live sports
+                flight_proximity_triggered = False
+                if hasattr(self, 'flight_overhead') and self.flight_overhead:
+                    # Only check if current mode is NOT a live sports mode
+                    if not self.current_display_mode.endswith('_live'):
+                        if self.flight_overhead.should_trigger_proximity_alert():
+                            flight_proximity_triggered = True
+                            logger.info("[Flight Tracker] Proximity alert triggered! Switching to overhead view")
+                            self.current_display_mode = 'flight_overhead'
+                            self.force_clear = True
+                            self.last_switch = current_time
 
                 # Check for live games and live_priority
                 has_live_games, live_sport_type = self._check_live_games()
@@ -1363,6 +1401,12 @@ class DisplayController:
                                 manager_to_display = self.milb_live
                             elif self.current_display_mode == 'soccer_live' and self.soccer_live:
                                 manager_to_display = self.soccer_live
+                            elif self.current_display_mode == 'flight_map' and self.flight_map:
+                                manager_to_display = self.flight_map
+                            elif self.current_display_mode == 'flight_overhead' and self.flight_overhead:
+                                manager_to_display = self.flight_overhead
+                            elif self.current_display_mode == 'flight_stats' and self.flight_stats:
+                                manager_to_display = self.flight_stats
 
                 # --- Perform Display Update ---
                 try:

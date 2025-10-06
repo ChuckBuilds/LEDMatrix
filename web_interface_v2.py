@@ -436,6 +436,20 @@ class OnDemandRunner:
             mgr = NewsManager(cfg, display_manager)
             self._force_enable(mgr)
             return mgr, lambda fc=False: mgr.display_news(), None, 0
+        
+        # Flight Tracker managers
+        if mode.startswith('flight_'):
+            from src.flight_manager import FlightMapManager, FlightOverheadManager, FlightStatsManager
+            if mode == 'flight_map':
+                mgr = FlightMapManager(cfg, display_manager, self.cache_manager)
+            elif mode == 'flight_overhead':
+                mgr = FlightOverheadManager(cfg, display_manager, self.cache_manager)
+            elif mode == 'flight_stats':
+                mgr = FlightStatsManager(cfg, display_manager, self.cache_manager)
+            else:
+                raise ValueError(f"Unknown flight mode: {mode}")
+            self._force_enable(mgr)
+            return mgr, lambda fc=False: mgr.display(force_clear=fc), lambda: mgr.update(), float(cfg.get('display', {}).get('display_durations', {}).get(mode, 30))
 
         # Sports managers mapping helper
         def sport(kind: str, variant: str):
