@@ -340,8 +340,8 @@ class Baseball(SportsCore):
         bbox = draw_overlay.textbbox((0, 0), series_summary, font=self.fonts['time'])
         height = bbox[3] - bbox[1]
         shots_y = (self.display_height - height) // 2
-        # Use FontManager's measure_text for proper font type handling
-        shots_width, _, _ = self.display_manager.font_manager.measure_text(series_summary, self.fonts['time'])
+        # Handle both PIL and freetype fonts for text measurement
+        shots_width = self._get_text_width(series_summary, self.fonts['time'])
         shots_x = (self.display_width - shots_width) // 2
         self._draw_text_with_outline(
             draw_overlay, series_summary, (shots_x, shots_y), self.fonts['time']

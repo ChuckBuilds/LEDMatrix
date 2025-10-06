@@ -168,10 +168,8 @@ class BasketballLive(Basketball, SportsLive):
                 f"{game.get('period_text', '')} {game.get('clock', '')}".strip()
             )
 
-            # Use FontManager's measure_text for proper font type handling
-            status_width, _, _ = self.display_manager.font_manager.measure_text(
-                period_clock_text, self.fonts["time"]
-            )
+            # Handle both PIL and freetype fonts for text measurement
+            status_width = self._get_text_width(period_clock_text, self.fonts["time"])
             status_x = (self.display_width - status_width) // 2
             status_y = 1  # Position at top
             self._draw_text_with_outline(
@@ -185,8 +183,8 @@ class BasketballLive(Basketball, SportsLive):
             home_score = str(game.get("home_score", "0"))
             away_score = str(game.get("away_score", "0"))
             score_text = f"{away_score}-{home_score}"
-            # Use FontManager's measure_text for proper font type handling
-            score_width, _, _ = self.display_manager.font_manager.measure_text(score_text, self.fonts["score"])
+            # Handle both PIL and freetype fonts for text measurement
+            score_width = self._get_text_width(score_text, self.fonts["score"])
             score_x = (self.display_width - score_width) // 2
             score_y = (
                 self.display_height // 2

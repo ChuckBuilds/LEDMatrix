@@ -1028,6 +1028,21 @@ class OddsTickerManager:
         else:
             draw.polygon(poly1, outline=base_color_empty)
 
+    def _get_text_width(self, text, font):
+        """Get text width handling both PIL and freetype fonts."""
+        try:
+            # Check if it's a PIL font (has getlength method)
+            if hasattr(font, 'getlength'):
+                return int(font.getlength(text))
+            else:
+                # Use FontManager's measure_text for freetype fonts
+                width, _, _ = self.display_manager.font_manager.measure_text(text, font)
+                return int(width)
+        except Exception as e:
+            logger.warning(f"Error measuring text width: {e}")
+            # Fallback to character count estimate
+            return len(text) * 8
+
     def _create_game_display(self, game: Dict[str, Any]) -> Image.Image:
         """Create a display image for a game in the new format."""
         width = self.display_manager.matrix.width
@@ -1214,20 +1229,16 @@ class OddsTickerManager:
         
         # Datetime column width
         temp_draw = ImageDraw.Draw(Image.new('RGB', (1, 1)))
-        # Use FontManager's measure_text for proper font type handling
-        day_width, _, _ = self.display_manager.font_manager.measure_text(day_text, datetime_font)
-        date_width, _, _ = self.display_manager.font_manager.measure_text(date_text, datetime_font)
-        time_width, _, _ = self.display_manager.font_manager.measure_text(time_text, datetime_font)
-        day_width = int(day_width)
-        date_width = int(date_width)
-        time_width = int(time_width)
+        # Handle both PIL and freetype fonts for text measurement
+        day_width = self._get_text_width(day_text, datetime_font)
+        date_width = self._get_text_width(date_text, datetime_font)
+        time_width = self._get_text_width(time_text, datetime_font)
         datetime_col_width = max(day_width, date_width, time_width)
 
         # "vs." text
         vs_text = "vs."
-        # Use FontManager's measure_text for proper font type handling
-        vs_width, _, _ = self.display_manager.font_manager.measure_text(vs_text, vs_font)
-        vs_width = int(vs_width)
+        # Handle both PIL and freetype fonts for text measurement
+        vs_width = self._get_text_width(vs_text, vs_font)
 
         # Team and record text with rankings
         away_team_name = game.get('away_team_name', game.get('away_team', 'N/A'))
@@ -1264,11 +1275,9 @@ class OddsTickerManager:
             away_team_text = f"{away_team_name}:{away_score} "
             home_team_text = f"{home_team_name}:{home_score} "
         
-        # Use FontManager's measure_text for proper font type handling
-        away_team_width, _, _ = self.display_manager.font_manager.measure_text(away_team_text, team_font)
-        home_team_width, _, _ = self.display_manager.font_manager.measure_text(home_team_text, team_font)
-        away_team_width = int(away_team_width)
-        home_team_width = int(home_team_width)
+        # Handle both PIL and freetype fonts for text measurement
+        away_team_width = self._get_text_width(away_team_text, team_font)
+        home_team_width = self._get_text_width(home_team_text, team_font)
         team_info_width = max(away_team_width, home_team_width)
         
         # Odds text
@@ -1357,11 +1366,9 @@ class OddsTickerManager:
             elif over_under:
                 home_odds_text = f"O/U {over_under}"
         
-        # Use FontManager's measure_text for proper font type handling
-        away_odds_width, _, _ = self.display_manager.font_manager.measure_text(away_odds_text, odds_font)
-        home_odds_width, _, _ = self.display_manager.font_manager.measure_text(home_odds_text, odds_font)
-        away_odds_width = int(away_odds_width)
-        home_odds_width = int(home_odds_width)
+        # Handle both PIL and freetype fonts for text measurement
+        away_odds_width = self._get_text_width(away_odds_text, odds_font)
+        home_odds_width = self._get_text_width(home_odds_text, odds_font)
         odds_width = max(away_odds_width, home_odds_width)
         
         # For baseball live games, optimize width for graphical bases
@@ -1494,13 +1501,10 @@ class OddsTickerManager:
         time_y = date_y + datetime_font_height + 2
 
         # Center justify each line of text within the datetime column
-        # Use FontManager's measure_text for proper font type handling
-        day_text_width, _, _ = self.display_manager.font_manager.measure_text(day_text, datetime_font)
-        date_text_width, _, _ = self.display_manager.font_manager.measure_text(date_text, datetime_font)
-        time_text_width, _, _ = self.display_manager.font_manager.measure_text(time_text, datetime_font)
-        day_text_width = int(day_text_width)
-        date_text_width = int(date_text_width)
-        time_text_width = int(time_text_width)
+        # Handle both PIL and freetype fonts for text measurement
+        day_text_width = self._get_text_width(day_text, datetime_font)
+        date_text_width = self._get_text_width(date_text, datetime_font)
+        time_text_width = self._get_text_width(time_text, datetime_font)
 
         day_x = current_x + (datetime_col_width - day_text_width) // 2
         date_x = current_x + (datetime_col_width - date_text_width) // 2
@@ -2008,8 +2012,8 @@ class OddsTickerManager:
             # Draw a simple message with larger font
             message = "No odds data"
             font = self.fonts['large']  # Use large font for better visibility
-            # Use FontManager's measure_text for proper font type handling
-            text_width, _, _ = self.display_manager.font_manager.measure_text(message, font)
+            # Handle both PIL and freetype fonts for text measurement
+            text_width = self._get_text_width(message, font)
             text_x = (width - text_width) // 2
             text_y = (height - font.size) // 2
             

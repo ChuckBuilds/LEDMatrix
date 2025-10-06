@@ -387,6 +387,21 @@ class BaseSoccerManager:
             fonts['status'] = ImageFont.load_default()
         return fonts
 
+    def _get_text_width(self, text, font):
+        """Get text width handling both PIL and freetype fonts."""
+        try:
+            # Check if it's a PIL font (has getlength method)
+            if hasattr(font, 'getlength'):
+                return int(font.getlength(text))
+            else:
+                # Use FontManager's measure_text for freetype fonts
+                width, _, _ = self.display_manager.font_manager.measure_text(text, font)
+                return int(width)
+        except Exception as e:
+            self.logger.warning(f"Error measuring text width: {e}")
+            # Fallback to character count estimate
+            return len(text) * 8
+
     def _draw_text_with_outline(self, draw, text, position, font, fill=(255, 255, 255), outline_color=(0, 0, 0)):
         """Draw text with a black outline for better readability."""
         x, y = position
@@ -494,8 +509,8 @@ class BaseSoccerManager:
                                 script_dir = os.path.dirname(os.path.abspath(__file__))
                                 font_4x6 = os.path.abspath(os.path.join(script_dir, "../assets/fonts/4x6-font.ttf"))
                                 placeholder_font = ImageFont.truetype(font_4x6, 12)
-                                # Use FontManager's measure_text for proper font type handling
-                                text_width, _, _ = self.display_manager.font_manager.measure_text(team_abbrev, placeholder_font)
+                                # Handle both PIL and freetype fonts for text measurement
+                                text_width = self._get_text_width(team_abbrev, placeholder_font)
                                 text_x = (36 - text_width) // 2
                                 text_y = 10
                                 draw.text((text_x, text_y), team_abbrev, fill=(0,0,0,255), font=placeholder_font)
@@ -712,9 +727,9 @@ class BaseSoccerManager:
             away_abbr = game.get("away_abbr", "AWAY")
             home_abbr = game.get("home_abbr", "HOME")
             
-            # Use FontManager's measure_text for proper font type handling
-            away_abbr_width, _, _ = self.display_manager.font_manager.measure_text(away_abbr, abbr_font)
-            home_abbr_width, _, _ = self.display_manager.font_manager.measure_text(home_abbr, abbr_font)
+            # Handle both PIL and freetype fonts for text measurement
+            away_abbr_width = self._get_text_width(away_abbr, abbr_font)
+            home_abbr_width = self._get_text_width(home_abbr, abbr_font)
 
             # Position abbreviations: One left-aligned, one right-aligned
             # Add a small margin from the edges
@@ -739,22 +754,22 @@ class BaseSoccerManager:
                 
                 # Draw "Next Game" at the top center
                 status_text = "Next Game"
-                # Use FontManager's measure_text for proper font type handling
-                status_width, _, _ = self.display_manager.font_manager.measure_text(status_text, status_font_top)
+                # Handle both PIL and freetype fonts for text measurement
+                status_width = self._get_text_width(status_text, status_font_top)
                 status_x = (self.display_width - status_width) // 2
                 status_y_top = 2 # Specific Y position from NHL spec
                 self._draw_text_with_outline(draw, status_text, (status_x, status_y_top), status_font_top)
 
                 # Calculate position for the date text (centered horizontally, above vertical center)
-                # Use FontManager's measure_text for proper font type handling
-                date_width, _, _ = self.display_manager.font_manager.measure_text(game_date, time_font_center)
+                # Handle both PIL and freetype fonts for text measurement
+                date_width = self._get_text_width(game_date, time_font_center)
                 date_x = (self.display_width - date_width) // 2
                 date_y = center_y - 5 # Specific Y position from NHL spec
                 self._draw_text_with_outline(draw, game_date, (date_x, date_y), time_font_center)
 
                 # Calculate position for the time text (centered horizontally, below date)
-                # Use FontManager's measure_text for proper font type handling
-                time_width, _, _ = self.display_manager.font_manager.measure_text(game_time, time_font_center)
+                # Handle both PIL and freetype fonts for text measurement
+                time_width = self._get_text_width(game_time, time_font_center)
                 time_x = (self.display_width - time_width) // 2
                 time_y = date_y + 10 # Specific Y position from NHL spec (relative to date_y)
                 self._draw_text_with_outline(draw, game_time, (time_x, time_y), time_font_center)
@@ -765,8 +780,8 @@ class BaseSoccerManager:
                 away_score = str(game.get("away_score", "0"))
                 score_text = f"{away_score}-{home_score}"
 
-                # Use FontManager's measure_text for proper font type handling
-                score_width, _, _ = self.display_manager.font_manager.measure_text(score_text, score_font)
+                # Handle both PIL and freetype fonts for text measurement
+                score_width = self._get_text_width(score_text, score_font)
                 score_x = center_x - score_width // 2
                 score_y = (self.display_height - score_height) // 2 # Keep score centered vertically
 
@@ -774,8 +789,8 @@ class BaseSoccerManager:
 
                 # Use status_font_top (which is self.fonts['time'] in this else block) for consistency
                 status_text = game.get("game_clock_display", "")
-                # Use FontManager's measure_text for proper font type handling
-                status_width, _, _ = self.display_manager.font_manager.measure_text(status_text, status_font_top) 
+                # Handle both PIL and freetype fonts for text measurement
+                status_width = self._get_text_width(status_text, status_font_top) 
                 status_x = center_x - status_width // 2
                 status_y_top = 1 # Original Y position for live/final status
                 self._draw_text_with_outline(draw, status_text, (status_x, status_y_top), status_font_top)
@@ -791,8 +806,8 @@ class BaseSoccerManager:
                     # Choose color and position based on which team has the spread
                     if odds.get('spread', {}).get('team') == game['home_abbr']:
                         text_color = (255, 100, 100) # Reddish
-                        # Use FontManager's measure_text for proper font type handling
-                        spread_width, _, _ = self.display_manager.font_manager.measure_text(spread_text, self.fonts['status'])
+                        # Handle both PIL and freetype fonts for text measurement
+                        spread_width = self._get_text_width(spread_text, self.fonts['status'])
                         spread_x = self.display_width - spread_width
                     else:
                         text_color = (100, 255, 100) # Greenish

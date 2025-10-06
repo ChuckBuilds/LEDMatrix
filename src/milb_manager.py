@@ -433,8 +433,8 @@ class BaseMiLBManager(Baseball):
                 score_font = ImageFont.load_default()
             
             # Calculate position for the score text
-            # Use FontManager's measure_text for proper font type handling
-            score_width, _, _ = self.display_manager.font_manager.measure_text(score_text, score_font)
+            # Handle both PIL and freetype fonts for text measurement
+            score_width = self._get_text_width(score_text, score_font)
             score_x = (width - score_width) // 2
             score_y = height - score_font.size - 2
             # draw.text((score_x, score_y), score_text, font=score_font, fill=(255, 255, 255))
