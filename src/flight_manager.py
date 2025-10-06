@@ -305,13 +305,15 @@ class BaseFlightManager:
             lon_range = lat_range / math.cos(math.radians(self.center_lat))  # Adjust for longitude convergence
             
             # Create a simple rectangle outline (4 corners + close the loop)
-            return [
+            coords = [
                 (self.center_lat + lat_range, self.center_lon - lon_range),  # Top-left
                 (self.center_lat + lat_range, self.center_lon + lon_range),  # Top-right
                 (self.center_lat - lat_range, self.center_lon + lon_range),  # Bottom-right
                 (self.center_lat - lat_range, self.center_lon - lon_range),  # Bottom-left
                 (self.center_lat + lat_range, self.center_lon - lon_range),  # Close the loop
             ]
+            logger.debug(f"[Flight Tracker] Generated area outline coordinates: {coords}")
+            return coords
     
     def _get_area_outline_pixels(self) -> List[Tuple[int, int]]:
         """Get area outline as pixel coordinates, with caching."""
@@ -324,9 +326,20 @@ class BaseFlightManager:
                 pixel = self._latlon_to_pixel(lat, lon)
                 if pixel:
                     self.coastline_pixels.append(pixel)
+                    logger.debug(f"[Flight Tracker] Converted ({lat}, {lon}) to pixel {pixel}")
+                else:
+                    # If coordinate is outside bounds, clamp it to display edges
+                    x = int((lon - self.center_lon) * (self.display_width / (self.map_radius_miles * 2 / 69.0 / math.cos(math.radians(self.center_lat)))) + self.display_width / 2)
+                    y = int((self.center_lat - lat) * (self.display_height / (self.map_radius_miles * 2 / 69.0)) + self.display_height / 2)
+                    
+                    # Clamp to display bounds
+                    x = max(0, min(self.display_width - 1, x))
+                    y = max(0, min(self.display_height - 1, y))
+                    self.coastline_pixels.append((x, y))
+                    logger.debug(f"[Flight Tracker] Clamped ({lat}, {lon}) to pixel ({x}, {y})")
             
             self.cached_display_size = current_size
-            logger.debug(f"[Flight Tracker] Cached {len(self.coastline_pixels)} area outline pixels")
+            logger.debug(f"[Flight Tracker] Cached {len(self.coastline_pixels)} area outline pixels: {self.coastline_pixels}")
         
         return self.coastline_pixels
     
@@ -375,12 +388,14 @@ class FlightMapManager(BaseFlightManager):
         
         # Draw area outline
         outline_pixels = self._get_area_outline_pixels()
+        logger.debug(f"[Flight Tracker] Drawing area outline with {len(outline_pixels)} pixels")
         if len(outline_pixels) >= 2:
             # Draw lines connecting outline points
             for i in range(len(outline_pixels)):
                 p1 = outline_pixels[i]
                 p2 = outline_pixels[(i + 1) % len(outline_pixels)]
-                draw.line([p1, p2], fill=(80, 80, 80), width=1)
+                logger.debug(f"[Flight Tracker] Drawing outline line from {p1} to {p2}")
+                draw.line([p1, p2], fill=(255, 255, 255), width=2)  # Make it bright white and visible
         
         # Draw aircraft trails if enabled
         if self.show_trails:
