@@ -1410,6 +1410,30 @@ def api_fonts_validate():
         logger.error(f"Error validating font: {e}")
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
+@app.route('/api/fonts/reload', methods=['POST'])
+def api_fonts_reload():
+    """Force reload the font manager with latest configuration."""
+    try:
+        global font_manager
+        
+        # Force reload by setting to None and reloading
+        font_manager = None
+        font_manager = get_font_manager()
+        
+        if not font_manager:
+            return jsonify({'status': 'error', 'message': 'Failed to reload font manager'}), 500
+        
+        # Also reload display manager font manager if available
+        if display_manager and hasattr(display_manager, 'font_manager'):
+            config = config_manager.load_config()
+            display_manager.font_manager.reload_config(config)
+        
+        return jsonify({'status': 'success', 'message': 'Font manager reloaded successfully'})
+        
+    except Exception as e:
+        logger.error(f"Error reloading font manager: {e}")
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
 # --- API Call Metrics (simple in-memory counters) ---
 api_counters = {
     'weather': {'used': 0},
