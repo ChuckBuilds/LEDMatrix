@@ -50,8 +50,64 @@ class BaseFlightManager:
         })
         
         # Area outline configuration - can be custom coordinates or auto-generated
-        self.area_outline = self.flight_config.get('area_outline', 'auto')  # 'auto', 'custom', or 'none'
+        self.area_outline = self.flight_config.get('area_outline', 'auto')  # 'auto', 'custom', 'tampa_bay', or 'none'
         self.custom_coastline = self.flight_config.get('custom_coastline', [])
+        
+        # Predefined coastline shapes for common areas
+        self.predefined_coastlines = {
+            'tampa_bay': [
+                (28.0, -82.8),   # North of Tampa Bay
+                (28.1, -82.7),   # Upper bay
+                (28.0, -82.6),   # East side
+                (27.9, -82.5),   # South Tampa
+                (27.8, -82.4),   # Lower bay
+                (27.7, -82.3),   # South side
+                (27.8, -82.2),   # East side
+                (27.9, -82.1),   # Upper east
+                (28.0, -82.0),   # North east
+                (28.1, -82.1),   # North
+                (28.0, -82.2),   # Back to start
+            ],
+            'miami': [
+                (25.9, -80.3),   # North Miami
+                (25.8, -80.2),   # Upper bay
+                (25.7, -80.1),   # East side
+                (25.6, -80.0),   # South Miami
+                (25.5, -79.9),   # Lower bay
+                (25.4, -79.8),   # South side
+                (25.5, -79.7),   # East side
+                (25.6, -79.6),   # Upper east
+                (25.7, -79.5),   # North east
+                (25.8, -79.6),   # North
+                (25.9, -79.7),   # Back to start
+            ],
+            'orlando': [
+                (28.6, -81.4),   # North Orlando
+                (28.5, -81.3),   # Upper area
+                (28.4, -81.2),   # East side
+                (28.3, -81.1),   # South Orlando
+                (28.2, -81.0),   # Lower area
+                (28.1, -80.9),   # South side
+                (28.2, -80.8),   # East side
+                (28.3, -80.7),   # Upper east
+                (28.4, -80.6),   # North east
+                (28.5, -80.7),   # North
+                (28.6, -80.8),   # Back to start
+            ],
+            'jacksonville': [
+                (30.4, -81.7),   # North Jacksonville
+                (30.3, -81.6),   # Upper area
+                (30.2, -81.5),   # East side
+                (30.1, -81.4),   # South Jacksonville
+                (30.0, -81.3),   # Lower area
+                (29.9, -81.2),   # South side
+                (30.0, -81.1),   # East side
+                (30.1, -81.0),   # Upper east
+                (30.2, -80.9),   # North east
+                (30.3, -81.0),   # North
+                (30.4, -81.1),   # Back to start
+            ]
+        }
         
         # Auto-generated area outline (lightweight rectangle)
         self.area_coords = self._generate_area_outline()
@@ -339,8 +395,8 @@ class BaseFlightManager:
         y = int((self.center_lat - lat) * lat_scale + self.display_height / 2)  # Flip Y axis
         
         # Debug logging
-        logger.info(f"[Flight Tracker] Converting ({lat:.6f}, {lon:.6f}) to pixel ({x}, {y})")
-        logger.info(f"[Flight Tracker] Scale: lat={lat_scale:.2f}, lon={lon_scale:.2f}, lat_degrees={lat_degrees:.4f}, lon_degrees={lon_degrees:.4f}")
+        logger.debug(f"[Flight Tracker] Converting ({lat:.6f}, {lon:.6f}) to pixel ({x}, {y})")
+        logger.debug(f"[Flight Tracker] Scale: lat={lat_scale:.2f}, lon={lon_scale:.2f}, lat_degrees={lat_degrees:.4f}, lon_degrees={lon_degrees:.4f}")
         
         # Check if within display bounds
         if 0 <= x < self.display_width and 0 <= y < self.display_height:
@@ -352,7 +408,11 @@ class BaseFlightManager:
     def _generate_area_outline(self) -> List[Tuple[float, float]]:
         """Generate lightweight area outline based on center point and radius."""
         if self.area_outline == 'custom' and self.custom_coastline:
+            logger.info("[Flight Tracker] Using custom coastline coordinates")
             return self.custom_coastline
+        elif self.area_outline in self.predefined_coastlines:
+            logger.info(f"[Flight Tracker] Using predefined coastline: {self.area_outline}")
+            return self.predefined_coastlines[self.area_outline]
         elif self.area_outline == 'none':
             return []
         else:
@@ -383,7 +443,7 @@ class BaseFlightManager:
                 pixel = self._latlon_to_pixel(lat, lon)
                 if pixel:
                     self.coastline_pixels.append(pixel)
-                    logger.info(f"[Flight Tracker] Converted ({lat}, {lon}) to pixel {pixel}")
+                    logger.debug(f"[Flight Tracker] Converted ({lat}, {lon}) to pixel {pixel}")
                 else:
                     # If coordinate is outside bounds, clamp it to display edges
                     x = int((lon - self.center_lon) * (self.display_width / (self.map_radius_miles * 2 / 69.0 / math.cos(math.radians(self.center_lat)))) + self.display_width / 2)
@@ -393,7 +453,7 @@ class BaseFlightManager:
                     x = max(0, min(self.display_width - 1, x))
                     y = max(0, min(self.display_height - 1, y))
                     self.coastline_pixels.append((x, y))
-                    logger.info(f"[Flight Tracker] Clamped ({lat}, {lon}) to pixel ({x}, {y})")
+                    logger.debug(f"[Flight Tracker] Clamped ({lat}, {lon}) to pixel ({x}, {y})")
             
             self.cached_display_size = current_size
             logger.debug(f"[Flight Tracker] Cached {len(self.coastline_pixels)} area outline pixels: {self.coastline_pixels}")
@@ -447,13 +507,13 @@ class FlightMapManager(BaseFlightManager):
         
         # Draw area outline
         outline_pixels = self._get_area_outline_pixels()
-        logger.info(f"[Flight Tracker] Drawing area outline with {len(outline_pixels)} pixels: {outline_pixels}")
+        logger.debug(f"[Flight Tracker] Drawing area outline with {len(outline_pixels)} pixels: {outline_pixels}")
         if len(outline_pixels) >= 2:
             # Draw lines connecting outline points
             for i in range(len(outline_pixels)):
                 p1 = outline_pixels[i]
                 p2 = outline_pixels[(i + 1) % len(outline_pixels)]
-                logger.info(f"[Flight Tracker] Drawing outline line from {p1} to {p2}")
+                logger.debug(f"[Flight Tracker] Drawing outline line from {p1} to {p2}")
                 draw.line([p1, p2], fill=(255, 255, 255), width=2)  # Make it bright white and visible
         else:
             # Fallback: draw a simple rectangle outline if no pixels generated
