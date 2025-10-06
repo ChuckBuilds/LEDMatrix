@@ -76,6 +76,7 @@ class BaseFlightManager:
         logger.info(f"[Flight Tracker] Initialized with center: ({self.center_lat}, {self.center_lon}), radius: {self.map_radius_miles}mi")
         logger.info(f"[Flight Tracker] Display: {self.display_width}x{self.display_height}, SkyAware: {self.skyaware_url}")
         logger.info(f"[Flight Tracker] Area outline: {self.area_outline} mode with {len(self.area_coords)} points")
+        logger.info(f"[Flight Tracker] Area coordinates: {self.area_coords}")
     
     def _load_fonts(self) -> Dict[str, Any]:
         """Load fonts for text rendering with better readability."""
@@ -376,6 +377,8 @@ class FlightMapManager(BaseFlightManager):
     def __init__(self, config: Dict[str, Any], display_manager: DisplayManager, cache_manager: CacheManager):
         super().__init__(config, display_manager, cache_manager)
         logger.info("[Flight Tracker] Initialized Map Manager")
+        logger.info(f"[Flight Tracker] Area outline mode: {self.area_outline}")
+        logger.info(f"[Flight Tracker] Generated {len(self.area_coords)} area coordinates")
     
     def display(self, force_clear: bool = False) -> None:
         """Display the flight map with aircraft and optional coastline."""
@@ -396,6 +399,12 @@ class FlightMapManager(BaseFlightManager):
                 p2 = outline_pixels[(i + 1) % len(outline_pixels)]
                 logger.debug(f"[Flight Tracker] Drawing outline line from {p1} to {p2}")
                 draw.line([p1, p2], fill=(255, 255, 255), width=2)  # Make it bright white and visible
+        else:
+            # Fallback: draw a simple rectangle outline if no pixels generated
+            logger.warning(f"[Flight Tracker] No outline pixels generated, drawing fallback rectangle")
+            margin = 5
+            draw.rectangle([margin, margin, self.display_width - margin, self.display_height - margin], 
+                          outline=(255, 255, 255), width=2)
         
         # Draw aircraft trails if enabled
         if self.show_trails:
