@@ -194,28 +194,190 @@ class FontManager:
             'nba.upcoming.odds': {'family': 'four_by_six', 'size_token': 'xs'},   # 6px - use 4x6 font
             'nba.upcoming.detail': {'family': 'four_by_six', 'size_token': 'xs'}, # 6px - use 4x6 font
             
-            # NCAA Basketball elements
-            'ncaam.live.score': {'family': 'press_start', 'size_token': 'md'},    # 10px
-            'ncaam.live.time': {'family': 'press_start', 'size_token': 'sm'},     # 8px
-            'ncaam.live.team': {'family': 'press_start', 'size_token': 'sm'},     # 8px
-            'ncaam.live.status': {'family': 'four_by_six', 'size_token': 'xs'},   # 6px - use 4x6 font
-            'ncaam.live.record': {'family': 'four_by_six', 'size_token': 'xs'},   # 6px - use 4x6 font
-            'ncaam.live.odds': {'family': 'four_by_six', 'size_token': 'xs'},     # 6px - use 4x6 font
-            'ncaam.live.detail': {'family': 'four_by_six', 'size_token': 'xs'},   # 6px - use 4x6 font
-            'ncaam.recent.score': {'family': 'press_start', 'size_token': 'lg'},  # 12px
-            'ncaam.recent.time': {'family': 'press_start', 'size_token': 'sm'},   # 8px
-            'ncaam.recent.team': {'family': 'press_start', 'size_token': 'sm'},   # 8px
-            'ncaam.recent.status': {'family': 'four_by_six', 'size_token': 'xs'}, # 6px - use 4x6 font
-            'ncaam.recent.record': {'family': 'four_by_six', 'size_token': 'xs'}, # 6px - use 4x6 font
-            'ncaam.recent.odds': {'family': 'four_by_six', 'size_token': 'xs'},   # 6px - use 4x6 font
-            'ncaam.recent.detail': {'family': 'four_by_six', 'size_token': 'xs'}, # 6px - use 4x6 font
-            'ncaam.upcoming.score': {'family': 'press_start', 'size_token': 'lg'}, # 12px
-            'ncaam.upcoming.time': {'family': 'press_start', 'size_token': 'sm'}, # 8px
-            'ncaam.upcoming.team': {'family': 'press_start', 'size_token': 'sm'}, # 8px
-            'ncaam.upcoming.status': {'family': 'four_by_six', 'size_token': 'xs'}, # 6px - use 4x6 font
-            'ncaam.upcoming.record': {'family': 'four_by_six', 'size_token': 'xs'}, # 6px - use 4x6 font
-            'ncaam.upcoming.odds': {'family': 'four_by_six', 'size_token': 'xs'}, # 6px - use 4x6 font
-            'ncaam.upcoming.detail': {'family': 'four_by_six', 'size_token': 'xs'}, # 6px - use 4x6 font
+            
+            # NCAA Football elements
+            'ncaa_fb.live.score': {'family': 'press_start', 'size_token': 'md'},    # 10px
+            'ncaa_fb.live.time': {'family': 'press_start', 'size_token': 'sm'},     # 8px
+            'ncaa_fb.live.team': {'family': 'press_start', 'size_token': 'sm'},     # 8px
+            'ncaa_fb.live.status': {'family': 'four_by_six', 'size_token': 'xs'},   # 6px - use 4x6 font
+            'ncaa_fb.live.record': {'family': 'four_by_six', 'size_token': 'xs'},   # 6px - use 4x6 font
+            'ncaa_fb.live.odds': {'family': 'four_by_six', 'size_token': 'xs'},     # 6px - use 4x6 font
+            'ncaa_fb.live.detail': {'family': 'four_by_six', 'size_token': 'xs'},   # 6px - use 4x6 font
+            'ncaa_fb.recent.score': {'family': 'press_start', 'size_token': 'lg'},  # 12px
+            'ncaa_fb.recent.time': {'family': 'press_start', 'size_token': 'sm'},   # 8px
+            'ncaa_fb.recent.team': {'family': 'press_start', 'size_token': 'sm'},   # 8px
+            'ncaa_fb.recent.status': {'family': 'four_by_six', 'size_token': 'xs'}, # 6px - use 4x6 font
+            'ncaa_fb.recent.record': {'family': 'four_by_six', 'size_token': 'xs'}, # 6px - use 4x6 font
+            'ncaa_fb.recent.odds': {'family': 'four_by_six', 'size_token': 'xs'},   # 6px - use 4x6 font
+            'ncaa_fb.recent.detail': {'family': 'four_by_six', 'size_token': 'xs'}, # 6px - use 4x6 font
+            'ncaa_fb.upcoming.score': {'family': 'press_start', 'size_token': 'lg'}, # 12px
+            'ncaa_fb.upcoming.time': {'family': 'press_start', 'size_token': 'sm'}, # 8px
+            'ncaa_fb.upcoming.team': {'family': 'press_start', 'size_token': 'sm'}, # 8px
+            'ncaa_fb.upcoming.status': {'family': 'four_by_six', 'size_token': 'xs'}, # 6px - use 4x6 font
+            'ncaa_fb.upcoming.record': {'family': 'four_by_six', 'size_token': 'xs'}, # 6px - use 4x6 font
+            'ncaa_fb.upcoming.odds': {'family': 'four_by_six', 'size_token': 'xs'}, # 6px - use 4x6 font
+            'ncaa_fb.upcoming.detail': {'family': 'four_by_six', 'size_token': 'xs'}, # 6px - use 4x6 font
+            
+            # NCAA Men's Basketball elements (corrected sport key)
+            'ncaam_basketball.live.score': {'family': 'press_start', 'size_token': 'md'},    # 10px
+            'ncaam_basketball.live.time': {'family': 'press_start', 'size_token': 'sm'},     # 8px
+            'ncaam_basketball.live.team': {'family': 'press_start', 'size_token': 'sm'},     # 8px
+            'ncaam_basketball.live.status': {'family': 'four_by_six', 'size_token': 'xs'},   # 6px - use 4x6 font
+            'ncaam_basketball.live.record': {'family': 'four_by_six', 'size_token': 'xs'},   # 6px - use 4x6 font
+            'ncaam_basketball.live.odds': {'family': 'four_by_six', 'size_token': 'xs'},     # 6px - use 4x6 font
+            'ncaam_basketball.live.detail': {'family': 'four_by_six', 'size_token': 'xs'},   # 6px - use 4x6 font
+            'ncaam_basketball.recent.score': {'family': 'press_start', 'size_token': 'lg'},  # 12px
+            'ncaam_basketball.recent.time': {'family': 'press_start', 'size_token': 'sm'},   # 8px
+            'ncaam_basketball.recent.team': {'family': 'press_start', 'size_token': 'sm'},   # 8px
+            'ncaam_basketball.recent.status': {'family': 'four_by_six', 'size_token': 'xs'}, # 6px - use 4x6 font
+            'ncaam_basketball.recent.record': {'family': 'four_by_six', 'size_token': 'xs'}, # 6px - use 4x6 font
+            'ncaam_basketball.recent.odds': {'family': 'four_by_six', 'size_token': 'xs'},   # 6px - use 4x6 font
+            'ncaam_basketball.recent.detail': {'family': 'four_by_six', 'size_token': 'xs'}, # 6px - use 4x6 font
+            'ncaam_basketball.upcoming.score': {'family': 'press_start', 'size_token': 'lg'}, # 12px
+            'ncaam_basketball.upcoming.time': {'family': 'press_start', 'size_token': 'sm'}, # 8px
+            'ncaam_basketball.upcoming.team': {'family': 'press_start', 'size_token': 'sm'}, # 8px
+            'ncaam_basketball.upcoming.status': {'family': 'four_by_six', 'size_token': 'xs'}, # 6px - use 4x6 font
+            'ncaam_basketball.upcoming.record': {'family': 'four_by_six', 'size_token': 'xs'}, # 6px - use 4x6 font
+            'ncaam_basketball.upcoming.odds': {'family': 'four_by_six', 'size_token': 'xs'}, # 6px - use 4x6 font
+            'ncaam_basketball.upcoming.detail': {'family': 'four_by_six', 'size_token': 'xs'}, # 6px - use 4x6 font
+            
+            # NCAA Women's Basketball elements
+            'ncaaw_basketball.live.score': {'family': 'press_start', 'size_token': 'md'},    # 10px
+            'ncaaw_basketball.live.time': {'family': 'press_start', 'size_token': 'sm'},     # 8px
+            'ncaaw_basketball.live.team': {'family': 'press_start', 'size_token': 'sm'},     # 8px
+            'ncaaw_basketball.live.status': {'family': 'four_by_six', 'size_token': 'xs'},   # 6px - use 4x6 font
+            'ncaaw_basketball.live.record': {'family': 'four_by_six', 'size_token': 'xs'},   # 6px - use 4x6 font
+            'ncaaw_basketball.live.odds': {'family': 'four_by_six', 'size_token': 'xs'},     # 6px - use 4x6 font
+            'ncaaw_basketball.live.detail': {'family': 'four_by_six', 'size_token': 'xs'},   # 6px - use 4x6 font
+            'ncaaw_basketball.recent.score': {'family': 'press_start', 'size_token': 'lg'},  # 12px
+            'ncaaw_basketball.recent.time': {'family': 'press_start', 'size_token': 'sm'},   # 8px
+            'ncaaw_basketball.recent.team': {'family': 'press_start', 'size_token': 'sm'},   # 8px
+            'ncaaw_basketball.recent.status': {'family': 'four_by_six', 'size_token': 'xs'}, # 6px - use 4x6 font
+            'ncaaw_basketball.recent.record': {'family': 'four_by_six', 'size_token': 'xs'}, # 6px - use 4x6 font
+            'ncaaw_basketball.recent.odds': {'family': 'four_by_six', 'size_token': 'xs'},   # 6px - use 4x6 font
+            'ncaaw_basketball.recent.detail': {'family': 'four_by_six', 'size_token': 'xs'}, # 6px - use 4x6 font
+            'ncaaw_basketball.upcoming.score': {'family': 'press_start', 'size_token': 'lg'}, # 12px
+            'ncaaw_basketball.upcoming.time': {'family': 'press_start', 'size_token': 'sm'}, # 8px
+            'ncaaw_basketball.upcoming.team': {'family': 'press_start', 'size_token': 'sm'}, # 8px
+            'ncaaw_basketball.upcoming.status': {'family': 'four_by_six', 'size_token': 'xs'}, # 6px - use 4x6 font
+            'ncaaw_basketball.upcoming.record': {'family': 'four_by_six', 'size_token': 'xs'}, # 6px - use 4x6 font
+            'ncaaw_basketball.upcoming.odds': {'family': 'four_by_six', 'size_token': 'xs'}, # 6px - use 4x6 font
+            'ncaaw_basketball.upcoming.detail': {'family': 'four_by_six', 'size_token': 'xs'}, # 6px - use 4x6 font
+            
+            # NCAA Men's Hockey elements
+            'ncaam_hockey.live.score': {'family': 'press_start', 'size_token': 'md'},    # 10px
+            'ncaam_hockey.live.time': {'family': 'press_start', 'size_token': 'sm'},     # 8px
+            'ncaam_hockey.live.team': {'family': 'press_start', 'size_token': 'sm'},     # 8px
+            'ncaam_hockey.live.status': {'family': 'four_by_six', 'size_token': 'xs'},   # 6px - use 4x6 font
+            'ncaam_hockey.live.record': {'family': 'four_by_six', 'size_token': 'xs'},   # 6px - use 4x6 font
+            'ncaam_hockey.live.odds': {'family': 'four_by_six', 'size_token': 'xs'},     # 6px - use 4x6 font
+            'ncaam_hockey.live.detail': {'family': 'four_by_six', 'size_token': 'xs'},   # 6px - use 4x6 font
+            'ncaam_hockey.recent.score': {'family': 'press_start', 'size_token': 'lg'},  # 12px
+            'ncaam_hockey.recent.time': {'family': 'press_start', 'size_token': 'sm'},   # 8px
+            'ncaam_hockey.recent.team': {'family': 'press_start', 'size_token': 'sm'},   # 8px
+            'ncaam_hockey.recent.status': {'family': 'four_by_six', 'size_token': 'xs'}, # 6px - use 4x6 font
+            'ncaam_hockey.recent.record': {'family': 'four_by_six', 'size_token': 'xs'}, # 6px - use 4x6 font
+            'ncaam_hockey.recent.odds': {'family': 'four_by_six', 'size_token': 'xs'},   # 6px - use 4x6 font
+            'ncaam_hockey.recent.detail': {'family': 'four_by_six', 'size_token': 'xs'}, # 6px - use 4x6 font
+            'ncaam_hockey.upcoming.score': {'family': 'press_start', 'size_token': 'lg'}, # 12px
+            'ncaam_hockey.upcoming.time': {'family': 'press_start', 'size_token': 'sm'}, # 8px
+            'ncaam_hockey.upcoming.team': {'family': 'press_start', 'size_token': 'sm'}, # 8px
+            'ncaam_hockey.upcoming.status': {'family': 'four_by_six', 'size_token': 'xs'}, # 6px - use 4x6 font
+            'ncaam_hockey.upcoming.record': {'family': 'four_by_six', 'size_token': 'xs'}, # 6px - use 4x6 font
+            'ncaam_hockey.upcoming.odds': {'family': 'four_by_six', 'size_token': 'xs'}, # 6px - use 4x6 font
+            'ncaam_hockey.upcoming.detail': {'family': 'four_by_six', 'size_token': 'xs'}, # 6px - use 4x6 font
+            
+            # NCAA Women's Hockey elements
+            'ncaaw_hockey.live.score': {'family': 'press_start', 'size_token': 'md'},    # 10px
+            'ncaaw_hockey.live.time': {'family': 'press_start', 'size_token': 'sm'},     # 8px
+            'ncaaw_hockey.live.team': {'family': 'press_start', 'size_token': 'sm'},     # 8px
+            'ncaaw_hockey.live.status': {'family': 'four_by_six', 'size_token': 'xs'},   # 6px - use 4x6 font
+            'ncaaw_hockey.live.record': {'family': 'four_by_six', 'size_token': 'xs'},   # 6px - use 4x6 font
+            'ncaaw_hockey.live.odds': {'family': 'four_by_six', 'size_token': 'xs'},     # 6px - use 4x6 font
+            'ncaaw_hockey.live.detail': {'family': 'four_by_six', 'size_token': 'xs'},   # 6px - use 4x6 font
+            'ncaaw_hockey.recent.score': {'family': 'press_start', 'size_token': 'lg'},  # 12px
+            'ncaaw_hockey.recent.time': {'family': 'press_start', 'size_token': 'sm'},   # 8px
+            'ncaaw_hockey.recent.team': {'family': 'press_start', 'size_token': 'sm'},   # 8px
+            'ncaaw_hockey.recent.status': {'family': 'four_by_six', 'size_token': 'xs'}, # 6px - use 4x6 font
+            'ncaaw_hockey.recent.record': {'family': 'four_by_six', 'size_token': 'xs'}, # 6px - use 4x6 font
+            'ncaaw_hockey.recent.odds': {'family': 'four_by_six', 'size_token': 'xs'},   # 6px - use 4x6 font
+            'ncaaw_hockey.recent.detail': {'family': 'four_by_six', 'size_token': 'xs'}, # 6px - use 4x6 font
+            'ncaaw_hockey.upcoming.score': {'family': 'press_start', 'size_token': 'lg'}, # 12px
+            'ncaaw_hockey.upcoming.time': {'family': 'press_start', 'size_token': 'sm'}, # 8px
+            'ncaaw_hockey.upcoming.team': {'family': 'press_start', 'size_token': 'sm'}, # 8px
+            'ncaaw_hockey.upcoming.status': {'family': 'four_by_six', 'size_token': 'xs'}, # 6px - use 4x6 font
+            'ncaaw_hockey.upcoming.record': {'family': 'four_by_six', 'size_token': 'xs'}, # 6px - use 4x6 font
+            'ncaaw_hockey.upcoming.odds': {'family': 'four_by_six', 'size_token': 'xs'}, # 6px - use 4x6 font
+            'ncaaw_hockey.upcoming.detail': {'family': 'four_by_six', 'size_token': 'xs'}, # 6px - use 4x6 font
+            
+            # NCAA Baseball elements
+            'ncaa_baseball.live.score': {'family': 'press_start', 'size_token': 'md'},    # 10px
+            'ncaa_baseball.live.time': {'family': 'press_start', 'size_token': 'sm'},     # 8px
+            'ncaa_baseball.live.team': {'family': 'press_start', 'size_token': 'sm'},     # 8px
+            'ncaa_baseball.live.status': {'family': 'four_by_six', 'size_token': 'xs'},   # 6px - use 4x6 font
+            'ncaa_baseball.live.record': {'family': 'four_by_six', 'size_token': 'xs'},   # 6px - use 4x6 font
+            'ncaa_baseball.live.odds': {'family': 'four_by_six', 'size_token': 'xs'},     # 6px - use 4x6 font
+            'ncaa_baseball.live.detail': {'family': 'four_by_six', 'size_token': 'xs'},   # 6px - use 4x6 font
+            'ncaa_baseball.recent.score': {'family': 'press_start', 'size_token': 'lg'},  # 12px
+            'ncaa_baseball.recent.time': {'family': 'press_start', 'size_token': 'sm'},   # 8px
+            'ncaa_baseball.recent.team': {'family': 'press_start', 'size_token': 'sm'},   # 8px
+            'ncaa_baseball.recent.status': {'family': 'four_by_six', 'size_token': 'xs'}, # 6px - use 4x6 font
+            'ncaa_baseball.recent.record': {'family': 'four_by_six', 'size_token': 'xs'}, # 6px - use 4x6 font
+            'ncaa_baseball.recent.odds': {'family': 'four_by_six', 'size_token': 'xs'},   # 6px - use 4x6 font
+            'ncaa_baseball.recent.detail': {'family': 'four_by_six', 'size_token': 'xs'}, # 6px - use 4x6 font
+            'ncaa_baseball.upcoming.score': {'family': 'press_start', 'size_token': 'lg'}, # 12px
+            'ncaa_baseball.upcoming.time': {'family': 'press_start', 'size_token': 'sm'}, # 8px
+            'ncaa_baseball.upcoming.team': {'family': 'press_start', 'size_token': 'sm'}, # 8px
+            'ncaa_baseball.upcoming.status': {'family': 'four_by_six', 'size_token': 'xs'}, # 6px - use 4x6 font
+            'ncaa_baseball.upcoming.record': {'family': 'four_by_six', 'size_token': 'xs'}, # 6px - use 4x6 font
+            'ncaa_baseball.upcoming.odds': {'family': 'four_by_six', 'size_token': 'xs'}, # 6px - use 4x6 font
+            'ncaa_baseball.upcoming.detail': {'family': 'four_by_six', 'size_token': 'xs'}, # 6px - use 4x6 font
+            
+            # WNBA elements
+            'wnba.live.score': {'family': 'press_start', 'size_token': 'md'},    # 10px
+            'wnba.live.time': {'family': 'press_start', 'size_token': 'sm'},     # 8px
+            'wnba.live.team': {'family': 'press_start', 'size_token': 'sm'},     # 8px
+            'wnba.live.status': {'family': 'four_by_six', 'size_token': 'xs'},   # 6px - use 4x6 font
+            'wnba.live.record': {'family': 'four_by_six', 'size_token': 'xs'},   # 6px - use 4x6 font
+            'wnba.live.odds': {'family': 'four_by_six', 'size_token': 'xs'},     # 6px - use 4x6 font
+            'wnba.live.detail': {'family': 'four_by_six', 'size_token': 'xs'},   # 6px - use 4x6 font
+            'wnba.recent.score': {'family': 'press_start', 'size_token': 'lg'},  # 12px
+            'wnba.recent.time': {'family': 'press_start', 'size_token': 'sm'},   # 8px
+            'wnba.recent.team': {'family': 'press_start', 'size_token': 'sm'},   # 8px
+            'wnba.recent.status': {'family': 'four_by_six', 'size_token': 'xs'}, # 6px - use 4x6 font
+            'wnba.recent.record': {'family': 'four_by_six', 'size_token': 'xs'}, # 6px - use 4x6 font
+            'wnba.recent.odds': {'family': 'four_by_six', 'size_token': 'xs'},   # 6px - use 4x6 font
+            'wnba.recent.detail': {'family': 'four_by_six', 'size_token': 'xs'}, # 6px - use 4x6 font
+            'wnba.upcoming.score': {'family': 'press_start', 'size_token': 'lg'}, # 12px
+            'wnba.upcoming.time': {'family': 'press_start', 'size_token': 'sm'}, # 8px
+            'wnba.upcoming.team': {'family': 'press_start', 'size_token': 'sm'}, # 8px
+            'wnba.upcoming.status': {'family': 'four_by_six', 'size_token': 'xs'}, # 6px - use 4x6 font
+            'wnba.upcoming.record': {'family': 'four_by_six', 'size_token': 'xs'}, # 6px - use 4x6 font
+            'wnba.upcoming.odds': {'family': 'four_by_six', 'size_token': 'xs'}, # 6px - use 4x6 font
+            'wnba.upcoming.detail': {'family': 'four_by_six', 'size_token': 'xs'}, # 6px - use 4x6 font
+            
+            # MLB elements
+            'mlb.live.score': {'family': 'press_start', 'size_token': 'md'},    # 10px
+            'mlb.live.time': {'family': 'press_start', 'size_token': 'sm'},     # 8px
+            'mlb.live.team': {'family': 'press_start', 'size_token': 'sm'},     # 8px
+            'mlb.live.status': {'family': 'four_by_six', 'size_token': 'xs'},   # 6px - use 4x6 font
+            'mlb.live.record': {'family': 'four_by_six', 'size_token': 'xs'},   # 6px - use 4x6 font
+            'mlb.live.odds': {'family': 'four_by_six', 'size_token': 'xs'},     # 6px - use 4x6 font
+            'mlb.live.detail': {'family': 'four_by_six', 'size_token': 'xs'},   # 6px - use 4x6 font
+            'mlb.recent.score': {'family': 'press_start', 'size_token': 'lg'},  # 12px
+            'mlb.recent.time': {'family': 'press_start', 'size_token': 'sm'},   # 8px
+            'mlb.recent.team': {'family': 'press_start', 'size_token': 'sm'},   # 8px
+            'mlb.recent.status': {'family': 'four_by_six', 'size_token': 'xs'}, # 6px - use 4x6 font
+            'mlb.recent.record': {'family': 'four_by_six', 'size_token': 'xs'}, # 6px - use 4x6 font
+            'mlb.recent.odds': {'family': 'four_by_six', 'size_token': 'xs'},   # 6px - use 4x6 font
+            'mlb.recent.detail': {'family': 'four_by_six', 'size_token': 'xs'}, # 6px - use 4x6 font
+            'mlb.upcoming.score': {'family': 'press_start', 'size_token': 'lg'}, # 12px
+            'mlb.upcoming.time': {'family': 'press_start', 'size_token': 'sm'}, # 8px
+            'mlb.upcoming.team': {'family': 'press_start', 'size_token': 'sm'}, # 8px
+            'mlb.upcoming.status': {'family': 'four_by_six', 'size_token': 'xs'}, # 6px - use 4x6 font
+            'mlb.upcoming.record': {'family': 'four_by_six', 'size_token': 'xs'}, # 6px - use 4x6 font
+            'mlb.upcoming.odds': {'family': 'four_by_six', 'size_token': 'xs'}, # 6px - use 4x6 font
+            'mlb.upcoming.detail': {'family': 'four_by_six', 'size_token': 'xs'}, # 6px - use 4x6 font
             
             # Soccer elements (special case - smaller team fonts)
             'soccer.live.score': {'family': 'press_start', 'size_token': 'md'},   # 10px

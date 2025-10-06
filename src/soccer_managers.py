@@ -358,19 +358,40 @@ class BaseSoccerManager:
         return self._fetch_soccer_api_data(use_cache=True)
 
     def _load_fonts(self):
-        """Load fonts using the unified font system."""
+        """Load fonts using the unified font system with complete font set."""
         fonts = {}
         try:
             if hasattr(self.display_manager, 'font_manager'):
-                # Use unified font system with element keys
-                element_key_mapping = {
-                    'score': f"{self.sport_key}.live.score",
-                    'time': f"{self.sport_key}.live.time", 
-                    'team': f"{self.sport_key}.live.team",
-                    'status': f"{self.sport_key}.live.status"
-                }
+                # Determine which element keys to use based on manager type
+                if hasattr(self, '__class__') and 'Upcoming' in self.__class__.__name__:
+                    # Upcoming managers use upcoming element keys
+                    element_key_mapping = {
+                        'score': f"{self.sport_key}.upcoming.score",
+                        'time': f"{self.sport_key}.upcoming.time", 
+                        'team': f"{self.sport_key}.upcoming.team",
+                        'status': f"{self.sport_key}.upcoming.status",
+                        'detail': f"{self.sport_key}.upcoming.detail",
+                        'rank': f"{self.sport_key}.upcoming.rank",
+                        'record': f"{self.sport_key}.upcoming.record",
+                        'odds': f"{self.sport_key}.upcoming.odds"
+                    }
+                else:
+                    # Live managers use live element keys
+                    element_key_mapping = {
+                        'score': f"{self.sport_key}.live.score",
+                        'time': f"{self.sport_key}.live.time", 
+                        'team': f"{self.sport_key}.live.team",
+                        'status': f"{self.sport_key}.live.status",
+                        'detail': f"{self.sport_key}.live.detail",
+                        'rank': f"{self.sport_key}.live.rank",
+                        'record': f"{self.sport_key}.live.record",
+                        'odds': f"{self.sport_key}.live.odds"
+                    }
+                
+                # Load fonts using element keys
                 for font_type, element_key in element_key_mapping.items():
                     fonts[font_type] = self.display_manager.font_manager.resolve(element_key=element_key)
+                
                 logging.info(f"Successfully loaded fonts via FontManager for {self.sport_key}")
             else:
                 # Fallback to direct font loading
@@ -378,6 +399,10 @@ class BaseSoccerManager:
                 fonts['time'] = ImageFont.truetype("assets/fonts/PressStart2P-Regular.ttf", 8)
                 fonts['team'] = ImageFont.truetype("assets/fonts/4x6-font.ttf", 6)
                 fonts['status'] = ImageFont.truetype("assets/fonts/4x6-font.ttf", 6)
+                fonts['detail'] = ImageFont.truetype("assets/fonts/4x6-font.ttf", 6) # Added detail font
+                fonts['rank'] = ImageFont.truetype("assets/fonts/PressStart2P-Regular.ttf", 10)
+                fonts['record'] = ImageFont.truetype("assets/fonts/4x6-font.ttf", 6) # Added record font
+                fonts['odds'] = ImageFont.truetype("assets/fonts/4x6-font.ttf", 6) # Added odds font
                 logging.info("[Soccer] Fallback: Successfully loaded custom fonts")
         except Exception as e:
             logging.warning(f"[Soccer] Fonts not found, using default PIL font: {e}")
@@ -385,6 +410,10 @@ class BaseSoccerManager:
             fonts['time'] = ImageFont.load_default()
             fonts['team'] = ImageFont.load_default()
             fonts['status'] = ImageFont.load_default()
+            fonts['detail'] = ImageFont.load_default()
+            fonts['rank'] = ImageFont.load_default()
+            fonts['record'] = ImageFont.load_default()
+            fonts['odds'] = ImageFont.load_default()
         return fonts
 
     def _get_text_width(self, text, font):
