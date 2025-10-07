@@ -523,27 +523,19 @@ class FlightMapManager(BaseFlightManager):
         img = Image.new('RGB', (self.display_width, self.display_height), (0, 0, 0))
         draw = ImageDraw.Draw(img)
         
-        # Draw area outline
-        outline_pixels = self._get_area_outline_pixels()
-        logger.debug(f"[Flight Tracker] Drawing area outline with {len(outline_pixels)} pixels: {outline_pixels}")
-        if len(outline_pixels) >= 2:
-            # Draw lines connecting outline points
-            for i in range(len(outline_pixels)):
-                p1 = outline_pixels[i]
-                p2 = outline_pixels[(i + 1) % len(outline_pixels)]
-                logger.debug(f"[Flight Tracker] Drawing outline line from {p1} to {p2}")
-                draw.line([p1, p2], fill=(255, 255, 255), width=2)  # Make it bright white and visible
-        else:
-            # Fallback: draw a simple rectangle outline if no pixels generated
-            logger.warning(f"[Flight Tracker] No outline pixels generated, drawing fallback rectangle")
-            margin = 5
-            draw.rectangle([margin, margin, self.display_width - margin, self.display_height - margin], 
-                          outline=(255, 255, 255), width=2)
+        # Area outline drawing removed for cleaner display
         
-        # Always draw a test rectangle in the center to verify drawing works
-        test_margin = 10
-        draw.rectangle([test_margin, test_margin, self.display_width - test_margin, self.display_height - test_margin], 
-                      outline=(255, 0, 0), width=1)  # Red test rectangle
+        # Draw center position marker (white dot at our lat/lon)
+        center_pixel = self._latlon_to_pixel(self.center_lat, self.center_lon)
+        if center_pixel:
+            x, y = center_pixel
+            # Draw a small white dot at our center position
+            draw.point((x, y), fill=(255, 255, 255))
+            # Draw a small cross for better visibility
+            draw.point((x-1, y), fill=(255, 255, 255))
+            draw.point((x+1, y), fill=(255, 255, 255))
+            draw.point((x, y-1), fill=(255, 255, 255))
+            draw.point((x, y+1), fill=(255, 255, 255))
         
         # Draw aircraft trails if enabled
         if self.show_trails:
@@ -822,6 +814,29 @@ class FlightStatsManager(BaseFlightManager):
             if y_offset + self._calculate_line_spacing(self.fonts['data_small']) <= self.display_height:
                 self._draw_text_smart(draw, f"ALT:{int(aircraft['altitude'])} SPD:{int(aircraft['speed'])}", (2, y_offset), 
                                     self.fonts['data_small'], fill=(150, 150, 150), use_outline=False)
+            
+            # Right side info - stacked vertically
+            right_x = self.display_width - 60  # Start 60 pixels from right edge
+            right_y = 1
+            
+            # Aircraft type
+            if right_y + self._calculate_line_spacing(self.fonts['data_small']) <= self.display_height:
+                self._draw_text_smart(draw, f"TYPE: {aircraft['aircraft_type']}", (right_x, right_y), 
+                                    self.fonts['data_small'], fill=(200, 200, 200), use_outline=False)
+                right_y += self._calculate_line_spacing(self.fonts['data_small'])
+            
+            # Origin (placeholder - could be enhanced with flight plan data)
+            if right_y + self._calculate_line_spacing(self.fonts['data_small']) <= self.display_height:
+                origin = aircraft.get('from', 'Unknown')
+                self._draw_text_smart(draw, f"FROM: {origin}", (right_x, right_y), 
+                                    self.fonts['data_small'], fill=(150, 150, 150), use_outline=False)
+                right_y += self._calculate_line_spacing(self.fonts['data_small'])
+            
+            # Destination (placeholder - could be enhanced with flight plan data)
+            if right_y + self._calculate_line_spacing(self.fonts['data_small']) <= self.display_height:
+                destination = aircraft.get('to', 'Unknown')
+                self._draw_text_smart(draw, f"TO: {destination}", (right_x, right_y), 
+                                    self.fonts['data_small'], fill=(150, 150, 150), use_outline=False)
         else:
             # Large display layout with dynamic spacing
             y_offset = 4
@@ -866,6 +881,30 @@ class FlightStatsManager(BaseFlightManager):
             
             if aircraft['heading'] and y_offset + self._calculate_line_spacing(self.fonts['data_medium']) <= self.display_height:
                 self._draw_text_smart(draw, f"Heading: {int(aircraft['heading'])}°", (4, y_offset), 
+                                    self.fonts['data_medium'], fill=(150, 150, 150), use_outline=False)
+                y_offset += self._calculate_line_spacing(self.fonts['data_medium'])
+            
+            # Right side info - stacked vertically for large display
+            right_x = self.display_width - 80  # Start 80 pixels from right edge
+            right_y = 4
+            
+            # Aircraft type
+            if right_y + self._calculate_line_spacing(self.fonts['data_medium']) <= self.display_height:
+                self._draw_text_smart(draw, f"Type: {aircraft['aircraft_type']}", (right_x, right_y), 
+                                    self.fonts['data_medium'], fill=(200, 200, 200), use_outline=False)
+                right_y += self._calculate_line_spacing(self.fonts['data_medium'])
+            
+            # Origin (placeholder - could be enhanced with flight plan data)
+            if right_y + self._calculate_line_spacing(self.fonts['data_medium']) <= self.display_height:
+                origin = aircraft.get('from', 'Unknown')
+                self._draw_text_smart(draw, f"From: {origin}", (right_x, right_y), 
+                                    self.fonts['data_medium'], fill=(150, 150, 150), use_outline=False)
+                right_y += self._calculate_line_spacing(self.fonts['data_medium'])
+            
+            # Destination (placeholder - could be enhanced with flight plan data)
+            if right_y + self._calculate_line_spacing(self.fonts['data_medium']) <= self.display_height:
+                destination = aircraft.get('to', 'Unknown')
+                self._draw_text_smart(draw, f"To: {destination}", (right_x, right_y), 
                                     self.fonts['data_medium'], fill=(150, 150, 150), use_outline=False)
         
         # Display the image

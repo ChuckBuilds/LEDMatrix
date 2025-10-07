@@ -107,8 +107,8 @@
             "30000": [0, 0, 139],
             "40000": [128, 0, 128]
         },
-        "_area_outline_options": "auto = auto-generate rectangle around center, tampa_bay = Tampa Bay coastline, miami = Miami area coastline, orlando = Orlando area coastline, jacksonville = Jacksonville area coastline, custom = use custom_coastline coordinates, none = no outline",
-        "area_outline": "tampa_bay",
+        "_area_outline_options": "Removed - coastline drawing disabled for cleaner display",
+        "area_outline": "none",
         "custom_coastline": []
     },
     "clock": {
