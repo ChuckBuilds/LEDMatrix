@@ -62,9 +62,26 @@ class BaseFlightManager:
         self.fade_intensity = self.map_bg_config.get('fade_intensity', 0.3)
         self.update_on_location_change = self.map_bg_config.get('update_on_location_change', True)
         
-        # Map tile cache directory
-        self.tile_cache_dir = Path('cache/map_tiles')
-        self.tile_cache_dir.mkdir(parents=True, exist_ok=True)
+        # Map tile cache directory - use the same cache system as the rest of the project
+        cache_dir = cache_manager.cache_dir
+        if cache_dir:
+            self.tile_cache_dir = Path(cache_dir) / 'map_tiles'
+            try:
+                self.tile_cache_dir.mkdir(parents=True, exist_ok=True)
+                logger.info(f"[Flight Tracker] Using map tile cache directory: {self.tile_cache_dir}")
+            except PermissionError as e:
+                logger.warning(f"[Flight Tracker] Could not create map tile cache directory {self.tile_cache_dir}: {e}")
+                # Fallback to a temporary directory
+                import tempfile
+                self.tile_cache_dir = Path(tempfile.gettempdir()) / 'ledmatrix_map_tiles'
+                self.tile_cache_dir.mkdir(parents=True, exist_ok=True)
+                logger.info(f"[Flight Tracker] Using temporary map tile cache: {self.tile_cache_dir}")
+        else:
+            # No cache directory available, use temporary
+            import tempfile
+            self.tile_cache_dir = Path(tempfile.gettempdir()) / 'ledmatrix_map_tiles'
+            self.tile_cache_dir.mkdir(parents=True, exist_ok=True)
+            logger.info(f"[Flight Tracker] Using temporary map tile cache: {self.tile_cache_dir}")
         
         # Cached map background
         self.cached_map_bg = None
@@ -606,9 +623,13 @@ class BaseFlightManager:
             response.raise_for_status()
             
             # Save to cache
-            cache_path.parent.mkdir(parents=True, exist_ok=True)
-            with open(cache_path, 'wb') as f:
-                f.write(response.content)
+            try:
+                cache_path.parent.mkdir(parents=True, exist_ok=True)
+                with open(cache_path, 'wb') as f:
+                    f.write(response.content)
+            except PermissionError as e:
+                logger.warning(f"[Flight Tracker] Could not save tile to cache {cache_path}: {e}")
+                # Continue without caching
             
             return Image.open(cache_path)
             
