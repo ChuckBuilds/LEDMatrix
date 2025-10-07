@@ -59,9 +59,9 @@ class BaseFlightManager:
         self.map_bg_enabled = self.map_bg_config.get('enabled', True)
         self.tile_provider = self.map_bg_config.get('tile_provider', 'osm')
         self.tile_size = self.map_bg_config.get('tile_size', 256)
-        self.cache_ttl_hours = self.map_bg_config.get('cache_ttl_hours', 24)
+        # Cache tiles for 1 year by default - map tiles don't change frequently
+        self.cache_ttl_hours = self.map_bg_config.get('cache_ttl_hours', 8760)
         self.fade_intensity = self.map_bg_config.get('fade_intensity', 0.3)
-        self.update_on_location_change = self.map_bg_config.get('update_on_location_change', True)
         self.disable_on_cache_error = self.map_bg_config.get('disable_on_cache_error', False)
         
         # Custom tile server URL (for self-hosted OSM servers)
@@ -921,35 +921,40 @@ class BaseFlightManager:
             logger.warning(f"[Flight Tracker] Disabling map background due to {self.cache_error_count} cache errors")
             return None
         
-        # Calculate appropriate zoom level based on map radius
+        # Calculate appropriate zoom level based on map radius and zoom factor
+        # Apply zoom_factor to get the effective radius shown on the map
+        effective_radius = self.map_radius_miles / self.zoom_factor
+        
         # Higher zoom for smaller radius to show more detail
-        if self.map_radius_miles <= 2:
+        if effective_radius <= 2:
             zoom = 13  # Very detailed for small areas
-        elif self.map_radius_miles <= 5:
+        elif effective_radius <= 5:
             zoom = 12  # Detailed for local areas
-        elif self.map_radius_miles <= 10:
+        elif effective_radius <= 10:
             zoom = 11  # Good for city/metro areas
-        elif self.map_radius_miles <= 25:
+        elif effective_radius <= 25:
             zoom = 10  # Regional view
-        elif self.map_radius_miles <= 50:
+        elif effective_radius <= 50:
             zoom = 9   # State-level view
         else:
             zoom = 8   # Multi-state view
         
-        # Check if we need to update the background
+        logger.debug(f"[Flight Tracker] Map zoom calculation: radius={self.map_radius_miles}mi, zoom_factor={self.zoom_factor}, effective_radius={effective_radius:.2f}mi, zoom={zoom}")
+        
+        # Check if we can reuse the cached composite map
         current_center = (round(center_lat, 4), round(center_lon, 4))
         if (self.cached_map_bg is not None and 
             self.last_map_center == current_center and 
-            self.last_map_zoom == zoom and
-            not self.update_on_location_change):
+            self.last_map_zoom == zoom):
+            # Location and zoom haven't changed, reuse cached composite
             return self.cached_map_bg
         
         # Calculate tile coordinates for center
         center_x, center_y = self._latlon_to_tile_coords(center_lat, center_lon, zoom)
         
         # Calculate how many tiles we need to cover the display
-        # Each tile covers a certain lat/lon area
-        lat_degrees = (self.map_radius_miles * 2) / 69.0
+        # Each tile covers a certain lat/lon area, adjusted by zoom_factor
+        lat_degrees = (effective_radius * 2) / 69.0
         lon_degrees = lat_degrees / math.cos(math.radians(center_lat))
         
         # Calculate tile coverage - optimize for reasonable number of tiles
@@ -1063,7 +1068,7 @@ class BaseFlightManager:
         self.last_map_zoom = zoom
         
         logger.info(f"[Flight Tracker] Generated map background with {tiles_fetched} tiles at zoom {zoom}")
-        logger.info(f"[Flight Tracker] Center: ({center_lat:.4f}, {center_lon:.4f}), Radius: {self.map_radius_miles}mi")
+        logger.info(f"[Flight Tracker] Center: ({center_lat:.4f}, {center_lon:.4f}), Radius: {self.map_radius_miles}mi, Effective: {effective_radius:.2f}mi (zoom_factor: {self.zoom_factor})")
         logger.info(f"[Flight Tracker] Tile coverage: {tiles_x}x{tiles_y}, Crop: ({crop_left},{crop_top})-({crop_right},{crop_bottom})")
         
         # Debug: Save composite image to see what's happening
