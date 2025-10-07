@@ -67,6 +67,12 @@ class BaseFlightManager:
         # Custom tile server URL (for self-hosted OSM servers)
         self.custom_tile_server = self.map_bg_config.get('custom_tile_server', None)
         
+        # Log tile server configuration
+        if self.custom_tile_server:
+            logger.info(f"[Flight Tracker] Configured to use custom tile server: {self.custom_tile_server}")
+        else:
+            logger.info(f"[Flight Tracker] Configured to use tile provider: {self.tile_provider}")
+        
         # Track cache errors
         self.cache_error_count = 0
         self.max_cache_errors = 5  # Disable after 5 consecutive cache errors
@@ -817,7 +823,7 @@ class BaseFlightManager:
         
         for i, url in enumerate(urls):
             try:
-                logger.debug(f"[Flight Tracker] Trying tile URL {i+1}/{len(urls)}: {url}")
+                logger.info(f"[Flight Tracker] Fetching tile {x},{y} at zoom {zoom} from: {url}")
                 
                 response = requests.get(url, timeout=10)
                 response.raise_for_status()
@@ -959,6 +965,12 @@ class BaseFlightManager:
         tiles_y = min(max_tiles, max(2, base_tiles_y + 2))  # Add 2 for buffer
         
         logger.info(f"[Flight Tracker] Tile calculation: base=({base_tiles_x}x{base_tiles_y}), final=({tiles_x}x{tiles_y}), total={tiles_x * tiles_y}")
+        
+        # Log tile server being used
+        if self.custom_tile_server:
+            logger.info(f"[Flight Tracker] Using custom tile server: {self.custom_tile_server}")
+        else:
+            logger.info(f"[Flight Tracker] Using tile provider: {self.tile_provider}")
         
         # Calculate tile bounds
         start_x = center_x - tiles_x // 2
