@@ -459,13 +459,17 @@ class BaseFlightManager:
         # Always provide aircraft type categorization as fallback
         aircraft_category = self._categorize_aircraft(callsign)
         
-        if not self.flight_plan_enabled or not self.flightaware_api_key:
-            logger.debug(f"[Flight Tracker] Flight plan disabled or no API key for {callsign}")
+        if not self.flight_plan_enabled:
+            logger.info(f"[Flight Tracker] Flight plan disabled for {callsign} (flight_plan_enabled=False)")
+            return {'origin': 'Unknown', 'destination': 'Unknown', 'aircraft_type': aircraft_category}
+        
+        if not self.flightaware_api_key:
+            logger.info(f"[Flight Tracker] No API key configured for {callsign}")
             return {'origin': 'Unknown', 'destination': 'Unknown', 'aircraft_type': aircraft_category}
         
         # Check if callsign is worth fetching (cost control)
         if not self._is_callsign_worth_fetching(callsign):
-            logger.debug(f"[Flight Tracker] Skipping flight plan fetch for {callsign} (not worth fetching)")
+            logger.info(f"[Flight Tracker] Skipping flight plan fetch for {callsign} (not worth fetching - category: {aircraft_category})")
             return {'origin': 'Unknown', 'destination': 'Unknown', 'aircraft_type': aircraft_category}
         
         # Check rate limiting
@@ -525,10 +529,16 @@ class BaseFlightManager:
     def _process_aircraft_data(self, data: Dict) -> None:
         """Process and update aircraft data."""
         if not data or 'aircraft' not in data:
+            logger.warning("[Flight Tracker] No aircraft data in response")
             return
+        
+        total_aircraft = len(data['aircraft'])
+        logger.info(f"[Flight Tracker] Processing {total_aircraft} aircraft from SkyAware")
         
         current_time = time.time()
         active_icao = set()
+        aircraft_with_position = 0
+        aircraft_in_range = 0
         
         for aircraft in data['aircraft']:
             # Extract required fields
@@ -542,12 +552,16 @@ class BaseFlightManager:
             if lat is None or lon is None:
                 continue
             
+            aircraft_with_position += 1
+            
             # Calculate distance from center
             distance_miles = self._calculate_distance(lat, lon, self.center_lat, self.center_lon)
             
             # Filter by radius
             if distance_miles > self.map_radius_miles:
                 continue
+            
+            aircraft_in_range += 1
             
             active_icao.add(icao)
             
@@ -601,7 +615,7 @@ class BaseFlightManager:
             if icao in self.aircraft_trails:
                 del self.aircraft_trails[icao]
         
-        logger.debug(f"[Flight Tracker] Processed {len(active_icao)} aircraft, removed {len(stale_icao)} stale")
+        logger.info(f"[Flight Tracker] Summary - Total: {total_aircraft}, With position: {aircraft_with_position}, In range ({self.map_radius_miles}mi): {aircraft_in_range}, Tracking: {len(self.aircraft_data)}, Removed stale: {len(stale_icao)}")
     
     def _altitude_to_color(self, altitude: float) -> Tuple[int, int, int]:
         """Convert altitude to color using gradient interpolation."""
@@ -1046,17 +1060,23 @@ class BaseFlightManager:
         # Check if it's time to fetch new data
         if current_time - self.last_fetch >= self.update_interval:
             self.last_fetch = current_time
+            logger.info(f"[Flight Tracker] Fetching aircraft data from {self.skyaware_url}")
             
             data = self._fetch_aircraft_data()
             if data:
+                logger.info(f"[Flight Tracker] Received data, processing aircraft...")
                 self._process_aircraft_data(data)
+                logger.info(f"[Flight Tracker] Currently tracking {len(self.aircraft_data)} aircraft")
                 # Queue interesting callsigns for background fetching
                 self._queue_interesting_callsigns()
+            else:
+                logger.warning("[Flight Tracker] No data received from SkyAware")
             
             self.last_update = current_time
         
         # Background service for flight plan data
         if self.background_service_enabled and current_time - self.last_background_fetch >= self.background_fetch_interval:
+            logger.info("[Flight Tracker] Running background service for flight plans")
             self._background_fetch_flight_plans()
             self.last_background_fetch = current_time
     
