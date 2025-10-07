@@ -36,7 +36,14 @@ class BaseFlightManager:
         flight_secrets = secrets_config.get('flight_tracker', {})
         self.flightaware_api_key = flight_secrets.get('flightaware_api_key', '')
         
-        self.flight_plan_cache = {}  # Cache flight plan data
+        # Rate limiting and cost control for FlightAware API
+        self.api_call_timestamps = []  # Track API call timestamps for rate limiting
+        self.max_api_calls_per_hour = self.flight_config.get('max_api_calls_per_hour', 50)  # Conservative default
+        self.cache_ttl_seconds = self.flight_config.get('flight_plan_cache_ttl_hours', 4) * 3600  # Convert hours to seconds
+        self.min_callsign_length = self.flight_config.get('min_callsign_length', 3)  # Filter out short callsigns
+        self.airline_callsign_prefixes = self.flight_config.get('airline_callsign_prefixes', [
+            'AAL', 'UAL', 'DAL', 'SWA', 'JBU', 'ASQ', 'ENY', 'FFT', 'NKS', 'F9', 'G4', 'B6', 'WN', 'AA', 'UA', 'DL'
+        ])  # Only fetch for known airline callsigns
         
         # Location configuration
         self.center_lat = self.flight_config.get('center_latitude', 27.9506)
@@ -195,6 +202,80 @@ class BaseFlightManager:
         font_height = self._get_font_height(font)
         return int(font_height * padding_factor)
     
+    def _is_callsign_worth_fetching(self, callsign: str) -> bool:
+        """Determine if a callsign is worth fetching flight plan data for."""
+        if not callsign or len(callsign) < self.min_callsign_length:
+            return False
+        
+        # Check if it's a known airline callsign
+        callsign_upper = callsign.upper()
+        for prefix in self.airline_callsign_prefixes:
+            if callsign_upper.startswith(prefix):
+                return True
+        
+        # Include international aircraft (they often have interesting flight plans)
+        if callsign_upper.startswith(('G-', 'F-', 'D-', 'I-', 'HB-', 'OE-', 'PH-', 'SE-', 'LN-', 'OY-', 'VH-', 'C-G', 'C-F', 'JA-', 'B-', 'HL-', '9V-', 'A6-', 'VT-', 'PK-', 'HS-', 'RP-', 'ZS-', '4X-', 'SU-', 'RA-', 'UR-', 'EW-', 'S7-', 'U6-', 'FV-', 'DP-', 'P4-', 'P5-', 'P6-', 'P7-', 'P8-', 'P9-', 'P0-', 'P1-', 'P2-', 'P3-')):
+            return True
+        
+        # Skip military/private aircraft for cost reasons
+        if callsign_upper.startswith(('N', 'C-', 'CF-')):  # Military or private aircraft
+            return False
+        
+        return False  # Default to not fetching unknown patterns
+    
+    def _categorize_aircraft(self, callsign: str) -> str:
+        """Categorize aircraft based on callsign patterns."""
+        if not callsign:
+            return "Unknown"
+        
+        callsign_upper = callsign.upper()
+        
+        # Check for military patterns
+        if callsign_upper.startswith(('C-', 'CF-', 'AF-', 'NATO-', 'USAF-', 'USN-', 'USMC-', 'USCG-')):
+            return "Military"
+        
+        # Check for private aircraft (N-prefix with numbers/letters)
+        if callsign_upper.startswith('N') and len(callsign) >= 4:
+            return "Private"
+        
+        # Check for known airline callsigns
+        for prefix in self.airline_callsign_prefixes:
+            if callsign_upper.startswith(prefix):
+                return "Airline"
+        
+        # Check for other patterns
+        if callsign_upper.startswith(('G-', 'F-', 'D-', 'I-', 'HB-', 'OE-', 'PH-', 'SE-', 'LN-', 'OY-', 'OY-', 'VH-', 'C-G', 'C-F', 'JA-', 'B-', 'HL-', '9V-', 'A6-', 'VT-', 'PK-', 'HS-', 'RP-', 'ZS-', '4X-', 'SU-', 'RA-', 'UR-', 'EW-', 'S7-', 'U6-', 'FV-', 'DP-', 'P4-', 'P5-', 'P6-', 'P7-', 'P8-', 'P9-', 'P0-', 'P1-', 'P2-', 'P3-')):
+            return "International"
+        
+        # Default categorization
+        if len(callsign) <= 3:
+            return "Unknown"
+        elif callsign_upper.startswith('N'):
+            return "Private"
+        else:
+            return "Other"
+    
+    def _check_rate_limit(self) -> bool:
+        """Check if we're within API rate limits."""
+        current_time = time.time()
+        hour_ago = current_time - 3600  # 1 hour ago
+        
+        # Remove timestamps older than 1 hour
+        self.api_call_timestamps = [ts for ts in self.api_call_timestamps if ts > hour_ago]
+        
+        # Check if we're under the limit
+        if len(self.api_call_timestamps) >= self.max_api_calls_per_hour:
+            logger.warning(f"[Flight Tracker] Rate limit reached: {len(self.api_call_timestamps)}/{self.max_api_calls_per_hour} calls in the last hour")
+            return False
+        
+        return True
+    
+    def _record_api_call(self):
+        """Record an API call for rate limiting."""
+        self.api_call_timestamps.append(time.time())
+        logger.debug(f"[Flight Tracker] API call recorded. Total calls in last hour: {len(self.api_call_timestamps)}")
+    
+    
     def _fetch_aircraft_data(self) -> Optional[Dict]:
         """Fetch aircraft data from SkyAware API."""
         try:
@@ -222,12 +303,26 @@ class BaseFlightManager:
         """Get flight plan data for a callsign (origin/destination)."""
         if not self.flight_plan_enabled or not self.flightaware_api_key:
             logger.debug(f"[Flight Tracker] Flight plan disabled or no API key for {callsign}")
-            return {'origin': 'Unknown', 'destination': 'Unknown'}
+            return {'origin': 'Unknown', 'destination': 'Unknown', 'aircraft_type': 'Unknown'}
         
-        # Check cache first
-        if callsign in self.flight_plan_cache:
+        # Check if callsign is worth fetching (cost control)
+        if not self._is_callsign_worth_fetching(callsign):
+            logger.debug(f"[Flight Tracker] Skipping flight plan fetch for {callsign} (not worth fetching)")
+            category = self._categorize_aircraft(callsign)
+            return {'origin': 'Unknown', 'destination': 'Unknown', 'aircraft_type': category}
+        
+        # Check rate limiting
+        if not self._check_rate_limit():
+            logger.warning(f"[Flight Tracker] Rate limit reached, skipping API call for {callsign}")
+            return {'origin': 'Unknown', 'destination': 'Unknown', 'aircraft_type': 'Unknown'}
+        
+        # Use cache manager for flight plan data
+        cache_key = f"flight_plan_{callsign}"
+        cached_data = self.cache_manager.get(cache_key, max_age=self.cache_ttl_seconds)
+        
+        if cached_data:
             logger.debug(f"[Flight Tracker] Using cached flight plan for {callsign}")
-            return self.flight_plan_cache[callsign]
+            return cached_data
         
         logger.info(f"[Flight Tracker] Fetching flight plan data for {callsign}")
         
@@ -239,20 +334,36 @@ class BaseFlightManager:
             response = requests.get(url, headers=headers, timeout=5)
             if response.status_code == 200:
                 data = response.json()
-                flight_plan = {
-                    'origin': data.get('origin', {}).get('code', 'Unknown'),
-                    'destination': data.get('destination', {}).get('code', 'Unknown')
-                }
-                # Cache for 1 hour
-                self.flight_plan_cache[callsign] = flight_plan
+                
+                # Handle the API response format - it returns an array of flights
+                if 'flights' in data and data['flights']:
+                    # Get the first (most recent) flight
+                    flight = data['flights'][0]
+                    flight_plan = {
+                        'origin': flight.get('origin', {}).get('code', 'Unknown'),
+                        'destination': flight.get('destination', {}).get('code', 'Unknown'),
+                        'aircraft_type': flight.get('aircraft_type', 'Unknown')
+                    }
+                else:
+                    # Fallback for single flight response format
+                    flight_plan = {
+                        'origin': data.get('origin', {}).get('code', 'Unknown'),
+                        'destination': data.get('destination', {}).get('code', 'Unknown'),
+                        'aircraft_type': data.get('aircraft_type', 'Unknown')
+                    }
+                
+                # Cache using the cache manager
+                self.cache_manager.set(cache_key, flight_plan)
+                self._record_api_call()
+                logger.info(f"[Flight Tracker] Successfully fetched and cached flight plan for {callsign}: {flight_plan['origin']} -> {flight_plan['destination']}")
                 return flight_plan
             else:
                 logger.warning(f"[Flight Tracker] API returned status {response.status_code} for {callsign}: {response.text[:100]}")
-                return {'origin': 'Unknown', 'destination': 'Unknown'}
+                return {'origin': 'Unknown', 'destination': 'Unknown', 'aircraft_type': 'Unknown'}
                 
         except Exception as e:
             logger.warning(f"[Flight Tracker] Failed to fetch flight plan for {callsign}: {e}")
-            return {'origin': 'Unknown', 'destination': 'Unknown'}
+            return {'origin': 'Unknown', 'destination': 'Unknown', 'aircraft_type': 'Unknown'}
     
     def _process_aircraft_data(self, data: Dict) -> None:
         """Process and update aircraft data."""
@@ -769,16 +880,30 @@ class FlightStatsManager(BaseFlightManager):
             if right_y + self._calculate_line_spacing(self.fonts['data_small']) <= self.display_height:
                 flight_plan = self._get_flight_plan_data(aircraft['callsign'])
                 origin = flight_plan.get('origin', 'Unknown')
-                self._draw_text_smart(draw, f"FROM: {origin}", (right_x, right_y), 
-                                    self.fonts['data_small'], fill=(150, 150, 150), use_outline=False)
+                aircraft_type = flight_plan.get('aircraft_type', 'Unknown')
+                
+                # Show appropriate information based on aircraft type
+                if origin == 'Unknown' and aircraft_type in ['Military', 'Private', 'Other']:
+                    self._draw_text_smart(draw, f"TYPE: {aircraft_type}", (right_x, right_y), 
+                                        self.fonts['data_small'], fill=(255, 200, 0), use_outline=False)
+                else:
+                    self._draw_text_smart(draw, f"FROM: {origin}", (right_x, right_y), 
+                                        self.fonts['data_small'], fill=(150, 150, 150), use_outline=False)
                 right_y += self._calculate_line_spacing(self.fonts['data_small'])
             
             # Destination (from flight plan data)
             if right_y + self._calculate_line_spacing(self.fonts['data_small']) <= self.display_height:
                 flight_plan = self._get_flight_plan_data(aircraft['callsign'])
                 destination = flight_plan.get('destination', 'Unknown')
-                self._draw_text_smart(draw, f"TO: {destination}", (right_x, right_y), 
-                                    self.fonts['data_small'], fill=(150, 150, 150), use_outline=False)
+                aircraft_type = flight_plan.get('aircraft_type', 'Unknown')
+                
+                # Show appropriate information based on aircraft type
+                if destination == 'Unknown' and aircraft_type in ['Military', 'Private', 'Other']:
+                    # Skip destination for non-airline aircraft
+                    pass
+                else:
+                    self._draw_text_smart(draw, f"TO: {destination}", (right_x, right_y), 
+                                        self.fonts['data_small'], fill=(150, 150, 150), use_outline=False)
         else:
             # Large display layout with dynamic spacing
             y_offset = 4
@@ -840,16 +965,30 @@ class FlightStatsManager(BaseFlightManager):
             if right_y + self._calculate_line_spacing(self.fonts['data_medium']) <= self.display_height:
                 flight_plan = self._get_flight_plan_data(aircraft['callsign'])
                 origin = flight_plan.get('origin', 'Unknown')
-                self._draw_text_smart(draw, f"From: {origin}", (right_x, right_y), 
-                                    self.fonts['data_medium'], fill=(150, 150, 150), use_outline=False)
+                aircraft_type = flight_plan.get('aircraft_type', 'Unknown')
+                
+                # Show appropriate information based on aircraft type
+                if origin == 'Unknown' and aircraft_type in ['Military', 'Private', 'Other']:
+                    self._draw_text_smart(draw, f"Category: {aircraft_type}", (right_x, right_y), 
+                                        self.fonts['data_medium'], fill=(255, 200, 0), use_outline=False)
+                else:
+                    self._draw_text_smart(draw, f"From: {origin}", (right_x, right_y), 
+                                        self.fonts['data_medium'], fill=(150, 150, 150), use_outline=False)
                 right_y += self._calculate_line_spacing(self.fonts['data_medium'])
             
             # Destination (from flight plan data)
             if right_y + self._calculate_line_spacing(self.fonts['data_medium']) <= self.display_height:
                 flight_plan = self._get_flight_plan_data(aircraft['callsign'])
                 destination = flight_plan.get('destination', 'Unknown')
-                self._draw_text_smart(draw, f"To: {destination}", (right_x, right_y), 
-                                    self.fonts['data_medium'], fill=(150, 150, 150), use_outline=False)
+                aircraft_type = flight_plan.get('aircraft_type', 'Unknown')
+                
+                # Show appropriate information based on aircraft type
+                if destination == 'Unknown' and aircraft_type in ['Military', 'Private', 'Other']:
+                    # Skip destination for non-airline aircraft
+                    pass
+                else:
+                    self._draw_text_smart(draw, f"To: {destination}", (right_x, right_y), 
+                                        self.fonts['data_medium'], fill=(150, 150, 150), use_outline=False)
         
         # Display the image
         self.display_manager.image = img.copy()

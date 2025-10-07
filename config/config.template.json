@@ -108,7 +108,13 @@
             "30000": [0, 0, 139],
             "40000": [128, 0, 128]
         },
-        "flight_plan_enabled": false
+        "flight_plan_enabled": false,
+        "max_api_calls_per_hour": 50,
+        "flight_plan_cache_ttl_hours": 4,
+        "min_callsign_length": 3,
+        "airline_callsign_prefixes": [
+            "AAL", "UAL", "DAL", "SWA", "JBU", "ASQ", "ENY", "FFT", "NKS", "F9", "G4", "B6", "WN", "AA", "UA", "DL"
+        ]
     },
     "clock": {
         "enabled": true,
