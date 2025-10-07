@@ -703,50 +703,49 @@ class BaseFlightManager:
         return R * c
     
     def _latlon_to_pixel(self, lat: float, lon: float) -> Optional[Tuple[int, int]]:
-        """Convert lat/lon to pixel coordinates on the display using Web Mercator projection."""
-        # The map background is exactly display_width x display_height with center at (width/2, height/2)
-        # We need to calculate how lat/lon maps to pixels using Web Mercator math
+        """Convert lat/lon to pixel coordinates on the display."""
+        # The display shows an area of (map_radius_miles * 2) in diameter
+        # We need to scale lat/lon distances to pixels based on this
         
-        # Get the zoom level to calculate the proper scale
-        zoom = self._calculate_zoom_level()
+        # Calculate the effective radius (accounting for zoom_factor)
+        effective_radius = self.map_radius_miles / self.zoom_factor
         
-        # Convert lat/lon to Web Mercator world coordinates (normalized 0-1)
-        # This is the standard Web Mercator projection formula
-        def lat_to_mercator_y(lat_deg):
-            lat_rad = math.radians(lat_deg)
-            return math.log(math.tan(math.pi / 4 + lat_rad / 2))
+        # Calculate distance in miles from center to aircraft using Haversine
+        distance_miles = self._calculate_distance(self.center_lat, self.center_lon, lat, lon)
         
-        center_x_world = self.center_lon / 360.0 + 0.5  # Normalize to 0-1
-        center_y_world = (1.0 - lat_to_mercator_y(self.center_lat) / math.pi) / 2.0
+        # Calculate bearing from center to aircraft (in radians)
+        lat1_rad = math.radians(self.center_lat)
+        lat2_rad = math.radians(lat)
+        delta_lon_rad = math.radians(lon - self.center_lon)
         
-        aircraft_x_world = lon / 360.0 + 0.5
-        aircraft_y_world = (1.0 - lat_to_mercator_y(lat) / math.pi) / 2.0
+        x = math.sin(delta_lon_rad) * math.cos(lat2_rad)
+        y = math.cos(lat1_rad) * math.sin(lat2_rad) - math.sin(lat1_rad) * math.cos(lat2_rad) * math.cos(delta_lon_rad)
+        bearing_rad = math.atan2(x, y)
         
-        # At zoom level z, the world is (256 * 2^z) pixels wide
-        world_pixels = self.tile_size * (2 ** zoom)
+        # Calculate pixels per mile based on display size and effective radius
+        # The display shows (effective_radius * 2) miles across both dimensions
+        pixels_per_mile_x = self.display_width / (effective_radius * 2)
+        pixels_per_mile_y = self.display_height / (effective_radius * 2)
         
-        # Calculate pixel positions in the world coordinate system
-        center_x_pixel = center_x_world * world_pixels
-        center_y_pixel = center_y_world * world_pixels
+        # Use the average for consistent scaling
+        pixels_per_mile = (pixels_per_mile_x + pixels_per_mile_y) / 2
         
-        aircraft_x_pixel = aircraft_x_world * world_pixels
-        aircraft_y_pixel = aircraft_y_world * world_pixels
-        
-        # Calculate offset from center
-        offset_x = aircraft_x_pixel - center_x_pixel
-        offset_y = aircraft_y_pixel - center_y_pixel
+        # Convert distance and bearing to pixel offset from center
+        pixel_distance = distance_miles * pixels_per_mile
+        offset_x = pixel_distance * math.sin(bearing_rad)
+        offset_y = -pixel_distance * math.cos(bearing_rad)  # Negative because screen Y increases downward
         
         # Map to display coordinates (center is at display_width/2, display_height/2)
-        x = int(self.display_width / 2 + offset_x)
-        y = int(self.display_height / 2 + offset_y)
+        x_pixel = int(self.display_width / 2 + offset_x)
+        y_pixel = int(self.display_height / 2 + offset_y)
         
         # Debug logging
-        logger.debug(f"[Flight Tracker] Converting ({lat:.6f}, {lon:.6f}) to pixel ({x}, {y})")
-        logger.debug(f"[Flight Tracker] Zoom: {zoom}, World pixels: {world_pixels}, Offset: ({offset_x:.1f}, {offset_y:.1f})")
+        logger.debug(f"[Flight Tracker] Converting ({lat:.6f}, {lon:.6f}) to pixel ({x_pixel}, {y_pixel})")
+        logger.debug(f"[Flight Tracker] Distance: {distance_miles:.2f}mi, Bearing: {math.degrees(bearing_rad):.1f}°, Pixels/mile: {pixels_per_mile:.2f}")
         
         # Check if within display bounds
-        if 0 <= x < self.display_width and 0 <= y < self.display_height:
-            return (x, y)
+        if 0 <= x_pixel < self.display_width and 0 <= y_pixel < self.display_height:
+            return (x_pixel, y_pixel)
         
         # Rate limit bounds warnings to prevent spam
         coord_key = f"{lat:.6f},{lon:.6f}"
@@ -1085,9 +1084,19 @@ class BaseFlightManager:
         self.last_map_center = current_center
         self.last_map_zoom = zoom
         
+        # Calculate the actual scale of the final map
+        # How many miles does the display show?
+        world_pixels_at_zoom = self.tile_size * (2 ** zoom)
+        pixels_per_degree_lon = world_pixels_at_zoom / 360.0
+        pixels_per_mile_lon = pixels_per_degree_lon / (69.0 / math.cos(math.radians(center_lat)))
+        
+        display_miles_wide = self.display_width / pixels_per_mile_lon
+        display_miles_tall = self.display_height / pixels_per_mile_lon  # Approximate, Mercator distorts
+        
         logger.info(f"[Flight Tracker] Generated map background with {tiles_fetched} tiles at zoom {zoom}")
         logger.info(f"[Flight Tracker] Center: ({center_lat:.4f}, {center_lon:.4f}), Radius: {self.map_radius_miles}mi, Effective: {effective_radius:.2f}mi (zoom_factor: {self.zoom_factor})")
         logger.info(f"[Flight Tracker] Tile coverage: {tiles_x}x{tiles_y}, Crop: ({crop_left},{crop_top})-({crop_right},{crop_bottom})")
+        logger.info(f"[Flight Tracker] Display scale: {display_miles_wide:.1f} miles wide, {display_miles_tall:.1f} miles tall (target: {effective_radius*2:.1f} miles)")
         
         # Debug: Save composite image to see what's happening
         try:
