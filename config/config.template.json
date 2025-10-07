@@ -96,7 +96,7 @@
         "show_trails": true,
         "trail_length": 10,
         "map_background": {
-            "enabled": true,
+            "enabled": false,
             "tile_provider": "osm",
             "tile_size": 256,
             "cache_ttl_hours": 24,

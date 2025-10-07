@@ -668,6 +668,39 @@ class BaseFlightManager:
                         pass
                     continue  # Try next URL
                 
+                # Additional validation: try to load as image and check for text artifacts
+                try:
+                    from PIL import Image
+                    import io
+                    test_img = Image.open(io.BytesIO(response.content))
+                    
+                    # Check if image is too small (likely an error page rendered as image)
+                    if test_img.size[0] < 100 or test_img.size[1] < 100:
+                        logger.debug(f"[Flight Tracker] Tile image too small: {test_img.size}")
+                        continue
+                    
+                    # Check for suspiciously uniform colors (error pages often have solid colors)
+                    if test_img.mode == 'RGB':
+                        # Convert to grayscale for analysis
+                        gray_img = test_img.convert('L')
+                        # Get pixel data
+                        pixels = list(gray_img.getdata())
+                        if len(pixels) > 0:
+                            # Check if image is mostly one color (suspicious for error pages)
+                            color_counts = {}
+                            for pixel in pixels[::100]:  # Sample every 100th pixel for performance
+                                color_counts[pixel] = color_counts.get(pixel, 0) + 1
+                            
+                            # If more than 80% of pixels are the same color, it's likely an error page
+                            max_count = max(color_counts.values())
+                            if max_count > len(pixels[::100]) * 0.8:
+                                logger.debug(f"[Flight Tracker] Tile appears to be solid color (error page)")
+                                continue
+                    
+                except Exception as e:
+                    logger.debug(f"[Flight Tracker] Could not validate tile image: {e}")
+                    # Continue anyway if we can't validate
+                
                 # If we get here, we have a valid tile
                 logger.debug(f"[Flight Tracker] ✓ Successfully fetched tile from URL {i+1}: {url}")
                 logger.debug(f"[Flight Tracker]   Tile size: {len(response.content)} bytes, Content-Type: {response.headers.get('content-type', 'unknown')}")
@@ -707,9 +740,9 @@ class BaseFlightManager:
         if not self.map_bg_enabled:
             return None
         
-        # Check if we should disable due to cache errors
+        # Check if we should disable due to too many cache errors
         if self.disable_on_cache_error and self.cache_error_count >= self.max_cache_errors:
-            logger.warning(f"[Flight Tracker] Map background disabled due to {self.cache_error_count} consecutive cache errors")
+            logger.warning(f"[Flight Tracker] Disabling map background due to {self.cache_error_count} cache errors")
             return None
         
         # Calculate appropriate zoom level based on map radius
@@ -799,6 +832,12 @@ class BaseFlightManager:
         # Log summary of failed tiles
         if failed_tiles:
             logger.warning(f"[Flight Tracker] Failed to fetch {len(failed_tiles)} tiles: {failed_tiles}")
+            # If more than 50% of tiles failed, disable map background
+            failure_rate = len(failed_tiles) / (tiles_x * tiles_y)
+            if failure_rate > 0.5:
+                logger.warning(f"[Flight Tracker] High tile failure rate ({failure_rate:.1%}), disabling map background")
+                self.map_bg_enabled = False
+                return None
         else:
             logger.info(f"[Flight Tracker] All tiles fetched successfully")
         
