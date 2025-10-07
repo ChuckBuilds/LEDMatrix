@@ -313,27 +313,45 @@ class BaseFlightManager:
         callsign_upper = callsign.upper()
         
         # Check for military patterns
-        if callsign_upper.startswith(('C-', 'CF-', 'AF-', 'NATO-', 'USAF-', 'USN-', 'USMC-', 'USCG-')):
+        if callsign_upper.startswith(('C-', 'CF-', 'AF-', 'NATO-', 'USAF-', 'USN-', 'USMC-', 'USCG-', 'RAZOR', 'VADER', 'SPIRIT')):
             return "Military"
         
-        # Check for private aircraft (N-prefix with numbers/letters)
-        if callsign_upper.startswith('N') and len(callsign) >= 4:
-            return "Private"
+        # Check for cargo airlines (often have interesting routes)
+        cargo_prefixes = ['UPS', 'FDX', 'GTI', 'ABX', 'CPZ', 'DHL', 'TNT', 'QFA', 'SIA', 'CAL', 'CARGO']
+        for prefix in cargo_prefixes:
+            if callsign_upper.startswith(prefix):
+                return "Cargo"
         
-        # Check for known airline callsigns
+        # Check for known major airline callsigns
+        major_airlines = ['AAL', 'UAL', 'DAL', 'SWA', 'JBU', 'B6', 'WN', 'AA', 'UA', 'DL']
+        for prefix in major_airlines:
+            if callsign_upper.startswith(prefix):
+                return "Airline"
+        
+        # Check for other airline callsigns
         for prefix in self.airline_callsign_prefixes:
             if callsign_upper.startswith(prefix):
                 return "Airline"
         
-        # Check for other patterns
-        if callsign_upper.startswith(('G-', 'F-', 'D-', 'I-', 'HB-', 'OE-', 'PH-', 'SE-', 'LN-', 'OY-', 'OY-', 'VH-', 'C-G', 'C-F', 'JA-', 'B-', 'HL-', '9V-', 'A6-', 'VT-', 'PK-', 'HS-', 'RP-', 'ZS-', '4X-', 'SU-', 'RA-', 'UR-', 'EW-', 'S7-', 'U6-', 'FV-', 'DP-', 'P4-', 'P5-', 'P6-', 'P7-', 'P8-', 'P9-', 'P0-', 'P1-', 'P2-', 'P3-')):
+        # Check for international aircraft with country prefixes
+        if callsign_upper.startswith(('G-', 'F-', 'D-', 'I-', 'HB-', 'OE-', 'PH-', 'SE-', 'LN-', 'OY-', 'VH-', 'C-G', 'C-F', 'JA-', 'B-', 'HL-', '9V-', 'A6-', 'VT-', 'PK-', 'HS-', 'RP-', 'ZS-', '4X-', 'SU-', 'RA-', 'UR-', 'EW-', 'S7-', 'U6-', 'FV-', 'DP-', 'P4-', 'P5-', 'P6-', 'P7-', 'P8-', 'P9-', 'P0-', 'P1-', 'P2-', 'P3-')):
             return "International"
+        
+        # Check for private aircraft (N-prefix with numbers/letters)
+        if callsign_upper.startswith('N') and len(callsign) >= 4:
+            # Check if it looks like a commercial aircraft (longer callsigns)
+            if len(callsign) >= 6:
+                return "Commercial"
+            else:
+                return "Private"
+        
+        # Check for general aviation patterns
+        if callsign_upper.startswith(('N', 'C-', 'CF-')) and len(callsign) >= 4:
+            return "General Aviation"
         
         # Default categorization
         if len(callsign) <= 3:
             return "Unknown"
-        elif callsign_upper.startswith('N'):
-            return "Private"
         else:
             return "Other"
     
@@ -422,20 +440,22 @@ class BaseFlightManager:
     
     def _get_flight_plan_data(self, callsign: str) -> Dict[str, str]:
         """Get flight plan data for a callsign (origin/destination)."""
+        # Always provide aircraft type categorization as fallback
+        aircraft_category = self._categorize_aircraft(callsign)
+        
         if not self.flight_plan_enabled or not self.flightaware_api_key:
             logger.debug(f"[Flight Tracker] Flight plan disabled or no API key for {callsign}")
-            return {'origin': 'Unknown', 'destination': 'Unknown', 'aircraft_type': 'Unknown'}
+            return {'origin': 'Unknown', 'destination': 'Unknown', 'aircraft_type': aircraft_category}
         
         # Check if callsign is worth fetching (cost control)
         if not self._is_callsign_worth_fetching(callsign):
             logger.debug(f"[Flight Tracker] Skipping flight plan fetch for {callsign} (not worth fetching)")
-            category = self._categorize_aircraft(callsign)
-            return {'origin': 'Unknown', 'destination': 'Unknown', 'aircraft_type': category}
+            return {'origin': 'Unknown', 'destination': 'Unknown', 'aircraft_type': aircraft_category}
         
         # Check rate limiting
         if not self._check_rate_limit():
             logger.warning(f"[Flight Tracker] Rate limit reached, skipping API call for {callsign}")
-            return {'origin': 'Unknown', 'destination': 'Unknown', 'aircraft_type': 'Unknown'}
+            return {'origin': 'Unknown', 'destination': 'Unknown', 'aircraft_type': aircraft_category}
         
         # Use cache manager for flight plan data
         cache_key = f"flight_plan_{callsign}"
@@ -1379,6 +1399,16 @@ class FlightStatsManager(BaseFlightManager):
             title = "HIGHEST"
             title_color = (100, 150, 255)
         
+        # Get flight plan data once and cache it for this display cycle
+        flight_plan = self._get_flight_plan_data(aircraft['callsign'])
+        origin = flight_plan.get('origin', 'Unknown')
+        destination = flight_plan.get('destination', 'Unknown')
+        aircraft_type = flight_plan.get('aircraft_type', 'Unknown')
+        
+        # Improve aircraft type display with better categorization
+        if aircraft_type == 'Unknown':
+            aircraft_type = self._categorize_aircraft(aircraft['callsign'])
+        
         if is_small_display:
             # Small display layout with dynamic spacing
             y_offset = 1
@@ -1422,14 +1452,17 @@ class FlightStatsManager(BaseFlightManager):
             
             # Origin (from flight plan data)
             if right_y + self._calculate_line_spacing(self.fonts['data_small']) <= self.display_height:
-                flight_plan = self._get_flight_plan_data(aircraft['callsign'])
-                origin = flight_plan.get('origin', 'Unknown')
-                aircraft_type = flight_plan.get('aircraft_type', 'Unknown')
-                
                 # Show appropriate information based on aircraft type
-                if origin == 'Unknown' and aircraft_type in ['Military', 'Private', 'Other']:
-                    self._draw_text_smart(draw, f"TYPE: {aircraft_type}", (right_x, right_y), 
-                                        self.fonts['data_small'], fill=(255, 200, 0), use_outline=False)
+                if origin == 'Unknown':
+                    if aircraft_type in ['Military', 'Private', 'General Aviation', 'Other']:
+                        self._draw_text_smart(draw, f"TYPE: {aircraft_type}", (right_x, right_y), 
+                                            self.fonts['data_small'], fill=(255, 200, 0), use_outline=False)
+                    elif aircraft_type in ['Airline', 'Cargo', 'Commercial', 'International']:
+                        self._draw_text_smart(draw, f"TYPE: {aircraft_type}", (right_x, right_y), 
+                                            self.fonts['data_small'], fill=(255, 200, 0), use_outline=False)
+                    else:
+                        self._draw_text_smart(draw, f"TYPE: {aircraft_type}", (right_x, right_y), 
+                                            self.fonts['data_small'], fill=(255, 200, 0), use_outline=False)
                 else:
                     self._draw_text_smart(draw, f"FROM: {origin}", (right_x, right_y), 
                                         self.fonts['data_small'], fill=(150, 150, 150), use_outline=False)
@@ -1437,14 +1470,15 @@ class FlightStatsManager(BaseFlightManager):
             
             # Destination (from flight plan data)
             if right_y + self._calculate_line_spacing(self.fonts['data_small']) <= self.display_height:
-                flight_plan = self._get_flight_plan_data(aircraft['callsign'])
-                destination = flight_plan.get('destination', 'Unknown')
-                aircraft_type = flight_plan.get('aircraft_type', 'Unknown')
-                
                 # Show appropriate information based on aircraft type
-                if destination == 'Unknown' and aircraft_type in ['Military', 'Private', 'Other']:
-                    # Skip destination for non-airline aircraft
-                    pass
+                if destination == 'Unknown':
+                    if aircraft_type in ['Military', 'Private', 'General Aviation', 'Other']:
+                        # Skip destination for non-airline aircraft
+                        pass
+                    else:
+                        # Show aircraft type for commercial aircraft without destination
+                        self._draw_text_smart(draw, f"TYPE: {aircraft_type}", (right_x, right_y), 
+                                            self.fonts['data_small'], fill=(255, 200, 0), use_outline=False)
                 else:
                     self._draw_text_smart(draw, f"TO: {destination}", (right_x, right_y), 
                                         self.fonts['data_small'], fill=(150, 150, 150), use_outline=False)
@@ -1507,14 +1541,17 @@ class FlightStatsManager(BaseFlightManager):
             
             # Origin (from flight plan data)
             if right_y + self._calculate_line_spacing(self.fonts['data_medium']) <= self.display_height:
-                flight_plan = self._get_flight_plan_data(aircraft['callsign'])
-                origin = flight_plan.get('origin', 'Unknown')
-                aircraft_type = flight_plan.get('aircraft_type', 'Unknown')
-                
                 # Show appropriate information based on aircraft type
-                if origin == 'Unknown' and aircraft_type in ['Military', 'Private', 'Other']:
-                    self._draw_text_smart(draw, f"Category: {aircraft_type}", (right_x, right_y), 
-                                        self.fonts['data_medium'], fill=(255, 200, 0), use_outline=False)
+                if origin == 'Unknown':
+                    if aircraft_type in ['Military', 'Private', 'General Aviation', 'Other']:
+                        self._draw_text_smart(draw, f"Category: {aircraft_type}", (right_x, right_y), 
+                                            self.fonts['data_medium'], fill=(255, 200, 0), use_outline=False)
+                    elif aircraft_type in ['Airline', 'Cargo', 'Commercial', 'International']:
+                        self._draw_text_smart(draw, f"Category: {aircraft_type}", (right_x, right_y), 
+                                            self.fonts['data_medium'], fill=(255, 200, 0), use_outline=False)
+                    else:
+                        self._draw_text_smart(draw, f"Category: {aircraft_type}", (right_x, right_y), 
+                                            self.fonts['data_medium'], fill=(255, 200, 0), use_outline=False)
                 else:
                     self._draw_text_smart(draw, f"From: {origin}", (right_x, right_y), 
                                         self.fonts['data_medium'], fill=(150, 150, 150), use_outline=False)
@@ -1522,14 +1559,15 @@ class FlightStatsManager(BaseFlightManager):
             
             # Destination (from flight plan data)
             if right_y + self._calculate_line_spacing(self.fonts['data_medium']) <= self.display_height:
-                flight_plan = self._get_flight_plan_data(aircraft['callsign'])
-                destination = flight_plan.get('destination', 'Unknown')
-                aircraft_type = flight_plan.get('aircraft_type', 'Unknown')
-                
                 # Show appropriate information based on aircraft type
-                if destination == 'Unknown' and aircraft_type in ['Military', 'Private', 'Other']:
-                    # Skip destination for non-airline aircraft
-                    pass
+                if destination == 'Unknown':
+                    if aircraft_type in ['Military', 'Private', 'General Aviation', 'Other']:
+                        # Skip destination for non-airline aircraft
+                        pass
+                    else:
+                        # Show aircraft type for commercial aircraft without destination
+                        self._draw_text_smart(draw, f"Category: {aircraft_type}", (right_x, right_y), 
+                                            self.fonts['data_medium'], fill=(255, 200, 0), use_outline=False)
                 else:
                     self._draw_text_smart(draw, f"To: {destination}", (right_x, right_y), 
                                         self.fonts['data_medium'], fill=(150, 150, 150), use_outline=False)
