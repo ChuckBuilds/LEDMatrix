@@ -102,7 +102,8 @@
             "cache_ttl_hours": 24,
             "fade_intensity": 0.7,
             "update_on_location_change": true,
-            "disable_on_cache_error": false
+            "disable_on_cache_error": false,
+            "custom_tile_server": "http://192.168.86.182:8080"
         },
         "proximity_alert": {
             "enabled": true,

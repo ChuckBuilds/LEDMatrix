@@ -64,6 +64,9 @@ class BaseFlightManager:
         self.update_on_location_change = self.map_bg_config.get('update_on_location_change', True)
         self.disable_on_cache_error = self.map_bg_config.get('disable_on_cache_error', False)
         
+        # Custom tile server URL (for self-hosted OSM servers)
+        self.custom_tile_server = self.map_bg_config.get('custom_tile_server', None)
+        
         # Track cache errors
         self.cache_error_count = 0
         self.max_cache_errors = 5  # Disable after 5 consecutive cache errors
@@ -727,6 +730,12 @@ class BaseFlightManager:
     
     def _get_tile_urls(self, x: int, y: int, zoom: int) -> List[str]:
         """Get multiple tile URLs to try in order of preference."""
+        # If custom tile server is configured, use it for all requests
+        if self.custom_tile_server:
+            # Remove trailing slash if present
+            base_url = self.custom_tile_server.rstrip('/')
+            return [f"{base_url}/{zoom}/{x}/{y}.png"]
+        
         if self.tile_provider == 'osm':
             # Use multiple OSM mirrors to avoid blocking
             return [

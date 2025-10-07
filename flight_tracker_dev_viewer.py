@@ -46,6 +46,9 @@ class FlightTrackerDevViewer:
         self.cache_ttl_hours = self.map_bg_config.get('cache_ttl_hours', 24)
         self.fade_intensity = self.map_bg_config.get('fade_intensity', 0.7)
         
+        # Custom tile server URL (for self-hosted OSM servers)
+        self.custom_tile_server = self.map_bg_config.get('custom_tile_server', None)
+        
         # Display configuration
         self.display_width = 800
         self.display_height = 600
@@ -229,6 +232,12 @@ class FlightTrackerDevViewer:
     
     def _get_tile_urls(self, x: int, y: int, zoom: int) -> List[str]:
         """Get multiple tile URLs to try in order of preference."""
+        # If custom tile server is configured, use it for all requests
+        if self.custom_tile_server:
+            # Remove trailing slash if present
+            base_url = self.custom_tile_server.rstrip('/')
+            return [f"{base_url}/{zoom}/{x}/{y}.png"]
+        
         if self.tile_provider == 'osm':
             # Use multiple OSM mirrors to avoid blocking
             return [
