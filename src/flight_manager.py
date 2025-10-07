@@ -50,6 +50,10 @@ class BaseFlightManager:
         self.show_trails = self.flight_config.get('show_trails', False)
         self.trail_length = self.flight_config.get('trail_length', 10)
         
+        # Logging rate limiting for bounds warnings
+        self.bounds_warning_cache = {}
+        self.bounds_warning_interval = 30  # Only log each unique coordinate once every 30 seconds
+        
         # Altitude color configuration
         self.altitude_colors = self.flight_config.get('altitude_colors', {
             '0': [255, 165, 0],      # Orange
@@ -400,7 +404,15 @@ class BaseFlightManager:
         if 0 <= x < self.display_width and 0 <= y < self.display_height:
             return (x, y)
         
-        logger.warning(f"[Flight Tracker] Coordinate ({lat}, {lon}) -> pixel ({x}, {y}) is outside display bounds {self.display_width}x{self.display_height}")
+        # Rate limit bounds warnings to prevent spam
+        coord_key = f"{lat:.6f},{lon:.6f}"
+        current_time = time.time()
+        
+        if coord_key not in self.bounds_warning_cache or \
+           current_time - self.bounds_warning_cache[coord_key] > self.bounds_warning_interval:
+            logger.debug(f"[Flight Tracker] Coordinate ({lat}, {lon}) -> pixel ({x}, {y}) is outside display bounds {self.display_width}x{self.display_height}")
+            self.bounds_warning_cache[coord_key] = current_time
+        
         return None
     
     
