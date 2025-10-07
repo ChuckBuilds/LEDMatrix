@@ -345,7 +345,7 @@ class Baseball(SportsCore):
         
         # Position at bottom center
         x = (self.display_width - width) // 2
-        y = self.display_height - height - 2  # 2 pixels from bottom
+        y = self.display_height - height - 1  # 1 pixel from bottom
         
         # Draw with yellow color and black outline
         self._draw_text_with_outline(
