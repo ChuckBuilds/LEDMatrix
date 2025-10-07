@@ -221,11 +221,15 @@ class BaseFlightManager:
     def _get_flight_plan_data(self, callsign: str) -> Dict[str, str]:
         """Get flight plan data for a callsign (origin/destination)."""
         if not self.flight_plan_enabled or not self.flightaware_api_key:
+            logger.debug(f"[Flight Tracker] Flight plan disabled or no API key for {callsign}")
             return {'origin': 'Unknown', 'destination': 'Unknown'}
         
         # Check cache first
         if callsign in self.flight_plan_cache:
+            logger.debug(f"[Flight Tracker] Using cached flight plan for {callsign}")
             return self.flight_plan_cache[callsign]
+        
+        logger.info(f"[Flight Tracker] Fetching flight plan data for {callsign}")
         
         try:
             # FlightAware AeroAPI integration
@@ -243,11 +247,11 @@ class BaseFlightManager:
                 self.flight_plan_cache[callsign] = flight_plan
                 return flight_plan
             else:
-                logger.debug(f"[Flight Tracker] No flight plan data for {callsign}")
+                logger.warning(f"[Flight Tracker] API returned status {response.status_code} for {callsign}: {response.text[:100]}")
                 return {'origin': 'Unknown', 'destination': 'Unknown'}
                 
         except Exception as e:
-            logger.debug(f"[Flight Tracker] Failed to fetch flight plan for {callsign}: {e}")
+            logger.warning(f"[Flight Tracker] Failed to fetch flight plan for {callsign}: {e}")
             return {'origin': 'Unknown', 'destination': 'Unknown'}
     
     def _process_aircraft_data(self, data: Dict) -> None:
