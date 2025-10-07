@@ -1,0 +1,18 @@
+# Requirements for Windows Development Environment
+# Flight Tracker Development Viewer
+
+# Core dependencies
+Pillow>=10.0.0
+requests>=2.28.0
+
+# GUI framework (tkinter is included with Python)
+# No additional GUI dependencies needed
+
+# Optional: For better performance and features
+numpy>=1.24.0  # For better image processing
+matplotlib>=3.6.0  # For additional plotting capabilities
+
+# Development and debugging
+pytest>=7.0.0  # For testing
+black>=22.0.0  # For code formatting
+flake8>=5.0.0  # For linting

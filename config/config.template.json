@@ -96,8 +96,8 @@
         "show_trails": true,
         "trail_length": 10,
         "map_background": {
-            "enabled": false,
-            "tile_provider": "osm",
+            "enabled": true,
+            "tile_provider": "carto_dark",
             "tile_size": 256,
             "cache_ttl_hours": 24,
             "fade_intensity": 0.7,
@@ -120,7 +120,7 @@
         "flight_plan_enabled": false,
         "max_api_calls_per_hour": 25,
         "daily_api_budget": 60,
-        "flight_plan_cache_ttl_hours": 12,
+        "flight_plan_cache_ttl_hours": 1,
         "min_callsign_length": 3,
         "airline_callsign_prefixes": [
             "AAL", "UAL", "DAL", "SWA", "JBU", "ASQ", "ENY", "FFT", "NKS", "F9", "G4", "B6", "WN", "AA", "UA", "DL"

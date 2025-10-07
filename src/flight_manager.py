@@ -697,9 +697,14 @@ class BaseFlightManager:
     def _get_tile_urls(self, x: int, y: int, zoom: int) -> List[str]:
         """Get multiple tile URLs to try in order of preference."""
         if self.tile_provider == 'osm':
-            return [f"https://tile.openstreetmap.org/{zoom}/{x}/{y}.png"]
+            # Use multiple OSM mirrors to avoid blocking
+            return [
+                f"https://tile.openstreetmap.org/{zoom}/{x}/{y}.png",
+                f"https://a.tile.openstreetmap.org/{zoom}/{x}/{y}.png",
+                f"https://b.tile.openstreetmap.org/{zoom}/{x}/{y}.png",
+                f"https://c.tile.openstreetmap.org/{zoom}/{x}/{y}.png"
+            ]
         elif self.tile_provider == 'carto':
-            # Try different CartoDB endpoints
             return [
                 f"https://cartodb-basemaps-a.global.ssl.fastly.net/light_all/{zoom}/{x}/{y}.png",
                 f"https://cartodb-basemaps-b.global.ssl.fastly.net/light_all/{zoom}/{x}/{y}.png",
@@ -716,11 +721,24 @@ class BaseFlightManager:
         elif self.tile_provider == 'stamen':
             return [
                 f"https://stamen-tiles.a.ssl.fastly.net/terrain/{zoom}/{x}/{y}.png",
+                f"https://stamen-tiles.b.ssl.fastly.net/terrain/{zoom}/{x}/{y}.png",
+                f"https://stamen-tiles-c.a.ssl.fastly.net/terrain/{zoom}/{x}/{y}.png",
+                f"https://tile.openstreetmap.org/{zoom}/{x}/{y}.png"  # Fallback to OSM
+            ]
+        elif self.tile_provider == 'esri':
+            return [
+                f"https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{zoom}/{y}/{x}",
+                f"https://services.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{zoom}/{y}/{x}",
                 f"https://tile.openstreetmap.org/{zoom}/{x}/{y}.png"  # Fallback to OSM
             ]
         else:
-            # Default to OSM
-            return [f"https://tile.openstreetmap.org/{zoom}/{x}/{y}.png"]
+            # Default to OSM with multiple mirrors
+            return [
+                f"https://tile.openstreetmap.org/{zoom}/{x}/{y}.png",
+                f"https://a.tile.openstreetmap.org/{zoom}/{x}/{y}.png",
+                f"https://b.tile.openstreetmap.org/{zoom}/{x}/{y}.png",
+                f"https://c.tile.openstreetmap.org/{zoom}/{x}/{y}.png"
+            ]
     
     def _get_tile_url(self, x: int, y: int, zoom: int) -> str:
         """Get the URL for a map tile based on provider (backward compatibility)."""
