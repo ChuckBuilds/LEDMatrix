@@ -33,10 +33,8 @@ class BaseFlightManager:
         # Flight plan data configuration
         self.flight_plan_enabled = self.flight_config.get('flight_plan_enabled', False)
         
-        # Get API key from secrets config
-        secrets_config = config.get('secrets', {})
-        flight_secrets = secrets_config.get('flight_tracker', {})
-        self.flightaware_api_key = flight_secrets.get('flightaware_api_key', '')
+        # Get API key from flight_tracker config (secrets are merged by ConfigManager)
+        self.flightaware_api_key = self.flight_config.get('flightaware_api_key', '')
         
         # Rate limiting and cost control for FlightAware API
         self.api_call_timestamps = []  # Track API call timestamps for rate limiting
