@@ -329,14 +329,27 @@ class Baseball(SportsCore):
             return
         
         series_summary = game.get("series_summary", "")
-        font = ImageFont.truetype("assets/fonts/4x6-font.ttf", 6)
-        bbox = draw_overlay.textbbox((0, 0), series_summary, font=self.fonts['time'])
+        if not series_summary:
+            return
+            
+        # Use small font for series summary
+        try:
+            font = ImageFont.truetype("assets/fonts/4x6-font.ttf", 6)
+        except IOError:
+            font = ImageFont.load_default()
+            
+        # Calculate positioning
+        bbox = draw_overlay.textbbox((0, 0), series_summary, font=font)
         height = bbox[3] - bbox[1]
-        shots_y = (self.display_height - height) // 2
-        shots_width = draw_overlay.textlength(series_summary, font=self.fonts['time'])
-        shots_x = (self.display_width - shots_width) // 2
+        width = draw_overlay.textlength(series_summary, font=font)
+        
+        # Position at bottom center
+        x = (self.display_width - width) // 2
+        y = self.display_height - height - 2  # 2 pixels from bottom
+        
+        # Draw with yellow color and black outline
         self._draw_text_with_outline(
-            draw_overlay, series_summary, (shots_x, shots_y), self.fonts['time']
+            draw_overlay, series_summary, (x, y), font, fill=(255, 255, 0)
         )
 
 class BaseballRecent(Baseball, SportsRecent):

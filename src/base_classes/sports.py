@@ -754,6 +754,10 @@ class SportsUpcoming(SportsCore):
             if 'odds' in game and game['odds']:
                 self._draw_dynamic_odds(draw_overlay, game['odds'], self.display_width, self.display_height)
 
+            # Draw series summary for baseball games if available
+            if hasattr(self, 'display_series_summary') and game.get('series_summary'):
+                self.display_series_summary(game, draw_overlay)
+
             # Draw records or rankings if enabled
             if self.show_records or self.show_ranking:
                 try:
