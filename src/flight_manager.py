@@ -704,13 +704,26 @@ class BaseFlightManager:
     
     def _latlon_to_pixel(self, lat: float, lon: float) -> Optional[Tuple[int, int]]:
         """Convert lat/lon to pixel coordinates on the display."""
-        # The display shows an area of (map_radius_miles * 2) in diameter
-        # We need to scale lat/lon distances to pixels based on this
+        # Use the SAME scale calculation as the map background (Web Mercator zoom level)
+        # This ensures aircraft position exactly matches the map tiles
         
-        # Calculate the effective radius (accounting for zoom_factor)
-        effective_radius = self.map_radius_miles / self.zoom_factor
+        # Get the zoom level (same as map background uses)
+        zoom = self._calculate_zoom_level()
         
-        # Calculate distance in miles from center to aircraft using Haversine
+        # Calculate pixels per mile based on Web Mercator zoom level
+        # At zoom level z, the world is (256 * 2^z) pixels wide at the equator
+        world_pixels_at_zoom = self.tile_size * (2 ** zoom)
+        
+        # Pixels per degree of longitude at this zoom level
+        pixels_per_degree_lon = world_pixels_at_zoom / 360.0
+        
+        # Convert to pixels per mile (1 degree ≈ 69 miles, adjusted for latitude)
+        # At the equator: 1 degree longitude = 69 miles
+        # At latitude θ: 1 degree longitude = 69 * cos(θ) miles
+        miles_per_degree_lon = 69.0 * math.cos(math.radians(self.center_lat))
+        pixels_per_mile = pixels_per_degree_lon / miles_per_degree_lon
+        
+        # Calculate distance in miles from center to aircraft
         distance_miles = self._calculate_distance(self.center_lat, self.center_lon, lat, lon)
         
         # Calculate bearing from center to aircraft (in radians)
@@ -721,14 +734,6 @@ class BaseFlightManager:
         x = math.sin(delta_lon_rad) * math.cos(lat2_rad)
         y = math.cos(lat1_rad) * math.sin(lat2_rad) - math.sin(lat1_rad) * math.cos(lat2_rad) * math.cos(delta_lon_rad)
         bearing_rad = math.atan2(x, y)
-        
-        # Calculate pixels per mile based on display size and effective radius
-        # The display shows (effective_radius * 2) miles across both dimensions
-        pixels_per_mile_x = self.display_width / (effective_radius * 2)
-        pixels_per_mile_y = self.display_height / (effective_radius * 2)
-        
-        # Use the average for consistent scaling
-        pixels_per_mile = (pixels_per_mile_x + pixels_per_mile_y) / 2
         
         # Convert distance and bearing to pixel offset from center
         pixel_distance = distance_miles * pixels_per_mile
@@ -741,7 +746,7 @@ class BaseFlightManager:
         
         # Debug logging
         logger.debug(f"[Flight Tracker] Converting ({lat:.6f}, {lon:.6f}) to pixel ({x_pixel}, {y_pixel})")
-        logger.debug(f"[Flight Tracker] Distance: {distance_miles:.2f}mi, Bearing: {math.degrees(bearing_rad):.1f}°, Pixels/mile: {pixels_per_mile:.2f}")
+        logger.debug(f"[Flight Tracker] Zoom: {zoom}, Distance: {distance_miles:.2f}mi, Bearing: {math.degrees(bearing_rad):.1f}°, Pixels/mile: {pixels_per_mile:.2f}")
         
         # Check if within display bounds
         if 0 <= x_pixel < self.display_width and 0 <= y_pixel < self.display_height:
