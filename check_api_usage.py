@@ -30,6 +30,7 @@ def check_api_usage():
     print(f"   Daily: {daily_api_budget} calls")
     
     # Check if there are any cached flight plans
+    flight_plan_files = []
     cache_dir = Path("cache") if Path("cache").exists() else None
     if cache_dir:
         flight_plan_files = list(cache_dir.glob("flight_plan_*"))
@@ -42,6 +43,8 @@ def check_api_usage():
                 mtime = datetime.fromtimestamp(file.stat().st_mtime)
                 age_hours = (time.time() - file.stat().st_mtime) / 3600
                 print(f"   - {callsign} (cached {age_hours:.1f}h ago)")
+    else:
+        print(f"\n💾 Cached Flight Plans: 0 (no cache directory found)")
     
     print(f"\n💡 Recommendations:")
     if len(flight_plan_files) < 10:
