@@ -97,10 +97,10 @@
         "trail_length": 10,
         "map_background": {
             "enabled": true,
-            "tile_provider": "osm",
+            "tile_provider": "carto",
             "tile_size": 256,
             "cache_ttl_hours": 24,
-            "fade_intensity": 0.3,
+            "fade_intensity": 0.7,
             "update_on_location_change": true,
             "disable_on_cache_error": false
         },

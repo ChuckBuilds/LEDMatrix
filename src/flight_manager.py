@@ -668,17 +668,19 @@ class BaseFlightManager:
             return None
         
         # Calculate appropriate zoom level based on map radius
-        # Higher zoom for smaller radius
-        if self.map_radius_miles <= 5:
-            zoom = 12
+        # Higher zoom for smaller radius to show more detail
+        if self.map_radius_miles <= 2:
+            zoom = 13  # Very detailed for small areas
+        elif self.map_radius_miles <= 5:
+            zoom = 12  # Detailed for local areas
         elif self.map_radius_miles <= 10:
-            zoom = 11
+            zoom = 11  # Good for city/metro areas
         elif self.map_radius_miles <= 25:
-            zoom = 10
+            zoom = 10  # Regional view
         elif self.map_radius_miles <= 50:
-            zoom = 9
+            zoom = 9   # State-level view
         else:
-            zoom = 8
+            zoom = 8   # Multi-state view
         
         # Check if we need to update the background
         current_center = (round(center_lat, 4), round(center_lon, 4))
@@ -696,10 +698,11 @@ class BaseFlightManager:
         lat_degrees = (self.map_radius_miles * 2) / 69.0
         lon_degrees = lat_degrees / math.cos(math.radians(center_lat))
         
-        # Calculate tile coverage
+        # Calculate tile coverage - get more tiles for better coverage
         tiles_per_degree = 2 ** zoom
-        tiles_x = max(1, int(lon_degrees * tiles_per_degree / 360.0 * 2) + 2)
-        tiles_y = max(1, int(lat_degrees * tiles_per_degree / 360.0 * 2) + 2)
+        # Add extra tiles to ensure we have good coverage
+        tiles_x = max(2, int(lon_degrees * tiles_per_degree / 360.0 * 2) + 4)
+        tiles_y = max(2, int(lat_degrees * tiles_per_degree / 360.0 * 2) + 4)
         
         # Calculate tile bounds
         start_x = center_x - tiles_x // 2
@@ -730,11 +733,19 @@ class BaseFlightManager:
             return None
         
         # Calculate the crop area to match our display bounds
-        # Convert center lat/lon to pixel coordinates in the composite
-        center_pixel_x = int((center_lon - self._tile_to_lon(start_x, zoom)) * tiles_per_degree * self.tile_size / 360.0)
-        center_pixel_y = int((self._tile_to_lat(start_y, zoom) - center_lat) * tiles_per_degree * self.tile_size / 360.0)
+        # Find the center tile and position within it
+        center_tile_x = center_x - start_x
+        center_tile_y = center_y - start_y
         
-        # Calculate crop bounds
+        # Calculate position within the center tile
+        center_lon_in_tile = (center_lon - self._tile_to_lon(start_x + center_tile_x, zoom)) / (self._tile_to_lon(start_x + center_tile_x + 1, zoom) - self._tile_to_lon(start_x + center_tile_x, zoom))
+        center_lat_in_tile = (self._tile_to_lat(start_y + center_tile_y, zoom) - center_lat) / (self._tile_to_lat(start_y + center_tile_y, zoom) - self._tile_to_lat(start_y + center_tile_y + 1, zoom))
+        
+        # Calculate pixel position in composite
+        center_pixel_x = int((center_tile_x + center_lon_in_tile) * self.tile_size)
+        center_pixel_y = int((center_tile_y + center_lat_in_tile) * self.tile_size)
+        
+        # Calculate crop bounds centered on the center point
         crop_left = max(0, center_pixel_x - self.display_width // 2)
         crop_top = max(0, center_pixel_y - self.display_height // 2)
         crop_right = min(composite_width, crop_left + self.display_width)
@@ -759,6 +770,8 @@ class BaseFlightManager:
         self.last_map_zoom = zoom
         
         logger.info(f"[Flight Tracker] Generated map background with {tiles_fetched} tiles at zoom {zoom}")
+        logger.info(f"[Flight Tracker] Center: ({center_lat:.4f}, {center_lon:.4f}), Radius: {self.map_radius_miles}mi")
+        logger.info(f"[Flight Tracker] Tile coverage: {tiles_x}x{tiles_y}, Crop: ({crop_left},{crop_top})-({crop_right},{crop_bottom})")
         return cropped
     
     def _tile_to_lat(self, y: int, zoom: int) -> float:
