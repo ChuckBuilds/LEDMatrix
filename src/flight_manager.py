@@ -669,7 +669,8 @@ class BaseFlightManager:
                     continue  # Try next URL
                 
                 # If we get here, we have a valid tile
-                logger.debug(f"[Flight Tracker] Successfully fetched tile from {url}")
+                logger.info(f"[Flight Tracker] ✓ Successfully fetched tile from URL {i+1}: {url}")
+                logger.info(f"[Flight Tracker]   Tile size: {len(response.content)} bytes, Content-Type: {response.headers.get('content-type', 'unknown')}")
                 
                 # Save to cache
                 try:
@@ -759,10 +760,18 @@ class BaseFlightManager:
         
         # Fetch and composite tiles
         tiles_fetched = 0
+        failed_tiles = []
+        
         for ty in range(tiles_y):
             for tx in range(tiles_x):
                 tile_x = start_x + tx
                 tile_y = start_y + ty
+                
+                # Log the tile coordinates and URLs being tried
+                urls = self._get_tile_urls(tile_x, tile_y, zoom)
+                logger.info(f"[Flight Tracker] Fetching tile ({tile_x},{tile_y}) at zoom {zoom}")
+                for i, url in enumerate(urls):
+                    logger.info(f"[Flight Tracker]   URL {i+1}: {url}")
                 
                 tile_img = self._fetch_tile(tile_x, tile_y, zoom)
                 if tile_img:
@@ -775,11 +784,20 @@ class BaseFlightManager:
                     paste_y = ty * self.tile_size
                     composite.paste(tile_img, (paste_x, paste_y))
                     tiles_fetched += 1
-                    logger.debug(f"[Flight Tracker] Placed tile {tile_x},{tile_y} at ({paste_x},{paste_y})")
+                    logger.info(f"[Flight Tracker] ✓ Successfully placed tile {tile_x},{tile_y} at ({paste_x},{paste_y})")
+                else:
+                    failed_tiles.append((tile_x, tile_y))
+                    logger.warning(f"[Flight Tracker] ✗ Failed to fetch tile {tile_x},{tile_y}")
         
         if tiles_fetched == 0:
             logger.warning("[Flight Tracker] No map tiles could be fetched")
             return None
+        
+        # Log summary of failed tiles
+        if failed_tiles:
+            logger.warning(f"[Flight Tracker] Failed to fetch {len(failed_tiles)} tiles: {failed_tiles}")
+        else:
+            logger.info(f"[Flight Tracker] All tiles fetched successfully")
         
         # Calculate the crop area to match our display bounds
         # Find the center tile and position within it
