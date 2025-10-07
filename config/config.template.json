@@ -107,9 +107,6 @@
             "30000": [0, 0, 139],
             "40000": [128, 0, 128]
         },
-        "_area_outline_options": "Removed - coastline drawing disabled for cleaner display",
-        "area_outline": "none",
-        "custom_coastline": [],
         "flight_plan_enabled": false
     },
     "clock": {
