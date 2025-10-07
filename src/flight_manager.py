@@ -498,23 +498,42 @@ class BaseFlightManager:
                 if 'flights' in data and data['flights']:
                     # Get the first (most recent) flight
                     flight = data['flights'][0]
+                    
+                    # Try multiple field names for aircraft type
+                    aircraft_type = (
+                        flight.get('aircraft_type') or 
+                        flight.get('aircraft', {}).get('type') or
+                        flight.get('type') or
+                        'Unknown'
+                    )
+                    
                     flight_plan = {
                         'origin': flight.get('origin', {}).get('code', 'Unknown'),
                         'destination': flight.get('destination', {}).get('code', 'Unknown'),
-                        'aircraft_type': flight.get('aircraft_type', 'Unknown')
+                        'aircraft_type': aircraft_type
                     }
+                    
+                    # Log the full flight data for debugging (first time only)
+                    logger.debug(f"[Flight Tracker] API response keys for {callsign}: {list(flight.keys())}")
                 else:
                     # Fallback for single flight response format
+                    aircraft_type = (
+                        data.get('aircraft_type') or 
+                        data.get('aircraft', {}).get('type') or
+                        data.get('type') or
+                        'Unknown'
+                    )
+                    
                     flight_plan = {
                         'origin': data.get('origin', {}).get('code', 'Unknown'),
                         'destination': data.get('destination', {}).get('code', 'Unknown'),
-                        'aircraft_type': data.get('aircraft_type', 'Unknown')
+                        'aircraft_type': aircraft_type
                     }
                 
                 # Cache using the cache manager
                 self.cache_manager.set(cache_key, flight_plan)
                 self._record_api_call()
-                logger.info(f"[Flight Tracker] Successfully fetched and cached flight plan for {callsign}: {flight_plan['origin']} -> {flight_plan['destination']}")
+                logger.info(f"[Flight Tracker] Successfully fetched and cached flight plan for {callsign}: {flight_plan['origin']} -> {flight_plan['destination']} ({flight_plan['aircraft_type']})")
                 return flight_plan
             else:
                 logger.warning(f"[Flight Tracker] API returned status {response.status_code} for {callsign}: {response.text[:100]}")
