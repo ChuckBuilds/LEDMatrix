@@ -17,8 +17,8 @@
             "cols": 64,
             "chain_length": 2,
             "parallel": 1,
-            "brightness": 95,
-            "hardware_mapping": "adafruit-hat-pwm",
+            "brightness": 50,
+            "hardware_mapping": "adafruit-hat",
             "scan_mode": 0,
             "pwm_bits": 9,
             "pwm_dither_bits": 1,
@@ -26,7 +26,7 @@
             "disable_hardware_pulsing": false,
             "inverse_colors": false,
             "show_refresh_rate": false,
-            "limit_refresh_rate_hz": 120
+            "limit_refresh_rate_hz": 100
         },
         "runtime": {
             "gpio_slowdown": 3
@@ -155,7 +155,7 @@
         "duration_buffer": 0.1,
         "background_service": {
             "enabled": true,
-            "max_workers": 3,
+            "max_workers": 1,
             "request_timeout": 30,
             "max_retries": 3,
             "priority": 2
@@ -205,7 +205,7 @@
         "max_display_time": 600,
         "background_service": {
             "enabled": true,
-            "max_workers": 3,
+            "max_workers": 1,
             "request_timeout": 30,
             "max_retries": 3,
             "priority": 2
@@ -243,7 +243,7 @@
         "show_records": true,
         "background_service": {
             "enabled": true,
-            "max_workers": 3,
+            "max_workers": 1,
             "request_timeout": 30,
             "max_retries": 3,
             "priority": 2
@@ -277,7 +277,7 @@
         "show_records": true,
         "background_service": {
             "enabled": true,
-            "max_workers": 3,
+            "max_workers": 1,
             "request_timeout": 30,
             "max_retries": 3,
             "priority": 2
@@ -311,7 +311,7 @@
         "show_records": true,
         "background_service": {
             "enabled": true,
-            "max_workers": 3,
+            "max_workers": 1,
             "request_timeout": 30,
             "max_retries": 3,
             "priority": 2
@@ -346,7 +346,7 @@
         "show_records": true,
         "background_service": {
             "enabled": true,
-            "max_workers": 3,
+            "max_workers": 1,
             "request_timeout": 30,
             "max_retries": 3,
             "priority": 2
@@ -380,7 +380,7 @@
         "show_ranking": true,
         "background_service": {
             "enabled": true,
-            "max_workers": 3,
+            "max_workers": 1,
             "request_timeout": 30,
             "max_retries": 3,
             "priority": 2
@@ -572,7 +572,7 @@
         "upcoming_fetch_days": 7,
         "background_service": {
             "enabled": true,
-            "max_workers": 3,
+            "max_workers": 1,
             "request_timeout": 30,
             "max_retries": 3,
             "priority": 2
@@ -625,7 +625,7 @@
         "show_records": true,
         "background_service": {
             "enabled": true,
-            "max_workers": 3,
+            "max_workers": 1,
             "request_timeout": 30,
             "max_retries": 3,
             "priority": 2
