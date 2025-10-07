@@ -42,6 +42,7 @@ class BaseFlightManager:
         self.center_lat = self.flight_config.get('center_latitude', 27.9506)
         self.center_lon = self.flight_config.get('center_longitude', -82.4572)
         self.map_radius_miles = self.flight_config.get('map_radius_miles', 10)  # Reduced from 50 to 10 miles for better visibility
+        self.zoom_factor = self.flight_config.get('zoom_factor', 1.0)  # Zoom factor to use more of the display
         
         # Display configuration
         self.display_width = display_manager.matrix.width
@@ -436,8 +437,7 @@ class BaseFlightManager:
     def _latlon_to_pixel(self, lat: float, lon: float) -> Optional[Tuple[int, int]]:
         """Convert lat/lon to pixel coordinates on the display."""
         # Calculate degrees per pixel based on radius and display size
-        # Use smaller dimension for aspect ratio considerations
-        min_dimension = min(self.display_width, self.display_height)
+        # Apply zoom factor to use more of the display area
         
         # Degrees of latitude/longitude to cover
         # 1 degree of latitude ≈ 69 miles, 1 degree of longitude varies by latitude
@@ -446,9 +446,13 @@ class BaseFlightManager:
         # Adjust longitude for latitude (longitude lines converge at poles)
         lon_degrees = lat_degrees / math.cos(math.radians(self.center_lat))
         
-        # Calculate pixel scale
-        lat_scale = self.display_height / lat_degrees
-        lon_scale = self.display_width / lon_degrees
+        # Apply zoom factor to reduce the effective area and use more of the display
+        effective_lat_degrees = lat_degrees / self.zoom_factor
+        effective_lon_degrees = lon_degrees / self.zoom_factor
+        
+        # Calculate pixel scale - use full display dimensions with zoom
+        lat_scale = self.display_height / effective_lat_degrees
+        lon_scale = self.display_width / effective_lon_degrees
         
         # Convert to pixel coordinates (center of display is center_lat, center_lon)
         x = int((lon - self.center_lon) * lon_scale + self.display_width / 2)
@@ -456,7 +460,7 @@ class BaseFlightManager:
         
         # Debug logging
         logger.debug(f"[Flight Tracker] Converting ({lat:.6f}, {lon:.6f}) to pixel ({x}, {y})")
-        logger.debug(f"[Flight Tracker] Scale: lat={lat_scale:.2f}, lon={lon_scale:.2f}, lat_degrees={lat_degrees:.4f}, lon_degrees={lon_degrees:.4f}")
+        logger.debug(f"[Flight Tracker] Scale: lat={lat_scale:.2f}, lon={lon_scale:.2f}, effective_lat_degrees={effective_lat_degrees:.4f}, effective_lon_degrees={effective_lon_degrees:.4f}, zoom_factor={self.zoom_factor}")
         
         # Check if within display bounds
         if 0 <= x < self.display_width and 0 <= y < self.display_height:
