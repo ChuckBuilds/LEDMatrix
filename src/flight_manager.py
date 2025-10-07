@@ -704,28 +704,45 @@ class BaseFlightManager:
     
     def _latlon_to_pixel(self, lat: float, lon: float) -> Optional[Tuple[int, int]]:
         """Convert lat/lon to pixel coordinates on the display using Web Mercator projection."""
-        # Use the same projection system as the map tiles for proper alignment
+        # The map background is exactly display_width x display_height with center at (width/2, height/2)
+        # We need to calculate how lat/lon maps to pixels using Web Mercator math
         
-        # Calculate the zoom level
+        # Get the zoom level to calculate the proper scale
         zoom = self._calculate_zoom_level()
         
-        # Convert center and aircraft to Web Mercator tile coordinates
-        center_tile_x, center_tile_y = self._latlon_to_tile_coords(self.center_lat, self.center_lon, zoom)
-        aircraft_tile_x, aircraft_tile_y = self._latlon_to_tile_coords(lat, lon, zoom)
+        # Convert lat/lon to Web Mercator world coordinates (normalized 0-1)
+        # This is the standard Web Mercator projection formula
+        def lat_to_mercator_y(lat_deg):
+            lat_rad = math.radians(lat_deg)
+            return math.log(math.tan(math.pi / 4 + lat_rad / 2))
         
-        # Calculate pixel offset from center in tile space
-        # Each tile is tile_size pixels, and we have fractional tiles
-        pixel_offset_x = (aircraft_tile_x - center_tile_x) * self.tile_size
-        pixel_offset_y = (aircraft_tile_y - center_tile_y) * self.tile_size
+        center_x_world = self.center_lon / 360.0 + 0.5  # Normalize to 0-1
+        center_y_world = (1.0 - lat_to_mercator_y(self.center_lat) / math.pi) / 2.0
         
-        # Convert to display coordinates (center is at display_width/2, display_height/2)
-        x = int(self.display_width / 2 + pixel_offset_x)
-        y = int(self.display_height / 2 + pixel_offset_y)
+        aircraft_x_world = lon / 360.0 + 0.5
+        aircraft_y_world = (1.0 - lat_to_mercator_y(lat) / math.pi) / 2.0
+        
+        # At zoom level z, the world is (256 * 2^z) pixels wide
+        world_pixels = self.tile_size * (2 ** zoom)
+        
+        # Calculate pixel positions in the world coordinate system
+        center_x_pixel = center_x_world * world_pixels
+        center_y_pixel = center_y_world * world_pixels
+        
+        aircraft_x_pixel = aircraft_x_world * world_pixels
+        aircraft_y_pixel = aircraft_y_world * world_pixels
+        
+        # Calculate offset from center
+        offset_x = aircraft_x_pixel - center_x_pixel
+        offset_y = aircraft_y_pixel - center_y_pixel
+        
+        # Map to display coordinates (center is at display_width/2, display_height/2)
+        x = int(self.display_width / 2 + offset_x)
+        y = int(self.display_height / 2 + offset_y)
         
         # Debug logging
         logger.debug(f"[Flight Tracker] Converting ({lat:.6f}, {lon:.6f}) to pixel ({x}, {y})")
-        logger.debug(f"[Flight Tracker] Zoom: {zoom}, Tile coords: aircraft=({aircraft_tile_x:.4f},{aircraft_tile_y:.4f}), center=({center_tile_x:.4f},{center_tile_y:.4f})")
-        logger.debug(f"[Flight Tracker] Pixel offset: ({pixel_offset_x:.1f}, {pixel_offset_y:.1f})")
+        logger.debug(f"[Flight Tracker] Zoom: {zoom}, World pixels: {world_pixels}, Offset: ({offset_x:.1f}, {offset_y:.1f})")
         
         # Check if within display bounds
         if 0 <= x < self.display_width and 0 <= y < self.display_height:
