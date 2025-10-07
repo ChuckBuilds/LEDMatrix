@@ -654,23 +654,23 @@ class BaseFlightManager:
                 # Check if we got an error page instead of a tile
                 content_type = response.headers.get('content-type', '').lower()
                 if 'text/html' in content_type or 'text/plain' in content_type:
-                    logger.warning(f"[Flight Tracker] Got HTML/text response from {url}")
+                    logger.debug(f"[Flight Tracker] Got HTML/text response from {url}")
                     continue  # Try next URL
                 
                 # Check if response is too small (likely an error page)
                 if len(response.content) < 2000:  # Tiles are usually much larger
-                    logger.warning(f"[Flight Tracker] Tile response too small ({len(response.content)} bytes) from {url}")
+                    logger.debug(f"[Flight Tracker] Tile response too small ({len(response.content)} bytes) from {url}")
                     # Try to read the error message
                     try:
                         error_text = response.content.decode('utf-8', errors='ignore')[:200]
-                        logger.warning(f"[Flight Tracker] Error content: {error_text}")
+                        logger.debug(f"[Flight Tracker] Error content: {error_text}")
                     except:
                         pass
                     continue  # Try next URL
                 
                 # If we get here, we have a valid tile
-                logger.info(f"[Flight Tracker] ✓ Successfully fetched tile from URL {i+1}: {url}")
-                logger.info(f"[Flight Tracker]   Tile size: {len(response.content)} bytes, Content-Type: {response.headers.get('content-type', 'unknown')}")
+                logger.debug(f"[Flight Tracker] ✓ Successfully fetched tile from URL {i+1}: {url}")
+                logger.debug(f"[Flight Tracker]   Tile size: {len(response.content)} bytes, Content-Type: {response.headers.get('content-type', 'unknown')}")
                 
                 # Save to cache
                 try:
@@ -743,11 +743,19 @@ class BaseFlightManager:
         lat_degrees = (self.map_radius_miles * 2) / 69.0
         lon_degrees = lat_degrees / math.cos(math.radians(center_lat))
         
-        # Calculate tile coverage - get more tiles for better coverage
+        # Calculate tile coverage - optimize for reasonable number of tiles
         tiles_per_degree = 2 ** zoom
-        # Add extra tiles to ensure we have good coverage
-        tiles_x = max(2, int(lon_degrees * tiles_per_degree / 360.0 * 2) + 4)
-        tiles_y = max(2, int(lat_degrees * tiles_per_degree / 360.0 * 2) + 4)
+        
+        # Calculate base tile coverage
+        base_tiles_x = max(1, int(lon_degrees * tiles_per_degree / 360.0 * 2))
+        base_tiles_y = max(1, int(lat_degrees * tiles_per_degree / 360.0 * 2))
+        
+        # Limit maximum tiles to prevent excessive fetching
+        max_tiles = 16  # 4x4 maximum
+        tiles_x = min(max_tiles, max(2, base_tiles_x + 2))  # Add 2 for buffer
+        tiles_y = min(max_tiles, max(2, base_tiles_y + 2))  # Add 2 for buffer
+        
+        logger.info(f"[Flight Tracker] Tile calculation: base=({base_tiles_x}x{base_tiles_y}), final=({tiles_x}x{tiles_y}), total={tiles_x * tiles_y}")
         
         # Calculate tile bounds
         start_x = center_x - tiles_x // 2
@@ -767,12 +775,7 @@ class BaseFlightManager:
                 tile_x = start_x + tx
                 tile_y = start_y + ty
                 
-                # Log the tile coordinates and URLs being tried
-                urls = self._get_tile_urls(tile_x, tile_y, zoom)
-                logger.info(f"[Flight Tracker] Fetching tile ({tile_x},{tile_y}) at zoom {zoom}")
-                for i, url in enumerate(urls):
-                    logger.info(f"[Flight Tracker]   URL {i+1}: {url}")
-                
+                # Fetch tile (reduced logging for performance)
                 tile_img = self._fetch_tile(tile_x, tile_y, zoom)
                 if tile_img:
                     # Ensure tile is in RGB mode for proper compositing
@@ -784,7 +787,7 @@ class BaseFlightManager:
                     paste_y = ty * self.tile_size
                     composite.paste(tile_img, (paste_x, paste_y))
                     tiles_fetched += 1
-                    logger.info(f"[Flight Tracker] ✓ Successfully placed tile {tile_x},{tile_y} at ({paste_x},{paste_y})")
+                    logger.debug(f"[Flight Tracker] ✓ Placed tile {tile_x},{tile_y} at ({paste_x},{paste_y})")
                 else:
                     failed_tiles.append((tile_x, tile_y))
                     logger.warning(f"[Flight Tracker] ✗ Failed to fetch tile {tile_x},{tile_y}")
