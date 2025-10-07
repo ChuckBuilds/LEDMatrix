@@ -86,7 +86,7 @@
         "center_latitude": 27.9506,
         "center_longitude": -82.4572,
         "map_radius_miles": 10,
-        "zoom_factor": 2.0,
+        "zoom_factor": 1.0,
         "display_modes": {
             "flight_map": true,
             "flight_overhead": true,
