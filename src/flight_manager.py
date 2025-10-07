@@ -1244,68 +1244,51 @@ class FlightMapManager(BaseFlightManager):
                 continue
             
             x, y = pixel
-            color = aircraft['color']
+            # Brighten the plane colors by boosting RGB values
+            base_color = aircraft['color']
+            color = tuple(min(255, int(c * 1.3)) for c in base_color)
             
             if is_small_display:
-                # Small display: single pixel with outline for visibility
-                # Draw black outline
-                for dx in [-1, 0, 1]:
-                    for dy in [-1, 0, 1]:
-                        if dx != 0 or dy != 0:
-                            draw.point((x + dx, y + dy), fill=(0, 0, 0))
-                # Draw colored center
+                # Small display: brighter pixel without outline
                 draw.point((x, y), fill=color)
-            else:
-                # Large display: small arrow showing heading with outline
+                # Add a single pixel for the nose
                 heading = aircraft['heading']
                 if heading:
-                    # Calculate arrow points
                     angle_rad = math.radians(heading)
-                    dx = int(2 * math.sin(angle_rad))
-                    dy = int(-2 * math.cos(angle_rad))
-                    
-                    # Draw arrow with black outline
-                    arrow_points = [(x + dx, y + dy), (x, y)]
-                    
-                    # Draw black outline for arrow head
-                    for px, py in arrow_points:
-                        for ox in [-1, 0, 1]:
-                            for oy in [-1, 0, 1]:
-                                if ox != 0 or oy != 0:
-                                    draw.point((px + ox, py + oy), fill=(0, 0, 0))
-                    
-                    # Draw colored arrow head
+                    dx = int(1 * math.sin(angle_rad))
+                    dy = int(-1 * math.cos(angle_rad))
                     draw.point((x + dx, y + dy), fill=color)
+            else:
+                # Large display: arrow showing heading without outline, with visible tail
+                heading = aircraft['heading']
+                if heading:
+                    # Calculate arrow points for nose and tail
+                    angle_rad = math.radians(heading)
+                    # Nose (front) - extend further out
+                    nose_dx = int(3 * math.sin(angle_rad))
+                    nose_dy = int(-3 * math.cos(angle_rad))
+                    # Tail (back) - show the tail clearly
+                    tail_dx = int(-2 * math.sin(angle_rad))
+                    tail_dy = int(2 * math.cos(angle_rad))
+                    
+                    # Draw fuselage from tail to nose
+                    draw.line([(x + tail_dx, y + tail_dy), (x + nose_dx, y + nose_dy)], fill=color, width=1)
+                    
+                    # Draw center body
                     draw.point((x, y), fill=color)
                     
-                    # Draw small wings with outline
-                    wing_angle = math.radians(heading + 135)
-                    wx1 = int(math.sin(wing_angle))
-                    wy1 = int(-math.cos(wing_angle))
-                    # Outline
-                    for ox in [-1, 0, 1]:
-                        for oy in [-1, 0, 1]:
-                            if ox != 0 or oy != 0:
-                                draw.point((x + wx1 + ox, y + wy1 + oy), fill=(0, 0, 0))
+                    # Draw small wings (no outline, brighter)
+                    wing_angle = math.radians(heading + 90)
+                    wx1 = int(2 * math.sin(wing_angle))
+                    wy1 = int(-2 * math.cos(wing_angle))
                     draw.point((x + wx1, y + wy1), fill=color)
                     
-                    wing_angle = math.radians(heading - 135)
-                    wx2 = int(math.sin(wing_angle))
-                    wy2 = int(-math.cos(wing_angle))
-                    # Outline
-                    for ox in [-1, 0, 1]:
-                        for oy in [-1, 0, 1]:
-                            if ox != 0 or oy != 0:
-                                draw.point((x + wx2 + ox, y + wy2 + oy), fill=(0, 0, 0))
+                    wing_angle = math.radians(heading - 90)
+                    wx2 = int(2 * math.sin(wing_angle))
+                    wy2 = int(-2 * math.cos(wing_angle))
                     draw.point((x + wx2, y + wy2), fill=color)
                 else:
-                    # No heading data, draw single pixel with outline
-                    # Draw black outline
-                    for dx in [-1, 0, 1]:
-                        for dy in [-1, 0, 1]:
-                            if dx != 0 or dy != 0:
-                                draw.point((x + dx, y + dy), fill=(0, 0, 0))
-                    # Draw colored center
+                    # No heading data, draw brighter pixel without outline
                     draw.point((x, y), fill=color)
         
         # Draw info text with pixel-perfect rendering for better readability
