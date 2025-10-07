@@ -95,6 +95,14 @@
         "skyaware_url": "http://192.168.86.30/skyaware/data/aircraft.json",
         "show_trails": true,
         "trail_length": 10,
+        "map_background": {
+            "enabled": true,
+            "tile_provider": "osm",
+            "tile_size": 256,
+            "cache_ttl_hours": 24,
+            "fade_intensity": 0.3,
+            "update_on_location_change": true
+        },
         "proximity_alert": {
             "enabled": true,
             "distance_miles": 0.1,

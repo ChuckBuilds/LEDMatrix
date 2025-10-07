@@ -1,6 +1,8 @@
 import logging
 import math
 import time
+import hashlib
+import os
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -50,6 +52,24 @@ class BaseFlightManager:
         self.center_lon = self.flight_config.get('center_longitude', -82.4572)
         self.map_radius_miles = self.flight_config.get('map_radius_miles', 10)  # Reduced from 50 to 10 miles for better visibility
         self.zoom_factor = self.flight_config.get('zoom_factor', 1.0)  # Zoom factor to use more of the display
+        
+        # Map background configuration
+        self.map_bg_config = self.flight_config.get('map_background', {})
+        self.map_bg_enabled = self.map_bg_config.get('enabled', True)
+        self.tile_provider = self.map_bg_config.get('tile_provider', 'osm')
+        self.tile_size = self.map_bg_config.get('tile_size', 256)
+        self.cache_ttl_hours = self.map_bg_config.get('cache_ttl_hours', 24)
+        self.fade_intensity = self.map_bg_config.get('fade_intensity', 0.3)
+        self.update_on_location_change = self.map_bg_config.get('update_on_location_change', True)
+        
+        # Map tile cache directory
+        self.tile_cache_dir = Path('cache/map_tiles')
+        self.tile_cache_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Cached map background
+        self.cached_map_bg = None
+        self.last_map_center = None
+        self.last_map_zoom = None
         
         # Display configuration
         self.display_width = display_manager.matrix.width
@@ -530,6 +550,181 @@ class BaseFlightManager:
         
         return None
     
+    def _latlon_to_tile_coords(self, lat: float, lon: float, zoom: int) -> Tuple[int, int]:
+        """Convert lat/lon to tile coordinates for a given zoom level."""
+        n = 2.0 ** zoom
+        x = int((lon + 180.0) / 360.0 * n)
+        y = int((1.0 - math.asinh(math.tan(math.radians(lat))) / math.pi) / 2.0 * n)
+        return (x, y)
+    
+    def _get_tile_url(self, x: int, y: int, zoom: int) -> str:
+        """Get the URL for a map tile based on provider."""
+        if self.tile_provider == 'osm':
+            # OpenStreetMap tile server
+            return f"https://tile.openstreetmap.org/{zoom}/{x}/{y}.png"
+        elif self.tile_provider == 'carto':
+            # CartoDB Positron (light theme)
+            return f"https://cartodb-basemaps-a.global.ssl.fastly.net/light_all/{zoom}/{x}/{y}.png"
+        elif self.tile_provider == 'carto_dark':
+            # CartoDB Dark Matter
+            return f"https://cartodb-basemaps-a.global.ssl.fastly.net/dark_all/{zoom}/{x}/{y}.png"
+        else:
+            # Default to OSM
+            return f"https://tile.openstreetmap.org/{zoom}/{x}/{y}.png"
+    
+    def _get_tile_cache_path(self, x: int, y: int, zoom: int) -> Path:
+        """Get the cache file path for a tile."""
+        return self.tile_cache_dir / f"{self.tile_provider}_{zoom}_{x}_{y}.png"
+    
+    def _is_tile_cached(self, x: int, y: int, zoom: int) -> bool:
+        """Check if a tile is cached and not expired."""
+        cache_path = self._get_tile_cache_path(x, y, zoom)
+        if not cache_path.exists():
+            return False
+        
+        # Check if tile is not expired
+        tile_age = time.time() - cache_path.stat().st_mtime
+        return tile_age < (self.cache_ttl_hours * 3600)
+    
+    def _fetch_tile(self, x: int, y: int, zoom: int) -> Optional[Image.Image]:
+        """Fetch a map tile, using cache if available."""
+        cache_path = self._get_tile_cache_path(x, y, zoom)
+        
+        # Try to load from cache first
+        if self._is_tile_cached(x, y, zoom):
+            try:
+                return Image.open(cache_path)
+            except Exception as e:
+                logger.warning(f"[Flight Tracker] Failed to load cached tile {x},{y},{zoom}: {e}")
+        
+        # Fetch from server
+        try:
+            url = self._get_tile_url(x, y, zoom)
+            logger.debug(f"[Flight Tracker] Fetching tile from {url}")
+            
+            response = requests.get(url, timeout=10)
+            response.raise_for_status()
+            
+            # Save to cache
+            cache_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(cache_path, 'wb') as f:
+                f.write(response.content)
+            
+            return Image.open(cache_path)
+            
+        except Exception as e:
+            logger.warning(f"[Flight Tracker] Failed to fetch tile {x},{y},{zoom}: {e}")
+            return None
+    
+    def _get_map_background(self, center_lat: float, center_lon: float) -> Optional[Image.Image]:
+        """Get the map background for the current view."""
+        if not self.map_bg_enabled:
+            return None
+        
+        # Calculate appropriate zoom level based on map radius
+        # Higher zoom for smaller radius
+        if self.map_radius_miles <= 5:
+            zoom = 12
+        elif self.map_radius_miles <= 10:
+            zoom = 11
+        elif self.map_radius_miles <= 25:
+            zoom = 10
+        elif self.map_radius_miles <= 50:
+            zoom = 9
+        else:
+            zoom = 8
+        
+        # Check if we need to update the background
+        current_center = (round(center_lat, 4), round(center_lon, 4))
+        if (self.cached_map_bg is not None and 
+            self.last_map_center == current_center and 
+            self.last_map_zoom == zoom and
+            not self.update_on_location_change):
+            return self.cached_map_bg
+        
+        # Calculate tile coordinates for center
+        center_x, center_y = self._latlon_to_tile_coords(center_lat, center_lon, zoom)
+        
+        # Calculate how many tiles we need to cover the display
+        # Each tile covers a certain lat/lon area
+        lat_degrees = (self.map_radius_miles * 2) / 69.0
+        lon_degrees = lat_degrees / math.cos(math.radians(center_lat))
+        
+        # Calculate tile coverage
+        tiles_per_degree = 2 ** zoom
+        tiles_x = max(1, int(lon_degrees * tiles_per_degree / 360.0 * 2) + 2)
+        tiles_y = max(1, int(lat_degrees * tiles_per_degree / 360.0 * 2) + 2)
+        
+        # Calculate tile bounds
+        start_x = center_x - tiles_x // 2
+        start_y = center_y - tiles_y // 2
+        
+        # Create composite image
+        composite_width = tiles_x * self.tile_size
+        composite_height = tiles_y * self.tile_size
+        composite = Image.new('RGB', (composite_width, composite_height), (0, 0, 0))
+        
+        # Fetch and composite tiles
+        tiles_fetched = 0
+        for ty in range(tiles_y):
+            for tx in range(tiles_x):
+                tile_x = start_x + tx
+                tile_y = start_y + ty
+                
+                tile_img = self._fetch_tile(tile_x, tile_y, zoom)
+                if tile_img:
+                    # Paste tile into composite
+                    paste_x = tx * self.tile_size
+                    paste_y = ty * self.tile_size
+                    composite.paste(tile_img, (paste_x, paste_y))
+                    tiles_fetched += 1
+        
+        if tiles_fetched == 0:
+            logger.warning("[Flight Tracker] No map tiles could be fetched")
+            return None
+        
+        # Calculate the crop area to match our display bounds
+        # Convert center lat/lon to pixel coordinates in the composite
+        center_pixel_x = int((center_lon - self._tile_to_lon(start_x, zoom)) * tiles_per_degree * self.tile_size / 360.0)
+        center_pixel_y = int((self._tile_to_lat(start_y, zoom) - center_lat) * tiles_per_degree * self.tile_size / 360.0)
+        
+        # Calculate crop bounds
+        crop_left = max(0, center_pixel_x - self.display_width // 2)
+        crop_top = max(0, center_pixel_y - self.display_height // 2)
+        crop_right = min(composite_width, crop_left + self.display_width)
+        crop_bottom = min(composite_height, crop_top + self.display_height)
+        
+        # Crop to display size
+        cropped = composite.crop((crop_left, crop_top, crop_right, crop_bottom))
+        
+        # Resize to exact display dimensions
+        if cropped.size != (self.display_width, self.display_height):
+            cropped = cropped.resize((self.display_width, self.display_height), Image.Resampling.LANCZOS)
+        
+        # Apply fade effect
+        if self.fade_intensity < 1.0:
+            # Create a fade overlay
+            fade_overlay = Image.new('RGB', (self.display_width, self.display_height), (0, 0, 0))
+            cropped = Image.blend(cropped, fade_overlay, 1.0 - self.fade_intensity)
+        
+        # Cache the result
+        self.cached_map_bg = cropped
+        self.last_map_center = current_center
+        self.last_map_zoom = zoom
+        
+        logger.info(f"[Flight Tracker] Generated map background with {tiles_fetched} tiles at zoom {zoom}")
+        return cropped
+    
+    def _tile_to_lat(self, y: int, zoom: int) -> float:
+        """Convert tile Y coordinate to latitude."""
+        n = 2.0 ** zoom
+        lat_rad = math.atan(math.sinh(math.pi * (1 - 2 * y / n)))
+        return math.degrees(lat_rad)
+    
+    def _tile_to_lon(self, x: int, zoom: int) -> float:
+        """Convert tile X coordinate to longitude."""
+        n = 2.0 ** zoom
+        return x / n * 360.0 - 180.0
     
     def update(self) -> None:
         """Update aircraft data from SkyAware."""
@@ -566,23 +761,34 @@ class FlightMapManager(BaseFlightManager):
         logger.info("[Flight Tracker] Initialized Map Manager")
     
     def display(self, force_clear: bool = False) -> None:
-        """Display the flight map with aircraft and optional coastline."""
+        """Display the flight map with aircraft and geographical background."""
         if force_clear:
             self.display_manager.clear()
         
-        # Create image
-        img = Image.new('RGB', (self.display_width, self.display_height), (0, 0, 0))
-        draw = ImageDraw.Draw(img)
+        # Get map background if enabled
+        map_bg = self._get_map_background(self.center_lat, self.center_lon)
         
-        # Area outline drawing removed for cleaner display
+        # Create image with background
+        if map_bg:
+            img = map_bg.copy()
+        else:
+            img = Image.new('RGB', (self.display_width, self.display_height), (0, 0, 0))
+        
+        draw = ImageDraw.Draw(img)
         
         # Draw center position marker (white dot at our lat/lon)
         center_pixel = self._latlon_to_pixel(self.center_lat, self.center_lon)
         if center_pixel:
             x, y = center_pixel
-            # Draw a small white dot at our center position
+            # Draw a more visible center marker with outline
+            # Draw black outline first
+            for dx in [-2, -1, 0, 1, 2]:
+                for dy in [-2, -1, 0, 1, 2]:
+                    if abs(dx) + abs(dy) <= 2:
+                        draw.point((x + dx, y + dy), fill=(0, 0, 0))
+            
+            # Draw white center
             draw.point((x, y), fill=(255, 255, 255))
-            # Draw a small cross for better visibility
             draw.point((x-1, y), fill=(255, 255, 255))
             draw.point((x+1, y), fill=(255, 255, 255))
             draw.point((x, y-1), fill=(255, 255, 255))
@@ -622,34 +828,65 @@ class FlightMapManager(BaseFlightManager):
             color = aircraft['color']
             
             if is_small_display:
-                # Small display: single pixel
+                # Small display: single pixel with outline for visibility
+                # Draw black outline
+                for dx in [-1, 0, 1]:
+                    for dy in [-1, 0, 1]:
+                        if dx != 0 or dy != 0:
+                            draw.point((x + dx, y + dy), fill=(0, 0, 0))
+                # Draw colored center
                 draw.point((x, y), fill=color)
             else:
-                # Large display: small arrow showing heading
+                # Large display: small arrow showing heading with outline
                 heading = aircraft['heading']
                 if heading:
-                    # Draw 3-pixel arrow
                     # Calculate arrow points
                     angle_rad = math.radians(heading)
                     dx = int(2 * math.sin(angle_rad))
                     dy = int(-2 * math.cos(angle_rad))
                     
-                    # Draw arrow head
+                    # Draw arrow with black outline
+                    arrow_points = [(x + dx, y + dy), (x, y)]
+                    
+                    # Draw black outline for arrow head
+                    for px, py in arrow_points:
+                        for ox in [-1, 0, 1]:
+                            for oy in [-1, 0, 1]:
+                                if ox != 0 or oy != 0:
+                                    draw.point((px + ox, py + oy), fill=(0, 0, 0))
+                    
+                    # Draw colored arrow head
                     draw.point((x + dx, y + dy), fill=color)
                     draw.point((x, y), fill=color)
                     
-                    # Draw small wings
+                    # Draw small wings with outline
                     wing_angle = math.radians(heading + 135)
                     wx1 = int(math.sin(wing_angle))
                     wy1 = int(-math.cos(wing_angle))
+                    # Outline
+                    for ox in [-1, 0, 1]:
+                        for oy in [-1, 0, 1]:
+                            if ox != 0 or oy != 0:
+                                draw.point((x + wx1 + ox, y + wy1 + oy), fill=(0, 0, 0))
                     draw.point((x + wx1, y + wy1), fill=color)
                     
                     wing_angle = math.radians(heading - 135)
                     wx2 = int(math.sin(wing_angle))
                     wy2 = int(-math.cos(wing_angle))
+                    # Outline
+                    for ox in [-1, 0, 1]:
+                        for oy in [-1, 0, 1]:
+                            if ox != 0 or oy != 0:
+                                draw.point((x + wx2 + ox, y + wy2 + oy), fill=(0, 0, 0))
                     draw.point((x + wx2, y + wy2), fill=color)
                 else:
-                    # No heading data, draw single pixel
+                    # No heading data, draw single pixel with outline
+                    # Draw black outline
+                    for dx in [-1, 0, 1]:
+                        for dy in [-1, 0, 1]:
+                            if dx != 0 or dy != 0:
+                                draw.point((x + dx, y + dy), fill=(0, 0, 0))
+                    # Draw colored center
                     draw.point((x, y), fill=color)
         
         # Draw info text with pixel-perfect rendering for better readability
