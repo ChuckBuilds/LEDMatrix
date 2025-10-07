@@ -349,11 +349,27 @@ class BaseFlightManager:
         if callsign_upper.startswith(('N', 'C-', 'CF-')) and len(callsign) >= 4:
             return "General Aviation"
         
+        # Additional pattern matching for common aircraft types
+        if len(callsign) >= 4:
+            # Check for common commercial flight patterns
+            if any(pattern in callsign_upper for pattern in ['1', '2', '3', '4', '5', '6', '7', '8', '9']):
+                if len(callsign) >= 6:
+                    return "Commercial"
+                else:
+                    return "General Aviation"
+            
+            # Check for common airline patterns
+            if callsign_upper.startswith(('A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'O', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z')):
+                if len(callsign) >= 5:
+                    return "Commercial"
+                else:
+                    return "General Aviation"
+        
         # Default categorization
         if len(callsign) <= 3:
             return "Unknown"
         else:
-            return "Other"
+            return "General Aviation"
     
     def _check_rate_limit(self) -> bool:
         """Check if we're within API rate limits and daily budget."""
@@ -1408,6 +1424,9 @@ class FlightStatsManager(BaseFlightManager):
         # Improve aircraft type display with better categorization
         if aircraft_type == 'Unknown':
             aircraft_type = self._categorize_aircraft(aircraft['callsign'])
+            # Log uncategorized aircraft for debugging
+            if aircraft_type == 'Unknown':
+                logger.debug(f"[Flight Tracker] Unclassified aircraft: {aircraft['callsign']}")
         
         if is_small_display:
             # Small display layout with dynamic spacing
