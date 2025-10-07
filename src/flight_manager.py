@@ -40,9 +40,12 @@ class BaseFlightManager:
         
         # Rate limiting and cost control for FlightAware API
         self.api_call_timestamps = []  # Track API call timestamps for rate limiting
-        self.max_api_calls_per_hour = self.flight_config.get('max_api_calls_per_hour', 50)  # Conservative default
-        self.cache_ttl_seconds = self.flight_config.get('flight_plan_cache_ttl_hours', 4) * 3600  # Convert hours to seconds
-        self.min_callsign_length = self.flight_config.get('min_callsign_length', 3)  # Filter out short callsigns
+        self.max_api_calls_per_hour = self.flight_config.get('max_api_calls_per_hour', 20)  # Reduced from 50 to 20 for cost control
+        self.cache_ttl_seconds = self.flight_config.get('flight_plan_cache_ttl_hours', 12) * 3600  # 12 hours for fresher data
+        self.min_callsign_length = self.flight_config.get('min_callsign_length', 4)  # Increased from 3 to 4 to filter more
+        self.daily_api_budget = self.flight_config.get('daily_api_budget', 60)  # Max 60 calls per day (1800/month)
+        self.api_calls_today = 0
+        self.last_reset_date = None
         self.airline_callsign_prefixes = self.flight_config.get('airline_callsign_prefixes', [
             'AAL', 'UAL', 'DAL', 'SWA', 'JBU', 'ASQ', 'ENY', 'FFT', 'NKS', 'F9', 'G4', 'B6', 'WN', 'AA', 'UA', 'DL'
         ])  # Only fetch for known airline callsigns
@@ -129,6 +132,19 @@ class BaseFlightManager:
         self.aircraft_trails = {}  # ICAO -> list of (lat, lon, timestamp) tuples
         self.last_update = 0
         self.last_fetch = 0
+        
+        # Cost monitoring
+        self.monthly_api_calls = 0
+        self.cost_per_call = 0.005  # $0.005 per call based on your data
+        self.monthly_budget = 10.0  # $10 monthly budget
+        self.budget_warning_threshold = 0.8  # Warn at 80% of budget
+        
+        # Background service for flight plan data
+        self.background_service_enabled = self.flight_config.get('background_service', {}).get('enabled', True)
+        self.background_fetch_interval = self.flight_config.get('background_service', {}).get('fetch_interval_hours', 4) * 3600  # More frequent fetching
+        self.last_background_fetch = 0
+        self.pending_flight_plans = set()  # Callsigns to fetch in background
+        self.max_background_calls_per_run = self.flight_config.get('background_service', {}).get('max_calls_per_run', 10)  # More calls per background run
         
         # Fonts
         self.fonts = self._load_fonts()
@@ -253,21 +269,41 @@ class BaseFlightManager:
         if not callsign or len(callsign) < self.min_callsign_length:
             return False
         
-        # Check if it's a known airline callsign
         callsign_upper = callsign.upper()
-        for prefix in self.airline_callsign_prefixes:
+        
+        # Priority 1: Major US airlines (most likely to have interesting flight plans)
+        major_us_airlines = ['AAL', 'UAL', 'DAL', 'SWA', 'JBU', 'B6', 'WN', 'AA', 'UA', 'DL', 'ASQ', 'ENY', 'FFT', 'NKS', 'F9', 'G4']
+        for prefix in major_us_airlines:
             if callsign_upper.startswith(prefix):
                 return True
         
-        # Include international aircraft (they often have interesting flight plans)
-        if callsign_upper.startswith(('G-', 'F-', 'D-', 'I-', 'HB-', 'OE-', 'PH-', 'SE-', 'LN-', 'OY-', 'VH-', 'C-G', 'C-F', 'JA-', 'B-', 'HL-', '9V-', 'A6-', 'VT-', 'PK-', 'HS-', 'RP-', 'ZS-', '4X-', 'SU-', 'RA-', 'UR-', 'EW-', 'S7-', 'U6-', 'FV-', 'DP-', 'P4-', 'P5-', 'P6-', 'P7-', 'P8-', 'P9-', 'P0-', 'P1-', 'P2-', 'P3-')):
+        # Priority 2: International airlines (expanded for better coverage)
+        international_airlines = ['BAW', 'AFR', 'LUF', 'KLM', 'SAS', 'IBE', 'EZY', 'RYR', 'WZZ', 'EIN', 'DLH', 'AUA', 'SWR', 'AZA', 'IBB', 'VLG', 'TAP', 'KLM', 'AFR', 'LUF']
+        for prefix in international_airlines:
+            if callsign_upper.startswith(prefix):
+                return True
+        
+        # Priority 3: Cargo airlines (often have interesting routes)
+        cargo_airlines = ['UPS', 'FDX', 'GTI', 'ABX', 'CPZ', 'DHL', 'TNT', 'QFA', 'SIA', 'CAL']
+        for prefix in cargo_airlines:
+            if callsign_upper.startswith(prefix):
+                return True
+        
+        # Priority 4: Regional airlines (for more comprehensive coverage)
+        regional_airlines = ['ENY', 'ASQ', 'FFT', 'NKS', 'JBU', 'G4', 'B6', 'F9', 'NK', 'G4']
+        for prefix in regional_airlines:
+            if callsign_upper.startswith(prefix):
+                return True
+        
+        # Priority 5: International aircraft with country prefixes (interesting routes)
+        if callsign_upper.startswith(('G-', 'F-', 'D-', 'I-', 'HB-', 'OE-', 'PH-', 'SE-', 'LN-', 'OY-', 'VH-', 'C-G', 'C-F', 'JA-', 'B-', 'HL-', '9V-', 'A6-', 'VT-', 'PK-', 'HS-', 'RP-', 'ZS-', '4X-', 'SU-', 'RA-', 'UR-', 'EW-', 'S7-', 'U6-', 'FV-', 'DP-')):
             return True
         
-        # Skip military/private aircraft for cost reasons
-        if callsign_upper.startswith(('N', 'C-', 'CF-')):  # Military or private aircraft
+        # Skip military and private aircraft to focus on commercial traffic
+        if callsign_upper.startswith(('N', 'C-', 'CF-', 'AF-', 'NATO-', 'USAF-', 'USN-', 'USMC-', 'USCG-')):
             return False
         
-        return False  # Default to not fetching unknown patterns
+        return False
     
     def _categorize_aircraft(self, callsign: str) -> str:
         """Categorize aircraft based on callsign patterns."""
@@ -302,24 +338,63 @@ class BaseFlightManager:
             return "Other"
     
     def _check_rate_limit(self) -> bool:
-        """Check if we're within API rate limits."""
+        """Check if we're within API rate limits and daily budget."""
         current_time = time.time()
-        hour_ago = current_time - 3600  # 1 hour ago
+        current_date = datetime.now().date()
         
-        # Remove timestamps older than 1 hour
+        # Reset daily counter if new day
+        if self.last_reset_date != current_date:
+            self.api_calls_today = 0
+            self.last_reset_date = current_date
+            logger.info(f"[Flight Tracker] Daily API budget reset: {self.daily_api_budget} calls available")
+        
+        # Check daily budget first (more restrictive)
+        if self.api_calls_today >= self.daily_api_budget:
+            logger.warning(f"[Flight Tracker] Daily API budget reached: {self.api_calls_today}/{self.daily_api_budget} calls today")
+            return False
+        
+        # Check hourly rate limit
+        hour_ago = current_time - 3600  # 1 hour ago
         self.api_call_timestamps = [ts for ts in self.api_call_timestamps if ts > hour_ago]
         
-        # Check if we're under the limit
         if len(self.api_call_timestamps) >= self.max_api_calls_per_hour:
-            logger.warning(f"[Flight Tracker] Rate limit reached: {len(self.api_call_timestamps)}/{self.max_api_calls_per_hour} calls in the last hour")
+            logger.warning(f"[Flight Tracker] Hourly rate limit reached: {len(self.api_call_timestamps)}/{self.max_api_calls_per_hour} calls in the last hour")
             return False
         
         return True
     
     def _record_api_call(self):
-        """Record an API call for rate limiting."""
-        self.api_call_timestamps.append(time.time())
-        logger.debug(f"[Flight Tracker] API call recorded. Total calls in last hour: {len(self.api_call_timestamps)}")
+        """Record an API call for rate limiting and cost monitoring."""
+        current_time = time.time()
+        self.api_call_timestamps.append(current_time)
+        self.api_calls_today += 1
+        self.monthly_api_calls += 1
+        
+        # Calculate current costs
+        current_cost = self.monthly_api_calls * self.cost_per_call
+        budget_usage = current_cost / self.monthly_budget
+        
+        # Log cost information
+        logger.info(f"[Flight Tracker] API call recorded. Today: {self.api_calls_today}/{self.daily_api_budget}, "
+                   f"Monthly: {self.monthly_api_calls} calls (${current_cost:.2f}), "
+                   f"Budget usage: {budget_usage:.1%}")
+        
+        # Budget warning
+        if budget_usage >= self.budget_warning_threshold:
+            logger.warning(f"[Flight Tracker] BUDGET WARNING: {budget_usage:.1%} of monthly budget used "
+                          f"(${current_cost:.2f}/${self.monthly_budget:.2f})")
+        
+        # Smart budget management - reduce daily budget as month progresses
+        days_in_month = 30
+        current_day = datetime.now().day
+        if current_day > 15:  # After mid-month, be more conservative
+            self.daily_api_budget = min(self.daily_api_budget, 40)  # Reduce to 40 calls/day
+            logger.info(f"[Flight Tracker] Mid-month budget adjustment: {self.daily_api_budget} calls/day")
+        
+        # Emergency stop at 95% budget
+        if budget_usage >= 0.95:
+            logger.error(f"[Flight Tracker] EMERGENCY STOP: 95% of budget reached. Disabling API calls.")
+            self.daily_api_budget = 0  # Effectively disable further calls
     
     
     def _fetch_aircraft_data(self) -> Optional[Dict]:
@@ -921,8 +996,56 @@ class BaseFlightManager:
             data = self._fetch_aircraft_data()
             if data:
                 self._process_aircraft_data(data)
+                # Queue interesting callsigns for background fetching
+                self._queue_interesting_callsigns()
             
             self.last_update = current_time
+        
+        # Background service for flight plan data
+        if self.background_service_enabled and current_time - self.last_background_fetch >= self.background_fetch_interval:
+            self._background_fetch_flight_plans()
+            self.last_background_fetch = current_time
+    
+    def _queue_interesting_callsigns(self):
+        """Queue callsigns that are worth fetching flight plan data for, with priority."""
+        # Sort aircraft by distance (closer = higher priority)
+        sorted_aircraft = sorted(self.aircraft_data.values(), key=lambda a: a['distance_miles'])
+        
+        for aircraft in sorted_aircraft:
+            callsign = aircraft['callsign']
+            if self._is_callsign_worth_fetching(callsign):
+                # Check if we already have cached data
+                cache_key = f"flight_plan_{callsign}"
+                if not self.cache_manager.get(cache_key, max_age=self.cache_ttl_seconds):
+                    # Add priority based on distance and aircraft type
+                    priority = 1 if aircraft['distance_miles'] < 5 else 2  # Closer aircraft get priority
+                    self.pending_flight_plans.add((priority, callsign))
+    
+    def _background_fetch_flight_plans(self):
+        """Fetch flight plan data in background to avoid blocking display."""
+        if not self.pending_flight_plans:
+            return
+        
+        logger.info(f"[Flight Tracker] Background fetching {len(self.pending_flight_plans)} flight plans")
+        
+        # Sort by priority (lower number = higher priority)
+        sorted_plans = sorted(self.pending_flight_plans, key=lambda x: x[0])
+        
+        # Process a limited number of callsigns per background run
+        max_per_run = min(self.max_background_calls_per_run, len(sorted_plans))
+        plans_to_process = sorted_plans[:max_per_run]
+        
+        for priority, callsign in plans_to_process:
+            if self._check_rate_limit():
+                # Fetch flight plan data
+                flight_plan = self._get_flight_plan_data(callsign)
+                if flight_plan and flight_plan.get('origin') != 'Unknown':
+                    logger.info(f"[Flight Tracker] Background fetched (priority {priority}): {callsign} -> {flight_plan['origin']}-{flight_plan['destination']}")
+                
+                self.pending_flight_plans.remove((priority, callsign))
+            else:
+                logger.warning(f"[Flight Tracker] Rate limit reached, deferring {len(self.pending_flight_plans)} callsigns")
+                break
     
     def get_closest_aircraft(self) -> Optional[Dict]:
         """Get the closest aircraft to the center point."""
