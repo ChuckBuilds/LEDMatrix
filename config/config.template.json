@@ -101,7 +101,8 @@
             "tile_size": 256,
             "cache_ttl_hours": 24,
             "fade_intensity": 0.3,
-            "update_on_location_change": true
+            "update_on_location_change": true,
+            "disable_on_cache_error": false
         },
         "proximity_alert": {
             "enabled": true,

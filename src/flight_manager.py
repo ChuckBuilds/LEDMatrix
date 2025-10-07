@@ -61,6 +61,11 @@ class BaseFlightManager:
         self.cache_ttl_hours = self.map_bg_config.get('cache_ttl_hours', 24)
         self.fade_intensity = self.map_bg_config.get('fade_intensity', 0.3)
         self.update_on_location_change = self.map_bg_config.get('update_on_location_change', True)
+        self.disable_on_cache_error = self.map_bg_config.get('disable_on_cache_error', False)
+        
+        # Track cache errors
+        self.cache_error_count = 0
+        self.max_cache_errors = 5  # Disable after 5 consecutive cache errors
         
         # Map tile cache directory - use the same cache system as the rest of the project
         cache_dir = cache_manager.cache_dir
@@ -68,9 +73,13 @@ class BaseFlightManager:
             self.tile_cache_dir = Path(cache_dir) / 'map_tiles'
             try:
                 self.tile_cache_dir.mkdir(parents=True, exist_ok=True)
+                # Test write access
+                test_file = self.tile_cache_dir / '.writetest'
+                test_file.write_text('test')
+                test_file.unlink()
                 logger.info(f"[Flight Tracker] Using map tile cache directory: {self.tile_cache_dir}")
-            except PermissionError as e:
-                logger.warning(f"[Flight Tracker] Could not create map tile cache directory {self.tile_cache_dir}: {e}")
+            except (PermissionError, OSError) as e:
+                logger.warning(f"[Flight Tracker] Could not use map tile cache directory {self.tile_cache_dir}: {e}")
                 # Fallback to a temporary directory
                 import tempfile
                 self.tile_cache_dir = Path(tempfile.gettempdir()) / 'ledmatrix_map_tiles'
@@ -627,9 +636,20 @@ class BaseFlightManager:
                 cache_path.parent.mkdir(parents=True, exist_ok=True)
                 with open(cache_path, 'wb') as f:
                     f.write(response.content)
-            except PermissionError as e:
+                logger.debug(f"[Flight Tracker] Cached tile {x},{y},{zoom}")
+                # Reset cache error count on successful cache
+                if self.cache_error_count > 0:
+                    self.cache_error_count = 0
+            except (PermissionError, OSError) as e:
                 logger.warning(f"[Flight Tracker] Could not save tile to cache {cache_path}: {e}")
-                # Continue without caching
+                # Track cache error
+                self.cache_error_count += 1
+                # Continue without caching - create a temporary file
+                import tempfile
+                temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.png')
+                temp_file.write(response.content)
+                temp_file.close()
+                return Image.open(temp_file.name)
             
             return Image.open(cache_path)
             
@@ -640,6 +660,11 @@ class BaseFlightManager:
     def _get_map_background(self, center_lat: float, center_lon: float) -> Optional[Image.Image]:
         """Get the map background for the current view."""
         if not self.map_bg_enabled:
+            return None
+        
+        # Check if we should disable due to cache errors
+        if self.disable_on_cache_error and self.cache_error_count >= self.max_cache_errors:
+            logger.warning(f"[Flight Tracker] Map background disabled due to {self.cache_error_count} consecutive cache errors")
             return None
         
         # Calculate appropriate zoom level based on map radius
