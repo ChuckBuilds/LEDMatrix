@@ -632,12 +632,14 @@ class BaseFlightManager:
     
     def _fetch_tile(self, x: int, y: int, zoom: int) -> Optional[Image.Image]:
         """Fetch a map tile, using cache if available."""
+        from PIL import Image as PILImage
+        
         cache_path = self._get_tile_cache_path(x, y, zoom)
         
         # Try to load from cache first
         if self._is_tile_cached(x, y, zoom):
             try:
-                return Image.open(cache_path)
+                return PILImage.open(cache_path)
             except Exception as e:
                 logger.warning(f"[Flight Tracker] Failed to load cached tile {x},{y},{zoom}: {e}")
         
@@ -670,9 +672,8 @@ class BaseFlightManager:
                 
                 # Additional validation: try to load as image and check for text artifacts
                 try:
-                    from PIL import Image
                     import io
-                    test_img = Image.open(io.BytesIO(response.content))
+                    test_img = PILImage.open(io.BytesIO(response.content))
                     
                     # Check if image is too small (likely an error page rendered as image)
                     if test_img.size[0] < 100 or test_img.size[1] < 100:
@@ -714,7 +715,7 @@ class BaseFlightManager:
                     # Reset cache error count on successful cache
                     if self.cache_error_count > 0:
                         self.cache_error_count = 0
-                    return Image.open(cache_path)
+                    return PILImage.open(cache_path)
                 except (PermissionError, OSError) as e:
                     logger.warning(f"[Flight Tracker] Could not save tile to cache {cache_path}: {e}")
                     # Track cache error
@@ -724,7 +725,7 @@ class BaseFlightManager:
                     temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.png')
                     temp_file.write(response.content)
                     temp_file.close()
-                    return Image.open(temp_file.name)
+                    return PILImage.open(temp_file.name)
                 
             except Exception as e:
                 logger.warning(f"[Flight Tracker] Failed to fetch tile from {url}: {e}")
