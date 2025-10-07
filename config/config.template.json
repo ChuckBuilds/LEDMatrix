@@ -109,7 +109,8 @@
         },
         "_area_outline_options": "Removed - coastline drawing disabled for cleaner display",
         "area_outline": "none",
-        "custom_coastline": []
+        "custom_coastline": [],
+        "flight_plan_enabled": false
     },
     "clock": {
         "enabled": true,

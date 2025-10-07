@@ -28,6 +28,16 @@ class BaseFlightManager:
         self.update_interval = self.flight_config.get('update_interval', 5)
         self.skyaware_url = self.flight_config.get('skyaware_url', 'http://192.168.86.30/skyaware/data/aircraft.json')
         
+        # Flight plan data configuration
+        self.flight_plan_enabled = self.flight_config.get('flight_plan_enabled', False)
+        
+        # Get API key from secrets config
+        secrets_config = config.get('secrets', {})
+        flight_secrets = secrets_config.get('flight_tracker', {})
+        self.flightaware_api_key = flight_secrets.get('flightaware_api_key', '')
+        
+        self.flight_plan_cache = {}  # Cache flight plan data
+        
         # Location configuration
         self.center_lat = self.flight_config.get('center_latitude', 27.9506)
         self.center_lon = self.flight_config.get('center_longitude', -82.4572)
@@ -268,6 +278,38 @@ class BaseFlightManager:
                 return cached_data
             
             return None
+    
+    def _get_flight_plan_data(self, callsign: str) -> Dict[str, str]:
+        """Get flight plan data for a callsign (origin/destination)."""
+        if not self.flight_plan_enabled or not self.flightaware_api_key:
+            return {'origin': 'Unknown', 'destination': 'Unknown'}
+        
+        # Check cache first
+        if callsign in self.flight_plan_cache:
+            return self.flight_plan_cache[callsign]
+        
+        try:
+            # FlightAware AeroAPI integration
+            url = f"https://aeroapi.flightaware.com/aeroapi/flights/{callsign}"
+            headers = {"x-apikey": self.flightaware_api_key}
+            
+            response = requests.get(url, headers=headers, timeout=5)
+            if response.status_code == 200:
+                data = response.json()
+                flight_plan = {
+                    'origin': data.get('origin', {}).get('code', 'Unknown'),
+                    'destination': data.get('destination', {}).get('code', 'Unknown')
+                }
+                # Cache for 1 hour
+                self.flight_plan_cache[callsign] = flight_plan
+                return flight_plan
+            else:
+                logger.debug(f"[Flight Tracker] No flight plan data for {callsign}")
+                return {'origin': 'Unknown', 'destination': 'Unknown'}
+                
+        except Exception as e:
+            logger.debug(f"[Flight Tracker] Failed to fetch flight plan for {callsign}: {e}")
+            return {'origin': 'Unknown', 'destination': 'Unknown'}
     
     def _process_aircraft_data(self, data: Dict) -> None:
         """Process and update aircraft data."""
@@ -825,16 +867,18 @@ class FlightStatsManager(BaseFlightManager):
                                     self.fonts['data_small'], fill=(200, 200, 200), use_outline=False)
                 right_y += self._calculate_line_spacing(self.fonts['data_small'])
             
-            # Origin (placeholder - could be enhanced with flight plan data)
+            # Origin (from flight plan data)
             if right_y + self._calculate_line_spacing(self.fonts['data_small']) <= self.display_height:
-                origin = aircraft.get('from', 'Unknown')
+                flight_plan = self._get_flight_plan_data(aircraft['callsign'])
+                origin = flight_plan.get('origin', 'Unknown')
                 self._draw_text_smart(draw, f"FROM: {origin}", (right_x, right_y), 
                                     self.fonts['data_small'], fill=(150, 150, 150), use_outline=False)
                 right_y += self._calculate_line_spacing(self.fonts['data_small'])
             
-            # Destination (placeholder - could be enhanced with flight plan data)
+            # Destination (from flight plan data)
             if right_y + self._calculate_line_spacing(self.fonts['data_small']) <= self.display_height:
-                destination = aircraft.get('to', 'Unknown')
+                flight_plan = self._get_flight_plan_data(aircraft['callsign'])
+                destination = flight_plan.get('destination', 'Unknown')
                 self._draw_text_smart(draw, f"TO: {destination}", (right_x, right_y), 
                                     self.fonts['data_small'], fill=(150, 150, 150), use_outline=False)
         else:
@@ -894,16 +938,18 @@ class FlightStatsManager(BaseFlightManager):
                                     self.fonts['data_medium'], fill=(200, 200, 200), use_outline=False)
                 right_y += self._calculate_line_spacing(self.fonts['data_medium'])
             
-            # Origin (placeholder - could be enhanced with flight plan data)
+            # Origin (from flight plan data)
             if right_y + self._calculate_line_spacing(self.fonts['data_medium']) <= self.display_height:
-                origin = aircraft.get('from', 'Unknown')
+                flight_plan = self._get_flight_plan_data(aircraft['callsign'])
+                origin = flight_plan.get('origin', 'Unknown')
                 self._draw_text_smart(draw, f"From: {origin}", (right_x, right_y), 
                                     self.fonts['data_medium'], fill=(150, 150, 150), use_outline=False)
                 right_y += self._calculate_line_spacing(self.fonts['data_medium'])
             
-            # Destination (placeholder - could be enhanced with flight plan data)
+            # Destination (from flight plan data)
             if right_y + self._calculate_line_spacing(self.fonts['data_medium']) <= self.display_height:
-                destination = aircraft.get('to', 'Unknown')
+                flight_plan = self._get_flight_plan_data(aircraft['callsign'])
+                destination = flight_plan.get('destination', 'Unknown')
                 self._draw_text_smart(draw, f"To: {destination}", (right_x, right_y), 
                                     self.fonts['data_medium'], fill=(150, 150, 150), use_outline=False)
         
