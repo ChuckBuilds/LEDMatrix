@@ -670,6 +670,24 @@ class BaseFlightManager:
         # Fallback (shouldn't reach here)
         return (255, 255, 255)
     
+    def _calculate_zoom_level(self) -> int:
+        """Calculate the appropriate zoom level based on map radius and zoom factor."""
+        effective_radius = self.map_radius_miles / self.zoom_factor
+        
+        # Higher zoom for smaller radius to show more detail
+        if effective_radius <= 2:
+            return 13  # Very detailed for small areas
+        elif effective_radius <= 5:
+            return 12  # Detailed for local areas
+        elif effective_radius <= 10:
+            return 11  # Good for city/metro areas
+        elif effective_radius <= 25:
+            return 10  # Regional view
+        elif effective_radius <= 50:
+            return 9   # State-level view
+        else:
+            return 8   # Multi-state view
+    
     def _calculate_distance(self, lat1: float, lon1: float, lat2: float, lon2: float) -> float:
         """Calculate distance between two lat/lon points in miles using Haversine formula."""
         R = 3959  # Earth's radius in miles
@@ -685,32 +703,29 @@ class BaseFlightManager:
         return R * c
     
     def _latlon_to_pixel(self, lat: float, lon: float) -> Optional[Tuple[int, int]]:
-        """Convert lat/lon to pixel coordinates on the display."""
-        # Calculate degrees per pixel based on radius and display size
-        # Apply zoom factor to use more of the display area
+        """Convert lat/lon to pixel coordinates on the display using Web Mercator projection."""
+        # Use the same projection system as the map tiles for proper alignment
         
-        # Degrees of latitude/longitude to cover
-        # 1 degree of latitude ≈ 69 miles, 1 degree of longitude varies by latitude
-        lat_degrees = (self.map_radius_miles * 2) / 69.0
+        # Calculate the zoom level
+        zoom = self._calculate_zoom_level()
         
-        # Adjust longitude for latitude (longitude lines converge at poles)
-        lon_degrees = lat_degrees / math.cos(math.radians(self.center_lat))
+        # Convert center and aircraft to Web Mercator tile coordinates
+        center_tile_x, center_tile_y = self._latlon_to_tile_coords(self.center_lat, self.center_lon, zoom)
+        aircraft_tile_x, aircraft_tile_y = self._latlon_to_tile_coords(lat, lon, zoom)
         
-        # Apply zoom factor to reduce the effective area and use more of the display
-        effective_lat_degrees = lat_degrees / self.zoom_factor
-        effective_lon_degrees = lon_degrees / self.zoom_factor
+        # Calculate pixel offset from center in tile space
+        # Each tile is tile_size pixels, and we have fractional tiles
+        pixel_offset_x = (aircraft_tile_x - center_tile_x) * self.tile_size
+        pixel_offset_y = (aircraft_tile_y - center_tile_y) * self.tile_size
         
-        # Calculate pixel scale - use full display dimensions with zoom
-        lat_scale = self.display_height / effective_lat_degrees
-        lon_scale = self.display_width / effective_lon_degrees
-        
-        # Convert to pixel coordinates (center of display is center_lat, center_lon)
-        x = int((lon - self.center_lon) * lon_scale + self.display_width / 2)
-        y = int((self.center_lat - lat) * lat_scale + self.display_height / 2)  # Flip Y axis
+        # Convert to display coordinates (center is at display_width/2, display_height/2)
+        x = int(self.display_width / 2 + pixel_offset_x)
+        y = int(self.display_height / 2 + pixel_offset_y)
         
         # Debug logging
         logger.debug(f"[Flight Tracker] Converting ({lat:.6f}, {lon:.6f}) to pixel ({x}, {y})")
-        logger.debug(f"[Flight Tracker] Scale: lat={lat_scale:.2f}, lon={lon_scale:.2f}, effective_lat_degrees={effective_lat_degrees:.4f}, effective_lon_degrees={effective_lon_degrees:.4f}, zoom_factor={self.zoom_factor}")
+        logger.debug(f"[Flight Tracker] Zoom: {zoom}, Tile coords: aircraft=({aircraft_tile_x:.4f},{aircraft_tile_y:.4f}), center=({center_tile_x:.4f},{center_tile_y:.4f})")
+        logger.debug(f"[Flight Tracker] Pixel offset: ({pixel_offset_x:.1f}, {pixel_offset_y:.1f})")
         
         # Check if within display bounds
         if 0 <= x < self.display_width and 0 <= y < self.display_height:
@@ -922,22 +937,8 @@ class BaseFlightManager:
             return None
         
         # Calculate appropriate zoom level based on map radius and zoom factor
-        # Apply zoom_factor to get the effective radius shown on the map
+        zoom = self._calculate_zoom_level()
         effective_radius = self.map_radius_miles / self.zoom_factor
-        
-        # Higher zoom for smaller radius to show more detail
-        if effective_radius <= 2:
-            zoom = 13  # Very detailed for small areas
-        elif effective_radius <= 5:
-            zoom = 12  # Detailed for local areas
-        elif effective_radius <= 10:
-            zoom = 11  # Good for city/metro areas
-        elif effective_radius <= 25:
-            zoom = 10  # Regional view
-        elif effective_radius <= 50:
-            zoom = 9   # State-level view
-        else:
-            zoom = 8   # Multi-state view
         
         logger.debug(f"[Flight Tracker] Map zoom calculation: radius={self.map_radius_miles}mi, zoom_factor={self.zoom_factor}, effective_radius={effective_radius:.2f}mi, zoom={zoom}")
         
