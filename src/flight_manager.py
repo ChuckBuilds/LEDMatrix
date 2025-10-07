@@ -583,23 +583,38 @@ class BaseFlightManager:
         y = int((1.0 - math.asinh(math.tan(math.radians(lat))) / math.pi) / 2.0 * n)
         return (x, y)
     
-    def _get_tile_url(self, x: int, y: int, zoom: int) -> str:
-        """Get the URL for a map tile based on provider."""
+    def _get_tile_urls(self, x: int, y: int, zoom: int) -> List[str]:
+        """Get multiple tile URLs to try in order of preference."""
         if self.tile_provider == 'osm':
-            # OpenStreetMap tile server
-            return f"https://tile.openstreetmap.org/{zoom}/{x}/{y}.png"
+            return [f"https://tile.openstreetmap.org/{zoom}/{x}/{y}.png"]
         elif self.tile_provider == 'carto':
-            # CartoDB Positron (light theme) - use different endpoint
-            return f"https://cartodb-basemaps-{chr(97 + (x + y) % 3)}.global.ssl.fastly.net/light_all/{zoom}/{x}/{y}.png"
+            # Try different CartoDB endpoints
+            return [
+                f"https://cartodb-basemaps-a.global.ssl.fastly.net/light_all/{zoom}/{x}/{y}.png",
+                f"https://cartodb-basemaps-b.global.ssl.fastly.net/light_all/{zoom}/{x}/{y}.png",
+                f"https://cartodb-basemaps-c.global.ssl.fastly.net/light_all/{zoom}/{x}/{y}.png",
+                f"https://tile.openstreetmap.org/{zoom}/{x}/{y}.png"  # Fallback to OSM
+            ]
         elif self.tile_provider == 'carto_dark':
-            # CartoDB Dark Matter
-            return f"https://cartodb-basemaps-{chr(97 + (x + y) % 3)}.global.ssl.fastly.net/dark_all/{zoom}/{x}/{y}.png"
+            return [
+                f"https://cartodb-basemaps-a.global.ssl.fastly.net/dark_all/{zoom}/{x}/{y}.png",
+                f"https://cartodb-basemaps-b.global.ssl.fastly.net/dark_all/{zoom}/{x}/{y}.png",
+                f"https://cartodb-basemaps-c.global.ssl.fastly.net/dark_all/{zoom}/{x}/{y}.png",
+                f"https://tile.openstreetmap.org/{zoom}/{x}/{y}.png"  # Fallback to OSM
+            ]
         elif self.tile_provider == 'stamen':
-            # Stamen Terrain - good for geographical features
-            return f"https://stamen-tiles.a.ssl.fastly.net/terrain/{zoom}/{x}/{y}.png"
+            return [
+                f"https://stamen-tiles.a.ssl.fastly.net/terrain/{zoom}/{x}/{y}.png",
+                f"https://tile.openstreetmap.org/{zoom}/{x}/{y}.png"  # Fallback to OSM
+            ]
         else:
             # Default to OSM
-            return f"https://tile.openstreetmap.org/{zoom}/{x}/{y}.png"
+            return [f"https://tile.openstreetmap.org/{zoom}/{x}/{y}.png"]
+    
+    def _get_tile_url(self, x: int, y: int, zoom: int) -> str:
+        """Get the URL for a map tile based on provider (backward compatibility)."""
+        urls = self._get_tile_urls(x, y, zoom)
+        return urls[0]  # Return first URL for backward compatibility
     
     def _get_tile_cache_path(self, x: int, y: int, zoom: int) -> Path:
         """Get the cache file path for a tile."""
@@ -626,50 +641,65 @@ class BaseFlightManager:
             except Exception as e:
                 logger.warning(f"[Flight Tracker] Failed to load cached tile {x},{y},{zoom}: {e}")
         
-        # Fetch from server
-        try:
-            url = self._get_tile_url(x, y, zoom)
-            logger.debug(f"[Flight Tracker] Fetching tile from {url}")
-            
-            response = requests.get(url, timeout=10)
-            response.raise_for_status()
-            
-            # Check if we got an error page instead of a tile
-            content_type = response.headers.get('content-type', '').lower()
-            if 'text/html' in content_type or 'text/plain' in content_type:
-                logger.warning(f"[Flight Tracker] Got HTML/text response instead of tile from {url}")
-                return None
-            
-            # Check if response is too small (likely an error page)
-            if len(response.content) < 1000:  # Tiles are usually much larger
-                logger.warning(f"[Flight Tracker] Tile response too small ({len(response.content)} bytes) from {url}")
-                return None
-            
-            # Save to cache
+        # Fetch from server - try multiple URLs
+        urls = self._get_tile_urls(x, y, zoom)
+        
+        for i, url in enumerate(urls):
             try:
-                cache_path.parent.mkdir(parents=True, exist_ok=True)
-                with open(cache_path, 'wb') as f:
-                    f.write(response.content)
-                logger.debug(f"[Flight Tracker] Cached tile {x},{y},{zoom}")
-                # Reset cache error count on successful cache
-                if self.cache_error_count > 0:
-                    self.cache_error_count = 0
-            except (PermissionError, OSError) as e:
-                logger.warning(f"[Flight Tracker] Could not save tile to cache {cache_path}: {e}")
-                # Track cache error
-                self.cache_error_count += 1
-                # Continue without caching - create a temporary file
-                import tempfile
-                temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.png')
-                temp_file.write(response.content)
-                temp_file.close()
-                return Image.open(temp_file.name)
-            
-            return Image.open(cache_path)
-            
-        except Exception as e:
-            logger.warning(f"[Flight Tracker] Failed to fetch tile {x},{y},{zoom}: {e}")
-            return None
+                logger.debug(f"[Flight Tracker] Trying tile URL {i+1}/{len(urls)}: {url}")
+                
+                response = requests.get(url, timeout=10)
+                response.raise_for_status()
+                
+                # Check if we got an error page instead of a tile
+                content_type = response.headers.get('content-type', '').lower()
+                if 'text/html' in content_type or 'text/plain' in content_type:
+                    logger.warning(f"[Flight Tracker] Got HTML/text response from {url}")
+                    continue  # Try next URL
+                
+                # Check if response is too small (likely an error page)
+                if len(response.content) < 2000:  # Tiles are usually much larger
+                    logger.warning(f"[Flight Tracker] Tile response too small ({len(response.content)} bytes) from {url}")
+                    # Try to read the error message
+                    try:
+                        error_text = response.content.decode('utf-8', errors='ignore')[:200]
+                        logger.warning(f"[Flight Tracker] Error content: {error_text}")
+                    except:
+                        pass
+                    continue  # Try next URL
+                
+                # If we get here, we have a valid tile
+                logger.debug(f"[Flight Tracker] Successfully fetched tile from {url}")
+                
+                # Save to cache
+                try:
+                    cache_path.parent.mkdir(parents=True, exist_ok=True)
+                    with open(cache_path, 'wb') as f:
+                        f.write(response.content)
+                    logger.debug(f"[Flight Tracker] Cached tile {x},{y},{zoom}")
+                    # Reset cache error count on successful cache
+                    if self.cache_error_count > 0:
+                        self.cache_error_count = 0
+                    return Image.open(cache_path)
+                except (PermissionError, OSError) as e:
+                    logger.warning(f"[Flight Tracker] Could not save tile to cache {cache_path}: {e}")
+                    # Track cache error
+                    self.cache_error_count += 1
+                    # Continue without caching - create a temporary file
+                    import tempfile
+                    temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.png')
+                    temp_file.write(response.content)
+                    temp_file.close()
+                    return Image.open(temp_file.name)
+                
+            except Exception as e:
+                logger.warning(f"[Flight Tracker] Failed to fetch tile from {url}: {e}")
+                if i == len(urls) - 1:  # Last URL failed
+                    return None
+                continue  # Try next URL
+        
+        # If we get here, all URLs failed
+        return None
     
     def _get_map_background(self, center_lat: float, center_lon: float) -> Optional[Image.Image]:
         """Get the map background for the current view."""
@@ -736,11 +766,16 @@ class BaseFlightManager:
                 
                 tile_img = self._fetch_tile(tile_x, tile_y, zoom)
                 if tile_img:
+                    # Ensure tile is in RGB mode for proper compositing
+                    if tile_img.mode != 'RGB':
+                        tile_img = tile_img.convert('RGB')
+                    
                     # Paste tile into composite
                     paste_x = tx * self.tile_size
                     paste_y = ty * self.tile_size
                     composite.paste(tile_img, (paste_x, paste_y))
                     tiles_fetched += 1
+                    logger.debug(f"[Flight Tracker] Placed tile {tile_x},{tile_y} at ({paste_x},{paste_y})")
         
         if tiles_fetched == 0:
             logger.warning("[Flight Tracker] No map tiles could be fetched")
@@ -767,9 +802,11 @@ class BaseFlightManager:
         
         # Crop to display size
         cropped = composite.crop((crop_left, crop_top, crop_right, crop_bottom))
+        logger.debug(f"[Flight Tracker] Cropped size: {cropped.size}")
         
         # Resize to exact display dimensions
         if cropped.size != (self.display_width, self.display_height):
+            logger.debug(f"[Flight Tracker] Resizing from {cropped.size} to ({self.display_width}, {self.display_height})")
             cropped = cropped.resize((self.display_width, self.display_height), Image.Resampling.LANCZOS)
         
         # Apply fade effect
@@ -786,6 +823,19 @@ class BaseFlightManager:
         logger.info(f"[Flight Tracker] Generated map background with {tiles_fetched} tiles at zoom {zoom}")
         logger.info(f"[Flight Tracker] Center: ({center_lat:.4f}, {center_lon:.4f}), Radius: {self.map_radius_miles}mi")
         logger.info(f"[Flight Tracker] Tile coverage: {tiles_x}x{tiles_y}, Crop: ({crop_left},{crop_top})-({crop_right},{crop_bottom})")
+        
+        # Debug: Save composite image to see what's happening
+        try:
+            debug_composite = Path("debug_composite.png")
+            composite.save(debug_composite)
+            logger.debug(f"[Flight Tracker] Saved composite to: {debug_composite}")
+            
+            debug_cropped = Path("debug_cropped.png")
+            cropped.save(debug_cropped)
+            logger.debug(f"[Flight Tracker] Saved cropped to: {debug_cropped}")
+        except Exception as e:
+            logger.debug(f"[Flight Tracker] Could not save debug images: {e}")
+        
         return cropped
     
     def _tile_to_lat(self, y: int, zoom: int) -> float:
