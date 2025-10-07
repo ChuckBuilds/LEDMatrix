@@ -160,6 +160,8 @@ class Baseball(SportsCore):
             series = game_event["competitions"][0].get("series", None)
             series_summary = ""
             if series:
+                # Log the full series object structure for debugging
+                self.logger.debug(f"Series object found: {series}")
                 series_summary = series.get("summary", "")
             # Get game state information
             if status_state == "in":
