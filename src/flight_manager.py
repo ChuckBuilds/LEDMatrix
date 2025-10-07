@@ -740,7 +740,7 @@ class BaseFlightManager:
         if self.custom_tile_server:
             # Remove trailing slash if present
             base_url = self.custom_tile_server.rstrip('/')
-            return [f"{base_url}/{zoom}/{x}/{y}.png"]
+            return [f"{base_url}/tile/{zoom}/{x}/{y}.png"]
         
         if self.tile_provider == 'osm':
             # Use multiple OSM mirrors to avoid blocking
