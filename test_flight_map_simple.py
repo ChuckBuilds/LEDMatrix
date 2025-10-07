@@ -16,9 +16,9 @@ def test_simple_map_background():
     print("=" * 40)
     
     try:
-        from flight_manager import FlightMapManager
-        from display_manager import DisplayManager
-        from cache_manager import CacheManager
+        from src.flight_manager import FlightMapManager
+        from src.display_manager import DisplayManager
+        from src.cache_manager import CacheManager
         
         class MockMatrix:
             def __init__(self, width=192, height=96):

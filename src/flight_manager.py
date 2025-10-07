@@ -589,11 +589,14 @@ class BaseFlightManager:
             # OpenStreetMap tile server
             return f"https://tile.openstreetmap.org/{zoom}/{x}/{y}.png"
         elif self.tile_provider == 'carto':
-            # CartoDB Positron (light theme)
-            return f"https://cartodb-basemaps-a.global.ssl.fastly.net/light_all/{zoom}/{x}/{y}.png"
+            # CartoDB Positron (light theme) - use different endpoint
+            return f"https://cartodb-basemaps-{chr(97 + (x + y) % 3)}.global.ssl.fastly.net/light_all/{zoom}/{x}/{y}.png"
         elif self.tile_provider == 'carto_dark':
             # CartoDB Dark Matter
-            return f"https://cartodb-basemaps-a.global.ssl.fastly.net/dark_all/{zoom}/{x}/{y}.png"
+            return f"https://cartodb-basemaps-{chr(97 + (x + y) % 3)}.global.ssl.fastly.net/dark_all/{zoom}/{x}/{y}.png"
+        elif self.tile_provider == 'stamen':
+            # Stamen Terrain - good for geographical features
+            return f"https://stamen-tiles.a.ssl.fastly.net/terrain/{zoom}/{x}/{y}.png"
         else:
             # Default to OSM
             return f"https://tile.openstreetmap.org/{zoom}/{x}/{y}.png"
@@ -630,6 +633,17 @@ class BaseFlightManager:
             
             response = requests.get(url, timeout=10)
             response.raise_for_status()
+            
+            # Check if we got an error page instead of a tile
+            content_type = response.headers.get('content-type', '').lower()
+            if 'text/html' in content_type or 'text/plain' in content_type:
+                logger.warning(f"[Flight Tracker] Got HTML/text response instead of tile from {url}")
+                return None
+            
+            # Check if response is too small (likely an error page)
+            if len(response.content) < 1000:  # Tiles are usually much larger
+                logger.warning(f"[Flight Tracker] Tile response too small ({len(response.content)} bytes) from {url}")
+                return None
             
             # Save to cache
             try:
