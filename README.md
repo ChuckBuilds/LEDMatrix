@@ -181,8 +181,9 @@ or
 ## Mount/Stand
 I 3D printed stands to keep the panels upright and snug. STL Files are included in the Repo but are also available at https://www.thingiverse.com/thing:5169867 Thanks to "Randomwire" for making these for the 4mm Pixel Pitch LED Matrix.
 
-Special Thanks for Rmatze for making a 3mm Pixel Pitch RGB Matrix Connector: https://www.thingiverse.com/thing:7149818
-
+Special Thanks for Rmatze for making:
+- 3mm Pixel Pitch RGB Stand for 32x64 Display : https://www.thingiverse.com/thing:7149818 
+- 4mm Pixel Pitch RGB Stand for 32x64 Display : https://www.thingiverse.com/thing:7165993
 
 These are not required and you can probably rig up something basic with stuff you have around the house. I used these screws: https://amzn.to/4mFwNJp (Amazon Affiliate Link)
 
