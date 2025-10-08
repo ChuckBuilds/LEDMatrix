@@ -1274,6 +1274,28 @@ class FlightMapManager(BaseFlightManager):
         super().__init__(config, display_manager, cache_manager)
         logger.info("[Flight Tracker] Initialized Map Manager")
     
+    def _draw_airplane_icon(self, draw: ImageDraw.Draw, x: int, y: int, color: Tuple[int, int, int] = (200, 200, 200)) -> None:
+        """Draw a simple airplane icon at the specified position.
+        
+        Args:
+            draw: ImageDraw object to draw on
+            x: X coordinate for the icon's top-left corner
+            y: Y coordinate for the icon's top-left corner
+            color: RGB color tuple for the icon
+        """
+        # Simple 5x5 pixel airplane icon
+        # Format: (relative_x, relative_y)
+        airplane_pixels = [
+            (2, 0),  # Nose
+            (2, 1),  # Body
+            (0, 2), (1, 2), (2, 2), (3, 2), (4, 2),  # Wings
+            (2, 3),  # Body
+            (1, 4), (2, 4), (3, 4),  # Tail
+        ]
+        
+        for px, py in airplane_pixels:
+            draw.point((x + px, y + py), fill=color)
+    
     def display(self, force_clear: bool = False) -> None:
         """Display the flight map with aircraft and geographical background."""
         if force_clear:
@@ -1335,9 +1357,17 @@ class FlightMapManager(BaseFlightManager):
         
         # Draw info text with pixel-perfect rendering for better readability
         if len(self.aircraft_data) > 0:
-            info_text = f"{len(self.aircraft_data)} ✈"
+            # Draw aircraft count
+            info_text = f"{len(self.aircraft_data)}"
             self._draw_text_smart(draw, info_text, (2, 2), self.fonts['small'], 
                                 fill=(200, 200, 200), use_outline=False)
+            
+            # Get text width to position the airplane icon
+            bbox = draw.textbbox((0, 0), info_text, font=self.fonts['small'])
+            text_width = bbox[2] - bbox[0]
+            
+            # Draw airplane icon after the count (with 2px spacing)
+            self._draw_airplane_icon(draw, 2 + text_width + 2, 2, color=(200, 200, 200))
         
         # Display the image
         self.display_manager.image = img.copy()
