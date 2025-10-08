@@ -1294,19 +1294,8 @@ class FlightMapManager(BaseFlightManager):
         center_pixel = self._latlon_to_pixel(self.center_lat, self.center_lon)
         if center_pixel:
             x, y = center_pixel
-            # Draw a more visible center marker with outline
-            # Draw black outline first
-            for dx in [-2, -1, 0, 1, 2]:
-                for dy in [-2, -1, 0, 1, 2]:
-                    if abs(dx) + abs(dy) <= 2:
-                        draw.point((x + dx, y + dy), fill=(0, 0, 0))
-            
-            # Draw white center
+            # Draw white center dot
             draw.point((x, y), fill=(255, 255, 255))
-            draw.point((x-1, y), fill=(255, 255, 255))
-            draw.point((x+1, y), fill=(255, 255, 255))
-            draw.point((x, y-1), fill=(255, 255, 255))
-            draw.point((x, y+1), fill=(255, 255, 255))
         
         # Draw aircraft trails if enabled
         if self.show_trails:
@@ -1388,7 +1377,7 @@ class FlightMapManager(BaseFlightManager):
         
         # Draw info text with pixel-perfect rendering for better readability
         if len(self.aircraft_data) > 0:
-            info_text = f"{len(self.aircraft_data)} aircraft"
+            info_text = f"{len(self.aircraft_data)} ✈"
             self._draw_text_smart(draw, info_text, (2, 2), self.fonts['small'], 
                                 fill=(200, 200, 200), use_outline=False)
         
