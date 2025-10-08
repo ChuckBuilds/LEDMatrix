@@ -105,19 +105,12 @@ class SportsCore(ABC):
         self._rankings_cache_timestamp = 0
         self._rankings_cache_duration = 3600  # Cache rankings for 1 hour
 
-        # Initialize background data service
-        background_config = self.mode_config.get("background_service", {})
-        if background_config.get("enabled", True):  # Default to enabled
-            max_workers = background_config.get("max_workers", 3)
-            self.background_service = get_background_service(self.cache_manager, max_workers)
-            self.background_fetch_requests = {}  # Track background fetch requests
-            self.background_enabled = True
-            self.logger.info(f"Background service enabled with {max_workers} workers")
-        else:
-            self.background_service = None
-            self.background_fetch_requests = {}
-            self.background_enabled = False
-            self.logger.info("Background service disabled")
+        # Initialize background data service with optimized settings
+        # Hardcoded for memory optimization: 1 worker, 30s timeout, 3 retries
+        self.background_service = get_background_service(self.cache_manager, max_workers=1)
+        self.background_fetch_requests = {}  # Track background fetch requests
+        self.background_enabled = True
+        self.logger.info("Background service enabled with 1 worker (memory optimized)")
 
     def _get_season_schedule_dates(self) -> tuple[str, str]:
         return "", ""
