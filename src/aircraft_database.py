@@ -187,13 +187,37 @@ class AircraftDatabase:
     def _update_from_faa(self) -> bool:
         """Update database from FAA Aircraft Registry."""
         try:
-            # Download FAA database
+            # Download FAA database (large file, need longer timeout)
             logger.info(f"[Aircraft DB] Downloading from {self.FAA_MASTER_URL}")
-            response = requests.get(self.FAA_MASTER_URL, timeout=60)
+            logger.info("[Aircraft DB] This may take several minutes (50-80 MB download)...")
+            
+            # Use streaming download with longer timeout
+            response = requests.get(self.FAA_MASTER_URL, timeout=300, stream=True)
             response.raise_for_status()
             
+            # Log download progress
+            total_size = int(response.headers.get('content-length', 0))
+            if total_size > 0:
+                logger.info(f"[Aircraft DB] Download size: {total_size / (1024*1024):.1f} MB")
+            
+            # Read content in chunks
+            content = bytearray()
+            downloaded = 0
+            chunk_size = 1024 * 1024  # 1MB chunks
+            
+            for chunk in response.iter_content(chunk_size=chunk_size):
+                if chunk:
+                    content.extend(chunk)
+                    downloaded += len(chunk)
+                    if total_size > 0 and downloaded % (5 * 1024 * 1024) == 0:  # Log every 5MB
+                        progress = (downloaded / total_size) * 100
+                        logger.info(f"[Aircraft DB] Downloaded {downloaded / (1024*1024):.1f} / {total_size / (1024*1024):.1f} MB ({progress:.1f}%)")
+            
+            logger.info(f"[Aircraft DB] Download complete: {len(content) / (1024*1024):.1f} MB")
+            
             # Extract ZIP file
-            zip_file = zipfile.ZipFile(io.BytesIO(response.content))
+            logger.info("[Aircraft DB] Extracting ZIP file...")
+            zip_file = zipfile.ZipFile(io.BytesIO(bytes(content)))
             
             # Look for MASTER.txt (main aircraft registry)
             master_file = None
@@ -286,12 +310,36 @@ class AircraftDatabase:
         """Update database from OpenSky Network."""
         try:
             logger.info(f"[Aircraft DB] Downloading from {self.OPENSKY_DB_URL}")
-            response = requests.get(self.OPENSKY_DB_URL, timeout=60)
+            logger.info("[Aircraft DB] This may take several minutes (30-50 MB download)...")
+            
+            # Use streaming download with longer timeout
+            response = requests.get(self.OPENSKY_DB_URL, timeout=300, stream=True)
             response.raise_for_status()
             
+            # Log download progress
+            total_size = int(response.headers.get('content-length', 0))
+            if total_size > 0:
+                logger.info(f"[Aircraft DB] Download size: {total_size / (1024*1024):.1f} MB")
+            
+            # Read content in chunks
+            content = bytearray()
+            downloaded = 0
+            chunk_size = 1024 * 1024  # 1MB chunks
+            
+            for chunk in response.iter_content(chunk_size=chunk_size):
+                if chunk:
+                    content.extend(chunk)
+                    downloaded += len(chunk)
+                    if total_size > 0 and downloaded % (5 * 1024 * 1024) == 0:  # Log every 5MB
+                        progress = (downloaded / total_size) * 100
+                        logger.info(f"[Aircraft DB] Downloaded {downloaded / (1024*1024):.1f} / {total_size / (1024*1024):.1f} MB ({progress:.1f}%)")
+            
+            logger.info(f"[Aircraft DB] Download complete: {len(content) / (1024*1024):.1f} MB")
+            
             # Parse CSV
-            content = response.content.decode('utf-8', errors='ignore')
-            reader = csv.DictReader(io.StringIO(content))
+            logger.info("[Aircraft DB] Parsing CSV data...")
+            csv_content = bytes(content).decode('utf-8', errors='ignore')
+            reader = csv.DictReader(io.StringIO(csv_content))
             
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
