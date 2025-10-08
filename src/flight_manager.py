@@ -1320,8 +1320,6 @@ class FlightMapManager(BaseFlightManager):
                         draw.line([trail_pixels[i], trail_pixels[i + 1]], fill=color, width=1)
         
         # Draw aircraft
-        is_small_display = self.display_width <= 128 and self.display_height <= 32
-        
         for aircraft in self.aircraft_data.values():
             pixel = self._latlon_to_pixel(aircraft['lat'], aircraft['lon'])
             if not pixel:
@@ -1332,48 +1330,8 @@ class FlightMapManager(BaseFlightManager):
             base_color = aircraft['color']
             color = tuple(min(255, int(c * 1.3)) for c in base_color)
             
-            if is_small_display:
-                # Small display: brighter pixel without outline
-                draw.point((x, y), fill=color)
-                # Add a single pixel for the nose
-                heading = aircraft['heading']
-                if heading:
-                    angle_rad = math.radians(heading)
-                    dx = int(1 * math.sin(angle_rad))
-                    dy = int(-1 * math.cos(angle_rad))
-                    draw.point((x + dx, y + dy), fill=color)
-            else:
-                # Large display: arrow showing heading without outline, with visible tail
-                heading = aircraft['heading']
-                if heading:
-                    # Calculate arrow points for nose and tail
-                    angle_rad = math.radians(heading)
-                    # Nose (front) - extend further out
-                    nose_dx = int(3 * math.sin(angle_rad))
-                    nose_dy = int(-3 * math.cos(angle_rad))
-                    # Tail (back) - show the tail clearly
-                    tail_dx = int(-2 * math.sin(angle_rad))
-                    tail_dy = int(2 * math.cos(angle_rad))
-                    
-                    # Draw fuselage from tail to nose
-                    draw.line([(x + tail_dx, y + tail_dy), (x + nose_dx, y + nose_dy)], fill=color, width=1)
-                    
-                    # Draw center body
-                    draw.point((x, y), fill=color)
-                    
-                    # Draw small wings (no outline, brighter)
-                    wing_angle = math.radians(heading + 90)
-                    wx1 = int(2 * math.sin(wing_angle))
-                    wy1 = int(-2 * math.cos(wing_angle))
-                    draw.point((x + wx1, y + wy1), fill=color)
-                    
-                    wing_angle = math.radians(heading - 90)
-                    wx2 = int(2 * math.sin(wing_angle))
-                    wy2 = int(-2 * math.cos(wing_angle))
-                    draw.point((x + wx2, y + wy2), fill=color)
-                else:
-                    # No heading data, draw brighter pixel without outline
-                    draw.point((x, y), fill=color)
+            # Draw single pixel for each aircraft
+            draw.point((x, y), fill=color)
         
         # Draw info text with pixel-perfect rendering for better readability
         if len(self.aircraft_data) > 0:
