@@ -12,6 +12,7 @@ from PIL import Image, ImageDraw, ImageFont, ImageEnhance
 
 from src.cache_manager import CacheManager
 from src.display_manager import DisplayManager
+from src.aircraft_database import AircraftDatabase
 
 logger = logging.getLogger(__name__)
 
@@ -169,6 +170,21 @@ class BaseFlightManager:
         
         # Fonts
         self.fonts = self._load_fonts()
+        
+        # Initialize offline aircraft database
+        self.use_offline_db = self.flight_config.get('use_offline_database', True)
+        self.aircraft_db = None
+        if self.use_offline_db:
+            try:
+                cache_dir = cache_manager.cache_dir if cache_manager.cache_dir else Path.home() / '.cache' / 'ledmatrix'
+                self.aircraft_db = AircraftDatabase(cache_dir)
+                stats = self.aircraft_db.get_stats()
+                logger.info(f"[Flight Tracker] Offline aircraft database loaded: {stats['total_aircraft']} aircraft, {stats['database_size_mb']:.1f}MB")
+                if stats['last_update']:
+                    logger.info(f"[Flight Tracker] Database last updated: {stats['last_update']}")
+            except Exception as e:
+                logger.warning(f"[Flight Tracker] Failed to load offline aircraft database: {e}")
+                self.aircraft_db = None
         
         logger.info(f"[Flight Tracker] Initialized with center: ({self.center_lat}, {self.center_lon}), radius: {self.map_radius_miles}mi")
         logger.info(f"[Flight Tracker] Display: {self.display_width}x{self.display_height}, SkyAware: {self.skyaware_url}")
@@ -475,14 +491,72 @@ class BaseFlightManager:
             
             return None
     
-    def _get_flight_plan_data(self, callsign: str) -> Dict[str, str]:
-        """Get flight plan data for a callsign (origin/destination)."""
+    def _get_aircraft_info_from_database(self, icao24: str, registration: str = None) -> Optional[Dict]:
+        """Get aircraft information from offline database.
+        
+        Args:
+            icao24: ICAO24 hex code
+            registration: Optional registration number
+            
+        Returns:
+            Dictionary with aircraft info or None
+        """
+        if not self.aircraft_db:
+            return None
+        
+        # Try ICAO24 first
+        info = self.aircraft_db.lookup_by_icao24(icao24)
+        
+        # Try registration as fallback
+        if not info and registration:
+            info = self.aircraft_db.lookup_by_registration(registration)
+        
+        return info
+    
+    def _get_flight_plan_data(self, callsign: str, icao24: str = None) -> Dict[str, str]:
+        """Get flight plan data for a callsign (origin/destination) and aircraft info.
+        
+        This method now checks offline database first before making API calls.
+        
+        Args:
+            callsign: Flight callsign
+            icao24: ICAO24 hex code for offline database lookup
+            
+        Returns:
+            Dictionary with origin, destination, and aircraft_type
+        """
         # Always provide aircraft type categorization as fallback
         aircraft_category = self._categorize_aircraft(callsign)
         
+        # Try offline database first for aircraft type info
+        aircraft_type = 'Unknown'
+        if self.aircraft_db and icao24:
+            db_info = self._get_aircraft_info_from_database(icao24, callsign)
+            if db_info:
+                # Build aircraft type string from database info
+                if db_info.get('manufacturer') and db_info.get('model'):
+                    aircraft_type = f"{db_info['manufacturer']} {db_info['model']}"
+                elif db_info.get('type_aircraft'):
+                    aircraft_type = db_info['type_aircraft']
+                elif db_info.get('model'):
+                    aircraft_type = db_info['model']
+                
+                logger.debug(f"[Flight Tracker] Found {callsign} in offline DB: {aircraft_type}")
+                
+                # If we got aircraft type from database, return early without API call
+                # We still don't have origin/destination, but that's okay for most use cases
+                return {
+                    'origin': 'Unknown',
+                    'destination': 'Unknown', 
+                    'aircraft_type': aircraft_type,
+                    'registration': db_info.get('registration', 'Unknown'),
+                    'operator': db_info.get('operator', 'Unknown'),
+                    'source': 'offline_db'
+                }
+        
         if not self.flight_plan_enabled:
-            logger.info(f"[Flight Tracker] Flight plan disabled for {callsign} (flight_plan_enabled=False)")
-            return {'origin': 'Unknown', 'destination': 'Unknown', 'aircraft_type': aircraft_category}
+            logger.debug(f"[Flight Tracker] Flight plan disabled for {callsign} (flight_plan_enabled=False)")
+            return {'origin': 'Unknown', 'destination': 'Unknown', 'aircraft_type': aircraft_type or aircraft_category}
         
         if not self.flightaware_api_key:
             logger.info(f"[Flight Tracker] No API key configured for {callsign}")
@@ -613,6 +687,7 @@ class BaseFlightManager:
             callsign = aircraft.get('flight', '').strip() or icao
             speed = aircraft.get('gs', 0)  # Ground speed in knots
             heading = aircraft.get('track', aircraft.get('heading', 0))
+            registration = aircraft.get('r', '')  # Registration/tail number
             aircraft_type = aircraft.get('t', 'Unknown')
             
             # Calculate color based on altitude
@@ -622,6 +697,7 @@ class BaseFlightManager:
             aircraft_info = {
                 'icao': icao,
                 'callsign': callsign,
+                'registration': registration,
                 'lat': lat,
                 'lon': lon,
                 'altitude': altitude,
@@ -1566,10 +1642,15 @@ class FlightStatsManager(BaseFlightManager):
             title_color = (100, 150, 255)
         
         # Get flight plan data once and cache it for this display cycle
-        flight_plan = self._get_flight_plan_data(aircraft['callsign'])
+        # Pass ICAO24 for offline database lookup
+        flight_plan = self._get_flight_plan_data(aircraft['callsign'], aircraft.get('icao'))
         origin = flight_plan.get('origin', 'Unknown')
         destination = flight_plan.get('destination', 'Unknown')
         aircraft_type = flight_plan.get('aircraft_type', 'Unknown')
+        
+        # Log if we used offline database
+        if flight_plan.get('source') == 'offline_db':
+            logger.debug(f"[Flight Tracker] Using offline database for {aircraft['callsign']}: {aircraft_type}")
         
         # Improve aircraft type display with better categorization
         if aircraft_type == 'Unknown':

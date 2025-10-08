@@ -124,7 +124,10 @@
             "enabled": true,
             "fetch_interval_hours": 4,
             "max_calls_per_run": 10
-        }
+        },
+        "use_offline_database": true,
+        "offline_database_auto_update": true,
+        "offline_database_update_interval_days": 30
     },
     "clock": {
         "enabled": true,
