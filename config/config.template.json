@@ -112,14 +112,6 @@
             "distance_miles": 0.1,
             "duration_seconds": 30
         },
-        "altitude_colors": {
-            "0": [255, 165, 0],
-            "4000": [255, 255, 0],
-            "8000": [0, 255, 0],
-            "20000": [135, 206, 250],
-            "30000": [0, 0, 139],
-            "40000": [128, 0, 128]
-        },
         "flight_plan_enabled": false,
         "max_api_calls_per_hour": 25,
         "daily_api_budget": 60,

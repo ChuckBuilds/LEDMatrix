@@ -124,15 +124,22 @@ class BaseFlightManager:
         self.bounds_warning_cache = {}
         self.bounds_warning_interval = 30  # Only log each unique coordinate once every 30 seconds
         
-        # Altitude color configuration
-        self.altitude_colors = self.flight_config.get('altitude_colors', {
-            '0': [255, 165, 0],      # Orange
-            '4000': [255, 255, 0],   # Yellow
-            '8000': [0, 255, 0],     # Green
-            '20000': [135, 206, 250], # Light Blue
-            '30000': [0, 0, 139],    # Dark Blue
-            '40000': [128, 0, 128]   # Purple
-        })
+        # Altitude color configuration - matches the gradient from the image
+        # This uses the standard aviation altitude color scale
+        self.altitude_colors = {
+            '0': [255, 100, 0],       # Deep orange-red (ground level)
+            '500': [255, 120, 0],     # Slightly lighter orange-red
+            '1000': [255, 140, 0],    # Distinct orange
+            '2000': [255, 200, 0],    # Bright orange-yellow
+            '4000': [255, 255, 0],    # Clear yellow
+            '6000': [200, 255, 0],    # Yellowish-green
+            '8000': [0, 255, 0],      # Vibrant green
+            '10000': [0, 200, 150],   # Bright teal (bluish-green)
+            '20000': [0, 150, 255],   # Clear bright blue
+            '30000': [0, 0, 200],     # Deep royal blue
+            '40000': [150, 0, 200],   # Vibrant purple
+            '45000': [200, 0, 150]    # Distinct magenta/purple
+        }
         
         
         # Proximity alert configuration
@@ -651,7 +658,7 @@ class BaseFlightManager:
         logger.info(f"[Flight Tracker] Summary - Total: {total_aircraft}, With position: {aircraft_with_position}, In range ({self.map_radius_miles}mi): {aircraft_in_range}, Tracking: {len(self.aircraft_data)}, Removed stale: {len(stale_icao)}")
     
     def _altitude_to_color(self, altitude: float) -> Tuple[int, int, int]:
-        """Convert altitude to color using gradient interpolation."""
+        """Convert altitude to color using smooth gradient interpolation matching the altitude scale."""
         # Sort altitude breakpoints
         breakpoints = sorted([(int(k), v) for k, v in self.altitude_colors.items()])
         
@@ -667,14 +674,23 @@ class BaseFlightManager:
             alt2, color2 = breakpoints[i + 1]
             
             if alt1 <= altitude <= alt2:
-                # Linear interpolation
+                # Smooth linear interpolation between colors
                 ratio = (altitude - alt1) / (alt2 - alt1)
+                
+                # Interpolate each RGB component
                 r = int(color1[0] + (color2[0] - color1[0]) * ratio)
                 g = int(color1[1] + (color2[1] - color1[1]) * ratio)
                 b = int(color1[2] + (color2[2] - color1[2]) * ratio)
+                
+                # Ensure values are within valid RGB range
+                r = max(0, min(255, r))
+                g = max(0, min(255, g))
+                b = max(0, min(255, b))
+                
                 return (r, g, b)
         
         # Fallback (shouldn't reach here)
+        logger.warning(f"[Flight Tracker] Could not find color for altitude {altitude}")
         return (255, 255, 255)
     
     def _calculate_zoom_level(self) -> int:
