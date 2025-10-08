@@ -1063,9 +1063,10 @@ class BaseFlightManager:
         desired_pixels_per_mile = self.display_width / desired_miles_wide
         
         # Calculate how many pixels we need to crop from the composite to get the desired geographic area
-        # If tiles show X miles per pixel, and we want Y miles total, we need Y * pixels_per_mile_at_zoom pixels
+        # maintaining the display aspect ratio to avoid stretching
         crop_width_needed = int(desired_miles_wide * pixels_per_mile_at_zoom)
-        crop_height_needed = int(desired_miles_wide * pixels_per_mile_at_zoom)  # Square area
+        # Calculate height based on display aspect ratio to avoid stretching when we resize
+        crop_height_needed = int(crop_width_needed * (self.display_height / self.display_width))
         
         # Find the center tile and position within it
         center_tile_x = center_x - start_x
@@ -1110,12 +1111,15 @@ class BaseFlightManager:
         self.last_map_center = current_center
         self.last_map_zoom = zoom
         
+        # Calculate the geographic height coverage
+        desired_miles_high = crop_height_needed / pixels_per_mile_at_zoom
+        
         # Log the final map configuration
         logger.info(f"[Flight Tracker] Generated map background with {tiles_fetched} tiles at zoom {zoom}")
         logger.info(f"[Flight Tracker] Center: ({center_lat:.4f}, {center_lon:.4f}), Radius: {self.map_radius_miles}mi, Effective: {effective_radius:.2f}mi (zoom_factor: {self.zoom_factor})")
         logger.info(f"[Flight Tracker] Tile coverage: {tiles_x}x{tiles_y}, Crop: ({crop_left},{crop_top})-({crop_right},{crop_bottom})")
-        logger.info(f"[Flight Tracker] Map displays {desired_miles_wide:.1f} miles wide ({desired_pixels_per_mile:.3f} pixels/mile)")
-        logger.info(f"[Flight Tracker] Native tile scale: {pixels_per_mile_at_zoom:.3f} pixels/mile, cropped {crop_width_needed}x{crop_height_needed} pixels, then scaled to {self.display_width}x{self.display_height}")
+        logger.info(f"[Flight Tracker] Map displays {desired_miles_wide:.1f} miles wide x {desired_miles_high:.1f} miles high (no stretching)")
+        logger.info(f"[Flight Tracker] Native tile scale: {pixels_per_mile_at_zoom:.3f} pixels/mile, cropped {crop_width_needed}x{crop_height_needed} pixels, scaled to {self.display_width}x{self.display_height}")
         
         # Debug: Save composite image to see what's happening
         try:
