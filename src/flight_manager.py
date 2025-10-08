@@ -106,6 +106,7 @@ class BaseFlightManager:
         self.cached_map_bg = None
         self.last_map_center = None
         self.last_map_zoom = None
+        self.cached_pixels_per_mile = None  # Actual scale of the cached map
         
         # Display configuration
         self.display_width = display_manager.matrix.width
@@ -671,22 +672,29 @@ class BaseFlightManager:
         return (255, 255, 255)
     
     def _calculate_zoom_level(self) -> int:
-        """Calculate the appropriate zoom level based on map radius and zoom factor."""
+        """Calculate the appropriate zoom level for tile detail.
+        
+        This determines tile detail level, NOT the geographic area shown.
+        The area is controlled by map_radius_miles independently.
+        """
         effective_radius = self.map_radius_miles / self.zoom_factor
         
-        # Higher zoom for smaller radius to show more detail
-        if effective_radius <= 2:
-            return 13  # Very detailed for small areas
-        elif effective_radius <= 5:
-            return 12  # Detailed for local areas
-        elif effective_radius <= 10:
-            return 11  # Good for city/metro areas
+        # Choose zoom level based on desired detail, not scale
+        # We'll scale the tiles to fit the desired radius afterward
+        if effective_radius <= 5:
+            return 12  # High detail for very local areas
         elif effective_radius <= 25:
-            return 10  # Regional view
-        elif effective_radius <= 50:
-            return 9   # State-level view
+            return 11  # Good detail for city/regional areas
+        elif effective_radius <= 100:
+            return 10  # Regional detail
+        elif effective_radius <= 300:
+            return 9   # State-level detail
+        elif effective_radius <= 600:
+            return 8   # Multi-state detail
+        elif effective_radius <= 1200:
+            return 7   # Country-level detail
         else:
-            return 8   # Multi-state view
+            return 6   # Continental detail
     
     def _calculate_distance(self, lat1: float, lon1: float, lat2: float, lon2: float) -> float:
         """Calculate distance between two lat/lon points in miles using Haversine formula."""
@@ -704,24 +712,14 @@ class BaseFlightManager:
     
     def _latlon_to_pixel(self, lat: float, lon: float) -> Optional[Tuple[int, int]]:
         """Convert lat/lon to pixel coordinates on the display."""
-        # Use the SAME scale calculation as the map background (Web Mercator zoom level)
-        # This ensures aircraft position exactly matches the map tiles
+        # Calculate pixels per mile based on the DESIRED display radius
+        # This ensures we show exactly map_radius_miles * 2 across the display
         
-        # Get the zoom level (same as map background uses)
-        zoom = self._calculate_zoom_level()
+        effective_radius = self.map_radius_miles / self.zoom_factor
         
-        # Calculate pixels per mile based on Web Mercator zoom level
-        # At zoom level z, the world is (256 * 2^z) pixels wide at the equator
-        world_pixels_at_zoom = self.tile_size * (2 ** zoom)
-        
-        # Pixels per degree of longitude at this zoom level
-        pixels_per_degree_lon = world_pixels_at_zoom / 360.0
-        
-        # Convert to pixels per mile (1 degree ≈ 69 miles, adjusted for latitude)
-        # At the equator: 1 degree longitude = 69 miles
-        # At latitude θ: 1 degree longitude = 69 * cos(θ) miles
-        miles_per_degree_lon = 69.0 * math.cos(math.radians(self.center_lat))
-        pixels_per_mile = pixels_per_degree_lon / miles_per_degree_lon
+        # The display shows (effective_radius * 2) miles across
+        # Calculate pixels per mile to fit this area
+        pixels_per_mile = self.display_width / (effective_radius * 2)
         
         # Calculate distance in miles from center to aircraft
         distance_miles = self._calculate_distance(self.center_lat, self.center_lon, lat, lon)
@@ -746,7 +744,7 @@ class BaseFlightManager:
         
         # Debug logging
         logger.debug(f"[Flight Tracker] Converting ({lat:.6f}, {lon:.6f}) to pixel ({x_pixel}, {y_pixel})")
-        logger.debug(f"[Flight Tracker] Zoom: {zoom}, Distance: {distance_miles:.2f}mi, Bearing: {math.degrees(bearing_rad):.1f}°, Pixels/mile: {pixels_per_mile:.2f}")
+        logger.debug(f"[Flight Tracker] Distance: {distance_miles:.2f}mi, Bearing: {math.degrees(bearing_rad):.1f}°, Pixels/mile: {pixels_per_mile:.2f}, Radius: {effective_radius:.1f}mi")
         
         # Check if within display bounds
         if 0 <= x_pixel < self.display_width and 0 <= y_pixel < self.display_height:
@@ -1089,19 +1087,25 @@ class BaseFlightManager:
         self.last_map_center = current_center
         self.last_map_zoom = zoom
         
-        # Calculate the actual scale of the final map
-        # How many miles does the display show?
+        # Calculate what the tiles natively show at this zoom level
         world_pixels_at_zoom = self.tile_size * (2 ** zoom)
         pixels_per_degree_lon = world_pixels_at_zoom / 360.0
-        pixels_per_mile_lon = pixels_per_degree_lon / (69.0 / math.cos(math.radians(center_lat)))
+        pixels_per_mile_at_zoom = pixels_per_degree_lon / (69.0 / math.cos(math.radians(center_lat)))
         
-        display_miles_wide = self.display_width / pixels_per_mile_lon
-        display_miles_tall = self.display_height / pixels_per_mile_lon  # Approximate, Mercator distorts
+        tile_native_miles_wide = self.display_width / pixels_per_mile_at_zoom
+        
+        # Calculate the actual desired scale (what we WANT to show)
+        desired_miles_wide = effective_radius * 2
+        desired_pixels_per_mile = self.display_width / desired_miles_wide
         
         logger.info(f"[Flight Tracker] Generated map background with {tiles_fetched} tiles at zoom {zoom}")
         logger.info(f"[Flight Tracker] Center: ({center_lat:.4f}, {center_lon:.4f}), Radius: {self.map_radius_miles}mi, Effective: {effective_radius:.2f}mi (zoom_factor: {self.zoom_factor})")
         logger.info(f"[Flight Tracker] Tile coverage: {tiles_x}x{tiles_y}, Crop: ({crop_left},{crop_top})-({crop_right},{crop_bottom})")
-        logger.info(f"[Flight Tracker] Display scale: {display_miles_wide:.1f} miles wide, {display_miles_tall:.1f} miles tall (target: {effective_radius*2:.1f} miles)")
+        logger.info(f"[Flight Tracker] Tile native scale: {tile_native_miles_wide:.1f} miles wide at zoom {zoom}")
+        logger.info(f"[Flight Tracker] Desired display: {desired_miles_wide:.1f} miles wide ({desired_pixels_per_mile:.3f} pixels/mile)")
+        
+        if abs(tile_native_miles_wide - desired_miles_wide) > 5:
+            logger.warning(f"[Flight Tracker] Note: Tiles show {tile_native_miles_wide:.1f}mi but config requests {desired_miles_wide:.1f}mi - aircraft will be positioned for {desired_miles_wide:.1f}mi")
         
         # Debug: Save composite image to see what's happening
         try:
