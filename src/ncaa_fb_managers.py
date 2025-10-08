@@ -73,10 +73,6 @@ class BaseNCAAFBManager(Football): # Renamed class
                     # Clear invalid cache
                     self.cache_manager.clear_cache(cache_key)
         
-        # If background service is disabled, fall back to synchronous fetch
-        if not self.background_enabled or not self.background_service:
-            return self._fetch_ncaa_api_data_sync(use_cache)
-        
         self.logger.info(f"Fetching full {season_year} season schedule from ESPN API...")
 
         # Start background fetch
@@ -121,30 +117,6 @@ class BaseNCAAFBManager(Football): # Renamed class
         if partial_data:
             return partial_data
         return None
-    
-    def _fetch_ncaa_api_data_sync(self, use_cache: bool = True) -> Optional[Dict]:
-        """
-        Synchronous fallback for fetching NFL data when background service is disabled.
-        """
-        now = datetime.now(pytz.utc)
-        current_year = now.year
-        cache_key = f"ncaafb_schedule_{current_year}"
-
-        self.logger.info(f"Fetching full {current_year} season schedule from ESPN API (sync mode)...")
-        try:
-            response = self.session.get(ESPN_NCAAFB_SCOREBOARD_URL, params={"dates": current_year, "limit":1000}, headers=self.headers, timeout=15)
-            response.raise_for_status()
-            data = response.json()
-            events = data.get('events', [])
-            
-            if use_cache:
-                self.cache_manager.set(cache_key, events)
-            
-            self.logger.info(f"Successfully fetched {len(events)} events for the {current_year} season.")
-            return {'events': events}
-        except requests.exceptions.RequestException as e:
-            self.logger.error(f"[API error fetching full schedule: {e}")
-            return None
 
     def _fetch_data(self) -> Optional[Dict]:
         """Fetch data using shared data mechanism or direct fetch for live."""

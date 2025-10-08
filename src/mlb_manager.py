@@ -82,11 +82,6 @@ class BaseMLBManager(Baseball):
                     # Clear invalid cache
                     self.cache_manager.clear_cache(cache_key)
 
-        # If background service is disabled, fall back to synchronous fetch
-        if not self.background_enabled or not self.background_service:
-            pass
-            # return self._fetch_ncaa_api_data_sync(use_cache)
-
         self.logger.info(f"Fetching full {datestring} season schedule from ESPN API...")
 
         # Start background fetch
