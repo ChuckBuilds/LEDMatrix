@@ -1048,7 +1048,25 @@ class BaseFlightManager:
         else:
             logger.info(f"[Flight Tracker] All tiles fetched successfully")
         
-        # Calculate the crop area to match our display bounds
+        # Calculate what geographic area the tiles natively show at this zoom level
+        world_pixels_at_zoom = self.tile_size * (2 ** zoom)
+        pixels_per_degree_lon_native = world_pixels_at_zoom / 360.0
+        # Adjust for latitude (longitude degrees get smaller as you move away from equator)
+        meters_per_degree_lat = 111000  # approximately 111km or 69 miles per degree
+        miles_per_degree_lat = 69.0
+        miles_per_degree_lon = miles_per_degree_lat * math.cos(math.radians(center_lat))
+        
+        pixels_per_mile_at_zoom = pixels_per_degree_lon_native / miles_per_degree_lon
+        
+        # Calculate what we WANT to show (effective_radius * 2 miles wide)
+        desired_miles_wide = effective_radius * 2
+        desired_pixels_per_mile = self.display_width / desired_miles_wide
+        
+        # Calculate how many pixels we need to crop from the composite to get the desired geographic area
+        # If tiles show X miles per pixel, and we want Y miles total, we need Y * pixels_per_mile_at_zoom pixels
+        crop_width_needed = int(desired_miles_wide * pixels_per_mile_at_zoom)
+        crop_height_needed = int(desired_miles_wide * pixels_per_mile_at_zoom)  # Square area
+        
         # Find the center tile and position within it
         center_tile_x = center_x - start_x
         center_tile_y = center_y - start_y
@@ -1061,20 +1079,25 @@ class BaseFlightManager:
         center_pixel_x = int((center_tile_x + center_lon_in_tile) * self.tile_size)
         center_pixel_y = int((center_tile_y + center_lat_in_tile) * self.tile_size)
         
-        # Calculate crop bounds centered on the center point
-        crop_left = max(0, center_pixel_x - self.display_width // 2)
-        crop_top = max(0, center_pixel_y - self.display_height // 2)
-        crop_right = min(composite_width, crop_left + self.display_width)
-        crop_bottom = min(composite_height, crop_top + self.display_height)
+        # Calculate crop bounds centered on the center point, using the geographic-aware crop size
+        crop_left = max(0, center_pixel_x - crop_width_needed // 2)
+        crop_top = max(0, center_pixel_y - crop_height_needed // 2)
+        crop_right = min(composite_width, crop_left + crop_width_needed)
+        crop_bottom = min(composite_height, crop_top + crop_height_needed)
         
-        # Crop to display size
+        # Adjust if we hit the edges
+        if crop_right - crop_left < crop_width_needed:
+            crop_width_needed = crop_right - crop_left
+        if crop_bottom - crop_top < crop_height_needed:
+            crop_height_needed = crop_bottom - crop_top
+        
+        # Crop to get the desired geographic area
         cropped = composite.crop((crop_left, crop_top, crop_right, crop_bottom))
-        logger.debug(f"[Flight Tracker] Cropped size: {cropped.size}")
+        logger.debug(f"[Flight Tracker] Cropped size: {cropped.size} (wanted {crop_width_needed}x{crop_height_needed} pixels for {desired_miles_wide:.1f} miles)")
         
-        # Resize to exact display dimensions
-        if cropped.size != (self.display_width, self.display_height):
-            logger.debug(f"[Flight Tracker] Resizing from {cropped.size} to ({self.display_width}, {self.display_height})")
-            cropped = cropped.resize((self.display_width, self.display_height), Image.Resampling.LANCZOS)
+        # Now resize to display dimensions - this scales the geographic area to fit the display
+        logger.debug(f"[Flight Tracker] Resizing from {cropped.size} to ({self.display_width}, {self.display_height})")
+        cropped = cropped.resize((self.display_width, self.display_height), Image.Resampling.LANCZOS)
         
         # Apply fade effect
         if self.fade_intensity < 1.0:
@@ -1087,25 +1110,12 @@ class BaseFlightManager:
         self.last_map_center = current_center
         self.last_map_zoom = zoom
         
-        # Calculate what the tiles natively show at this zoom level
-        world_pixels_at_zoom = self.tile_size * (2 ** zoom)
-        pixels_per_degree_lon = world_pixels_at_zoom / 360.0
-        pixels_per_mile_at_zoom = pixels_per_degree_lon / (69.0 / math.cos(math.radians(center_lat)))
-        
-        tile_native_miles_wide = self.display_width / pixels_per_mile_at_zoom
-        
-        # Calculate the actual desired scale (what we WANT to show)
-        desired_miles_wide = effective_radius * 2
-        desired_pixels_per_mile = self.display_width / desired_miles_wide
-        
+        # Log the final map configuration
         logger.info(f"[Flight Tracker] Generated map background with {tiles_fetched} tiles at zoom {zoom}")
         logger.info(f"[Flight Tracker] Center: ({center_lat:.4f}, {center_lon:.4f}), Radius: {self.map_radius_miles}mi, Effective: {effective_radius:.2f}mi (zoom_factor: {self.zoom_factor})")
         logger.info(f"[Flight Tracker] Tile coverage: {tiles_x}x{tiles_y}, Crop: ({crop_left},{crop_top})-({crop_right},{crop_bottom})")
-        logger.info(f"[Flight Tracker] Tile native scale: {tile_native_miles_wide:.1f} miles wide at zoom {zoom}")
-        logger.info(f"[Flight Tracker] Desired display: {desired_miles_wide:.1f} miles wide ({desired_pixels_per_mile:.3f} pixels/mile)")
-        
-        if abs(tile_native_miles_wide - desired_miles_wide) > 5:
-            logger.warning(f"[Flight Tracker] Note: Tiles show {tile_native_miles_wide:.1f}mi but config requests {desired_miles_wide:.1f}mi - aircraft will be positioned for {desired_miles_wide:.1f}mi")
+        logger.info(f"[Flight Tracker] Map displays {desired_miles_wide:.1f} miles wide ({desired_pixels_per_mile:.3f} pixels/mile)")
+        logger.info(f"[Flight Tracker] Native tile scale: {pixels_per_mile_at_zoom:.3f} pixels/mile, cropped {crop_width_needed}x{crop_height_needed} pixels, then scaled to {self.display_width}x{self.display_height}")
         
         # Debug: Save composite image to see what's happening
         try:
