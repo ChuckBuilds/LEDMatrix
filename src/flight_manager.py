@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 import requests
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFont, ImageEnhance
 
 from src.cache_manager import CacheManager
 from src.display_manager import DisplayManager
@@ -62,6 +62,9 @@ class BaseFlightManager:
         # Cache tiles for 1 year by default - map tiles don't change frequently
         self.cache_ttl_hours = self.map_bg_config.get('cache_ttl_hours', 8760)
         self.fade_intensity = self.map_bg_config.get('fade_intensity', 0.3)
+        self.map_brightness = self.map_bg_config.get('brightness', 1.0)
+        self.map_contrast = self.map_bg_config.get('contrast', 1.0)
+        self.map_saturation = self.map_bg_config.get('saturation', 1.0)
         self.disable_on_cache_error = self.map_bg_config.get('disable_on_cache_error', False)
         
         # Custom tile server URL (for self-hosted OSM servers)
@@ -72,6 +75,9 @@ class BaseFlightManager:
             logger.info(f"[Flight Tracker] Configured to use custom tile server: {self.custom_tile_server}")
         else:
             logger.info(f"[Flight Tracker] Configured to use tile provider: {self.tile_provider}")
+        
+        # Log map appearance settings
+        logger.info(f"[Flight Tracker] Map appearance - Brightness: {self.map_brightness}, Contrast: {self.map_contrast}, Saturation: {self.map_saturation}, Fade: {self.fade_intensity}")
         
         # Track cache errors
         self.cache_error_count = 0
@@ -1105,6 +1111,24 @@ class BaseFlightManager:
             # Create a fade overlay
             fade_overlay = Image.new('RGB', (self.display_width, self.display_height), (0, 0, 0))
             cropped = Image.blend(cropped, fade_overlay, 1.0 - self.fade_intensity)
+        
+        # Apply brightness adjustment
+        if self.map_brightness != 1.0:
+            enhancer = ImageEnhance.Brightness(cropped)
+            cropped = enhancer.enhance(self.map_brightness)
+            logger.debug(f"[Flight Tracker] Applied brightness: {self.map_brightness}")
+        
+        # Apply contrast adjustment
+        if self.map_contrast != 1.0:
+            enhancer = ImageEnhance.Contrast(cropped)
+            cropped = enhancer.enhance(self.map_contrast)
+            logger.debug(f"[Flight Tracker] Applied contrast: {self.map_contrast}")
+        
+        # Apply saturation adjustment
+        if self.map_saturation != 1.0:
+            enhancer = ImageEnhance.Color(cropped)
+            cropped = enhancer.enhance(self.map_saturation)
+            logger.debug(f"[Flight Tracker] Applied saturation: {self.map_saturation}")
         
         # Cache the result
         self.cached_map_bg = cropped

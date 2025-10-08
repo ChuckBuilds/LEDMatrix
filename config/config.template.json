@@ -101,6 +101,9 @@
             "tile_size": 256,
             "cache_ttl_hours": 8760,
             "fade_intensity": 0.4,
+            "brightness": 1.0,
+            "contrast": 1.0,
+            "saturation": 1.0,
             "disable_on_cache_error": false,
             "custom_tile_server": "http://192.168.86.182:8080"
         },
