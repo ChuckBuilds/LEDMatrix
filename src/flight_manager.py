@@ -1275,7 +1275,7 @@ class FlightMapManager(BaseFlightManager):
         logger.info("[Flight Tracker] Initialized Map Manager")
     
     def _draw_airplane_icon(self, draw: ImageDraw.Draw, x: int, y: int, color: Tuple[int, int, int] = (200, 200, 200)) -> None:
-        """Draw a simple airplane icon at the specified position.
+        """Draw a simple airplane icon at the specified position with black outline.
         
         Args:
             draw: ImageDraw object to draw on
@@ -1293,6 +1293,25 @@ class FlightMapManager(BaseFlightManager):
             (1, 4), (2, 4), (3, 4),  # Tail
         ]
         
+        airplane_set = set(airplane_pixels)
+        
+        # Draw black outline (all pixels adjacent to airplane pixels)
+        outline_pixels = set()
+        for px, py in airplane_pixels:
+            # Check all 8 surrounding pixels
+            for dx in [-1, 0, 1]:
+                for dy in [-1, 0, 1]:
+                    if dx == 0 and dy == 0:
+                        continue  # Skip the center pixel
+                    neighbor = (px + dx, py + dy)
+                    if neighbor not in airplane_set:
+                        outline_pixels.add(neighbor)
+        
+        # Draw outline first
+        for px, py in outline_pixels:
+            draw.point((x + px, y + py), fill=(0, 0, 0))
+        
+        # Draw airplane on top
         for px, py in airplane_pixels:
             draw.point((x + px, y + py), fill=color)
     
