@@ -1648,16 +1648,42 @@ class FlightStatsManager(BaseFlightManager):
         destination = flight_plan.get('destination', 'Unknown')
         aircraft_type = flight_plan.get('aircraft_type', 'Unknown')
         
+        # Parse manufacturer and model from aircraft_type
+        manufacturer = 'Unknown'
+        model = 'Unknown'
+        
+        if aircraft_type and aircraft_type != 'Unknown':
+            # Try to split manufacturer and model (e.g., "Boeing 737-800")
+            parts = aircraft_type.split(' ', 1)
+            if len(parts) == 2:
+                manufacturer = parts[0]
+                model = parts[1]
+            else:
+                # If we can't split, use aircraft_type as model
+                model = aircraft_type
+        
+        # Get operator/owner from flight plan data
+        operator = flight_plan.get('operator', 'Unknown')
+        if operator == 'Unknown':
+            operator = flight_plan.get('owner_name', 'Unknown')
+        
         # Log if we used offline database
         if flight_plan.get('source') == 'offline_db':
-            logger.debug(f"[Flight Tracker] Using offline database for {aircraft['callsign']}: {aircraft_type}")
+            logger.debug(f"[Flight Tracker] Using offline database for {aircraft['callsign']}: {manufacturer} {model}")
         
-        # Improve aircraft type display with better categorization
-        if aircraft_type == 'Unknown':
-            aircraft_type = self._categorize_aircraft(aircraft['callsign'])
+        # Improve aircraft type display with better categorization if still unknown
+        if model == 'Unknown':
+            categorized = self._categorize_aircraft(aircraft['callsign'])
+            if categorized != 'Unknown':
+                model = categorized
             # Log uncategorized aircraft for debugging
-            if aircraft_type == 'Unknown':
+            if model == 'Unknown':
                 logger.debug(f"[Flight Tracker] Unclassified aircraft: {aircraft['callsign']}")
+        
+        # Determine if we should show origin/destination
+        show_route = (self.flight_plan_enabled and 
+                     origin != 'Unknown' and 
+                     destination != 'Unknown')
         
         if is_small_display:
             # Small display layout with dynamic spacing
@@ -1694,44 +1720,36 @@ class FlightStatsManager(BaseFlightManager):
             right_x = self.display_width - 60  # Start 60 pixels from right edge
             right_y = 1
             
-            # Aircraft type
+            # Manufacturer
             if right_y + self._calculate_line_spacing(self.fonts['data_small']) <= self.display_height:
-                self._draw_text_smart(draw, f"TYPE: {aircraft['aircraft_type']}", (right_x, right_y), 
+                self._draw_text_smart(draw, f"MFR: {manufacturer}", (right_x, right_y), 
                                     self.fonts['data_small'], fill=(200, 200, 200), use_outline=False)
                 right_y += self._calculate_line_spacing(self.fonts['data_small'])
             
-            # Origin (from flight plan data)
+            # Model
             if right_y + self._calculate_line_spacing(self.fonts['data_small']) <= self.display_height:
-                # Show appropriate information based on aircraft type
-                if origin == 'Unknown':
-                    if aircraft_type in ['Military', 'Private', 'General Aviation', 'Other']:
-                        self._draw_text_smart(draw, f"TYPE: {aircraft_type}", (right_x, right_y), 
-                                            self.fonts['data_small'], fill=(255, 200, 0), use_outline=False)
-                    elif aircraft_type in ['Airline', 'Cargo', 'Commercial', 'International']:
-                        self._draw_text_smart(draw, f"TYPE: {aircraft_type}", (right_x, right_y), 
-                                            self.fonts['data_small'], fill=(255, 200, 0), use_outline=False)
-                    else:
-                        self._draw_text_smart(draw, f"TYPE: {aircraft_type}", (right_x, right_y), 
-                                            self.fonts['data_small'], fill=(255, 200, 0), use_outline=False)
-                else:
-                    self._draw_text_smart(draw, f"FROM: {origin}", (right_x, right_y), 
-                                        self.fonts['data_small'], fill=(150, 150, 150), use_outline=False)
+                self._draw_text_smart(draw, f"MDL: {model}", (right_x, right_y), 
+                                    self.fonts['data_small'], fill=(200, 200, 200), use_outline=False)
                 right_y += self._calculate_line_spacing(self.fonts['data_small'])
             
-            # Destination (from flight plan data)
+            # Owner/Operator
             if right_y + self._calculate_line_spacing(self.fonts['data_small']) <= self.display_height:
-                # Show appropriate information based on aircraft type
-                if destination == 'Unknown':
-                    if aircraft_type in ['Military', 'Private', 'General Aviation', 'Other']:
-                        # Skip destination for non-airline aircraft
-                        pass
-                    else:
-                        # Show aircraft type for commercial aircraft without destination
-                        self._draw_text_smart(draw, f"TYPE: {aircraft_type}", (right_x, right_y), 
-                                            self.fonts['data_small'], fill=(255, 200, 0), use_outline=False)
-                else:
-                    self._draw_text_smart(draw, f"TO: {destination}", (right_x, right_y), 
-                                        self.fonts['data_small'], fill=(150, 150, 150), use_outline=False)
+                # Truncate long operator names for small display
+                operator_display = operator if len(operator) <= 12 else operator[:12]
+                self._draw_text_smart(draw, f"OPR: {operator_display}", (right_x, right_y), 
+                                    self.fonts['data_small'], fill=(200, 200, 200), use_outline=False)
+                right_y += self._calculate_line_spacing(self.fonts['data_small'])
+            
+            # Origin (only if flight plan enabled and available)
+            if show_route and right_y + self._calculate_line_spacing(self.fonts['data_small']) <= self.display_height:
+                self._draw_text_smart(draw, f"FROM: {origin}", (right_x, right_y), 
+                                    self.fonts['data_small'], fill=(150, 255, 150), use_outline=False)
+                right_y += self._calculate_line_spacing(self.fonts['data_small'])
+            
+            # Destination (only if flight plan enabled and available)
+            if show_route and right_y + self._calculate_line_spacing(self.fonts['data_small']) <= self.display_height:
+                self._draw_text_smart(draw, f"TO: {destination}", (right_x, right_y), 
+                                    self.fonts['data_small'], fill=(150, 255, 150), use_outline=False)
         else:
             # Large display layout with dynamic spacing
             y_offset = 4
@@ -1783,44 +1801,36 @@ class FlightStatsManager(BaseFlightManager):
             right_x = self.display_width - 80  # Start 80 pixels from right edge
             right_y = 4
             
-            # Aircraft type
+            # Manufacturer
             if right_y + self._calculate_line_spacing(self.fonts['data_medium']) <= self.display_height:
-                self._draw_text_smart(draw, f"Type: {aircraft['aircraft_type']}", (right_x, right_y), 
+                self._draw_text_smart(draw, f"Manufacturer: {manufacturer}", (right_x, right_y), 
                                     self.fonts['data_medium'], fill=(200, 200, 200), use_outline=False)
                 right_y += self._calculate_line_spacing(self.fonts['data_medium'])
             
-            # Origin (from flight plan data)
+            # Model
             if right_y + self._calculate_line_spacing(self.fonts['data_medium']) <= self.display_height:
-                # Show appropriate information based on aircraft type
-                if origin == 'Unknown':
-                    if aircraft_type in ['Military', 'Private', 'General Aviation', 'Other']:
-                        self._draw_text_smart(draw, f"Category: {aircraft_type}", (right_x, right_y), 
-                                            self.fonts['data_medium'], fill=(255, 200, 0), use_outline=False)
-                    elif aircraft_type in ['Airline', 'Cargo', 'Commercial', 'International']:
-                        self._draw_text_smart(draw, f"Category: {aircraft_type}", (right_x, right_y), 
-                                            self.fonts['data_medium'], fill=(255, 200, 0), use_outline=False)
-                    else:
-                        self._draw_text_smart(draw, f"Category: {aircraft_type}", (right_x, right_y), 
-                                            self.fonts['data_medium'], fill=(255, 200, 0), use_outline=False)
-                else:
-                    self._draw_text_smart(draw, f"From: {origin}", (right_x, right_y), 
-                                        self.fonts['data_medium'], fill=(150, 150, 150), use_outline=False)
+                self._draw_text_smart(draw, f"Model: {model}", (right_x, right_y), 
+                                    self.fonts['data_medium'], fill=(200, 200, 200), use_outline=False)
                 right_y += self._calculate_line_spacing(self.fonts['data_medium'])
             
-            # Destination (from flight plan data)
+            # Owner/Operator
             if right_y + self._calculate_line_spacing(self.fonts['data_medium']) <= self.display_height:
-                # Show appropriate information based on aircraft type
-                if destination == 'Unknown':
-                    if aircraft_type in ['Military', 'Private', 'General Aviation', 'Other']:
-                        # Skip destination for non-airline aircraft
-                        pass
-                    else:
-                        # Show aircraft type for commercial aircraft without destination
-                        self._draw_text_smart(draw, f"Category: {aircraft_type}", (right_x, right_y), 
-                                            self.fonts['data_medium'], fill=(255, 200, 0), use_outline=False)
-                else:
-                    self._draw_text_smart(draw, f"To: {destination}", (right_x, right_y), 
-                                        self.fonts['data_medium'], fill=(150, 150, 150), use_outline=False)
+                # Truncate long operator names for display
+                operator_display = operator if len(operator) <= 20 else operator[:20] + '...'
+                self._draw_text_smart(draw, f"Operator: {operator_display}", (right_x, right_y), 
+                                    self.fonts['data_medium'], fill=(200, 200, 200), use_outline=False)
+                right_y += self._calculate_line_spacing(self.fonts['data_medium'])
+            
+            # Origin (only if flight plan enabled and available)
+            if show_route and right_y + self._calculate_line_spacing(self.fonts['data_medium']) <= self.display_height:
+                self._draw_text_smart(draw, f"From: {origin}", (right_x, right_y), 
+                                    self.fonts['data_medium'], fill=(150, 255, 150), use_outline=False)
+                right_y += self._calculate_line_spacing(self.fonts['data_medium'])
+            
+            # Destination (only if flight plan enabled and available)
+            if show_route and right_y + self._calculate_line_spacing(self.fonts['data_medium']) <= self.display_height:
+                self._draw_text_smart(draw, f"To: {destination}", (right_x, right_y), 
+                                    self.fonts['data_medium'], fill=(150, 255, 150), use_outline=False)
         
         # Display the image
         self.display_manager.image = img.copy()
