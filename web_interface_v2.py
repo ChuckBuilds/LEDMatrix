@@ -595,6 +595,278 @@ class OnDemandRunner:
 
 on_demand_runner = OnDemandRunner()
 
+# Font Management API Endpoints
+
+@app.route('/api/fonts/list', methods=['GET'])
+def api_fonts_list():
+    """Get list of all available fonts."""
+    try:
+        fonts = display_manager.list_available_fonts()
+        return jsonify({
+            'status': 'success',
+            'fonts': fonts
+        })
+    except Exception as e:
+        logger.error(f"Error listing fonts: {e}")
+        return jsonify({
+            'status': 'error',
+            'message': str(e)
+        }), 500
+
+@app.route('/api/fonts/metadata/<family>', methods=['GET'])
+def api_fonts_metadata(family):
+    """Get metadata for a specific font family."""
+    try:
+        metadata = display_manager.get_font_metadata(family)
+        if metadata:
+            return jsonify({
+                'status': 'success',
+                'metadata': metadata
+            })
+        else:
+            return jsonify({
+                'status': 'error',
+                'message': f'Font family "{family}" not found'
+            }), 404
+    except Exception as e:
+        logger.error(f"Error getting font metadata for {family}: {e}")
+        return jsonify({
+            'status': 'error',
+            'message': str(e)
+        }), 500
+
+@app.route('/api/fonts/reload-config', methods=['POST'])
+def api_fonts_reload_config():
+    """Hot-reload font configuration."""
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({
+                'status': 'error',
+                'message': 'No configuration data provided'
+            }), 400
+
+        success = display_manager.hot_reload_font_config(data)
+        if success:
+            return jsonify({
+                'status': 'success',
+                'message': 'Font configuration reloaded successfully'
+            })
+        else:
+            return jsonify({
+                'status': 'error',
+                'message': 'Failed to reload font configuration'
+            }), 500
+    except Exception as e:
+        logger.error(f"Error reloading font config: {e}")
+        return jsonify({
+            'status': 'error',
+            'message': str(e)
+        }), 500
+
+@app.route('/api/fonts/add-runtime', methods=['POST'])
+def api_fonts_add_runtime():
+    """Add a font at runtime."""
+    try:
+        data = request.get_json()
+        if not data or 'family' not in data or 'path' not in data:
+            return jsonify({
+                'status': 'error',
+                'message': 'Missing required fields: family, path'
+            }), 400
+
+        family = data['family']
+        font_path = data['path']
+        metadata = data.get('metadata', {})
+
+        success = display_manager.add_font_at_runtime(family, font_path, metadata)
+        if success:
+            return jsonify({
+                'status': 'success',
+                'message': f'Font "{family}" added successfully'
+            })
+        else:
+            return jsonify({
+                'status': 'error',
+                'message': f'Failed to add font "{family}"'
+            }), 500
+    except Exception as e:
+        logger.error(f"Error adding font at runtime: {e}")
+        return jsonify({
+            'status': 'error',
+            'message': str(e)
+        }), 500
+
+@app.route('/api/fonts/remove-runtime/<family>', methods=['DELETE'])
+def api_fonts_remove_runtime(family):
+    """Remove a font at runtime."""
+    try:
+        success = display_manager.remove_font_at_runtime(family)
+        if success:
+            return jsonify({
+                'status': 'success',
+                'message': f'Font "{family}" removed successfully'
+            })
+        else:
+            return jsonify({
+                'status': 'error',
+                'message': f'Failed to remove font "{family}"'
+            }), 500
+    except Exception as e:
+        logger.error(f"Error removing font at runtime: {e}")
+        return jsonify({
+            'status': 'error',
+            'message': str(e)
+        }), 500
+
+@app.route('/api/fonts/statistics', methods=['GET'])
+def api_fonts_statistics():
+    """Get font system statistics."""
+    try:
+        stats = display_manager.get_font_statistics()
+        return jsonify({
+            'status': 'success',
+            'statistics': stats
+        })
+    except Exception as e:
+        logger.error(f"Error getting font statistics: {e}")
+        return jsonify({
+            'status': 'error',
+            'message': str(e)
+        }), 500
+
+@app.route('/api/plugins/fonts/<plugin_id>', methods=['GET'])
+def api_plugin_fonts(plugin_id):
+    """Get fonts registered by a specific plugin."""
+    try:
+        fonts = display_manager.get_plugin_fonts(plugin_id)
+        return jsonify({
+            'status': 'success',
+            'plugin_id': plugin_id,
+            'fonts': fonts
+        })
+    except Exception as e:
+        logger.error(f"Error getting fonts for plugin {plugin_id}: {e}")
+        return jsonify({
+            'status': 'error',
+            'message': str(e)
+        }), 500
+
+@app.route('/api/plugins/reload-fonts/<plugin_id>', methods=['POST'])
+def api_reload_plugin_fonts(plugin_id):
+    """Reload fonts for a specific plugin."""
+    try:
+        success = display_manager.reload_plugin_fonts(plugin_id)
+        if success:
+            return jsonify({
+                'status': 'success',
+                'message': f'Fonts reloaded for plugin "{plugin_id}"'
+            })
+        else:
+            return jsonify({
+                'status': 'error',
+                'message': f'Failed to reload fonts for plugin "{plugin_id}"'
+            }), 500
+    except Exception as e:
+        logger.error(f"Error reloading fonts for plugin {plugin_id}: {e}")
+        return jsonify({
+            'status': 'error',
+            'message': str(e)
+        }), 500
+
+# Performance Monitoring API Endpoints
+
+@app.route('/api/fonts/performance', methods=['GET'])
+def api_fonts_performance():
+    """Get font system performance statistics."""
+    try:
+        stats = display_manager.get_font_performance_statistics()
+        return jsonify({
+            'status': 'success',
+            'performance': stats
+        })
+    except Exception as e:
+        logger.error(f"Error getting font performance: {e}")
+        return jsonify({
+            'status': 'error',
+            'message': str(e)
+        }), 500
+
+@app.route('/api/fonts/performance/<font_key>', methods=['GET'])
+def api_fonts_performance_monitor(font_key):
+    """Monitor performance for a specific font."""
+    try:
+        stats = display_manager.monitor_font_performance(font_key)
+        return jsonify({
+            'status': 'success',
+            'font_key': font_key,
+            'performance': stats
+        })
+    except Exception as e:
+        logger.error(f"Error monitoring font performance for {font_key}: {e}")
+        return jsonify({
+            'status': 'error',
+            'message': str(e)
+        }), 500
+
+@app.route('/api/fonts/optimize', methods=['GET'])
+def api_fonts_optimize():
+    """Get performance optimization suggestions."""
+    try:
+        suggestions = display_manager.get_performance_optimization_suggestions()
+        return jsonify({
+            'status': 'success',
+            'optimization': suggestions
+        })
+    except Exception as e:
+        logger.error(f"Error getting optimization suggestions: {e}")
+        return jsonify({
+            'status': 'error',
+            'message': str(e)
+        }), 500
+
+@app.route('/api/fonts/performance/reset', methods=['POST'])
+def api_fonts_performance_reset():
+    """Reset font performance statistics."""
+    try:
+        display_manager.reset_font_performance_stats()
+        return jsonify({
+            'status': 'success',
+            'message': 'Performance statistics reset'
+        })
+    except Exception as e:
+        logger.error(f"Error resetting performance stats: {e}")
+        return jsonify({
+            'status': 'error',
+            'message': str(e)
+        }), 500
+
+@app.route('/api/fonts/performance/export', methods=['GET'])
+def api_fonts_performance_export():
+    """Export font performance data."""
+    try:
+        format_type = request.args.get('format', 'json')
+        data = display_manager.export_font_performance_data(format_type)
+
+        if format_type.lower() == 'csv':
+            return Response(
+                data,
+                mimetype='text/csv',
+                headers={'Content-disposition': 'attachment; filename=font_performance.csv'}
+            )
+        else:
+            return Response(
+                data,
+                mimetype='application/json',
+                headers={'Content-disposition': 'attachment; filename=font_performance.json'}
+            )
+    except Exception as e:
+        logger.error(f"Error exporting performance data: {e}")
+        return jsonify({
+            'status': 'error',
+            'message': str(e)
+        }), 500
+
 @app.route('/')
 def index():
     try:

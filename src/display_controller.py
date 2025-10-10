@@ -41,6 +41,7 @@ from src.static_image_manager import StaticImageManager
 from src.music_manager import MusicManager
 from src.of_the_day_manager import OfTheDayManager
 from src.news_manager import NewsManager
+from src.plugin_loader import PluginLoader
 
 # Get logger without configuring
 logger = logging.getLogger(__name__)
@@ -73,6 +74,14 @@ class DisplayController:
         self.static_image = StaticImageManager(self.display_manager, self.config) if self.config.get('static_image', {}).get('enabled', False) else None
         self.of_the_day = OfTheDayManager(self.display_manager, self.config) if self.config.get('of_the_day', {}).get('enabled', False) else None
         self.news_manager = NewsManager(self.config, self.display_manager, self.config_manager) if self.config.get('news_manager', {}).get('enabled', False) else None
+
+        # Initialize Plugin Loader (always available for font management)
+        plugin_init_time = time.time()
+        self.plugin_loader = PluginLoader(self.display_manager, self.config)
+        # Set plugin loader reference in display manager for font management
+        self.display_manager.set_plugin_loader(self.plugin_loader)
+        logger.info(f"Plugin Loader initialized in %.3f seconds", time.time() - plugin_init_time)
+
         logger.info(f"Calendar Manager initialized: {'Object' if self.calendar else 'None'}")
         logger.info(f"Text Display initialized: {'Object' if self.text_display else 'None'}")
         logger.info(f"Static Image Manager initialized: {'Object' if self.static_image else 'None'}")

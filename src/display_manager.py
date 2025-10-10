@@ -54,7 +54,10 @@ class DisplayManager:
         self.font_manager = FontManager(self.config)
         self._load_fonts()
         logger.info("Font loading completed in %.3f seconds", time.time() - font_time)
-        
+
+        # Plugin loader will be set by DisplayController
+        self.plugin_loader = None
+
         # Initialize managers
         # Calendar manager is now initialized by DisplayController
         
@@ -863,3 +866,130 @@ class DisplayManager:
         except Exception as e:
             # Snapshot failures should never break display; log at debug to avoid noise
             logger.debug(f"Snapshot write skipped: {e}")
+
+    # Plugin Font Management Methods
+
+    def register_plugin_fonts(self, plugin_id: str, font_manifest: Dict[str, Any]) -> bool:
+        """Register fonts for a plugin. Delegates to FontManager."""
+        return self.font_manager.register_plugin_fonts(plugin_id, font_manifest)
+
+    def unregister_plugin_fonts(self, plugin_id: str) -> bool:
+        """Unregister fonts for a plugin. Delegates to FontManager."""
+        return self.font_manager.unregister_plugin_fonts(plugin_id)
+
+    def get_plugin_fonts(self, plugin_id: str) -> List[str]:
+        """Get list of fonts registered by a plugin. Delegates to FontManager."""
+        return self.font_manager.get_plugin_fonts(plugin_id)
+
+    def resolve_font_with_plugin_support(self, *, element_key: Optional[str] = None,
+                                       family: Optional[str] = None, size_px: Optional[int] = None,
+                                       size_token: Optional[str] = None, plugin_id: Optional[str] = None):
+        """Resolve font with plugin support. Delegates to FontManager."""
+        return self.font_manager.resolve_font_with_plugin_support(
+            element_key=element_key, family=family, size_px=size_px,
+            size_token=size_token, plugin_id=plugin_id
+        )
+
+    def clear_plugin_font_cache(self, plugin_id: Optional[str] = None):
+        """Clear font cache for plugin(s). Delegates to FontManager."""
+        self.font_manager.clear_plugin_cache(plugin_id)
+
+    def get_font_metadata(self, family: str) -> Optional[Dict[str, Any]]:
+        """Get metadata for a font family."""
+        return self.font_manager.font_metadata.get(family)
+
+    def list_available_fonts(self) -> Dict[str, List[str]]:
+        """Get all available fonts organized by source."""
+        result = {
+            "global": list(self.font_manager.font_catalog.keys()),
+            "plugins": {}
+        }
+
+        for plugin_id, catalog in self.font_manager.plugin_font_catalogs.items():
+            result["plugins"][plugin_id] = list(catalog.keys())
+
+        return result
+
+    # Hot-reload and Runtime Font Management
+
+    def hot_reload_font_config(self, font_updates: Dict[str, Any]) -> bool:
+        """Hot-reload font configuration. Delegates to FontManager."""
+        return self.font_manager.hot_reload_font_config(font_updates)
+
+    def add_font_at_runtime(self, family: str, font_path: str, metadata: Optional[Dict[str, Any]] = None) -> bool:
+        """Add a font at runtime. Delegates to FontManager."""
+        return self.font_manager.add_font_at_runtime(family, font_path, metadata)
+
+    def remove_font_at_runtime(self, family: str) -> bool:
+        """Remove a font at runtime. Delegates to FontManager."""
+        return self.font_manager.remove_font_at_runtime(family)
+
+    def update_font_metadata(self, family: str, metadata: Dict[str, Any]) -> bool:
+        """Update font metadata at runtime. Delegates to FontManager."""
+        return self.font_manager.update_font_metadata(family, metadata)
+
+    def get_font_statistics(self) -> Dict[str, Any]:
+        """Get font system statistics. Delegates to FontManager."""
+        return self.font_manager.get_font_statistics()
+
+    def set_plugin_loader(self, plugin_loader):
+        """Set the plugin loader reference for font management."""
+        self.plugin_loader = plugin_loader
+
+    def reload_plugin_fonts(self, plugin_id: str) -> bool:
+        """Reload fonts for a specific plugin."""
+        try:
+            if not self.plugin_loader:
+                logger.error("Plugin loader not available")
+                return False
+
+            # Unregister existing fonts
+            self.unregister_plugin_fonts(plugin_id)
+
+            # Re-register if plugin is loaded
+            if plugin_id in self.plugin_loader.loaded_plugins:
+                plugin_info = self.plugin_loader.loaded_plugins[plugin_id]
+                manifest = plugin_info["manifest"]
+
+                if "fonts" in manifest:
+                    return self.register_plugin_fonts(plugin_id, manifest["fonts"])
+
+            return True
+
+        except Exception as e:
+            logger.error(f"Error reloading fonts for plugin {plugin_id}: {e}")
+            return False
+
+    def register_plugin_font_defaults(self, plugin_id: str, defaults: Dict[str, Dict[str, str]]):
+        """Allow plugins to register their font defaults."""
+        self.font_manager.register_plugin_font_defaults(plugin_id, defaults)
+
+    def unregister_plugin_font_defaults(self, plugin_id: str):
+        """Remove font defaults for a plugin."""
+        self.font_manager.unregister_plugin_font_defaults(plugin_id)
+
+    def refresh_font_defaults(self):
+        """Refresh the dynamic font defaults (call when plugins are loaded/unloaded)."""
+        self.font_manager.refresh_dynamic_defaults()
+
+    # Performance Monitoring Methods
+
+    def get_font_performance_statistics(self) -> Dict[str, Any]:
+        """Get font performance statistics. Delegates to FontManager."""
+        return self.font_manager.get_performance_statistics()
+
+    def monitor_font_performance(self, font_key: str) -> Dict[str, Any]:
+        """Monitor performance for a specific font. Delegates to FontManager."""
+        return self.font_manager.monitor_font_loading(font_key)
+
+    def get_performance_optimization_suggestions(self) -> Dict[str, Any]:
+        """Get performance optimization suggestions. Delegates to FontManager."""
+        return self.font_manager.optimize_performance()
+
+    def reset_font_performance_stats(self):
+        """Reset font performance statistics. Delegates to FontManager."""
+        self.font_manager.reset_performance_stats()
+
+    def export_font_performance_data(self, format: str = "json") -> str:
+        """Export font performance data. Delegates to FontManager."""
+        return self.font_manager.export_performance_data(format)
