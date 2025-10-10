@@ -373,6 +373,7 @@ class LeaderboardManager:
                 if team_record:
                     standings.append({
                         'name': team_name,
+                        'id': team.get('id'),  # Add team ID for logo fetching
                         'abbreviation': team_abbr,
                         'wins': team_record.get('wins', 0),
                         'losses': team_record.get('losses', 0),
