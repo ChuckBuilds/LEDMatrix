@@ -38,7 +38,7 @@ from src.youtube_display import YouTubeDisplay
 from src.calendar_manager import CalendarManager
 from src.text_display import TextDisplay
 from src.static_image_manager import StaticImageManager
-from src.music_manager import MusicManager
+from src.music_manager import MusicManager, SkipModuleException
 from src.of_the_day_manager import OfTheDayManager
 from src.news_manager import NewsManager
 
@@ -1379,10 +1379,20 @@ class DisplayController:
                     
                     if self.current_display_mode == 'music' and self.music_manager:
                         # Call MusicManager's display method
-                        self.music_manager.display(force_clear=self.force_clear)
-                        # Reset force_clear if it was true for this mode
-                        if self.force_clear:
-                            self.force_clear = False
+                        try:
+                            self.music_manager.display(force_clear=self.force_clear)
+                            # Reset force_clear if it was true for this mode
+                            if self.force_clear:
+                                self.force_clear = False
+                        except SkipModuleException as e:
+                            # Music module requested skip (nothing playing and configured to skip)
+                            logger.info(f"Music module requested skip: {e}")
+                            # Force change to next module
+                            self.force_change = True
+                        except Exception as e:
+                            logger.error(f"Unexpected error in music display: {e}", exc_info=True)
+                            # Reset force_clear on error
+                            self.force_clear = True
                     elif manager_to_display:
                         logger.debug(f"Attempting to display mode: {self.current_display_mode} using manager {type(manager_to_display).__name__} with force_clear={self.force_clear}")
                         # Call the appropriate display method based on mode/manager type
