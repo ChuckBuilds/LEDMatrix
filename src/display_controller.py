@@ -1041,12 +1041,13 @@ class DisplayController:
                     # Special handling for music manager - check if music is actively playing
                     if mode_name == 'music_live':
                         has_live_content = self._music_has_live_content()
+                        logger.debug(f"Music live mode update: mode_name={mode_name}, has_live_content={has_live_content}, in_available_modes={mode_name in self.available_modes}")
                         if has_live_content and mode_name not in self.available_modes:
                             self.available_modes.append(mode_name)
-                            logger.debug(f"Added {mode_name} to rotation (music is playing)")
+                            logger.info(f"Added {mode_name} to rotation (music is playing)")
                         elif not has_live_content and mode_name in self.available_modes:
                             self.available_modes.remove(mode_name)
-                            logger.debug(f"Removed {mode_name} from rotation (music stopped)")
+                            logger.info(f"Removed {mode_name} from rotation (music stopped)")
                     elif getattr(manager, 'live_games', None):
                         live_games = getattr(manager, 'live_games', None)
                         if mode_name not in self.available_modes:
@@ -1094,20 +1095,29 @@ class DisplayController:
         update_mode('ncaaw_hockey_live', getattr(self, 'ncaaw_hockey_live', None), self.ncaaw_hockey_live_priority, ncaaw_hockey_enabled)
         # Add music to live priority rotation if enabled and music is playing
         music_enabled = self.config.get('music', {}).get('enabled', False)
+        logger.debug(f"Music enabled: {music_enabled}, live_priority: {self.music_live_priority}, manager: {self.music_manager is not None}")
         update_mode('music_live', self.music_manager, self.music_live_priority, music_enabled)
 
     def _music_has_live_content(self) -> bool:
         """Check if music manager has live content (actively playing music)."""
         if not self.music_manager:
+            logger.debug("Music manager not initialized")
             return False
 
         # Get current track info from music manager
         current_track_info = self.music_manager.get_current_display_info()
         if not current_track_info:
+            logger.debug("No current track info from music manager")
             return False
 
         # Check if music is currently playing
-        return current_track_info.get('is_playing', False) and current_track_info.get('title', '') != 'Nothing Playing'
+        is_playing = current_track_info.get('is_playing', False)
+        title = current_track_info.get('title', '')
+        has_live_content = is_playing and title != 'Nothing Playing'
+
+        logger.debug(f"Music live content check: is_playing={is_playing}, title='{title}', has_live_content={has_live_content}, current_track_info={current_track_info}")
+
+        return has_live_content
 
     def run(self):
         """Run the display controller, switching between displays."""
@@ -1144,6 +1154,11 @@ class DisplayController:
                 # Check for live games and live_priority
                 has_live_games, live_sport_type = self._check_live_games()
                 is_currently_live = self.current_display_mode.endswith('_live')
+
+                # Special case: if we're in music mode and music is actively playing, treat it as live
+                if self.current_display_mode == 'music' and self._music_has_live_content():
+                    is_currently_live = True
+                    logger.debug("Music mode with active content treated as live priority")
                 
                 # Collect all sports with live_priority=True that have live games
                 live_priority_sports = []
@@ -1160,19 +1175,19 @@ class DisplayController:
                     ('ncaam_basketball', 'ncaam_basketball_live', self.ncaam_basketball_live_priority),
                     ('ncaaw_basketball', 'ncaaw_basketball_live', self.ncaaw_basketball_live_priority),
                     ('ncaam_hockey', 'ncaam_hockey_live', self.ncaam_hockey_live_priority),
-                    ('ncaaw_hockey', 'ncaaw_hockey_live', self.ncaaw_hockey_live_priority),
-                    ('music', 'music_live', self.music_live_priority)
+                    ('ncaaw_hockey', 'ncaaw_hockey_live', self.ncaaw_hockey_live_priority)
                 ]:
                     manager = getattr(self, attr, None)
 
                     # Special handling for music - check if music is actively playing
                     if sport == 'music':
                         has_live_content = self._music_has_live_content()
+                        logger.debug(f"Music live priority check: manager={manager is not None}, priority={priority}, has_live_content={has_live_content}")
                         if (manager is not None and
                             priority and
                             has_live_content):
                             live_priority_sports.append(sport)
-                            logger.debug(f"Live priority music found: music is playing")
+                            logger.info(f"Live priority music found: music is playing - added to live priority rotation")
                         elif manager is not None and priority:
                             logger.debug("Music has live_priority=True but no music is playing (not taking over)")
                     else:
@@ -1188,27 +1203,34 @@ class DisplayController:
                         elif manager is not None and priority and live_games is not None:
                             logger.debug(f"{sport} has live_priority=True but {len(live_games)} live games (not taking over)")
                 
+                # Special case: add music to live priority sports if music is actively playing
+                if self._music_has_live_content() and self.music_live_priority and self.music_manager:
+                    live_priority_sports.append('music')
+                    logger.info("Added music to live priority sports (music is playing)")
+
                 # Determine if we have any live priority sports
                 live_priority_takeover = len(live_priority_sports) > 0
+                logger.debug(f"Live priority sports: {live_priority_sports}, takeover: {live_priority_takeover}")
                 
                 manager_to_display = None
                 # --- State Machine for Display Logic ---
                 if is_currently_live:
                     if live_priority_takeover:
                         # Check if we need to rotate to the next live priority sport
-                        current_sport_type = self.current_display_mode.replace('_live', '')
-                        
+                        current_sport_type = self.current_display_mode.replace('_live', '') if self.current_display_mode.endswith('_live') else self.current_display_mode
+
                         # If current sport is not in live priority sports, switch to first one
                         if current_sport_type not in live_priority_sports:
                             next_sport = live_priority_sports[0]
-                            new_mode = f"{next_sport}_live"
+                            # Special case for music - use "music" mode instead of "music_live"
+                            new_mode = "music" if next_sport == "music" else f"{next_sport}_live"
                             logger.info(f"Current live sport {current_sport_type} no longer has priority, switching to {new_mode}")
                             self.current_display_mode = new_mode
                             if hasattr(self, '_last_logged_duration'):
                                 delattr(self, '_last_logged_duration')
                             self.force_clear = True
                             self.last_switch = current_time
-                            manager_to_display = getattr(self, f"{next_sport}_live", None)
+                            manager_to_display = self.music_manager if next_sport == "music" else getattr(self, f"{next_sport}_live", None)
                         else:
                             # Check if duration has elapsed for current sport
                             current_duration = self.get_current_duration()
@@ -1217,18 +1239,20 @@ class DisplayController:
                                 current_index = live_priority_sports.index(current_sport_type)
                                 next_index = (current_index + 1) % len(live_priority_sports)
                                 next_sport = live_priority_sports[next_index]
-                                new_mode = f"{next_sport}_live"
-                                
+                                # Special case for music - use "music" mode instead of "music_live"
+                                new_mode = "music" if next_sport == "music" else f"{next_sport}_live"
+
                                 logger.info(f"Rotating live priority sports: {current_sport_type} -> {next_sport} (duration: {current_duration}s)")
                                 self.current_display_mode = new_mode
                                 if hasattr(self, '_last_logged_duration'):
                                     delattr(self, '_last_logged_duration')
                                 self.force_clear = True
                                 self.last_switch = current_time
-                                manager_to_display = getattr(self, f"{next_sport}_live", None)
+                                manager_to_display = self.music_manager if next_sport == "music" else getattr(self, f"{next_sport}_live", None)
                             else:
                                 self.force_clear = False
-                                manager_to_display = getattr(self, f"{current_sport_type}_live", None)
+                                # Special case for music - use "music" mode instead of "music_live"
+                                manager_to_display = self.music_manager if current_sport_type == "music" else getattr(self, f"{current_sport_type}_live", None)
                     else:
                         # If no sport has live_priority takeover, treat as regular rotation
                         is_currently_live = False
@@ -1237,14 +1261,19 @@ class DisplayController:
                     if live_priority_takeover:
                         # Switch to first live priority sport
                         next_sport = live_priority_sports[0]
-                        new_mode = f"{next_sport}_live"
-                        
-                        # Double-check that the manager actually has live games before switching
-                        target_manager = getattr(self, f"{next_sport}_live", None)
-                        if target_manager and hasattr(target_manager, 'live_games') and len(target_manager.live_games) > 0:
+                        # Special case for music - use "music" mode instead of "music_live"
+                        new_mode = "music" if next_sport == "music" else f"{next_sport}_live"
+
+                        # Double-check that the manager actually has live content before switching
+                        if next_sport == "music":
+                            target_manager = self.music_manager if self._music_has_live_content() else None
+                        else:
+                            target_manager = getattr(self, f"{next_sport}_live", None)
+
+                        if target_manager and ((next_sport == "music") or (hasattr(target_manager, 'live_games') and len(target_manager.live_games) > 0)):
                             logger.info(f"Live priority takeover: Switching to {new_mode} from {self.current_display_mode}")
-                            logger.debug(f"[DisplayController] Live priority takeover details: sport={next_sport}, manager={target_manager}, live_games={target_manager.live_games}")
-                            if previous_mode_before_switch == 'music' and self.music_manager:
+                            logger.debug(f"[DisplayController] Live priority takeover details: sport={next_sport}, manager={target_manager}")
+                            if previous_mode_before_switch == 'music' and self.music_manager and next_sport != "music":
                                 self.music_manager.deactivate_music_display()
                             self.current_display_mode = new_mode
                             # Reset logged duration when mode changes
@@ -1254,7 +1283,7 @@ class DisplayController:
                             self.last_switch = current_time
                             manager_to_display = target_manager
                         else:
-                            logger.warning(f"[DisplayController] Live priority takeover attempted for {new_mode} but manager has no live games, skipping takeover")
+                            logger.warning(f"[DisplayController] Live priority takeover attempted for {new_mode} but manager has no live content, skipping takeover")
                             live_priority_takeover = False
                     else:
                         # No live_priority takeover, regular rotation
