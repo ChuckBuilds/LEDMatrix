@@ -1197,42 +1197,28 @@ class DisplayController:
                 ]:
                     manager = getattr(self, attr, None)
 
-                    # Special handling for music - check if music is actively playing
-                    if sport == 'music':
-                        has_live_content = self._music_has_live_content()
-                        logger.debug(f"Music live priority check: manager={manager is not None}, priority={priority}, has_live_content={has_live_content}")
-                        if (manager is not None and
-                            priority and
-                            has_live_content):
-                            live_priority_sports.append(sport)
-                            logger.info(f"Live priority music found: music is playing - added to live priority rotation")
-                        elif manager is not None and priority:
-                            logger.debug("Music has live_priority=True but no music is playing (not taking over)")
-                    else:
-                        # Standard sports logic
-                        live_games = getattr(manager, 'live_games', None) if manager is not None else None
-                        # Check that manager exists, has live_priority enabled, has live_games attribute, and has at least one live game
-                        if (manager is not None and
-                            priority and
-                            live_games is not None and
-                            len(live_games) > 0):
-                            live_priority_sports.append(sport)
-                            logger.debug(f"Live priority sport found: {sport} with {len(live_games)} live games")
-                        elif manager is not None and priority and live_games is not None:
-                            logger.debug(f"{sport} has live_priority=True but {len(live_games)} live games (not taking over)")
-                
-                # Special case: add music to live priority sports if music is actively playing
-                if self._music_has_live_content() and self.music_live_priority and self.music_manager:
+                    # Standard sports logic
+                    live_games = getattr(manager, 'live_games', None) if manager is not None else None
+                    # Check that manager exists, has live_priority enabled, has live_games attribute, and has at least one live game
+                    if (manager is not None and
+                        priority and
+                        live_games is not None and
+                        len(live_games) > 0):
+                        live_priority_sports.append(sport)
+                        logger.debug(f"Live priority sport found: {sport} with {len(live_games)} live games")
+                    elif manager is not None and priority and live_games is not None:
+                        logger.debug(f"{sport} has live_priority=True but {len(live_games)} live games (not taking over)")
+
+                # Special handling for music - check if music is actively playing
+                if (self.music_manager is not None and
+                    self.music_live_priority and
+                    self._music_has_live_content()):
                     live_priority_sports.append('music')
                     # Throttle logging - only log every 30 seconds
                     current_time = time.time()
                     if current_time - self._last_music_live_priority_log >= self._music_live_priority_log_interval:
-                        logger.info("Added music to live priority sports (music is playing)")
+                        logger.info("Live priority music found: music is playing - added to live priority rotation")
                         self._last_music_live_priority_log = current_time
-                    # Throttle debug logging for music live priority check
-                    if current_time - self._last_music_rotation_log >= self._music_live_priority_log_interval:
-                        logger.debug(f"Music live priority check result: has_content=True, priority={self.music_live_priority}, manager={self.music_manager is not None}")
-                        self._last_music_rotation_log = current_time
 
                 # Determine if we have any live priority sports
                 live_priority_takeover = len(live_priority_sports) > 0
