@@ -579,7 +579,9 @@
         "YTM_COMPANION_URL": "http://192.168.86.12:9863",
         "POLLING_INTERVAL_SECONDS": 1,
         "skip_when_nothing_playing": true,
-        "skip_delay_seconds": 2
+        "skip_delay_seconds": 2,
+        "live_priority": true,
+        "live_game_duration": 30
     },
     "of_the_day": {
         "enabled": false,
