@@ -325,6 +325,11 @@ class DisplayController:
         self.ncaam_hockey_live_priority = self.config.get('ncaam_hockey_scoreboard', {}).get('live_priority', True)
         self.ncaaw_hockey_live_priority = self.config.get('ncaaw_hockey_scoreboard', {}).get('live_priority', True)
         self.music_live_priority = self.config.get('music', {}).get('live_priority', True)
+
+        # Live priority logging throttling
+        self._last_music_live_priority_log = 0
+        self._last_music_rotation_log = 0
+        self._music_live_priority_log_interval = 30.0  # Log every 30 seconds
         
         # List of available display modes (adjust order as desired)
         self.available_modes = []
@@ -1044,10 +1049,18 @@ class DisplayController:
                         logger.debug(f"Music live mode update: mode_name={mode_name}, has_live_content={has_live_content}, in_available_modes={mode_name in self.available_modes}")
                         if has_live_content and mode_name not in self.available_modes:
                             self.available_modes.append(mode_name)
-                            logger.info(f"Added {mode_name} to rotation (music is playing)")
+                            # Throttle logging - only log every 30 seconds
+                            current_time = time.time()
+                            if current_time - self._last_music_rotation_log >= self._music_live_priority_log_interval:
+                                logger.info(f"Added {mode_name} to rotation (music is playing)")
+                                self._last_music_rotation_log = current_time
                         elif not has_live_content and mode_name in self.available_modes:
                             self.available_modes.remove(mode_name)
-                            logger.info(f"Removed {mode_name} from rotation (music stopped)")
+                            # Throttle logging - only log every 30 seconds
+                            current_time = time.time()
+                            if current_time - self._last_music_rotation_log >= self._music_live_priority_log_interval:
+                                logger.info(f"Removed {mode_name} from rotation (music stopped)")
+                                self._last_music_rotation_log = current_time
                     elif getattr(manager, 'live_games', None):
                         live_games = getattr(manager, 'live_games', None)
                         if mode_name not in self.available_modes:
@@ -1095,7 +1108,10 @@ class DisplayController:
         update_mode('ncaaw_hockey_live', getattr(self, 'ncaaw_hockey_live', None), self.ncaaw_hockey_live_priority, ncaaw_hockey_enabled)
         # Add music to live priority rotation if enabled and music is playing
         music_enabled = self.config.get('music', {}).get('enabled', False)
-        logger.debug(f"Music enabled: {music_enabled}, live_priority: {self.music_live_priority}, manager: {self.music_manager is not None}")
+        # Throttle debug logging - only log every 30 seconds
+        current_time = time.time()
+        if current_time - self._last_music_rotation_log >= self._music_live_priority_log_interval:
+            logger.debug(f"Music enabled: {music_enabled}, live_priority: {self.music_live_priority}, manager: {self.music_manager is not None}")
         update_mode('music_live', self.music_manager, self.music_live_priority, music_enabled)
 
     def _music_has_live_content(self) -> bool:
@@ -1114,8 +1130,6 @@ class DisplayController:
         is_playing = current_track_info.get('is_playing', False)
         title = current_track_info.get('title', '')
         has_live_content = is_playing and title != 'Nothing Playing'
-
-        logger.debug(f"Music live content check: is_playing={is_playing}, title='{title}', has_live_content={has_live_content}, current_track_info={current_track_info}")
 
         return has_live_content
 
@@ -1158,7 +1172,11 @@ class DisplayController:
                 # Special case: if we're in music mode and music is actively playing, treat it as live
                 if self.current_display_mode == 'music' and self._music_has_live_content():
                     is_currently_live = True
-                    logger.debug("Music mode with active content treated as live priority")
+                    # Throttle logging - only log every 30 seconds
+                    current_time = time.time()
+                    if current_time - self._last_music_rotation_log >= self._music_live_priority_log_interval:
+                        logger.debug("Music mode with active content treated as live priority")
+                        self._last_music_rotation_log = current_time
                 
                 # Collect all sports with live_priority=True that have live games
                 live_priority_sports = []
@@ -1206,11 +1224,21 @@ class DisplayController:
                 # Special case: add music to live priority sports if music is actively playing
                 if self._music_has_live_content() and self.music_live_priority and self.music_manager:
                     live_priority_sports.append('music')
-                    logger.info("Added music to live priority sports (music is playing)")
+                    # Throttle logging - only log every 30 seconds
+                    current_time = time.time()
+                    if current_time - self._last_music_live_priority_log >= self._music_live_priority_log_interval:
+                        logger.info("Added music to live priority sports (music is playing)")
+                        self._last_music_live_priority_log = current_time
+                    # Throttle debug logging for music live priority check
+                    if current_time - self._last_music_rotation_log >= self._music_live_priority_log_interval:
+                        logger.debug(f"Music live priority check result: has_content=True, priority={self.music_live_priority}, manager={self.music_manager is not None}")
+                        self._last_music_rotation_log = current_time
 
                 # Determine if we have any live priority sports
                 live_priority_takeover = len(live_priority_sports) > 0
-                logger.debug(f"Live priority sports: {live_priority_sports}, takeover: {live_priority_takeover}")
+                # Throttle debug logging - only log every 30 seconds
+                if current_time - self._last_music_rotation_log >= self._music_live_priority_log_interval:
+                    logger.debug(f"Live priority sports: {live_priority_sports}, takeover: {live_priority_takeover}")
                 
                 manager_to_display = None
                 # --- State Machine for Display Logic ---
