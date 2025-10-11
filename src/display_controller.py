@@ -103,8 +103,11 @@ class DisplayController:
                     self.music_manager = None
             else:
                 logger.info("Music module is disabled in main configuration (config.json).")
+            # Read music live game duration setting regardless of whether music is enabled
+            self.music_live_game_duration = music_config_main.get('live_game_duration', 30)
         else:
             logger.error("Config not loaded before MusicManager initialization attempt.")
+            self.music_live_game_duration = 30  # Default fallback
         logger.info("MusicManager initialized in %.3f seconds", time.time() - music_init_time)
         
         # Initialize NHL managers if enabled
@@ -651,6 +654,16 @@ class DisplayController:
                 # Fall back to configured duration
                 return self.display_durations.get(mode_key, 600)
 
+        # Handle music live priority mode
+        elif mode_key == 'music' and self.music_live_priority and self.music_manager and self._music_has_live_content():
+            # Use the configured live game duration for music when in live priority mode
+            music_live_duration = getattr(self, 'music_live_game_duration', 30)
+            # Only log if duration has changed or we haven't logged this duration yet
+            if not hasattr(self, '_last_logged_music_live_duration') or self._last_logged_music_live_duration != music_live_duration:
+                logger.info(f"Using music live priority duration: {music_live_duration} seconds")
+                self._last_logged_music_live_duration = music_live_duration
+            return music_live_duration
+
         # Simplify weather key handling
         elif mode_key.startswith('weather_'):
             return self.display_durations.get(mode_key, 15)
@@ -660,7 +673,7 @@ class DisplayController:
             # elif duration_key == 'daily': duration_key = 'weather_daily'
             # else: duration_key = 'weather_current' # Default to current
             # return self.display_durations.get(duration_key, 15)
-        
+
         return self.display_durations.get(mode_key, 15)
 
     def _update_modules(self):
