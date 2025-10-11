@@ -44,11 +44,7 @@ class YouTubeDisplay:
             
     def _initialize_display(self):
         """Initialize display components."""
-        try:
-            self.font = self.display_manager.font_manager.resolve(element_key="youtube.display")
-        except Exception as e:
-            logger.warning(f"Failed to resolve font using unified system: {e}. Using fallback.")
-            self.font = ImageFont.load_default()
+        self.font = ImageFont.truetype("assets/fonts/PressStart2P-Regular.ttf", 8)
         try:
             self.youtube_logo = Image.open("assets/youtube_logo.png")
         except Exception as e:

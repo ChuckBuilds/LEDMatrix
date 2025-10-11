@@ -83,8 +83,9 @@ class NewsManager:
         self.max_duration = self.news_config.get('max_duration', 300)
         self.duration_buffer = self.news_config.get('duration_buffer', 0.1)
         
-        # Font settings - now using unified font system
-        self.font_element_key = "news_manager.headline"  # Element key for news headlines
+        # Font settings
+        self.font_size = self.news_config.get('font_size', 12)
+        self.font_path = self.news_config.get('font_path', '/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf')
         
         # Colors
         self.text_color = tuple(self.news_config.get('text_color', [255, 255, 255]))
@@ -236,12 +237,12 @@ class NewsManager:
             return
             
         try:
-            # Load font using unified font system
+            # Load font
             try:
-                font = self.display_manager.font_manager.resolve(element_key=self.font_element_key)
-                logger.debug(f"Successfully resolved font using unified system for {self.font_element_key}")
+                font = ImageFont.truetype(self.font_path, self.font_size)
+                logger.debug(f"Successfully loaded custom font: {self.font_path}")
             except Exception as e:
-                logger.warning(f"Failed to resolve font using unified system: {e}. Using fallback.")
+                logger.warning(f"Failed to load custom font '{self.font_path}': {e}. Using default font.")
                 font = ImageFont.load_default()
                 
             # Calculate text width
@@ -273,9 +274,9 @@ class NewsManager:
             return
 
         try:
-            font = self.display_manager.font_manager.resolve(element_key=self.font_element_key)
+            font = ImageFont.truetype(self.font_path, self.font_size)
         except Exception as e:
-            logger.warning(f"Failed to resolve font for pre-rendering: {e}. Using default.")
+            logger.warning(f"Failed to load custom font for pre-rendering: {e}. Using default.")
             font = ImageFont.load_default()
 
         height = self.display_manager.height
@@ -405,10 +406,10 @@ class NewsManager:
         draw = ImageDraw.Draw(img)
         
         try:
-            font = self.display_manager.font_manager.resolve(element_key=self.font_element_key)
-            logger.debug(f"Successfully resolved font using unified system for {self.font_element_key}")
+            font = ImageFont.truetype(self.font_path, self.font_size)
+            logger.debug(f"Successfully loaded custom font: {self.font_path}")
         except Exception as e:
-            logger.warning(f"Failed to resolve font using unified system: {e}. Using default font.")
+            logger.warning(f"Failed to load custom font '{self.font_path}': {e}. Using default font.")
             font = ImageFont.load_default()
         
         text = "Loading news..."
@@ -431,11 +432,10 @@ class NewsManager:
         draw = ImageDraw.Draw(img)
         
         try:
-            # Use a smaller size token for separator text
-            font = self.display_manager.font_manager.resolve(element_key="news_manager.separator")
-            logger.debug(f"Successfully resolved font using unified system for news_manager.separator")
+            font = ImageFont.truetype(self.font_path, max(8, self.font_size - 2))
+            logger.debug(f"Successfully loaded custom font: {self.font_path}")
         except Exception as e:
-            logger.warning(f"Failed to resolve font using unified system: {e}. Using default font.")
+            logger.warning(f"Failed to load custom font '{self.font_path}': {e}. Using default font.")
             font = ImageFont.load_default()
         
         text = f"News Error: {error_msg[:50]}..."
