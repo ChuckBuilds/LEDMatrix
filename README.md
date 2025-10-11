@@ -200,7 +200,8 @@ These are not required and you can probably rig up something basic with stuff yo
 # Preparing the Raspberry Pi
 1. Create RPI Image on a Micro-SD card (I use 16gb because I have it, size is not too important but I would use 8gb or more) using [Raspberry Pi Imager](https://www.raspberrypi.com/software/)
 2. Choose your Raspberry Pi (3B+ in my case) 
-3. For Operating System (OS), choose "Other", then choose Raspbian OS (Legacy, 64-bit) Lite  (This needs to be Debian Bookworm not Debian Trixie! Packages are broken on Trixie as of 10/2/25. I will try to get working as soon as requirements are met!)
+3. For Operating System (OS), choose "Other", then choose Raspbian OS (Legacy, 64-bit) Lite  (This needs to be Debian Bookworm not Debian Trixie! Packages are broken on Trixie as of 10/2/25. I will try to get working as soon as requirements are met!) 
+![image](https://github.com/user-attachments/assets/e8e2e806-18a8-4175-9c25-0cefaae438ea)
 4. For Storage, choose your micro-sd card
 ![image](https://github.com/user-attachments/assets/05580e0a-86d5-4613-aadc-93207365c38f)
 5. Press Next then Edit Settings
