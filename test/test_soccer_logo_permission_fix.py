@@ -125,7 +125,7 @@ def test_permission_error_messages():
         source = inspect.getsource(BaseSoccerManager._load_and_resize_logo)
         
         # Check that the method includes permission error handling
-        if "Permission denied" in source and "fix_assets_permissions.sh" in source:
+        if "Permission denied" in source and "scripts/fix_perms/fix_assets_permissions.sh" in source:
             print("✓ Permission error handling with helpful messages is implemented")
             return True
         else:
@@ -147,8 +147,8 @@ if __name__ == "__main__":
         print("\n🎉 All tests passed! The soccer logo permission fix is working correctly.")
         print("\nTo apply this fix on your Raspberry Pi:")
         print("1. Transfer the updated files to your Pi")
-        print("2. Run: chmod +x fix_assets_permissions.sh")
-        print("3. Run: sudo ./fix_assets_permissions.sh")
+        print("2. Run: chmod +x scripts/fix_perms/fix_assets_permissions.sh")
+        print("3. Run: sudo ./scripts/fix_perms/fix_assets_permissions.sh")
         print("4. Restart your LEDMatrix application")
     else:
         print("\n❌ Tests failed. Please check the error messages above.")

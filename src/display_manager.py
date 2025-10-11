@@ -400,8 +400,18 @@ class DisplayManager:
             return 8 # A reasonable default for an 8px font.
 
     def draw_text(self, text: str, x: int = None, y: int = None, color: tuple = (255, 255, 255), 
-                 small_font: bool = False, font: ImageFont = None):
-        """Draw text on the canvas with optional font selection."""
+                 small_font: bool = False, font: ImageFont = None, centered: bool = False):
+        """Draw text on the canvas with optional font selection.
+        
+        Args:
+            text: Text to display
+            x: X position (None to auto-center, or used as center point if centered=True)
+            y: Y position (None defaults to 0)
+            color: RGB color tuple
+            small_font: Use small font if True
+            font: Custom font object (overrides small_font)
+            centered: If True, x is treated as center point; if False, x is left edge
+        """
         try:
             # Select font based on parameters
             if font:
@@ -409,10 +419,15 @@ class DisplayManager:
             else:
                 current_font = self.small_font if small_font else self.regular_font
             
-            # Calculate x position if not provided (center text)
+            # Calculate x position
             if x is None:
+                # No x provided - center text
                 text_width = self.get_text_width(text, current_font)
                 x = (self.width - text_width) // 2
+            elif centered:
+                # x is provided as center point - adjust to left edge
+                text_width = self.get_text_width(text, current_font)
+                x = x - (text_width // 2)
             
             # Set default y position if not provided
             if y is None:

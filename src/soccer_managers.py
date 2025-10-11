@@ -423,7 +423,7 @@ class BaseSoccerManager:
                             
             except (OSError, PermissionError) as e:
                 self.logger.warning(f"Permission denied listing directory {self.logo_dir}: {e}")
-                self.logger.warning(f"Please run: sudo ./fix_assets_permissions.sh")
+                self.logger.warning(f"Please run: sudo ./scripts/fix_perms/fix_assets_permissions.sh")
         
         if logo_path is None:
             logo_path = expected_path  # Use original path for creation attempts
@@ -489,7 +489,7 @@ class BaseSoccerManager:
                             raise PermissionError("No writable cache directory available")
                     except (PermissionError, OSError) as pe:
                         self.logger.warning(f"Permission denied creating placeholder logo for {team_abbrev}: {pe}")
-                        self.logger.warning(f"Please run: sudo ./fix_assets_permissions.sh")
+                        self.logger.warning(f"Please run: sudo ./scripts/fix_perms/fix_assets_permissions.sh")
                         # Return a simple in-memory placeholder instead
                         logo = Image.new('RGBA', (36, 36), (random.randint(50, 200), random.randint(50, 200), random.randint(50, 200), 255))
                         self._logo_cache[team_abbrev] = logo
@@ -518,7 +518,7 @@ class BaseSoccerManager:
                     return logo
                 except PermissionError as pe:
                     self.logger.warning(f"Permission denied accessing logo for {team_abbrev}: {pe}")
-                    self.logger.warning(f"Please run: sudo ./fix_assets_permissions.sh")
+                    self.logger.warning(f"Please run: sudo ./scripts/fix_perms/fix_assets_permissions.sh")
                     # Return a simple in-memory placeholder instead
                     logo = Image.new('RGBA', (36, 36), (random.randint(50, 200), random.randint(50, 200), random.randint(50, 200), 255))
                     self._logo_cache[team_abbrev] = logo

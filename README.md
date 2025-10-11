@@ -1087,8 +1087,8 @@ This will:
 **If You Still See Cache Warnings:**
 If you see warnings about using temporary cache directory, run the permissions fix:
 ```bash
-chmod +x fix_cache_permissions.sh
-./fix_cache_permissions.sh
+chmod +x scripts/fix_perms/fix_cache_permissions.sh
+./scripts/fix_perms/fix_cache_permissions.sh
 ```
 
 **Manual Setup:**

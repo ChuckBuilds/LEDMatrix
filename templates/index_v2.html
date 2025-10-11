@@ -730,6 +730,126 @@
             background: rgba(231, 76, 60, 0.9);
             color: white;
         }
+
+        /* Plugin Management Styles */
+        .plugins-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+            gap: 20px;
+            margin-top: 20px;
+        }
+
+        .plugin-card {
+            background: var(--card-background);
+            border: 1px solid var(--border-color);
+            border-radius: var(--border-radius);
+            padding: 20px;
+            box-shadow: var(--shadow);
+            transition: transform 0.2s ease, box-shadow 0.2s ease;
+        }
+
+        .plugin-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 20px rgba(0,0,0,0.15);
+        }
+
+        .plugin-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+        }
+
+        .plugin-header h4 {
+            margin: 0;
+            color: var(--primary-color);
+            font-size: 1.1rem;
+        }
+
+        .plugin-meta {
+            display: flex;
+            gap: 15px;
+            margin-bottom: 10px;
+            font-size: 0.85rem;
+            color: #666;
+        }
+
+        .plugin-description {
+            color: #555;
+            margin-bottom: 15px;
+            line-height: 1.4;
+        }
+
+        .plugin-tags {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 5px;
+            margin-bottom: 15px;
+        }
+
+        .tag {
+            background: rgba(52, 152, 219, 0.1);
+            color: var(--secondary-color);
+            padding: 3px 8px;
+            border-radius: 12px;
+            font-size: 0.75rem;
+            font-weight: 500;
+        }
+
+        .plugin-controls {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+
+        .plugin-controls button {
+            flex: 1;
+            min-width: 100px;
+        }
+
+        .plugin-config-section {
+            margin-top: 20px;
+            padding-top: 20px;
+            border-top: 1px solid var(--border-color);
+        }
+
+        .config-row {
+            display: flex;
+            gap: 15px;
+            margin-bottom: 15px;
+            align-items: center;
+        }
+
+        .config-row label {
+            min-width: 120px;
+            font-weight: 500;
+        }
+
+        .config-row input,
+        .config-row select,
+        .config-row textarea {
+            flex: 1;
+            padding: 8px;
+            border: 1px solid var(--border-color);
+            border-radius: 4px;
+        }
+
+        .store-controls {
+            background: rgba(52, 152, 219, 0.05);
+            padding: 15px;
+            border-radius: var(--border-radius);
+            margin-bottom: 20px;
+        }
+
+        .no-plugins {
+            text-align: center;
+            padding: 40px;
+            color: #666;
+            font-style: italic;
+            background: rgba(149, 165, 166, 0.1);
+            border-radius: var(--border-radius);
+            border: 2px dashed #bdc3c7;
+        }
     </style>
 </head>
 <body>
@@ -777,14 +897,6 @@
             <div style="margin-top:12px; color:#666; font-size:12px;">Service actions may require sudo privileges on the Pi. Migrate Config adds new options with defaults while preserving your settings.</div>
         </div>
 
-        <!-- Editor Mode Banner -->
-        {% if editor_mode %}
-        <div class="editor-mode">
-            <h2><i class="fas fa-edit"></i> Display Editor Mode Active</h2>
-            <p>Normal display operation is paused. Use the tools below to customize your display layout.</p>
-        </div>
-        {% endif %}
-
         <!-- Main Grid -->
         <div class="main-grid">
             <!-- Display Panel -->
@@ -803,10 +915,6 @@
                     </div>
                 </div>
                 <div class="display-controls">
-                    <button class="btn btn-warning" onclick="toggleEditorMode()">
-                        <i class="fas fa-edit"></i> 
-                        {{ 'Exit Editor' if editor_mode else 'Enter Editor' }}
-                    </button>
                     <button class="btn btn-primary" onclick="takeScreenshot()">
                         <i class="fas fa-camera"></i> Screenshot
                     </button>
@@ -878,9 +986,6 @@
                     <button class="tab-btn" onclick="showTab('static_image')">
                         <i class="fas fa-image"></i> Static Image
                     </button>
-                    <button class="tab-btn" onclick="showTab('features')">
-                        <i class="fas fa-star"></i> Features
-                    </button>
                     <button class="tab-btn" onclick="showTab('of_the_day')">
                         <i class="fas fa-calendar-day"></i> Of The Day
                     </button>
@@ -899,9 +1004,6 @@
                     <button class="tab-btn" onclick="showTab('secrets')">
                         <i class="fas fa-key"></i> API Keys
                     </button>
-                    <button class="tab-btn" onclick="showTab('editor')">
-                        <i class="fas fa-paint-brush"></i> Editor
-                    </button>
                     <button class="tab-btn" onclick="showTab('actions')">
                         <i class="fas fa-tools"></i> Actions
                     </button>
@@ -910,6 +1012,12 @@
                     </button>
                     <button class="tab-btn" onclick="showTab('logs')">
                         <i class="fas fa-file-alt"></i> Logs
+                    </button>
+                    <button class="tab-btn" onclick="showTab('plugins')">
+                        <i class="fas fa-plug"></i> Plugins
+                    </button>
+                    <button class="tab-btn" onclick="showTab('plugin-store')">
+                        <i class="fas fa-store"></i> Plugin Store
                     </button>
                 </div>
 
@@ -1671,18 +1779,6 @@
                     </div>
                 </div>
 
-                <!-- Features Tab -->
-                <div id="features" class="tab-content">
-                    <div class="config-section">
-                        <h3>Additional Features</h3>
-                        <p>Configure additional features like clock, text display, and more.</p>
-                        <!-- Features configuration will be populated by JavaScript -->
-                        <div id="features-config">
-                            Loading features configuration...
-                        </div>
-                    </div>
-                </div>
-
                 <!-- Of The Day Tab -->
                 <div id="of_the_day" class="tab-content">
                     <div class="config-section">
@@ -1971,46 +2067,6 @@
                     </div>
                 </div>
 
-                <!-- Editor Tab -->
-                <div id="editor" class="tab-content">
-                    <h3>Display Editor</h3>
-                    
-                    <div class="element-palette">
-                        <h4>Elements</h4>
-                        <div class="palette-item" draggable="true" data-type="text">
-                            <i class="fas fa-font"></i> Text
-                        </div>
-                        <div class="palette-item" draggable="true" data-type="weather_icon">
-                            <i class="fas fa-cloud-sun"></i> Weather Icon
-                        </div>
-                        <div class="palette-item" draggable="true" data-type="rectangle">
-                            <i class="fas fa-square"></i> Rectangle
-                        </div>
-                        <div class="palette-item" draggable="true" data-type="line">
-                            <i class="fas fa-minus"></i> Line
-                        </div>
-                    </div>
-
-                    <div class="editor-toolbar">
-                        <button class="btn btn-primary" onclick="clearEditor()">
-                            <i class="fas fa-trash"></i> Clear
-                        </button>
-                        <button class="btn btn-success" onclick="saveLayout()">
-                            <i class="fas fa-save"></i> Save Layout
-                        </button>
-                        <button class="btn btn-warning" onclick="loadLayout()">
-                            <i class="fas fa-folder-open"></i> Load Layout
-                        </button>
-                    </div>
-
-                    <div class="properties-panel">
-                        <h4>Element Properties</h4>
-                        <div id="elementProperties">
-                            <p>Select an element to edit its properties</p>
-                        </div>
-                    </div>
-                </div>
-
                 <!-- Actions Tab -->
                 <div id="actions" class="tab-content">
                     <div class="config-section">
@@ -2108,6 +2164,58 @@
                         <pre id="log-content" style="background-color: #1e1e1e; color: #d4d4d4; padding: 15px; border-radius: var(--border-radius); max-height: 600px; overflow-y: auto; white-space: pre-wrap; word-wrap: break-word; margin-top: 15px;"></pre>
                     </div>
                 </div>
+
+                <!-- Plugins Tab -->
+                <div id="plugins" class="tab-content">
+                    <div class="config-section">
+                        <h3>Installed Plugins</h3>
+                        <p>Manage your installed plugins. Enable/disable plugins and configure their settings.</p>
+
+                        <div class="plugin-controls" style="margin-bottom: 20px;">
+                            <button class="btn btn-primary" onclick="refreshPlugins()">
+                                <i class="fas fa-refresh"></i> Refresh Plugins
+                            </button>
+                            <button class="btn btn-success" onclick="restartDisplay()">
+                                <i class="fas fa-redo"></i> Restart Display
+                            </button>
+                        </div>
+
+                        <div id="installed-plugins" class="plugins-grid">
+                            <div class="loading">Loading plugins...</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Plugin Store Tab -->
+                <div id="plugin-store" class="tab-content">
+                    <div class="config-section">
+                        <h3>Plugin Store</h3>
+                        <p>Browse and install plugins from the community store.</p>
+
+                        <div class="store-controls" style="margin-bottom: 20px;">
+                            <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
+                                <input type="text" id="plugin-search" placeholder="Search plugins..." style="padding: 8px; border: 1px solid var(--border-color); border-radius: 4px; min-width: 200px;">
+                                <select id="plugin-category" style="padding: 8px; border: 1px solid var(--border-color); border-radius: 4px;">
+                                    <option value="">All Categories</option>
+                                    <option value="time">Time</option>
+                                    <option value="weather">Weather</option>
+                                    <option value="sports">Sports</option>
+                                    <option value="finance">Finance</option>
+                                    <option value="entertainment">Entertainment</option>
+                                    <option value="example">Example</option>
+                                    <option value="utility">Utility</option>
+                                </select>
+                                <button class="btn btn-primary" onclick="searchPlugins()">
+                                    <i class="fas fa-search"></i> Search
+                                </button>
+                            </div>
+                        </div>
+
+                        <div id="plugin-store-content" class="plugins-grid">
+                            <div class="loading">Loading plugin store...</div>
+                        </div>
+                    </div>
+                </div>
             </div>
         </div>
     </div>
@@ -2129,9 +2237,6 @@
         const __serverDataEl = document.getElementById('serverData');
         const __serverData = __serverDataEl ? JSON.parse(__serverDataEl.textContent) : { main_config: {}, editor_mode: false };
         let currentConfig = __serverData.main_config || {};
-        let editorMode = !!__serverData.editor_mode;
-        let currentElements = [];
-        let selectedElement = null;
 
         // Function to refresh the current config from the server
         async function refreshCurrentConfig() {
@@ -2191,7 +2296,6 @@
         // Initialize on page load
         document.addEventListener('DOMContentLoaded', function() {
             initializeSocket();
-            initializeEditor();
             updateSystemStats();
             loadNewsManagerData();
             updateApiMetrics();
@@ -2560,23 +2664,6 @@
             await runAction('stop_display');
         }
 
-        async function toggleEditorMode() {
-            try {
-                const response = await fetch('/api/editor/toggle', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'}
-                });
-                const result = await response.json();
-                showNotification(result.message, result.status);
-                
-                if (result.status === 'success') {
-                    editorMode = result.editor_mode;
-                    location.reload(); // Reload to update UI
-                }
-            } catch (error) {
-                showNotification('Error toggling editor mode: ' + error.message, 'error');
-            }
-        }
 
         async function takeScreenshot() {
             try {
@@ -3844,6 +3931,603 @@
             }
             showNotification('Sports configuration saved', 'success');
         }
+        // ===== Plugin Management Functions =====
+
+        // Store plugins data globally for tab generation
+        let installedPluginsData = [];
+
+        async function refreshPlugins() {
+            try {
+                showNotification('Refreshing plugins...', 'info');
+                const response = await fetch('/api/plugins/installed');
+                const data = await response.json();
+
+                if (response.ok && data.status === 'success') {
+                    installedPluginsData = data.plugins;
+                    renderInstalledPlugins(data.plugins);
+                    generatePluginTabs(data.plugins);
+                    showNotification('Plugins refreshed successfully', 'success');
+                } else {
+                    const errorMessage = data.message || 'Failed to refresh plugins';
+                    showNotification(errorMessage, 'error');
+                    installedPluginsData = [];
+                    renderInstalledPlugins([]); // Show empty state
+                    generatePluginTabs([]);
+                }
+            } catch (error) {
+                showNotification('Error refreshing plugins: ' + error.message, 'error');
+                installedPluginsData = [];
+                renderInstalledPlugins([]); // Show empty state on error
+                generatePluginTabs([]);
+            }
+        }
+
+        function generatePluginTabs(plugins) {
+            // Remove existing plugin tabs and content
+            document.querySelectorAll('.plugin-tab-btn').forEach(el => el.remove());
+            document.querySelectorAll('.plugin-tab-content').forEach(el => el.remove());
+
+            if (!plugins || plugins.length === 0) {
+                return;
+            }
+
+            const tabsContainer = document.querySelector('.tabs');
+            const controlPanel = document.querySelector('.control-panel');
+
+            // Add tab buttons and content for each plugin
+            plugins.forEach(plugin => {
+                // Create tab button
+                const tabBtn = document.createElement('button');
+                tabBtn.className = 'tab-btn plugin-tab-btn';
+                tabBtn.setAttribute('onclick', `showTab('plugin-${plugin.id}')`);
+                
+                // Get icon from plugin manifest or use default
+                const iconHTML = getPluginIcon(plugin);
+                tabBtn.innerHTML = `${iconHTML} ${plugin.name}`;
+                
+                // Insert before the last tab (or at the end)
+                tabsContainer.appendChild(tabBtn);
+
+                // Create tab content
+                const tabContent = document.createElement('div');
+                tabContent.id = `plugin-${plugin.id}`;
+                tabContent.className = 'tab-content plugin-tab-content';
+                
+                // Generate form based on config schema
+                const formHTML = generatePluginConfigForm(plugin);
+                tabContent.innerHTML = formHTML;
+                
+                // Append to control panel
+                controlPanel.appendChild(tabContent);
+            });
+        }
+
+        function getPluginIcon(plugin) {
+            // Check if plugin has a custom icon specified
+            if (plugin.icon) {
+                const icon = plugin.icon;
+                
+                // Support for Font Awesome icons (e.g., "fas fa-clock")
+                if (icon.includes('fa-')) {
+                    return `<i class="${icon}"></i>`;
+                }
+                
+                // Support for emoji (single character)
+                if (icon.length <= 4) {  // Emojis can be 1-4 bytes in UTF-8
+                    return `<span style="font-size: 1.1em;">${icon}</span>`;
+                }
+                
+                // Support for custom image URL
+                if (icon.startsWith('http://') || icon.startsWith('https://') || icon.startsWith('/')) {
+                    return `<img src="${icon}" alt="" style="width: 16px; height: 16px; vertical-align: middle;">`;
+                }
+            }
+            
+            // Default fallback icon
+            return '<i class="fas fa-puzzle-piece"></i>';
+        }
+
+        function generatePluginConfigForm(plugin) {
+            const iconHTML = getPluginIcon(plugin);
+            
+            if (!plugin.config_schema_data) {
+                return `
+                    <h3>${iconHTML} ${plugin.name} Configuration</h3>
+                    <p style="color: #666;">No configuration schema available for this plugin.</p>
+                    <div style="margin-top: 20px;">
+                        <button class="btn btn-secondary" onclick="showTab('plugins')">
+                            <i class="fas fa-arrow-left"></i> Back to Plugin Management
+                        </button>
+                    </div>
+                `;
+            }
+
+            const schema = plugin.config_schema_data;
+            const config = plugin.config || {};
+            const properties = schema.properties || {};
+            
+            let formHTML = `
+                <h3>${iconHTML} ${plugin.name} Configuration</h3>
+                <p style="color: #666; margin-bottom: 20px;">${schema.description || plugin.description || ''}</p>
+                
+                <form id="plugin-config-form-${plugin.id}" class="config-form" onsubmit="event.preventDefault(); savePluginConfiguration('${plugin.id}');">
+            `;
+
+            // Generate form fields from JSON schema
+            for (const [key, propSchema] of Object.entries(properties)) {
+                const value = config[key] !== undefined ? config[key] : propSchema.default;
+                const label = propSchema.title || key;
+                const description = propSchema.description || '';
+                const type = propSchema.type;
+
+                formHTML += `<div class="form-group" style="margin-bottom: 20px;">`;
+                formHTML += `<label style="font-weight: 600; display: block; margin-bottom: 5px;">${label}</label>`;
+                
+                if (description) {
+                    formHTML += `<p style="font-size: 0.85rem; color: #666; margin-bottom: 8px;">${description}</p>`;
+                }
+
+                // Generate appropriate input based on type
+                if (type === 'boolean') {
+                    formHTML += `
+                        <label class="toggle-switch">
+                            <input type="checkbox" 
+                                   name="${key}" 
+                                   ${value ? 'checked' : ''}>
+                            <span class="slider"></span>
+                        </label>
+                    `;
+                } else if (type === 'number' || type === 'integer') {
+                    const min = propSchema.minimum !== undefined ? propSchema.minimum : '';
+                    const max = propSchema.maximum !== undefined ? propSchema.maximum : '';
+                    const step = type === 'integer' ? '1' : 'any';
+                    formHTML += `
+                        <input type="number" 
+                               class="form-control" 
+                               name="${key}" 
+                               value="${value || ''}" 
+                               min="${min}" 
+                               max="${max}" 
+                               step="${step}"
+                               style="width: 100%; padding: 8px; border: 1px solid var(--border-color); border-radius: 4px;">
+                    `;
+                } else if (type === 'array') {
+                    // Handle arrays (e.g., RGB colors)
+                    const arrayValue = Array.isArray(value) ? value.join(', ') : '';
+                    formHTML += `
+                        <input type="text" 
+                               class="form-control" 
+                               name="${key}" 
+                               value="${arrayValue}" 
+                               placeholder="Enter values separated by commas"
+                               style="width: 100%; padding: 8px; border: 1px solid var(--border-color); border-radius: 4px;">
+                        <small style="color: #888; font-size: 0.8rem;">Enter values separated by commas</small>
+                    `;
+                } else if (propSchema.enum) {
+                    // Handle enums as select dropdowns
+                    formHTML += `<select class="form-control" name="${key}" style="width: 100%; padding: 8px; border: 1px solid var(--border-color); border-radius: 4px;">`;
+                    propSchema.enum.forEach(option => {
+                        const selected = value === option ? 'selected' : '';
+                        formHTML += `<option value="${option}" ${selected}>${option}</option>`;
+                    });
+                    formHTML += `</select>`;
+                } else {
+                    // Default to text input
+                    const maxLength = propSchema.maxLength || '';
+                    formHTML += `
+                        <input type="text" 
+                               class="form-control" 
+                               name="${key}" 
+                               value="${value || ''}" 
+                               maxlength="${maxLength}"
+                               style="width: 100%; padding: 8px; border: 1px solid var(--border-color); border-radius: 4px;">
+                    `;
+                }
+
+                formHTML += `</div>`;
+            }
+
+            formHTML += `
+                    <div class="form-group" style="margin-top: 30px; padding-top: 20px; border-top: 1px solid var(--border-color); display: flex; gap: 10px;">
+                        <button type="submit" class="btn btn-success">
+                            <i class="fas fa-save"></i> Save Configuration
+                        </button>
+                        <button type="button" class="btn btn-secondary" onclick="showTab('plugins')">
+                            <i class="fas fa-arrow-left"></i> Back to Plugin Management
+                        </button>
+                        <button type="button" class="btn btn-warning" onclick="resetPluginConfig('${plugin.id}')">
+                            <i class="fas fa-undo"></i> Reset to Defaults
+                        </button>
+                    </div>
+                </form>
+            `;
+
+            return formHTML;
+        }
+
+        async function savePluginConfiguration(pluginId) {
+            try {
+                const form = document.getElementById(`plugin-config-form-${pluginId}`);
+                const formData = new FormData(form);
+                const plugin = installedPluginsData.find(p => p.id === pluginId);
+                
+                if (!plugin || !plugin.config_schema_data) {
+                    showNotification('Plugin schema not found', 'error');
+                    return;
+                }
+
+                const schema = plugin.config_schema_data.properties || {};
+                
+                // Process form data according to schema
+                for (const [key, propSchema] of Object.entries(schema)) {
+                    let value;
+                    
+                    if (propSchema.type === 'boolean') {
+                        const checkbox = form.querySelector(`[name="${key}"]`);
+                        value = checkbox ? checkbox.checked : false;
+                    } else if (propSchema.type === 'number' || propSchema.type === 'integer') {
+                        const inputValue = formData.get(key);
+                        value = propSchema.type === 'integer' ? parseInt(inputValue) : parseFloat(inputValue);
+                    } else if (propSchema.type === 'array') {
+                        const inputValue = formData.get(key);
+                        if (inputValue && inputValue.trim()) {
+                            value = inputValue.split(',').map(v => {
+                                const trimmed = v.trim();
+                                // If items schema specifies integer, parse as int
+                                if (propSchema.items && propSchema.items.type === 'integer') {
+                                    return parseInt(trimmed);
+                                }
+                                return trimmed;
+                            });
+                        } else {
+                            value = [];
+                        }
+                    } else {
+                        value = formData.get(key);
+                    }
+
+                    // Save each config value
+                    const response = await fetch('/api/plugins/config', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            plugin_id: pluginId,
+                            key: key,
+                            value: value
+                        })
+                    });
+
+                    if (!response.ok) {
+                        const data = await response.json();
+                        throw new Error(data.message || 'Failed to save configuration');
+                    }
+                }
+
+                showNotification(`Configuration saved for ${pluginId}. Restart display to apply changes.`, 'success');
+                // Refresh plugins to update display
+                refreshPlugins();
+                
+            } catch (error) {
+                showNotification('Error saving plugin configuration: ' + error.message, 'error');
+            }
+        }
+
+        async function resetPluginConfig(pluginId) {
+            if (!confirm('Reset all settings to default values?')) {
+                return;
+            }
+
+            try {
+                const plugin = installedPluginsData.find(p => p.id === pluginId);
+                if (!plugin || !plugin.config_schema_data) {
+                    showNotification('Plugin schema not found', 'error');
+                    return;
+                }
+
+                const schema = plugin.config_schema_data.properties || {};
+                
+                // Reset each config value to default
+                for (const [key, propSchema] of Object.entries(schema)) {
+                    const defaultValue = propSchema.default;
+                    
+                    if (defaultValue !== undefined) {
+                        const response = await fetch('/api/plugins/config', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                plugin_id: pluginId,
+                                key: key,
+                                value: defaultValue
+                            })
+                        });
+
+                        if (!response.ok) {
+                            const data = await response.json();
+                            throw new Error(data.message || 'Failed to reset configuration');
+                        }
+                    }
+                }
+
+                showNotification(`Configuration reset to defaults for ${pluginId}`, 'success');
+                // Refresh plugins and re-render form
+                refreshPlugins();
+                setTimeout(() => showTab(`plugin-${pluginId}`), 500);
+                
+            } catch (error) {
+                showNotification('Error resetting plugin configuration: ' + error.message, 'error');
+            }
+        }
+
+        function renderInstalledPlugins(plugins) {
+            const container = document.getElementById('installed-plugins');
+            if (!plugins || plugins.length === 0) {
+                container.innerHTML = '<div class="no-plugins">No plugins installed</div>';
+                return;
+            }
+
+            container.innerHTML = plugins.map(plugin => `
+                <div class="plugin-card">
+                    <div class="plugin-header">
+                        <h4>${plugin.name}</h4>
+                        <div style="display: flex; align-items: center; gap: 10px;">
+                            <label class="toggle-switch">
+                                <input type="checkbox" ${plugin.enabled ? 'checked' : ''} onchange="togglePlugin('${plugin.id}', this.checked)">
+                                <span class="slider"></span>
+                            </label>
+                            <span style="font-size: 0.8rem; color: ${plugin.enabled ? 'var(--success-color)' : 'var(--accent-color)'}">
+                                ${plugin.enabled ? 'Enabled' : 'Disabled'}
+                            </span>
+                        </div>
+                    </div>
+                    <div class="plugin-meta">
+                        <span><i class="fas fa-user"></i> ${plugin.author}</span>
+                        <span><i class="fas fa-tag"></i> v${plugin.version}</span>
+                        <span><i class="fas fa-folder"></i> ${plugin.category}</span>
+                    </div>
+                    <div class="plugin-description">${plugin.description}</div>
+                    <div class="plugin-tags">
+                        ${plugin.tags ? plugin.tags.map(tag => `<span class="tag">${tag}</span>`).join('') : ''}
+                    </div>
+                    <div class="plugin-controls">
+                        <button class="btn btn-primary" onclick="configurePlugin('${plugin.id}')">
+                            <i class="fas fa-cog"></i> Configure
+                        </button>
+                        <button class="btn btn-warning" onclick="updatePlugin('${plugin.id}')">
+                            <i class="fas fa-sync"></i> Update
+                        </button>
+                        <button class="btn btn-danger" onclick="uninstallPlugin('${plugin.id}')">
+                            <i class="fas fa-trash"></i> Uninstall
+                        </button>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        async function togglePlugin(pluginId, enabled) {
+            try {
+                const response = await fetch('/api/plugins/toggle', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ plugin_id: pluginId, enabled })
+                });
+
+                if (response.ok) {
+                    showNotification(`Plugin ${pluginId} ${enabled ? 'enabled' : 'disabled'}`, 'success');
+                    refreshPlugins();
+                } else {
+                    showNotification(`Failed to ${enabled ? 'enable' : 'disable'} plugin`, 'error');
+                }
+            } catch (error) {
+                showNotification('Error toggling plugin: ' + error.message, 'error');
+            }
+        }
+
+        async function configurePlugin(pluginId) {
+            // Navigate to the plugin's configuration tab
+            showTab(`plugin-${pluginId}`);
+        }
+
+        async function updatePlugin(pluginId) {
+            try {
+                showNotification(`Updating ${pluginId}...`, 'info');
+                const response = await fetch('/api/plugins/update', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ plugin_id: pluginId })
+                });
+
+                if (response.ok) {
+                    showNotification(`Plugin ${pluginId} updated successfully`, 'success');
+                    refreshPlugins();
+                } else {
+                    showNotification(`Failed to update plugin ${pluginId}`, 'error');
+                }
+            } catch (error) {
+                showNotification('Error updating plugin: ' + error.message, 'error');
+            }
+        }
+
+        async function uninstallPlugin(pluginId) {
+            if (!confirm(`Are you sure you want to uninstall ${pluginId}?`)) {
+                return;
+            }
+
+            try {
+                showNotification(`Uninstalling ${pluginId}...`, 'info');
+                const response = await fetch('/api/plugins/uninstall', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ plugin_id: pluginId })
+                });
+
+                if (response.ok) {
+                    showNotification(`Plugin ${pluginId} uninstalled successfully`, 'success');
+                    refreshPlugins();
+                } else {
+                    showNotification(`Failed to uninstall plugin ${pluginId}`, 'error');
+                }
+            } catch (error) {
+                showNotification('Error uninstalling plugin: ' + error.message, 'error');
+            }
+        }
+
+        async function updatePluginConfig(pluginId, key, value) {
+            try {
+                const response = await fetch('/api/plugins/config', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        plugin_id: pluginId,
+                        key: key,
+                        value: value
+                    })
+                });
+
+                const data = await response.json();
+
+                if (response.ok && data.status === 'success') {
+                    showNotification(`Configuration updated for ${pluginId}.${key}`, 'success');
+                } else {
+                    showNotification(`Failed to update configuration: ${data.message}`, 'error');
+                }
+            } catch (error) {
+                showNotification('Error updating plugin config: ' + error.message, 'error');
+            }
+        }
+
+        async function searchPlugins() {
+            try {
+                const query = document.getElementById('plugin-search').value;
+                const category = document.getElementById('plugin-category').value;
+
+                showNotification('Searching plugin store...', 'info');
+
+                let url = '/api/plugins/store/list';
+                const params = new URLSearchParams();
+                if (query) params.append('query', query);
+                if (category) params.append('category', category);
+
+                if (params.toString()) {
+                    url += '?' + params.toString();
+                }
+
+                const response = await fetch(url);
+                const data = await response.json();
+
+                if (response.ok && data.status === 'success') {
+                    renderPluginStore(data.plugins);
+                    showNotification(`Found ${data.plugins.length} plugins`, 'success');
+                } else {
+                    const errorMessage = data.message || 'Failed to search plugin store';
+                    showNotification(errorMessage, 'error');
+                    renderPluginStore([]); // Show empty state
+                }
+            } catch (error) {
+                showNotification('Error searching plugins: ' + error.message, 'error');
+                renderPluginStore([]); // Show empty state on error
+            }
+        }
+
+        function renderPluginStore(plugins) {
+            const container = document.getElementById('plugin-store-content');
+            if (!plugins || plugins.length === 0) {
+                container.innerHTML = '<div class="no-plugins">No plugins found</div>';
+                return;
+            }
+
+            container.innerHTML = plugins.map(plugin => `
+                <div class="plugin-card">
+                    <div class="plugin-header">
+                        <h4>${plugin.name}</h4>
+                        ${plugin.verified ? '<span class="tag" style="background: rgba(39, 174, 96, 0.1); color: var(--success-color);">✓ Verified</span>' : ''}
+                    </div>
+                    <div class="plugin-meta">
+                        <span><i class="fas fa-user"></i> ${plugin.author}</span>
+                        <span><i class="fas fa-tag"></i> ${plugin.category}</span>
+                        <span><i class="fas fa-star"></i> ${plugin.stars || 0}</span>
+                        <span><i class="fas fa-download"></i> ${plugin.downloads || 0}</span>
+                    </div>
+                    <div class="plugin-description">${plugin.description}</div>
+                    <div class="plugin-tags">
+                        ${plugin.tags ? plugin.tags.map(tag => `<span class="tag">${tag}</span>`).join('') : ''}
+                    </div>
+                    <div class="plugin-controls">
+                        <button class="btn btn-success" onclick="installPlugin('${plugin.id}')">
+                            <i class="fas fa-download"></i> Install
+                        </button>
+                        <button class="btn btn-primary" onclick="window.open('${plugin.repo}', '_blank')">
+                            <i class="fas fa-external-link-alt"></i> View on GitHub
+                        </button>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        async function installPlugin(pluginId) {
+            try {
+                showNotification(`Installing ${pluginId}...`, 'info');
+                const response = await fetch('/api/plugins/install', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ plugin_id: pluginId })
+                });
+
+                if (response.ok) {
+                    showNotification(`Plugin ${pluginId} installed successfully!`, 'success');
+                    searchPlugins(); // Refresh the store
+                    // Also refresh installed plugins to show the new plugin
+                    setTimeout(refreshPlugins, 1000);
+                } else {
+                    const error = await response.json();
+                    showNotification(`Failed to install plugin: ${error.message}`, 'error');
+                }
+            } catch (error) {
+                showNotification('Error installing plugin: ' + error.message, 'error');
+            }
+        }
+
+        async function restartDisplay() {
+            try {
+                showNotification('Restarting display service...', 'info');
+                const response = await fetch('/run_action', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ action: 'start_display' })
+                });
+
+                if (response.ok) {
+                    showNotification('Display service restarted successfully', 'success');
+                } else {
+                    showNotification('Failed to restart display service', 'error');
+                }
+            } catch (error) {
+                showNotification('Error restarting display: ' + error.message, 'error');
+            }
+        }
+
+        // Initialize plugin management on page load
+        document.addEventListener('DOMContentLoaded', function() {
+            // Load plugins on page load to generate dynamic tabs
+            refreshPlugins();
+
+            // Load plugin store when the store tab is first shown
+            const storeObserver = new MutationObserver(function(mutations) {
+                mutations.forEach(function(mutation) {
+                    if (mutation.type === 'attributes' && mutation.attributeName === 'class') {
+                        const target = mutation.target;
+                        if (target.id === 'plugin-store' && target.classList.contains('active')) {
+                            searchPlugins();
+                            storeObserver.disconnect();
+                        }
+                    }
+                });
+            });
+
+            const storeTab = document.getElementById('plugin-store');
+            if (storeTab) {
+                storeObserver.observe(storeTab, { attributes: true });
+            }
+        });
     </script>
 </body>
 </html>

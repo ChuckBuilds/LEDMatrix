@@ -205,9 +205,9 @@ echo "Step 2: Fixing cache permissions..."
 echo "----------------------------------"
 
 # Run the cache permissions fix
-if [ -f "$PROJECT_ROOT_DIR/fix_cache_permissions.sh" ]; then
+if [ -f "$PROJECT_ROOT_DIR/scripts/fix_perms/fix_cache_permissions.sh" ]; then
     echo "Running cache permissions fix..."
-    bash "$PROJECT_ROOT_DIR/fix_cache_permissions.sh"
+    bash "$PROJECT_ROOT_DIR/scripts/fix_perms/fix_cache_permissions.sh"
     echo "✓ Cache permissions fixed"
 else
     echo "⚠ Cache permissions script not found, creating cache directories manually..."
@@ -223,9 +223,9 @@ echo "Step 3: Fixing assets directory permissions..."
 echo "--------------------------------------------"
 
 # Run the assets permissions fix
-if [ -f "$PROJECT_ROOT_DIR/fix_assets_permissions.sh" ]; then
+if [ -f "$PROJECT_ROOT_DIR/scripts/fix_perms/fix_assets_permissions.sh" ]; then
     echo "Running assets permissions fix..."
-    bash "$PROJECT_ROOT_DIR/fix_assets_permissions.sh"
+    bash "$PROJECT_ROOT_DIR/scripts/fix_perms/fix_assets_permissions.sh"
     echo "✓ Assets permissions fixed"
 else
     echo "⚠ Assets permissions script not found, fixing permissions manually..."
@@ -584,7 +584,7 @@ find "$PROJECT_ROOT_DIR" -path "*/.git*" -prune -o -type f -name "*.sh" -exec ch
 
 # Explicitly ensure common helper scripts are executable (in case paths change)
 chmod 755 "$PROJECT_ROOT_DIR/start_display.sh" "$PROJECT_ROOT_DIR/stop_display.sh" 2>/dev/null || true
-chmod 755 "$PROJECT_ROOT_DIR/fix_cache_permissions.sh" "$PROJECT_ROOT_DIR/fix_web_permissions.sh" "$PROJECT_ROOT_DIR/fix_assets_permissions.sh" 2>/dev/null || true
+chmod 755 "$PROJECT_ROOT_DIR/scripts/fix_perms/fix_cache_permissions.sh" "$PROJECT_ROOT_DIR/scripts/fix_perms/fix_web_permissions.sh" "$PROJECT_ROOT_DIR/scripts/fix_perms/fix_assets_permissions.sh" 2>/dev/null || true
 chmod 755 "$PROJECT_ROOT_DIR/install_service.sh" "$PROJECT_ROOT_DIR/install_web_service.sh" 2>/dev/null || true
 
 echo "✓ Project file permissions normalized"

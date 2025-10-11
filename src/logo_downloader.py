@@ -153,7 +153,7 @@ class LogoDownloader:
                 return True
             except PermissionError:
                 logger.error(f"Permission denied: Cannot write to directory {logo_dir}")
-                logger.error(f"Please run: sudo ./fix_assets_permissions.sh")
+                logger.error(f"Please run: sudo ./scripts/fix_perms/fix_assets_permissions.sh")
                 return False
             except Exception as e:
                 logger.error(f"Failed to test write access to directory {logo_dir}: {e}")
@@ -207,7 +207,7 @@ class LogoDownloader:
             
         except PermissionError as e:
             logger.error(f"Permission denied downloading logo for {team_abbreviation}: {e}")
-            logger.error(f"Please run: sudo ./fix_assets_permissions.sh")
+            logger.error(f"Please run: sudo ./scripts/fix_perms/fix_assets_permissions.sh")
             return False
         except requests.exceptions.RequestException as e:
             logger.error(f"Failed to download logo for {team_abbreviation}: {e}")
