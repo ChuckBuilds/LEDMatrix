@@ -239,15 +239,15 @@ class OddsTickerManager:
         logger.info(f"Show favorite teams only: {self.show_favorite_teams_only}")
 
     def _load_fonts(self) -> Dict[str, ImageFont.FreeTypeFont]:
-        """Load fonts for the ticker display."""
+        """Load fonts for the ticker display using unified font system."""
         try:
             return {
-                'small': ImageFont.truetype("assets/fonts/PressStart2P-Regular.ttf", 6),
-                'medium': ImageFont.truetype("assets/fonts/PressStart2P-Regular.ttf", 8),
-                'large': ImageFont.truetype("assets/fonts/PressStart2P-Regular.ttf", 10)
+                'small': self.display_manager.font_manager.resolve(element_key="odds_ticker.small"),
+                'medium': self.display_manager.font_manager.resolve(element_key="odds_ticker.medium"),
+                'large': self.display_manager.font_manager.resolve(element_key="odds_ticker.large")
             }
         except Exception as e:
-            logger.error(f"Error loading fonts: {e}")
+            logger.error(f"Error loading fonts using unified system: {e}")
             return {
                 'small': ImageFont.load_default(),
                 'medium': ImageFont.load_default(),
