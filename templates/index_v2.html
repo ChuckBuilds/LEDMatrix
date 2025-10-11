@@ -1790,6 +1790,37 @@
                                 <input type="number" class="form-control" id="music_polling_interval" name="music_polling_interval" value="{{ safe_config_get(main_config, 'music', 'POLLING_INTERVAL_SECONDS', default=1) }}" min="1" max="60">
                                 <div class="description">How often to check for music updates</div>
                             </div>
+
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label>
+                                        <input type="checkbox" id="music_skip_when_nothing_playing" name="music_skip_when_nothing_playing" {% if safe_config_get(main_config, 'music', 'skip_when_nothing_playing', default=True) %}checked{% endif %}>
+                                        Skip When Nothing Playing
+                                    </label>
+                                    <div class="description">Skip to next module when no music is playing</div>
+                                </div>
+                                <div class="form-group">
+                                    <label for="music_skip_delay_seconds">Skip Delay (seconds):</label>
+                                    <input type="number" class="form-control" id="music_skip_delay_seconds" name="music_skip_delay_seconds" value="{{ safe_config_get(main_config, 'music', 'skip_delay_seconds', default=2) }}" min="0" max="60">
+                                    <div class="description">Wait time before skipping when nothing playing</div>
+                                </div>
+                            </div>
+
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label>
+                                        <input type="checkbox" id="music_live_priority" name="music_live_priority" {% if safe_config_get(main_config, 'music', 'live_priority', default=True) %}checked{% endif %}>
+                                        Enable Live Priority
+                                    </label>
+                                    <div class="description">Include music in live priority rotation when playing</div>
+                                </div>
+                                <div class="form-group">
+                                    <label for="music_live_game_duration">Live Duration (seconds):</label>
+                                    <input type="number" class="form-control" id="music_live_game_duration" name="music_live_game_duration" value="{{ safe_config_get(main_config, 'music', 'live_game_duration', default=30) }}" min="10" max="300">
+                                    <div class="description">How long music stays in live priority rotation</div>
+                                </div>
+                            </div>
+
                             <button type="submit" class="btn btn-success">Save Music Settings</button>
                         </form>
                     </div>
@@ -3222,7 +3253,11 @@
                         enabled: document.getElementById('music_enabled').checked,
                         preferred_source: document.getElementById('music_preferred_source').value,
                         YTM_COMPANION_URL: document.getElementById('ytm_companion_url').value,
-                        POLLING_INTERVAL_SECONDS: parseInt(document.getElementById('music_polling_interval').value)
+                        POLLING_INTERVAL_SECONDS: parseInt(document.getElementById('music_polling_interval').value),
+                        skip_when_nothing_playing: document.getElementById('music_skip_when_nothing_playing').checked,
+                        skip_delay_seconds: parseInt(document.getElementById('music_skip_delay_seconds').value),
+                        live_priority: document.getElementById('music_live_priority').checked,
+                        live_game_duration: parseInt(document.getElementById('music_live_game_duration').value)
                     }
                 };
                 await saveConfigJson(payload);

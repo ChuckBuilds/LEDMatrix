@@ -34,6 +34,10 @@ class MusicSource(Enum):
     SPOTIFY = auto()
     YTM = auto()
 
+class SkipModuleException(StopIteration):
+    """Exception raised when a module should be skipped to the next one."""
+    pass
+
 class MusicManager:
     def __init__(self, display_manager, config, update_callback=None):
         self.display_manager = display_manager
@@ -65,6 +69,7 @@ class MusicManager:
         self.album_scroll_tick = 0
         self.is_music_display_active = False # New state variable
         self.is_currently_showing_nothing_playing = False # To prevent flashing
+        self.nothing_playing_start_time = None # Timestamp when "Nothing Playing" started being displayed
         self._needs_immediate_full_refresh = False # Flag for forcing refresh from YTM updates
         self.ytm_event_data_queue = queue.Queue(maxsize=1) # Queue for event data
         
@@ -306,6 +311,10 @@ class MusicManager:
     def deactivate_music_display(self):
         logger.info("Music display deactivated.")
         self.is_music_display_active = False
+        # Reset the nothing playing timer when display is deactivated
+        if self.nothing_playing_start_time is not None:
+            logger.debug("MusicManager: Display deactivated, resetting nothing playing timer")
+            self.nothing_playing_start_time = None
         if self.ytm and self.ytm.is_connected:
             logger.info("Disconnecting YTM client due to music display deactivation.")
             self.ytm.disconnect_client()
@@ -692,6 +701,23 @@ class MusicManager:
         if perform_full_refresh_this_cycle: 
              logger.debug(f"MusicManager.display (Full Refresh Render): Using snapshot - Title: '{snapshot_title_for_log}'")
         
+        # --- Check if we should skip when nothing is playing ---
+        music_config = self.config.get('music', {})
+        skip_when_nothing_playing = music_config.get('skip_when_nothing_playing', True)
+        skip_delay_seconds = music_config.get('skip_delay_seconds', 2)
+
+        if (not current_track_info_snapshot or current_track_info_snapshot.get('title') == 'Nothing Playing') and skip_when_nothing_playing:
+            # Check if we've been showing "Nothing Playing" for the configured delay
+            current_time = time.time()
+            if self.nothing_playing_start_time is None:
+                # We just started showing "Nothing Playing", set the start time
+                self.nothing_playing_start_time = current_time
+                logger.debug(f"MusicManager: Started showing 'Nothing Playing', timer set (will skip after {skip_delay_seconds}s)")
+
+            elif current_time - self.nothing_playing_start_time >= skip_delay_seconds:
+                logger.info(f"MusicManager: Nothing playing for {skip_delay_seconds}+ seconds, raising SkipModuleException to advance to next module.")
+                raise SkipModuleException(f"Music module: Nothing playing for {skip_delay_seconds}+ seconds and skip_when_nothing_playing is enabled")
+
         # --- Original Nothing Playing Logic ---
         if not current_track_info_snapshot or current_track_info_snapshot.get('title') == 'Nothing Playing':
             if not hasattr(self, '_last_nothing_playing_log_time') or time.time() - getattr(self, '_last_nothing_playing_log_time', 0) > 30:
@@ -701,7 +727,7 @@ class MusicManager:
             if not self.is_currently_showing_nothing_playing or perform_full_refresh_this_cycle:
                 if perform_full_refresh_this_cycle or not self.is_currently_showing_nothing_playing:
                     self.display_manager.clear()
-                
+
                 text_width = self.display_manager.get_text_width("Nothing Playing", self.display_manager.regular_font)
                 x_pos = (self.display_manager.matrix.width - text_width) // 2
                 y_pos = (self.display_manager.matrix.height // 2) - 4
@@ -709,7 +735,7 @@ class MusicManager:
                 self.display_manager.update_display()
                 self.is_currently_showing_nothing_playing = True
 
-            with self.track_info_lock: 
+            with self.track_info_lock:
                 self.scroll_position_title = 0
                 self.scroll_position_artist = 0
                 self.scroll_position_album = 0
@@ -722,7 +748,12 @@ class MusicManager:
                     self.last_album_art_url = None
             return
 
-        self.is_currently_showing_nothing_playing = False 
+        # Reset the nothing playing timer when music starts playing
+        if self.nothing_playing_start_time is not None:
+            logger.debug("MusicManager: Music started playing, resetting nothing playing timer")
+            self.nothing_playing_start_time = None
+
+        self.is_currently_showing_nothing_playing = False
 
         if perform_full_refresh_this_cycle: 
             title_being_displayed = current_track_info_snapshot.get('title','N/A') if current_track_info_snapshot else "N/A"
