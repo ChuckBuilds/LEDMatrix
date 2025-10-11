@@ -1236,7 +1236,8 @@ class DisplayController:
                 # Determine if we have any live priority sports
                 live_priority_takeover = len(live_priority_sports) > 0
                 # Throttle debug logging - only log every 30 seconds
-                if current_time - self._last_music_rotation_log >= self._music_live_priority_log_interval:
+                current_time_for_debug = time.time()
+                if current_time_for_debug - self._last_music_rotation_log >= self._music_live_priority_log_interval:
                     logger.debug(f"Live priority sports: {live_priority_sports}, takeover: {live_priority_takeover}")
                 
                 manager_to_display = None
