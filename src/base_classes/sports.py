@@ -15,7 +15,6 @@ from urllib3.util.retry import Retry
 from src.background_data_service import get_background_service
 
 # Import new architecture components (individual classes will import what they need)
-from src.base_classes.api_extractors import APIDataExtractor
 from src.base_classes.data_sources import DataSource
 from src.cache_manager import CacheManager
 from src.display_manager import DisplayManager
@@ -42,7 +41,6 @@ class SportsCore(ABC):
         
         # Initialize new architecture components (will be overridden by sport-specific classes)
         self.sport_config = None
-        self.api_extractor: APIDataExtractor
         self.data_source: DataSource
         self.mode_config = config.get(f"{sport_key}_scoreboard", {})  # Changed config key
         self.is_enabled: bool = self.mode_config.get("enabled", False)
