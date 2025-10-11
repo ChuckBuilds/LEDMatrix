@@ -51,30 +51,11 @@ def test_sport_configurations():
 def test_api_extractors():
     """Test API extractors for different sports."""
     print("\n🧪 Testing API Extractors...")
-    
-    try:
-        from src.base_classes.api_extractors import get_extractor_for_sport
-        logger = logging.getLogger('test')
-        
-        # Test each sport extractor
-        sports_to_test = ['nfl', 'mlb', 'nhl', 'soccer']
-        
-        for sport_key in sports_to_test:
-            extractor = get_extractor_for_sport(sport_key, logger)
-            print(f"✅ {sport_key} extractor: {type(extractor).__name__}")
-            
-            # Test that extractor has required methods
-            assert hasattr(extractor, 'extract_game_details')
-            assert hasattr(extractor, 'get_sport_specific_fields')
-            assert callable(extractor.extract_game_details)
-            assert callable(extractor.get_sport_specific_fields)
-        
-        print("✅ All API extractors valid")
-        return True
-        
-    except Exception as e:
-        print(f"❌ API extractor test failed: {e}")
-        return False
+
+    # API extractors have been removed as they were unused dead code
+    print("ℹ️ API extractors removed (unused code cleanup)")
+    print("✅ API extractor test skipped")
+    return True
 
 def test_data_sources():
     """Test data sources for different sports."""
