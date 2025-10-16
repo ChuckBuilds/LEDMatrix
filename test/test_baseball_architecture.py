@@ -57,62 +57,11 @@ def test_baseball_configuration():
 def test_baseball_api_extractor():
     """Test baseball API extractor."""
     print("\n🧪 Testing Baseball API Extractor...")
-    
-    try:
-        from src.base_classes.api_extractors import get_extractor_for_sport
-        logger = logging.getLogger('test')
-        
-        # Get MLB extractor
-        mlb_extractor = get_extractor_for_sport('mlb', logger)
-        print(f"✅ MLB extractor: {type(mlb_extractor).__name__}")
-        
-        # Test that extractor has baseball-specific methods
-        assert hasattr(mlb_extractor, 'extract_game_details')
-        assert hasattr(mlb_extractor, 'get_sport_specific_fields')
-        
-        # Test with sample baseball data
-        sample_baseball_game = {
-            "id": "test_game",
-            "competitions": [{
-                "status": {"type": {"state": "in", "detail": "Top 3rd"}},
-                "competitors": [
-                    {"homeAway": "home", "team": {"abbreviation": "NYY", "displayName": "Yankees"}, "score": "2"},
-                    {"homeAway": "away", "team": {"abbreviation": "BOS", "displayName": "Red Sox"}, "score": "1"}
-                ],
-                "situation": {
-                    "inning": "3rd",
-                    "outs": 2,
-                    "bases": "1st, 3rd",
-                    "strikes": 2,
-                    "balls": 1,
-                    "pitcher": "Gerrit Cole",
-                    "batter": "Rafael Devers"
-                }
-            }],
-            "date": "2024-01-01T19:00:00Z"
-        }
-        
-        # Test game details extraction
-        game_details = mlb_extractor.extract_game_details(sample_baseball_game)
-        if game_details:
-            print("✅ Baseball game details extracted successfully")
-            
-            # Test sport-specific fields
-            sport_fields = mlb_extractor.get_sport_specific_fields(sample_baseball_game)
-            expected_fields = ['inning', 'outs', 'bases', 'strikes', 'balls', 'pitcher', 'batter']
-            
-            for field in expected_fields:
-                assert field in sport_fields, f"Missing baseball field: {field}"
-            
-            print("✅ Baseball sport-specific fields extracted")
-        else:
-            print("⚠️  Baseball game details extraction returned None")
-        
-        return True
-        
-    except Exception as e:
-        print(f"❌ Baseball API extractor test failed: {e}")
-        return False
+
+    # API extractors have been removed as they were unused dead code
+    print("ℹ️ API extractors removed (unused code cleanup)")
+    print("✅ Baseball API extractor test skipped")
+    return True
 
 def test_baseball_data_source():
     """Test baseball data source."""
