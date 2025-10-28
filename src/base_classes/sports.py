@@ -497,11 +497,14 @@ class SportsCore(ABC):
     def _fetch_todays_games(self) -> Optional[Dict]:
         """Fetch only today's games for live updates (not entire season)."""
         try:
-            now = datetime.now()
+            tz = pytz.timezone("EST")
+            now = datetime.now(tz)
+            yesterday = now - timedelta(days=1)
             formatted_date = now.strftime("%Y%m%d")
+            formatted_date_yesterday = yesterday.strftime("%Y%m%d")
             # Fetch todays games only
             url = f"https://site.api.espn.com/apis/site/v2/sports/{self.sport}/{self.league}/scoreboard"
-            response = self.session.get(url, params={"dates": formatted_date, "limit": 1000}, headers=self.headers, timeout=10)
+            response = self.session.get(url, params={"dates": f"{formatted_date_yesterday}-{formatted_date}", "limit": 1000}, headers=self.headers, timeout=10)
             response.raise_for_status()
             data = response.json()
             events = data.get('events', [])
