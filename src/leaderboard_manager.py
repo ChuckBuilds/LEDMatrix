@@ -631,7 +631,7 @@ class LeaderboardManager:
             # Build the standings URL with query parameters
             standings_url = league_config['standings_url']
             params = {
-                'season': league_config.get('season', 2025),
+                # 'season': league_config.get('season', 2025),
                 'level': league_config.get('level', 1),
                 'sort': league_config.get('sort', 'winpercent:desc,gamesbehind:asc')
             }
@@ -789,7 +789,7 @@ class LeaderboardManager:
                 'standings': top_teams,
                 'timestamp': time.time(),
                 'league': league_key,
-                'season': params['season'],
+                # 'season': params['season'],
                 'level': params['level']
             }
             self.cache_manager.save_cache(cache_key, cache_data)
