@@ -789,7 +789,7 @@ class LeaderboardManager:
                 'standings': top_teams,
                 'timestamp': time.time(),
                 'league': league_key,
-                'season': params['season'],
+                # 'season': params['season'],
                 'level': params['level']
             }
             self.cache_manager.save_cache(cache_key, cache_data)
