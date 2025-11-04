@@ -659,10 +659,41 @@ def update_plugin():
 
         plugin_id = data['plugin_id']
         
+        # Get current version before update
+        current_version = None
+        plugin_path = Path(api_v3.plugin_store_manager.plugins_dir) / plugin_id / "manifest.json"
+        if plugin_path.exists():
+            try:
+                import json
+                with open(plugin_path, 'r', encoding='utf-8') as f:
+                    manifest = json.load(f)
+                    current_version = manifest.get('version')
+            except Exception:
+                pass
+        
         # Update the plugin
         success = api_v3.plugin_store_manager.update_plugin(plugin_id)
         
         if success:
+            # Get updated version
+            updated_version = None
+            if plugin_path.exists():
+                try:
+                    import json
+                    with open(plugin_path, 'r', encoding='utf-8') as f:
+                        manifest = json.load(f)
+                        updated_version = manifest.get('version')
+                except Exception:
+                    pass
+            
+            # Determine message based on whether version changed
+            if current_version and updated_version and current_version == updated_version:
+                message = f'Plugin {plugin_id} is already at the latest version ({updated_version})'
+            elif updated_version and updated_version != current_version:
+                message = f'Plugin {plugin_id} updated successfully from {current_version or "unknown"} to {updated_version}'
+            else:
+                message = f'Plugin {plugin_id} updated successfully'
+            
             # Rediscover plugins to refresh manifest info (including new version number)
             if api_v3.plugin_manager:
                 api_v3.plugin_manager.discover_plugins()
@@ -671,16 +702,35 @@ def update_plugin():
                 if plugin_id in api_v3.plugin_manager.plugins:
                     api_v3.plugin_manager.reload_plugin(plugin_id)
             
-            return jsonify({'status': 'success', 'message': f'Plugin {plugin_id} updated successfully'})
+            return jsonify({
+                'status': 'success', 
+                'message': message,
+                'current_version': updated_version
+            })
         else:
-            return jsonify({'status': 'error', 'message': f'Failed to update plugin {plugin_id}'}), 500
+            # Provide more detailed error message
+            error_msg = f'Failed to update plugin {plugin_id}'
+            
+            # Check if plugin exists
+            plugin_path_dir = Path(api_v3.plugin_store_manager.plugins_dir) / plugin_id
+            if not plugin_path_dir.exists():
+                error_msg += ': Plugin not found'
+            else:
+                # Check if it's in registry
+                plugin_info = api_v3.plugin_store_manager.get_plugin_info(plugin_id)
+                if not plugin_info:
+                    error_msg += ': Plugin not found in registry and cannot be updated automatically'
+                else:
+                    error_msg += '. Check logs for details'
+            
+            return jsonify({'status': 'error', 'message': error_msg}), 500
             
     except Exception as e:
         import traceback
         error_details = traceback.format_exc()
         print(f"Error in update_plugin: {str(e)}")
         print(error_details)
-        return jsonify({'status': 'error', 'message': str(e)}), 500
+        return jsonify({'status': 'error', 'message': f'Error updating plugin: {str(e)}'}), 500
 
 @api_v3.route('/plugins/uninstall', methods=['POST'])
 def uninstall_plugin():

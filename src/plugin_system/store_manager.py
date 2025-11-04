@@ -862,6 +862,27 @@ class PluginStoreManager:
             self.logger.info(f"Checking for updates to plugin {plugin_id}")
             self.fetch_registry(force_refresh=True)
             
+            # Get current installed version from manifest
+            current_version = None
+            manifest_path = plugin_path / "manifest.json"
+            if manifest_path.exists():
+                try:
+                    with open(manifest_path, 'r', encoding='utf-8') as f:
+                        manifest = json.load(f)
+                        current_version = manifest.get('version')
+                except Exception as e:
+                    self.logger.warning(f"Could not read manifest for {plugin_id}: {e}")
+            
+            # Get latest version from registry
+            plugin_info = self.get_plugin_info(plugin_id, fetch_latest_from_github=True)
+            if plugin_info:
+                latest_version = plugin_info.get('latest_version') or plugin_info.get('version')
+                if current_version and latest_version:
+                    if current_version == latest_version:
+                        self.logger.info(f"Plugin {plugin_id} is already at latest version {latest_version}")
+                        return True
+                    self.logger.info(f"Update available: {plugin_id} {current_version} → {latest_version}")
+            
             # Check if this is a git repository
             git_dir = plugin_path / ".git"
             if git_dir.exists():
@@ -875,25 +896,71 @@ class PluginStoreManager:
                 
                 if result.returncode == 0:
                     # On a branch, try git pull
+                    self.logger.info(f"Updating {plugin_id} via git pull...")
                     pull_result = subprocess.run(
                         ['git', '-C', str(plugin_path), 'pull'],
                         capture_output=True,
                         text=True,
                         timeout=60
                     )
+                    
                     if pull_result.returncode == 0:
-                        self.logger.info(f"Updated plugin {plugin_id} via git pull")
-                        # Reinstall dependencies in case they changed
-                        self._install_dependencies(plugin_path)
-                        return True
+                        pull_output = pull_result.stdout.strip()
+                        if "Already up to date" in pull_output:
+                            # Check if there's actually a newer version we should get
+                            if plugin_info and latest_version and current_version:
+                                if latest_version != current_version:
+                                    # Version mismatch - try fetching and pulling
+                                    self.logger.info(f"Git says up to date but version mismatch detected, fetching latest...")
+                                    fetch_result = subprocess.run(
+                                        ['git', '-C', str(plugin_path), 'fetch', 'origin'],
+                                        capture_output=True,
+                                        text=True,
+                                        timeout=30
+                                    )
+                                    if fetch_result.returncode == 0:
+                                        pull_result = subprocess.run(
+                                            ['git', '-C', str(plugin_path), 'pull', 'origin', 'master'],
+                                            capture_output=True,
+                                            text=True,
+                                            timeout=60
+                                        )
+                                        if pull_result.returncode != 0:
+                                            self.logger.warning(f"Git pull after fetch failed, trying branch 'main'...")
+                                            pull_result = subprocess.run(
+                                                ['git', '-C', str(plugin_path), 'pull', 'origin', 'main'],
+                                                capture_output=True,
+                                                text=True,
+                                                timeout=60
+                                            )
+                        
+                        if pull_result.returncode == 0:
+                            # Check if anything actually changed
+                            if "Already up to date" not in pull_result.stdout:
+                                self.logger.info(f"Updated plugin {plugin_id} via git pull")
+                            else:
+                                self.logger.info(f"Plugin {plugin_id} is already up to date")
+                            
+                            # Reinstall dependencies in case they changed
+                            try:
+                                self._install_dependencies(plugin_path)
+                            except Exception as deps_error:
+                                self.logger.warning(f"Warning: Could not reinstall dependencies: {deps_error}")
+                            
+                            return True
+                        else:
+                            self.logger.warning(f"Git pull failed for {plugin_id}: {pull_result.stderr}")
+                            # Fall through to registry reinstall
+                    else:
+                        self.logger.warning(f"Git pull failed for {plugin_id}: {pull_result.stderr}")
+                        # Fall through to registry reinstall
                 else:
                     # Detached HEAD (installed from tag), need to fetch and checkout latest tag
                     self.logger.info(f"Plugin {plugin_id} is on a tag (detached HEAD), fetching latest version from registry")
                     # For tagged installations, always reinstall from registry to get the latest version
                     return self.install_plugin(plugin_id, version="latest")
             
-            # Not a git repo, check if plugin is in registry before trying to update
-            plugin_info = self.get_plugin_info(plugin_id)
+            # Not a git repo, or git pull failed - try registry reinstall
             if not plugin_info:
                 self.logger.warning(f"Plugin {plugin_id} not found in registry and is not a git repository. Cannot update automatically.")
                 self.logger.warning(f"To update this plugin, manually update it via git or reinstall from registry.")
@@ -904,7 +971,9 @@ class PluginStoreManager:
             return self.install_plugin(plugin_id, version="latest")
             
         except Exception as e:
+            import traceback
             self.logger.error(f"Error updating plugin {plugin_id}: {e}")
+            self.logger.debug(traceback.format_exc())
             return False
     
     def list_installed_plugins(self) -> List[str]:
