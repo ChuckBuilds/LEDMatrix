@@ -230,7 +230,7 @@
     
     // Local variables for this instance
 let installedPlugins = [];
-let currentPluginConfig = null;
+window.currentPluginConfig = null;
     let pluginStoreCache = null; // Cache for plugin store to speed up subsequent loads
     let cacheTimestamp = null;
     const CACHE_DURATION = 5 * 60 * 1000; // 5 minutes in milliseconds
@@ -406,24 +406,28 @@ function updateToggleText(checkbox) {
 }
 
 window.configurePlugin = function(pluginId) {
-    console.log('Switching to plugin tab:', pluginId);
+    console.log('[DEBUG] ===== configurePlugin called =====');
+    console.log('[DEBUG] Plugin ID:', pluginId);
     
-    // Switch to the plugin's dedicated tab using Alpine.js
-    const appElement = document.querySelector('[x-data="app()"]');
-    if (appElement && appElement._x_dataStack && appElement._x_dataStack[0]) {
-        appElement._x_dataStack[0].activeTab = pluginId;
-        console.log('Switched to tab:', pluginId);
+    // First, load the plugin config
+    fetch(`/api/v3/plugins/config?plugin_id=${pluginId}`)
+        .then(response => response.json())
+        .then(data => {
+            console.log('[DEBUG] Config loaded:', data);
+            if (data.status === 'success') {
+                const config = data.data.config || {};
+                console.log('[DEBUG] Calling showPluginConfigModal with config:', config);
+                showPluginConfigModal(pluginId, config);
     } else {
-        // Fallback: try to trigger the tab button click
-        const pluginTab = document.querySelector(`.plugin-tab[onclick*="${pluginId}"]`);
-        if (pluginTab) {
-            pluginTab.click();
-            console.log('Clicked plugin tab button');
-        } else {
-            console.error('Could not find plugin tab for:', pluginId);
-            showNotification('Plugin tab not found. Please refresh the page.', 'error');
-        }
-    }
+                console.error('[DEBUG] Failed to load config:', data.message);
+                showNotification('Failed to load plugin configuration: ' + data.message, 'error');
+            }
+        })
+        .catch(error => {
+            console.error('[DEBUG] Error loading config:', error);
+            // Still show modal with empty config
+            showPluginConfigModal(pluginId, {});
+        });
 }
 
 function showPluginConfigModal(pluginId, config) {
@@ -431,7 +435,9 @@ function showPluginConfigModal(pluginId, config) {
     const title = document.getElementById('plugin-config-title');
     const content = document.getElementById('plugin-config-content');
 
-    console.log('Showing modal for:', pluginId);
+    console.log('[DEBUG] ===== Opening plugin config modal =====');
+    console.log('[DEBUG] Plugin ID:', pluginId);
+    console.log('[DEBUG] Config:', config);
     title.textContent = `Configure ${pluginId}`;
     
     // Show loading state while form is generated
@@ -439,12 +445,12 @@ function showPluginConfigModal(pluginId, config) {
     
     // Show modal immediately
     modal.style.display = 'flex';
-    console.log('Modal display set to flex');
+    console.log('[DEBUG] Modal display set to flex');
     
     // Generate form asynchronously
     generatePluginConfigForm(pluginId, config)
         .then(formHtml => {
-            console.log('Form generated, setting content');
+            console.log('[DEBUG] Form generated, setting content. HTML length:', formHtml.length);
             content.innerHTML = formHtml;
             
             // Attach form submit handler after form is inserted
@@ -460,23 +466,37 @@ function showPluginConfigModal(pluginId, config) {
         });
 }
 
-// Helper function to find property type in nested schema using dot notation
-function getSchemaPropertyType(schema, path) {
+// Helper function to get the full property object from schema
+function getSchemaProperty(schema, path) {
+    if (!schema || !schema.properties) return null;
+    
     const parts = path.split('.');
-    let current = schema;
+    let current = schema.properties;
     
     for (let i = 0; i < parts.length; i++) {
-        if (!current || !current.properties) return null;
-        current = current.properties[parts[i]];
-        if (!current) return null;
-        
-        // If this is an object and not the last part, continue traversing
-        if (i < parts.length - 1 && current.type === 'object') {
-            continue;
+        const part = parts[i];
+        if (current && current[part]) {
+            if (i === parts.length - 1) {
+                // Last part - return the property
+                return current[part];
+            } else if (current[part].properties) {
+                // Navigate into nested object
+                current = current[part].properties;
+            } else {
+                return null;
+            }
+        } else {
+            return null;
         }
     }
     
-    return current;
+    return null;
+}
+
+// Helper function to find property type in nested schema using dot notation
+function getSchemaPropertyType(schema, path) {
+    const prop = getSchemaProperty(schema, path);
+    return prop; // Return the full property object (was returning just type, but callers expect object)
 }
 
 // Helper function to convert dot notation to nested object
@@ -544,10 +564,31 @@ function handlePluginConfigSubmit(e) {
             const propType = propSchema.type;
             
             if (propType === 'array') {
-                // Convert comma-separated string to array
+                // Check if this is a file upload widget (JSON array)
+                if (propSchema['x-widget'] === 'file-upload') {
+                    // Try to parse as JSON first (for file uploads)
+                    try {
+                        const jsonValue = JSON.parse(value);
+                        if (Array.isArray(jsonValue)) {
+                            flatConfig[key] = jsonValue;
+                            console.log(`File upload array field ${key}: parsed JSON array with ${jsonValue.length} items`);
+                        } else {
+                            // Fallback to comma-separated
+                            const arrayValue = value ? value.split(',').map(v => v.trim()).filter(v => v) : [];
+                            flatConfig[key] = arrayValue;
+                        }
+                    } catch (e) {
+                        // Not JSON, use comma-separated
                 const arrayValue = value ? value.split(',').map(v => v.trim()).filter(v => v) : [];
                 flatConfig[key] = arrayValue;
                 console.log(`Array field ${key}: "${value}" -> `, arrayValue);
+                    }
+                } else {
+                    // Regular array: convert comma-separated string to array
+                    const arrayValue = value ? value.split(',').map(v => v.trim()).filter(v => v) : [];
+                    flatConfig[key] = arrayValue;
+                    console.log(`Array field ${key}: "${value}" -> `, arrayValue);
+                }
             } else if (propType === 'integer') {
                 flatConfig[key] = parseInt(value, 10);
             } else if (propType === 'number') {
@@ -609,16 +650,21 @@ function handlePluginConfigSubmit(e) {
 }
 
 function generatePluginConfigForm(pluginId, config) {
+    console.log('[DEBUG] ===== Generating plugin config form =====');
+    console.log('[DEBUG] Plugin ID:', pluginId);
     // Load plugin schema for dynamic form generation
     return fetch(`/api/v3/plugins/schema?plugin_id=${pluginId}`)
         .then(response => response.json())
         .then(schemaData => {
+            console.log('[DEBUG] Schema data received:', schemaData.status);
             if (schemaData.status === 'success' && schemaData.data.schema) {
+                console.log('[DEBUG] Schema has properties:', Object.keys(schemaData.data.schema.properties || {}));
                 // Store plugin ID and schema for form submission
                 currentPluginConfig = {
                     pluginId: pluginId,
                     schema: schemaData.data.schema
                 };
+                console.log('[DEBUG] Calling generateFormFromSchema...');
                 return generateFormFromSchema(schemaData.data.schema, config);
             } else {
                 // Fallback to simple form if no schema
@@ -682,6 +728,12 @@ function generateFieldHtml(key, prop, value, prefix = '') {
         // Recursively generate fields for nested properties
         Object.entries(prop.properties).forEach(([nestedKey, nestedProp]) => {
             const nestedValue = nestedConfig[nestedKey] !== undefined ? nestedConfig[nestedKey] : nestedProp.default;
+            console.log(`[DEBUG] Processing nested field ${fullKey}.${nestedKey}:`, {
+                type: nestedProp.type,
+                hasXWidget: nestedProp.hasOwnProperty('x-widget'),
+                xWidget: nestedProp['x-widget'],
+                allKeys: Object.keys(nestedProp)
+            });
             html += generateFieldHtml(nestedKey, nestedProp, nestedValue, fullKey);
         });
         
@@ -721,11 +773,114 @@ function generateFieldHtml(key, prop, value, prefix = '') {
             <input type="number" id="${fullKey}" name="${fullKey}" value="${value !== undefined ? value : ''}" ${min} ${max} ${step} class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm">
         `;
     } else if (prop.type === 'array') {
+        // Check if this is a file upload widget - try multiple ways to access x-widget
+        const hasXWidget = prop.hasOwnProperty('x-widget');
+        const xWidgetValue = prop['x-widget'];
+        const xWidgetValue2 = prop['x-widget'] || prop['x_widget'] || prop.xWidget;
+        
+        console.log(`[DEBUG] Array field ${fullKey}:`, {
+            type: prop.type,
+            hasXWidget: hasXWidget,
+            'x-widget': xWidgetValue,
+            'x-widget (alt)': xWidgetValue2,
+            'x-upload-config': prop['x-upload-config'],
+            propKeys: Object.keys(prop),
+            propString: JSON.stringify(prop),
+            value: value
+        });
+        
+        // Check for file-upload widget - be more defensive
+        if (xWidgetValue === 'file-upload' || xWidgetValue2 === 'file-upload') {
+            console.log(`[DEBUG] ✅ Detected file-upload widget for ${fullKey} - rendering upload zone`);
+            const uploadConfig = prop['x-upload-config'] || {};
+            const pluginId = uploadConfig.plugin_id || currentPluginConfig?.pluginId || 'static-image';
+            const maxFiles = uploadConfig.max_files || 10;
+            const allowedTypes = uploadConfig.allowed_types || ['image/png', 'image/jpeg', 'image/bmp', 'image/gif'];
+            const maxSizeMB = uploadConfig.max_size_mb || 5;
+            
+            const currentImages = Array.isArray(value) ? value : [];
+            const fieldId = fullKey.replace(/\./g, '_');
+            
+            html += `
+                <div id="${fieldId}_upload_widget" class="mt-1">
+                    <!-- File Upload Drop Zone -->
+                    <div id="${fieldId}_drop_zone" 
+                         class="border-2 border-dashed border-gray-300 rounded-lg p-6 text-center hover:border-blue-400 transition-colors cursor-pointer"
+                         ondrop="handleFileDrop(event, '${fieldId}')" 
+                         ondragover="event.preventDefault()" 
+                         onclick="document.getElementById('${fieldId}_file_input').click()">
+                        <input type="file" 
+                               id="${fieldId}_file_input" 
+                               multiple 
+                               accept="${allowedTypes.join(',')}"
+                               style="display: none;"
+                               onchange="handleFileSelect(event, '${fieldId}')">
+                        <i class="fas fa-cloud-upload-alt text-3xl text-gray-400 mb-2"></i>
+                        <p class="text-sm text-gray-600">Drag and drop images here or click to browse</p>
+                        <p class="text-xs text-gray-500 mt-1">Max ${maxFiles} files, ${maxSizeMB}MB each (PNG, JPG, GIF, BMP)</p>
+                    </div>
+                    
+                    <!-- Uploaded Images List -->
+                    <div id="${fieldId}_image_list" class="mt-4 space-y-2">
+                        ${currentImages.map((img, idx) => {
+                            const imgSchedule = img.schedule || {};
+                            const hasSchedule = imgSchedule.enabled && imgSchedule.mode && imgSchedule.mode !== 'always';
+                            const scheduleSummary = hasSchedule ? getScheduleSummary(imgSchedule) : 'Always shown';
+                            
+                            return `
+                            <div id="img_${img.id || idx}" class="bg-gray-50 p-3 rounded-lg border border-gray-200">
+                                <div class="flex items-center justify-between mb-2">
+                                    <div class="flex items-center space-x-3 flex-1">
+                                        <img src="/${img.path || ''}" 
+                                             alt="${img.filename || ''}" 
+                                             class="w-16 h-16 object-cover rounded"
+                                             onerror="this.style.display='none'; this.nextElementSibling.style.display='block';">
+                                        <div style="display:none;" class="w-16 h-16 bg-gray-200 rounded flex items-center justify-center">
+                                            <i class="fas fa-image text-gray-400"></i>
+                                        </div>
+                                        <div class="flex-1 min-w-0">
+                                            <p class="text-sm font-medium text-gray-900 truncate">${img.original_filename || img.filename || 'Image'}</p>
+                                            <p class="text-xs text-gray-500">${formatFileSize(img.size || 0)} • ${formatDate(img.uploaded_at)}</p>
+                                            <p class="text-xs text-blue-600 mt-1">
+                                                <i class="fas fa-clock mr-1"></i>${scheduleSummary}
+                                            </p>
+                                        </div>
+                                    </div>
+                                    <div class="flex items-center space-x-2 ml-4">
+                                        <button type="button" 
+                                                onclick="openImageSchedule('${fieldId}', '${img.id}', ${idx})"
+                                                class="text-blue-600 hover:text-blue-800 p-2" 
+                                                title="Schedule this image">
+                                            <i class="fas fa-calendar-alt"></i>
+                                        </button>
+                                        <button type="button" 
+                                                onclick="deleteUploadedImage('${fieldId}', '${img.id}', '${pluginId}')"
+                                                class="text-red-600 hover:text-red-800 p-2"
+                                                title="Delete image">
+                                            <i class="fas fa-trash"></i>
+                                        </button>
+                                    </div>
+                                </div>
+                                <!-- Schedule widget will be inserted here when opened -->
+                                <div id="schedule_${img.id || idx}" class="hidden mt-3 pt-3 border-t border-gray-300"></div>
+                            </div>
+                            `;
+                        }).join('')}
+                    </div>
+                    
+                    <!-- Hidden input to store image data -->
+                    <input type="hidden" id="${fieldId}_images_data" name="${fullKey}" value="${JSON.stringify(currentImages).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/'/g, '&#39;')}">
+                </div>
+            `;
+        } else {
+            // Regular array input
+            console.log(`[DEBUG] ❌ NOT a file upload widget for ${fullKey}, using regular array input`);
         const arrayValue = Array.isArray(value) ? value.join(', ') : '';
         html += `
             <input type="text" id="${fullKey}" name="${fullKey}" value="${arrayValue}" placeholder="Enter values separated by commas" class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm">
             <p class="text-sm text-gray-600 mt-1">Enter values separated by commas</p>
         `;
+        }
     } else if (prop.enum) {
         html += `<select id="${fullKey}" name="${fullKey}" class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm">`;
         prop.enum.forEach(option => {
@@ -738,10 +893,12 @@ function generateFieldHtml(key, prop, value, prefix = '') {
         const isSecret = prop['x-secret'] === true;
         const inputType = isSecret ? 'password' : 'text';
         const maxLength = prop.maxLength || '';
+        const maxLengthAttr = maxLength ? `maxlength="${maxLength}"` : '';
+        const secretClass = isSecret ? 'pr-10' : '';
         
         html += `
             <div class="relative">
-                <input type="${inputType}" id="${fullKey}" name="${fullKey}" value="${value !== undefined ? value : ''}" ${maxLength ? `maxlength="${maxLength}"` : ''} class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm ${isSecret ? 'pr-10' : ''}">
+                <input type="${inputType}" id="${fullKey}" name="${fullKey}" value="${value !== undefined ? value : ''}" ${maxLengthAttr} class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm ${secretClass}">
         `;
         
         if (isSecret) {
@@ -761,6 +918,8 @@ function generateFieldHtml(key, prop, value, prefix = '') {
 }
 
 function generateFormFromSchema(schema, config) {
+    console.log('[DEBUG] ===== generateFormFromSchema called =====');
+    console.log('[DEBUG] Schema properties:', Object.keys(schema.properties || {}));
     let formHtml = '<form id="plugin-config-form" class="space-y-4">';
 
     // Always add the enabled toggle at the top
@@ -927,8 +1086,9 @@ function refreshPlugins() {
     cacheTimestamp = null;
     
     loadInstalledPlugins();
-    searchPluginStore();
-    showNotification('Plugins refreshed', 'success');
+    // Fetch latest versions from GitHub when refreshing
+    searchPluginStore(true);
+    showNotification('Plugins refreshed with latest versions from GitHub', 'success');
 }
 
 function restartDisplay() {
@@ -946,16 +1106,16 @@ function restartDisplay() {
     });
 }
 
-function searchPluginStore() {
-    console.log('Searching plugin store...');
+function searchPluginStore(fetchLatestVersions = false) {
+    console.log('Searching plugin store...', { fetchLatestVersions });
     const query = document.getElementById('plugin-search').value;
     const category = document.getElementById('plugin-category').value;
 
-    // Check if we can use cached data (only for non-filtered requests)
+    // Check if we can use cached data (only for non-filtered requests and if not fetching latest versions)
     const now = Date.now();
     const isCacheValid = pluginStoreCache && cacheTimestamp && (now - cacheTimestamp < CACHE_DURATION);
     
-    if (!query && !category && isCacheValid) {
+    if (!query && !category && isCacheValid && !fetchLatestVersions) {
         console.log('Using cached plugin store data');
         renderPluginStore(pluginStoreCache);
         const countEl = document.getElementById('store-count');
@@ -976,6 +1136,7 @@ function searchPluginStore() {
     const params = new URLSearchParams();
     if (query) params.append('query', query);
     if (category) params.append('category', category);
+    if (fetchLatestVersions) params.append('fetch_latest_versions', 'true');
 
     if (params.toString()) {
         url += '?' + params.toString();
@@ -1501,5 +1662,527 @@ window.closeInstructionsModal = function() {
     console.log('Instructions modal closed');
 }
 
+// ==================== File Upload Functions ====================
+// Make these globally accessible for use in base.html
+
+window.handleFileDrop = function(event, fieldId) {
+    event.preventDefault();
+    const files = event.dataTransfer.files;
+    if (files.length > 0) {
+        window.handleFiles(fieldId, Array.from(files));
+    }
+}
+
+window.handleFileSelect = function(event, fieldId) {
+    const files = event.target.files;
+    if (files.length > 0) {
+        window.handleFiles(fieldId, Array.from(files));
+    }
+}
+
+window.handleFiles = async function(fieldId, files) {
+    const uploadConfig = window.getUploadConfig(fieldId);
+    const pluginId = uploadConfig.plugin_id || window.currentPluginConfig?.pluginId || 'static-image';
+    const maxFiles = uploadConfig.max_files || 10;
+    const maxSizeMB = uploadConfig.max_size_mb || 5;
+    
+    // Validate file count
+    const currentImages = window.getCurrentImages(fieldId);
+    if (currentImages.length + files.length > maxFiles) {
+        showNotification(`Maximum ${maxFiles} files allowed. You have ${currentImages.length} and tried to add ${files.length}.`, 'error');
+        return;
+    }
+    
+    // Validate file types and sizes
+    const validFiles = [];
+    for (const file of files) {
+        if (file.size > maxSizeMB * 1024 * 1024) {
+            showNotification(`File ${file.name} exceeds ${maxSizeMB}MB limit`, 'error');
+            continue;
+        }
+        
+        const allowedTypes = ['image/png', 'image/jpeg', 'image/jpg', 'image/bmp', 'image/gif'];
+        if (!allowedTypes.includes(file.type)) {
+            showNotification(`File ${file.name} is not a valid image type`, 'error');
+            continue;
+        }
+        
+        validFiles.push(file);
+    }
+    
+    if (validFiles.length === 0) {
+        return;
+    }
+    
+    // Show upload progress
+    window.showUploadProgress(fieldId, validFiles.length);
+    
+    // Upload files
+    const formData = new FormData();
+    formData.append('plugin_id', pluginId);
+    validFiles.forEach(file => formData.append('files', file));
+    
+    try {
+        const response = await fetch('/api/v3/plugins/assets/upload', {
+            method: 'POST',
+            body: formData
+        });
+        
+        const data = await response.json();
+        
+        if (data.status === 'success') {
+            // Add uploaded images to current list
+            const currentImages = window.getCurrentImages(fieldId);
+            const newImages = [...currentImages, ...data.uploaded_files];
+            window.updateImageList(fieldId, newImages);
+            
+            showNotification(`Successfully uploaded ${data.uploaded_files.length} image(s)`, 'success');
+        } else {
+            showNotification(`Upload failed: ${data.message}`, 'error');
+        }
+    } catch (error) {
+        console.error('Upload error:', error);
+        showNotification(`Upload error: ${error.message}`, 'error');
+    } finally {
+        window.hideUploadProgress(fieldId);
+        // Clear file input
+        const fileInput = document.getElementById(`${fieldId}_file_input`);
+        if (fileInput) {
+            fileInput.value = '';
+        }
+    }
+}
+
+window.deleteUploadedImage = async function(fieldId, imageId, pluginId) {
+    if (!confirm('Are you sure you want to delete this image?')) {
+        return;
+    }
+    
+    try {
+        const response = await fetch('/api/v3/plugins/assets/delete', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ plugin_id: pluginId, image_id: imageId })
+        });
+        
+        const data = await response.json();
+        
+        if (data.status === 'success') {
+            // Remove from current list
+            const currentImages = window.getCurrentImages(fieldId);
+            const newImages = currentImages.filter(img => img.id !== imageId);
+            window.updateImageList(fieldId, newImages);
+            
+            showNotification('Image deleted successfully', 'success');
+        } else {
+            showNotification(`Delete failed: ${data.message}`, 'error');
+        }
+    } catch (error) {
+        console.error('Delete error:', error);
+        showNotification(`Delete error: ${error.message}`, 'error');
+    }
+}
+
+window.getUploadConfig = function(fieldId) {
+    // Extract config from schema
+    const schema = window.currentPluginConfig?.schema;
+    if (!schema || !schema.properties) return {};
+    
+    // Find the property that matches this fieldId
+    // FieldId is like "image_config_images" for "image_config.images"
+    const key = fieldId.replace(/_/g, '.');
+    const keys = key.split('.');
+    let prop = schema.properties;
+    
+    for (const k of keys) {
+        if (prop && prop[k]) {
+            prop = prop[k];
+            if (prop.properties && prop.type === 'object') {
+                prop = prop.properties;
+            } else if (prop.type === 'array' && prop['x-widget'] === 'file-upload') {
+                break;
+            } else {
+                break;
+            }
+        }
+    }
+    
+    // If we found an array with x-widget, get its config
+    if (prop && prop.type === 'array' && prop['x-widget'] === 'file-upload') {
+        return prop['x-upload-config'] || {};
+    }
+    
+    // Try to find nested images array
+    if (schema.properties && schema.properties.image_config && 
+        schema.properties.image_config.properties && 
+        schema.properties.image_config.properties.images) {
+        const imagesProp = schema.properties.image_config.properties.images;
+        if (imagesProp['x-widget'] === 'file-upload') {
+            return imagesProp['x-upload-config'] || {};
+        }
+    }
+    
+    return {};
+}
+
+window.getCurrentImages = function(fieldId) {
+    const hiddenInput = document.getElementById(`${fieldId}_images_data`);
+    if (hiddenInput && hiddenInput.value) {
+        try {
+            return JSON.parse(hiddenInput.value);
+        } catch (e) {
+            console.error('Error parsing images data:', e);
+        }
+    }
+    return [];
+}
+
+window.updateImageList = function(fieldId, images) {
+    const hiddenInput = document.getElementById(`${fieldId}_images_data`);
+    if (hiddenInput) {
+        hiddenInput.value = JSON.stringify(images);
+    }
+    
+    // Update the display
+    const imageList = document.getElementById(`${fieldId}_image_list`);
+    if (imageList) {
+        const uploadConfig = window.getUploadConfig(fieldId);
+        const pluginId = uploadConfig.plugin_id || window.currentPluginConfig?.pluginId || 'static-image';
+        
+        imageList.innerHTML = images.map((img, idx) => {
+            const imgSchedule = img.schedule || {};
+            const hasSchedule = imgSchedule.enabled && imgSchedule.mode && imgSchedule.mode !== 'always';
+            const scheduleSummary = hasSchedule ? (window.getScheduleSummary ? window.getScheduleSummary(imgSchedule) : 'Scheduled') : 'Always shown';
+            
+            return `
+            <div id="img_${img.id || idx}" class="bg-gray-50 p-3 rounded-lg border border-gray-200">
+                <div class="flex items-center justify-between mb-2">
+                    <div class="flex items-center space-x-3 flex-1">
+                        <img src="/${img.path || ''}" 
+                             alt="${img.filename || ''}" 
+                             class="w-16 h-16 object-cover rounded"
+                             onerror="this.style.display='none'; this.nextElementSibling.style.display='block';">
+                        <div style="display:none;" class="w-16 h-16 bg-gray-200 rounded flex items-center justify-center">
+                            <i class="fas fa-image text-gray-400"></i>
+                        </div>
+                        <div class="flex-1 min-w-0">
+                            <p class="text-sm font-medium text-gray-900 truncate">${img.original_filename || img.filename || 'Image'}</p>
+                            <p class="text-xs text-gray-500">${window.formatFileSize ? window.formatFileSize(img.size || 0) : (Math.round((img.size || 0) / 1024) + ' KB')} • ${window.formatDate ? window.formatDate(img.uploaded_at) : (img.uploaded_at || '')}</p>
+                            <p class="text-xs text-blue-600 mt-1">
+                                <i class="fas fa-clock mr-1"></i>${scheduleSummary}
+                            </p>
+                        </div>
+                    </div>
+                    <div class="flex items-center space-x-2 ml-4">
+                        <button type="button" 
+                                onclick="window.openImageSchedule('${fieldId}', '${img.id}', ${idx})"
+                                class="text-blue-600 hover:text-blue-800 p-2" 
+                                title="Schedule this image">
+                            <i class="fas fa-calendar-alt"></i>
+                        </button>
+                        <button type="button" 
+                                onclick="window.deleteUploadedImage('${fieldId}', '${img.id}', '${pluginId}')"
+                                class="text-red-600 hover:text-red-800 p-2"
+                                title="Delete image">
+                            <i class="fas fa-trash"></i>
+                        </button>
+                    </div>
+                </div>
+                <!-- Schedule widget will be inserted here when opened -->
+                <div id="schedule_${img.id || idx}" class="hidden mt-3 pt-3 border-t border-gray-300"></div>
+            </div>
+            `;
+        }).join('');
+    }
+}
+
+window.showUploadProgress = function(fieldId, totalFiles) {
+    const dropZone = document.getElementById(`${fieldId}_drop_zone`);
+    if (dropZone) {
+        dropZone.innerHTML = `
+            <i class="fas fa-spinner fa-spin text-3xl text-blue-500 mb-2"></i>
+            <p class="text-sm text-gray-600">Uploading ${totalFiles} file(s)...</p>
+        `;
+        dropZone.style.pointerEvents = 'none';
+    }
+}
+
+window.hideUploadProgress = function(fieldId) {
+    const uploadConfig = window.getUploadConfig(fieldId);
+    const maxFiles = uploadConfig.max_files || 10;
+    const maxSizeMB = uploadConfig.max_size_mb || 5;
+    const allowedTypes = uploadConfig.allowed_types || ['image/png', 'image/jpeg', 'image/bmp', 'image/gif'];
+    
+    const dropZone = document.getElementById(`${fieldId}_drop_zone`);
+    if (dropZone) {
+        dropZone.innerHTML = `
+            <i class="fas fa-cloud-upload-alt text-3xl text-gray-400 mb-2"></i>
+            <p class="text-sm text-gray-600">Drag and drop images here or click to browse</p>
+            <p class="text-xs text-gray-500 mt-1">Max ${maxFiles} files, ${maxSizeMB}MB each (PNG, JPG, GIF, BMP)</p>
+        `;
+        dropZone.style.pointerEvents = 'auto';
+    }
+}
+
+window.formatFileSize = function(bytes) {
+    if (bytes === 0) return '0 B';
+    const k = 1024;
+    const sizes = ['B', 'KB', 'MB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return Math.round(bytes / Math.pow(k, i) * 100) / 100 + ' ' + sizes[i];
+}
+
+function formatDate(dateString) {
+    if (!dateString) return 'Unknown date';
+    try {
+        const date = new Date(dateString);
+        return date.toLocaleDateString() + ' ' + date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    } catch (e) {
+        return dateString;
+    }
+}
+
+window.getScheduleSummary = function(schedule) {
+    if (!schedule || !schedule.enabled || schedule.mode === 'always') {
+        return 'Always shown';
+    }
+    
+    if (schedule.mode === 'time_range') {
+        return `${schedule.start_time || '08:00'} - ${schedule.end_time || '18:00'} (daily)`;
+    }
+    
+    if (schedule.mode === 'per_day' && schedule.days) {
+        const enabledDays = Object.entries(schedule.days)
+            .filter(([day, config]) => config && config.enabled)
+            .map(([day]) => day.charAt(0).toUpperCase() + day.slice(1, 3));
+        
+        if (enabledDays.length === 0) {
+            return 'Never shown';
+        }
+        
+        return enabledDays.join(', ') + ' only';
+    }
+    
+    return 'Scheduled';
+}
+
+window.openImageSchedule = function(fieldId, imageId, imageIdx) {
+    const currentImages = getCurrentImages(fieldId);
+    const image = currentImages[imageIdx];
+    if (!image) return;
+    
+    const scheduleContainer = document.getElementById(`schedule_${imageId || imageIdx}`);
+    if (!scheduleContainer) return;
+    
+    // Toggle visibility
+    const isVisible = !scheduleContainer.classList.contains('hidden');
+    
+    if (isVisible) {
+        scheduleContainer.classList.add('hidden');
+        return;
+    }
+    
+    scheduleContainer.classList.remove('hidden');
+    
+    const schedule = image.schedule || { enabled: false, mode: 'always', start_time: '08:00', end_time: '18:00', days: {} };
+    
+    scheduleContainer.innerHTML = `
+        <div class="bg-white rounded-lg border border-blue-200 p-4">
+            <h4 class="text-sm font-semibold text-gray-900 mb-3">
+                <i class="fas fa-clock mr-2"></i>Schedule Settings
+            </h4>
+            
+            <!-- Enable Schedule -->
+            <div class="mb-4">
+                <label class="flex items-center">
+                    <input type="checkbox" 
+                           id="schedule_enabled_${imageId}"
+                           ${schedule.enabled ? 'checked' : ''}
+                           onchange="window.toggleImageScheduleEnabled('${fieldId}', '${imageId}', ${imageIdx})"
+                           class="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded">
+                    <span class="ml-2 text-sm font-medium text-gray-700">Enable schedule for this image</span>
+                </label>
+                <p class="ml-6 text-xs text-gray-500 mt-1">When enabled, this image will only display during scheduled times</p>
+            </div>
+            
+            <!-- Schedule Mode -->
+            <div id="schedule_options_${imageId}" class="space-y-4" style="display: ${schedule.enabled ? 'block' : 'none'};">
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-2">Schedule Type</label>
+                    <select id="schedule_mode_${imageId}"
+                            onchange="window.updateImageScheduleMode('${fieldId}', '${imageId}', ${imageIdx})"
+                            class="block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm">
+                        <option value="always" ${schedule.mode === 'always' ? 'selected' : ''}>Always Show (No Schedule)</option>
+                        <option value="time_range" ${schedule.mode === 'time_range' ? 'selected' : ''}>Same Time Every Day</option>
+                        <option value="per_day" ${schedule.mode === 'per_day' ? 'selected' : ''}>Different Times Per Day</option>
+                    </select>
+                </div>
+                
+                <!-- Time Range Mode -->
+                <div id="time_range_${imageId}" class="grid grid-cols-2 gap-4" style="display: ${schedule.mode === 'time_range' ? 'grid' : 'none'};">
+                    <div>
+                        <label class="block text-xs font-medium text-gray-700 mb-1">Start Time</label>
+                        <input type="time" 
+                               id="schedule_start_${imageId}"
+                               value="${schedule.start_time || '08:00'}"
+                               onchange="window.updateImageScheduleTime('${fieldId}', '${imageId}', ${imageIdx})"
+                               class="block w-full px-2 py-1 text-sm border border-gray-300 rounded-md">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-medium text-gray-700 mb-1">End Time</label>
+                        <input type="time" 
+                               id="schedule_end_${imageId}"
+                               value="${schedule.end_time || '18:00'}"
+                               onchange="window.updateImageScheduleTime('${fieldId}', '${imageId}', ${imageIdx})"
+                               class="block w-full px-2 py-1 text-sm border border-gray-300 rounded-md">
+                    </div>
+                </div>
+                
+                <!-- Per-Day Mode -->
+                <div id="per_day_${imageId}" style="display: ${schedule.mode === 'per_day' ? 'block' : 'none'};">
+                    <label class="block text-xs font-medium text-gray-700 mb-2">Day-Specific Times</label>
+                    <div class="bg-gray-50 rounded p-3 space-y-2 max-h-64 overflow-y-auto">
+                        ${['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'].map(day => {
+                            const dayConfig = (schedule.days && schedule.days[day]) || { enabled: true, start_time: '08:00', end_time: '18:00' };
+                            return `
+                            <div class="bg-white rounded p-2 border border-gray-200">
+                                <div class="flex items-center justify-between mb-2">
+                                    <label class="flex items-center">
+                                        <input type="checkbox"
+                                               id="day_${day}_${imageId}"
+                                               ${dayConfig.enabled ? 'checked' : ''}
+                                               onchange="window.updateImageScheduleDay('${fieldId}', '${imageId}', ${imageIdx}, '${day}')"
+                                               class="h-3 w-3 text-blue-600 focus:ring-blue-500 border-gray-300 rounded">
+                                        <span class="ml-2 text-xs font-medium text-gray-700 capitalize">${day}</span>
+                                    </label>
+                                </div>
+                                <div class="grid grid-cols-2 gap-2 ml-5" id="day_times_${day}_${imageId}" style="display: ${dayConfig.enabled ? 'grid' : 'none'};">
+                                    <input type="time"
+                                           id="day_${day}_start_${imageId}"
+                                           value="${dayConfig.start_time || '08:00'}"
+                                           onchange="updateImageScheduleDay('${fieldId}', '${imageId}', ${imageIdx}, '${day}')"
+                                           class="text-xs px-2 py-1 border border-gray-300 rounded"
+                                           ${!dayConfig.enabled ? 'disabled' : ''}>
+                                    <input type="time"
+                                           id="day_${day}_end_${imageId}"
+                                           value="${dayConfig.end_time || '18:00'}"
+                                           onchange="updateImageScheduleDay('${fieldId}', '${imageId}', ${imageIdx}, '${day}')"
+                                           class="text-xs px-2 py-1 border border-gray-300 rounded"
+                                           ${!dayConfig.enabled ? 'disabled' : ''}>
+                                </div>
+                            </div>
+                            `;
+                        }).join('')}
+                    </div>
+                </div>
+            </div>
+        </div>
+    `;
+}
+
+window.toggleImageScheduleEnabled = function(fieldId, imageId, imageIdx) {
+    const currentImages = window.getCurrentImages(fieldId);
+    const image = currentImages[imageIdx];
+    if (!image) return;
+    
+    const checkbox = document.getElementById(`schedule_enabled_${imageId}`);
+    const enabled = checkbox.checked;
+    
+    if (!image.schedule) {
+        image.schedule = { enabled: false, mode: 'always', start_time: '08:00', end_time: '18:00', days: {} };
+    }
+    
+    image.schedule.enabled = enabled;
+    
+    const optionsDiv = document.getElementById(`schedule_options_${imageId}`);
+    if (optionsDiv) {
+        optionsDiv.style.display = enabled ? 'block' : 'none';
+    }
+    
+    window.updateImageList(fieldId, currentImages);
+}
+
+window.updateImageScheduleMode = function(fieldId, imageId, imageIdx) {
+    const currentImages = window.getCurrentImages(fieldId);
+    const image = currentImages[imageIdx];
+    if (!image) return;
+    
+    if (!image.schedule) {
+        image.schedule = { enabled: true, mode: 'always', start_time: '08:00', end_time: '18:00', days: {} };
+    }
+    
+    const modeSelect = document.getElementById(`schedule_mode_${imageId}`);
+    const mode = modeSelect.value;
+    
+    image.schedule.mode = mode;
+    
+    const timeRangeDiv = document.getElementById(`time_range_${imageId}`);
+    const perDayDiv = document.getElementById(`per_day_${imageId}`);
+    
+    if (timeRangeDiv) timeRangeDiv.style.display = mode === 'time_range' ? 'grid' : 'none';
+    if (perDayDiv) perDayDiv.style.display = mode === 'per_day' ? 'block' : 'none';
+    
+    window.updateImageList(fieldId, currentImages);
+}
+
+window.updateImageScheduleTime = function(fieldId, imageId, imageIdx) {
+    const currentImages = window.getCurrentImages(fieldId);
+    const image = currentImages[imageIdx];
+    if (!image) return;
+    
+    if (!image.schedule) {
+        image.schedule = { enabled: true, mode: 'time_range', start_time: '08:00', end_time: '18:00' };
+    }
+    
+    const startInput = document.getElementById(`schedule_start_${imageId}`);
+    const endInput = document.getElementById(`schedule_end_${imageId}`);
+    
+    if (startInput) image.schedule.start_time = startInput.value || '08:00';
+    if (endInput) image.schedule.end_time = endInput.value || '18:00';
+    
+    window.updateImageList(fieldId, currentImages);
+}
+
+window.updateImageScheduleDay = function(fieldId, imageId, imageIdx, day) {
+    const currentImages = window.getCurrentImages(fieldId);
+    const image = currentImages[imageIdx];
+    if (!image) return;
+    
+    if (!image.schedule) {
+        image.schedule = { enabled: true, mode: 'per_day', days: {} };
+    }
+    
+    if (!image.schedule.days) {
+        image.schedule.days = {};
+    }
+    
+    const checkbox = document.getElementById(`day_${day}_${imageId}`);
+    const startInput = document.getElementById(`day_${day}_start_${imageId}`);
+    const endInput = document.getElementById(`day_${day}_end_${imageId}`);
+    
+    const enabled = checkbox ? checkbox.checked : true;
+    
+    if (!image.schedule.days[day]) {
+        image.schedule.days[day] = { enabled: true, start_time: '08:00', end_time: '18:00' };
+    }
+    
+    image.schedule.days[day].enabled = enabled;
+    
+    if (startInput) image.schedule.days[day].start_time = startInput.value || '08:00';
+    if (endInput) image.schedule.days[day].end_time = endInput.value || '18:00';
+    
+    const timesDiv = document.getElementById(`day_times_${day}_${imageId}`);
+    if (timesDiv) {
+        timesDiv.style.display = enabled ? 'grid' : 'none';
+        if (startInput) startInput.disabled = !enabled;
+        if (endInput) endInput.disabled = !enabled;
+    }
+    
+    window.updateImageList(fieldId, currentImages);
+}
+
 })(); // End IIFE
+
+// Make currentPluginConfig globally accessible (outside IIFE)
+window.currentPluginConfig = null;
 </script>

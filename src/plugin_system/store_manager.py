@@ -180,7 +180,7 @@ class PluginStoreManager:
             self.logger.error(f"Error parsing registry JSON: {e}")
             return {"version": "1.0.0", "plugins": []}
     
-    def search_plugins(self, query: str = "", category: str = "", tags: List[str] = None) -> List[Dict]:
+    def search_plugins(self, query: str = "", category: str = "", tags: List[str] = None, fetch_latest_versions: bool = False) -> List[Dict]:
         """
         Search for plugins in the registry with enhanced metadata.
 
@@ -188,6 +188,7 @@ class PluginStoreManager:
             query: Search query string (searches name, description, id)
             category: Filter by category (e.g., 'sports', 'weather', 'time')
             tags: Filter by tags (matches any tag in list)
+            fetch_latest_versions: If True, fetch latest manifest from GitHub for each plugin to get current versions
 
         Returns:
             List of matching plugin metadata with real stars and downloads
@@ -229,24 +230,133 @@ class PluginStoreManager:
             if repo_url:
                 github_info = self._get_github_repo_info(repo_url)
                 enhanced_plugin['stars'] = github_info.get('stars', plugin.get('stars', 0))
+                
+                # Optionally fetch latest manifest from GitHub to get current version
+                if fetch_latest_versions:
+                    branch = plugin.get('branch', 'master')
+                    github_manifest = self._fetch_manifest_from_github(repo_url, branch)
+                    if github_manifest:
+                        # Update version from GitHub manifest
+                        if 'version' in github_manifest:
+                            enhanced_plugin['version'] = github_manifest['version']
+                        
+                        # Update versions array if available
+                        if 'versions' in github_manifest:
+                            enhanced_plugin['versions'] = github_manifest['versions']
+                        
+                        # Update latest_version
+                        if 'versions' in enhanced_plugin and isinstance(enhanced_plugin['versions'], list) and len(enhanced_plugin['versions']) > 0:
+                            latest_ver = enhanced_plugin['versions'][0]
+                            if isinstance(latest_ver, dict) and 'version' in latest_ver:
+                                enhanced_plugin['latest_version'] = latest_ver['version']
+                        elif 'version' in enhanced_plugin:
+                            enhanced_plugin['latest_version'] = enhanced_plugin['version']
+                        
+                        # Update other fields that might be more current
+                        if 'last_updated' in github_manifest:
+                            enhanced_plugin['last_updated'] = github_manifest['last_updated']
+                        if 'description' in github_manifest:
+                            enhanced_plugin['description'] = github_manifest['description']
 
             results.append(enhanced_plugin)
 
         return results
     
-    def get_plugin_info(self, plugin_id: str) -> Optional[Dict]:
+    def _fetch_manifest_from_github(self, repo_url: str, branch: str = "master") -> Optional[Dict]:
+        """
+        Fetch manifest.json directly from a GitHub repository.
+        
+        Args:
+            repo_url: GitHub repository URL
+            branch: Branch name (default: master)
+            
+        Returns:
+            Manifest data or None if not found
+        """
+        try:
+            # Convert repo URL to raw content URL
+            # https://github.com/user/repo -> https://raw.githubusercontent.com/user/repo/branch/manifest.json
+            if 'github.com' in repo_url:
+                # Handle different URL formats
+                repo_url = repo_url.rstrip('/')
+                if repo_url.endswith('.git'):
+                    repo_url = repo_url[:-4]
+                
+                parts = repo_url.split('/')
+                if len(parts) >= 2:
+                    owner = parts[-2]
+                    repo = parts[-1]
+                    
+                    raw_url = f"https://raw.githubusercontent.com/{owner}/{repo}/{branch}/manifest.json"
+                    
+                    response = self._http_get_with_retries(raw_url, timeout=10)
+                    if response.status_code == 200:
+                        return response.json()
+                    elif response.status_code == 404:
+                        # Try main branch instead
+                        if branch != "main":
+                            raw_url = f"https://raw.githubusercontent.com/{owner}/{repo}/main/manifest.json"
+                            response = self._http_get_with_retries(raw_url, timeout=10)
+                            if response.status_code == 200:
+                                return response.json()
+        except Exception as e:
+            self.logger.debug(f"Could not fetch manifest from GitHub for {repo_url}: {e}")
+        
+        return None
+    
+    def get_plugin_info(self, plugin_id: str, fetch_latest_from_github: bool = False) -> Optional[Dict]:
         """
         Get detailed information about a plugin from the registry.
         
         Args:
             plugin_id: Plugin identifier
+            fetch_latest_from_github: If True, fetch latest manifest from GitHub to get current version
             
         Returns:
             Plugin metadata or None if not found
         """
         registry = self.fetch_registry()
         plugins = registry.get('plugins', []) or []
-        return next((p for p in plugins if p['id'] == plugin_id), None)
+        plugin_info = next((p for p in plugins if p['id'] == plugin_id), None)
+        
+        if not plugin_info:
+            return None
+        
+        # Optionally fetch latest manifest from GitHub to get the most current version
+        if fetch_latest_from_github:
+            repo_url = plugin_info.get('repo')
+            branch = plugin_info.get('branch', 'master')
+            
+            if repo_url:
+                github_manifest = self._fetch_manifest_from_github(repo_url, branch)
+                if github_manifest:
+                    # Merge GitHub manifest data (which has the latest version)
+                    # into the registry data (which has metadata like verified, stars, etc.)
+                    plugin_info = plugin_info.copy()
+                    
+                    # Update version from GitHub manifest
+                    if 'version' in github_manifest:
+                        plugin_info['version'] = github_manifest['version']
+                    
+                    # Update versions array if available
+                    if 'versions' in github_manifest:
+                        plugin_info['versions'] = github_manifest['versions']
+                    
+                    # Update latest_version
+                    if 'versions' in plugin_info and isinstance(plugin_info['versions'], list) and len(plugin_info['versions']) > 0:
+                        latest_ver = plugin_info['versions'][0]
+                        if isinstance(latest_ver, dict) and 'version' in latest_ver:
+                            plugin_info['latest_version'] = latest_ver['version']
+                    elif 'version' in plugin_info:
+                        plugin_info['latest_version'] = plugin_info['version']
+                    
+                    # Update other fields that might be more current
+                    if 'last_updated' in github_manifest:
+                        plugin_info['last_updated'] = github_manifest['last_updated']
+                    if 'description' in github_manifest:
+                        plugin_info['description'] = github_manifest['description']
+        
+        return plugin_info
     
     def install_plugin(self, plugin_id: str, version: str = "latest") -> bool:
         """

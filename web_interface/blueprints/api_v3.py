@@ -734,9 +734,16 @@ def list_plugin_store():
         query = request.args.get('query', '')
         category = request.args.get('category', '')
         tags = request.args.getlist('tags')
+        # Allow fetching latest versions from GitHub (default: False for performance)
+        fetch_latest = request.args.get('fetch_latest_versions', 'false').lower() == 'true'
 
         # Search plugins from the registry
-        plugins = api_v3.plugin_store_manager.search_plugins(query=query, category=category, tags=tags)
+        plugins = api_v3.plugin_store_manager.search_plugins(
+            query=query, 
+            category=category, 
+            tags=tags,
+            fetch_latest_versions=fetch_latest
+        )
         
         # Format plugins for the web interface
         formatted_plugins = []
@@ -814,13 +821,20 @@ def refresh_plugin_store():
         if not api_v3.plugin_store_manager:
             return jsonify({'status': 'error', 'message': 'Plugin store manager not initialized'}), 500
         
+        data = request.get_json() or {}
+        fetch_latest_versions = data.get('fetch_latest_versions', False)
+        
         # Force refresh the registry
         registry = api_v3.plugin_store_manager.fetch_registry(force_refresh=True)
         plugin_count = len(registry.get('plugins', []))
         
+        message = 'Plugin store refreshed'
+        if fetch_latest_versions:
+            message += ' (with latest versions from GitHub)'
+        
         return jsonify({
             'status': 'success', 
-            'message': 'Plugin store refreshed', 
+            'message': message, 
             'plugin_count': plugin_count
         })
     except Exception as e:
