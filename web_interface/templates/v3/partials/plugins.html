@@ -284,7 +284,7 @@ function initializePlugins() {
 
     // Load both installed plugins and plugin store
     loadInstalledPlugins();
-    searchPluginStore(); // Load plugin store with no filters
+    searchPluginStore(true); // Load plugin store with latest versions fetched from GitHub
 
     // Setup search functionality
     document.getElementById('plugin-search').addEventListener('input', debounce(searchPluginStore, 300));
@@ -1106,17 +1106,20 @@ function restartDisplay() {
     });
 }
 
-function searchPluginStore(fetchLatestVersions = false) {
+function searchPluginStore(fetchLatestVersions = true) {
     console.log('Searching plugin store...', { fetchLatestVersions });
     const query = document.getElementById('plugin-search').value;
     const category = document.getElementById('plugin-category').value;
 
-    // Check if we can use cached data (only for non-filtered requests and if not fetching latest versions)
+    // For filtered searches (user typing), we can use cache to avoid excessive API calls
+    // For initial load or refresh, always fetch latest versions
+    const isFilteredSearch = query || category;
     const now = Date.now();
     const isCacheValid = pluginStoreCache && cacheTimestamp && (now - cacheTimestamp < CACHE_DURATION);
     
-    if (!query && !category && isCacheValid && !fetchLatestVersions) {
-        console.log('Using cached plugin store data');
+    // Only use cache for filtered searches that don't explicitly request latest versions
+    if (isFilteredSearch && isCacheValid && !fetchLatestVersions) {
+        console.log('Using cached plugin store data for filtered search');
         renderPluginStore(pluginStoreCache);
         const countEl = document.getElementById('store-count');
         if (countEl) {
@@ -1136,7 +1139,11 @@ function searchPluginStore(fetchLatestVersions = false) {
     const params = new URLSearchParams();
     if (query) params.append('query', query);
     if (category) params.append('category', category);
-    if (fetchLatestVersions) params.append('fetch_latest_versions', 'true');
+    // Always fetch latest versions unless explicitly disabled (for performance on repeated filtered searches)
+    if (!fetchLatestVersions) {
+        params.append('fetch_latest_versions', 'false');
+    }
+    // Note: fetch_latest_versions defaults to true on the server side, so we don't need to send it explicitly
 
     if (params.toString()) {
         url += '?' + params.toString();
@@ -1219,7 +1226,7 @@ function renderPluginStore(plugins) {
                     </div>
                     <div class="text-sm text-gray-600 space-y-1">
                         <p><i class="fas fa-user mr-1"></i>${escapeHtml(plugin.author || 'Unknown')}</p>
-                        <p><i class="fas fa-code-branch mr-1"></i>v${plugin.versions && plugin.versions[0] ? plugin.versions[0].version : '1.0.0'}</p>
+                        <p><i class="fas fa-code-branch mr-1"></i>v${plugin.latest_version || (plugin.versions && plugin.versions[0] ? plugin.versions[0].version : null) || plugin.version || '1.0.0'}</p>
                         <p><i class="fas fa-calendar mr-1"></i>${formatDate(plugin.last_updated)}</p>
                         <p><i class="fas fa-tag mr-1"></i>${escapeHtml(plugin.category || 'General')}</p>
                         <p><i class="fas fa-star mr-1"></i>${plugin.stars || 0} stars</p>

@@ -807,8 +807,14 @@ def list_plugin_store():
         query = request.args.get('query', '')
         category = request.args.get('category', '')
         tags = request.args.getlist('tags')
-        # Allow fetching latest versions from GitHub (default: False for performance)
-        fetch_latest = request.args.get('fetch_latest_versions', 'false').lower() == 'true'
+        # Default to fetching latest versions to ensure accurate version display
+        # Only skip if explicitly set to false (for performance on filtered searches)
+        fetch_latest_param = request.args.get('fetch_latest_versions', '').lower()
+        if fetch_latest_param == 'false':
+            fetch_latest = False
+        else:
+            # Default to True for initial loads, explicit true, or when not specified
+            fetch_latest = True
 
         # Search plugins from the registry
         plugins = api_v3.plugin_store_manager.search_plugins(
@@ -845,6 +851,8 @@ def list_plugin_store():
                 'name': plugin.get('name'),
                 'author': plugin.get('author'),
                 'version': version_str,
+                'latest_version': plugin.get('latest_version', version_str),
+                'versions': plugin.get('versions', []),  # Include full versions array for UI
                 'category': plugin.get('category'),
                 'description': plugin.get('description'),
                 'tags': plugin.get('tags', []),
