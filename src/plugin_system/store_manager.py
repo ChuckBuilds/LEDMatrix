@@ -353,12 +353,20 @@ class PluginStoreManager:
             try:
                 with open(manifest_path, 'r') as mf:
                     manifest = json.load(mf)
-                required_fields = ['id', 'name', 'version', 'entry_point', 'class_name']
+                required_fields = ['id', 'name', 'version', 'class_name']
                 missing = [f for f in required_fields if f not in manifest]
                 if missing:
                     self.logger.error(f"Plugin manifest missing required fields for {plugin_id}: {', '.join(missing)}")
                     shutil.rmtree(plugin_path)
                     return False
+                
+                # entry_point is optional, default to "manager.py" if not specified
+                if 'entry_point' not in manifest:
+                    manifest['entry_point'] = 'manager.py'
+                    # Write the updated manifest back
+                    with open(manifest_path, 'w') as mf:
+                        json.dump(manifest, mf, indent=2)
+                    self.logger.info(f"Added missing entry_point field to {plugin_id} manifest (defaulted to manager.py)")
             except Exception as me:
                 self.logger.error(f"Failed to read/validate manifest for {plugin_id}: {me}")
                 shutil.rmtree(plugin_path)
@@ -437,13 +445,21 @@ class PluginStoreManager:
                 }
             
             # Validate manifest has required fields
-            required_fields = ['id', 'name', 'version', 'entry_point', 'class_name']
+            required_fields = ['id', 'name', 'version', 'class_name']
             missing_fields = [field for field in required_fields if field not in manifest]
             if missing_fields:
                 return {
                     'success': False,
                     'error': f'Manifest missing required fields: {", ".join(missing_fields)}'
                 }
+            
+            # entry_point is optional, default to "manager.py" if not specified
+            if 'entry_point' not in manifest:
+                manifest['entry_point'] = 'manager.py'
+                # Write updated manifest back to file
+                with open(manifest_path, 'w') as f:
+                    json.dump(manifest, f, indent=2)
+                self.logger.info(f"Added missing entry_point field to {plugin_id} manifest (defaulted to manager.py)")
             
             # Move to plugins directory
             final_path = self.plugins_dir / plugin_id
@@ -766,7 +782,14 @@ class PluginStoreManager:
                     # For tagged installations, always reinstall from registry to get the latest version
                     return self.install_plugin(plugin_id, version="latest")
             
-            # Not a git repo, try registry update
+            # Not a git repo, check if plugin is in registry before trying to update
+            plugin_info = self.get_plugin_info(plugin_id)
+            if not plugin_info:
+                self.logger.warning(f"Plugin {plugin_id} not found in registry and is not a git repository. Cannot update automatically.")
+                self.logger.warning(f"To update this plugin, manually update it via git or reinstall from registry.")
+                return False
+            
+            # Plugin is in registry, try to reinstall from registry
             self.logger.info(f"Re-downloading plugin {plugin_id} from registry")
             return self.install_plugin(plugin_id, version="latest")
             
