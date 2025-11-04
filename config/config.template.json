@@ -85,5 +85,14 @@
         "plugins_directory": "plugin-repos",
         "auto_discover": true,
         "auto_load_enabled": true
+    },
+    "web-ui-info": {
+        "enabled": true,
+        "display_duration": 10,
+        "transition": {
+            "type": "redraw",
+            "speed": 2,
+            "enabled": true
+        }
     }
 }
