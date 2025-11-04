@@ -168,6 +168,9 @@ def _load_stocks_partial():
 def _load_plugins_partial():
     """Load plugins management partial"""
     try:
+        import json
+        from pathlib import Path
+        
         # Load plugin data from the plugin system
         plugins_data = []
 
@@ -180,6 +183,26 @@ def _load_plugins_partial():
                 # Format for the web interface
                 for plugin_info in all_plugin_info:
                     plugin_id = plugin_info.get('id')
+
+                    # Re-read manifest from disk to ensure we have the latest version
+                    # This ensures that if the manifest was updated, we show the correct version
+                    manifest_path = Path(pages_v3.plugin_manager.plugins_dir) / plugin_id / "manifest.json"
+                    if manifest_path.exists():
+                        try:
+                            with open(manifest_path, 'r', encoding='utf-8') as f:
+                                fresh_manifest = json.load(f)
+                            # Update plugin_info with fresh manifest data
+                            plugin_info.update(fresh_manifest)
+                            # Auto-extract version from versions array if not present at top level
+                            if 'version' not in plugin_info or not plugin_info['version']:
+                                versions = plugin_info.get('versions', [])
+                                if versions and isinstance(versions, list) and len(versions) > 0:
+                                    latest = versions[0]
+                                    if isinstance(latest, dict) and 'version' in latest:
+                                        plugin_info['version'] = latest['version']
+                        except Exception as e:
+                            # If we can't read the fresh manifest, use the cached one
+                            print(f"Warning: Could not read fresh manifest for {plugin_id}: {e}")
 
                     # Get enabled status from loaded plugin or config
                     plugin_instance = pages_v3.plugin_manager.get_plugin(plugin_id)
