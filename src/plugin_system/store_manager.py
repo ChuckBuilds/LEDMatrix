@@ -1018,13 +1018,32 @@ class PluginStoreManager:
             plugin_id: Plugin identifier
             
         Returns:
-            True if uninstalled successfully
+            True if uninstalled successfully (or already not installed)
         """
         plugin_path = self.plugins_dir / plugin_id
         
         if not plugin_path.exists():
-            self.logger.warning(f"Plugin not found: {plugin_id}")
-            return False
+            # Plugin already not installed - check if it might be in a different directory
+            # (e.g., if plugin_id in manifest doesn't match directory name)
+            found = False
+            if self.plugins_dir.exists():
+                for item in self.plugins_dir.iterdir():
+                    if item.is_dir() and (item / "manifest.json").exists():
+                        try:
+                            with open(item / "manifest.json", 'r', encoding='utf-8') as f:
+                                manifest = json.load(f)
+                                if manifest.get('id') == plugin_id:
+                                    # Found plugin with matching ID but different directory name
+                                    plugin_path = item
+                                    found = True
+                                    self.logger.info(f"Found plugin {plugin_id} in directory {item.name}")
+                                    break
+                        except Exception:
+                            continue
+            
+            if not found:
+                self.logger.info(f"Plugin {plugin_id} not found (already uninstalled)")
+                return True  # Already uninstalled, consider this success
         
         try:
             self.logger.info(f"Uninstalling plugin: {plugin_id}")
