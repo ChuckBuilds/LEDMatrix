@@ -1200,16 +1200,23 @@ function searchPluginStore(fetchLatestVersions = true) {
     // Only use cache for filtered searches that don't explicitly request latest versions
     if (isFilteredSearch && isCacheValid && !fetchLatestVersions) {
         console.log('Using cached plugin store data for filtered search');
-        renderPluginStore(pluginStoreCache);
-        try {
-            const countEl = document.getElementById('store-count');
-            if (countEl) {
-                countEl.innerHTML = `${pluginStoreCache.length} available`;
+        // Ensure plugin store grid exists before rendering
+        const storeGrid = document.getElementById('plugin-store-grid');
+        if (!storeGrid) {
+            console.error('plugin-store-grid element not found, cannot render cached plugins');
+            // Don't return, let it fetch fresh data
+        } else {
+            renderPluginStore(pluginStoreCache);
+            try {
+                const countEl = document.getElementById('store-count');
+                if (countEl) {
+                    countEl.innerHTML = `${pluginStoreCache.length} available`;
+                }
+            } catch (e) {
+                console.warn('Could not update store count:', e);
             }
-        } catch (e) {
-            console.warn('Could not update store count:', e);
+            return;
         }
-        return;
     }
 
     // Show loading state - safely check element exists
@@ -1259,6 +1266,14 @@ function searchPluginStore(fetchLatestVersions = true) {
                     console.log('Cached plugin store data');
                 }
                 
+                // Ensure plugin store grid exists before rendering
+                const storeGrid = document.getElementById('plugin-store-grid');
+                if (!storeGrid) {
+                    console.error('plugin-store-grid element not found, cannot render plugins');
+                    showError('Plugin store container not found. Please refresh the page.');
+                    return;
+                }
+                
                 renderPluginStore(plugins);
 
                 // Update count - safely check element exists
@@ -1306,6 +1321,12 @@ function showStoreLoading(show) {
 
 function renderPluginStore(plugins) {
     const container = document.getElementById('plugin-store-grid');
+    
+    if (!container) {
+        console.error('plugin-store-grid element not found');
+        showError('Plugin store container not found. Please refresh the page.');
+        return;
+    }
 
     if (plugins.length === 0) {
         container.innerHTML = `
@@ -1378,7 +1399,10 @@ window.installPlugin = function(pluginId) {
         if (data.status === 'success') {
             // Refresh both installed plugins and store
             loadInstalledPlugins();
-            searchPluginStore();
+            // Delay store refresh slightly to ensure DOM is ready
+            setTimeout(() => {
+                searchPluginStore();
+            }, 100);
         }
     })
     .catch(error => {
