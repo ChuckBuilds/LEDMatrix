@@ -20,6 +20,20 @@ fi
 install_hook() {
     local plugin_dir="$1"
     local git_dir="$plugin_dir/.git"
+    
+    # Handle git submodules (where .git is a file pointing to the actual git dir)
+    if [ -f "$git_dir" ]; then
+        # Read the gitdir path from .git file
+        GIT_DIR_PATH="$(cat "$git_dir" | sed 's/^gitdir: //')"
+        if [ -n "$GIT_DIR_PATH" ]; then
+            # Convert relative path to absolute if needed
+            if [[ "$GIT_DIR_PATH" != /* ]]; then
+                GIT_DIR_PATH="$(cd "$plugin_dir" && cd "$GIT_DIR_PATH" && pwd)"
+            fi
+            git_dir="$GIT_DIR_PATH"
+        fi
+    fi
+    
     local hook_path="$git_dir/hooks/pre-push"
     
     if [ ! -d "$git_dir" ]; then
