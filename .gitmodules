@@ -7,3 +7,6 @@
 [submodule "plugins/baseball-scoreboard"]
 	path = plugins/baseball-scoreboard
 	url = https://github.com/ChuckBuilds/ledmatrix-baseball-scoreboard.git
+[submodule "plugins/ledmatrix-weather"]
+	path = plugins/ledmatrix-weather
+	url = https://github.com/ChuckBuilds/ledmatrix-weather
