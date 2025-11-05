@@ -1,7 +1,7 @@
-<div class="bg-white rounded-lg shadow p-6">
-    <div class="border-b border-gray-200 pb-4 mb-6">
-        <h2 class="text-lg font-semibold text-gray-900">Plugin Management</h2>
-        <p class="mt-1 text-sm text-gray-600">Manage installed plugins, configure settings, and browse the plugin store.</p>
+<div class="bg-white rounded-lg shadow-md p-6">
+    <div class="section-header">
+        <h2 class="text-xl font-bold text-gray-900 mb-1">Plugin Management</h2>
+        <p class="text-sm text-gray-600">Manage installed plugins, configure settings, and browse the plugin store.</p>
     </div>
 
     <!-- Plugin Controls -->
@@ -19,34 +19,34 @@
     <!-- Plugin Content Area -->
     <div id="plugins-content" class="space-y-8">
         <!-- Installed Plugins Section (Always visible at top) -->
-        <div id="installed-plugins-section">
-            <div class="flex items-center justify-between mb-4">
+        <div id="installed-plugins-section" class="mb-8">
+            <div class="flex items-center justify-between mb-5 pb-3 border-b border-gray-200">
                 <div class="flex items-center gap-3">
-                    <h3 class="text-md font-medium text-gray-900">Installed Plugins</h3>
-                    <span id="installed-count" class="text-sm text-gray-500">0 installed</span>
+                    <h3 class="text-lg font-bold text-gray-900">Installed Plugins</h3>
+                    <span id="installed-count" class="text-sm text-gray-500 font-medium">0 installed</span>
                 </div>
-                <button id="toggle-installed-plugins" class="text-sm text-gray-600 hover:text-gray-800 flex items-center">
+                <button id="toggle-installed-plugins" class="text-sm text-gray-600 hover:text-gray-900 hover:text-blue-600 transition-colors flex items-center font-medium">
                     <i class="fas fa-chevron-down mr-1" id="installed-plugins-icon"></i>
                     <span>Collapse</span>
                 </button>
             </div>
             <div id="installed-plugins-content" class="block">
-                <div id="installed-plugins-grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-4">
+                <div id="installed-plugins-grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-6">
                     <!-- Plugins will be loaded here -->
                 </div>
             </div>
         </div>
 
         <!-- Plugin Store Section (Always visible at bottom) -->
-        <div id="plugin-store-section" class="border-t border-gray-200 pt-8">
-            <div class="flex items-center justify-between mb-4">
+        <div id="plugin-store-section" class="border-t border-gray-200 pt-8 mt-8">
+            <div class="flex items-center justify-between mb-5 pb-3 border-b border-gray-200">
                 <div class="flex items-center gap-3">
-                    <h3 class="text-md font-medium text-gray-900">Plugin Store</h3>
-                    <span id="store-count" class="text-sm text-gray-500">
+                    <h3 class="text-lg font-bold text-gray-900">Plugin Store</h3>
+                    <span id="store-count" class="text-sm text-gray-500 font-medium">
                         <i class="fas fa-spinner fa-spin mr-1"></i>Loading...
                     </span>
                 </div>
-                <button id="toggle-plugin-store" class="text-sm text-gray-600 hover:text-gray-800 flex items-center">
+                <button id="toggle-plugin-store" class="text-sm text-gray-600 hover:text-gray-900 hover:text-blue-600 transition-colors flex items-center font-medium">
                     <i class="fas fa-chevron-down mr-1" id="plugin-store-icon"></i>
                     <span>Collapse</span>
                 </button>
@@ -55,7 +55,7 @@
             <div id="plugin-store-content" class="block">
             
             <!-- GitHub Auth Warning Banner (only shown when no token is configured) -->
-            <div id="github-auth-warning" class="hidden mb-4 bg-yellow-50 border-l-4 border-yellow-400 p-4" style="display: none;">
+            <div id="github-auth-warning" class="hidden mb-5 bg-yellow-50 border-l-4 border-yellow-400 p-4 rounded-r-lg" style="display: none;">
                 <div class="flex">
                     <div class="flex-shrink-0">
                         <i class="fas fa-exclamation-triangle text-yellow-400"></i>
@@ -84,18 +84,18 @@
             </div>
 
             <!-- GitHub Token Configuration Section -->
-            <div id="github-token-settings" class="hidden mb-4 bg-blue-50 border border-blue-200 rounded-lg p-4" style="display: none;">
-                <div class="flex items-start justify-between mb-3">
+            <div id="github-token-settings" class="hidden mb-5 bg-blue-50 border border-blue-200 rounded-lg p-5 shadow-sm" style="display: none;">
+                <div class="flex items-start justify-between mb-4">
                     <div class="flex items-center space-x-2">
                         <i class="fab fa-github text-blue-600 text-xl"></i>
-                        <h4 class="font-semibold text-gray-900">GitHub API Configuration</h4>
+                        <h4 class="font-bold text-gray-900">GitHub API Configuration</h4>
                     </div>
                     <div class="flex items-center gap-2">
-                        <button id="toggle-github-token-collapse" class="text-gray-500 hover:text-gray-700 text-sm flex items-center">
+                        <button id="toggle-github-token-collapse" class="text-gray-600 hover:text-gray-900 text-sm flex items-center font-medium transition-colors">
                             <i class="fas fa-chevron-up mr-1" id="github-token-icon-collapse"></i>
                             <span>Collapse</span>
                         </button>
-                        <button onclick="toggleGithubTokenSettings()" class="text-gray-500 hover:text-gray-700">
+                        <button onclick="toggleGithubTokenSettings()" class="text-gray-500 hover:text-gray-700 transition-colors">
                             <i class="fas fa-times"></i>
                         </button>
                     </div>
@@ -152,10 +152,10 @@
                 </div>
                 </div>
             </div>
-            <div class="mb-4">
+            <div class="mb-6">
                 <div class="flex gap-3">
-                    <input type="text" id="plugin-search" placeholder="Search plugins by name, description, or tags..." class="form-control text-sm flex-[3] min-w-0 px-3 py-2 border border-gray-300 rounded-md">
-                    <select id="plugin-category" class="form-control text-sm flex-1 px-2 py-2 border border-gray-300 rounded-md">
+                    <input type="text" id="plugin-search" placeholder="Search plugins by name, description, or tags..." class="form-control text-sm flex-[3] min-w-0 px-4 py-2.5 border border-gray-300 rounded-lg shadow-sm focus:shadow-md transition-shadow">
+                    <select id="plugin-category" class="form-control text-sm flex-1 px-3 py-2.5 border border-gray-300 rounded-lg shadow-sm focus:shadow-md transition-shadow">
                         <option value="">All Categories</option>
                         <option value="sports">Sports</option>
                         <option value="content">Content</option>
@@ -165,12 +165,12 @@
                         <option value="media">Media</option>
                         <option value="demo">Demo</option>
                     </select>
-                    <button id="search-plugins-btn" class="btn bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md whitespace-nowrap">
+                    <button id="search-plugins-btn" class="btn bg-blue-600 hover:bg-blue-700 text-white px-5 py-2.5 rounded-lg whitespace-nowrap font-semibold shadow-sm">
                         <i class="fas fa-search mr-2"></i>Search
                     </button>
                 </div>
             </div>
-            <div id="plugin-store-grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-4">
+            <div id="plugin-store-grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-6">
                 <!-- Loading skeleton -->
                 <div class="store-loading col-span-full">
                     <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-4">
@@ -186,12 +186,12 @@
         
         <!-- Install from GitHub URL Section (Separate section, always visible) -->
         <div class="border-t border-gray-200 pt-8 mt-8">
-            <div class="flex items-center justify-between mb-4">
+            <div class="flex items-center justify-between mb-5 pb-3 border-b border-gray-200">
                 <div>
-                    <h3 class="text-md font-medium text-gray-900">Install from GitHub</h3>
-                    <p class="text-sm text-gray-500 mt-1">Install plugins directly from GitHub repositories</p>
+                    <h3 class="text-lg font-bold text-gray-900">Install from GitHub</h3>
+                    <p class="text-sm text-gray-600 mt-1">Install plugins directly from GitHub repositories</p>
                 </div>
-                <button id="toggle-github-install" class="text-sm text-blue-600 hover:text-blue-800 flex items-center">
+                <button id="toggle-github-install" class="text-sm text-blue-600 hover:text-blue-800 flex items-center font-medium transition-colors">
                     <i class="fas fa-chevron-down mr-1" id="github-install-icon"></i>
                     <span>Show</span>
                 </button>
@@ -199,12 +199,12 @@
             
             <div id="github-install-section" class="hidden space-y-4">
                 <!-- Saved Repositories Section -->
-                <div class="bg-blue-50 rounded-lg p-4 border border-blue-200">
-                    <div class="flex items-center justify-between mb-3">
-                        <h4 class="text-sm font-semibold text-gray-900">
-                            <i class="fas fa-bookmark mr-2"></i>Saved Repositories
+                <div class="bg-blue-50 rounded-lg p-5 border border-blue-200 shadow-sm">
+                    <div class="flex items-center justify-between mb-4">
+                        <h4 class="text-base font-bold text-gray-900">
+                            <i class="fas fa-bookmark mr-2 text-blue-600"></i>Saved Repositories
                         </h4>
-                        <span id="saved-repos-count" class="text-xs text-gray-500">0 saved</span>
+                        <span id="saved-repos-count" class="text-xs text-gray-600 font-medium">0 saved</span>
                     </div>
                     <p class="text-xs text-gray-600 mb-3">Saved repositories are automatically loaded and their plugins appear in the Plugin Store above.</p>
                     <div id="saved-repositories-list" class="space-y-2 mb-3">
@@ -216,9 +216,9 @@
                 </div>
                 
                 <!-- Direct Plugin Installation -->
-                <div class="bg-gray-50 rounded-lg p-4 border border-gray-200">
-                    <h4 class="text-sm font-semibold text-gray-900 mb-2">
-                        <i class="fas fa-code-branch mr-2"></i>Install Single Plugin
+                <div class="bg-gray-50 rounded-lg p-5 border border-gray-200 shadow-sm">
+                    <h4 class="text-base font-bold text-gray-900 mb-3">
+                        <i class="fas fa-code-branch mr-2 text-blue-600"></i>Install Single Plugin
                     </h4>
                     <p class="text-xs text-gray-600 mb-3">Install a plugin directly from its GitHub repository URL</p>
                     <div class="flex gap-2">
@@ -233,9 +233,9 @@
                 </div>
                 
                 <!-- Registry-Style Monorepo Installation -->
-                <div class="bg-gray-50 rounded-lg p-4 border border-gray-200">
-                    <h4 class="text-sm font-semibold text-gray-900 mb-2">
-                        <i class="fas fa-folder-open mr-2"></i>Browse Plugin Registry
+                <div class="bg-gray-50 rounded-lg p-5 border border-gray-200 shadow-sm">
+                    <h4 class="text-base font-bold text-gray-900 mb-3">
+                        <i class="fas fa-folder-open mr-2 text-green-600"></i>Browse Plugin Registry
                     </h4>
                     <p class="text-xs text-gray-600 mb-3">Load a registry-style monorepo (like the official ledmatrix-plugins repo) to browse and install plugins</p>
                     <div class="flex gap-2 mb-2">
@@ -267,8 +267,8 @@
     </div>
 
     <!-- Plugin Configuration Modal -->
-    <div id="plugin-config-modal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50" style="display: none;">
-        <div class="bg-white rounded-lg p-6 w-full max-w-2xl max-h-[90vh] overflow-y-auto">
+    <div id="plugin-config-modal" class="fixed inset-0 modal-backdrop flex items-center justify-center z-50" style="display: none;">
+        <div class="modal-content p-6 w-full max-w-2xl max-h-[90vh] overflow-y-auto">
             <div class="flex justify-between items-center mb-4">
                 <h3 id="plugin-config-title" class="text-lg font-semibold">Plugin Configuration</h3>
                 <button id="close-plugin-config" class="text-gray-400 hover:text-gray-600">
@@ -458,54 +458,56 @@ function renderInstalledPlugins(plugins) {
 
     if (plugins.length === 0) {
         container.innerHTML = `
-            <div class="col-span-full text-center py-8">
-                <i class="fas fa-plug text-4xl text-gray-400 mb-2"></i>
-                <p class="text-gray-600">No plugins installed</p>
-                <p class="text-sm text-gray-500 mt-1">Install plugins from the store to get started</p>
+            <div class="col-span-full empty-state">
+                <div class="empty-state-icon">
+                    <i class="fas fa-plug"></i>
+                </div>
+                <p class="text-lg font-medium text-gray-700 mb-1">No plugins installed</p>
+                <p class="text-sm text-gray-500">Install plugins from the store to get started</p>
             </div>
         `;
         return;
     }
 
     container.innerHTML = plugins.map(plugin => `
-        <div class="bg-gray-50 rounded-lg p-4 border">
-            <div class="flex items-start justify-between mb-3">
-                <div class="flex-1">
-                    <div class="flex items-center space-x-2 mb-1">
-                        <h4 class="font-medium text-gray-900">${escapeHtml(plugin.name || plugin.id)}</h4>
-                        ${plugin.verified ? '<span class="bg-green-100 text-green-800 text-xs px-2 py-1 rounded">✓ Verified</span>' : ''}
-                        ${plugin.enabled ? '<span class="bg-green-100 text-green-800 text-xs px-2 py-1 rounded ml-2">Enabled</span>' : '<span class="bg-gray-100 text-gray-800 text-xs px-2 py-1 rounded ml-2">Disabled</span>'}
+        <div class="plugin-card">
+            <div class="flex items-start justify-between mb-4">
+                <div class="flex-1 min-w-0">
+                    <div class="flex items-center flex-wrap gap-2 mb-2">
+                        <h4 class="font-semibold text-gray-900 text-base">${escapeHtml(plugin.name || plugin.id)}</h4>
+                        ${plugin.verified ? '<span class="badge badge-success"><i class="fas fa-check-circle mr-1"></i>Verified</span>' : ''}
+                        ${plugin.enabled ? '<span class="badge badge-success"><i class="fas fa-check mr-1"></i>Enabled</span>' : '<span class="badge badge-warning"><i class="fas fa-times mr-1"></i>Disabled</span>'}
                     </div>
-                    <div class="text-sm text-gray-600 space-y-1">
-                        <p><i class="fas fa-user mr-1"></i>${escapeHtml(plugin.author || 'Unknown')}</p>
-                        <p><i class="fas fa-code-branch mr-1"></i>v${plugin.version || '1.0.0'}</p>
-                        <p><i class="fas fa-folder mr-1"></i>${escapeHtml(plugin.category || 'General')}</p>
-                        <p><i class="fas fa-star mr-1"></i>${plugin.stars || 0} stars</p>
+                    <div class="text-sm text-gray-600 space-y-1.5 mb-3">
+                        <p class="flex items-center"><i class="fas fa-user mr-2 text-gray-400 w-4"></i>${escapeHtml(plugin.author || 'Unknown')}</p>
+                        <p class="flex items-center"><i class="fas fa-code-branch mr-2 text-gray-400 w-4"></i>v${plugin.version || '1.0.0'}</p>
+                        <p class="flex items-center"><i class="fas fa-folder mr-2 text-gray-400 w-4"></i>${escapeHtml(plugin.category || 'General')}</p>
+                        ${plugin.stars ? `<p class="flex items-center"><i class="fas fa-star mr-2 text-gray-400 w-4"></i>${plugin.stars} stars</p>` : ''}
                     </div>
-                    <p class="text-sm text-gray-700 mt-2">${escapeHtml(plugin.description || 'No description available')}</p>
+                    <p class="text-sm text-gray-700 leading-relaxed">${escapeHtml(plugin.description || 'No description available')}</p>
                 </div>
             </div>
 
             <!-- Plugin Tags -->
-            ${plugin.tags ? `
-                <div class="flex flex-wrap gap-1 mb-3">
-                    ${plugin.tags.map(tag => `<span class="bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded">${escapeHtml(tag)}</span>`).join('')}
+            ${plugin.tags && plugin.tags.length > 0 ? `
+                <div class="flex flex-wrap gap-1.5 mb-4">
+                    ${plugin.tags.map(tag => `<span class="badge badge-info">${escapeHtml(tag)}</span>`).join('')}
                 </div>
             ` : ''}
 
             <!-- Plugin Actions -->
-            <div class="flex space-x-2">
+            <div class="flex gap-2 mt-4 pt-4 border-t border-gray-200">
                 <button onclick="configurePlugin('${plugin.id}')"
-                        class="btn bg-blue-600 hover:bg-blue-700 text-white px-3 py-1 rounded text-sm flex-1">
-                    <i class="fas fa-cog mr-1"></i>Configure
+                        class="btn bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md text-sm flex-1 font-semibold">
+                    <i class="fas fa-cog mr-2"></i>Configure
                 </button>
                 <button onclick="updatePlugin('${plugin.id}')"
-                        class="btn bg-gray-600 hover:bg-gray-700 text-white px-3 py-1 rounded text-sm flex-1">
-                    <i class="fas fa-sync mr-1"></i>Update
+                        class="btn bg-gray-600 hover:bg-gray-700 text-white px-4 py-2 rounded-md text-sm flex-1 font-semibold">
+                    <i class="fas fa-sync mr-2"></i>Update
                 </button>
                 <button onclick="uninstallPlugin('${plugin.id}')"
-                        class="btn bg-red-600 hover:bg-red-700 text-white px-3 py-1 rounded text-sm flex-1">
-                    <i class="fas fa-trash mr-1"></i>Uninstall
+                        class="btn bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-md text-sm flex-1 font-semibold">
+                    <i class="fas fa-trash mr-2"></i>Uninstall
                 </button>
             </div>
         </div>
@@ -1344,52 +1346,54 @@ function renderPluginStore(plugins) {
 
     if (plugins.length === 0) {
         container.innerHTML = `
-            <div class="col-span-full text-center py-8">
-                <i class="fas fa-store text-4xl text-gray-400 mb-2"></i>
-                <p class="text-gray-600">No plugins found</p>
-                <p class="text-sm text-gray-500 mt-1">Try adjusting your search criteria</p>
+            <div class="col-span-full empty-state">
+                <div class="empty-state-icon">
+                    <i class="fas fa-store"></i>
+                </div>
+                <p class="text-lg font-medium text-gray-700 mb-1">No plugins found</p>
+                <p class="text-sm text-gray-500">Try adjusting your search criteria</p>
             </div>
         `;
         return;
     }
 
     container.innerHTML = plugins.map(plugin => `
-        <div class="bg-gray-50 rounded-lg p-4 border">
-            <div class="flex items-start justify-between mb-3">
-                <div class="flex-1">
-                    <div class="flex items-center space-x-2 mb-1">
-                        <h4 class="font-medium text-gray-900">${escapeHtml(plugin.name || plugin.id)}</h4>
-                        ${plugin.verified ? '<span class="bg-green-100 text-green-800 text-xs px-2 py-1 rounded">✓ Verified</span>' : ''}
-                        ${isNewPlugin(plugin.last_updated) ? '<span class="bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded">✨ New</span>' : ''}
-                        ${plugin._source === 'custom_repository' ? `<span class="bg-purple-100 text-purple-800 text-xs px-2 py-1 rounded" title="From: ${escapeHtml(plugin._repository_name || plugin._repository_url || 'Custom Repository')}"><i class="fas fa-bookmark mr-1"></i>Custom</span>` : ''}
+        <div class="plugin-card">
+            <div class="flex items-start justify-between mb-4">
+                <div class="flex-1 min-w-0">
+                    <div class="flex items-center flex-wrap gap-2 mb-2">
+                        <h4 class="font-semibold text-gray-900 text-base">${escapeHtml(plugin.name || plugin.id)}</h4>
+                        ${plugin.verified ? '<span class="badge badge-success"><i class="fas fa-check-circle mr-1"></i>Verified</span>' : ''}
+                        ${isNewPlugin(plugin.last_updated) ? '<span class="badge badge-info"><i class="fas fa-sparkles mr-1"></i>New</span>' : ''}
+                        ${plugin._source === 'custom_repository' ? `<span class="badge badge-accent" title="From: ${escapeHtml(plugin._repository_name || plugin._repository_url || 'Custom Repository')}"><i class="fas fa-bookmark mr-1"></i>Custom</span>` : ''}
                     </div>
-                    <div class="text-sm text-gray-600 space-y-1">
-                        <p><i class="fas fa-user mr-1"></i>${escapeHtml(plugin.author || 'Unknown')}</p>
-                        <p><i class="fas fa-code-branch mr-1"></i>v${plugin.latest_version || (plugin.versions && plugin.versions[0] ? plugin.versions[0].version : null) || plugin.version || '1.0.0'}</p>
-                        <p><i class="fas fa-calendar mr-1"></i>${formatDate(plugin.last_updated)}</p>
-                        <p><i class="fas fa-tag mr-1"></i>${escapeHtml(plugin.category || 'General')}</p>
-                        <p><i class="fas fa-star mr-1"></i>${plugin.stars || 0} stars</p>
+                    <div class="text-sm text-gray-600 space-y-1.5 mb-3">
+                        <p class="flex items-center"><i class="fas fa-user mr-2 text-gray-400 w-4"></i>${escapeHtml(plugin.author || 'Unknown')}</p>
+                        <p class="flex items-center"><i class="fas fa-code-branch mr-2 text-gray-400 w-4"></i>v${plugin.latest_version || (plugin.versions && plugin.versions[0] ? plugin.versions[0].version : null) || plugin.version || '1.0.0'}</p>
+                        <p class="flex items-center"><i class="fas fa-calendar mr-2 text-gray-400 w-4"></i>${formatDate(plugin.last_updated)}</p>
+                        <p class="flex items-center"><i class="fas fa-tag mr-2 text-gray-400 w-4"></i>${escapeHtml(plugin.category || 'General')}</p>
+                        <p class="flex items-center"><i class="fas fa-star mr-2 text-gray-400 w-4"></i>${plugin.stars || 0} stars</p>
                     </div>
-                    <p class="text-sm text-gray-700 mt-2">${escapeHtml(plugin.description || 'No description available')}</p>
+                    <p class="text-sm text-gray-700 leading-relaxed">${escapeHtml(plugin.description || 'No description available')}</p>
                 </div>
             </div>
 
             <!-- Plugin Tags -->
-            ${plugin.tags ? `
-                <div class="flex flex-wrap gap-1 mb-3">
-                    ${plugin.tags.map(tag => `<span class="bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded">${escapeHtml(tag)}</span>`).join('')}
+            ${plugin.tags && plugin.tags.length > 0 ? `
+                <div class="flex flex-wrap gap-1.5 mb-4">
+                    ${plugin.tags.map(tag => `<span class="badge badge-info">${escapeHtml(tag)}</span>`).join('')}
                 </div>
             ` : ''}
 
             <!-- Store Actions -->
-            <div class="flex space-x-2">
+            <div class="flex gap-2 mt-4 pt-4 border-t border-gray-200">
                 <button onclick="installPlugin('${plugin.id}')"
-                        class="btn bg-green-600 hover:bg-green-700 text-white px-3 py-1 rounded text-sm flex-1">
-                    <i class="fas fa-download mr-1"></i>Install
+                        class="btn bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-md text-sm flex-1 font-semibold">
+                    <i class="fas fa-download mr-2"></i>Install
                 </button>
                 <button onclick="window.open('${plugin.repo || '#'}', '_blank')"
-                        class="btn bg-gray-600 hover:bg-gray-700 text-white px-3 py-1 rounded text-sm flex-1">
-                    <i class="fas fa-external-link-alt mr-1"></i>View
+                        class="btn bg-gray-600 hover:bg-gray-700 text-white px-4 py-2 rounded-md text-sm flex-1 font-semibold">
+                    <i class="fas fa-external-link-alt mr-2"></i>View
                 </button>
             </div>
         </div>
