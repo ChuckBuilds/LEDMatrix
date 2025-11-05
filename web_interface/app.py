@@ -12,6 +12,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from src.config_manager import ConfigManager
 from src.plugin_system.plugin_manager import PluginManager
 from src.plugin_system.store_manager import PluginStoreManager
+from src.plugin_system.saved_repositories import SavedRepositoriesManager
 
 # Create Flask app
 app = Flask(__name__)
@@ -38,6 +39,7 @@ plugin_manager = PluginManager(
     cache_manager=None     # Not needed for web interface
 )
 plugin_store_manager = PluginStoreManager(plugins_dir=str(plugins_dir))
+saved_repositories_manager = SavedRepositoriesManager()
 
 # Discover and load plugins
 plugin_manager.discover_plugins()
@@ -51,10 +53,12 @@ from web_interface.blueprints.api_v3 import api_v3
 pages_v3.config_manager = config_manager
 pages_v3.plugin_manager = plugin_manager
 pages_v3.plugin_store_manager = plugin_store_manager
+pages_v3.saved_repositories_manager = saved_repositories_manager
 
 api_v3.config_manager = config_manager
 api_v3.plugin_manager = plugin_manager
 api_v3.plugin_store_manager = plugin_store_manager
+api_v3.saved_repositories_manager = saved_repositories_manager
 
 app.register_blueprint(pages_v3, url_prefix='/v3')
 app.register_blueprint(api_v3, url_prefix='/api/v3')

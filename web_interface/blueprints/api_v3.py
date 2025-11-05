@@ -12,6 +12,7 @@ from pathlib import Path
 config_manager = None
 plugin_manager = None
 plugin_store_manager = None
+saved_repositories_manager = None
 
 # Get project root directory (web_interface/../..)
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -820,6 +821,173 @@ def install_plugin():
         print(error_details)
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
+@api_v3.route('/plugins/install-from-url', methods=['POST'])
+def install_plugin_from_url():
+    """Install plugin from custom GitHub URL"""
+    try:
+        if not api_v3.plugin_store_manager:
+            return jsonify({'status': 'error', 'message': 'Plugin store manager not initialized'}), 500
+        
+        data = request.get_json()
+        if not data or 'repo_url' not in data:
+            return jsonify({'status': 'error', 'message': 'repo_url required'}), 400
+
+        repo_url = data['repo_url'].strip()
+        plugin_id = data.get('plugin_id')  # Optional, for monorepo installations
+        plugin_path = data.get('plugin_path')  # Optional, for monorepo subdirectory
+        
+        # Install the plugin
+        result = api_v3.plugin_store_manager.install_from_url(
+            repo_url=repo_url,
+            plugin_id=plugin_id,
+            plugin_path=plugin_path
+        )
+        
+        if result.get('success'):
+            # Discover and load the new plugin
+            installed_plugin_id = result.get('plugin_id')
+            if api_v3.plugin_manager and installed_plugin_id:
+                api_v3.plugin_manager.discover_plugins()
+                api_v3.plugin_manager.load_plugin(installed_plugin_id)
+            
+            return jsonify({
+                'status': 'success',
+                'message': f"Plugin {installed_plugin_id} installed successfully",
+                'plugin_id': installed_plugin_id,
+                'name': result.get('name'),
+                'version': result.get('version')
+            })
+        else:
+            return jsonify({
+                'status': 'error',
+                'message': result.get('error', 'Failed to install plugin from URL')
+            }), 500
+            
+    except Exception as e:
+        import traceback
+        error_details = traceback.format_exc()
+        print(f"Error in install_plugin_from_url: {str(e)}")
+        print(error_details)
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+@api_v3.route('/plugins/registry-from-url', methods=['POST'])
+def get_registry_from_url():
+    """Get plugin list from a registry-style monorepo URL"""
+    try:
+        if not api_v3.plugin_store_manager:
+            return jsonify({'status': 'error', 'message': 'Plugin store manager not initialized'}), 500
+        
+        data = request.get_json()
+        if not data or 'repo_url' not in data:
+            return jsonify({'status': 'error', 'message': 'repo_url required'}), 400
+
+        repo_url = data['repo_url'].strip()
+        
+        # Get registry from the URL
+        registry = api_v3.plugin_store_manager.fetch_registry_from_url(repo_url)
+        
+        if registry:
+            return jsonify({
+                'status': 'success',
+                'plugins': registry.get('plugins', []),
+                'registry_url': repo_url
+            })
+        else:
+            return jsonify({
+                'status': 'error',
+                'message': 'Failed to fetch registry from URL or URL does not contain a valid registry'
+            }), 400
+            
+    except Exception as e:
+        import traceback
+        error_details = traceback.format_exc()
+        print(f"Error in get_registry_from_url: {str(e)}")
+        print(error_details)
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+@api_v3.route('/plugins/saved-repositories', methods=['GET'])
+def get_saved_repositories():
+    """Get all saved repositories"""
+    try:
+        if not api_v3.saved_repositories_manager:
+            return jsonify({'status': 'error', 'message': 'Saved repositories manager not initialized'}), 500
+        
+        repositories = api_v3.saved_repositories_manager.get_all()
+        return jsonify({'status': 'success', 'data': {'repositories': repositories}})
+    except Exception as e:
+        import traceback
+        error_details = traceback.format_exc()
+        print(f"Error in get_saved_repositories: {str(e)}")
+        print(error_details)
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+@api_v3.route('/plugins/saved-repositories', methods=['POST'])
+def add_saved_repository():
+    """Add a repository to saved list"""
+    try:
+        if not api_v3.saved_repositories_manager:
+            return jsonify({'status': 'error', 'message': 'Saved repositories manager not initialized'}), 500
+        
+        data = request.get_json()
+        if not data or 'repo_url' not in data:
+            return jsonify({'status': 'error', 'message': 'repo_url required'}), 400
+        
+        repo_url = data['repo_url'].strip()
+        name = data.get('name')
+        
+        success = api_v3.saved_repositories_manager.add(repo_url, name)
+        
+        if success:
+            return jsonify({
+                'status': 'success',
+                'message': 'Repository saved successfully',
+                'data': {'repositories': api_v3.saved_repositories_manager.get_all()}
+            })
+        else:
+            return jsonify({
+                'status': 'error',
+                'message': 'Repository already exists or failed to save'
+            }), 400
+    except Exception as e:
+        import traceback
+        error_details = traceback.format_exc()
+        print(f"Error in add_saved_repository: {str(e)}")
+        print(error_details)
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+@api_v3.route('/plugins/saved-repositories', methods=['DELETE'])
+def remove_saved_repository():
+    """Remove a repository from saved list"""
+    try:
+        if not api_v3.saved_repositories_manager:
+            return jsonify({'status': 'error', 'message': 'Saved repositories manager not initialized'}), 500
+        
+        data = request.get_json()
+        if not data or 'repo_url' not in data:
+            return jsonify({'status': 'error', 'message': 'repo_url required'}), 400
+        
+        repo_url = data['repo_url']
+        
+        success = api_v3.saved_repositories_manager.remove(repo_url)
+        
+        if success:
+            return jsonify({
+                'status': 'success',
+                'message': 'Repository removed successfully',
+                'data': {'repositories': api_v3.saved_repositories_manager.get_all()}
+            })
+        else:
+            return jsonify({
+                'status': 'error',
+                'message': 'Repository not found'
+            }), 404
+    except Exception as e:
+        import traceback
+        error_details = traceback.format_exc()
+        print(f"Error in remove_saved_repository: {str(e)}")
+        print(error_details)
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
 @api_v3.route('/plugins/store/list', methods=['GET'])
 def list_plugin_store():
     """Search plugin store"""
@@ -839,12 +1007,14 @@ def list_plugin_store():
             # Default to True for initial loads, explicit true, or when not specified
             fetch_latest = True
 
-        # Search plugins from the registry
+        # Search plugins from the registry (including saved repositories)
         plugins = api_v3.plugin_store_manager.search_plugins(
             query=query, 
-            category=category, 
+            category=category,
             tags=tags,
-            fetch_latest_versions=fetch_latest
+            fetch_latest_versions=fetch_latest,
+            include_saved_repos=True,
+            saved_repositories_manager=api_v3.saved_repositories_manager
         )
         
         # Format plugins for the web interface

@@ -21,25 +21,41 @@
         <!-- Installed Plugins Section (Always visible at top) -->
         <div id="installed-plugins-section">
             <div class="flex items-center justify-between mb-4">
-                <h3 class="text-md font-medium text-gray-900">Installed Plugins</h3>
-                <span id="installed-count" class="text-sm text-gray-500">0 installed</span>
+                <div class="flex items-center gap-3">
+                    <h3 class="text-md font-medium text-gray-900">Installed Plugins</h3>
+                    <span id="installed-count" class="text-sm text-gray-500">0 installed</span>
+                </div>
+                <button id="toggle-installed-plugins" class="text-sm text-gray-600 hover:text-gray-800 flex items-center">
+                    <i class="fas fa-chevron-down mr-1" id="installed-plugins-icon"></i>
+                    <span>Collapse</span>
+                </button>
             </div>
-            <div id="installed-plugins-grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-4">
-                <!-- Plugins will be loaded here -->
+            <div id="installed-plugins-content" class="block">
+                <div id="installed-plugins-grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-4">
+                    <!-- Plugins will be loaded here -->
+                </div>
             </div>
         </div>
 
         <!-- Plugin Store Section (Always visible at bottom) -->
         <div id="plugin-store-section" class="border-t border-gray-200 pt-8">
             <div class="flex items-center justify-between mb-4">
-                <h3 class="text-md font-medium text-gray-900">Plugin Store</h3>
-                <span id="store-count" class="text-sm text-gray-500">
-                    <i class="fas fa-spinner fa-spin mr-1"></i>Loading...
-                </span>
+                <div class="flex items-center gap-3">
+                    <h3 class="text-md font-medium text-gray-900">Plugin Store</h3>
+                    <span id="store-count" class="text-sm text-gray-500">
+                        <i class="fas fa-spinner fa-spin mr-1"></i>Loading...
+                    </span>
+                </div>
+                <button id="toggle-plugin-store" class="text-sm text-gray-600 hover:text-gray-800 flex items-center">
+                    <i class="fas fa-chevron-down mr-1" id="plugin-store-icon"></i>
+                    <span>Collapse</span>
+                </button>
             </div>
             
+            <div id="plugin-store-content" class="block">
+            
             <!-- GitHub Auth Warning Banner (only shown when no token is configured) -->
-            <div id="github-auth-warning" class="hidden mb-4 bg-yellow-50 border-l-4 border-yellow-400 p-4">
+            <div id="github-auth-warning" class="hidden mb-4 bg-yellow-50 border-l-4 border-yellow-400 p-4" style="display: none;">
                 <div class="flex">
                     <div class="flex-shrink-0">
                         <i class="fas fa-exclamation-triangle text-yellow-400"></i>
@@ -68,16 +84,24 @@
             </div>
 
             <!-- GitHub Token Configuration Section -->
-            <div id="github-token-settings" class="hidden mb-4 bg-blue-50 border border-blue-200 rounded-lg p-4">
+            <div id="github-token-settings" class="hidden mb-4 bg-blue-50 border border-blue-200 rounded-lg p-4" style="display: none;">
                 <div class="flex items-start justify-between mb-3">
                     <div class="flex items-center space-x-2">
                         <i class="fab fa-github text-blue-600 text-xl"></i>
                         <h4 class="font-semibold text-gray-900">GitHub API Configuration</h4>
                     </div>
-                    <button onclick="toggleGithubTokenSettings()" class="text-gray-500 hover:text-gray-700">
-                        <i class="fas fa-times"></i>
-                    </button>
+                    <div class="flex items-center gap-2">
+                        <button id="toggle-github-token-collapse" class="text-gray-500 hover:text-gray-700 text-sm flex items-center">
+                            <i class="fas fa-chevron-up mr-1" id="github-token-icon-collapse"></i>
+                            <span>Collapse</span>
+                        </button>
+                        <button onclick="toggleGithubTokenSettings()" class="text-gray-500 hover:text-gray-700">
+                            <i class="fas fa-times"></i>
+                        </button>
+                    </div>
                 </div>
+                
+                <div id="github-token-content" class="block">
                 
                 <p class="text-sm text-gray-600 mb-3">
                     Configure your GitHub Personal Access Token to increase API rate limits and get real-time plugin statistics.
@@ -126,6 +150,7 @@
                         </p>
                     </div>
                 </div>
+                </div>
             </div>
             <div class="mb-4">
                 <div class="flex gap-3">
@@ -158,6 +183,87 @@
             </div>
             </div>
         </div>
+        
+        <!-- Install from GitHub URL Section (Separate section, always visible) -->
+        <div class="border-t border-gray-200 pt-8 mt-8">
+            <div class="flex items-center justify-between mb-4">
+                <div>
+                    <h3 class="text-md font-medium text-gray-900">Install from GitHub</h3>
+                    <p class="text-sm text-gray-500 mt-1">Install plugins directly from GitHub repositories</p>
+                </div>
+                <button id="toggle-github-install" class="text-sm text-blue-600 hover:text-blue-800 flex items-center">
+                    <i class="fas fa-chevron-down mr-1" id="github-install-icon"></i>
+                    <span>Show</span>
+                </button>
+            </div>
+            
+            <div id="github-install-section" class="hidden space-y-4">
+                <!-- Saved Repositories Section -->
+                <div class="bg-blue-50 rounded-lg p-4 border border-blue-200">
+                    <div class="flex items-center justify-between mb-3">
+                        <h4 class="text-sm font-semibold text-gray-900">
+                            <i class="fas fa-bookmark mr-2"></i>Saved Repositories
+                        </h4>
+                        <span id="saved-repos-count" class="text-xs text-gray-500">0 saved</span>
+                    </div>
+                    <p class="text-xs text-gray-600 mb-3">Saved repositories are automatically loaded and their plugins appear in the Plugin Store above.</p>
+                    <div id="saved-repositories-list" class="space-y-2 mb-3">
+                        <!-- Saved repositories will be loaded here -->
+                    </div>
+                    <button id="refresh-saved-repos" class="text-xs text-blue-600 hover:text-blue-800">
+                        <i class="fas fa-sync mr-1"></i>Refresh
+                    </button>
+                </div>
+                
+                <!-- Direct Plugin Installation -->
+                <div class="bg-gray-50 rounded-lg p-4 border border-gray-200">
+                    <h4 class="text-sm font-semibold text-gray-900 mb-2">
+                        <i class="fas fa-code-branch mr-2"></i>Install Single Plugin
+                    </h4>
+                    <p class="text-xs text-gray-600 mb-3">Install a plugin directly from its GitHub repository URL</p>
+                    <div class="flex gap-2">
+                        <input type="text" id="github-plugin-url" 
+                               placeholder="https://github.com/user/ledmatrix-plugin-name" 
+                               class="flex-1 px-3 py-2 text-sm border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500">
+                        <button id="install-plugin-from-url" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm rounded-md whitespace-nowrap">
+                            <i class="fas fa-download mr-2"></i>Install
+                        </button>
+                    </div>
+                    <div id="github-plugin-status" class="mt-2 text-sm"></div>
+                </div>
+                
+                <!-- Registry-Style Monorepo Installation -->
+                <div class="bg-gray-50 rounded-lg p-4 border border-gray-200">
+                    <h4 class="text-sm font-semibold text-gray-900 mb-2">
+                        <i class="fas fa-folder-open mr-2"></i>Browse Plugin Registry
+                    </h4>
+                    <p class="text-xs text-gray-600 mb-3">Load a registry-style monorepo (like the official ledmatrix-plugins repo) to browse and install plugins</p>
+                    <div class="flex gap-2 mb-2">
+                        <input type="text" id="github-registry-url" 
+                               placeholder="https://github.com/user/ledmatrix-plugins" 
+                               class="flex-1 px-3 py-2 text-sm border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500">
+                        <button id="load-registry-from-url" class="px-4 py-2 bg-green-600 hover:bg-green-700 text-white text-sm rounded-md whitespace-nowrap">
+                            <i class="fas fa-search mr-2"></i>Load Registry
+                        </button>
+                    </div>
+                    <div class="flex gap-2 mb-3">
+                        <button id="save-registry-url" class="px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm rounded-md whitespace-nowrap">
+                            <i class="fas fa-bookmark mr-2"></i>Save Repository
+                        </button>
+                        <div id="registry-status" class="flex-1 text-sm"></div>
+                    </div>
+                    <div id="custom-registry-plugins" class="hidden">
+                        <div class="border-t border-gray-300 pt-3 mt-3">
+                            <p class="text-xs font-medium text-gray-700 mb-2">Available Plugins:</p>
+                            <div id="custom-registry-grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                                <!-- Custom registry plugins will be loaded here -->
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
     </div>
 
     <!-- Plugin Configuration Modal -->
@@ -289,6 +395,15 @@ function initializePlugins() {
     // Setup search functionality
     document.getElementById('plugin-search').addEventListener('input', debounce(searchPluginStore, 300));
     document.getElementById('plugin-category').addEventListener('change', searchPluginStore);
+    
+    // Setup GitHub installation handlers
+    setupGitHubInstallHandlers();
+    
+    // Setup collapsible section handlers
+    setupCollapsibleSections();
+    
+    // Load saved repositories
+    loadSavedRepositories();
 
     console.log('Plugins initialized');
 }
@@ -1246,6 +1361,7 @@ function renderPluginStore(plugins) {
                         <h4 class="font-medium text-gray-900">${escapeHtml(plugin.name || plugin.id)}</h4>
                         ${plugin.verified ? '<span class="bg-green-100 text-green-800 text-xs px-2 py-1 rounded">✓ Verified</span>' : ''}
                         ${isNewPlugin(plugin.last_updated) ? '<span class="bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded">✨ New</span>' : ''}
+                        ${plugin._source === 'custom_repository' ? `<span class="bg-purple-100 text-purple-800 text-xs px-2 py-1 rounded" title="From: ${escapeHtml(plugin._repository_name || plugin._repository_url || 'Custom Repository')}"><i class="fas fa-bookmark mr-1"></i>Custom</span>` : ''}
                     </div>
                     <div class="text-sm text-gray-600 space-y-1">
                         <p><i class="fas fa-user mr-1"></i>${escapeHtml(plugin.author || 'Unknown')}</p>
@@ -1303,11 +1419,471 @@ window.installPlugin = function(pluginId) {
     });
 }
 
+function setupCollapsibleSections() {
+    // Toggle Installed Plugins section
+    const toggleInstalledBtn = document.getElementById('toggle-installed-plugins');
+    const installedContent = document.getElementById('installed-plugins-content');
+    const installedIcon = document.getElementById('installed-plugins-icon');
+    
+    if (toggleInstalledBtn && installedContent) {
+        toggleInstalledBtn.addEventListener('click', function() {
+            const isHidden = installedContent.style.display === 'none' || installedContent.classList.contains('hidden');
+            if (isHidden) {
+                installedContent.style.display = 'block';
+                installedContent.classList.remove('hidden');
+                installedIcon.classList.remove('fa-chevron-down');
+                installedIcon.classList.add('fa-chevron-up');
+                toggleInstalledBtn.querySelector('span').textContent = 'Collapse';
+            } else {
+                installedContent.style.display = 'none';
+                installedContent.classList.add('hidden');
+                installedIcon.classList.remove('fa-chevron-up');
+                installedIcon.classList.add('fa-chevron-down');
+                toggleInstalledBtn.querySelector('span').textContent = 'Expand';
+            }
+        });
+    }
+    
+    // Toggle Plugin Store section
+    const toggleStoreBtn = document.getElementById('toggle-plugin-store');
+    const storeContent = document.getElementById('plugin-store-content');
+    const storeIcon = document.getElementById('plugin-store-icon');
+    
+    if (toggleStoreBtn && storeContent) {
+        toggleStoreBtn.addEventListener('click', function() {
+            const isHidden = storeContent.style.display === 'none' || storeContent.classList.contains('hidden');
+            if (isHidden) {
+                storeContent.style.display = 'block';
+                storeContent.classList.remove('hidden');
+                storeIcon.classList.remove('fa-chevron-down');
+                storeIcon.classList.add('fa-chevron-up');
+                toggleStoreBtn.querySelector('span').textContent = 'Collapse';
+            } else {
+                storeContent.style.display = 'none';
+                storeContent.classList.add('hidden');
+                storeIcon.classList.remove('fa-chevron-up');
+                storeIcon.classList.add('fa-chevron-down');
+                toggleStoreBtn.querySelector('span').textContent = 'Expand';
+            }
+        });
+    }
+    
+    // Toggle GitHub Token Settings section
+    const toggleTokenCollapseBtn = document.getElementById('toggle-github-token-collapse');
+    const tokenContent = document.getElementById('github-token-content');
+    const tokenIconCollapse = document.getElementById('github-token-icon-collapse');
+    
+    if (toggleTokenCollapseBtn && tokenContent) {
+        toggleTokenCollapseBtn.addEventListener('click', function(e) {
+            e.stopPropagation(); // Prevent triggering the close button
+            const isHidden = tokenContent.style.display === 'none' || tokenContent.classList.contains('hidden');
+            if (isHidden) {
+                tokenContent.style.display = 'block';
+                tokenContent.classList.remove('hidden');
+                tokenIconCollapse.classList.remove('fa-chevron-down');
+                tokenIconCollapse.classList.add('fa-chevron-up');
+                toggleTokenCollapseBtn.querySelector('span').textContent = 'Collapse';
+            } else {
+                tokenContent.style.display = 'none';
+                tokenContent.classList.add('hidden');
+                tokenIconCollapse.classList.remove('fa-chevron-up');
+                tokenIconCollapse.classList.add('fa-chevron-down');
+                toggleTokenCollapseBtn.querySelector('span').textContent = 'Expand';
+            }
+        });
+    }
+}
+
+function loadSavedRepositories() {
+    fetch('/api/v3/plugins/saved-repositories')
+        .then(response => response.json())
+        .then(data => {
+            if (data.status === 'success') {
+                renderSavedRepositories(data.data.repositories || []);
+            }
+        })
+        .catch(error => {
+            console.error('Error loading saved repositories:', error);
+        });
+}
+
+function renderSavedRepositories(repositories) {
+    const container = document.getElementById('saved-repositories-list');
+    const countEl = document.getElementById('saved-repos-count');
+    
+    if (!container) return;
+    
+    if (countEl) {
+        countEl.textContent = `${repositories.length} saved`;
+    }
+    
+    if (repositories.length === 0) {
+        container.innerHTML = '<p class="text-xs text-gray-500 italic">No saved repositories yet. Save a repository URL to see it here.</p>';
+        return;
+    }
+    
+    container.innerHTML = repositories.map(repo => {
+        const repoUrl = repo.url || '';
+        const repoName = repo.name || repoUrl;
+        const repoType = repo.type || 'single';
+        
+        return `
+            <div class="bg-white border border-gray-200 rounded p-2 flex items-center justify-between">
+                <div class="flex-1 min-w-0">
+                    <div class="flex items-center gap-2">
+                        <i class="fas ${repoType === 'registry' ? 'fa-folder-open' : 'fa-code-branch'} text-gray-400 text-xs"></i>
+                        <span class="text-sm font-medium text-gray-900 truncate" title="${repoUrl}">${escapeHtml(repoName)}</span>
+                    </div>
+                    <p class="text-xs text-gray-500 truncate" title="${repoUrl}">${escapeHtml(repoUrl)}</p>
+                </div>
+                <button onclick="removeSavedRepository('${escapeAttr(repoUrl)}')" 
+                        class="ml-2 text-red-600 hover:text-red-800 text-xs px-2 py-1" 
+                        title="Remove repository">
+                    <i class="fas fa-trash"></i>
+                </button>
+            </div>
+        `;
+    }).join('');
+}
+
+window.removeSavedRepository = function(repoUrl) {
+    if (!confirm('Remove this saved repository? Its plugins will no longer appear in the store.')) {
+        return;
+    }
+    
+    fetch('/api/v3/plugins/saved-repositories', {
+        method: 'DELETE',
+        headers: {
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ repo_url: repoUrl })
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.status === 'success') {
+            showSuccess('Repository removed successfully');
+            renderSavedRepositories(data.data.repositories || []);
+            // Refresh plugin store to remove plugins from deleted repo
+            searchPluginStore();
+        } else {
+            showError(data.message || 'Failed to remove repository');
+        }
+    })
+    .catch(error => {
+        showError('Error removing repository: ' + error.message);
+    });
+}
+
+function setupGitHubInstallHandlers() {
+    // Toggle GitHub install section visibility
+    const toggleBtn = document.getElementById('toggle-github-install');
+    const installSection = document.getElementById('github-install-section');
+    const icon = document.getElementById('github-install-icon');
+    
+    if (toggleBtn && installSection) {
+        toggleBtn.addEventListener('click', function() {
+            const isHidden = installSection.classList.contains('hidden');
+            if (isHidden) {
+                installSection.classList.remove('hidden');
+                icon.classList.remove('fa-chevron-down');
+                icon.classList.add('fa-chevron-up');
+                toggleBtn.querySelector('span').textContent = 'Hide';
+            } else {
+                installSection.classList.add('hidden');
+                icon.classList.remove('fa-chevron-up');
+                icon.classList.add('fa-chevron-down');
+                toggleBtn.querySelector('span').textContent = 'Show';
+            }
+        });
+    }
+    
+    // Install single plugin from URL
+    const installBtn = document.getElementById('install-plugin-from-url');
+    const pluginUrlInput = document.getElementById('github-plugin-url');
+    const pluginStatusDiv = document.getElementById('github-plugin-status');
+    
+    if (installBtn && pluginUrlInput) {
+        installBtn.addEventListener('click', function() {
+            const repoUrl = pluginUrlInput.value.trim();
+            if (!repoUrl) {
+                pluginStatusDiv.innerHTML = '<span class="text-red-600"><i class="fas fa-exclamation-circle mr-1"></i>Please enter a GitHub URL</span>';
+                return;
+            }
+            
+            if (!repoUrl.includes('github.com')) {
+                pluginStatusDiv.innerHTML = '<span class="text-red-600"><i class="fas fa-exclamation-circle mr-1"></i>Please enter a valid GitHub URL</span>';
+                return;
+            }
+            
+            installBtn.disabled = true;
+            installBtn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>Installing...';
+            pluginStatusDiv.innerHTML = '<span class="text-blue-600"><i class="fas fa-spinner fa-spin mr-1"></i>Installing plugin...</span>';
+            
+            fetch('/api/v3/plugins/install-from-url', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ repo_url: repoUrl })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.status === 'success') {
+                    pluginStatusDiv.innerHTML = `<span class="text-green-600"><i class="fas fa-check-circle mr-1"></i>Successfully installed: ${data.plugin_id}</span>`;
+                    pluginUrlInput.value = '';
+                    
+                    // Refresh installed plugins list
+                    setTimeout(() => {
+                        loadInstalledPlugins();
+                    }, 1000);
+                } else {
+                    pluginStatusDiv.innerHTML = `<span class="text-red-600"><i class="fas fa-times-circle mr-1"></i>${data.message || 'Installation failed'}</span>`;
+                }
+            })
+            .catch(error => {
+                pluginStatusDiv.innerHTML = `<span class="text-red-600"><i class="fas fa-times-circle mr-1"></i>Error: ${error.message}</span>`;
+            })
+            .finally(() => {
+                installBtn.disabled = false;
+                installBtn.innerHTML = '<i class="fas fa-download mr-2"></i>Install';
+            });
+        });
+        
+        // Allow Enter key to trigger install
+        pluginUrlInput.addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') {
+                installBtn.click();
+            }
+        });
+    }
+    
+    // Load registry from URL
+    const loadRegistryBtn = document.getElementById('load-registry-from-url');
+    const registryUrlInput = document.getElementById('github-registry-url');
+    const registryStatusDiv = document.getElementById('registry-status');
+    const customRegistryPlugins = document.getElementById('custom-registry-plugins');
+    const customRegistryGrid = document.getElementById('custom-registry-grid');
+    
+    if (loadRegistryBtn && registryUrlInput) {
+        loadRegistryBtn.addEventListener('click', function() {
+            const repoUrl = registryUrlInput.value.trim();
+            if (!repoUrl) {
+                registryStatusDiv.innerHTML = '<span class="text-red-600"><i class="fas fa-exclamation-circle mr-1"></i>Please enter a GitHub URL</span>';
+                return;
+            }
+            
+            if (!repoUrl.includes('github.com')) {
+                registryStatusDiv.innerHTML = '<span class="text-red-600"><i class="fas fa-exclamation-circle mr-1"></i>Please enter a valid GitHub URL</span>';
+                return;
+            }
+            
+            loadRegistryBtn.disabled = true;
+            loadRegistryBtn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>Loading...';
+            registryStatusDiv.innerHTML = '<span class="text-blue-600"><i class="fas fa-spinner fa-spin mr-1"></i>Loading registry...</span>';
+            customRegistryPlugins.classList.add('hidden');
+            
+            fetch('/api/v3/plugins/registry-from-url', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ repo_url: repoUrl })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.status === 'success' && data.plugins && data.plugins.length > 0) {
+                    registryStatusDiv.innerHTML = `<span class="text-green-600"><i class="fas fa-check-circle mr-1"></i>Found ${data.plugins.length} plugins</span>`;
+                    renderCustomRegistryPlugins(data.plugins, repoUrl);
+                    customRegistryPlugins.classList.remove('hidden');
+                } else {
+                    registryStatusDiv.innerHTML = '<span class="text-red-600"><i class="fas fa-times-circle mr-1"></i>No valid registry found or registry is empty</span>';
+                    customRegistryPlugins.classList.add('hidden');
+                }
+            })
+            .catch(error => {
+                registryStatusDiv.innerHTML = `<span class="text-red-600"><i class="fas fa-times-circle mr-1"></i>Error: ${error.message}</span>`;
+                customRegistryPlugins.classList.add('hidden');
+            })
+            .finally(() => {
+                loadRegistryBtn.disabled = false;
+                loadRegistryBtn.innerHTML = '<i class="fas fa-search mr-2"></i>Load Registry';
+            });
+        });
+        
+        // Allow Enter key to trigger load
+        registryUrlInput.addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') {
+                loadRegistryBtn.click();
+            }
+        });
+    }
+    
+    // Save registry URL button
+    const saveRegistryBtn = document.getElementById('save-registry-url');
+    if (saveRegistryBtn && registryUrlInput) {
+        saveRegistryBtn.addEventListener('click', function() {
+            const repoUrl = registryUrlInput.value.trim();
+            if (!repoUrl) {
+                showError('Please enter a repository URL first');
+                return;
+            }
+            
+            if (!repoUrl.includes('github.com')) {
+                showError('Please enter a valid GitHub URL');
+                return;
+            }
+            
+            saveRegistryBtn.disabled = true;
+            saveRegistryBtn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>Saving...';
+            
+            fetch('/api/v3/plugins/saved-repositories', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ repo_url: repoUrl })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.status === 'success') {
+                    showSuccess('Repository saved successfully! Its plugins will appear in the Plugin Store.');
+                    renderSavedRepositories(data.data.repositories || []);
+                    // Refresh plugin store to include new repo
+                    searchPluginStore();
+                } else {
+                    showError(data.message || 'Failed to save repository');
+                }
+            })
+            .catch(error => {
+                showError('Error saving repository: ' + error.message);
+            })
+            .finally(() => {
+                saveRegistryBtn.disabled = false;
+                saveRegistryBtn.innerHTML = '<i class="fas fa-bookmark mr-2"></i>Save Repository';
+            });
+        });
+    }
+    
+    // Refresh saved repos button
+    const refreshSavedReposBtn = document.getElementById('refresh-saved-repos');
+    if (refreshSavedReposBtn) {
+        refreshSavedReposBtn.addEventListener('click', function() {
+            loadSavedRepositories();
+            searchPluginStore(); // Also refresh plugin store
+            showSuccess('Repositories refreshed');
+        });
+    }
+}
+
+function renderCustomRegistryPlugins(plugins, registryUrl) {
+    const container = document.getElementById('custom-registry-grid');
+    if (!container) return;
+    
+    if (plugins.length === 0) {
+        container.innerHTML = '<p class="text-sm text-gray-500 col-span-full">No plugins found in this registry</p>';
+        return;
+    }
+    
+    // Escape HTML helper
+    const escapeHtml = (text) => {
+        if (!text) return '';
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+    };
+    
+    // Escape URL and path for onclick handler
+    const escapeAttr = (text) => {
+        return (text || '').replace(/'/g, "\\'").replace(/"/g, '&quot;');
+    };
+    
+    container.innerHTML = plugins.map(plugin => {
+        const isInstalled = installedPlugins.some(p => p.id === plugin.id);
+        const pluginId = escapeAttr(plugin.id);
+        const escapedUrl = escapeAttr(registryUrl);
+        const pluginPath = escapeAttr(plugin.plugin_path || '');
+        
+        const installBtn = isInstalled 
+            ? '<button class="px-3 py-1 text-xs bg-gray-400 text-white rounded cursor-not-allowed" disabled><i class="fas fa-check mr-1"></i>Installed</button>'
+            : `<button onclick="installFromCustomRegistry('${pluginId}', '${escapedUrl}', '${pluginPath}')" class="px-3 py-1 text-xs bg-blue-600 hover:bg-blue-700 text-white rounded"><i class="fas fa-download mr-1"></i>Install</button>`;
+        
+        return `
+            <div class="bg-white border border-gray-200 rounded-lg p-3">
+                <div class="flex items-start justify-between mb-2">
+                    <div class="flex-1">
+                        <h5 class="font-semibold text-sm text-gray-900">${escapeHtml(plugin.name || plugin.id)}</h5>
+                        <p class="text-xs text-gray-600 mt-1 line-clamp-2">${escapeHtml(plugin.description || 'No description')}</p>
+                    </div>
+                </div>
+                <div class="flex items-center justify-between mt-2 pt-2 border-t border-gray-100">
+                    <span class="text-xs text-gray-500">v${escapeHtml(plugin.latest_version || plugin.version || '?')}</span>
+                    ${installBtn}
+                </div>
+            </div>
+        `;
+    }).join('');
+}
+
+window.installFromCustomRegistry = function(pluginId, registryUrl, pluginPath) {
+    const repoUrl = registryUrl;
+    
+    fetch('/api/v3/plugins/install-from-url', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ 
+            repo_url: repoUrl,
+            plugin_id: pluginId,
+            plugin_path: pluginPath
+        })
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.status === 'success') {
+            showSuccess(`Plugin ${data.plugin_id} installed successfully`);
+            // Refresh installed plugins and re-render custom registry
+            loadInstalledPlugins();
+            // Re-render custom registry to update install buttons
+            const registryUrlInput = document.getElementById('github-registry-url');
+            if (registryUrlInput && registryUrlInput.value.trim()) {
+                document.getElementById('load-registry-from-url').click();
+            }
+        } else {
+            showError(data.message || 'Installation failed');
+        }
+    })
+    .catch(error => {
+        showError('Error installing plugin: ' + error.message);
+    });
+}
+
+function showSuccess(message) {
+    // Try to use notification system if available, otherwise use alert
+    if (typeof showNotification === 'function') {
+        showNotification(message, 'success');
+    } else {
+        console.log('Success: ' + message);
+        // Show a temporary success message
+        const statusDiv = document.getElementById('github-plugin-status') || document.getElementById('registry-status');
+        if (statusDiv) {
+            statusDiv.innerHTML = `<span class="text-green-600"><i class="fas fa-check-circle mr-1"></i>${message}</span>`;
+            setTimeout(() => {
+                if (statusDiv) statusDiv.innerHTML = '';
+            }, 5000);
+        }
+    }
+}
+
 function showError(message) {
     const content = document.getElementById('plugins-content');
     if (!content) {
         console.error('plugins-content element not found');
-        showNotification(message, 'error');
+        if (typeof showNotification === 'function') {
+            showNotification(message, 'error');
+        } else {
+            console.error('Error: ' + message);
+        }
         return;
     }
     content.innerHTML = `

@@ -153,6 +153,60 @@ class PluginStoreManager:
         # Exhausted retries
         raise last_exc
 
+    def fetch_registry_from_url(self, repo_url: str) -> Optional[Dict]:
+        """
+        Fetch a registry-style plugins.json from a custom GitHub repository URL.
+        
+        This allows users to point to a registry-style monorepo (like the official
+        ledmatrix-plugins repo) and browse/install plugins from it.
+        
+        Args:
+            repo_url: GitHub repository URL (e.g., https://github.com/user/ledmatrix-plugins)
+            
+        Returns:
+            Registry dict with plugins list, or None if not found/invalid
+        """
+        try:
+            # Clean up URL
+            repo_url = repo_url.rstrip('/').replace('.git', '')
+            
+            # Try to find plugins.json in common locations
+            # First try root directory
+            registry_urls = []
+            
+            # Extract owner/repo from URL
+            if 'github.com' in repo_url:
+                parts = repo_url.split('/')
+                if len(parts) >= 2:
+                    owner = parts[-2]
+                    repo = parts[-1]
+                    
+                    # Try common branch names
+                    for branch in ['main', 'master']:
+                        registry_urls.append(f"https://raw.githubusercontent.com/{owner}/{repo}/{branch}/plugins.json")
+                        registry_urls.append(f"https://raw.githubusercontent.com/{owner}/{repo}/{branch}/registry.json")
+            
+            # Try each URL
+            for url in registry_urls:
+                try:
+                    response = self._http_get_with_retries(url, timeout=10)
+                    if response.status_code == 200:
+                        registry = response.json()
+                        # Validate it looks like a registry
+                        if isinstance(registry, dict) and 'plugins' in registry:
+                            self.logger.info(f"Successfully fetched registry from {url}")
+                            return registry
+                except Exception as e:
+                    self.logger.debug(f"Failed to fetch from {url}: {e}")
+                    continue
+            
+            self.logger.warning(f"No valid registry found at {repo_url}")
+            return None
+            
+        except Exception as e:
+            self.logger.error(f"Error fetching registry from URL: {e}", exc_info=True)
+            return None
+    
     def fetch_registry(self, force_refresh: bool = False) -> Dict:
         """
         Fetch the plugin registry from GitHub.
@@ -180,7 +234,7 @@ class PluginStoreManager:
             self.logger.error(f"Error parsing registry JSON: {e}")
             return {"version": "1.0.0", "plugins": []}
     
-    def search_plugins(self, query: str = "", category: str = "", tags: List[str] = None, fetch_latest_versions: bool = False) -> List[Dict]:
+    def search_plugins(self, query: str = "", category: str = "", tags: List[str] = None, fetch_latest_versions: bool = False, include_saved_repos: bool = True, saved_repositories_manager = None) -> List[Dict]:
         """
         Search for plugins in the registry with enhanced metadata.
 
@@ -196,8 +250,28 @@ class PluginStoreManager:
         if tags is None:
             tags = []
 
+        # Fetch from official registry
         registry = self.fetch_registry()
         plugins = registry.get('plugins', []) or []
+        
+        # Also fetch from saved repositories if enabled
+        if include_saved_repos and saved_repositories_manager:
+            saved_repos = saved_repositories_manager.get_registry_repositories()
+            for repo_info in saved_repos:
+                repo_url = repo_info.get('url')
+                if repo_url:
+                    try:
+                        custom_registry = self.fetch_registry_from_url(repo_url)
+                        if custom_registry:
+                            custom_plugins = custom_registry.get('plugins', []) or []
+                            # Mark these as from custom repository
+                            for plugin in custom_plugins:
+                                plugin['_source'] = 'custom_repository'
+                                plugin['_repository_url'] = repo_url
+                                plugin['_repository_name'] = repo_info.get('name', repo_url)
+                            plugins.extend(custom_plugins)
+                    except Exception as e:
+                        self.logger.warning(f"Failed to fetch plugins from saved repository {repo_url}: {e}")
 
         results = []
         for plugin in plugins:
@@ -520,19 +594,24 @@ class PluginStoreManager:
                 shutil.rmtree(plugin_path)
             return False
     
-    def install_from_url(self, repo_url: str, plugin_id: str = None) -> Dict[str, Any]:
+    def install_from_url(self, repo_url: str, plugin_id: str = None, plugin_path: str = None) -> Dict[str, Any]:
         """
         Install a plugin directly from a GitHub URL.
         This allows users to install custom/unverified plugins.
         
+        Supports two installation modes:
+        1. Direct plugin repo: Repository contains a single plugin with manifest.json at root
+        2. Monorepo with plugin_path: Repository contains multiple plugins, install from subdirectory
+        
         Args:
             repo_url: GitHub repository URL (e.g., https://github.com/user/repo)
             plugin_id: Optional plugin ID (extracted from manifest if not provided)
+            plugin_path: Optional subdirectory path for monorepo installations (e.g., "plugins/hello-world")
             
         Returns:
             Dict with status and plugin_id or error message
         """
-        self.logger.info(f"Installing plugin from custom URL: {repo_url}")
+        self.logger.info(f"Installing plugin from custom URL: {repo_url}" + (f" (subpath: {plugin_path})" if plugin_path else ""))
         
         # Clean up URL (remove .git suffix if present)
         repo_url = repo_url.rstrip('/').replace('.git', '')
@@ -542,29 +621,42 @@ class PluginStoreManager:
             # Create temporary directory
             temp_dir = Path(tempfile.mkdtemp(prefix='ledmatrix_plugin_'))
             
-            # Try git clone
-            if self._install_via_git(repo_url, branch='main', target_path=temp_dir):
-                self.logger.info("Cloned via git")
-            elif self._install_via_git(repo_url, branch='master', target_path=temp_dir):
-                self.logger.info("Cloned via git (master branch)")
-            else:
+            # For monorepo installations, download and extract subdirectory
+            if plugin_path:
                 # Try downloading as zip (main branch)
                 download_url = f"{repo_url}/archive/refs/heads/main.zip"
-                if not self._install_via_download(download_url, temp_dir):
+                if not self._install_from_monorepo(download_url, plugin_path, temp_dir):
                     # Try master branch
                     download_url = f"{repo_url}/archive/refs/heads/master.zip"
-                    if not self._install_via_download(download_url, temp_dir):
+                    if not self._install_from_monorepo(download_url, plugin_path, temp_dir):
                         return {
                             'success': False,
-                            'error': 'Failed to clone or download repository'
+                            'error': f'Failed to download or extract plugin from monorepo subdirectory: {plugin_path}'
                         }
+            else:
+                # Try git clone for direct plugin repos
+                if self._install_via_git(repo_url, branch='main', target_path=temp_dir):
+                    self.logger.info("Cloned via git")
+                elif self._install_via_git(repo_url, branch='master', target_path=temp_dir):
+                    self.logger.info("Cloned via git (master branch)")
+                else:
+                    # Try downloading as zip (main branch)
+                    download_url = f"{repo_url}/archive/refs/heads/main.zip"
+                    if not self._install_via_download(download_url, temp_dir):
+                        # Try master branch
+                        download_url = f"{repo_url}/archive/refs/heads/master.zip"
+                        if not self._install_via_download(download_url, temp_dir):
+                            return {
+                                'success': False,
+                                'error': 'Failed to clone or download repository'
+                            }
             
             # Read manifest to get plugin ID
             manifest_path = temp_dir / "manifest.json"
             if not manifest_path.exists():
                 return {
                     'success': False,
-                    'error': 'No manifest.json found in repository'
+                    'error': 'No manifest.json found in repository' + (f' at path: {plugin_path}' if plugin_path else '')
                 }
             
             with open(manifest_path, 'r') as f:
