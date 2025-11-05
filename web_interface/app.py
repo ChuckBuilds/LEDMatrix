@@ -59,6 +59,9 @@ api_v3.config_manager = config_manager
 api_v3.plugin_manager = plugin_manager
 api_v3.plugin_store_manager = plugin_store_manager
 api_v3.saved_repositories_manager = saved_repositories_manager
+# Initialize cache manager for API endpoints
+from src.cache_manager import CacheManager
+api_v3.cache_manager = CacheManager()
 
 app.register_blueprint(pages_v3, url_prefix='/v3')
 app.register_blueprint(api_v3, url_prefix='/api/v3')

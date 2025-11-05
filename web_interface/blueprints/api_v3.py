@@ -13,6 +13,7 @@ config_manager = None
 plugin_manager = None
 plugin_store_manager = None
 saved_repositories_manager = None
+cache_manager = None
 
 # Get project root directory (web_interface/../..)
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -1837,3 +1838,59 @@ def disable_ap_mode():
             'status': 'error',
             'message': f'Error disabling AP mode: {str(e)}'
         }), 500
+
+@api_v3.route('/cache/list', methods=['GET'])
+def list_cache_files():
+    """List all cache files with metadata"""
+    try:
+        if not api_v3.cache_manager:
+            # Initialize cache manager if not already initialized
+            from src.cache_manager import CacheManager
+            api_v3.cache_manager = CacheManager()
+        
+        cache_files = api_v3.cache_manager.list_cache_files()
+        cache_dir = api_v3.cache_manager.get_cache_dir()
+        
+        return jsonify({
+            'status': 'success',
+            'data': {
+                'cache_files': cache_files,
+                'cache_dir': cache_dir,
+                'total_files': len(cache_files)
+            }
+        })
+    except Exception as e:
+        import traceback
+        error_details = traceback.format_exc()
+        print(f"Error in list_cache_files: {str(e)}")
+        print(error_details)
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+@api_v3.route('/cache/delete', methods=['POST'])
+def delete_cache_file():
+    """Delete a specific cache file by key"""
+    try:
+        if not api_v3.cache_manager:
+            # Initialize cache manager if not already initialized
+            from src.cache_manager import CacheManager
+            api_v3.cache_manager = CacheManager()
+        
+        data = request.get_json()
+        if not data or 'key' not in data:
+            return jsonify({'status': 'error', 'message': 'cache key is required'}), 400
+        
+        cache_key = data['key']
+        
+        # Delete the cache file
+        api_v3.cache_manager.clear_cache(cache_key)
+        
+        return jsonify({
+            'status': 'success',
+            'message': f'Cache file for key "{cache_key}" deleted successfully'
+        })
+    except Exception as e:
+        import traceback
+        error_details = traceback.format_exc()
+        print(f"Error in delete_cache_file: {str(e)}")
+        print(error_details)
+        return jsonify({'status': 'error', 'message': str(e)}), 500

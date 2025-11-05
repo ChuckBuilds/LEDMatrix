@@ -76,6 +76,8 @@ def load_partial(partial_name):
             return _load_raw_json_partial()
         elif partial_name == 'wifi':
             return _load_wifi_partial()
+        elif partial_name == 'cache':
+            return _load_cache_partial()
         else:
             return f"Partial '{partial_name}' not found", 404
 
@@ -270,5 +272,12 @@ def _load_wifi_partial():
     """Load WiFi setup partial"""
     try:
         return render_template('v3/partials/wifi.html')
+    except Exception as e:
+        return f"Error: {str(e)}", 500
+
+def _load_cache_partial():
+    """Load cache management partial"""
+    try:
+        return render_template('v3/partials/cache.html')
     except Exception as e:
         return f"Error: {str(e)}", 500

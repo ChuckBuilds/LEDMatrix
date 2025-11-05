@@ -322,6 +322,82 @@ class CacheManager:
                             file_count += 1
                 self.logger.info(f"Cleared all cache: {memory_count} memory entries, {file_count} cache files")
 
+    def list_cache_files(self) -> list:
+        """List all cache files with metadata (key, age, size, path).
+        
+        Returns:
+            List of dicts with keys: 'key', 'filename', 'age_seconds', 'age_display', 
+            'size_bytes', 'size_display', 'path', 'modified_time'
+        """
+        if not self.cache_dir or not os.path.exists(self.cache_dir):
+            return []
+        
+        cache_files = []
+        current_time = time.time()
+        
+        try:
+            with self._cache_lock:
+                for filename in os.listdir(self.cache_dir):
+                    if not filename.endswith('.json'):
+                        continue
+                    
+                    # Extract key from filename (remove .json extension)
+                    key = filename[:-5]  # Remove '.json'
+                    
+                    file_path = os.path.join(self.cache_dir, filename)
+                    
+                    try:
+                        # Get file stats
+                        stat_info = os.stat(file_path)
+                        size_bytes = stat_info.st_size
+                        modified_time = stat_info.st_mtime
+                        age_seconds = current_time - modified_time
+                        
+                        # Format age display
+                        if age_seconds < 60:
+                            age_display = f"{int(age_seconds)}s"
+                        elif age_seconds < 3600:
+                            age_display = f"{int(age_seconds / 60)}m"
+                        elif age_seconds < 86400:
+                            age_display = f"{int(age_seconds / 3600)}h"
+                        else:
+                            age_display = f"{int(age_seconds / 86400)}d"
+                        
+                        # Format size display
+                        if size_bytes < 1024:
+                            size_display = f"{size_bytes}B"
+                        elif size_bytes < 1024 * 1024:
+                            size_display = f"{size_bytes / 1024:.1f}KB"
+                        else:
+                            size_display = f"{size_bytes / (1024 * 1024):.1f}MB"
+                        
+                        cache_files.append({
+                            'key': key,
+                            'filename': filename,
+                            'age_seconds': age_seconds,
+                            'age_display': age_display,
+                            'size_bytes': size_bytes,
+                            'size_display': size_display,
+                            'path': file_path,
+                            'modified_time': modified_time,
+                            'modified_datetime': datetime.fromtimestamp(modified_time).isoformat()
+                        })
+                    except OSError as e:
+                        self.logger.warning(f"Error getting stats for cache file {filename}: {e}")
+                        continue
+                        
+        except OSError as e:
+            self.logger.error(f"Error listing cache directory: {e}")
+            return []
+        
+        # Sort by modified time (newest first)
+        cache_files.sort(key=lambda x: x['modified_time'], reverse=True)
+        return cache_files
+
+    def get_cache_dir(self) -> Optional[str]:
+        """Get the cache directory path."""
+        return self.cache_dir
+
     def has_data_changed(self, data_type: str, new_data: Dict[str, Any]) -> bool:
         """Check if data has changed from cached version."""
         cached_data = self.load_cache(data_type)
