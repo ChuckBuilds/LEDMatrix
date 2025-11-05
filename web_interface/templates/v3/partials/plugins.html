@@ -476,7 +476,6 @@ function renderInstalledPlugins(plugins) {
                     <div class="flex items-center flex-wrap gap-2 mb-2">
                         <h4 class="font-semibold text-gray-900 text-base">${escapeHtml(plugin.name || plugin.id)}</h4>
                         ${plugin.verified ? '<span class="badge badge-success"><i class="fas fa-check-circle mr-1"></i>Verified</span>' : ''}
-                        ${plugin.enabled ? '<span class="badge badge-success"><i class="fas fa-check mr-1"></i>Enabled</span>' : '<span class="badge badge-warning"><i class="fas fa-times mr-1"></i>Disabled</span>'}
                     </div>
                     <div class="text-sm text-gray-600 space-y-1.5 mb-3">
                         <p class="flex items-center"><i class="fas fa-user mr-2 text-gray-400 w-4"></i>${escapeHtml(plugin.author || 'Unknown')}</p>
@@ -485,6 +484,29 @@ function renderInstalledPlugins(plugins) {
                         ${plugin.stars ? `<p class="flex items-center"><i class="fas fa-star mr-2 text-gray-400 w-4"></i>${plugin.stars} stars</p>` : ''}
                     </div>
                     <p class="text-sm text-gray-700 leading-relaxed">${escapeHtml(plugin.description || 'No description available')}</p>
+                </div>
+                <!-- Toggle Switch in Top Right -->
+                <div class="flex-shrink-0 ml-4">
+                    <label class="relative inline-flex items-center cursor-pointer group">
+                        <input type="checkbox" 
+                               class="sr-only peer" 
+                               id="toggle-${plugin.id}"
+                               ${plugin.enabled ? 'checked' : ''}
+                               onchange="togglePlugin('${plugin.id}', this.checked)">
+                        <div class="flex items-center gap-2 px-3 py-1.5 rounded-lg border-2 transition-all duration-200 ${plugin.enabled ? 'bg-green-50 border-green-500' : 'bg-gray-50 border-gray-300'} hover:shadow-md group-hover:scale-105">
+                            <!-- Toggle Switch -->
+                            <div class="relative w-14 h-7 ${plugin.enabled ? 'bg-green-500' : 'bg-gray-300'} peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 rounded-full peer peer-checked:bg-green-500 transition-colors duration-200 ease-in-out shadow-inner">
+                                <div class="absolute top-[3px] left-[3px] bg-white ${plugin.enabled ? 'translate-x-full' : ''} border-2 ${plugin.enabled ? 'border-green-500' : 'border-gray-400'} rounded-full h-5 w-5 transition-all duration-200 ease-in-out shadow-sm flex items-center justify-center">
+                                    ${plugin.enabled ? '<i class="fas fa-check text-green-600 text-xs"></i>' : '<i class="fas fa-times text-gray-400 text-xs"></i>'}
+                                </div>
+                            </div>
+                            <!-- Label with Icon -->
+                            <span class="text-sm font-semibold ${plugin.enabled ? 'text-green-700' : 'text-gray-600'} flex items-center gap-1.5" id="toggle-label-${plugin.id}">
+                                ${plugin.enabled ? '<i class="fas fa-toggle-on text-green-600"></i>' : '<i class="fas fa-toggle-off text-gray-400"></i>'}
+                                <span>${plugin.enabled ? 'Enabled' : 'Disabled'}</span>
+                            </span>
+                        </div>
+                    </label>
                 </div>
             </div>
 
@@ -1125,6 +1147,101 @@ window.closePluginConfigModal = function() {
     modal.style.display = 'none';
         currentPluginConfig = null;
     console.log('Modal closed');
+}
+
+window.togglePlugin = function(pluginId, enabled) {
+    const plugin = installedPlugins.find(p => p.id === pluginId);
+    const pluginName = plugin ? (plugin.name || pluginId) : pluginId;
+    const action = enabled ? 'enabling' : 'disabling';
+    
+    // Update UI immediately for better UX
+    const toggleCheckbox = document.getElementById(`toggle-${pluginId}`);
+    const toggleLabel = document.getElementById(`toggle-label-${pluginId}`);
+    const wrapperDiv = toggleCheckbox?.parentElement?.querySelector('.flex.items-center.gap-2');
+    const toggleTrack = wrapperDiv?.querySelector('.relative.w-14');
+    const toggleHandle = toggleTrack?.querySelector('.absolute');
+    
+    if (toggleCheckbox) toggleCheckbox.checked = enabled;
+    
+    // Update wrapper background and border
+    if (wrapperDiv) {
+        if (enabled) {
+            wrapperDiv.classList.remove('bg-gray-50', 'border-gray-300');
+            wrapperDiv.classList.add('bg-green-50', 'border-green-500');
+        } else {
+            wrapperDiv.classList.remove('bg-green-50', 'border-green-500');
+            wrapperDiv.classList.add('bg-gray-50', 'border-gray-300');
+        }
+    }
+    
+    // Update toggle track
+    if (toggleTrack) {
+        if (enabled) {
+            toggleTrack.classList.remove('bg-gray-300');
+            toggleTrack.classList.add('bg-green-500');
+        } else {
+            toggleTrack.classList.remove('bg-green-500');
+            toggleTrack.classList.add('bg-gray-300');
+        }
+    }
+    
+    // Update toggle handle
+    if (toggleHandle) {
+        if (enabled) {
+            toggleHandle.classList.add('translate-x-full', 'border-green-500');
+            toggleHandle.classList.remove('border-gray-400');
+            toggleHandle.innerHTML = '<i class="fas fa-check text-green-600 text-xs"></i>';
+        } else {
+            toggleHandle.classList.remove('translate-x-full', 'border-green-500');
+            toggleHandle.classList.add('border-gray-400');
+            toggleHandle.innerHTML = '<i class="fas fa-times text-gray-400 text-xs"></i>';
+        }
+    }
+    
+    // Update label with icon and text
+    if (toggleLabel) {
+        if (enabled) {
+            toggleLabel.className = 'text-sm font-semibold text-green-700 flex items-center gap-1.5';
+            toggleLabel.innerHTML = '<i class="fas fa-toggle-on text-green-600"></i><span>Enabled</span>';
+        } else {
+            toggleLabel.className = 'text-sm font-semibold text-gray-600 flex items-center gap-1.5';
+            toggleLabel.innerHTML = '<i class="fas fa-toggle-off text-gray-400"></i><span>Disabled</span>';
+        }
+    }
+    
+    showNotification(`${action.charAt(0).toUpperCase() + action.slice(1)} ${pluginName}...`, 'info');
+
+    fetch('/api/v3/plugins/toggle', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ plugin_id: pluginId, enabled: enabled })
+    })
+    .then(response => response.json())
+    .then(data => {
+        showNotification(data.message, data.status);
+        if (data.status === 'success') {
+            // Update local state
+            if (plugin) {
+                plugin.enabled = enabled;
+            }
+            // Refresh the list to ensure consistency
+            loadInstalledPlugins();
+        } else {
+            // Revert the toggle if API call failed
+            if (plugin) {
+                plugin.enabled = !enabled;
+            }
+            loadInstalledPlugins();
+        }
+    })
+    .catch(error => {
+        showNotification('Error toggling plugin: ' + error.message, 'error');
+        // Revert the toggle if API call failed
+        if (plugin) {
+            plugin.enabled = !enabled;
+        }
+        loadInstalledPlugins();
+    });
 }
 
 window.updatePlugin = function(pluginId) {
