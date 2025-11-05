@@ -518,6 +518,14 @@ window.configurePlugin = function(pluginId) {
     console.log('[DEBUG] ===== configurePlugin called =====');
     console.log('[DEBUG] Plugin ID:', pluginId);
     
+    // Verify modal exists before proceeding
+    const modal = document.getElementById('plugin-config-modal');
+    if (!modal) {
+        console.error('[DEBUG] Plugin config modal not found in DOM');
+        showError('Plugin configuration modal not found. Please refresh the page.');
+        return;
+    }
+    
     // First, load the plugin config
     fetch(`/api/v3/plugins/config?plugin_id=${pluginId}`)
         .then(response => response.json())
@@ -527,7 +535,7 @@ window.configurePlugin = function(pluginId) {
                 const config = data.data.config || {};
                 console.log('[DEBUG] Calling showPluginConfigModal with config:', config);
                 showPluginConfigModal(pluginId, config);
-    } else {
+            } else {
                 console.error('[DEBUG] Failed to load config:', data.message);
                 showNotification('Failed to load plugin configuration: ' + data.message, 'error');
             }
@@ -547,6 +555,26 @@ function showPluginConfigModal(pluginId, config) {
     console.log('[DEBUG] ===== Opening plugin config modal =====');
     console.log('[DEBUG] Plugin ID:', pluginId);
     console.log('[DEBUG] Config:', config);
+    
+    // Check if modal elements exist
+    if (!modal) {
+        console.error('[DEBUG] Plugin config modal element not found');
+        showError('Plugin configuration modal not found. Please refresh the page.');
+        return;
+    }
+    
+    if (!title) {
+        console.error('[DEBUG] Plugin config title element not found');
+        showError('Plugin configuration title element not found.');
+        return;
+    }
+    
+    if (!content) {
+        console.error('[DEBUG] Plugin config content element not found');
+        showError('Plugin configuration content element not found.');
+        return;
+    }
+    
     title.textContent = `Configure ${pluginId}`;
     
     // Show loading state while form is generated
