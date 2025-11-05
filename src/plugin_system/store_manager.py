@@ -250,7 +250,8 @@ class PluginStoreManager:
             query: Search query string (searches name, description, id)
             category: Filter by category (e.g., 'sports', 'weather', 'time')
             tags: Filter by tags (matches any tag in list)
-            fetch_latest_versions: If True, fetch latest manifest from GitHub for each plugin to get current versions
+            fetch_latest_versions: If True, fetch latest from GitHub Releases/Tags to detect if registry is outdated.
+                                   Registry versions remain the source of truth; GitHub is used to detect newer versions.
 
         Returns:
             List of matching plugin metadata with real stars and downloads
@@ -313,35 +314,59 @@ class PluginStoreManager:
                 github_info = self._get_github_repo_info(repo_url)
                 enhanced_plugin['stars'] = github_info.get('stars', plugin.get('stars', 0))
                 
-                # Optionally fetch latest manifest and releases from GitHub to get current version
+                # Optionally fetch latest from GitHub to detect if registry is outdated
+                # Registry remains primary source; GitHub is used to detect newer versions
                 if fetch_latest_versions:
-                    # First, try to get latest version from GitHub releases/tags (most accurate)
+                    # Get registry's latest version (from latest_version field or first in versions array)
+                    registry_latest = enhanced_plugin.get('latest_version')
+                    if not registry_latest and enhanced_plugin.get('versions'):
+                        if isinstance(enhanced_plugin['versions'][0], dict):
+                            registry_latest = enhanced_plugin['versions'][0].get('version', '')
+                    
+                    # Fetch latest from GitHub releases/tags to compare
                     github_releases = self._fetch_github_releases(repo_url)
                     if github_releases and len(github_releases) > 0:
                         # Get the latest release (first in list, as they're sorted by date)
                         latest_release = github_releases[0]
-                        latest_version = latest_release.get('version', '')
+                        github_latest_version = latest_release.get('version', '')
                         
-                        if latest_version:
-                            # Update latest_version field
-                            enhanced_plugin['latest_version'] = latest_version
-                            
-                            # Add to versions array if not already present
-                            if 'versions' not in enhanced_plugin or not isinstance(enhanced_plugin['versions'], list):
-                                enhanced_plugin['versions'] = []
-                            
-                            # Check if this version is already in the array
+                        # Only update if GitHub has a newer version than registry
+                        if github_latest_version and github_latest_version != registry_latest:
+                            # Check if GitHub version is actually newer (simple string comparison works for semver)
+                            # If registry doesn't have this version, GitHub is newer
                             existing_versions = [v.get('version', '') if isinstance(v, dict) else str(v) 
-                                                for v in enhanced_plugin['versions']]
+                                                for v in enhanced_plugin.get('versions', [])]
                             
-                            if latest_version not in existing_versions:
-                                # Add latest version to the front of versions array
+                            if github_latest_version not in existing_versions:
+                                # Registry is outdated - add GitHub's latest version
+                                self.logger.debug(f"Registry outdated for {plugin.get('id')}: registry={registry_latest}, github={github_latest_version}")
+                                
+                                # Update latest_version field to GitHub's version
+                                enhanced_plugin['latest_version'] = github_latest_version
+                                
+                                # Add to versions array if not already present
+                                if 'versions' not in enhanced_plugin or not isinstance(enhanced_plugin['versions'], list):
+                                    enhanced_plugin['versions'] = []
+                                
+                                # Add GitHub's latest version to the front of versions array
+                                # Use tag_name from release if available, otherwise construct from version
+                                tag_name = latest_release.get('tag_name', f"v{github_latest_version}")
+                                
+                                # Construct download URL using the actual tag name
+                                parts = repo_url.rstrip('/').split('/')
+                                owner = parts[-2]
+                                repo = parts[-1]
+                                download_url = f"https://github.com/{owner}/{repo}/archive/refs/tags/{tag_name}.zip"
+                                
                                 enhanced_plugin['versions'].insert(0, {
-                                    'version': latest_version,
+                                    'version': github_latest_version,
                                     'ledmatrix_min': enhanced_plugin.get('versions', [{}])[0].get('ledmatrix_min', '2.0.0') if enhanced_plugin.get('versions') else '2.0.0',
                                     'released': latest_release.get('published_at', '').split('T')[0] if latest_release.get('published_at') else '',
-                                    'download_url': f"https://github.com/{repo_url.split('/')[-2]}/{repo_url.split('/')[-1]}/archive/refs/tags/v{latest_version}.zip"
+                                    'download_url': download_url
                                 })
+                            elif github_latest_version == registry_latest:
+                                # Registry is up to date
+                                enhanced_plugin['latest_version'] = github_latest_version
                     
                     # Also fetch manifest from GitHub for additional metadata
                     branch = plugin.get('branch', 'master')
@@ -556,11 +581,20 @@ class PluginStoreManager:
                         
                         if latest_version not in existing_versions:
                             # Add latest version to the front of versions array
+                            # Use tag_name from release if available, otherwise construct from version
+                            tag_name = latest_release.get('tag_name', f"v{latest_version}")
+                            
+                            # Construct download URL using the actual tag name
+                            parts = repo_url.rstrip('/').split('/')
+                            owner = parts[-2]
+                            repo = parts[-1]
+                            download_url = f"https://github.com/{owner}/{repo}/archive/refs/tags/{tag_name}.zip"
+                            
                             plugin_info['versions'].insert(0, {
                                 'version': latest_version,
                                 'ledmatrix_min': plugin_info.get('versions', [{}])[0].get('ledmatrix_min', '2.0.0') if plugin_info.get('versions') else '2.0.0',
                                 'released': latest_release.get('published_at', '').split('T')[0] if latest_release.get('published_at') else '',
-                                'download_url': f"https://github.com/{repo_url.split('/')[-2]}/{repo_url.split('/')[-1]}/archive/refs/tags/v{latest_version}.zip"
+                                'download_url': download_url
                             })
                 
                 # Also fetch manifest from GitHub for additional metadata
