@@ -1870,13 +1870,10 @@ document.addEventListener('submit', function(e) {
         const config = {};
         const schema = currentPluginConfig?.schema;
 
-        // Get the enabled checkbox state (unchecked checkboxes don't appear in FormData)
-        const enabledCheckbox = document.getElementById('enabled');
-        config.enabled = enabledCheckbox ? enabledCheckbox.checked : true;
-
         // Convert form data to config object
+        // Note: 'enabled' is managed separately via the header toggle, not through this form
         for (let [key, value] of formData.entries()) {
-            // Skip enabled since we already handled it
+            // Skip enabled - it's managed separately via the header toggle
             if (key === 'enabled') continue;
 
             // Check if this field is an array type in the schema
