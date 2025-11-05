@@ -39,8 +39,11 @@ class PluginStoreManager:
         self.plugins_dir = Path(plugins_dir)
         self.logger = logging.getLogger(__name__)
         self.registry_cache = None
+        self.registry_cache_time = None  # Timestamp of when registry was cached
         self.github_cache = {}  # Cache for GitHub API responses
+        self.github_releases_cache = {}  # Cache for GitHub releases/tags
         self.cache_timeout = 3600  # 1 hour cache timeout
+        self.registry_cache_timeout = 300  # 5 minutes for registry cache
         self.github_token = self._load_github_token()
 
         # Ensure plugins directory exists
@@ -217,7 +220,11 @@ class PluginStoreManager:
         Returns:
             Registry data with list of available plugins
         """
-        if self.registry_cache and not force_refresh:
+        # Check if cache is still valid (within timeout)
+        current_time = time.time()
+        if (self.registry_cache and self.registry_cache_time and 
+            not force_refresh and 
+            (current_time - self.registry_cache_time) < self.registry_cache_timeout):
             return self.registry_cache
         
         try:
@@ -225,6 +232,7 @@ class PluginStoreManager:
             response = self._http_get_with_retries(self.REGISTRY_URL, timeout=10)
             response.raise_for_status()
             self.registry_cache = response.json()
+            self.registry_cache_time = current_time
             self.logger.info(f"Fetched registry with {len(self.registry_cache.get('plugins', []))} plugins")
             return self.registry_cache
         except requests.RequestException as e:
@@ -305,26 +313,57 @@ class PluginStoreManager:
                 github_info = self._get_github_repo_info(repo_url)
                 enhanced_plugin['stars'] = github_info.get('stars', plugin.get('stars', 0))
                 
-                # Optionally fetch latest manifest from GitHub to get current version
+                # Optionally fetch latest manifest and releases from GitHub to get current version
                 if fetch_latest_versions:
+                    # First, try to get latest version from GitHub releases/tags (most accurate)
+                    github_releases = self._fetch_github_releases(repo_url)
+                    if github_releases and len(github_releases) > 0:
+                        # Get the latest release (first in list, as they're sorted by date)
+                        latest_release = github_releases[0]
+                        latest_version = latest_release.get('version', '')
+                        
+                        if latest_version:
+                            # Update latest_version field
+                            enhanced_plugin['latest_version'] = latest_version
+                            
+                            # Add to versions array if not already present
+                            if 'versions' not in enhanced_plugin or not isinstance(enhanced_plugin['versions'], list):
+                                enhanced_plugin['versions'] = []
+                            
+                            # Check if this version is already in the array
+                            existing_versions = [v.get('version', '') if isinstance(v, dict) else str(v) 
+                                                for v in enhanced_plugin['versions']]
+                            
+                            if latest_version not in existing_versions:
+                                # Add latest version to the front of versions array
+                                enhanced_plugin['versions'].insert(0, {
+                                    'version': latest_version,
+                                    'ledmatrix_min': enhanced_plugin.get('versions', [{}])[0].get('ledmatrix_min', '2.0.0') if enhanced_plugin.get('versions') else '2.0.0',
+                                    'released': latest_release.get('published_at', '').split('T')[0] if latest_release.get('published_at') else '',
+                                    'download_url': f"https://github.com/{repo_url.split('/')[-2]}/{repo_url.split('/')[-1]}/archive/refs/tags/v{latest_version}.zip"
+                                })
+                    
+                    # Also fetch manifest from GitHub for additional metadata
                     branch = plugin.get('branch', 'master')
                     github_manifest = self._fetch_manifest_from_github(repo_url, branch)
                     if github_manifest:
-                        # Update version from GitHub manifest
-                        if 'version' in github_manifest:
+                        # Update version from GitHub manifest (if releases didn't provide it)
+                        if 'version' in github_manifest and 'latest_version' not in enhanced_plugin:
                             enhanced_plugin['version'] = github_manifest['version']
+                            enhanced_plugin['latest_version'] = github_manifest['version']
                         
-                        # Update versions array if available
-                        if 'versions' in github_manifest:
+                        # Update versions array if available and releases didn't update it
+                        if 'versions' in github_manifest and 'latest_version' not in enhanced_plugin:
                             enhanced_plugin['versions'] = github_manifest['versions']
                         
-                        # Update latest_version
-                        if 'versions' in enhanced_plugin and isinstance(enhanced_plugin['versions'], list) and len(enhanced_plugin['versions']) > 0:
-                            latest_ver = enhanced_plugin['versions'][0]
-                            if isinstance(latest_ver, dict) and 'version' in latest_ver:
-                                enhanced_plugin['latest_version'] = latest_ver['version']
-                        elif 'version' in enhanced_plugin:
-                            enhanced_plugin['latest_version'] = enhanced_plugin['version']
+                        # Update latest_version from versions array if not set
+                        if 'latest_version' not in enhanced_plugin:
+                            if 'versions' in enhanced_plugin and isinstance(enhanced_plugin['versions'], list) and len(enhanced_plugin['versions']) > 0:
+                                latest_ver = enhanced_plugin['versions'][0]
+                                if isinstance(latest_ver, dict) and 'version' in latest_ver:
+                                    enhanced_plugin['latest_version'] = latest_ver['version']
+                            elif 'version' in enhanced_plugin:
+                                enhanced_plugin['latest_version'] = enhanced_plugin['version']
                         
                         # Update other fields that might be more current
                         if 'last_updated' in github_manifest:
@@ -378,6 +417,98 @@ class PluginStoreManager:
         
         return None
     
+    def _fetch_github_releases(self, repo_url: str) -> Optional[List[Dict[str, Any]]]:
+        """
+        Fetch GitHub releases/tags for a repository to get latest version.
+        
+        Args:
+            repo_url: GitHub repository URL
+            
+        Returns:
+            List of release/tag info, or None if not found
+        """
+        try:
+            # Extract owner/repo from URL
+            if 'github.com' not in repo_url:
+                return None
+                
+            repo_url = repo_url.rstrip('/')
+            if repo_url.endswith('.git'):
+                repo_url = repo_url[:-4]
+            
+            parts = repo_url.split('/')
+            if len(parts) < 2:
+                return None
+            
+            owner = parts[-2]
+            repo = parts[-1]
+            cache_key = f"{owner}/{repo}/releases"
+            
+            # Check cache first
+            if cache_key in self.github_releases_cache:
+                cached_time, cached_data = self.github_releases_cache[cache_key]
+                if time.time() - cached_time < self.cache_timeout:
+                    return cached_data
+            
+            # Try GitHub Releases API first (more reliable)
+            api_url = f"https://api.github.com/repos/{owner}/{repo}/releases"
+            headers = {
+                'Accept': 'application/vnd.github.v3+json',
+                'User-Agent': 'LEDMatrix-Plugin-Manager/1.0'
+            }
+            
+            if self.github_token:
+                headers['Authorization'] = f'token {self.github_token}'
+            
+            response = requests.get(api_url, headers=headers, timeout=10)
+            if response.status_code == 200:
+                releases = response.json()
+                # Filter to only get published releases (not drafts/prereleases)
+                published_releases = [
+                    {
+                        'tag_name': r.get('tag_name', ''),
+                        'version': r.get('tag_name', '').lstrip('v'),  # Remove 'v' prefix if present
+                        'published_at': r.get('published_at', ''),
+                        'name': r.get('name', ''),
+                        'prerelease': r.get('prerelease', False),
+                        'draft': r.get('draft', False)
+                    }
+                    for r in releases if not r.get('draft', False) and not r.get('prerelease', False)
+                ]
+                
+                # Cache the result
+                self.github_releases_cache[cache_key] = (time.time(), published_releases)
+                return published_releases
+            elif response.status_code == 404:
+                # No releases found, try tags API instead
+                api_url = f"https://api.github.com/repos/{owner}/{repo}/tags"
+                response = requests.get(api_url, headers=headers, timeout=10)
+                if response.status_code == 200:
+                    tags = response.json()
+                    tag_list = [
+                        {
+                            'tag_name': t.get('name', ''),
+                            'version': t.get('name', '').lstrip('v'),
+                            'published_at': '',  # Tags don't have publish date
+                            'name': t.get('name', ''),
+                            'prerelease': False,
+                            'draft': False
+                        }
+                        for t in tags[:10]  # Limit to first 10 tags
+                    ]
+                    self.github_releases_cache[cache_key] = (time.time(), tag_list)
+                    return tag_list
+            elif response.status_code == 403:
+                if not self.github_token:
+                    self.logger.debug(f"GitHub API rate limit for releases (403). Consider adding a token.")
+            else:
+                self.logger.debug(f"GitHub API request failed: {response.status_code} for {api_url}")
+                
+        except Exception as e:
+            self.logger.debug(f"Error fetching GitHub releases for {repo_url}: {e}")
+        
+        return None
+    
     def get_plugin_info(self, plugin_id: str, fetch_latest_from_github: bool = False) -> Optional[Dict]:
         """
         Get detailed information about a plugin from the registry.
@@ -402,27 +533,59 @@ class PluginStoreManager:
             branch = plugin_info.get('branch', 'master')
             
             if repo_url:
+                plugin_info = plugin_info.copy()
+                
+                # First, try to get latest version from GitHub releases/tags (most accurate)
+                github_releases = self._fetch_github_releases(repo_url)
+                if github_releases and len(github_releases) > 0:
+                    # Get the latest release (first in list, as they're sorted by date)
+                    latest_release = github_releases[0]
+                    latest_version = latest_release.get('version', '')
+                    
+                    if latest_version:
+                        # Update latest_version field
+                        plugin_info['latest_version'] = latest_version
+                        
+                        # Add to versions array if not already present
+                        if 'versions' not in plugin_info or not isinstance(plugin_info['versions'], list):
+                            plugin_info['versions'] = []
+                        
+                        # Check if this version is already in the array
+                        existing_versions = [v.get('version', '') if isinstance(v, dict) else str(v) 
+                                            for v in plugin_info['versions']]
+                        
+                        if latest_version not in existing_versions:
+                            # Add latest version to the front of versions array
+                            plugin_info['versions'].insert(0, {
+                                'version': latest_version,
+                                'ledmatrix_min': plugin_info.get('versions', [{}])[0].get('ledmatrix_min', '2.0.0') if plugin_info.get('versions') else '2.0.0',
+                                'released': latest_release.get('published_at', '').split('T')[0] if latest_release.get('published_at') else '',
+                                'download_url': f"https://github.com/{repo_url.split('/')[-2]}/{repo_url.split('/')[-1]}/archive/refs/tags/v{latest_version}.zip"
+                            })
+                
+                # Also fetch manifest from GitHub for additional metadata
                 github_manifest = self._fetch_manifest_from_github(repo_url, branch)
                 if github_manifest:
                     # Merge GitHub manifest data (which has the latest version)
                     # into the registry data (which has metadata like verified, stars, etc.)
-                    plugin_info = plugin_info.copy()
                     
-                    # Update version from GitHub manifest
-                    if 'version' in github_manifest:
+                    # Update version from GitHub manifest (if releases didn't provide it)
+                    if 'version' in github_manifest and 'latest_version' not in plugin_info:
                         plugin_info['version'] = github_manifest['version']
+                        plugin_info['latest_version'] = github_manifest['version']
                     
-                    # Update versions array if available
-                    if 'versions' in github_manifest:
+                    # Update versions array if available and releases didn't update it
+                    if 'versions' in github_manifest and 'latest_version' not in plugin_info:
                         plugin_info['versions'] = github_manifest['versions']
                     
-                    # Update latest_version
-                    if 'versions' in plugin_info and isinstance(plugin_info['versions'], list) and len(plugin_info['versions']) > 0:
-                        latest_ver = plugin_info['versions'][0]
-                        if isinstance(latest_ver, dict) and 'version' in latest_ver:
-                            plugin_info['latest_version'] = latest_ver['version']
-                    elif 'version' in plugin_info:
-                        plugin_info['latest_version'] = plugin_info['version']
+                    # Update latest_version from versions array if not set
+                    if 'latest_version' not in plugin_info:
+                        if 'versions' in plugin_info and isinstance(plugin_info['versions'], list) and len(plugin_info['versions']) > 0:
+                            latest_ver = plugin_info['versions'][0]
+                            if isinstance(latest_ver, dict) and 'version' in latest_ver:
+                                plugin_info['latest_version'] = latest_ver['version']
+                        elif 'version' in plugin_info:
+                            plugin_info['latest_version'] = plugin_info['version']
                     
                     # Update other fields that might be more current
                     if 'last_updated' in github_manifest:
