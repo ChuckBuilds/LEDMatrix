@@ -358,12 +358,12 @@ class PluginStoreManager:
                         
                         # Update latest_version from versions array if not set
                         if 'latest_version' not in enhanced_plugin:
-                            if 'versions' in enhanced_plugin and isinstance(enhanced_plugin['versions'], list) and len(enhanced_plugin['versions']) > 0:
-                                latest_ver = enhanced_plugin['versions'][0]
-                                if isinstance(latest_ver, dict) and 'version' in latest_ver:
-                                    enhanced_plugin['latest_version'] = latest_ver['version']
-                            elif 'version' in enhanced_plugin:
-                                enhanced_plugin['latest_version'] = enhanced_plugin['version']
+                        if 'versions' in enhanced_plugin and isinstance(enhanced_plugin['versions'], list) and len(enhanced_plugin['versions']) > 0:
+                            latest_ver = enhanced_plugin['versions'][0]
+                            if isinstance(latest_ver, dict) and 'version' in latest_ver:
+                                enhanced_plugin['latest_version'] = latest_ver['version']
+                        elif 'version' in enhanced_plugin:
+                            enhanced_plugin['latest_version'] = enhanced_plugin['version']
                         
                         # Update other fields that might be more current
                         if 'last_updated' in github_manifest:
@@ -580,12 +580,12 @@ class PluginStoreManager:
                     
                     # Update latest_version from versions array if not set
                     if 'latest_version' not in plugin_info:
-                        if 'versions' in plugin_info and isinstance(plugin_info['versions'], list) and len(plugin_info['versions']) > 0:
-                            latest_ver = plugin_info['versions'][0]
-                            if isinstance(latest_ver, dict) and 'version' in latest_ver:
-                                plugin_info['latest_version'] = latest_ver['version']
-                        elif 'version' in plugin_info:
-                            plugin_info['latest_version'] = plugin_info['version']
+                    if 'versions' in plugin_info and isinstance(plugin_info['versions'], list) and len(plugin_info['versions']) > 0:
+                        latest_ver = plugin_info['versions'][0]
+                        if isinstance(latest_ver, dict) and 'version' in latest_ver:
+                            plugin_info['latest_version'] = latest_ver['version']
+                    elif 'version' in plugin_info:
+                        plugin_info['latest_version'] = plugin_info['version']
                     
                     # Update other fields that might be more current
                     if 'last_updated' in github_manifest:
@@ -609,7 +609,10 @@ class PluginStoreManager:
         self.logger.info(f"Installing plugin: {plugin_id} (version: {version})")
         
         # Get plugin info from registry
-        plugin_info = self.get_plugin_info(plugin_id)
+        # If installing "latest", fetch from GitHub to get the actual latest version
+        # even if registry JSON is outdated
+        fetch_latest = (version == "latest")
+        plugin_info = self.get_plugin_info(plugin_id, fetch_latest_from_github=fetch_latest)
         
         if not plugin_info:
             self.logger.error(f"Plugin not found in registry: {plugin_id}")
