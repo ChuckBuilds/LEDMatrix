@@ -71,9 +71,9 @@ class DisplayController:
             from src.plugin_system import PluginManager
             logger.info("Plugin system imported successfully")
             
-            # Get plugin directory from config, default to plugins in project directory
+            # Get plugin directory from config, default to plugin-repos for production
             plugin_system_config = self.config.get('plugin_system', {})
-            plugins_dir_name = plugin_system_config.get('plugins_directory', 'plugins')
+            plugins_dir_name = plugin_system_config.get('plugins_directory', 'plugin-repos')
             
             # Resolve plugin directory - handle both absolute and relative paths
             if os.path.isabs(plugins_dir_name):

@@ -802,6 +802,10 @@ def install_plugin():
         plugin_id = data['plugin_id']
         
         # Install the plugin
+        # Log the plugins directory being used for debugging
+        plugins_dir = api_v3.plugin_store_manager.plugins_dir
+        print(f"Installing plugin {plugin_id} to directory: {plugins_dir}", flush=True)
+        
         success = api_v3.plugin_store_manager.install_plugin(plugin_id)
         
         if success:
@@ -812,7 +816,19 @@ def install_plugin():
             
             return jsonify({'status': 'success', 'message': f'Plugin {plugin_id} installed successfully'})
         else:
-            return jsonify({'status': 'error', 'message': f'Failed to install plugin {plugin_id}'}), 500
+            # Get more detailed error information
+            error_msg = f'Failed to install plugin {plugin_id}'
+            # Check if plugin exists in registry
+            plugin_info = api_v3.plugin_store_manager.get_plugin_info(plugin_id)
+            if not plugin_info:
+                error_msg += ' (plugin not found in registry)'
+            else:
+                versions = plugin_info.get('versions', [])
+                if not versions:
+                    error_msg += ' (no versions available)'
+            
+            print(f"Installation failed for {plugin_id}. Plugins dir: {plugins_dir}", flush=True)
+            return jsonify({'status': 'error', 'message': error_msg}), 500
             
     except Exception as e:
         import traceback
