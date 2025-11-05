@@ -523,8 +523,27 @@ class PluginStoreManager:
                             # Construct GitHub download URL if not provided
                             download_url = f"{repo_url}/archive/refs/tags/v{version_info['version']}.zip"
                     
-                    if not self._install_via_download(download_url, plugin_path):
-                        self.logger.error(f"Failed to download plugin: {plugin_id}")
+                    # Try downloading the version-specific URL
+                    download_success = self._install_via_download(download_url, plugin_path)
+                    
+                    # If version-specific download fails, try branch-based download as fallback
+                    if not download_success:
+                        self.logger.warning(f"Version-specific download failed for {plugin_id}, trying branch-based download...")
+                        branch = plugin_info.get('branch', 'main')
+                        branch_download_url = f"{repo_url}/archive/refs/heads/{branch}.zip"
+                        download_success = self._install_via_download(branch_download_url, plugin_path)
+                        
+                        if not download_success:
+                            # Try master branch as last resort
+                            if branch != 'master':
+                                self.logger.warning(f"Branch {branch} download failed, trying master branch...")
+                                download_success = self._install_via_download(
+                                    f"{repo_url}/archive/refs/heads/master.zip", 
+                                    plugin_path
+                                )
+                    
+                    if not download_success:
+                        self.logger.error(f"Failed to download plugin: {plugin_id} (tried version tag and branch downloads)")
                         return False
             
             # Validate manifest exists
@@ -907,7 +926,8 @@ class PluginStoreManager:
         """
         try:
             self.logger.info(f"Downloading from: {download_url}")
-            response = self._http_get_with_retries(download_url, timeout=60, stream=True)
+            # Allow redirects (GitHub archive URLs redirect to codeload.github.com)
+            response = self._http_get_with_retries(download_url, timeout=60, stream=True, headers={'User-Agent': 'LEDMatrix-Plugin-Manager/1.0'})
             response.raise_for_status()
             
             # Download to temporary file
