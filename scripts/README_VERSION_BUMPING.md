@@ -4,11 +4,15 @@ This system automatically bumps plugin versions when code changes are pushed to 
 
 ## Overview
 
+The pre-push hook is **self-contained** - it includes all version bumping logic and doesn't require any external files. This means it works on any development machine, not just the Raspberry Pi.
+
 When you push code changes to a plugin repository, the git pre-push hook automatically:
 1. Detects if code files (excluding manifest.json) have changed
 2. Bumps the patch version (x.y.Z) in manifest.json
 3. Updates the versions array with the new version
 4. Stages the manifest.json file for commit
+
+**Key Benefit**: The hook works directly in your plugin repository on your dev machine - no need to have the main LEDMatrix repo structure or any external scripts.
 
 ## Quick Start
 
@@ -38,12 +42,14 @@ chmod +x .git/hooks/pre-push
 
 ### Git Pre-Push Hook
 
-The hook (`scripts/git-hooks/pre-push-plugin-version`) runs automatically before each `git push`:
+The hook (`scripts/git-hooks/pre-push-plugin-version`) is **self-contained** with embedded Python logic. It runs automatically before each `git push`:
 
 1. **Checks for code changes**: Compares the commits being pushed with the remote
 2. **Detects manifest changes**: If only manifest.json changed, no version bump needed
-3. **Bumps version**: If code files changed, automatically bumps patch version
+3. **Bumps version**: If code files changed, automatically bumps patch version using embedded Python
 4. **Stages manifest**: Adds the updated manifest.json to staging
+
+**No external dependencies**: The hook includes all version bumping logic, so it works on any machine with Python 3 and git, without needing the main LEDMatrix repository structure.
 
 ### Version Bump Script
 
@@ -157,14 +163,16 @@ git add manifest.json
 git commit -m "chore: Bump version"
 ```
 
-### Script Not Found
+### Hook Not Working
 
-The hook looks for the script in several locations:
-- `scripts/bump_plugin_version.py` (relative to plugin)
-- `../../scripts/bump_plugin_version.py` (from plugin directory)
-- `./scripts/bump_plugin_version.py`
+The hook is self-contained and doesn't need external scripts. However, if you're having issues:
 
-Make sure the script exists in the main LEDMatrix repository.
+1. Check Python 3 is available: `python3 --version`
+2. Verify the hook is executable: `chmod +x .git/hooks/pre-push`
+3. Test the hook manually: `bash .git/hooks/pre-push`
+4. Check manifest.json exists and is valid JSON
+
+The standalone `bump_plugin_version.py` script is optional and only needed if you want to manually bump versions with different types (minor/major).
 
 ## Integration with Plugin Store
 

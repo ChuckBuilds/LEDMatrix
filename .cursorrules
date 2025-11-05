@@ -278,9 +278,16 @@ plugins/
 **Automatic Version Bumping:**
 - **Always bump version before pushing code changes to plugin repositories**
 - Use the pre-push git hook to automatically bump patch version when pushing code changes
-- Installation: Copy `scripts/git-hooks/pre-push-plugin-version` to `.git/hooks/pre-push` in your plugin repo
+- The hook is self-contained (no external dependencies) and works on any dev machine
+- Installation: Copy the hook from LEDMatrix repo to your plugin repo:
+  ```bash
+  # From your plugin repository directory
+  cp /path/to/LEDMatrix/scripts/git-hooks/pre-push-plugin-version .git/hooks/pre-push
+  chmod +x .git/hooks/pre-push
+  ```
+- Or use the installer script from the main LEDMatrix repo (one-time setup)
 - The hook automatically bumps the patch version (x.y.Z) in manifest.json when code changes are detected
-- Manual bump: Run `python3 scripts/bump_plugin_version.py --type patch` (or `minor`/`major`)
+- Manual bump: Use the standalone script `scripts/bump_plugin_version.py` (available in main repo)
 - Version bumping ensures plugin store and registry always show current versions
 - The version in manifest.json is the source of truth for plugin versions
 
