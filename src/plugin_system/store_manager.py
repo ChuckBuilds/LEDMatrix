@@ -383,12 +383,12 @@ class PluginStoreManager:
                         
                         # Update latest_version from versions array if not set
                         if 'latest_version' not in enhanced_plugin:
-                        if 'versions' in enhanced_plugin and isinstance(enhanced_plugin['versions'], list) and len(enhanced_plugin['versions']) > 0:
-                            latest_ver = enhanced_plugin['versions'][0]
-                            if isinstance(latest_ver, dict) and 'version' in latest_ver:
-                                enhanced_plugin['latest_version'] = latest_ver['version']
-                        elif 'version' in enhanced_plugin:
-                            enhanced_plugin['latest_version'] = enhanced_plugin['version']
+                            if 'versions' in enhanced_plugin and isinstance(enhanced_plugin['versions'], list) and len(enhanced_plugin['versions']) > 0:
+                                latest_ver = enhanced_plugin['versions'][0]
+                                if isinstance(latest_ver, dict) and 'version' in latest_ver:
+                                    enhanced_plugin['latest_version'] = latest_ver['version']
+                            elif 'version' in enhanced_plugin:
+                                enhanced_plugin['latest_version'] = enhanced_plugin['version']
                         
                         # Update other fields that might be more current
                         if 'last_updated' in github_manifest:
@@ -489,6 +489,7 @@ class PluginStoreManager:
             if response.status_code == 200:
                 releases = response.json()
                 # Filter to only get published releases (not drafts/prereleases)
+                # Only include releases that have a tag_name (actual releases, not just drafts)
                 published_releases = [
                     {
                         'tag_name': r.get('tag_name', ''),
@@ -498,12 +499,14 @@ class PluginStoreManager:
                         'prerelease': r.get('prerelease', False),
                         'draft': r.get('draft', False)
                     }
-                    for r in releases if not r.get('draft', False) and not r.get('prerelease', False)
+                    for r in releases if not r.get('draft', False) and not r.get('prerelease', False) and r.get('tag_name')
                 ]
                 
-                # Cache the result
-                self.github_releases_cache[cache_key] = (time.time(), published_releases)
-                return published_releases
+                # Only return releases if we found valid ones
+                if published_releases:
+                    # Cache the result
+                    self.github_releases_cache[cache_key] = (time.time(), published_releases)
+                    return published_releases
             elif response.status_code == 404:
                 # No releases found, try tags API instead
                 api_url = f"https://api.github.com/repos/{owner}/{repo}/tags"
@@ -614,12 +617,12 @@ class PluginStoreManager:
                     
                     # Update latest_version from versions array if not set
                     if 'latest_version' not in plugin_info:
-                    if 'versions' in plugin_info and isinstance(plugin_info['versions'], list) and len(plugin_info['versions']) > 0:
-                        latest_ver = plugin_info['versions'][0]
-                        if isinstance(latest_ver, dict) and 'version' in latest_ver:
-                            plugin_info['latest_version'] = latest_ver['version']
-                    elif 'version' in plugin_info:
-                        plugin_info['latest_version'] = plugin_info['version']
+                        if 'versions' in plugin_info and isinstance(plugin_info['versions'], list) and len(plugin_info['versions']) > 0:
+                            latest_ver = plugin_info['versions'][0]
+                            if isinstance(latest_ver, dict) and 'version' in latest_ver:
+                                plugin_info['latest_version'] = latest_ver['version']
+                        elif 'version' in plugin_info:
+                            plugin_info['latest_version'] = plugin_info['version']
                     
                     # Update other fields that might be more current
                     if 'last_updated' in github_manifest:
