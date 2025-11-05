@@ -26,3 +26,8 @@ emulator_config.json
 
 # Cache directory
 cache/
+
+# Development plugins directory (contains symlinks to plugin repos)
+# Plugins are installed via plugin store to plugin-repos/ in production
+plugins/*
+!plugins/.gitkeep
