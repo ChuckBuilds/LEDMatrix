@@ -287,7 +287,14 @@ class GameHelper:
             if game_date_str.endswith('Z'):
                 game_date_str = game_date_str.replace('Z', '+00:00')
             
-            return datetime.fromisoformat(game_date_str)
+            dt = datetime.fromisoformat(game_date_str)
+            # Ensure the datetime is UTC-aware (fromisoformat may create timezone-aware but not pytz.UTC)
+            if dt.tzinfo is None:
+                # If naive, assume it's UTC
+                return dt.replace(tzinfo=pytz.UTC)
+            else:
+                # Convert to pytz.UTC for consistency
+                return dt.astimezone(pytz.UTC)
         except ValueError:
             self.logger.warning(f"Could not parse game date: {game_date_str}")
             return None

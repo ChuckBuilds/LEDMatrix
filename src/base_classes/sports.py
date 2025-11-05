@@ -416,7 +416,17 @@ class SportsCore(ABC):
             situation = competition.get("situation")
             start_time_utc = None
             try:
-                start_time_utc = datetime.fromisoformat(game_date_str.replace("Z", "+00:00"))
+                # Parse the datetime string
+                if game_date_str.endswith('Z'):
+                    game_date_str = game_date_str.replace('Z', '+00:00')
+                dt = datetime.fromisoformat(game_date_str)
+                # Ensure the datetime is UTC-aware (fromisoformat may create timezone-aware but not pytz.UTC)
+                if dt.tzinfo is None:
+                    # If naive, assume it's UTC
+                    start_time_utc = dt.replace(tzinfo=pytz.UTC)
+                else:
+                    # Convert to pytz.UTC for consistency
+                    start_time_utc = dt.astimezone(pytz.UTC)
             except ValueError:
                 logging.warning(f"Could not parse game date: {game_date_str}")
 
