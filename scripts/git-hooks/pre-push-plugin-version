@@ -1,0 +1,82 @@
+#!/bin/bash
+#
+# Git pre-push hook for plugin repositories
+# Automatically bumps the patch version in manifest.json before pushing
+#
+# Installation:
+#   cd plugins/your-plugin
+#   cp ../../scripts/git-hooks/pre-push-plugin-version .git/hooks/pre-push
+#   chmod +x .git/hooks/pre-push
+#
+# Or install for all plugins:
+#   find plugins -name ".git" -type d | while read gitdir; do
+#     plugin_dir=$(dirname "$gitdir")
+#     cp scripts/git-hooks/pre-push-plugin-version "$gitdir/hooks/pre-push"
+#     chmod +x "$gitdir/hooks/pre-push"
+#   done
+
+# Get the plugin directory (where .git is located)
+PLUGIN_DIR="$(git rev-parse --show-toplevel)"
+MANIFEST_PATH="$PLUGIN_DIR/manifest.json"
+
+# Check if manifest.json exists
+if [ ! -f "$MANIFEST_PATH" ]; then
+    echo "Warning: manifest.json not found, skipping version bump"
+    exit 0
+fi
+
+# Check if we're pushing to a remote (not just checking)
+while read local_ref local_sha remote_ref remote_sha; do
+    if [ "$local_sha" != "0000000000000000000000000000000000000000" ]; then
+        # We're actually pushing commits
+        
+        # Check if manifest.json has changes in the commits being pushed
+        if git diff --quiet "$remote_sha" "$local_sha" -- "$MANIFEST_PATH" 2>/dev/null; then
+            # manifest.json hasn't changed, check if any other files changed
+            if ! git diff --quiet "$remote_sha" "$local_sha" -- ':!manifest.json' 2>/dev/null; then
+                # Other files changed, but manifest.json didn't - bump version
+                echo "Code changes detected, bumping plugin version..."
+                
+                # Find the bump script (try relative to plugin dir, then absolute)
+                SCRIPT_DIR="$(dirname "$(readlink -f "$0")")"
+                BUMP_SCRIPT=""
+                
+                # Try to find the script in common locations
+                for path in \
+                    "$SCRIPT_DIR/../../scripts/bump_plugin_version.py" \
+                    "$PLUGIN_DIR/../../scripts/bump_plugin_version.py" \
+                    "$PLUGIN_DIR/scripts/bump_plugin_version.py" \
+                    "./scripts/bump_plugin_version.py"; do
+                    if [ -f "$path" ]; then
+                        BUMP_SCRIPT="$path"
+                        break
+                    fi
+                done
+                
+                if [ -z "$BUMP_SCRIPT" ]; then
+                    echo "Warning: bump_plugin_version.py not found, skipping version bump"
+                    echo "  Install it at: scripts/bump_plugin_version.py"
+                    exit 0
+                fi
+                
+                # Run the bump script
+                python3 "$BUMP_SCRIPT" --manifest "$MANIFEST_PATH" --type patch
+                BUMP_EXIT=$?
+                
+                if [ $BUMP_EXIT -eq 0 ]; then
+                    # Version was bumped, add manifest.json to the commit
+                    git add "$MANIFEST_PATH"
+                    echo "✓ Version bumped and manifest.json staged"
+                    echo "  You may need to amend your commit or create a new one"
+                    echo "  Run: git commit --amend --no-edit (to update current commit)"
+                    echo "  Or: git commit -m 'chore: Bump version' (to create new commit)"
+                else
+                    echo "Warning: Version bump failed, continuing with push"
+                fi
+            fi
+        fi
+    fi
+done
+
+exit 0
+

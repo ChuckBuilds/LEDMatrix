@@ -1,0 +1,295 @@
+# LEDMatrix Plugin Development Rules
+
+## Plugin System Overview
+
+The LEDMatrix project uses a plugin-based architecture. All display functionality (except core calendar) is implemented as plugins that are dynamically loaded from the `plugins/` directory.
+
+## Plugin Structure
+
+### Required Files
+- **manifest.json**: Plugin metadata, entry point, class name, dependencies
+- **manager.py**: Main plugin class (must inherit from `BasePlugin`)
+- **config_schema.json**: JSON schema for plugin configuration validation
+- **requirements.txt**: Python dependencies (if any)
+- **README.md**: Plugin documentation
+
+### Plugin Class Requirements
+- Must inherit from `src.plugin_system.base_plugin.BasePlugin`
+- Must implement `update()` method for data fetching
+- Must implement `display()` method for rendering
+- Should implement `validate_config()` for configuration validation
+- Optional: Override `has_live_content()` for live priority features
+
+## Plugin Development Workflow
+
+### 1. Creating a New Plugin
+
+**Option A: Use dev_plugin_setup.sh (Recommended)**
+```bash
+# Link from GitHub
+./dev_plugin_setup.sh link-github <plugin-name>
+
+# Link local repository
+./dev_plugin_setup.sh link <plugin-name> <path-to-repo>
+```
+
+**Option B: Manual Setup**
+1. Create directory in `plugins/<plugin-id>/`
+2. Add `manifest.json` with required fields
+3. Create `manager.py` with plugin class
+4. Add `config_schema.json` for configuration
+5. Enable plugin in `config/config.json` under `"<plugin-id>": {"enabled": true}`
+
+### 2. Plugin Configuration
+
+Plugins are configured in `config/config.json`:
+```json
+{
+  "<plugin-id>": {
+    "enabled": true,
+    "display_duration": 15,
+    "live_priority": false,
+    "high_performance_transitions": false,
+    "transition": {
+      "type": "redraw",
+      "speed": 2,
+      "enabled": true
+    },
+    // ... plugin-specific config
+  }
+}
+```
+
+### 3. Testing Plugins
+
+**On Development Machine:**
+- Use emulator: `python run.py --emulator` or `./run_emulator.sh`
+- Test plugin loading: Check logs for plugin discovery and loading
+- Validate configuration: Ensure config matches `config_schema.json`
+
+**On Raspberry Pi:**
+- Deploy and test on actual hardware
+- Monitor logs: `journalctl -u ledmatrix -f` (if running as service)
+- Check plugin status in web interface
+
+### 4. Plugin Development Best Practices
+
+**Code Organization:**
+- Keep plugin code in `plugins/<plugin-id>/`
+- Use shared assets from `assets/` directory when possible
+- Follow existing plugin patterns (see `plugins/hockey-scoreboard/` as reference)
+- Place shared utilities in `src/common/` if reusable across plugins
+
+**Configuration Management:**
+- Use `config_schema.json` for validation
+- Store secrets in `config/config_secrets.json` (not in main config)
+- Reference secrets via `config_secrets` key in main config
+- Validate all required fields in `validate_config()`
+
+**Error Handling:**
+- Use plugin's logger: `self.logger.info/error/warning()`
+- Handle API failures gracefully
+- Cache data to avoid excessive API calls
+- Provide fallback displays when data unavailable
+
+**Performance:**
+- Use `cache_manager` for API response caching
+- Implement background data fetching if needed
+- Use `high_performance_transitions` for smoother animations
+- Optimize rendering for Pi's limited resources
+
+**Display Rendering:**
+- Use `display_manager` for all drawing operations
+- Support different display sizes (check `display_manager.width/height`)
+- Use `apply_transition()` for smooth transitions between displays
+- Clear display before rendering: `display_manager.clear()`
+- Always call `display_manager.update_display()` after rendering
+
+## Plugin API Reference
+
+### BasePlugin Class
+Located in: `src/plugin_system/base_plugin.py`
+
+**Required Methods:**
+- `update()`: Fetch/update data (called based on `update_interval` in manifest)
+- `display(force_clear=False)`: Render plugin content
+
+**Optional Methods:**
+- `validate_config()`: Validate plugin configuration
+- `has_live_content()`: Return True if plugin has live/urgent content
+- `get_live_modes()`: Return list of modes for live priority
+- `cleanup()`: Clean up resources on unload
+- `on_config_change(new_config)`: Handle config updates
+- `on_enable()`: Called when plugin enabled
+- `on_disable()`: Called when plugin disabled
+
+**Available Properties:**
+- `self.plugin_id`: Plugin identifier
+- `self.config`: Plugin configuration dict
+- `self.display_manager`: Display manager instance
+- `self.cache_manager`: Cache manager instance
+- `self.plugin_manager`: Plugin manager reference
+- `self.logger`: Plugin-specific logger
+- `self.enabled`: Boolean enabled status
+- `self.transition_manager`: Transition system (if available)
+
+### Display Manager
+Located in: `src/display_manager.py`
+
+**Key Methods:**
+- `clear()`: Clear the display
+- `draw_text(text, x, y, color, font)`: Draw text
+- `draw_image(image, x, y)`: Draw PIL Image
+- `update_display()`: Update physical display
+- `width`, `height`: Display dimensions
+
+### Cache Manager
+Located in: `src/cache_manager.py`
+
+**Key Methods:**
+- `get(key, max_age=None)`: Get cached value
+- `set(key, value, ttl=None)`: Cache a value
+- `delete(key)`: Remove cached value
+
+## Plugin Manifest Schema
+
+Required fields in `manifest.json`:
+- `id`: Unique plugin identifier (matches directory name)
+- `name`: Human-readable plugin name
+- `version`: Semantic version (e.g., "1.0.0")
+- `entry_point`: Python file (usually "manager.py")
+- `class_name`: Plugin class name (must match class in entry_point)
+- `display_modes`: Array of mode names this plugin provides
+
+Common optional fields:
+- `description`: Plugin description
+- `author`: Plugin author
+- `homepage`: Plugin homepage URL
+- `category`: Plugin category (e.g., "sports", "weather")
+- `tags`: Array of tags
+- `update_interval`: Seconds between update() calls (default: 60)
+- `default_duration`: Default display duration (default: 15)
+- `requires`: Python version, display size requirements
+- `config_schema`: Path to config schema file
+- `api_requirements`: API dependencies and rate limits
+
+## Plugin Loading Process
+
+1. **Discovery**: PluginManager scans `plugins/` directory for directories containing `manifest.json`
+2. **Validation**: Validates manifest structure and required fields
+3. **Loading**: Imports plugin module and instantiates plugin class
+4. **Configuration**: Loads plugin config from `config/config.json`
+5. **Validation**: Calls `validate_config()` on plugin instance
+6. **Registration**: Adds plugin to available modes and stores instance
+7. **Enablement**: Calls `on_enable()` if plugin is enabled
+
+## Common Plugin Patterns
+
+### Sports Scoreboard Plugin
+- Use `background_data_service.py` pattern for API fetching
+- Implement live/recent/upcoming game modes
+- Use `scoreboard_renderer.py` for consistent rendering
+- Support team filtering and game filtering
+- Use shared sports logos from `assets/sports/`
+
+### Data Display Plugin
+- Fetch data in `update()` method
+- Cache API responses using `cache_manager`
+- Render in `display()` method
+- Handle API errors gracefully
+- Provide configuration for refresh intervals
+
+### Real-time Content Plugin
+- Implement `has_live_content()` for live priority
+- Use `get_live_modes()` to specify which modes are live
+- Set `live_priority: true` in config to enable live takeover
+- Update data frequently when live content exists
+
+## Debugging Plugins
+
+**Check Plugin Loading:**
+- Review logs for plugin discovery messages
+- Verify manifest.json syntax is valid JSON
+- Check that class_name matches actual class name
+- Ensure entry_point file exists and is importable
+
+**Check Plugin Execution:**
+- Add logging statements in `update()` and `display()`
+- Use `self.logger` for plugin-specific logging
+- Check cache_manager for cached data
+- Verify display_manager is rendering correctly
+
+**Common Issues:**
+- Import errors: Check Python path and dependencies
+- Config errors: Validate against config_schema.json
+- Display issues: Check display dimensions and coordinate calculations
+- Performance: Monitor CPU/memory usage on Pi
+
+## Plugin Testing
+
+**Unit Tests:**
+- Test plugin class instantiation
+- Test `update()` data fetching logic
+- Test `display()` rendering logic
+- Test `validate_config()` with various configs
+- Mock `display_manager` and `cache_manager` for testing
+
+**Integration Tests:**
+- Test plugin loading via PluginManager
+- Test plugin with actual config
+- Test plugin with emulator display
+- Test plugin with cache_manager
+
+**Hardware Tests:**
+- Test on Raspberry Pi with LED matrix
+- Verify display rendering on actual hardware
+- Test performance under load
+- Test with other plugins enabled
+
+## File Organization
+
+```
+plugins/
+  <plugin-id>/
+    manifest.json          # Plugin metadata
+    manager.py             # Main plugin class
+    config_schema.json     # Config validation schema
+    requirements.txt       # Python dependencies
+    README.md             # Plugin documentation
+    # Plugin-specific files
+    data_manager.py
+    renderer.py
+    etc.
+```
+
+## Git Workflow for Plugins
+
+**Plugin Development:**
+- Plugins are typically separate repositories
+- Use `dev_plugin_setup.sh` to link plugins for development
+- Symlinks are used to connect plugin repos to `plugins/` directory
+- Plugin repos follow naming: `ledmatrix-<plugin-name>`
+
+**Branching:**
+- Develop plugins in feature branches
+- Follow project branching conventions
+- Test plugins before merging to main
+
+**Automatic Version Bumping:**
+- **Always bump version before pushing code changes to plugin repositories**
+- Use the pre-push git hook to automatically bump patch version when pushing code changes
+- Installation: Copy `scripts/git-hooks/pre-push-plugin-version` to `.git/hooks/pre-push` in your plugin repo
+- The hook automatically bumps the patch version (x.y.Z) in manifest.json when code changes are detected
+- Manual bump: Run `python3 scripts/bump_plugin_version.py --type patch` (or `minor`/`major`)
+- Version bumping ensures plugin store and registry always show current versions
+- The version in manifest.json is the source of truth for plugin versions
+
+## Resources
+
+- Plugin System Docs: `docs/PLUGIN_ARCHITECTURE_SPEC.md`
+- Plugin Examples: `plugins/hockey-scoreboard/`, `plugins/football-scoreboard/`
+- Base Plugin: `src/plugin_system/base_plugin.py`
+- Plugin Manager: `src/plugin_system/plugin_manager.py`
+- Development Setup: `dev_plugin_setup.sh`
+- Example Config: `dev_plugins.json.example`
+
