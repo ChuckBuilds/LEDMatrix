@@ -1304,8 +1304,8 @@ def get_plugin_schema():
             if plugin_dir:
                 schema_path = Path(plugin_dir) / 'config_schema.json'
         
-        # Fallback to direct path if plugin manager not available
-        if not schema_path:
+        # Fallback to direct path if plugin manager not available or path doesn't exist
+        if schema_path is None or not schema_path.exists():
             # Read plugins directory from config
             config = api_v3.config_manager.load_config()
             plugin_system_config = config.get('plugin_system', {})
@@ -1314,15 +1314,29 @@ def get_plugin_schema():
                 plugins_dir = Path(plugins_dir_name)
             else:
                 plugins_dir = PROJECT_ROOT / plugins_dir_name
-            schema_path = plugins_dir / plugin_id / 'config_schema.json'
+            fallback_schema_path = plugins_dir / plugin_id / 'config_schema.json'
+            
+            # Use fallback path if it exists and original path doesn't
+            if fallback_schema_path.exists() and (schema_path is None or not schema_path.exists()):
+                schema_path = fallback_schema_path
 
-        if schema_path.exists():
+        if schema_path and schema_path.exists():
             try:
                 with open(schema_path, 'r', encoding='utf-8') as f:
                     schema = json.load(f)
                 return jsonify({'status': 'success', 'data': {'schema': schema}})
             except Exception as e:
+                import traceback
+                error_details = traceback.format_exc()
                 print(f"Error reading schema file for {plugin_id}: {e}")
+                print(f"Path attempted: {schema_path}")
+                print(f"Traceback: {error_details}")
+                # Return error instead of falling through to default schema
+                return jsonify({
+                    'status': 'error',
+                    'message': f'Error reading schema file: {str(e)}',
+                    'data': {'schema': None}
+                }), 500
 
         # Return a simple default schema if file not found
         schema = {
