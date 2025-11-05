@@ -141,6 +141,19 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
         except Exception as e:
             self.logger.error(f"Error initializing managers: {e}")
 
+    def _get_default_logo_dir(self, league: str) -> str:
+        """
+        Get the default logo directory for a league.
+        Matches the directories used in src/logo_downloader.py.
+        """
+        # Map leagues to their logo directories (matching logo_downloader.py)
+        logo_dir_map = {
+            'ncaa_fb': 'assets/sports/ncaa_logos',  # NCAA FB uses ncaa_logos, not ncaa_fb_logos
+            'nfl': 'assets/sports/nfl_logos',
+        }
+        # Default to league-specific directory if not in map
+        return logo_dir_map.get(league, f"assets/sports/{league}_logos")
+
     def _adapt_config_for_manager(self, league: str) -> Dict[str, Any]:
         """
         Adapt plugin config format to manager expected format.
@@ -166,7 +179,7 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
                 "recent_games_to_show": game_limits.get("recent_games_to_show", 5),
                 "upcoming_games_to_show": game_limits.get("upcoming_games_to_show", 10),
                 "logo_dir": league_config.get(
-                    "logo_dir", f"assets/sports/{league}_logos"
+                    "logo_dir", self._get_default_logo_dir(league)
                 ),
                 "show_records": display_options.get("show_records", self.show_records),
                 "show_ranking": display_options.get("show_ranking", self.show_ranking),
