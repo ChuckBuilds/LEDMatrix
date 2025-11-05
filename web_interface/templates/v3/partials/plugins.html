@@ -518,33 +518,28 @@ window.configurePlugin = function(pluginId) {
     console.log('[DEBUG] ===== configurePlugin called =====');
     console.log('[DEBUG] Plugin ID:', pluginId);
     
-    // Verify modal exists before proceeding
-    const modal = document.getElementById('plugin-config-modal');
-    if (!modal) {
-        console.error('[DEBUG] Plugin config modal not found in DOM');
-        showError('Plugin configuration modal not found. Please refresh the page.');
-        return;
-    }
-    
-    // First, load the plugin config
-    fetch(`/api/v3/plugins/config?plugin_id=${pluginId}`)
-        .then(response => response.json())
-        .then(data => {
-            console.log('[DEBUG] Config loaded:', data);
-            if (data.status === 'success') {
-                const config = data.data.config || {};
-                console.log('[DEBUG] Calling showPluginConfigModal with config:', config);
-                showPluginConfigModal(pluginId, config);
-            } else {
-                console.error('[DEBUG] Failed to load config:', data.message);
-                showNotification('Failed to load plugin configuration: ' + data.message, 'error');
+    // Navigate to the plugin's configuration tab
+    if (window.Alpine && document.querySelector('[x-data="app()"]')) {
+        const appElement = document.querySelector('[x-data="app()"]');
+        if (appElement && appElement._x_dataStack && appElement._x_dataStack[0]) {
+            const appData = appElement._x_dataStack[0];
+            appData.activeTab = pluginId;
+            console.log('[DEBUG] Switched to plugin tab:', pluginId);
+            
+            // Show a notification to confirm navigation
+            if (appData.showNotification) {
+                const plugin = window.installedPlugins?.find(p => p.id === pluginId);
+                const pluginName = plugin ? (plugin.name || pluginId) : pluginId;
+                appData.showNotification(`Opening ${pluginName} configuration`, 'info');
             }
-        })
-        .catch(error => {
-            console.error('[DEBUG] Error loading config:', error);
-            // Still show modal with empty config
-            showPluginConfigModal(pluginId, {});
-        });
+        } else {
+            console.error('[DEBUG] Could not access Alpine app data');
+            showNotification('Unable to navigate to plugin configuration. Please refresh the page.', 'error');
+        }
+    } else {
+        console.error('[DEBUG] Alpine.js not available or app element not found');
+        showNotification('Unable to navigate to plugin configuration. Please refresh the page.', 'error');
+    }
 }
 
 function showPluginConfigModal(pluginId, config) {
