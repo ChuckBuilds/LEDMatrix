@@ -431,7 +431,9 @@ class PluginStoreManager:
             else:
                 # Standard installation (plugin at repo root)
                 # Try to install via git clone first (preferred method)
-                if self._install_via_git(repo_url, version_info['version'], plugin_path):
+                # Use branch from registry if available, otherwise try version tag
+                branch = plugin_info.get('branch')
+                if self._install_via_git(repo_url, version=version_info.get('version'), target_path=plugin_path, branch=branch):
                     self.logger.info(f"Installed {plugin_id} via git clone")
                 else:
                     # Fall back to download zip
@@ -461,10 +463,28 @@ class PluginStoreManager:
             
             # Validate manifest required fields
             try:
-                with open(manifest_path, 'r') as mf:
+                with open(manifest_path, 'r', encoding='utf-8') as mf:
                     manifest = json.load(mf)
                 required_fields = ['id', 'name', 'version', 'class_name']
                 missing = [f for f in required_fields if f not in manifest]
+                
+                manifest_modified = False
+                
+                # Try to auto-detect class_name from manager.py if missing
+                if 'class_name' in missing:
+                    entry_point = manifest.get('entry_point', 'manager.py')
+                    manager_file = plugin_path / entry_point
+                    if manager_file.exists():
+                        try:
+                            detected_class = self._detect_class_name(manager_file)
+                            if detected_class:
+                                manifest['class_name'] = detected_class
+                                self.logger.info(f"Auto-detected class_name '{detected_class}' from {entry_point}")
+                                missing.remove('class_name')
+                                manifest_modified = True
+                        except Exception as e:
+                            self.logger.warning(f"Could not auto-detect class_name: {e}")
+                
                 if missing:
                     self.logger.error(f"Plugin manifest missing required fields for {plugin_id}: {', '.join(missing)}")
                     shutil.rmtree(plugin_path)
@@ -473,10 +493,13 @@ class PluginStoreManager:
                 # entry_point is optional, default to "manager.py" if not specified
                 if 'entry_point' not in manifest:
                     manifest['entry_point'] = 'manager.py'
-                    # Write the updated manifest back
-                    with open(manifest_path, 'w') as mf:
-                        json.dump(manifest, mf, indent=2)
+                    manifest_modified = True
                     self.logger.info(f"Added missing entry_point field to {plugin_id} manifest (defaulted to manager.py)")
+                
+                # Write manifest back if we modified it
+                if manifest_modified:
+                    with open(manifest_path, 'w', encoding='utf-8') as mf:
+                        json.dump(manifest, mf, indent=2)
             except Exception as me:
                 self.logger.error(f"Failed to read/validate manifest for {plugin_id}: {me}")
                 shutil.rmtree(plugin_path)
@@ -608,6 +631,38 @@ class PluginStoreManager:
             if temp_dir and temp_dir.exists():
                 shutil.rmtree(temp_dir)
     
+    def _detect_class_name(self, manager_file: Path) -> Optional[str]:
+        """
+        Attempt to auto-detect the plugin class name from the manager file.
+        
+        Args:
+            manager_file: Path to the manager.py file
+            
+        Returns:
+            Class name if found, None otherwise
+        """
+        try:
+            import re
+            with open(manager_file, 'r', encoding='utf-8') as f:
+                content = f.read()
+            
+            # Look for class definition that inherits from BasePlugin
+            pattern = r'class\s+(\w+)\s*\([^)]*BasePlugin[^)]*\)'
+            match = re.search(pattern, content)
+            if match:
+                return match.group(1)
+            
+            # Fallback: find first class definition
+            pattern = r'^class\s+(\w+)'
+            match = re.search(pattern, content, re.MULTILINE)
+            if match:
+                return match.group(1)
+            
+            return None
+        except Exception as e:
+            self.logger.warning(f"Error detecting class name from {manager_file}: {e}")
+            return None
+    
     def _install_via_git(self, repo_url: str, version: str = None, target_path: Path = None, branch: str = None) -> bool:
         """
         Install plugin by cloning git repository.
@@ -621,35 +676,62 @@ class PluginStoreManager:
         Returns:
             True if successful
         """
-        try:
-            cmd = ['git', 'clone', '--depth', '1']
-            
-            if version and not branch:
-                # Clone specific tag
-                cmd.extend(['--branch', f"v{version}"])
-            elif branch:
-                # Clone specific branch
-                cmd.extend(['--branch', branch])
-            
-            cmd.extend([repo_url, str(target_path)])
-            
-            result = subprocess.run(
-                cmd,
-                check=True,
-                capture_output=True,
-                text=True,
-                timeout=60
-            )
-            
-            # Keep .git directory for update functionality
-            # This allows plugins to be updated via 'git pull'
-            self.logger.debug(f"Successfully cloned {repo_url} to {target_path}")
-            
-            return True
-            
-        except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError) as e:
-            self.logger.debug(f"Git clone failed: {e}")
-            return False
+        branches_to_try = []
+        if version and not branch:
+            # Try version tag first
+            branches_to_try.append(f"v{version}")
+            branches_to_try.append(version)  # Try without v prefix
+        elif branch:
+            branches_to_try.append(branch)
+        else:
+            # Try common branch names if none specified
+            branches_to_try = ['main', 'master']
+        
+        last_error = None
+        for try_branch in branches_to_try:
+            try:
+                cmd = ['git', 'clone', '--depth', '1', '--branch', try_branch, repo_url, str(target_path)]
+                
+                result = subprocess.run(
+                    cmd,
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                    timeout=60
+                )
+                
+                # Keep .git directory for update functionality
+                # This allows plugins to be updated via 'git pull'
+                self.logger.debug(f"Successfully cloned {repo_url} (branch: {try_branch}) to {target_path}")
+                
+                return True
+                
+            except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError) as e:
+                last_error = e
+                self.logger.debug(f"Git clone failed for branch {try_branch}: {e}")
+                # Try next branch
+                if target_path.exists():
+                    shutil.rmtree(target_path)
+                continue
+        
+        # If all branches failed and we had a specific branch, try without branch specification (default branch)
+        if (version or branch) and not any(b in branches_to_try for b in ['main', 'master']):
+            try:
+                cmd = ['git', 'clone', '--depth', '1', repo_url, str(target_path)]
+                result = subprocess.run(
+                    cmd,
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                    timeout=60
+                )
+                self.logger.debug(f"Successfully cloned {repo_url} (default branch) to {target_path}")
+                return True
+            except Exception as e:
+                self.logger.debug(f"Git clone failed for default branch: {e}")
+        
+        self.logger.error(f"Git clone failed for all attempted branches: {last_error}")
+        return False
     
     def _install_from_monorepo(self, download_url: str, plugin_subpath: str, target_path: Path) -> bool:
         """
