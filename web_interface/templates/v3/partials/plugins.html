@@ -514,14 +514,6 @@ function renderInstalledPlugins(plugins) {
     `).join('');
 }
 
-// Helper function to update toggle text dynamically
-function updateToggleText(checkbox) {
-    const statusText = document.getElementById('enabled-status-text');
-    if (statusText) {
-        statusText.textContent = checkbox.checked ? 'Enabled' : 'Disabled';
-    }
-}
-
 window.configurePlugin = function(pluginId) {
     console.log('[DEBUG] ===== configurePlugin called =====');
     console.log('[DEBUG] Plugin ID:', pluginId);
@@ -1039,25 +1031,9 @@ function generateFormFromSchema(schema, config) {
     console.log('[DEBUG] Schema properties:', Object.keys(schema.properties || {}));
     let formHtml = '<form id="plugin-config-form" class="space-y-4">';
 
-    // Always add the enabled toggle at the top
-    const enabledValue = config.enabled !== undefined ? config.enabled : true;
-    formHtml += `
-        <div class="form-group bg-blue-50 p-4 rounded-lg border border-blue-200">
-            <label for="enabled" class="block text-sm font-medium text-gray-900 mb-2">
-                Plugin Status
-            </label>
-            <p class="text-sm text-gray-600 mb-3">Enable or disable this plugin from the rotation</p>
-            <label class="inline-flex items-center cursor-pointer">
-                <input type="checkbox" id="enabled" name="enabled" ${enabledValue ? 'checked' : ''} class="sr-only peer" onchange="updateToggleText(this)">
-                <div class="relative w-11 h-6 bg-gray-300 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-green-600"></div>
-                <span class="ms-3 text-sm font-medium text-gray-900 peer-checked:text-green-600" id="enabled-status-text">${enabledValue ? 'Enabled' : 'Disabled'}</span>
-            </label>
-        </div>
-    `;
-
     if (schema.properties) {
         Object.entries(schema.properties).forEach(([key, prop]) => {
-            // Skip the 'enabled' property if it's in the schema since we already added it
+            // Skip the 'enabled' property - it's managed separately via the header toggle
             if (key === 'enabled') return;
 
             const value = config[key] !== undefined ? config[key] : prop.default;
@@ -1102,21 +1078,8 @@ window.toggleNestedSection = function(sectionId) {
 }
 
 function generateSimpleConfigForm(config) {
-    const enabledValue = config.enabled !== undefined ? config.enabled : true;
     return `
         <form id="plugin-config-form" class="space-y-4">
-            <div class="form-group bg-blue-50 p-4 rounded-lg border border-blue-200">
-                <label for="enabled" class="block text-sm font-medium text-gray-900 mb-2">
-                    Plugin Status
-                </label>
-                <p class="text-sm text-gray-600 mb-3">Enable or disable this plugin from the rotation</p>
-                <label class="inline-flex items-center cursor-pointer">
-                    <input type="checkbox" id="enabled" name="enabled" ${enabledValue ? 'checked' : ''} class="sr-only peer" onchange="updateToggleText(this)">
-                    <div class="relative w-11 h-6 bg-gray-300 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-green-600"></div>
-                    <span class="ms-3 text-sm font-medium text-gray-900 peer-checked:text-green-600" id="enabled-status-text">${enabledValue ? 'Enabled' : 'Disabled'}</span>
-                </label>
-            </div>
-
             <div class="form-group">
                 <label class="block text-sm font-medium text-gray-700 mb-1">Configuration</label>
                 <textarea name="config" class="form-control h-32" placeholder="Plugin configuration JSON">${JSON.stringify(config, null, 2)}</textarea>
