@@ -1121,17 +1121,25 @@ function searchPluginStore(fetchLatestVersions = true) {
     if (isFilteredSearch && isCacheValid && !fetchLatestVersions) {
         console.log('Using cached plugin store data for filtered search');
         renderPluginStore(pluginStoreCache);
-        const countEl = document.getElementById('store-count');
-        if (countEl) {
-            countEl.innerHTML = `${pluginStoreCache.length} available`;
+        try {
+            const countEl = document.getElementById('store-count');
+            if (countEl) {
+                countEl.innerHTML = `${pluginStoreCache.length} available`;
+            }
+        } catch (e) {
+            console.warn('Could not update store count:', e);
         }
         return;
     }
 
-    // Show loading state
-    const countEl = document.getElementById('store-count');
-    if (countEl) {
-        countEl.innerHTML = '<i class="fas fa-spinner fa-spin mr-1"></i>Loading...';
+    // Show loading state - safely check element exists
+    try {
+        const countEl = document.getElementById('store-count');
+        if (countEl) {
+            countEl.innerHTML = '<i class="fas fa-spinner fa-spin mr-1"></i>Loading...';
+        }
+    } catch (e) {
+        console.warn('Could not update store count:', e);
     }
     showStoreLoading(true);
 
@@ -1173,14 +1181,24 @@ function searchPluginStore(fetchLatestVersions = true) {
                 
                 renderPluginStore(plugins);
 
-                // Update count
-                if (countEl) {
-                    countEl.innerHTML = `${plugins.length} available`;
+                // Update count - safely check element exists
+                try {
+                    const countEl = document.getElementById('store-count');
+                    if (countEl) {
+                        countEl.innerHTML = `${plugins.length} available`;
+                    }
+                } catch (e) {
+                    console.warn('Could not update store count:', e);
                 }
             } else {
                 showError('Failed to search plugin store: ' + data.message);
-                if (countEl) {
-                    countEl.innerHTML = 'Error loading';
+                try {
+                    const countEl = document.getElementById('store-count');
+                    if (countEl) {
+                        countEl.innerHTML = 'Error loading';
+                    }
+                } catch (e) {
+                    console.warn('Could not update store count:', e);
                 }
             }
         })
@@ -1188,8 +1206,13 @@ function searchPluginStore(fetchLatestVersions = true) {
             console.error('Error searching plugin store:', error);
             showStoreLoading(false);
             showError('Error searching plugin store: ' + error.message);
-            if (countEl) {
-                countEl.innerHTML = 'Error loading';
+            try {
+                const countEl = document.getElementById('store-count');
+                if (countEl) {
+                    countEl.innerHTML = 'Error loading';
+                }
+            } catch (e) {
+                console.warn('Could not update store count:', e);
             }
         });
 }
