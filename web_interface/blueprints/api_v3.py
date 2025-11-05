@@ -668,8 +668,15 @@ def update_plugin():
                 with open(plugin_path, 'r', encoding='utf-8') as f:
                     manifest = json.load(f)
                     current_version = manifest.get('version')
-            except Exception:
-                pass
+                    # If version not in manifest, try to get from versions array
+                    if not current_version:
+                        versions = manifest.get('versions', [])
+                        if versions and isinstance(versions, list) and len(versions) > 0:
+                            latest = versions[0]
+                            if isinstance(latest, dict) and 'version' in latest:
+                                current_version = latest['version']
+            except Exception as e:
+                print(f"Warning: Could not read current version for {plugin_id}: {e}")
         
         # Update the plugin
         success = api_v3.plugin_store_manager.update_plugin(plugin_id)
@@ -683,14 +690,30 @@ def update_plugin():
                     with open(plugin_path, 'r', encoding='utf-8') as f:
                         manifest = json.load(f)
                         updated_version = manifest.get('version')
-                except Exception:
-                    pass
+                        # If version not in manifest, try to get from versions array
+                        if not updated_version:
+                            versions = manifest.get('versions', [])
+                            if versions and isinstance(versions, list) and len(versions) > 0:
+                                latest = versions[0]
+                                if isinstance(latest, dict) and 'version' in latest:
+                                    updated_version = latest['version']
+                except Exception as e:
+                    print(f"Warning: Could not read updated version for {plugin_id}: {e}")
+            
+            # If we still don't have a version, try getting it from plugin manager
+            if not updated_version:
+                if api_v3.plugin_manager:
+                    plugin_info = api_v3.plugin_manager.get_plugin_info(plugin_id)
+                    if plugin_info:
+                        updated_version = plugin_info.get('version')
             
             # Determine message based on whether version changed
             if current_version and updated_version and current_version == updated_version:
                 message = f'Plugin {plugin_id} is already at the latest version ({updated_version})'
             elif updated_version and updated_version != current_version:
                 message = f'Plugin {plugin_id} updated successfully from {current_version or "unknown"} to {updated_version}'
+            elif updated_version:
+                message = f'Plugin {plugin_id} updated successfully to version {updated_version}'
             else:
                 message = f'Plugin {plugin_id} updated successfully'
             
