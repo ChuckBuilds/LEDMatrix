@@ -59,7 +59,9 @@ class SportsCore(ABC):
         self.is_enabled: bool = self.mode_config.get("enabled", False)
         self.show_odds: bool = self.mode_config.get("show_odds", False)
         self.test_mode: bool = self.mode_config.get("test_mode", False)
-        self.logo_dir = Path(self.mode_config.get("logo_dir", "assets/sports/ncaa_logos")) # Changed logo dir
+        # Use LogoDownloader to get the correct default logo directory for this sport
+        default_logo_dir = LogoDownloader().get_logo_directory(sport_key)
+        self.logo_dir = Path(self.mode_config.get("logo_dir", default_logo_dir))
         self.update_interval: int = self.mode_config.get(
             "update_interval_seconds", 60)
         self.show_records: bool = self.mode_config.get('show_records', False)
@@ -140,10 +142,10 @@ class SportsCore(ABC):
             self.logger.error(f"Error in base _draw_scorebug_layout: {e}", exc_info=True)
 
 
-    def display(self, force_clear: bool = False) -> None:
+    def display(self, force_clear: bool = False) -> bool:
         """Common display method for all NCAA FB managers""" # Updated docstring
         if not self.is_enabled: # Check if module is enabled
-             return
+             return False
 
         if not self.current_game:
             current_time = time.time()
@@ -152,14 +154,16 @@ class SportsCore(ABC):
             if current_time - getattr(self, '_last_warning_time', 0) > 300:
                 self.logger.warning(f"No game data available to display in {self.__class__.__name__}")
                 setattr(self, '_last_warning_time', current_time)
-            return
+            return False
 
         try:
             self._draw_scorebug_layout(self.current_game, force_clear)
             # display_manager.update_display() should be called within subclass draw methods
             # or after calling display() in the main loop. Let's keep it out of the base display.
+            return True
         except Exception as e:
              self.logger.error(f"Error during display call in {self.__class__.__name__}: {e}", exc_info=True)
+             return False
 
 
     def _load_fonts(self):
@@ -856,9 +860,9 @@ class SportsUpcoming(SportsCore):
         except Exception as e:
             self.logger.error(f"Error displaying upcoming game: {e}", exc_info=True) # Changed log prefix
 
-    def display(self, force_clear=False):
+    def display(self, force_clear=False) -> bool:
         """Display upcoming games, handling switching."""
-        if not self.is_enabled: return
+        if not self.is_enabled: return False
 
         if not self.games_list:
             if self.current_game: self.current_game = None # Clear state if list empty
@@ -867,7 +871,7 @@ class SportsUpcoming(SportsCore):
             if current_time - self.last_warning_time > self.warning_cooldown:
                 self.logger.info("No upcoming games found for favorite teams to display.") # Changed log prefix
                 self.last_warning_time = current_time
-            return # Skip display update
+            return False # Skip display update
 
         try:
             current_time = time.time()
@@ -890,10 +894,13 @@ class SportsUpcoming(SportsCore):
 
             if self.current_game:
                 self._draw_scorebug_layout(self.current_game, force_clear)
+                return True
             # update_display() is called within _draw_scorebug_layout for upcoming
+            return False
 
         except Exception as e:
             self.logger.error(f"Error in display loop: {e}", exc_info=True) # Changed log prefix
+            return False
 
 
 class SportsRecent(SportsCore):
@@ -1154,14 +1161,14 @@ class SportsRecent(SportsCore):
         except Exception as e:
             self.logger.error(f"Error displaying recent game: {e}", exc_info=True) # Changed log prefix
 
-    def display(self, force_clear=False):
+    def display(self, force_clear=False) -> bool:
         """Display recent games, handling switching."""
         if not self.is_enabled or not self.games_list:
             # If disabled or no games, ensure display might be cleared by main loop if needed
             # Or potentially clear it here? For now, rely on main loop/other managers.
             if not self.games_list and self.current_game:
                  self.current_game = None # Clear internal state if list becomes empty
-            return
+            return False
 
         try:
             current_time = time.time()
@@ -1184,10 +1191,13 @@ class SportsRecent(SportsCore):
 
             if self.current_game:
                 self._draw_scorebug_layout(self.current_game, force_clear)
+                return True
             # update_display() is called within _draw_scorebug_layout for recent
+            return False
 
         except Exception as e:
             self.logger.error(f"Error in display loop: {e}", exc_info=True) # Changed log prefix
+            return False
 
 class SportsLive(SportsCore):
 

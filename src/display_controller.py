@@ -254,58 +254,75 @@ class DisplayController:
                     manager_to_display = self.calendar
                 
                 # Display the current mode
+                display_result = True  # Default to True for backward compatibility
                 if manager_to_display:
                     try:
                         if hasattr(manager_to_display, 'display'):
-                            manager_to_display.display(force_clear=self.force_change)
+                            result = manager_to_display.display(force_clear=self.force_change)
+                            # Check if display() returned a boolean (new behavior)
+                            if isinstance(result, bool):
+                                display_result = result
                         self.force_change = False
                     except Exception as e:
                         logger.error(f"Error displaying {self.current_display_mode}: {e}")
                         self.force_change = True
+                        display_result = False
                 
-                # Get duration for current mode
-                duration = self._get_display_duration(self.current_display_mode)
-                
-                # For plugins, call display multiple times to allow game rotation
-                if manager_to_display and hasattr(manager_to_display, 'display'):
-                    # Check if plugin needs high FPS (like stock ticker)
-                    has_enable_scrolling = hasattr(manager_to_display, 'enable_scrolling')
-                    enable_scrolling_value = getattr(manager_to_display, 'enable_scrolling', False)
-                    needs_high_fps = has_enable_scrolling and enable_scrolling_value
-                    logger.debug(f"FPS check - has_enable_scrolling: {has_enable_scrolling}, enable_scrolling_value: {enable_scrolling_value}, needs_high_fps: {needs_high_fps}")
+                # If display() returned False, skip to next mode immediately
+                if not display_result:
+                    logger.info(f"No content to display for {self.current_display_mode}, skipping to next mode")
+                else:
+                    # Get duration for current mode
+                    duration = self._get_display_duration(self.current_display_mode)
                     
-                    if needs_high_fps:
-                        # Ultra-smooth FPS for scrolling plugins (8ms = 125 FPS)
-                        display_interval = 0.008
+                    # For plugins, call display multiple times to allow game rotation
+                    if manager_to_display and hasattr(manager_to_display, 'display'):
+                        # Check if plugin needs high FPS (like stock ticker)
+                        has_enable_scrolling = hasattr(manager_to_display, 'enable_scrolling')
+                        enable_scrolling_value = getattr(manager_to_display, 'enable_scrolling', False)
+                        needs_high_fps = has_enable_scrolling and enable_scrolling_value
+                        logger.debug(f"FPS check - has_enable_scrolling: {has_enable_scrolling}, enable_scrolling_value: {enable_scrolling_value}, needs_high_fps: {needs_high_fps}")
                         
-                        # Call display continuously for high-FPS plugins
-                        elapsed = 0
-                        while elapsed < duration:
-                            try:
-                                manager_to_display.display(force_clear=False)
-                            except Exception as e:
-                                logger.error(f"Error during display update: {e}")
+                        if needs_high_fps:
+                            # Ultra-smooth FPS for scrolling plugins (8ms = 125 FPS)
+                            display_interval = 0.008
                             
-                            time.sleep(display_interval)
-                            elapsed += display_interval
-                    else:
-                        # Normal FPS for other plugins (1 second)
-                        display_interval = 1.0
-                        
-                        elapsed = 0
-                        while elapsed < duration:
-                            time.sleep(display_interval)
-                            elapsed += display_interval
-                            
-                            # Call display again to allow game rotation
-                            if elapsed < duration:  # Don't call on the last iteration
+                            # Call display continuously for high-FPS plugins
+                            elapsed = 0
+                            while elapsed < duration:
                                 try:
-                                    manager_to_display.display(force_clear=False)
+                                    result = manager_to_display.display(force_clear=False)
+                                    # If display returns False, break early
+                                    if isinstance(result, bool) and not result:
+                                        logger.debug(f"Display returned False, breaking early")
+                                        break
                                 except Exception as e:
                                     logger.error(f"Error during display update: {e}")
-                else:
-                    # For non-plugin modes, use the original behavior
-                    time.sleep(duration)
+                                
+                                time.sleep(display_interval)
+                                elapsed += display_interval
+                        else:
+                            # Normal FPS for other plugins (1 second)
+                            display_interval = 1.0
+                            
+                            elapsed = 0
+                            while elapsed < duration:
+                                time.sleep(display_interval)
+                                elapsed += display_interval
+                                
+                                # Call display again to allow game rotation
+                                if elapsed < duration:  # Don't call on the last iteration
+                                    try:
+                                        result = manager_to_display.display(force_clear=False)
+                                        # If display returns False, break early
+                                        if isinstance(result, bool) and not result:
+                                            logger.debug(f"Display returned False, breaking early")
+                                            break
+                                    except Exception as e:
+                                        logger.error(f"Error during display update: {e}")
+                    else:
+                        # For non-plugin modes, use the original behavior
+                        time.sleep(duration)
                 
                 # Move to next mode
                 self.current_mode_index = (self.current_mode_index + 1) % len(self.available_modes)
