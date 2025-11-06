@@ -11,7 +11,7 @@ from pathlib import Path
 from src.display_manager import DisplayManager
 from src.cache_manager import CacheManager
 from src.odds_manager import OddsManager
-from src.logo_downloader import download_missing_logo
+from src.logo_downloader import download_missing_logo, LogoDownloader
 from src.background_data_service import get_background_service
 from src.dynamic_team_resolver import DynamicTeamResolver
 
@@ -663,7 +663,7 @@ class OddsTickerManager:
                                     'away_record': away_record,
                                     'odds': odds_data if has_odds else None,
                                     'broadcast_info': broadcast_info,
-                                    'logo_dir': league_config.get('logo_dir', f'assets/sports/{league.lower()}_logos'),
+                                    'logo_dir': league_config.get('logo_dir', LogoDownloader().get_logo_directory(league_config.get('logo_league', league))),
                                     'league': league_config.get('logo_league', league),  # Use logo_league for downloading
                                     'status': status,
                                     'status_state': status_state,

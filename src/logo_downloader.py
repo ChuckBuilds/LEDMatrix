@@ -136,7 +136,8 @@ class LogoDownloader:
     
     def get_logo_directory(self, league: str) -> str:
         """Get the logo directory for a given league."""
-        return self.LOGO_DIRECTORIES.get(league, f'assets/sports/{league}_logos')
+        # Access class variable directly to ensure correct lookup
+        return LogoDownloader.LOGO_DIRECTORIES.get(league, f'assets/sports/{league}_logos')
     
     def ensure_logo_directory(self, logo_dir: str) -> bool:
         """Ensure the logo directory exists, create if necessary."""
@@ -678,7 +679,8 @@ def download_missing_logo(league: str, team_id: str, team_abbreviation: str, log
     Args:
         team_abbreviation: Team abbreviation (e.g., 'UGA', 'BAMA', 'TA&M')
         league: League identifier (e.g., 'ncaa_fb', 'nfl')
-        team_name: Optional team name for logging
+        logo_path: Full path to where the logo should be saved
+        logo_url: Optional direct URL to the logo
         create_placeholder: Whether to create a placeholder if download fails
         
     Returns:
@@ -686,24 +688,30 @@ def download_missing_logo(league: str, team_id: str, team_abbreviation: str, log
     """
     downloader = LogoDownloader()
     
-    # Check if logo already exists
-    logo_dir = downloader.get_logo_directory(league)
+    # Use the directory from the logo_path parameter (respects config settings)
+    logo_dir = str(logo_path.parent)
+    
+    # Ensure the directory exists and is writable
     if not downloader.ensure_logo_directory(logo_dir):
         logger.error(f"Cannot download logo for {team_abbreviation}: directory {logo_dir} is not writable")
         return False
-    filename = f"{downloader.normalize_abbreviation(team_abbreviation)}.png"
-    filepath = Path(logo_dir) / filename
+    
+    # Use the exact filepath that was passed in (respects config settings)
+    filepath = logo_path
     
     if filepath.exists():
         logger.debug(f"Logo already exists for {team_abbreviation} ({league})")
         return True
     
     # Try to download the real logo first
-    logger.info(f"Attempting to download logo for {team_abbreviation}  from {league}")
+    logger.info(f"Attempting to download logo for {team_abbreviation} from {league}")
     if logo_url:
         success = downloader.download_logo(logo_url, filepath, team_abbreviation)
         if success:
             time.sleep(0.1)  # Small delay
+        if not success and create_placeholder:
+            logger.info(f"Creating placeholder logo for {team_abbreviation}")
+            success = downloader.create_placeholder_logo(team_abbreviation, logo_dir)
         return success
 
     success = downloader.download_missing_logo_for_team(league, team_id, team_abbreviation, logo_path)
