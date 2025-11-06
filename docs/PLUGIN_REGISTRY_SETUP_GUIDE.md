@@ -23,6 +23,15 @@ ledmatrix-plugins/
 
 This is the **core file** that the Plugin Store reads from.
 
+**Important**: The registry stores **metadata only** (name, description, repo URL, etc.). 
+**Versions are automatically fetched from GitHub** using this priority:
+1. GitHub Releases (most reliable)
+2. GitHub Tags (if no releases)
+3. Manifest from branch (if no releases/tags)
+4. Git commit hash (fallback)
+
+You **do not need to manage versions** in the registry - the plugin store always fetches the latest from GitHub.
+
 **File**: `plugins.json`
 
 ```json
@@ -39,14 +48,6 @@ This is the **core file** that the Plugin Store reads from.
       "tags": ["clock", "time", "date"],
       "repo": "https://github.com/ChuckBuilds/ledmatrix-clock-simple",
       "branch": "main",
-      "versions": [
-        {
-          "version": "1.0.0",
-          "ledmatrix_min": "2.0.0",
-          "released": "2025-01-09",
-          "download_url": "https://github.com/ChuckBuilds/ledmatrix-clock-simple/archive/refs/tags/v1.0.0.zip"
-        }
-      ],
       "stars": 12,
       "downloads": 156,
       "last_updated": "2025-01-09",
@@ -56,6 +57,9 @@ This is the **core file** that the Plugin Store reads from.
   ]
 }
 ```
+
+**Note**: The `versions` array and `latest_version` fields are **optional** and will be ignored. 
+The plugin store always fetches the latest version from GitHub automatically.
 
 ## Step 2: Create Plugin Repositories
 
@@ -160,17 +164,19 @@ Before submitting, ensure your plugin:
      -d '{"repo_url": "https://github.com/you/ledmatrix-your-plugin"}'
    ```
 
-2. **Create Release**
-   ```bash
-   git tag v1.0.0
-   git push origin v1.0.0
-   ```
+2. **Version Management (Automatic)**
+   - Versions are automatically managed via the pre-push git hook
+   - When you push code changes, the hook automatically:
+     - Bumps the patch version in manifest.json
+     - Creates a git tag (v{version})
+   - No manual version management needed!
+   - See `scripts/README_VERSION_BUMPING.md` for details
 
 3. **Fork This Repo**
    Fork [ledmatrix-plugins](https://github.com/ChuckBuilds/ledmatrix-plugins)
 
 4. **Update plugins.json**
-   Add your plugin entry:
+   Add your plugin entry (metadata only - no versions needed):
    ```json
    {
      "id": "your-plugin",
@@ -181,14 +187,6 @@ Before submitting, ensure your plugin:
      "tags": ["tag1", "tag2"],
      "repo": "https://github.com/you/ledmatrix-your-plugin",
      "branch": "main",
-     "versions": [
-       {
-         "version": "1.0.0",
-         "ledmatrix_min": "2.0.0",
-         "released": "2025-01-09",
-         "download_url": "https://github.com/you/ledmatrix-your-plugin/archive/refs/tags/v1.0.0.zip"
-       }
-     ],
      "verified": false
    }
    ```
@@ -212,10 +210,21 @@ Before submitting, ensure your plugin:
 
 ## Updating Your Plugin
 
-To release a new version:
+**Version updates are automatic!** When you push code changes:
 
-1. Create new release in your repo
-2. Update `versions` array in plugins.json
+1. The pre-push hook automatically bumps the version in manifest.json
+2. A git tag is automatically created (v{version})
+3. The plugin store automatically detects the new version from GitHub
+4. **No registry updates needed** - versions are fetched from GitHub automatically
+
+You only need to update the registry if:
+- Plugin metadata changes (name, description, category, etc.)
+- Repository URL changes
+- You want to update the verified status
+
+To update metadata:
+1. Fork the registry repo
+2. Update plugins.json with new metadata
 3. Submit PR with changes
 4. We'll review and merge
 

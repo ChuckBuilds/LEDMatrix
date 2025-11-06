@@ -277,19 +277,25 @@ plugins/
 
 **Automatic Version Bumping:**
 - **Always bump version before pushing code changes to plugin repositories**
-- Use the pre-push git hook to automatically bump patch version when pushing code changes
-- The hook is self-contained (no external dependencies) and works on any dev machine
-- Installation: Copy the hook from LEDMatrix repo to your plugin repo:
-  ```bash
-  # From your plugin repository directory
-  cp /path/to/LEDMatrix/scripts/git-hooks/pre-push-plugin-version .git/hooks/pre-push
-  chmod +x .git/hooks/pre-push
-  ```
-- Or use the installer script from the main LEDMatrix repo (one-time setup)
-- The hook automatically bumps the patch version (x.y.Z) in manifest.json when code changes are detected
-- Manual bump: Use the standalone script `scripts/bump_plugin_version.py` (available in main repo)
-- Version bumping ensures plugin store and registry always show current versions
-- The version in manifest.json is the source of truth for plugin versions
+- **Automatic Version Management**: Versions are automatically managed - no manual version bumping needed
+- **GitHub as Source of Truth**: Plugin store always fetches latest versions from GitHub (releases/tags/manifest/commit)
+- **Pre-Push Hook**: Automatically bumps patch version and creates git tags when pushing code changes
+  - The hook is self-contained (no external dependencies) and works on any dev machine
+  - Installation: Copy the hook from LEDMatrix repo to your plugin repo:
+    ```bash
+    # From your plugin repository directory
+    cp /path/to/LEDMatrix/scripts/git-hooks/pre-push-plugin-version .git/hooks/pre-push
+    chmod +x .git/hooks/pre-push
+    ```
+  - Or use the installer script from the main LEDMatrix repo (one-time setup)
+  - The hook automatically:
+    1. Bumps the patch version (x.y.Z) in manifest.json when code changes are detected
+    2. Creates a git tag (v{version}) for the new version
+    3. Stages manifest.json for commit
+  - Manual bump (if needed): Use the standalone script `scripts/bump_plugin_version.py`
+  - Skip auto-tagging: Set `SKIP_TAG=1` environment variable before pushing
+- **Registry**: The plugin registry (plugins.json) stores only metadata (name, description, repo URL) - no versions
+- **Version Priority**: Plugin store checks versions in this order: GitHub Releases → GitHub Tags → Manifest from branch → Git commit hash
 
 ## Resources
 

@@ -10,7 +10,10 @@ When you push code changes to a plugin repository, the git pre-push hook automat
 1. Detects if code files (excluding manifest.json) have changed
 2. Bumps the patch version (x.y.Z) in manifest.json
 3. Updates the versions array with the new version
-4. Stages the manifest.json file for commit
+4. Creates a git tag (v{version}) for the new version
+5. Stages the manifest.json file for commit
+
+**Note**: The plugin store always fetches versions from GitHub, so tags ensure your versions are discoverable.
 
 **Key Benefit**: The hook works directly in your plugin repository on your dev machine - no need to have the main LEDMatrix repo structure or any external scripts.
 
@@ -47,7 +50,8 @@ The hook (`scripts/git-hooks/pre-push-plugin-version`) is **self-contained** wit
 1. **Checks for code changes**: Compares the commits being pushed with the remote
 2. **Detects manifest changes**: If only manifest.json changed, no version bump needed
 3. **Bumps version**: If code files changed, automatically bumps patch version using embedded Python
-4. **Stages manifest**: Adds the updated manifest.json to staging
+4. **Creates git tag**: Creates a git tag (v{version}) for the new version (unless SKIP_TAG is set)
+5. **Stages manifest**: Adds the updated manifest.json to staging
 
 **No external dependencies**: The hook includes all version bumping logic, so it works on any machine with Python 3 and git, without needing the main LEDMatrix repository structure.
 
@@ -108,7 +112,15 @@ Example:
    - Stages manifest.json
 4. **Amend commit** (recommended): `git commit --amend --no-edit`
    - This includes the version bump in the same commit
-5. **Push again**: `git push --force-with-lease`
+5. **Push commits and tags**:
+   ```bash
+   git push --force-with-lease
+   git push --tags
+   ```
+   Or push everything at once:
+   ```bash
+   git push --force-with-lease && git push --tags
+   ```
 
 ### Alternative Workflow
 

@@ -114,18 +114,67 @@ if [ $NEEDS_BUMP -eq 1 ]; then
     if bump_version "$MANIFEST_PATH"; then
         # Version was bumped, add manifest.json to staging
         git add "$MANIFEST_PATH"
-        echo "✓ Version bumped and manifest.json staged"
+        
+        # Get the new version from manifest
+        NEW_VERSION=$(python3 << 'PYTHON_SCRIPT'
+import json
+import sys
+try:
+    with open(sys.argv[1], 'r', encoding='utf-8') as f:
+        manifest = json.load(f)
+        print(manifest.get('version', '1.0.0'))
+except:
+    print('1.0.0')
+PYTHON_SCRIPT
+"$MANIFEST_PATH")
+        
+        # Check if we should create a tag (skip if SKIP_TAG environment variable is set)
+        if [ -z "$SKIP_TAG" ]; then
+            TAG_NAME="v${NEW_VERSION}"
+            
+            # Check if tag already exists
+            if git rev-parse "$TAG_NAME" >/dev/null 2>&1; then
+                echo "⚠️  Tag $TAG_NAME already exists, skipping tag creation"
+            else
+                # Create the tag
+                if git tag -a "$TAG_NAME" -m "Version $NEW_VERSION" 2>/dev/null; then
+                    echo "✓ Created git tag: $TAG_NAME"
+                    
+                    # Push the tag along with commits
+                    # Note: We'll push tags after the commit is pushed
+                    echo "  (Tag will be pushed after commits are pushed)"
+                else
+                    echo "⚠️  Warning: Failed to create tag $TAG_NAME"
+                fi
+            fi
+        else
+            echo "  (Tag creation skipped - SKIP_TAG is set)"
+        fi
+        
+        echo "✓ Version bumped to $NEW_VERSION and manifest.json staged"
         echo ""
         echo "Note: The version bump has been staged but not committed."
         echo "You have two options:"
         echo "  1. Amend the current commit: git commit --amend --no-edit"
-        echo "  2. Create a new commit: git commit -m 'chore: Bump version'"
+        echo "  2. Create a new commit: git commit -m 'chore: Bump version to $NEW_VERSION'"
         echo ""
-        echo "After committing, push again: git push --force-with-lease (if amended)"
+        echo "After committing, push again:"
+        echo "  git push --force-with-lease (if amended)"
+        echo ""
+        echo "Then push the new tag:"
+        echo "  git push --tags"
+        echo ""
+        echo "Or push everything at once:"
+        echo "  git push --force-with-lease && git push --tags"
     else
         echo "Warning: Version bump failed, continuing with push"
     fi
 fi
+
+# Note: Tags are created but not automatically pushed in the pre-push hook
+# because the hook runs before the push. Users should push tags manually:
+#   git push --tags
+# Or tags can be pushed in a post-push hook if needed.
 
 exit 0
 

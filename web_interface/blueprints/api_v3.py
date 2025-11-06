@@ -695,6 +695,13 @@ def update_plugin():
             except Exception as e:
                 print(f"Warning: Could not read current version for {plugin_id}: {e}")
         
+        # Get latest version info from GitHub before updating
+        plugin_info = api_v3.plugin_store_manager.get_plugin_info(plugin_id, fetch_latest_from_github=True)
+        version_source = None
+        if plugin_info:
+            version_source = plugin_info.get('version_source', 'unknown')
+            latest_version = plugin_info.get('latest_version') or plugin_info.get('version')
+        
         # Update the plugin
         success = api_v3.plugin_store_manager.update_plugin(plugin_id)
         
@@ -720,17 +727,28 @@ def update_plugin():
             # If we still don't have a version, try getting it from plugin manager
             if not updated_version:
                 if api_v3.plugin_manager:
-                    plugin_info = api_v3.plugin_manager.get_plugin_info(plugin_id)
-                    if plugin_info:
-                        updated_version = plugin_info.get('version')
+                    plugin_info_local = api_v3.plugin_manager.get_plugin_info(plugin_id)
+                    if plugin_info_local:
+                        updated_version = plugin_info_local.get('version')
+            
+            # Build version source description
+            source_desc = ""
+            if version_source:
+                source_map = {
+                    'release': 'GitHub Release',
+                    'tag': 'GitHub Tag',
+                    'manifest': f'Branch: {plugin_info.get("branch", "main") if plugin_info else "main"}',
+                    'commit': 'Git Commit'
+                }
+                source_desc = f" (from {source_map.get(version_source, version_source)})"
             
             # Determine message based on whether version changed
             if current_version and updated_version and current_version == updated_version:
-                message = f'Plugin {plugin_id} is already at the latest version ({updated_version})'
+                message = f'Plugin {plugin_id} is already at the latest version ({updated_version}{source_desc})'
             elif updated_version and updated_version != current_version:
-                message = f'Plugin {plugin_id} updated successfully from {current_version or "unknown"} to {updated_version}'
+                message = f'Plugin {plugin_id} updated successfully from {current_version or "unknown"} to {updated_version}{source_desc}'
             elif updated_version:
-                message = f'Plugin {plugin_id} updated successfully to version {updated_version}'
+                message = f'Plugin {plugin_id} updated successfully to version {updated_version}{source_desc}'
             else:
                 message = f'Plugin {plugin_id} updated successfully'
             
@@ -745,7 +763,8 @@ def update_plugin():
             return jsonify({
                 'status': 'success', 
                 'message': message,
-                'current_version': updated_version
+                'current_version': updated_version,
+                'version_source': version_source
             })
         else:
             # Provide more detailed error message
@@ -1071,12 +1090,24 @@ def list_plugin_store():
             if not version_str:
                 version_str = plugin.get('version', '1.0.0')
             
+            # Get version source for display
+            version_source = plugin.get('version_source', 'unknown')
+            source_map = {
+                'release': 'GitHub Release',
+                'tag': 'GitHub Tag',
+                'manifest': f'Branch: {plugin.get("branch", "main")}',
+                'commit': 'Git Commit'
+            }
+            version_source_display = source_map.get(version_source, version_source)
+            
             formatted_plugins.append({
                 'id': plugin.get('id'),
                 'name': plugin.get('name'),
                 'author': plugin.get('author'),
                 'version': version_str,
                 'latest_version': plugin.get('latest_version', version_str),
+                'version_source': version_source,
+                'version_source_display': version_source_display,
                 'versions': plugin.get('versions', []),  # Include full versions array for UI
                 'category': plugin.get('category'),
                 'description': plugin.get('description'),
