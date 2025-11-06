@@ -13,3 +13,6 @@
 [submodule "plugins/ledmatrix-flights"]
 	path = plugins/ledmatrix-flights
 	url = https://github.com/ChuckBuilds/ledmatrix-flights.git
+[submodule "plugins/football-scoreboard"]
+	path = plugins/football-scoreboard
+	url = https://github.com/ChuckBuilds/ledmatrix-football-scoreboard.git
