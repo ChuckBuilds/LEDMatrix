@@ -243,7 +243,32 @@ class PluginManager:
             if not plugin_dir.exists():
                 # Try with ledmatrix- prefix
                 plugin_dir = self.plugins_dir / f"ledmatrix-{plugin_id}"
-                if not plugin_dir.exists():
+
+            if not plugin_dir.exists():
+                # Perform a case-insensitive lookup to handle filesystem casing mismatches
+                normalized_id = plugin_id.lower()
+                found_dir = None
+                for item in self.plugins_dir.iterdir():
+                    if not item.is_dir():
+                        continue
+
+                    item_name = item.name
+                    if item_name.lower() == normalized_id:
+                        found_dir = item
+                        break
+
+                    if item_name.lower() == f"ledmatrix-{plugin_id}".lower():
+                        found_dir = item
+                        break
+
+                if found_dir is not None:
+                    plugin_dir = found_dir
+                    self.logger.warning(
+                        "Plugin directory case mismatch detected for %s. Using %s",
+                        plugin_id,
+                        plugin_dir,
+                    )
+                else:
                     self.logger.error(f"Plugin directory not found: {plugin_id} or ledmatrix-{plugin_id}")
                     return False
             
