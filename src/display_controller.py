@@ -18,7 +18,6 @@ from src.display_manager import DisplayManager
 from src.config_manager import ConfigManager
 from src.cache_manager import CacheManager
 from src.font_manager import FontManager
-from src.old_managers.calendar_manager import CalendarManager
 
 # Get logger without configuring
 logger = logging.getLogger(__name__)
@@ -45,11 +44,7 @@ class DisplayController:
         # Initialize display modes - all functionality now handled via plugins
         init_time = time.time()
         
-        # Core system components only
-        self.calendar = CalendarManager(self.display_manager, self.config) if self.config.get('calendar', {}).get('enabled', True) else None
-        
         # All other functionality handled via plugins
-        logger.info(f"Calendar Manager initialized: {'Object' if self.calendar else 'None'}")
         logger.info("Display modes initialized in %.3f seconds", time.time() - init_time)
         
         self.force_change = False
@@ -248,10 +243,6 @@ class DisplayController:
                     plugin_instance = self.plugin_modes[self.current_display_mode]
                     if hasattr(plugin_instance, 'display'):
                         manager_to_display = plugin_instance
-                
-                # Handle calendar (core system component)
-                elif self.current_display_mode == 'calendar' and self.calendar:
-                    manager_to_display = self.calendar
                 
                 # Display the current mode
                 display_result = True  # Default to True for backward compatibility
