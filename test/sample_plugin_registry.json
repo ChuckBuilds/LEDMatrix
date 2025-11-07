@@ -1,5 +1,4 @@
 {
-  "version": "1.0.0",
   "last_updated": "2025-01-09",
   "plugins": [
     {
@@ -11,17 +10,10 @@
       "tags": ["clock", "time", "date"],
       "repo": "https://github.com/ChuckBuilds/ledmatrix-clock-simple",
       "branch": "main",
-      "versions": [
-        {
-          "version": "1.0.0",
-          "ledmatrix_min": "2.0.0",
-          "released": "2025-01-09",
-          "download_url": "https://github.com/ChuckBuilds/ledmatrix-clock-simple/archive/refs/tags/v1.0.0.zip"
-        }
-      ],
       "stars": 12,
       "downloads": 156,
       "last_updated": "2025-01-09",
+      "last_commit": "abc1234",
       "verified": true
     },
     {
@@ -33,17 +25,10 @@
       "tags": ["weather", "animated", "forecast"],
       "repo": "https://github.com/CommunityDev/ledmatrix-weather-animated",
       "branch": "main",
-      "versions": [
-        {
-          "version": "2.1.0",
-          "ledmatrix_min": "2.0.0",
-          "released": "2025-01-08",
-          "download_url": "https://github.com/CommunityDev/ledmatrix-weather-animated/archive/refs/tags/v2.1.0.zip"
-        }
-      ],
       "stars": 45,
       "downloads": 432,
       "last_updated": "2025-01-08",
+      "last_commit": "def5678",
       "verified": true
     },
     {
@@ -55,17 +40,10 @@
       "tags": ["nhl", "hockey", "sports", "scores"],
       "repo": "https://github.com/ChuckBuilds/ledmatrix-nhl-scores",
       "branch": "main",
-      "versions": [
-        {
-          "version": "1.0.0",
-          "ledmatrix_min": "2.0.0",
-          "released": "2025-01-07",
-          "download_url": "https://github.com/ChuckBuilds/ledmatrix-nhl-scores/archive/refs/tags/v1.0.0.zip"
-        }
-      ],
       "stars": 67,
       "downloads": 789,
       "last_updated": "2025-01-07",
+      "last_commit": "ghi9012",
       "verified": true
     },
     {
@@ -77,17 +55,10 @@
       "tags": ["stocks", "finance", "ticker", "market"],
       "repo": "https://github.com/FinanceDevs/ledmatrix-stocks-ticker",
       "branch": "main",
-      "versions": [
-        {
-          "version": "1.5.0",
-          "ledmatrix_min": "2.0.0",
-          "released": "2025-01-06",
-          "download_url": "https://github.com/FinanceDevs/ledmatrix-stocks-ticker/archive/refs/tags/v1.5.0.zip"
-        }
-      ],
       "stars": 34,
       "downloads": 523,
       "last_updated": "2025-01-06",
+      "last_commit": "jkl3456",
       "verified": true
     },
     {
@@ -99,17 +70,10 @@
       "tags": ["animation", "gif", "custom", "fun"],
       "repo": "https://github.com/AnimationFan/ledmatrix-custom-animation",
       "branch": "main",
-      "versions": [
-        {
-          "version": "0.9.0",
-          "ledmatrix_min": "2.0.0",
-          "released": "2025-01-05",
-          "download_url": "https://github.com/AnimationFan/ledmatrix-custom-animation/archive/refs/tags/v0.9.0.zip"
-        }
-      ],
       "stars": 23,
       "downloads": 301,
       "last_updated": "2025-01-05",
+      "last_commit": "mno7890",
       "verified": false
     }
   ]

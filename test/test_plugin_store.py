@@ -42,7 +42,6 @@ def test_fetch_registry():
     try:
         registry = store.fetch_registry()
         print(f"✓ Registry fetched successfully")
-        print(f"  Version: {registry.get('version', 'N/A')}")
         print(f"  Plugins available: {len(registry.get('plugins', []))}")
         
         # Show first 3 plugins as examples
@@ -111,7 +110,7 @@ def test_list_installed():
             for plugin_id in installed:
                 info = store.get_installed_plugin_info(plugin_id)
                 if info:
-                    print(f"    - {info.get('name')} ({plugin_id}) v{info.get('version')}")
+                    print(f"    - {info.get('name')} ({plugin_id})")
                 else:
                     print(f"    - {plugin_id} (no manifest)")
         else:
@@ -143,7 +142,7 @@ def test_install_from_url_example():
     
     print("\nSafety features:")
     print("  - Validates manifest.json exists and is valid")
-    print("  - Checks for required fields (id, name, version, entry_point, class_name)")
+    print("  - Checks for required fields (id, name, entry_point, class_name)")
     print("  - Returns detailed error messages if installation fails")
     print("  - Shows warning about unverified plugins in UI")
 
@@ -169,7 +168,7 @@ def test_api_usage():
     
     print("\n4. Install from registry:")
     print("   POST /api/plugins/install")
-    print("   Body: {'plugin_id': 'clock-simple', 'version': 'latest'}")
+    print("   Body: {'plugin_id': 'clock-simple'}")
     
     print("\n5. Install from URL:")
     print("   POST /api/plugins/install-from-url")
@@ -239,7 +238,7 @@ def main():
     print("✓ Search and filter plugins by query, category, tags")
     print("✓ List installed plugins with metadata")
     print("✓ Uninstall plugins")
-    print("✓ Update plugins to latest version")
+    print("✓ Update plugins to latest commit")
     print("✓ Automatic dependency installation")
     print("✓ Git clone or ZIP download fallback")
     print("✓ Comprehensive error handling and logging")

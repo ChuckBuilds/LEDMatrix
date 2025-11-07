@@ -13,6 +13,7 @@ import zipfile
 import tempfile
 import requests
 import time
+from datetime import datetime
 from pathlib import Path
 from typing import List, Dict, Optional, Any
 import logging
@@ -41,7 +42,6 @@ class PluginStoreManager:
         self.registry_cache = None
         self.registry_cache_time = None  # Timestamp of when registry was cached
         self.github_cache = {}  # Cache for GitHub API responses
-        self.github_releases_cache = {}  # Cache for GitHub releases/tags
         self.cache_timeout = 3600  # 1 hour cache timeout
         self.registry_cache_timeout = 300  # 5 minutes for registry cache
         self.github_token = self._load_github_token()
@@ -67,6 +67,32 @@ class PluginStoreManager:
         except Exception as e:
             self.logger.debug(f"Could not load GitHub token: {e}")
         return None
+
+    @staticmethod
+    def _iso_to_date(iso_timestamp: str) -> str:
+        """Convert an ISO timestamp to YYYY-MM-DD string."""
+        if not iso_timestamp:
+            return ""
+
+        try:
+            dt = datetime.fromisoformat(iso_timestamp.replace('Z', '+00:00'))
+            return dt.strftime('%Y-%m-%d')
+        except Exception:
+            return ""
+
+    @staticmethod
+    def _distinct_sequence(values: List[str]) -> List[str]:
+        """Return list preserving order while removing duplicates and falsey entries."""
+        seen = set()
+        ordered = []
+        for value in values:
+            if not value:
+                continue
+            if value in seen:
+                continue
+            seen.add(value)
+            ordered.append(value)
+        return ordered
 
     def _get_github_repo_info(self, repo_url: str) -> Dict[str, Any]:
         """Fetch GitHub repository information (stars, etc.)"""
@@ -103,13 +129,17 @@ class PluginStoreManager:
                     response = requests.get(api_url, headers=headers, timeout=10)
                     if response.status_code == 200:
                         data = response.json()
+                        pushed_at = data.get('pushed_at', '') or data.get('updated_at', '')
                         repo_info = {
                             'stars': data.get('stargazers_count', 0),
                             'forks': data.get('forks_count', 0),
                             'open_issues': data.get('open_issues_count', 0),
-                            'updated_at': data.get('updated_at', ''),
+                            'updated_at_iso': data.get('updated_at', ''),
+                            'last_commit_iso': pushed_at,
+                            'last_commit_date': self._iso_to_date(pushed_at),
                             'language': data.get('language', ''),
-                            'license': data.get('license', {}).get('name', '') if data.get('license') else ''
+                            'license': data.get('license', {}).get('name', '') if data.get('license') else '',
+                            'default_branch': data.get('default_branch', 'main')
                         }
 
                         # Cache the result
@@ -131,11 +161,31 @@ class PluginStoreManager:
                     else:
                         self.logger.warning(f"GitHub API request failed: {response.status_code} for {api_url}")
 
-            return {'stars': 0, 'forks': 0, 'open_issues': 0, 'updated_at': '', 'language': '', 'license': ''}
+            return {
+                'stars': 0,
+                'forks': 0,
+                'open_issues': 0,
+                'updated_at_iso': '',
+                'last_commit_iso': '',
+                'last_commit_date': '',
+                'language': '',
+                'license': '',
+                'default_branch': 'main'
+            }
 
         except Exception as e:
             self.logger.error(f"Error fetching GitHub repo info for {repo_url}: {e}")
-            return {'stars': 0, 'forks': 0, 'open_issues': 0, 'updated_at': '', 'language': '', 'license': ''}
+            return {
+                'stars': 0,
+                'forks': 0,
+                'open_issues': 0,
+                'updated_at_iso': '',
+                'last_commit_iso': '',
+                'last_commit_date': '',
+                'language': '',
+                'license': '',
+                'default_branch': 'main'
+            }
 
     def _http_get_with_retries(self, url: str, *, timeout: int = 10, stream: bool = False, headers: Dict[str, str] = None, max_retries: int = 3, backoff_sec: float = 0.75):
         """
@@ -237,27 +287,27 @@ class PluginStoreManager:
             return self.registry_cache
         except requests.RequestException as e:
             self.logger.error(f"Error fetching registry: {e}")
-            return {"version": "1.0.0", "plugins": []}
+            return {"plugins": []}
         except json.JSONDecodeError as e:
             self.logger.error(f"Error parsing registry JSON: {e}")
-            return {"version": "1.0.0", "plugins": []}
+            return {"plugins": []}
     
     def search_plugins(self, query: str = "", category: str = "", tags: List[str] = None, fetch_latest_versions: bool = True, include_saved_repos: bool = True, saved_repositories_manager = None) -> List[Dict]:
         """
         Search for plugins in the registry with enhanced metadata.
 
-        GitHub is now the primary source of truth for versions. The registry
-        provides metadata only (name, description, repo URL, etc.).
+        GitHub is now treated as the source of truth for live metadata like
+        stars and last commit timestamps. The registry provides descriptive
+        information (name, description, repo URL, etc.).
 
         Args:
             query: Search query string (searches name, description, id)
             category: Filter by category (e.g., 'sports', 'weather', 'time')
             tags: Filter by tags (matches any tag in list)
-            fetch_latest_versions: If True (default), fetch latest from GitHub.
-                                  GitHub is the source of truth for versions.
+            fetch_latest_versions: If True (default), fetch commit metadata from GitHub.
 
         Returns:
-            List of matching plugin metadata with real stars and downloads
+            List of matching plugin metadata enriched with GitHub information
         """
         if tags is None:
             tags = []
@@ -308,7 +358,7 @@ class PluginStoreManager:
                 if query_lower not in searchable_text:
                     continue
 
-            # Enhance plugin data with real GitHub stars
+            # Enhance plugin data with GitHub metadata
             enhanced_plugin = plugin.copy()
 
             # Get real GitHub stars
@@ -316,44 +366,28 @@ class PluginStoreManager:
             if repo_url:
                 github_info = self._get_github_repo_info(repo_url)
                 enhanced_plugin['stars'] = github_info.get('stars', plugin.get('stars', 0))
-                
-                # Always fetch latest version from GitHub (GitHub is source of truth)
+                enhanced_plugin['default_branch'] = github_info.get('default_branch', plugin.get('branch', 'main'))
+                enhanced_plugin['last_updated_iso'] = github_info.get('last_commit_iso')
+                enhanced_plugin['last_updated'] = github_info.get('last_commit_date')
+
                 if fetch_latest_versions:
-                    branch = plugin.get('branch', 'master')
-                    
-                    # Get version using priority order: Releases → Tags → Manifest → Commit
-                    version_info = self._get_latest_version_from_github(repo_url, branch)
-                    
-                    if version_info:
-                        enhanced_plugin['latest_version'] = version_info['version']
-                        enhanced_plugin['version'] = version_info['version']
-                        enhanced_plugin['version_source'] = version_info['source']
-                        
-                        # Add to versions array if not already present
-                        if 'versions' not in enhanced_plugin or not isinstance(enhanced_plugin['versions'], list):
-                            enhanced_plugin['versions'] = []
-                        
-                        existing_versions = [v.get('version', '') if isinstance(v, dict) else str(v) 
-                                            for v in enhanced_plugin.get('versions', [])]
-                        
-                        if version_info['version'] not in existing_versions:
-                            version_entry = {
-                                'version': version_info['version'],
-                                'ledmatrix_min': enhanced_plugin.get('versions', [{}])[0].get('ledmatrix_min', '2.0.0') if enhanced_plugin.get('versions') else '2.0.0',
-                                'released': version_info.get('released', ''),
-                                'source': version_info['source']
-                            }
-                            
-                            if version_info.get('download_url'):
-                                version_entry['download_url'] = version_info['download_url']
-                            
-                            enhanced_plugin['versions'].insert(0, version_entry)
-                    
-                    # Also fetch manifest from GitHub for additional metadata (description, etc.)
+                    branch = plugin.get('branch') or github_info.get('default_branch', 'main')
+
+                    commit_info = self._get_latest_commit_info(repo_url, branch)
+                    if commit_info:
+                        enhanced_plugin['last_commit'] = commit_info.get('short_sha')
+                        enhanced_plugin['last_commit_sha'] = commit_info.get('sha')
+                        enhanced_plugin['last_updated'] = commit_info.get('date') or enhanced_plugin.get('last_updated')
+                        enhanced_plugin['last_updated_iso'] = commit_info.get('date_iso') or enhanced_plugin.get('last_updated_iso')
+                        enhanced_plugin['last_commit_message'] = commit_info.get('message')
+                        enhanced_plugin['last_commit_author'] = commit_info.get('author')
+                        enhanced_plugin['branch'] = commit_info.get('branch', branch)
+                        enhanced_plugin['last_commit_branch'] = commit_info.get('branch')
+
+                    # Fetch manifest from GitHub for additional metadata (description, etc.)
                     github_manifest = self._fetch_manifest_from_github(repo_url, branch)
                     if github_manifest:
-                        # Update other fields that might be more current
-                        if 'last_updated' in github_manifest:
+                        if 'last_updated' in github_manifest and not enhanced_plugin.get('last_updated'):
                             enhanced_plugin['last_updated'] = github_manifest['last_updated']
                         if 'description' in github_manifest:
                             enhanced_plugin['description'] = github_manifest['description']
@@ -404,289 +438,80 @@ class PluginStoreManager:
         
         return None
     
-    def _get_version_from_git_commit(self, repo_url: str, branch: str = "master") -> Optional[Dict[str, Any]]:
-        """
-        Get version identifier from git commit hash/timestamp.
-        
-        This is used as a fallback when no releases, tags, or manifest versions exist.
-        Uses GitHub API to get the latest commit from the branch.
-        
-        Args:
-            repo_url: GitHub repository URL
-            branch: Branch name (default: master)
-            
-        Returns:
-            Dict with version info or None if failed
-        """
+    def _get_latest_commit_info(self, repo_url: str, branch: str = "main") -> Optional[Dict[str, Any]]:
+        """Return metadata about the latest commit on the given branch."""
         try:
-            # Extract owner/repo from URL
             if 'github.com' not in repo_url:
                 return None
-                
+
             repo_url = repo_url.rstrip('/')
             if repo_url.endswith('.git'):
                 repo_url = repo_url[:-4]
-            
+
             parts = repo_url.split('/')
             if len(parts) < 2:
                 return None
-            
+
             owner = parts[-2]
             repo = parts[-1]
-            
-            # Try to get latest commit from branch using GitHub API
-            api_url = f"https://api.github.com/repos/{owner}/{repo}/commits/{branch}"
+
+            branches_to_try = self._distinct_sequence([branch, 'main', 'master'])
+
             headers = {
                 'Accept': 'application/vnd.github.v3+json',
                 'User-Agent': 'LEDMatrix-Plugin-Manager/1.0'
             }
-            
+
             if self.github_token:
                 headers['Authorization'] = f'token {self.github_token}'
-            
-            response = requests.get(api_url, headers=headers, timeout=10)
-            if response.status_code == 200:
-                commit_data = response.json()
-                commit_sha = commit_data.get('sha', '')[:7]  # Short hash
-                commit_date = commit_data.get('commit', {}).get('author', {}).get('date', '')
-                
-                # Format version as timestamp-shorthash
-                if commit_date:
-                    # Extract date part (YYYY-MM-DD)
-                    date_part = commit_date.split('T')[0].replace('-', '')
-                    version = f"commit-{date_part}-{commit_sha}"
-                else:
-                    version = f"commit-{commit_sha}"
-                
-                return {
-                    'version': version,
-                    'source': 'commit',
-                    'released': commit_date.split('T')[0] if commit_date else '',
-                    'commit_hash': commit_sha
-                }
-            elif response.status_code == 404:
-                # Branch not found, try 'main' instead
-                if branch != "main":
-                    return self._get_version_from_git_commit(repo_url, "main")
-            elif response.status_code == 403:
-                if not self.github_token:
-                    self.logger.debug(f"GitHub API rate limit for commits (403). Consider adding a token.")
-        except Exception as e:
-            self.logger.debug(f"Error fetching commit version for {repo_url}: {e}")
-        
-        return None
-    
-    def _get_latest_version_from_github(self, repo_url: str, branch: str = "master") -> Optional[Dict[str, Any]]:
-        """
-        Get latest version from GitHub using priority order:
-        1. GitHub Releases (most reliable)
-        2. GitHub Tags (if no releases)
-        3. Manifest from branch (if no releases/tags)
-        4. Git commit hash/timestamp (fallback)
-        
-        Args:
-            repo_url: GitHub repository URL
-            branch: Branch name (default: master)
-            
-        Returns:
-            Dict with version info including 'version', 'source', 'released', 'download_url'
-        """
-        # Priority 1: Try GitHub Releases
-        github_releases = self._fetch_github_releases(repo_url)
-        if github_releases and len(github_releases) > 0:
-            latest_release = github_releases[0]
-            latest_version = latest_release.get('version', '')
-            
-            if latest_version:
-                tag_name = latest_release.get('tag_name', f"v{latest_version}")
-                
-                # Construct download URL
-                parts = repo_url.rstrip('/').split('/')
-                owner = parts[-2]
-                repo = parts[-1]
-                download_url = f"https://github.com/{owner}/{repo}/archive/refs/tags/{tag_name}.zip"
-                
-                return {
-                    'version': latest_version,
-                    'source': 'release',
-                    'released': latest_release.get('published_at', '').split('T')[0] if latest_release.get('published_at') else '',
-                    'download_url': download_url,
-                    'tag_name': tag_name
-                }
-        
-        # Priority 2: Try GitHub Tags (if no releases found)
-        # The _fetch_github_releases already tries tags as fallback, but if it returned None,
-        # we need to explicitly try tags API
-        try:
-            if 'github.com' in repo_url:
-                repo_url_clean = repo_url.rstrip('/').replace('.git', '')
-                parts = repo_url_clean.split('/')
-                if len(parts) >= 2:
-                    owner = parts[-2]
-                    repo = parts[-1]
-                    
-                    api_url = f"https://api.github.com/repos/{owner}/{repo}/tags"
-                    headers = {
-                        'Accept': 'application/vnd.github.v3+json',
-                        'User-Agent': 'LEDMatrix-Plugin-Manager/1.0'
-                    }
-                    
-                    if self.github_token:
-                        headers['Authorization'] = f'token {self.github_token}'
-                    
-                    response = requests.get(api_url, headers=headers, timeout=10, params={'per_page': 1})
-                    if response.status_code == 200:
-                        tags = response.json()
-                        if tags and len(tags) > 0:
-                            tag = tags[0]
-                            tag_name = tag.get('name', '')
-                            version = tag_name.lstrip('v')
-                            
-                            if version:
-                                download_url = f"https://github.com/{owner}/{repo}/archive/refs/tags/{tag_name}.zip"
-                                return {
-                                    'version': version,
-                                    'source': 'tag',
-                                    'released': '',  # Tags don't have publish date
-                                    'download_url': download_url,
-                                    'tag_name': tag_name
-                                }
-        except Exception as e:
-            self.logger.debug(f"Error fetching tags for {repo_url}: {e}")
-        
-        # Priority 3: Try Manifest from branch
-        github_manifest = self._fetch_manifest_from_github(repo_url, branch)
-        if github_manifest:
-            manifest_version = github_manifest.get('version')
-            if manifest_version:
-                # Check if versions array exists and has latest
-                if 'versions' in github_manifest and isinstance(github_manifest['versions'], list) and len(github_manifest['versions']) > 0:
-                    latest_ver = github_manifest['versions'][0]
-                    if isinstance(latest_ver, dict) and 'version' in latest_ver:
-                        manifest_version = latest_ver['version']
-                
-                return {
-                    'version': manifest_version,
-                    'source': 'manifest',
-                    'released': github_manifest.get('last_updated', ''),
-                    'download_url': None  # No download URL for branch-based installs
-                }
-        
-        # Priority 4: Fallback to commit hash/timestamp
-        commit_version = self._get_version_from_git_commit(repo_url, branch)
-        if commit_version:
-            return commit_version
-        
-        # No version found
-        self.logger.warning(f"Could not determine version for {repo_url} from any source")
-        return None
-    
-    def _fetch_github_releases(self, repo_url: str) -> Optional[List[Dict[str, Any]]]:
-        """
-        Fetch GitHub releases/tags for a repository to get latest version.
-        
-        Args:
-            repo_url: GitHub repository URL
-            
-        Returns:
-            List of release/tag info, or None if not found
-        """
-        try:
-            # Extract owner/repo from URL
-            if 'github.com' not in repo_url:
-                return None
-                
-            repo_url = repo_url.rstrip('/')
-            if repo_url.endswith('.git'):
-                repo_url = repo_url[:-4]
-            
-            parts = repo_url.split('/')
-            if len(parts) < 2:
-                return None
-            
-            owner = parts[-2]
-            repo = parts[-1]
-            cache_key = f"{owner}/{repo}/releases"
-            
-            # Check cache first
-            if cache_key in self.github_releases_cache:
-                cached_time, cached_data = self.github_releases_cache[cache_key]
-                if time.time() - cached_time < self.cache_timeout:
-                    return cached_data
-            
-            # Try GitHub Releases API first (more reliable)
-            api_url = f"https://api.github.com/repos/{owner}/{repo}/releases"
-            headers = {
-                'Accept': 'application/vnd.github.v3+json',
-                'User-Agent': 'LEDMatrix-Plugin-Manager/1.0'
-            }
-            
-            if self.github_token:
-                headers['Authorization'] = f'token {self.github_token}'
-            
-            response = requests.get(api_url, headers=headers, timeout=10)
-            if response.status_code == 200:
-                releases = response.json()
-                # Filter to only get published releases (not drafts/prereleases)
-                # Only include releases that have a tag_name (actual releases, not just drafts)
-                published_releases = [
-                    {
-                        'tag_name': r.get('tag_name', ''),
-                        'version': r.get('tag_name', '').lstrip('v'),  # Remove 'v' prefix if present
-                        'published_at': r.get('published_at', ''),
-                        'name': r.get('name', ''),
-                        'prerelease': r.get('prerelease', False),
-                        'draft': r.get('draft', False)
-                    }
-                    for r in releases if not r.get('draft', False) and not r.get('prerelease', False) and r.get('tag_name')
-                ]
-                
-                # Only return releases if we found valid ones
-                if published_releases:
-                    # Cache the result
-                    self.github_releases_cache[cache_key] = (time.time(), published_releases)
-                    return published_releases
-            elif response.status_code == 404:
-                # No releases found, try tags API instead
-                api_url = f"https://api.github.com/repos/{owner}/{repo}/tags"
+
+            last_error = None
+            for branch_name in branches_to_try:
+                api_url = f"https://api.github.com/repos/{owner}/{repo}/commits/{branch_name}"
                 response = requests.get(api_url, headers=headers, timeout=10)
                 if response.status_code == 200:
-                    tags = response.json()
-                    tag_list = [
-                        {
-                            'tag_name': t.get('name', ''),
-                            'version': t.get('name', '').lstrip('v'),
-                            'published_at': '',  # Tags don't have publish date
-                            'name': t.get('name', ''),
-                            'prerelease': False,
-                            'draft': False
-                        }
-                        for t in tags[:10]  # Limit to first 10 tags
-                    ]
-                    self.github_releases_cache[cache_key] = (time.time(), tag_list)
-                    return tag_list
-            elif response.status_code == 403:
-                if not self.github_token:
-                    self.logger.debug(f"GitHub API rate limit for releases (403). Consider adding a token.")
-            else:
-                self.logger.debug(f"GitHub API request failed: {response.status_code} for {api_url}")
-                
+                    commit_data = response.json()
+                    commit_sha_full = commit_data.get('sha', '')
+                    commit_sha_short = commit_sha_full[:7] if commit_sha_full else ''
+                    commit_meta = commit_data.get('commit', {})
+                    commit_author = commit_meta.get('author', {})
+                    commit_date_iso = commit_author.get('date', '')
+
+                    return {
+                        'branch': branch_name,
+                        'sha': commit_sha_full,
+                        'short_sha': commit_sha_short,
+                        'date_iso': commit_date_iso,
+                        'date': self._iso_to_date(commit_date_iso),
+                        'author': commit_author.get('name', ''),
+                        'message': commit_meta.get('message', ''),
+                    }
+
+                if response.status_code == 403 and not self.github_token:
+                    self.logger.debug("GitHub commit API rate limited (403). Consider adding a token.")
+                    last_error = response.text
+                else:
+                    last_error = response.text
+
+            if last_error:
+                self.logger.debug(f"Unable to fetch commit info for {repo_url}: {last_error}")
+
         except Exception as e:
-            self.logger.debug(f"Error fetching GitHub releases for {repo_url}: {e}")
-        
+            self.logger.debug(f"Error fetching latest commit metadata for {repo_url}: {e}")
+
         return None
+    
     
     def get_plugin_info(self, plugin_id: str, fetch_latest_from_github: bool = True) -> Optional[Dict]:
         """
         Get detailed information about a plugin from the registry.
-        
-        GitHub is now the primary source of truth for versions. The registry
-        provides metadata only (name, description, repo URL, etc.).
+
+        GitHub provides authoritative metadata such as stars and the latest
+        commit. The registry supplies descriptive information (name, id, repo URL).
         
         Args:
             plugin_id: Plugin identifier
-            fetch_latest_from_github: If True (default), fetch latest version from GitHub.
-                                     Uses priority: Releases → Tags → Manifest → Commit hash
+            fetch_latest_from_github: If True (default), augment with GitHub commit metadata.
             
         Returns:
             Plugin metadata or None if not found
@@ -698,50 +523,33 @@ class PluginStoreManager:
         if not plugin_info:
             return None
         
-        # Always fetch latest version from GitHub (GitHub is source of truth)
         if fetch_latest_from_github:
             repo_url = plugin_info.get('repo')
-            branch = plugin_info.get('branch', 'master')
-            
             if repo_url:
                 plugin_info = plugin_info.copy()
-                
-                # Priority order: GitHub Releases → GitHub Tags → Manifest from branch → Commit hash
-                version_info = self._get_latest_version_from_github(repo_url, branch)
-                
-                if version_info:
-                    plugin_info['latest_version'] = version_info['version']
-                    plugin_info['version_source'] = version_info['source']  # 'release', 'tag', 'manifest', 'commit'
-                    
-                    # Add version to versions array if not already present
-                    if 'versions' not in plugin_info or not isinstance(plugin_info['versions'], list):
-                        plugin_info['versions'] = []
-                    
-                    existing_versions = [v.get('version', '') if isinstance(v, dict) else str(v) 
-                                        for v in plugin_info['versions']]
-                    
-                    if version_info['version'] not in existing_versions:
-                        version_entry = {
-                            'version': version_info['version'],
-                            'ledmatrix_min': plugin_info.get('versions', [{}])[0].get('ledmatrix_min', '2.0.0') if plugin_info.get('versions') else '2.0.0',
-                            'released': version_info.get('released', ''),
-                            'source': version_info['source']
-                        }
-                        
-                        # Add download URL if available (for releases/tags)
-                        if version_info.get('download_url'):
-                            version_entry['download_url'] = version_info['download_url']
-                        
-                        plugin_info['versions'].insert(0, version_entry)
-                    
-                    # Also update main version field
-                    plugin_info['version'] = version_info['version']
-                
-                # Fetch manifest from GitHub for additional metadata (description, etc.)
+
+                github_info = self._get_github_repo_info(repo_url)
+                branch = plugin_info.get('branch') or github_info.get('default_branch', 'main')
+
+                plugin_info['default_branch'] = github_info.get('default_branch', branch)
+                plugin_info['stars'] = github_info.get('stars', plugin_info.get('stars', 0))
+                plugin_info['last_updated'] = github_info.get('last_commit_date', plugin_info.get('last_updated'))
+                plugin_info['last_updated_iso'] = github_info.get('last_commit_iso', plugin_info.get('last_updated_iso'))
+
+                commit_info = self._get_latest_commit_info(repo_url, branch)
+                if commit_info:
+                    plugin_info['last_commit'] = commit_info.get('short_sha')
+                    plugin_info['last_commit_sha'] = commit_info.get('sha')
+                    plugin_info['last_commit_message'] = commit_info.get('message')
+                    plugin_info['last_commit_author'] = commit_info.get('author')
+                    plugin_info['last_updated'] = commit_info.get('date') or plugin_info.get('last_updated')
+                    plugin_info['last_updated_iso'] = commit_info.get('date_iso') or plugin_info.get('last_updated_iso')
+                    plugin_info['branch'] = commit_info.get('branch', branch)
+                    plugin_info['last_commit_branch'] = commit_info.get('branch')
+
                 github_manifest = self._fetch_manifest_from_github(repo_url, branch)
                 if github_manifest:
-                    # Update other fields that might be more current
-                    if 'last_updated' in github_manifest:
+                    if 'last_updated' in github_manifest and not plugin_info.get('last_updated'):
                         plugin_info['last_updated'] = github_manifest['last_updated']
                     if 'description' in github_manifest:
                         plugin_info['description'] = github_manifest['description']
@@ -750,139 +558,80 @@ class PluginStoreManager:
     
     def install_plugin(self, plugin_id: str, version: str = "latest") -> bool:
         """
-        Install a plugin from the official registry.
-        
-        Args:
-            plugin_id: Plugin identifier
-            version: Version to install (default: latest)
-            
-        Returns:
-            True if installed successfully
+        Install a plugin from the official registry. ``version`` is ignored and kept for
+        backwards compatibility; the latest commit from the repository's default branch
+        is always installed.
         """
-        self.logger.info(f"Installing plugin: {plugin_id} (version: {version})")
-        
-        # Get plugin info from registry
-        # If installing "latest", fetch from GitHub to get the actual latest version
-        # even if registry JSON is outdated
-        fetch_latest = (version == "latest")
-        plugin_info = self.get_plugin_info(plugin_id, fetch_latest_from_github=fetch_latest)
-        
+        self.logger.info(f"Installing plugin: {plugin_id} (latest branch head)")
+
+        plugin_info = self.get_plugin_info(plugin_id, fetch_latest_from_github=True)
         if not plugin_info:
             self.logger.error(f"Plugin not found in registry: {plugin_id}")
             return False
-        
+
+        repo_url = plugin_info.get('repo')
+        if not repo_url:
+            self.logger.error(f"Plugin {plugin_id} missing repository URL")
+            return False
+
+        plugin_subpath = plugin_info.get('plugin_path')
+        branch_candidates = self._distinct_sequence([
+            plugin_info.get('branch'),
+            plugin_info.get('default_branch'),
+            plugin_info.get('last_commit_branch'),
+            'main',
+            'master'
+        ])
+
+        plugin_path = self.plugins_dir / plugin_id
+        if plugin_path.exists():
+            self.logger.warning(f"Plugin directory already exists: {plugin_id}. Removing it before reinstall.")
+            shutil.rmtree(plugin_path)
+
         try:
-            # Get version info
-            versions = plugin_info.get('versions', [])
-            if not versions:
-                self.logger.error(f"No versions available for plugin: {plugin_id}")
-                return False
-                
-            if version == "latest":
-                # Check for explicit latest_version field, otherwise use first in list
-                latest_ver = plugin_info.get('latest_version')
-                if latest_ver:
-                    version_info = next((v for v in versions if v['version'] == latest_ver), None)
-                    if not version_info:
-                        self.logger.warning(f"latest_version {latest_ver} not found, using first version")
-                        version_info = versions[0]
-                else:
-                    version_info = versions[0]  # First is latest
-            else:
-                version_info = next((v for v in versions if v['version'] == version), None)
-                if not version_info:
-                    self.logger.error(f"Version not found: {version}")
-                    return False
-            
-            # Get repo URL and plugin path (for monorepo support)
-            repo_url = plugin_info['repo']
-            plugin_subpath = plugin_info.get('plugin_path')  # e.g., "plugins/hello-world"
-            
-            # Check if plugin already exists
-            plugin_path = self.plugins_dir / plugin_id
-            if plugin_path.exists():
-                self.logger.warning(f"Plugin directory already exists: {plugin_id}. Removing old version.")
-                shutil.rmtree(plugin_path)
-            
-            # For monorepo plugins, we need to download and extract from subdirectory
+            branch_used = None
+
             if plugin_subpath:
                 self.logger.info(f"Installing from monorepo subdirectory: {plugin_subpath}")
-                download_url = version_info.get('download_url')
-                if not download_url:
-                    # Check for download_url_template at plugin level
-                    download_template = plugin_info.get('download_url_template')
-                    if download_template:
-                        # Use template with version substitution
-                        download_url = download_template.format(version=version_info['version'])
-                    else:
-                        # Construct GitHub download URL
-                        download_url = f"{repo_url}/archive/refs/heads/{plugin_info.get('branch', 'main')}.zip"
-                
-                if not self._install_from_monorepo(download_url, plugin_subpath, plugin_path):
-                    self.logger.error(f"Failed to install plugin from monorepo: {plugin_id}")
+                for candidate in branch_candidates:
+                    download_url = f"{repo_url}/archive/refs/heads/{candidate}.zip"
+                    if self._install_from_monorepo(download_url, plugin_subpath, plugin_path):
+                        branch_used = candidate
+                        break
+
+                if branch_used is None:
+                    self.logger.error(f"Failed to install plugin from monorepo path {plugin_subpath} for {plugin_id}")
                     return False
             else:
-                # Standard installation (plugin at repo root)
-                # Try to install via git clone first (preferred method)
-                # Use branch from registry if available, otherwise try version tag
-                branch = plugin_info.get('branch')
-                if self._install_via_git(repo_url, version=version_info.get('version'), target_path=plugin_path, branch=branch):
-                    self.logger.info(f"Installed {plugin_id} via git clone")
-                else:
-                    # Fall back to download zip
-                    self.logger.info("Git not available or failed, trying download...")
-                    download_url = version_info.get('download_url')
-                    if not download_url:
-                        # Check for download_url_template at plugin level
-                        download_template = plugin_info.get('download_url_template')
-                        if download_template:
-                            # Use template with version substitution
-                            download_url = download_template.format(version=version_info['version'])
-                        else:
-                            # Construct GitHub download URL if not provided
-                            download_url = f"{repo_url}/archive/refs/tags/v{version_info['version']}.zip"
-                    
-                    # Try downloading the version-specific URL
-                    download_success = self._install_via_download(download_url, plugin_path)
-                    
-                    # If version-specific download fails, try branch-based download as fallback
-                    if not download_success:
-                        self.logger.warning(f"Version-specific download failed for {plugin_id}, trying branch-based download...")
-                        branch = plugin_info.get('branch', 'main')
-                        branch_download_url = f"{repo_url}/archive/refs/heads/{branch}.zip"
-                        download_success = self._install_via_download(branch_download_url, plugin_path)
-                        
-                        if not download_success:
-                            # Try master branch as last resort
-                            if branch != 'master':
-                                self.logger.warning(f"Branch {branch} download failed, trying master branch...")
-                                download_success = self._install_via_download(
-                                    f"{repo_url}/archive/refs/heads/master.zip", 
-                                    plugin_path
-                                )
-                    
-                    if not download_success:
-                        self.logger.error(f"Failed to download plugin: {plugin_id} (tried version tag and branch downloads)")
-                        return False
-            
-            # Validate manifest exists
+                branch_used = self._install_via_git(repo_url, plugin_path, branch_candidates)
+                if branch_used is None and not plugin_path.exists():
+                    # Git failed entirely; fall back to zip download
+                    self.logger.info("Git not available or clone failed, attempting archive download...")
+                    for candidate in branch_candidates:
+                        download_url = f"{repo_url}/archive/refs/heads/{candidate}.zip"
+                        if self._install_via_download(download_url, plugin_path):
+                            branch_used = candidate
+                            break
+
+                if branch_used is None and not plugin_path.exists():
+                    self.logger.error(f"Failed to install plugin {plugin_id} via git or archive download")
+                    return False
+
             manifest_path = plugin_path / "manifest.json"
             if not manifest_path.exists():
                 self.logger.error(f"No manifest.json found in plugin: {plugin_id}")
-                self.logger.error(f"Expected at: {manifest_path}")
-                shutil.rmtree(plugin_path)
+                shutil.rmtree(plugin_path, ignore_errors=True)
                 return False
-            
-            # Validate manifest required fields
+
             try:
                 with open(manifest_path, 'r', encoding='utf-8') as mf:
                     manifest = json.load(mf)
-                required_fields = ['id', 'name', 'version', 'class_name']
-                missing = [f for f in required_fields if f not in manifest]
-                
+
+                required_fields = ['id', 'name', 'class_name']
+                missing = [field for field in required_fields if field not in manifest]
+
                 manifest_modified = False
-                
-                # Try to auto-detect class_name from manager.py if missing
+
                 if 'class_name' in missing:
                     entry_point = manifest.get('entry_point', 'manager.py')
                     manager_file = plugin_path / entry_point
@@ -891,45 +640,42 @@ class PluginStoreManager:
                             detected_class = self._detect_class_name(manager_file)
                             if detected_class:
                                 manifest['class_name'] = detected_class
-                                self.logger.info(f"Auto-detected class_name '{detected_class}' from {entry_point}")
                                 missing.remove('class_name')
                                 manifest_modified = True
-                        except Exception as e:
-                            self.logger.warning(f"Could not auto-detect class_name: {e}")
-                
+                                self.logger.info(f"Auto-detected class_name '{detected_class}' from {entry_point}")
+                        except Exception as err:
+                            self.logger.warning(f"Could not auto-detect class_name for {plugin_id}: {err}")
+
                 if missing:
                     self.logger.error(f"Plugin manifest missing required fields for {plugin_id}: {', '.join(missing)}")
-                    shutil.rmtree(plugin_path)
+                    shutil.rmtree(plugin_path, ignore_errors=True)
                     return False
-                
-                # entry_point is optional, default to "manager.py" if not specified
+
                 if 'entry_point' not in manifest:
                     manifest['entry_point'] = 'manager.py'
                     manifest_modified = True
                     self.logger.info(f"Added missing entry_point field to {plugin_id} manifest (defaulted to manager.py)")
-                
-                # Write manifest back if we modified it
+
                 if manifest_modified:
                     with open(manifest_path, 'w', encoding='utf-8') as mf:
                         json.dump(manifest, mf, indent=2)
-            except Exception as me:
-                self.logger.error(f"Failed to read/validate manifest for {plugin_id}: {me}")
-                shutil.rmtree(plugin_path)
+
+            except Exception as manifest_error:
+                self.logger.error(f"Failed to read/validate manifest for {plugin_id}: {manifest_error}")
+                shutil.rmtree(plugin_path, ignore_errors=True)
                 return False
-            
-            # Install Python dependencies
+
             if not self._install_dependencies(plugin_path):
                 self.logger.warning(f"Some dependencies may not have installed correctly for {plugin_id}")
 
-            self.logger.info(f"Successfully installed plugin: {plugin_id} v{version_info['version']}")
+            branch_display = branch_used or plugin_info.get('branch') or plugin_info.get('default_branch', 'unknown')
+            self.logger.info(f"Successfully installed plugin: {plugin_id} (branch {branch_display})")
             return True
-            
+
         except Exception as e:
             self.logger.error(f"Error installing plugin {plugin_id}: {e}", exc_info=True)
-            # Cleanup on failure
-            plugin_path = self.plugins_dir / plugin_id
             if plugin_path.exists():
-                shutil.rmtree(plugin_path)
+                shutil.rmtree(plugin_path, ignore_errors=True)
             return False
     
     def install_from_url(self, repo_url: str, plugin_id: str = None, plugin_path: str = None) -> Dict[str, Any]:
@@ -973,9 +719,9 @@ class PluginStoreManager:
                         }
             else:
                 # Try git clone for direct plugin repos
-                if self._install_via_git(repo_url, branch='main', target_path=temp_dir):
+                if self._install_via_git(repo_url, temp_dir, ['main']):
                     self.logger.info("Cloned via git")
-                elif self._install_via_git(repo_url, branch='master', target_path=temp_dir):
+                elif self._install_via_git(repo_url, temp_dir, ['master']):
                     self.logger.info("Cloned via git (master branch)")
                 else:
                     # Try downloading as zip (main branch)
@@ -1008,7 +754,7 @@ class PluginStoreManager:
                 }
             
             # Validate manifest has required fields
-            required_fields = ['id', 'name', 'version', 'class_name']
+            required_fields = ['id', 'name', 'class_name']
             missing_fields = [field for field in required_fields if field not in manifest]
             if missing_fields:
                 return {
@@ -1027,7 +773,7 @@ class PluginStoreManager:
             # Move to plugins directory
             final_path = self.plugins_dir / plugin_id
             if final_path.exists():
-                self.logger.warning(f"Plugin {plugin_id} already exists, removing old version")
+                self.logger.warning(f"Plugin {plugin_id} already exists, removing existing copy")
                 shutil.rmtree(final_path)
             
             shutil.move(str(temp_dir), str(final_path))
@@ -1040,8 +786,7 @@ class PluginStoreManager:
             return {
                 'success': True,
                 'plugin_id': plugin_id,
-                'name': manifest.get('name'),
-                'version': manifest.get('version')
+                'name': manifest.get('name')
             }
             
         except json.JSONDecodeError as e:
@@ -1093,75 +838,50 @@ class PluginStoreManager:
             self.logger.warning(f"Error detecting class name from {manager_file}: {e}")
             return None
     
-    def _install_via_git(self, repo_url: str, version: str = None, target_path: Path = None, branch: str = None) -> bool:
-        """
-        Install plugin by cloning git repository.
-        
-        Args:
-            repo_url: Repository URL
-            version: Version tag to checkout (optional)
-            target_path: Target directory
-            branch: Branch to clone (optional, used instead of version)
-            
-        Returns:
-            True if successful
-        """
-        branches_to_try = []
-        if version and not branch:
-            # Try version tag first
-            branches_to_try.append(f"v{version}")
-            branches_to_try.append(version)  # Try without v prefix
-        elif branch:
-            branches_to_try.append(branch)
-        else:
-            # Try common branch names if none specified
+    def _install_via_git(self, repo_url: str, target_path: Path, branches: Optional[List[str]] = None) -> Optional[str]:
+        """Clone a repository into ``target_path``. Returns the branch name on success."""
+        branches_to_try = self._distinct_sequence(branches or [])
+        if not branches_to_try:
             branches_to_try = ['main', 'master']
-        
+
         last_error = None
         for try_branch in branches_to_try:
             try:
                 cmd = ['git', 'clone', '--depth', '1', '--branch', try_branch, repo_url, str(target_path)]
-                
-                result = subprocess.run(
+                subprocess.run(
                     cmd,
                     check=True,
                     capture_output=True,
                     text=True,
                     timeout=60
                 )
-                
-                # Keep .git directory for update functionality
-                # This allows plugins to be updated via 'git pull'
                 self.logger.debug(f"Successfully cloned {repo_url} (branch: {try_branch}) to {target_path}")
-                
-                return True
-                
+                return try_branch
             except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError) as e:
                 last_error = e
                 self.logger.debug(f"Git clone failed for branch {try_branch}: {e}")
-                # Try next branch
                 if target_path.exists():
                     shutil.rmtree(target_path)
-                continue
-        
-        # If all branches failed and we had a specific branch, try without branch specification (default branch)
-        if (version or branch) and not any(b in branches_to_try for b in ['main', 'master']):
-            try:
-                cmd = ['git', 'clone', '--depth', '1', repo_url, str(target_path)]
-                result = subprocess.run(
-                    cmd,
-                    check=True,
-                    capture_output=True,
-                    text=True,
-                    timeout=60
-                )
-                self.logger.debug(f"Successfully cloned {repo_url} (default branch) to {target_path}")
-                return True
-            except Exception as e:
-                self.logger.debug(f"Git clone failed for default branch: {e}")
-        
+
+        # Try default branch (Git's configured default) as last resort
+        try:
+            cmd = ['git', 'clone', '--depth', '1', repo_url, str(target_path)]
+            subprocess.run(
+                cmd,
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=60
+            )
+            self.logger.debug(f"Successfully cloned {repo_url} (git default branch) to {target_path}")
+            return None  # Unknown branch name, git default used
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError) as e:
+            last_error = e
+            if target_path.exists():
+                shutil.rmtree(target_path)
+
         self.logger.error(f"Git clone failed for all attempted branches: {last_error}")
-        return False
+        return None
     
     def _install_from_monorepo(self, download_url: str, plugin_subpath: str, target_path: Path) -> bool:
         """
@@ -1328,6 +1048,46 @@ class PluginStoreManager:
         except subprocess.TimeoutExpired:
             self.logger.error("Dependency installation timed out")
             return False
+
+    def _get_local_git_info(self, plugin_path: Path) -> Optional[Dict[str, str]]:
+        """Return local git branch and commit hash if the plugin is a git checkout."""
+        git_dir = plugin_path / '.git'
+        if not git_dir.exists():
+            return None
+
+        try:
+            sha_result = subprocess.run(
+                ['git', '-C', str(plugin_path), 'rev-parse', 'HEAD'],
+                capture_output=True,
+                text=True,
+                timeout=10,
+                check=True
+            )
+            sha = sha_result.stdout.strip()
+
+            branch_result = subprocess.run(
+                ['git', '-C', str(plugin_path), 'rev-parse', '--abbrev-ref', 'HEAD'],
+                capture_output=True,
+                text=True,
+                timeout=10,
+                check=True
+            )
+            branch = branch_result.stdout.strip()
+
+            if branch == 'HEAD':
+                branch = ''
+
+            return {
+                'sha': sha,
+                'short_sha': sha[:7] if sha else '',
+                'branch': branch
+            }
+        except subprocess.CalledProcessError as err:
+            self.logger.debug(f"Failed to read git info for {plugin_path.name}: {err}")
+        except subprocess.TimeoutExpired:
+            self.logger.debug(f"Timed out reading git info for {plugin_path.name}")
+
+        return None
     
     def uninstall_plugin(self, plugin_id: str) -> bool:
         """
@@ -1375,13 +1135,7 @@ class PluginStoreManager:
     
     def update_plugin(self, plugin_id: str) -> bool:
         """
-        Update a plugin to the latest version.
-        
-        Args:
-            plugin_id: Plugin identifier
-            
-        Returns:
-            True if updated successfully
+        Update a plugin to the latest commit on its upstream branch.
         """
         plugin_path = self.plugins_dir / plugin_id
         
@@ -1390,118 +1144,78 @@ class PluginStoreManager:
             return False
         
         try:
-            # Force refresh the registry cache to get latest version info
             self.logger.info(f"Checking for updates to plugin {plugin_id}")
             self.fetch_registry(force_refresh=True)
-            
-            # Get current installed version from manifest
-            current_version = None
-            manifest_path = plugin_path / "manifest.json"
-            if manifest_path.exists():
+            plugin_info_remote = self.get_plugin_info(plugin_id, fetch_latest_from_github=True)
+            if not plugin_info_remote:
+                self.logger.warning(f"Plugin {plugin_id} not found in registry metadata; attempting reinstall using existing files")
+                return self.install_plugin(plugin_id)
+
+            repo_url = plugin_info_remote.get('repo')
+            remote_sha = plugin_info_remote.get('last_commit_sha')
+            remote_branch = plugin_info_remote.get('branch') or plugin_info_remote.get('default_branch')
+
+            git_info = self._get_local_git_info(plugin_path)
+
+            if git_info:
+                local_sha = git_info.get('sha')
+                local_branch = git_info.get('branch') or remote_branch or 'main'
+
+                if remote_sha and local_sha and remote_sha.startswith(local_sha):
+                    self.logger.info(f"Plugin {plugin_id} already matches remote commit {remote_sha[:7]}")
+                    return True
+
+                self.logger.info(f"Updating {plugin_id} via git pull (branch {local_branch})...")
                 try:
-                    with open(manifest_path, 'r', encoding='utf-8') as f:
-                        manifest = json.load(f)
-                        current_version = manifest.get('version')
-                except Exception as e:
-                    self.logger.warning(f"Could not read manifest for {plugin_id}: {e}")
-            
-            # Get latest version from registry
-            plugin_info = self.get_plugin_info(plugin_id, fetch_latest_from_github=True)
-            if plugin_info:
-                latest_version = plugin_info.get('latest_version') or plugin_info.get('version')
-                if current_version and latest_version:
-                    if current_version == latest_version:
-                        self.logger.info(f"Plugin {plugin_id} is already at latest version {latest_version}")
-                        return True
-                    self.logger.info(f"Update available: {plugin_id} {current_version} → {latest_version}")
-            
-            # Check if this is a git repository
-            git_dir = plugin_path / ".git"
-            if git_dir.exists():
-                # Check if we're on a branch or detached HEAD (tag)
-                result = subprocess.run(
-                    ['git', '-C', str(plugin_path), 'symbolic-ref', '-q', 'HEAD'],
-                    capture_output=True,
-                    text=True,
-                    timeout=10
-                )
-                
-                if result.returncode == 0:
-                    # On a branch, try git pull
-                    self.logger.info(f"Updating {plugin_id} via git pull...")
-                    pull_result = subprocess.run(
-                        ['git', '-C', str(plugin_path), 'pull'],
+                    subprocess.run(
+                        ['git', '-C', str(plugin_path), 'fetch', 'origin'],
                         capture_output=True,
                         text=True,
-                        timeout=60
+                        timeout=60,
+                        check=True
                     )
-                    
-                    if pull_result.returncode == 0:
-                        pull_output = pull_result.stdout.strip()
-                        if "Already up to date" in pull_output:
-                            # Check if there's actually a newer version we should get
-                            if plugin_info and latest_version and current_version:
-                                if latest_version != current_version:
-                                    # Version mismatch - try fetching and pulling
-                                    self.logger.info(f"Git says up to date but version mismatch detected, fetching latest...")
-                                    fetch_result = subprocess.run(
-                                        ['git', '-C', str(plugin_path), 'fetch', 'origin'],
-                                        capture_output=True,
-                                        text=True,
-                                        timeout=30
-                                    )
-                                    if fetch_result.returncode == 0:
-                                        pull_result = subprocess.run(
-                                            ['git', '-C', str(plugin_path), 'pull', 'origin', 'master'],
-                                            capture_output=True,
-                                            text=True,
-                                            timeout=60
-                                        )
-                                        if pull_result.returncode != 0:
-                                            self.logger.warning(f"Git pull after fetch failed, trying branch 'main'...")
-                                            pull_result = subprocess.run(
-                                                ['git', '-C', str(plugin_path), 'pull', 'origin', 'main'],
-                                                capture_output=True,
-                                                text=True,
-                                                timeout=60
-                                            )
-                        
-                        if pull_result.returncode == 0:
-                            # Check if anything actually changed
-                            if "Already up to date" not in pull_result.stdout:
-                                self.logger.info(f"Updated plugin {plugin_id} via git pull")
-                            else:
-                                self.logger.info(f"Plugin {plugin_id} is already up to date")
-                            
-                            # Reinstall dependencies in case they changed
-                            try:
-                                self._install_dependencies(plugin_path)
-                            except Exception as deps_error:
-                                self.logger.warning(f"Warning: Could not reinstall dependencies: {deps_error}")
-                            
-                            return True
-                        else:
-                            self.logger.warning(f"Git pull failed for {plugin_id}: {pull_result.stderr}")
-                            # Fall through to registry reinstall
-                    else:
-                        self.logger.warning(f"Git pull failed for {plugin_id}: {pull_result.stderr}")
-                        # Fall through to registry reinstall
-                else:
-                    # Detached HEAD (installed from tag), need to fetch and checkout latest tag
-                    self.logger.info(f"Plugin {plugin_id} is on a tag (detached HEAD), fetching latest version from registry")
-                    # For tagged installations, always reinstall from registry to get the latest version
-                    return self.install_plugin(plugin_id, version="latest")
-            
-            # Not a git repo, or git pull failed - try registry reinstall
-            if not plugin_info:
-                self.logger.warning(f"Plugin {plugin_id} not found in registry and is not a git repository. Cannot update automatically.")
-                self.logger.warning(f"To update this plugin, manually update it via git or reinstall from registry.")
-                return False
-            
-            # Plugin is in registry, try to reinstall from registry
-            self.logger.info(f"Re-downloading plugin {plugin_id} from registry")
-            return self.install_plugin(plugin_id, version="latest")
-            
+
+                    pull_branch = remote_branch or local_branch
+                    subprocess.run(
+                        ['git', '-C', str(plugin_path), 'checkout', pull_branch],
+                        capture_output=True,
+                        text=True,
+                        timeout=30,
+                        check=True
+                    )
+
+                    pull_result = subprocess.run(
+                        ['git', '-C', str(plugin_path), 'pull', 'origin', pull_branch],
+                        capture_output=True,
+                        text=True,
+                        timeout=120,
+                        check=True
+                    )
+
+                    self.logger.info(pull_result.stdout.strip() or f"Pulled latest changes for {plugin_id}")
+
+                    updated_git_info = self._get_local_git_info(plugin_path) or {}
+                    updated_sha = updated_git_info.get('sha', '')
+                    if remote_sha and updated_sha and remote_sha.startswith(updated_sha):
+                        self.logger.info(f"Plugin {plugin_id} now at remote commit {remote_sha[:7]}")
+                    elif updated_sha:
+                        self.logger.info(f"Plugin {plugin_id} updated to commit {updated_sha[:7]}")
+
+                    self._install_dependencies(plugin_path)
+                    return True
+
+                except subprocess.CalledProcessError as git_error:
+                    self.logger.warning(f"Git update failed for {plugin_id}: {git_error.stderr}")
+                except subprocess.TimeoutExpired:
+                    self.logger.warning(f"Git update timed out for {plugin_id}")
+
+            else:
+                self.logger.info(f"Plugin {plugin_id} not installed via git; re-installing latest archive")
+
+            # Remove directory and reinstall fresh
+            shutil.rmtree(plugin_path, ignore_errors=True)
+            return self.install_plugin(plugin_id)
+
         except Exception as e:
             import traceback
             self.logger.error(f"Error updating plugin {plugin_id}: {e}")

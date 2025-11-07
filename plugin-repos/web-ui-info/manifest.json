@@ -1,0 +1,22 @@
+{
+  "id": "web-ui-info",
+  "name": "Web UI Info",
+  "version": "1.0.0",
+  "author": "LEDMatrix",
+  "description": "Displays the web UI URL for easy access. Shows 'visit web ui at http://[deviceID]:5000'",
+  "entry_point": "manager.py",
+  "class_name": "WebUIInfoPlugin",
+  "category": "system",
+  "tags": [
+    "web",
+    "ui",
+    "info",
+    "system"
+  ],
+  "display_modes": [
+    "web_ui_info"
+  ],
+  "update_interval": 300,
+  "default_duration": 10
+}
+

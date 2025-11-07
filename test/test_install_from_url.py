@@ -67,7 +67,7 @@ def test_install_hello_world_local():
             print(f"\n✓ Plugin Info:")
             print(f"  ID: {manifest.get('id')}")
             print(f"  Name: {manifest.get('name')}")
-            print(f"  Version: {manifest.get('version')}")
+            print(f"  Last Updated: {manifest.get('last_updated', 'unknown')}")
             print(f"  Author: {manifest.get('author')}")
             print(f"  Description: {manifest.get('description')}")
             
@@ -91,7 +91,7 @@ def test_install_hello_world_local():
                 if info:
                     print(f"\n✓ Verified installation:")
                     print(f"  Name: {info.get('name')}")
-                    print(f"  Version: {info.get('version')}")
+                    print(f"  Last Updated: {info.get('last_updated', 'unknown')}")
                     print(f"  Entry Point: {info.get('entry_point')}")
                     print(f"  Class Name: {info.get('class_name')}")
                 
@@ -186,7 +186,6 @@ result = store.install_from_url('https://github.com/user/plugin')
 if result['success']:
     print(f"Installed: {result['plugin_id']}")
     print(f"Name: {result['name']}")
-    print(f"Version: {result['version']}")
 else:
     print(f"Error: {result['error']}")
 """)

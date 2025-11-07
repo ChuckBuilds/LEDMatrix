@@ -390,7 +390,7 @@ function initializePlugins() {
 
     // Load both installed plugins and plugin store
     loadInstalledPlugins();
-    searchPluginStore(true); // Load plugin store with latest versions fetched from GitHub
+    searchPluginStore(true); // Load plugin store with fresh metadata from GitHub
 
     // Setup search functionality
     document.getElementById('plugin-search').addEventListener('input', debounce(searchPluginStore, 300));
@@ -479,7 +479,8 @@ function renderInstalledPlugins(plugins) {
                     </div>
                     <div class="text-sm text-gray-600 space-y-1.5 mb-3">
                         <p class="flex items-center"><i class="fas fa-user mr-2 text-gray-400 w-4"></i>${escapeHtml(plugin.author || 'Unknown')}</p>
-                        <p class="flex items-center"><i class="fas fa-code-branch mr-2 text-gray-400 w-4"></i>v${plugin.version || '1.0.0'}</p>
+                        <p class="flex items-center"><i class="fas fa-code-branch mr-2 text-gray-400 w-4"></i>${formatCommit(plugin.last_commit, plugin.branch)}</p>
+                        <p class="flex items-center"><i class="fas fa-calendar mr-2 text-gray-400 w-4"></i>${formatDate(plugin.last_updated)}</p>
                         <p class="flex items-center"><i class="fas fa-folder mr-2 text-gray-400 w-4"></i>${escapeHtml(plugin.category || 'General')}</p>
                         ${plugin.stars ? `<p class="flex items-center"><i class="fas fa-star mr-2 text-gray-400 w-4"></i>${plugin.stars} stars</p>` : ''}
                     </div>
@@ -1306,16 +1307,18 @@ function refreshPlugins() {
     cacheTimestamp = null;
     
     loadInstalledPlugins();
-    // Fetch latest versions from GitHub when refreshing
+    // Fetch latest metadata from GitHub when refreshing
     searchPluginStore(true);
-    showNotification('Plugins refreshed with latest versions from GitHub', 'success');
+    showNotification('Plugins refreshed with latest metadata from GitHub', 'success');
 }
 
 function restartDisplay() {
+    showNotification('Restarting display service...', 'info');
+    
     fetch('/api/v3/system/action', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'start_display' })
+        body: JSON.stringify({ action: 'restart_display_service' })
     })
     .then(response => response.json())
     .then(data => {
@@ -1332,12 +1335,12 @@ function searchPluginStore(fetchLatestVersions = true) {
     const category = document.getElementById('plugin-category').value;
 
     // For filtered searches (user typing), we can use cache to avoid excessive API calls
-    // For initial load or refresh, always fetch latest versions
+    // For initial load or refresh, always fetch fresh metadata
     const isFilteredSearch = query || category;
     const now = Date.now();
     const isCacheValid = pluginStoreCache && cacheTimestamp && (now - cacheTimestamp < CACHE_DURATION);
     
-    // Only use cache for filtered searches that don't explicitly request latest versions
+    // Only use cache for filtered searches that don't explicitly request fresh metadata
     if (isFilteredSearch && isCacheValid && !fetchLatestVersions) {
         console.log('Using cached plugin store data for filtered search');
         // Ensure plugin store grid exists before rendering
@@ -1374,11 +1377,11 @@ function searchPluginStore(fetchLatestVersions = true) {
     const params = new URLSearchParams();
     if (query) params.append('query', query);
     if (category) params.append('category', category);
-    // Always fetch latest versions unless explicitly disabled (for performance on repeated filtered searches)
+    // Always fetch fresh metadata unless explicitly disabled (for performance on repeated filtered searches)
     if (!fetchLatestVersions) {
         params.append('fetch_latest_versions', 'false');
     }
-    // Note: fetch_latest_versions defaults to true on the server side, so we don't need to send it explicitly
+    // Note: fetch_latest_versions defaults to true on the server side to keep metadata fresh
 
     if (params.toString()) {
         url += '?' + params.toString();
@@ -1493,7 +1496,7 @@ function renderPluginStore(plugins) {
                     </div>
                     <div class="text-sm text-gray-600 space-y-1.5 mb-3">
                         <p class="flex items-center"><i class="fas fa-user mr-2 text-gray-400 w-4"></i>${escapeHtml(plugin.author || 'Unknown')}</p>
-                        <p class="flex items-center"><i class="fas fa-code-branch mr-2 text-gray-400 w-4"></i>v${plugin.latest_version || (plugin.versions && plugin.versions[0] ? plugin.versions[0].version : null) || plugin.version || '1.0.0'}</p>
+                        <p class="flex items-center"><i class="fas fa-code-branch mr-2 text-gray-400 w-4"></i>${formatCommit(plugin.last_commit, plugin.branch)}</p>
                         <p class="flex items-center"><i class="fas fa-calendar mr-2 text-gray-400 w-4"></i>${formatDate(plugin.last_updated)}</p>
                         <p class="flex items-center"><i class="fas fa-tag mr-2 text-gray-400 w-4"></i>${escapeHtml(plugin.category || 'General')}</p>
                         <p class="flex items-center"><i class="fas fa-star mr-2 text-gray-400 w-4"></i>${plugin.stars || 0} stars</p>
@@ -1947,7 +1950,7 @@ function renderCustomRegistryPlugins(plugins, registryUrl) {
                     </div>
                 </div>
                 <div class="flex items-center justify-between mt-2 pt-2 border-t border-gray-100">
-                    <span class="text-xs text-gray-500">v${escapeHtml(plugin.latest_version || plugin.version || '?')}</span>
+                    <span class="text-xs text-gray-500">Last updated ${formatDate(plugin.last_updated)}</span>
                     ${installBtn}
                 </div>
             </div>
@@ -2119,6 +2122,22 @@ function formatDate(dateString) {
     } catch (e) {
         return dateString;
     }
+}
+
+function formatCommit(commit, branch) {
+    const shortCommit = commit ? String(commit).substring(0, 7) : '';
+    const branchText = branch ? String(branch) : '';
+
+    if (branchText && shortCommit) {
+        return `${branchText} · ${shortCommit}`;
+    }
+    if (branchText) {
+        return branchText;
+    }
+    if (shortCommit) {
+        return shortCommit;
+    }
+    return 'Latest';
 }
 
 // Check if plugin is new (updated within last 7 days)

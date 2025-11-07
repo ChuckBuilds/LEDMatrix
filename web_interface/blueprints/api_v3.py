@@ -528,8 +528,7 @@ def get_installed_plugins():
         for plugin_info in all_plugin_info:
             plugin_id = plugin_info.get('id')
             
-            # Re-read manifest from disk to ensure we have the latest version
-            # This ensures that if the manifest was updated, we show the correct version
+            # Re-read manifest from disk to ensure we have the latest metadata
             manifest_path = Path(api_v3.plugin_manager.plugins_dir) / plugin_id / "manifest.json"
             if manifest_path.exists():
                 try:
@@ -537,13 +536,6 @@ def get_installed_plugins():
                         fresh_manifest = json.load(f)
                     # Update plugin_info with fresh manifest data
                     plugin_info.update(fresh_manifest)
-                    # Auto-extract version from versions array if not present at top level
-                    if 'version' not in plugin_info or not plugin_info['version']:
-                        versions = plugin_info.get('versions', [])
-                        if versions and isinstance(versions, list) and len(versions) > 0:
-                            latest = versions[0]
-                            if isinstance(latest, dict) and 'version' in latest:
-                                plugin_info['version'] = latest['version']
                 except Exception as e:
                     # If we can't read the fresh manifest, use the cached one
                     print(f"Warning: Could not read fresh manifest for {plugin_id}: {e}")
@@ -570,18 +562,32 @@ def get_installed_plugins():
             # Get verified status from store registry (if available)
             store_info = api_v3.plugin_store_manager.get_plugin_info(plugin_id)
             verified = store_info.get('verified', False) if store_info else False
+
+            last_updated = plugin_info.get('last_updated')
+            last_commit = plugin_info.get('last_commit') or plugin_info.get('last_commit_sha')
+            last_commit_message = plugin_info.get('last_commit_message')
+            branch = plugin_info.get('branch')
+
+            if store_info:
+                last_updated = last_updated or store_info.get('last_updated') or store_info.get('last_updated_iso')
+                last_commit = last_commit or store_info.get('last_commit') or store_info.get('last_commit_sha')
+                last_commit_message = last_commit_message or store_info.get('last_commit_message')
+                branch = branch or store_info.get('branch') or store_info.get('default_branch')
             
             plugins.append({
                 'id': plugin_id,
                 'name': plugin_info.get('name', plugin_id),
                 'author': plugin_info.get('author', 'Unknown'),
-                'version': plugin_info.get('version', '1.0.0'),
                 'category': plugin_info.get('category', 'General'),
                 'description': plugin_info.get('description', 'No description available'),
                 'tags': plugin_info.get('tags', []),
                 'enabled': enabled,
                 'verified': verified,
-                'loaded': plugin_info.get('loaded', False)
+                'loaded': plugin_info.get('loaded', False),
+                'last_updated': last_updated,
+                'last_commit': last_commit,
+                'last_commit_message': last_commit_message,
+                'branch': branch
             })
         
         return jsonify({'status': 'success', 'data': {'plugins': plugins}})
@@ -676,83 +682,69 @@ def update_plugin():
 
         plugin_id = data['plugin_id']
         
-        # Get current version before update
-        current_version = None
-        plugin_path = Path(api_v3.plugin_store_manager.plugins_dir) / plugin_id / "manifest.json"
-        if plugin_path.exists():
+        plugin_dir = Path(api_v3.plugin_store_manager.plugins_dir) / plugin_id
+        manifest_path = plugin_dir / "manifest.json"
+
+        current_last_updated = None
+        current_commit = None
+        current_branch = None
+
+        if manifest_path.exists():
             try:
                 import json
-                with open(plugin_path, 'r', encoding='utf-8') as f:
+                with open(manifest_path, 'r', encoding='utf-8') as f:
                     manifest = json.load(f)
-                    current_version = manifest.get('version')
-                    # If version not in manifest, try to get from versions array
-                    if not current_version:
-                        versions = manifest.get('versions', [])
-                        if versions and isinstance(versions, list) and len(versions) > 0:
-                            latest = versions[0]
-                            if isinstance(latest, dict) and 'version' in latest:
-                                current_version = latest['version']
+                    current_last_updated = manifest.get('last_updated')
             except Exception as e:
-                print(f"Warning: Could not read current version for {plugin_id}: {e}")
-        
-        # Get latest version info from GitHub before updating
-        plugin_info = api_v3.plugin_store_manager.get_plugin_info(plugin_id, fetch_latest_from_github=True)
-        version_source = None
-        if plugin_info:
-            version_source = plugin_info.get('version_source', 'unknown')
-            latest_version = plugin_info.get('latest_version') or plugin_info.get('version')
-        
+                print(f"Warning: Could not read local manifest for {plugin_id}: {e}")
+
+        if api_v3.plugin_store_manager:
+            git_info_before = api_v3.plugin_store_manager._get_local_git_info(plugin_dir)
+            if git_info_before:
+                current_commit = git_info_before.get('sha')
+                current_branch = git_info_before.get('branch')
+
+        remote_info = api_v3.plugin_store_manager.get_plugin_info(plugin_id, fetch_latest_from_github=True)
+        remote_commit = remote_info.get('last_commit_sha') if remote_info else None
+        remote_branch = remote_info.get('branch') if remote_info else None
+
         # Update the plugin
         success = api_v3.plugin_store_manager.update_plugin(plugin_id)
         
         if success:
-            # Get updated version
-            updated_version = None
-            if plugin_path.exists():
-                try:
+            updated_last_updated = current_last_updated
+            try:
+                if manifest_path.exists():
                     import json
-                    with open(plugin_path, 'r', encoding='utf-8') as f:
+                    with open(manifest_path, 'r', encoding='utf-8') as f:
                         manifest = json.load(f)
-                        updated_version = manifest.get('version')
-                        # If version not in manifest, try to get from versions array
-                        if not updated_version:
-                            versions = manifest.get('versions', [])
-                            if versions and isinstance(versions, list) and len(versions) > 0:
-                                latest = versions[0]
-                                if isinstance(latest, dict) and 'version' in latest:
-                                    updated_version = latest['version']
-                except Exception as e:
-                    print(f"Warning: Could not read updated version for {plugin_id}: {e}")
-            
-            # If we still don't have a version, try getting it from plugin manager
-            if not updated_version:
-                if api_v3.plugin_manager:
-                    plugin_info_local = api_v3.plugin_manager.get_plugin_info(plugin_id)
-                    if plugin_info_local:
-                        updated_version = plugin_info_local.get('version')
-            
-            # Build version source description
-            source_desc = ""
-            if version_source:
-                source_map = {
-                    'release': 'GitHub Release',
-                    'tag': 'GitHub Tag',
-                    'manifest': f'Branch: {plugin_info.get("branch", "main") if plugin_info else "main"}',
-                    'commit': 'Git Commit'
-                }
-                source_desc = f" (from {source_map.get(version_source, version_source)})"
-            
-            # Determine message based on whether version changed
-            if current_version and updated_version and current_version == updated_version:
-                message = f'Plugin {plugin_id} is already at the latest version ({updated_version}{source_desc})'
-            elif updated_version and updated_version != current_version:
-                message = f'Plugin {plugin_id} updated successfully from {current_version or "unknown"} to {updated_version}{source_desc}'
-            elif updated_version:
-                message = f'Plugin {plugin_id} updated successfully to version {updated_version}{source_desc}'
-            else:
-                message = f'Plugin {plugin_id} updated successfully'
-            
-            # Rediscover plugins to refresh manifest info (including new version number)
+                        updated_last_updated = manifest.get('last_updated', current_last_updated)
+            except Exception as e:
+                print(f"Warning: Could not read updated manifest for {plugin_id}: {e}")
+
+            updated_commit = None
+            updated_branch = remote_branch or current_branch
+            if api_v3.plugin_store_manager:
+                git_info_after = api_v3.plugin_store_manager._get_local_git_info(plugin_dir)
+                if git_info_after:
+                    updated_commit = git_info_after.get('sha')
+                    updated_branch = git_info_after.get('branch') or updated_branch
+
+            message = f'Plugin {plugin_id} updated successfully'
+            if current_commit and updated_commit and current_commit == updated_commit:
+                message = f'Plugin {plugin_id} already up to date (commit {updated_commit[:7]})'
+            elif updated_commit:
+                message = f'Plugin {plugin_id} updated to commit {updated_commit[:7]}'
+                if updated_branch:
+                    message += f' on branch {updated_branch}'
+            elif updated_last_updated and updated_last_updated != current_last_updated:
+                message = f'Plugin {plugin_id} refreshed (Last Updated {updated_last_updated})'
+
+            remote_commit_short = remote_commit[:7] if remote_commit else None
+            if remote_commit_short and updated_commit and remote_commit_short != updated_commit[:7]:
+                message += f' (remote latest {remote_commit_short})'
+
+            # Rediscover plugins to refresh manifest info
             if api_v3.plugin_manager:
                 api_v3.plugin_manager.discover_plugins()
                 
@@ -763,8 +755,8 @@ def update_plugin():
             return jsonify({
                 'status': 'success', 
                 'message': message,
-                'current_version': updated_version,
-                'version_source': version_source
+                'last_updated': updated_last_updated,
+                'commit': updated_commit
             })
         else:
             # Provide more detailed error message
@@ -857,10 +849,6 @@ def install_plugin():
             plugin_info = api_v3.plugin_store_manager.get_plugin_info(plugin_id)
             if not plugin_info:
                 error_msg += ' (plugin not found in registry)'
-            else:
-                versions = plugin_info.get('versions', [])
-                if not versions:
-                    error_msg += ' (no versions available)'
             
             print(f"Installation failed for {plugin_id}. Plugins dir: {plugins_dir}", flush=True)
             return jsonify({'status': 'error', 'message': error_msg}), 500
@@ -905,8 +893,7 @@ def install_plugin_from_url():
                 'status': 'success',
                 'message': f"Plugin {installed_plugin_id} installed successfully",
                 'plugin_id': installed_plugin_id,
-                'name': result.get('name'),
-                'version': result.get('version')
+                'name': result.get('name')
             })
         else:
             return jsonify({
@@ -1049,14 +1036,9 @@ def list_plugin_store():
         query = request.args.get('query', '')
         category = request.args.get('category', '')
         tags = request.args.getlist('tags')
-        # Default to fetching latest versions to ensure accurate version display
-        # Only skip if explicitly set to false (for performance on filtered searches)
+        # Default to fetching latest metadata to ensure accurate commit timestamps
         fetch_latest_param = request.args.get('fetch_latest_versions', '').lower()
-        if fetch_latest_param == 'false':
-            fetch_latest = False
-        else:
-            # Default to True for initial loads, explicit true, or when not specified
-            fetch_latest = True
+        fetch_latest = fetch_latest_param != 'false'
 
         # Search plugins from the registry (including saved repositories)
         plugins = api_v3.plugin_store_manager.search_plugins(
@@ -1071,51 +1053,23 @@ def list_plugin_store():
         # Format plugins for the web interface
         formatted_plugins = []
         for plugin in plugins:
-            # Get the latest version - check multiple sources
-            version_str = None
-            
-            # First, check for latest_version field
-            if 'latest_version' in plugin:
-                version_str = plugin.get('latest_version')
-            
-            # If not found, extract from versions array
-            if not version_str:
-                versions = plugin.get('versions', [])
-                if versions and isinstance(versions, list) and len(versions) > 0:
-                    latest_version = versions[0]
-                    if isinstance(latest_version, dict):
-                        version_str = latest_version.get('version')
-            
-            # Fallback to top-level version field
-            if not version_str:
-                version_str = plugin.get('version', '1.0.0')
-            
-            # Get version source for display
-            version_source = plugin.get('version_source', 'unknown')
-            source_map = {
-                'release': 'GitHub Release',
-                'tag': 'GitHub Tag',
-                'manifest': f'Branch: {plugin.get("branch", "main")}',
-                'commit': 'Git Commit'
-            }
-            version_source_display = source_map.get(version_source, version_source)
-            
             formatted_plugins.append({
                 'id': plugin.get('id'),
                 'name': plugin.get('name'),
                 'author': plugin.get('author'),
-                'version': version_str,
-                'latest_version': plugin.get('latest_version', version_str),
-                'version_source': version_source,
-                'version_source_display': version_source_display,
-                'versions': plugin.get('versions', []),  # Include full versions array for UI
                 'category': plugin.get('category'),
                 'description': plugin.get('description'),
                 'tags': plugin.get('tags', []),
                 'stars': plugin.get('stars', 0),
                 'verified': plugin.get('verified', False),
                 'repo': plugin.get('repo', ''),
-                'last_updated': plugin.get('last_updated', '')
+                'last_updated': plugin.get('last_updated') or plugin.get('last_updated_iso', ''),
+                'last_updated_iso': plugin.get('last_updated_iso', ''),
+                'last_commit': plugin.get('last_commit') or plugin.get('last_commit_sha'),
+                'last_commit_message': plugin.get('last_commit_message'),
+                'last_commit_author': plugin.get('last_commit_author'),
+                'branch': plugin.get('branch') or plugin.get('default_branch'),
+                'default_branch': plugin.get('default_branch')
             })
 
         return jsonify({'status': 'success', 'data': {'plugins': formatted_plugins}})
@@ -1167,7 +1121,7 @@ def refresh_plugin_store():
         
         message = 'Plugin store refreshed'
         if fetch_latest_versions:
-            message += ' (with latest versions from GitHub)'
+            message += ' (with refreshed metadata from GitHub)'
         
         return jsonify({
             'status': 'success', 

@@ -22,7 +22,7 @@ The official plugin store contains curated, verified plugins that have been revi
 ```bash
 curl -X POST http://your-pi-ip:5050/api/plugins/install \
   -H "Content-Type: application/json" \
-  -d '{"plugin_id": "clock-simple", "version": "latest"}'
+  -d '{"plugin_id": "clock-simple"}'
 ```
 
 **Via Python:**
@@ -69,7 +69,7 @@ store = PluginStoreManager()
 result = store.install_from_url('https://github.com/user/ledmatrix-my-plugin')
 
 if result['success']:
-    print(f"Installed: {result['plugin_id']} v{result['version']}")
+    print(f"Installed: {result['plugin_id']}")
 else:
     print(f"Error: {result['error']}")
 ```
@@ -131,7 +131,7 @@ installed = store.list_installed_plugins()
 
 for plugin_id in installed:
     info = store.get_installed_plugin_info(plugin_id)
-    print(f"{info['name']} v{info['version']}")
+    print(f"{info['name']} (Last updated: {info.get('last_updated', 'unknown')})")
 ```
 
 ### Enable/Disable Plugins
@@ -320,7 +320,7 @@ from src.plugin_system.store_manager import PluginStoreManager
 store = PluginStoreManager()
 for plugin_id in store.list_installed_plugins():
     info = store.get_installed_plugin_info(plugin_id)
-    print(f'{plugin_id}: {info[\"name\"]} v{info[\"version\"]}')
+    print(f"{plugin_id}: {info['name']} (Last updated: {info.get('last_updated', 'unknown')})")
 "
 
 # Uninstall
@@ -424,13 +424,13 @@ A: Yes, plugins are loaded when the display controller starts.
 A: Yes, you can install anytime, but you must restart to load them.
 
 **Q: What happens if I install a plugin with the same ID as an existing one?**  
-A: The old version will be removed and replaced with the new one.
+A: The existing copy will be replaced with the latest code from the repository.
 
 **Q: Can I install multiple versions of the same plugin?**  
-A: No, only one version can be installed at a time.
+A: No, each plugin ID maps to a single checkout of the repository's default branch.
 
 **Q: How do I update all plugins at once?**  
-A: Currently, you need to update each plugin individually. Bulk update coming in future version.
+A: Currently, you need to update each plugin individually. Bulk update is planned for a future release.
 
 **Q: Can plugins access my API keys from config_secrets.json?**  
 A: Yes, if a plugin needs API keys, it can access them like core managers do.

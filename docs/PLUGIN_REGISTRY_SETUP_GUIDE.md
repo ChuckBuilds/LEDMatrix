@@ -24,19 +24,12 @@ ledmatrix-plugins/
 This is the **core file** that the Plugin Store reads from.
 
 **Important**: The registry stores **metadata only** (name, description, repo URL, etc.). 
-**Versions are automatically fetched from GitHub** using this priority:
-1. GitHub Releases (most reliable)
-2. GitHub Tags (if no releases)
-3. Manifest from branch (if no releases/tags)
-4. Git commit hash (fallback)
-
-You **do not need to manage versions** in the registry - the plugin store always fetches the latest from GitHub.
+The plugin store always pulls the latest commit information directly from GitHub, so you never manage semantic versions here.
 
 **File**: `plugins.json`
 
 ```json
 {
-  "version": "1.0.0",
   "last_updated": "2025-01-09T12:00:00Z",
   "plugins": [
     {
@@ -51,6 +44,7 @@ You **do not need to manage versions** in the registry - the plugin store always
       "stars": 12,
       "downloads": 156,
       "last_updated": "2025-01-09",
+      "last_commit": "abc1234",
       "verified": true,
       "screenshot": "https://raw.githubusercontent.com/ChuckBuilds/ledmatrix-plugins/main/assets/screenshots/clock-simple.png"
     }
@@ -58,8 +52,7 @@ You **do not need to manage versions** in the registry - the plugin store always
 }
 ```
 
-**Note**: The `versions` array and `latest_version` fields are **optional** and will be ignored. 
-The plugin store always fetches the latest version from GitHub automatically.
+**Note**: There's no need for version arrays or release tracking. The store queries GitHub for the latest commit details (date, branch, and short SHA) whenever metadata is requested.
 
 ## Step 2: Create Plugin Repositories
 
@@ -78,8 +71,7 @@ Each plugin should have its own repository:
    ├── README.md
    └── assets/
    ```
-3. **Tag a release**: `git tag v1.0.0 && git push origin v1.0.0`
-4. **Add to registry**: Update `plugins.json` in ledmatrix-plugins repo
+3. **Add to registry**: Update `plugins.json` in ledmatrix-plugins repo
 
 ## Step 3: Update README.md
 
@@ -94,10 +86,10 @@ Official plugin registry for [LEDMatrix](https://github.com/ChuckBuilds/LEDMatri
 
 <!-- This table is auto-generated from plugins.json -->
 
-| Plugin | Description | Category | Version |
-|--------|-------------|----------|---------|
-| [Simple Clock](https://github.com/ChuckBuilds/ledmatrix-clock-simple) | Clean clock display | Time | 1.0.0 |
-| [NHL Scores](https://github.com/ChuckBuilds/ledmatrix-nhl-scores) | Live NHL scores | Sports | 1.0.0 |
+| Plugin | Description | Category | Last Updated |
+|--------|-------------|----------|--------------|
+| [Simple Clock](https://github.com/ChuckBuilds/ledmatrix-clock-simple) | Clean clock display | Time | 2025-01-09 |
+| [NHL Scores](https://github.com/ChuckBuilds/ledmatrix-nhl-scores) | Live NHL scores | Sports | 2025-01-07 |
 
 ## Installation
 
@@ -164,15 +156,7 @@ Before submitting, ensure your plugin:
      -d '{"repo_url": "https://github.com/you/ledmatrix-your-plugin"}'
    ```
 
-2. **Version Management (Automatic)**
-   - Versions are automatically managed via the pre-push git hook
-   - When you push code changes, the hook automatically:
-     - Bumps the patch version in manifest.json
-     - Creates a git tag (v{version})
-   - No manual version management needed!
-   - See `scripts/README_VERSION_BUMPING.md` for details
-
-3. **Fork This Repo**
+2. **Fork This Repo**
    Fork [ledmatrix-plugins](https://github.com/ChuckBuilds/ledmatrix-plugins)
 
 4. **Update plugins.json**
@@ -210,12 +194,7 @@ Before submitting, ensure your plugin:
 
 ## Updating Your Plugin
 
-**Version updates are automatic!** When you push code changes:
-
-1. The pre-push hook automatically bumps the version in manifest.json
-2. A git tag is automatically created (v{version})
-3. The plugin store automatically detects the new version from GitHub
-4. **No registry updates needed** - versions are fetched from GitHub automatically
+Whenever you push new commits to your plugin repository's default branch, the store will automatically surface the latest commit timestamp and short SHA. No release tagging or manifest version bumps are required.
 
 You only need to update the registry if:
 - Plugin metadata changes (name, description, category, etc.)
@@ -256,7 +235,7 @@ Use this checklist when reviewing plugin submissions.
 
 - [ ] All required fields present
 - [ ] Valid JSON syntax
-- [ ] Correct version format (semver)
+- [ ] Last updated metadata present when available
 - [ ] Category is valid
 - [ ] Tags are descriptive
 
@@ -318,11 +297,7 @@ git commit -m "Initial commit"
 git remote add origin https://github.com/ChuckBuilds/ledmatrix-clock-simple
 git push -u origin main
 
-# 3. Create release
-git tag v1.0.0
-git push origin v1.0.0
-
-# 4. Update registry
+# 3. Update registry
 cd ../ledmatrix-plugins
 # Edit plugins.json to add new entry
 git add plugins.json
@@ -356,30 +331,6 @@ python3 scripts/validate_registry.py
 
 # Check for plugin updates
 python3 scripts/check_updates.py
-```
-
-### Adding New Versions
-
-When a plugin releases a new version, update the `versions` array:
-
-```json
-{
-  "id": "clock-simple",
-  "versions": [
-    {
-      "version": "1.1.0",
-      "ledmatrix_min": "2.0.0",
-      "released": "2025-01-15",
-      "download_url": "https://github.com/ChuckBuilds/ledmatrix-clock-simple/archive/refs/tags/v1.1.0.zip"
-    },
-    {
-      "version": "1.0.0",
-      "ledmatrix_min": "2.0.0",
-      "released": "2025-01-09",
-      "download_url": "https://github.com/ChuckBuilds/ledmatrix-clock-simple/archive/refs/tags/v1.0.0.zip"
-    }
-  ]
-}
 ```
 
 ## Converting Existing Plugins

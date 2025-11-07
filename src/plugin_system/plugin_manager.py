@@ -98,7 +98,14 @@ class PluginManager:
                     
                     discovered.append(plugin_id)
                     self.plugin_manifests[plugin_id] = manifest
-                    self.logger.info(f"Discovered plugin: {plugin_id} v{manifest.get('version', '?')}")
+                    version_info = manifest.get('version')
+                    last_updated = manifest.get('last_updated')
+                    if version_info:
+                        self.logger.info(f"Discovered plugin: {plugin_id} (version {version_info})")
+                    elif last_updated:
+                        self.logger.info(f"Discovered plugin: {plugin_id} (last updated {last_updated})")
+                    else:
+                        self.logger.info(f"Discovered plugin: {plugin_id}")
                     
                 except json.JSONDecodeError as e:
                     self.logger.error(f"Invalid JSON in manifest {manifest_path}: {e}")
@@ -308,7 +315,11 @@ class PluginManager:
             
             # Store the plugin
             self.plugins[plugin_id] = plugin_instance
-            self.logger.info(f"Loaded plugin: {plugin_id} v{manifest.get('version', '?')}")
+            version_info = manifest.get('version')
+            if version_info:
+                self.logger.info(f"Loaded plugin: {plugin_id} (version {version_info})")
+            else:
+                self.logger.info(f"Loaded plugin: {plugin_id}")
             
             # Call on_enable if plugin is enabled
             if plugin_instance.enabled:
@@ -442,15 +453,6 @@ class PluginManager:
             return None
         
         info = manifest.copy()
-        
-        # Auto-extract version from versions array if not present at top level
-        if 'version' not in info or not info['version']:
-            versions = info.get('versions', [])
-            if versions and isinstance(versions, list) and len(versions) > 0:
-                # Get the latest version (first in array)
-                latest = versions[0]
-                if isinstance(latest, dict) and 'version' in latest:
-                    info['version'] = latest['version']
         
         # Add runtime information if plugin is loaded
         plugin = self.plugins.get(plugin_id)

@@ -29,5 +29,7 @@ cache/
 
 # Development plugins directory (contains symlinks to plugin repos)
 # Plugins are installed via plugin store to plugin-repos/ in production
+# Allow git submodules
 plugins/*
 !plugins/.gitkeep
+!plugins/*/.git

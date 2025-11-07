@@ -52,21 +52,20 @@ class TestAPIPlugins(TestCase):
             "plugins": [{
                 "id": "clock-simple",
                 "name": "Clock",
-                "versions": [{"version": "1.0.0"}],
                 "repo": "https://github.com/x/y"
             }]
         }
         mock_store.search_plugins.return_value = [{
             "id": "clock-simple",
             "name": "Clock",
-            "version": "1.0.0",
             "category": "time",
             "description": "Simple clock plugin",
             "tags": [],
             "stars": 5,
             "verified": True,
             "repo": "https://github.com/x/y",
-            "last_updated": ""
+            "last_updated": "2025-11-01",
+            "last_commit": "abc1234"
         }]
         mock_store.install_plugin.return_value = store_ok
         mock_store.uninstall_plugin.return_value = True
@@ -78,7 +77,7 @@ class TestAPIPlugins(TestCase):
         mock_pm.get_all_plugin_info.return_value = [{
             "id": "clock-simple",
             "name": "Clock",
-            "version": "1.0.0",
+            "last_updated": "2025-11-01",
             "loaded": False
         }]
         mock_pm.get_plugin.return_value = None

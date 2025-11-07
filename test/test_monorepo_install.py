@@ -38,7 +38,6 @@ def test_fetch_registry():
         registry = store.fetch_registry()
         print(f"✓ Registry fetched successfully")
         print(f"  URL: https://raw.githubusercontent.com/ChuckBuilds/ledmatrix-plugins/main/plugins.json")
-        print(f"  Version: {registry.get('version', 'N/A')}")
         print(f"  Plugins available: {len(registry.get('plugins', []))}")
         
         # Show available plugins
@@ -77,14 +76,8 @@ def test_plugin_info():
             print(f"  Author: {info.get('author')}")
             print(f"  Repo: {info.get('repo')}")
             print(f"  Plugin Path: {info.get('plugin_path')}")
-            print(f"  Versions: {len(info.get('versions', []))}")
-            
-            # Show version details
-            for version in info.get('versions', []):
-                print(f"\n  Version {version.get('version')}:")
-                print(f"    Released: {version.get('released')}")
-                print(f"    LEDMatrix Min: {version.get('ledmatrix_min')}")
-                print(f"    Download: {version.get('download_url')}")
+            print(f"  Last Updated: {info.get('last_updated')}")
+            print(f"  Last Commit: {info.get('last_commit')}")
             
             return True
         else:

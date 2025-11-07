@@ -186,8 +186,7 @@ def _load_plugins_partial():
                 for plugin_info in all_plugin_info:
                     plugin_id = plugin_info.get('id')
 
-                    # Re-read manifest from disk to ensure we have the latest version
-                    # This ensures that if the manifest was updated, we show the correct version
+                    # Re-read manifest from disk to ensure we have the latest metadata
                     manifest_path = Path(pages_v3.plugin_manager.plugins_dir) / plugin_id / "manifest.json"
                     if manifest_path.exists():
                         try:
@@ -195,13 +194,6 @@ def _load_plugins_partial():
                                 fresh_manifest = json.load(f)
                             # Update plugin_info with fresh manifest data
                             plugin_info.update(fresh_manifest)
-                            # Auto-extract version from versions array if not present at top level
-                            if 'version' not in plugin_info or not plugin_info['version']:
-                                versions = plugin_info.get('versions', [])
-                                if versions and isinstance(versions, list) and len(versions) > 0:
-                                    latest = versions[0]
-                                    if isinstance(latest, dict) and 'version' in latest:
-                                        plugin_info['version'] = latest['version']
                         except Exception as e:
                             # If we can't read the fresh manifest, use the cached one
                             print(f"Warning: Could not read fresh manifest for {plugin_id}: {e}")
@@ -214,17 +206,28 @@ def _load_plugins_partial():
                     store_info = pages_v3.plugin_store_manager.get_plugin_info(plugin_id)
                     verified = store_info.get('verified', False) if store_info else False
 
+                    last_updated = plugin_info.get('last_updated')
+                    last_commit = plugin_info.get('last_commit') or plugin_info.get('last_commit_sha')
+                    branch = plugin_info.get('branch')
+
+                    if store_info:
+                        last_updated = last_updated or store_info.get('last_updated') or store_info.get('last_updated_iso')
+                        last_commit = last_commit or store_info.get('last_commit') or store_info.get('last_commit_sha')
+                        branch = branch or store_info.get('branch') or store_info.get('default_branch')
+
                     plugins_data.append({
                         'id': plugin_id,
                         'name': plugin_info.get('name', plugin_id),
                         'author': plugin_info.get('author', 'Unknown'),
-                        'version': plugin_info.get('version', '1.0.0'),
                         'category': plugin_info.get('category', 'General'),
                         'description': plugin_info.get('description', 'No description available'),
                         'tags': plugin_info.get('tags', []),
                         'enabled': enabled,
                         'verified': verified,
-                        'loaded': plugin_info.get('loaded', False)
+                        'loaded': plugin_info.get('loaded', False),
+                        'last_updated': last_updated,
+                        'last_commit': last_commit,
+                        'branch': branch
                     })
             except Exception as e:
                 print(f"Error loading plugin data: {e}")

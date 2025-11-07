@@ -56,7 +56,7 @@ def test_plugin_discovery():
             manifest = plugin_manager.plugin_manifests.get(plugin_id, {})
             print(f"\n  Plugin: {manifest.get('name', plugin_id)}")
             print(f"    ID: {plugin_id}")
-            print(f"    Version: {manifest.get('version', 'unknown')}")
+            print(f"    Last Updated: {manifest.get('last_updated', 'unknown')}")
             print(f"    Author: {manifest.get('author', 'unknown')}")
             print(f"    Description: {manifest.get('description', 'N/A')}")
         
@@ -159,7 +159,7 @@ def test_plugin_manifest_validation():
             manifest = json.load(f)
         
         # Check required fields
-        required_fields = ['id', 'name', 'version', 'entry_point', 'class_name']
+        required_fields = ['id', 'name', 'entry_point', 'class_name']
         missing = [field for field in required_fields if field not in manifest]
         
         if missing:
@@ -171,10 +171,6 @@ def test_plugin_manifest_validation():
         # Validate field types
         if not isinstance(manifest.get('id'), str):
             print("[FAIL] 'id' must be a string")
-            return False
-        
-        if not isinstance(manifest.get('version'), str):
-            print("[FAIL] 'version' must be a string")
             return False
         
         print("[OK] Field types valid")

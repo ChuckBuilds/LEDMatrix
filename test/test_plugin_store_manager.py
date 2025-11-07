@@ -65,7 +65,7 @@ class TestPluginStoreManager(TestCase):
         try:
             with open(manifest_path, 'r') as mf:
                 manifest = json.load(mf)
-            required_fields = ['id', 'name', 'version', 'entry_point', 'class_name']
+            required_fields = ['id', 'name', 'entry_point', 'class_name']
             missing = [f for f in required_fields if f not in manifest]
             if missing:
                 # Mimic code behavior - remove directory on invalid manifest
@@ -88,7 +88,6 @@ class TestPluginStoreManager(TestCase):
         manifest = {
             "id": plugin_id,
             "name": "Valid Plugin",
-            "version": "1.0.0",
             "entry_point": "manager.py",
             "class_name": "ValidPlugin"
         }
@@ -96,7 +95,7 @@ class TestPluginStoreManager(TestCase):
         manifest_path.write_text(json.dumps(manifest))
         
         # Validate - should not remove directory
-        required_fields = ['id', 'name', 'version', 'entry_point', 'class_name']
+        required_fields = ['id', 'name', 'entry_point', 'class_name']
         
         with open(manifest_path, 'r') as mf:
             loaded_manifest = json.load(mf)

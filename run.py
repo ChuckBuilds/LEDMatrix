@@ -2,6 +2,22 @@
 import logging
 import sys
 import os
+import argparse
+
+# Parse command-line arguments BEFORE any imports
+parser = argparse.ArgumentParser(description='LEDMatrix Display Controller')
+parser.add_argument('-e', '--emulator', action='store_true',
+                    help='Run in emulator mode (uses pygame/RGBMatrixEmulator instead of hardware)')
+args = parser.parse_args()
+
+# Set emulator mode if requested (must be done BEFORE any imports that check EMULATOR env var)
+if args.emulator:
+    os.environ["EMULATOR"] = "true"
+    print("=" * 60)
+    print("LEDMatrix Emulator Mode Enabled")
+    print("=" * 60)
+    print("Using pygame/RGBMatrixEmulator for display")
+    print("Press ESC to exit\n")
 
 # Add project directory to Python path
 project_dir = os.path.dirname(os.path.abspath(__file__))
@@ -12,6 +28,7 @@ if project_dir not in sys.path:
 print(f"DEBUG: Project directory: {project_dir}", flush=True)
 print(f"DEBUG: Python path[0]: {sys.path[0]}", flush=True)
 print(f"DEBUG: Current working directory: {os.getcwd()}", flush=True)
+print(f"DEBUG: EMULATOR mode: {os.environ.get('EMULATOR', 'false')}", flush=True)
 print(f"DEBUG: src/__init__.py exists: {os.path.exists(os.path.join(project_dir, 'src', '__init__.py'))}", flush=True)
 print(f"DEBUG: src/plugin_system/__init__.py exists: {os.path.exists(os.path.join(project_dir, 'src', 'plugin_system', '__init__.py'))}", flush=True)
 print(f"DEBUG: src/plugin_system directory exists: {os.path.exists(os.path.join(project_dir, 'src', 'plugin_system'))}", flush=True)

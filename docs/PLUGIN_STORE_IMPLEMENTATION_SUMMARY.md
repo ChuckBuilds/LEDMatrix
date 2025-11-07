@@ -15,7 +15,7 @@ A comprehensive class that handles all plugin store operations:
 - ✅ Search and filter plugins by query, category, and tags
 - ✅ Install plugins from official registry
 - ✅ **Install plugins from custom GitHub URLs** (key feature!)
-- ✅ Update plugins to latest versions
+- ✅ Update plugins to latest commits
 - ✅ Uninstall plugins
 - ✅ List installed plugins with metadata
 - ✅ Automatic dependency installation
@@ -27,7 +27,7 @@ A comprehensive class that handles all plugin store operations:
 #### Method 1: From Official Registry
 ```python
 store = PluginStoreManager()
-store.install_plugin('clock-simple', version='latest')
+store.install_plugin('clock-simple')
 ```
 
 #### Method 2: From Any GitHub URL
@@ -36,7 +36,7 @@ store = PluginStoreManager()
 result = store.install_from_url('https://github.com/user/ledmatrix-custom-plugin')
 
 if result['success']:
-    print(f"Installed: {result['plugin_id']} v{result['version']}")
+    print(f"Installed: {result['plugin_id']}")
 else:
     print(f"Error: {result['error']}")
 ```
@@ -53,7 +53,7 @@ Updated and enhanced existing endpoints:
 | `/api/plugins/install` | POST | Install from registry |
 | `/api/plugins/install-from-url` | POST | **Install from GitHub URL** |
 | `/api/plugins/uninstall` | POST | Remove plugin |
-| `/api/plugins/update` | POST | Update to latest version |
+| `/api/plugins/update` | POST | Update to latest commit |
 | `/api/plugins/toggle` | POST | Enable/disable plugin |
 | `/api/plugins/config` | POST | Update plugin config |
 
@@ -193,15 +193,15 @@ class PluginStoreManager:
     def search_plugins(query, category, tags) -> List[Dict]
         # Search with filters
     
-    def install_plugin(plugin_id, version='latest') -> bool
-        # Install from official registry
+    def install_plugin(plugin_id) -> bool
+        # Install from official registry (always latest commit)
     
     def install_from_url(repo_url, plugin_id=None) -> Dict
         # Install from any GitHub URL
         # Returns: {'success': bool, 'plugin_id': str, 'error': str}
     
     def update_plugin(plugin_id) -> bool
-        # Update to latest version
+        # Update to latest commit
     
     def uninstall_plugin(plugin_id) -> bool
         # Remove plugin
@@ -220,8 +220,7 @@ class PluginStoreManager:
 {
     'success': True,
     'plugin_id': 'awesome-plugin',
-    'name': 'Awesome Plugin',
-    'version': '1.0.0'
+    'name': 'Awesome Plugin'
 }
 
 # Failure:

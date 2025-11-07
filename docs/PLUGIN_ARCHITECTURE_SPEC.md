@@ -1148,13 +1148,13 @@ class PluginStoreManager:
         
         return results
     
-    def install_plugin(self, plugin_id: str, version: str = "latest") -> bool:
+    def install_plugin(self, plugin_id: str) -> bool:
         """
         Install a plugin from GitHub.
+        Always clones or downloads the latest commit from the repository's default branch.
         
         Args:
             plugin_id: Plugin identifier
-            version: Version to install (default: latest)
             
         Returns:
             True if installed successfully
@@ -1276,7 +1276,7 @@ class PluginStoreManager:
             
             # Fall back to re-download
             self.logger.info(f"Re-downloading plugin {plugin_id}")
-            return self.install_plugin(plugin_id, version="latest")
+            return self.install_plugin(plugin_id)
             
         except Exception as e:
             self.logger.error(f"Error updating plugin {plugin_id}: {e}")
@@ -1691,7 +1691,7 @@ def api_plugin_install():
         version = data.get('version', 'latest')
         
         store_manager = PluginStoreManager()
-        success = store_manager.install_plugin(plugin_id, version)
+        success = store_manager.install_plugin(plugin_id)
         
         if success:
             # Reload plugin manager to discover new plugin
