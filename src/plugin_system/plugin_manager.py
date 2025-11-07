@@ -171,6 +171,17 @@ class PluginManager:
                 # will be installed to ~/.local/ and won't be accessible to the root service.
                 # For production plugin installation, always use the web interface or restart the service.
                 # Need --break-system-packages for Debian 12+ (PEP 668) even with --user
+                try:
+                    import pwd
+                    user_home = Path(pwd.getpwuid(os.getuid()).pw_dir)
+                except Exception as home_error:
+                    self.logger.debug(f"Falling back to environment HOME for plugin dependency install: {home_error}")
+                    user_home = Path(env.get('HOME', str(Path.cwd())))
+
+                env['HOME'] = str(user_home)
+                env.setdefault('PYTHONUSERBASE', str(user_home / '.local'))
+                env.setdefault('PIP_USER', '1')
+
                 cmd = [
                     'pip3', 'install', 
                     '--user', 
