@@ -522,7 +522,8 @@ class SportsCore(ABC):
         """
         try:
             # Fetch current week and next few days for immediate display
-            now = datetime.now(pytz.utc)
+            tz = pytz.timezone("EST")
+            now = datetime.now(tz)
             immediate_events = []
             
             start_date = now + timedelta(weeks=-2)
@@ -545,6 +546,29 @@ class SportsCore(ABC):
     def _custom_scorebug_layout(self, game: dict, draw_overlay: ImageDraw.ImageDraw):
         pass
 
+    def get_days_between_dates(self, start_date: datetime, end_date: datetime) -> list[datetime]:
+        """
+        Generates a list of all days between two given dates, inclusive.
+
+        Args:
+            start_date: The starting date (datetime.date object).
+            end_date: The ending date (datetime.date object).
+
+        Returns:
+            A list of datetime.date objects representing each day in the range.
+        """
+        if start_date > end_date:
+            # Handle cases where the start date is after the end date
+            # You might raise an error, return an empty list, or swap them
+            # For this example, we'll return an empty list.
+            return []
+
+        days_list = []
+        current_date = start_date
+        while current_date <= end_date:
+            days_list.append(current_date)
+            current_date += timedelta(days=1)
+        return days_list
 class SportsUpcoming(SportsCore):
     def __init__(self, config: Dict[str, Any], display_manager: DisplayManager, cache_manager: CacheManager, logger: logging.Logger, sport_key: str):
         super().__init__(config, display_manager, cache_manager, logger, sport_key)

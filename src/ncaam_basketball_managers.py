@@ -1,5 +1,6 @@
+import itertools
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -64,6 +65,67 @@ class BaseNCAAMBasketballManager(Basketball):
             f"Display modes - Recent: {self.recent_enabled}, Upcoming: {self.upcoming_enabled}, Live: {self.live_enabled}"
         )
         self.league = "mens-college-basketball"
+
+    def _get_events(self, start_date: datetime, end_date: datetime) -> Optional[Dict]:
+        """
+        Get partial data for immediate display while background fetch is in progress.
+        This fetches current/recent games only for quick response.
+        """
+        events = []
+        for group, date in list(
+            itertools.product(
+                [50, 51], self.get_days_between_dates(start_date, end_date)
+            )
+        ):
+            try:
+                # Fetch todays games only
+                url = f"https://site.api.espn.com/apis/site/v2/sports/{self.sport}/{self.league}/scoreboard"
+                print(date)
+                print(group)
+                response = self.session.get(
+                    url,
+                    params={
+                        "date": date.strftime("%Y%m%d"),
+                        "limit": 1000,
+                        "groups": group,
+                    },
+                    headers=self.headers,
+                    timeout=10,
+                )
+                response.raise_for_status()
+                data = response.json()
+                events.extend(data.get("events", []))
+                print(len(events))
+            except requests.exceptions.RequestException as e:
+                self.logger.error(
+                    f"API error fetching todays games for {self.sport} - {self.league}: {e}"
+                )
+                return None
+        self.logger.info(
+            f"Fetched {len(events)} todays games for {self.sport} - {self.league}"
+        )
+        print(len(events))
+        return {"events": events}
+
+    def _get_weeks_data(self) -> Optional[Dict]:
+        """
+        Get partial data for immediate display while background fetch is in progress.
+        This fetches current/recent games only for quick response.
+        """
+        tz = pytz.timezone("EST")
+        now = datetime.now(tz)
+        start_date = now + timedelta(weeks=-2)
+        end_date = now + timedelta(weeks=1)
+        return self._get_events(start_date, end_date)
+
+    def _fetch_todays_games(self) -> Dict | None:
+        """Fetch only today's games for live updates (not entire season)."""
+        tz = pytz.timezone("EST")
+        now = datetime.now(tz)
+        yesterday = now - timedelta(days=1)
+        data = self._get_events(yesterday, now)
+        # print(data)
+        return data
 
     def _fetch_ncaam_basketball_api_data(
         self, use_cache: bool = True
