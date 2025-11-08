@@ -1,5 +1,6 @@
 import logging
 import os
+import tempfile
 import time
 from abc import ABC, abstractmethod
 from datetime import datetime, timedelta, timezone
@@ -60,8 +61,9 @@ class SportsCore(ABC):
         self.show_odds: bool = self.mode_config.get("show_odds", False)
         self.test_mode: bool = self.mode_config.get("test_mode", False)
         # Use LogoDownloader to get the correct default logo directory for this sport
-        default_logo_dir = LogoDownloader().get_logo_directory(sport_key)
-        self.logo_dir = Path(self.mode_config.get("logo_dir", default_logo_dir))
+        default_logo_dir = Path(LogoDownloader().get_logo_directory(sport_key))
+        configured_logo_dir = Path(self.mode_config.get("logo_dir", default_logo_dir))
+        self.logo_dir = self._initialize_logo_dir(configured_logo_dir)
         self.update_interval: int = self.mode_config.get(
             "update_interval_seconds", 60)
         self.show_records: bool = self.mode_config.get('show_records', False)
@@ -124,6 +126,69 @@ class SportsCore(ABC):
         self.background_fetch_requests = {}  # Track background fetch requests
         self.background_enabled = True
         self.logger.info("Background service enabled with 1 worker (memory optimized)")
+
+    def _initialize_logo_dir(self, configured_path: Path) -> Path:
+        """Resolve and ensure a writable logo directory, falling back when necessary."""
+        downloader = LogoDownloader()
+        resolved_configured = self._resolve_project_path(configured_path)
+        candidates = [resolved_configured] + self._get_logo_directory_fallbacks(resolved_configured)
+
+        for candidate in candidates:
+            candidate_path = self._resolve_project_path(candidate)
+            if downloader.ensure_logo_directory(str(candidate_path)):
+                if candidate_path != resolved_configured:
+                    self.logger.warning(
+                        "Configured logo directory '%s' is not writable; using fallback '%s'",
+                        resolved_configured,
+                        candidate_path,
+                    )
+                return candidate_path
+
+        self.logger.error(
+            "Unable to find a writable logo directory. Logos may fail to download (last attempted: %s)",
+            resolved_configured,
+        )
+        return resolved_configured
+
+    def _resolve_project_path(self, path: Path) -> Path:
+        """Convert relative paths to absolute ones rooted at the project directory."""
+        if path.is_absolute():
+            return path
+        project_root = Path(__file__).resolve().parents[2]
+        return (project_root / path).resolve()
+
+    def _get_logo_directory_fallbacks(self, configured_dir: Path) -> List[Path]:
+        """Return fallback directories to try when the configured directory is not writable."""
+        fallbacks: List[Path] = []
+
+        env_override = os.environ.get("LEDMATRIX_LOGO_DIR")
+        if env_override:
+            env_path = Path(env_override)
+            if not env_path.is_absolute():
+                env_path = self._resolve_project_path(env_path)
+            fallbacks.append(env_path / self.sport_key)
+
+        cache_dir = getattr(self.cache_manager, "cache_dir", None)
+        if cache_dir:
+            fallbacks.append(Path(cache_dir) / "logos" / self.sport_key)
+
+        try:
+            fallbacks.append(Path.home() / ".ledmatrix" / "logos" / self.sport_key)
+        except Exception:
+            pass
+
+        fallbacks.append(Path(tempfile.gettempdir()) / "ledmatrix_logos" / self.sport_key)
+
+        unique_fallbacks: List[Path] = []
+        seen = set()
+        for candidate in fallbacks:
+            if candidate == configured_dir:
+                continue
+            if candidate not in seen:
+                unique_fallbacks.append(candidate)
+                seen.add(candidate)
+
+        return unique_fallbacks
 
     def _get_season_schedule_dates(self) -> tuple[str, str]:
         return "", ""

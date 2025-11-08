@@ -136,32 +136,37 @@ class LogoDownloader:
     
     def get_logo_directory(self, league: str) -> str:
         """Get the logo directory for a given league."""
-        # Access class variable directly to ensure correct lookup
-        return LogoDownloader.LOGO_DIRECTORIES.get(league, f'assets/sports/{league}_logos')
+        directory = LogoDownloader.LOGO_DIRECTORIES.get(league, f'assets/sports/{league}_logos')
+        path = Path(directory)
+        if not path.is_absolute():
+            project_root = Path(__file__).resolve().parents[1]
+            path = (project_root / path).resolve()
+        return str(path)
     
-    def ensure_logo_directory(self, logo_dir: str) -> bool:
+    def ensure_logo_directory(self, logo_dir: str | Path) -> bool:
         """Ensure the logo directory exists, create if necessary."""
+        path = Path(logo_dir)
         try:
-            os.makedirs(logo_dir, exist_ok=True)
+            path.mkdir(parents=True, exist_ok=True)
             
             # Check if we can actually write to the directory
-            test_file = os.path.join(logo_dir, '.write_test')
+            test_file = path / '.write_test'
             try:
                 with open(test_file, 'w') as f:
                     f.write('test')
-                os.remove(test_file)
-                logger.debug(f"Directory {logo_dir} is writable")
+                test_file.unlink(missing_ok=True)
+                logger.debug(f"Directory {path} is writable")
                 return True
             except PermissionError:
-                logger.error(f"Permission denied: Cannot write to directory {logo_dir}")
+                logger.error(f"Permission denied: Cannot write to directory {path}")
                 logger.error(f"Please run: sudo ./scripts/fix_perms/fix_assets_permissions.sh")
                 return False
             except Exception as e:
-                logger.error(f"Failed to test write access to directory {logo_dir}: {e}")
+                logger.error(f"Failed to test write access to directory {path}: {e}")
                 return False
                 
         except Exception as e:
-            logger.error(f"Failed to create logo directory {logo_dir}: {e}")
+            logger.error(f"Failed to create logo directory {path}: {e}")
             return False
     
     def download_logo(self, logo_url: str, filepath: Path, team_abbreviation: str) -> bool:
@@ -689,6 +694,11 @@ def download_missing_logo(league: str, team_id: str, team_abbreviation: str, log
     downloader = LogoDownloader()
     
     # Use the directory from the logo_path parameter (respects config settings)
+    logo_path = Path(logo_path)
+    if not logo_path.is_absolute():
+        project_root = Path(__file__).resolve().parents[1]
+        logo_path = (project_root / logo_path).resolve()
+
     logo_dir = str(logo_path.parent)
     
     # Ensure the directory exists and is writable
