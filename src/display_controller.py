@@ -56,7 +56,6 @@ class DisplayController:
         self.available_modes = []
         
         # Initialize Plugin System
-        import traceback
         plugin_time = time.time()
         self.plugin_manager = None
         self.plugin_modes = {}  # mode -> plugin_instance mapping for plugin-first dispatch
@@ -93,7 +92,7 @@ class DisplayController:
                 project_root = os.getcwd()
                 plugins_dir = os.path.join(project_root, plugins_dir_name)
             
-            logger.info(f"Plugin Manager initialized with plugins directory: {plugins_dir}")
+            logger.info("Plugin Manager initialized with plugins directory: %s", plugins_dir)
             
             self.plugin_manager = PluginManager(
                 plugins_dir=plugins_dir,
@@ -105,14 +104,14 @@ class DisplayController:
 
             # Discover plugins
             discovered_plugins = self.plugin_manager.discover_plugins()
-            logger.info(f"Discovered {len(discovered_plugins)} plugin(s)")
+            logger.info("Discovered %d plugin(s)", len(discovered_plugins))
 
             # Load enabled plugins
             for plugin_id in discovered_plugins:
                 plugin_config = self.config.get(plugin_id, {})
                 if plugin_config.get('enabled', False):
                     if self.plugin_manager.load_plugin(plugin_id):
-                        logger.info(f"Loaded plugin: {plugin_id}")
+                        logger.info("Loaded plugin: %s", plugin_id)
                         
                         # Get plugin instance and manifest
                         plugin_instance = self.plugin_manager.get_plugin(plugin_id)
@@ -129,19 +128,18 @@ class DisplayController:
                             self.available_modes.append(mode)
                             self.plugin_modes[mode] = plugin_instance
                             self.mode_to_plugin_id[mode] = plugin_id
-                            logger.info(f"Added plugin mode: {mode}")
+                            logger.info("Added plugin mode: %s", mode)
                     else:
-                        logger.warning(f"Failed to load plugin: {plugin_id}")
+                        logger.warning("Failed to load plugin: %s", plugin_id)
                 else:
-                    logger.info(f"Plugin {plugin_id} is disabled")
+                    logger.info("Plugin %s is disabled", plugin_id)
 
-            logger.info(f"Plugin system initialized in %.3f seconds", time.time() - plugin_time)
-            logger.info(f"Total available modes: {len(self.available_modes)}")
-            logger.info(f"Available modes: {self.available_modes}")
+            logger.info("Plugin system initialized in %.3f seconds", time.time() - plugin_time)
+            logger.info("Total available modes: %d", len(self.available_modes))
+            logger.info("Available modes: %s", self.available_modes)
 
-        except Exception as e:
-            logger.error(f"Plugin system initialization failed: {e}")
-            logger.error(traceback.format_exc())
+        except Exception:  # pylint: disable=broad-except
+            logger.exception("Plugin system initialization failed")
             self.plugin_manager = None
 
         # Display rotation state
@@ -156,7 +154,7 @@ class DisplayController:
         # Publish initial on-demand state
         try:
             self._publish_on_demand_state()
-        except Exception as err:
+        except (OSError, ValueError, RuntimeError) as err:
             logger.debug("Initial on-demand state publish failed: %s", err, exc_info=True)
 
         logger.info("DisplayController initialization completed in %.3f seconds", time.time() - start_time)
@@ -182,7 +180,7 @@ class DisplayController:
             # Check if this day is enabled
             if not day_config.get('enabled', True):
                 self.is_display_active = False
-                logger.debug(f"Display inactive - {current_day} is disabled in schedule")
+                logger.debug("Display inactive - %s is disabled in schedule", current_day)
                 return
             
             start_time_str = day_config.get('start_time', '07:00')
@@ -204,7 +202,7 @@ class DisplayController:
                 self.is_display_active = current_time_only >= start_time or current_time_only <= end_time
                 
         except ValueError as e:
-            logger.warning(f"Invalid schedule format: {e}")
+            logger.warning("Invalid schedule format: %s", e)
             self.is_display_active = True
 
     def _update_modules(self):
@@ -218,8 +216,8 @@ class DisplayController:
             try:
                 if hasattr(plugin_instance, 'update'):
                     plugin_instance.update()
-            except Exception as e:
-                logger.error(f"Error updating plugin {plugin_id}: {e}")
+            except Exception:  # pylint: disable=broad-except
+                logger.exception("Error updating plugin %s", plugin_id)
 
     def _get_display_duration(self, mode_key):
         """Get display duration for a mode."""
@@ -258,7 +256,7 @@ class DisplayController:
                 'last_updated': time.time()
             }
             self.cache_manager.set('display_on_demand_state', state)
-        except Exception as err:
+        except (OSError, RuntimeError, ValueError, TypeError) as err:
             logger.error("Failed to publish on-demand state: %s", err, exc_info=True)
 
     def _set_on_demand_error(self, message: str) -> None:
@@ -281,7 +279,7 @@ class DisplayController:
         """Poll cache for new on-demand requests from external controllers."""
         try:
             request = self.cache_manager.get('display_on_demand_request')
-        except Exception as err:
+        except (OSError, RuntimeError, ValueError, TypeError) as err:
             logger.error("Failed to read on-demand request: %s", err, exc_info=True)
             return
 
@@ -479,14 +477,14 @@ class DisplayController:
                             if isinstance(result, bool):
                                 display_result = result
                         self.force_change = False
-                    except Exception as e:
-                        logger.error(f"Error displaying {self.current_display_mode}: {e}")
+                    except Exception:  # pylint: disable=broad-except
+                        logger.exception("Error displaying %s", self.current_display_mode)
                         self.force_change = True
                         display_result = False
                 
                 # If display() returned False, skip to next mode immediately
                 if not display_result:
-                    logger.info(f"No content to display for {active_mode}, skipping to next mode")
+                    logger.info("No content to display for %s, skipping to next mode", active_mode)
                 else:
                     # Get duration for current mode
                     duration = self._get_display_duration(active_mode)
@@ -504,7 +502,12 @@ class DisplayController:
                         has_enable_scrolling = hasattr(manager_to_display, 'enable_scrolling')
                         enable_scrolling_value = getattr(manager_to_display, 'enable_scrolling', False)
                         needs_high_fps = has_enable_scrolling and enable_scrolling_value
-                        logger.debug(f"FPS check - has_enable_scrolling: {has_enable_scrolling}, enable_scrolling_value: {enable_scrolling_value}, needs_high_fps: {needs_high_fps}")
+                        logger.debug(
+                            "FPS check - has_enable_scrolling: %s, enable_scrolling_value: %s, needs_high_fps: %s",
+                            has_enable_scrolling,
+                            enable_scrolling_value,
+                            needs_high_fps,
+                        )
                         
                         if needs_high_fps:
                             # Ultra-smooth FPS for scrolling plugins (8ms = 125 FPS)
@@ -519,8 +522,8 @@ class DisplayController:
                                     if isinstance(result, bool) and not result:
                                         logger.debug("Display returned False, breaking early")
                                         break
-                                except Exception as e:
-                                    logger.error(f"Error during display update: {e}")
+                                except Exception:  # pylint: disable=broad-except
+                                    logger.exception("Error during display update")
                                 
                                 time.sleep(display_interval)
                                 elapsed += display_interval
@@ -546,8 +549,8 @@ class DisplayController:
                                         if isinstance(result, bool) and not result:
                                             logger.debug("Display returned False, breaking early")
                                             break
-                                    except Exception as e:
-                                        logger.error(f"Error during display update: {e}")
+                                    except Exception:  # pylint: disable=broad-except
+                                        logger.exception("Error during display update")
                                     
                                     self._poll_on_demand_requests()
                                     self._check_on_demand_expiration()
@@ -568,14 +571,12 @@ class DisplayController:
                 self.current_display_mode = self.available_modes[self.current_mode_index]
                 self.last_mode_change = time.time()
                 
-                logger.info(f"Switching to mode: {self.current_display_mode}")
+                logger.info("Switching to mode: %s", self.current_display_mode)
 
         except KeyboardInterrupt:
             logger.info("Received interrupt signal, shutting down...")
-        except Exception as e:
-            logger.error(f"Unexpected error in display controller: {e}")
-            import traceback
-            logger.error(traceback.format_exc())
+        except Exception:  # pylint: disable=broad-except
+            logger.exception("Unexpected error in display controller")
         finally:
             self.cleanup()
 
