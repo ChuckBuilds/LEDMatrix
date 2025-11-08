@@ -533,3 +533,41 @@ class PluginManager:
         
         return None
 
+    def get_plugin_display_modes(self, plugin_id: str) -> List[str]:
+        """
+        Get declared display modes for a plugin.
+
+        Args:
+            plugin_id: Plugin identifier
+
+        Returns:
+            List of display mode identifiers. Falls back to [plugin_id] if none declared.
+        """
+        manifest = self.plugin_manifests.get(plugin_id, {})
+        display_modes = manifest.get('display_modes')
+        if isinstance(display_modes, list) and display_modes:
+            return display_modes
+        fallback = manifest.get('id') or plugin_id
+        return [fallback]
+
+    def find_plugin_for_mode(self, mode: str) -> Optional[str]:
+        """
+        Find the plugin that owns a specific display mode.
+
+        Args:
+            mode: Display mode identifier
+
+        Returns:
+            Plugin identifier or None if not found.
+        """
+        normalized_mode = mode.strip().lower()
+        for plugin_id, manifest in self.plugin_manifests.items():
+            display_modes = manifest.get('display_modes')
+            if isinstance(display_modes, list) and display_modes:
+                if any(m.lower() == normalized_mode for m in display_modes):
+                    return plugin_id
+            else:
+                if plugin_id.lower() == normalized_mode:
+                    return plugin_id
+        return None
+

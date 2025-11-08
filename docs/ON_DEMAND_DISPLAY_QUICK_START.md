@@ -4,7 +4,65 @@
 
 On-Demand Display lets users **manually trigger** specific plugins to show on the LED matrix - perfect for "Show Now" buttons in your web interface!
 
+> **2025 update:** The LEDMatrix web interface now ships with first-class on-demand controls. You can trigger plugins directly from the Plugin Management page or by calling the new `/api/v3/display/on-demand/*` endpoints described below. The legacy quick-start steps are still documented for bespoke integrations.
+
+## ✅ Built-In Controls
+
+### Web Interface (no-code)
+
+- Navigate to **Settings → Plugin Management**.
+- Each installed plugin now exposes a **Run On-Demand** button:
+  - Choose the display mode (when a plugin exposes multiple views).
+  - Optionally set a fixed duration (leave blank to use the plugin default or `0` to run until you stop it).
+  - Pin the plugin so rotation stays paused.
+  - The dashboard shows real-time status and lets you stop the session. **Shift+click** the stop button to stop the display service after clearing the plugin.
+- The status card refreshes automatically and indicates whether the display service is running.
+
+### REST Endpoints
+
+All endpoints live under `/api/v3/display/on-demand`.
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/status` | GET | Returns the current on-demand state plus display service health. |
+| `/start`  | POST | Requests a plugin/mode to run. Automatically starts the display service (unless `start_service: false`). |
+| `/stop`   | POST | Clears on-demand mode. Include `{"stop_service": true}` to stop the systemd service. |
+
+Example `curl` calls:
+
+```bash
+# Start the default mode for football-scoreboard for 45 seconds
+curl -X POST http://localhost:5000/api/v3/display/on-demand/start \
+     -H "Content-Type: application/json" \
+     -d '{
+            "plugin_id": "football-scoreboard",
+            "duration": 45,
+            "pinned": true
+         }'
+
+# Start by mode name (plugin id inferred automatically)
+curl -X POST http://localhost:5000/api/v3/display/on-demand/start \
+     -H "Content-Type: application/json" \
+     -d '{ "mode": "football_live" }'
+
+# Stop on-demand and shut down the display service
+curl -X POST http://localhost:5000/api/v3/display/on-demand/stop \
+     -H "Content-Type: application/json" \
+     -d '{ "stop_service": true }'
+
+# Check current status
+curl http://localhost:5000/api/v3/display/on-demand/status | jq
+```
+
+**Notes**
+
+- The display controller will honour the plugin’s configured `display_duration` when no duration is provided.
+- When you pass `duration: 0` (or omit it) and `pinned: true`, the plugin stays active until you issue `/stop`.
+- The service automatically resumes normal rotation after the on-demand session expires or is cleared.
+
 ## 🚀 Quick Implementation (3 Steps)
+
+> The steps below describe a lightweight custom implementation that predates the built-in API. You generally no longer need this unless you are integrating with a separate control surface.
 
 ### Step 1: Add API Endpoint
 

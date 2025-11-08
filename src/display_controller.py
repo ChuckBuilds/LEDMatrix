@@ -2,8 +2,8 @@ import time
 import logging
 import sys
 import os
-from typing import Dict, Any, List
-from datetime import datetime, time as time_obj
+from typing import Dict, Any, List, Optional
+from datetime import datetime
 
 # Configure logging
 logging.basicConfig(
@@ -60,6 +60,21 @@ class DisplayController:
         plugin_time = time.time()
         self.plugin_manager = None
         self.plugin_modes = {}  # mode -> plugin_instance mapping for plugin-first dispatch
+        self.mode_to_plugin_id: Dict[str, str] = {}
+        self.plugin_display_modes: Dict[str, List[str]] = {}
+        self.on_demand_active = False
+        self.on_demand_mode: Optional[str] = None
+        self.on_demand_plugin_id: Optional[str] = None
+        self.on_demand_duration: Optional[float] = None
+        self.on_demand_requested_at: Optional[float] = None
+        self.on_demand_expires_at: Optional[float] = None
+        self.on_demand_pinned = False
+        self.on_demand_request_id: Optional[str] = None
+        self.on_demand_status: str = 'idle'
+        self.on_demand_last_error: Optional[str] = None
+        self.on_demand_last_event: Optional[str] = None
+        self.on_demand_schedule_override = False
+        self.rotation_resume_index: Optional[int] = None
         
         try:
             logger.info("Attempting to import plugin system...")
@@ -103,11 +118,17 @@ class DisplayController:
                         plugin_instance = self.plugin_manager.get_plugin(plugin_id)
                         manifest = self.plugin_manager.plugin_manifests.get(plugin_id, {})
                         display_modes = manifest.get('display_modes', [plugin_id])
+                        if isinstance(display_modes, list) and display_modes:
+                            self.plugin_display_modes[plugin_id] = list(display_modes)
+                        else:
+                            display_modes = [plugin_id]
+                            self.plugin_display_modes[plugin_id] = list(display_modes)
                         
                         # Add plugin modes to available modes
                         for mode in display_modes:
                             self.available_modes.append(mode)
                             self.plugin_modes[mode] = plugin_instance
+                            self.mode_to_plugin_id[mode] = plugin_id
                             logger.info(f"Added plugin mode: {mode}")
                     else:
                         logger.warning(f"Failed to load plugin: {plugin_id}")
@@ -132,6 +153,12 @@ class DisplayController:
         # Schedule management
         self.is_display_active = True
         
+        # Publish initial on-demand state
+        try:
+            self._publish_on_demand_state()
+        except Exception as err:
+            logger.debug("Initial on-demand state publish failed: %s", err, exc_info=True)
+
         logger.info("DisplayController initialization completed in %.3f seconds", time.time() - start_time)
 
     def _check_schedule(self):
@@ -206,6 +233,187 @@ class DisplayController:
         display_durations = self.config.get('display', {}).get('display_durations', {})
         return display_durations.get(mode_key, 30)
 
+    def _get_on_demand_remaining(self) -> Optional[float]:
+        """Calculate remaining time for an active on-demand session."""
+        if not self.on_demand_active or self.on_demand_expires_at is None:
+            return None
+        remaining = self.on_demand_expires_at - time.time()
+        return max(0.0, remaining)
+
+    def _publish_on_demand_state(self) -> None:
+        """Publish current on-demand state to cache for external consumers."""
+        try:
+            state = {
+                'active': self.on_demand_active,
+                'mode': self.on_demand_mode,
+                'plugin_id': self.on_demand_plugin_id,
+                'requested_at': self.on_demand_requested_at,
+                'expires_at': self.on_demand_expires_at,
+                'duration': self.on_demand_duration,
+                'pinned': self.on_demand_pinned,
+                'status': self.on_demand_status,
+                'error': self.on_demand_last_error,
+                'last_event': self.on_demand_last_event,
+                'remaining': self._get_on_demand_remaining(),
+                'last_updated': time.time()
+            }
+            self.cache_manager.set('display_on_demand_state', state)
+        except Exception as err:
+            logger.error("Failed to publish on-demand state: %s", err, exc_info=True)
+
+    def _set_on_demand_error(self, message: str) -> None:
+        """Set on-demand state to error and publish."""
+        self.on_demand_status = 'error'
+        self.on_demand_last_error = message
+        self.on_demand_last_event = None
+        self.on_demand_active = False
+        self.on_demand_mode = None
+        self.on_demand_plugin_id = None
+        self.on_demand_duration = None
+        self.on_demand_requested_at = None
+        self.on_demand_expires_at = None
+        self.on_demand_pinned = False
+        self.rotation_resume_index = None
+        self.on_demand_schedule_override = False
+        self._publish_on_demand_state()
+
+    def _poll_on_demand_requests(self) -> None:
+        """Poll cache for new on-demand requests from external controllers."""
+        try:
+            request = self.cache_manager.get('display_on_demand_request')
+        except Exception as err:
+            logger.error("Failed to read on-demand request: %s", err, exc_info=True)
+            return
+
+        if not request:
+            return
+
+        request_id = request.get('request_id')
+        if not request_id or request_id == self.on_demand_request_id:
+            return
+
+        action = request.get('action')
+        logger.info("Received on-demand request %s: %s", request_id, action)
+        if action == 'start':
+            self._activate_on_demand(request)
+        elif action == 'stop':
+            self._clear_on_demand(reason='requested-stop')
+        else:
+            logger.warning("Unknown on-demand action: %s", action)
+        self.on_demand_request_id = request_id
+
+    def _resolve_mode_for_plugin(self, plugin_id: Optional[str], mode: Optional[str]) -> Optional[str]:
+        """Resolve the display mode to use for on-demand activation."""
+        if mode:
+            return mode
+
+        if plugin_id and plugin_id in self.plugin_display_modes:
+            modes = self.plugin_display_modes.get(plugin_id, [])
+            if modes:
+                return modes[0]
+        return plugin_id
+
+    def _activate_on_demand(self, request: Dict[str, Any]) -> None:
+        """Activate on-demand mode for a specific plugin display."""
+        plugin_id = request.get('plugin_id')
+        mode = request.get('mode')
+        resolved_mode = self._resolve_mode_for_plugin(plugin_id, mode)
+
+        if not resolved_mode:
+            logger.error("On-demand request missing mode and plugin_id")
+            self._set_on_demand_error("missing-mode")
+            return
+
+        if resolved_mode not in self.plugin_modes:
+            logger.error("Requested on-demand mode '%s' is not available", resolved_mode)
+            self._set_on_demand_error("invalid-mode")
+            return
+
+        resolved_plugin_id = self.mode_to_plugin_id.get(resolved_mode)
+        if not resolved_plugin_id:
+            logger.error("Could not resolve plugin for mode '%s'", resolved_mode)
+            self._set_on_demand_error("unknown-plugin")
+            return
+
+        duration = request.get('duration')
+        if duration is not None:
+            try:
+                duration = float(duration)
+                if duration <= 0:
+                    duration = None
+            except (TypeError, ValueError):
+                logger.warning("Invalid duration '%s' in on-demand request", duration)
+                duration = None
+
+        pinned = bool(request.get('pinned', False))
+        now = time.time()
+
+        if self.available_modes:
+            self.rotation_resume_index = self.current_mode_index
+        else:
+            self.rotation_resume_index = None
+
+        if resolved_mode in self.available_modes:
+            self.current_mode_index = self.available_modes.index(resolved_mode)
+
+        self.on_demand_active = True
+        self.on_demand_mode = resolved_mode
+        self.on_demand_plugin_id = resolved_plugin_id
+        self.on_demand_duration = duration
+        self.on_demand_requested_at = now
+        self.on_demand_expires_at = (now + duration) if duration else None
+        self.on_demand_pinned = pinned
+        self.on_demand_status = 'active'
+        self.on_demand_last_error = None
+        self.on_demand_last_event = 'started'
+        self.on_demand_schedule_override = True
+        self.force_change = True
+        self.current_display_mode = resolved_mode
+        logger.info("Activated on-demand mode '%s' for plugin '%s'", resolved_mode, resolved_plugin_id)
+        self._publish_on_demand_state()
+
+    def _clear_on_demand(self, reason: Optional[str] = None) -> None:
+        """Clear on-demand mode and resume normal rotation."""
+        if not self.on_demand_active and self.on_demand_status == 'idle':
+            if reason == 'requested-stop':
+                self.on_demand_last_event = 'stop-request-ignored'  # Already idle
+                self._publish_on_demand_state()
+            return
+
+        self.on_demand_active = False
+        self.on_demand_mode = None
+        self.on_demand_plugin_id = None
+        self.on_demand_duration = None
+        self.on_demand_requested_at = None
+        self.on_demand_expires_at = None
+        self.on_demand_pinned = False
+        self.on_demand_status = 'idle'
+        self.on_demand_last_error = None
+        self.on_demand_last_event = reason or 'cleared'
+        self.on_demand_schedule_override = False
+
+        if self.rotation_resume_index is not None and self.available_modes:
+            self.current_mode_index = self.rotation_resume_index % len(self.available_modes)
+            self.current_display_mode = self.available_modes[self.current_mode_index]
+        elif self.available_modes:
+            # Default to first mode
+            self.current_mode_index = self.current_mode_index % len(self.available_modes)
+            self.current_display_mode = self.available_modes[self.current_mode_index]
+
+        self.rotation_resume_index = None
+        self.force_change = True
+        logger.info("Cleared on-demand mode (reason=%s), resuming rotation", reason)
+        self._publish_on_demand_state()
+
+    def _check_on_demand_expiration(self) -> None:
+        """Expire on-demand mode if duration has elapsed."""
+        if not self.on_demand_active or self.on_demand_expires_at is None:
+            return
+
+        if time.time() >= self.on_demand_expires_at:
+            logger.info("On-demand mode '%s' expired", self.on_demand_mode)
+            self._clear_on_demand(reason='expired')
+
     def run(self):
         """Run the display controller, switching between displays."""
         if not self.available_modes:
@@ -222,10 +430,20 @@ class DisplayController:
             self.current_display_mode = self.available_modes[self.current_mode_index] if self.available_modes else 'none'
             
             while True:
-                current_time = time.time()
+                # Handle on-demand commands before rendering
+                self._poll_on_demand_requests()
+                self._check_on_demand_expiration()
 
                 # Check the schedule
                 self._check_schedule()
+                if self.on_demand_active and not self.is_display_active:
+                    if not self.on_demand_schedule_override:
+                        logger.info("On-demand override keeping display active during scheduled downtime")
+                    self.on_demand_schedule_override = True
+                    self.is_display_active = True
+                elif not self.on_demand_active and self.on_demand_schedule_override:
+                    self.on_demand_schedule_override = False
+
                 if not self.is_display_active:
                     time.sleep(60)
                     continue
@@ -236,11 +454,18 @@ class DisplayController:
                 # Process any deferred updates that may have accumulated
                 self.display_manager.process_deferred_updates()
 
+                if self.on_demand_active and self.on_demand_mode:
+                    active_mode = self.on_demand_mode
+                    if self.current_display_mode != active_mode:
+                        self.current_display_mode = active_mode
+                else:
+                    active_mode = self.current_display_mode
+
                 manager_to_display = None
                 
                 # Handle plugin-based display modes
-                if self.current_display_mode in self.plugin_modes:
-                    plugin_instance = self.plugin_modes[self.current_display_mode]
+                if active_mode in self.plugin_modes:
+                    plugin_instance = self.plugin_modes[active_mode]
                     if hasattr(plugin_instance, 'display'):
                         manager_to_display = plugin_instance
                 
@@ -261,10 +486,17 @@ class DisplayController:
                 
                 # If display() returned False, skip to next mode immediately
                 if not display_result:
-                    logger.info(f"No content to display for {self.current_display_mode}, skipping to next mode")
+                    logger.info(f"No content to display for {active_mode}, skipping to next mode")
                 else:
                     # Get duration for current mode
-                    duration = self._get_display_duration(self.current_display_mode)
+                    duration = self._get_display_duration(active_mode)
+                    if self.on_demand_active:
+                        remaining = self._get_on_demand_remaining()
+                        if remaining is not None:
+                            duration = min(duration, remaining)
+                            if duration <= 0:
+                                self._check_on_demand_expiration()
+                                continue
                     
                     # For plugins, call display multiple times to allow game rotation
                     if manager_to_display and hasattr(manager_to_display, 'display'):
@@ -285,13 +517,18 @@ class DisplayController:
                                     result = manager_to_display.display(force_clear=False)
                                     # If display returns False, break early
                                     if isinstance(result, bool) and not result:
-                                        logger.debug(f"Display returned False, breaking early")
+                                        logger.debug("Display returned False, breaking early")
                                         break
                                 except Exception as e:
                                     logger.error(f"Error during display update: {e}")
                                 
                                 time.sleep(display_interval)
                                 elapsed += display_interval
+                                self._poll_on_demand_requests()
+                                self._check_on_demand_expiration()
+                                if self.current_display_mode != active_mode:
+                                    logger.debug("Mode changed during high-FPS loop, breaking early")
+                                    break
                         else:
                             # Normal FPS for other plugins (1 second)
                             display_interval = 1.0
@@ -307,15 +544,26 @@ class DisplayController:
                                         result = manager_to_display.display(force_clear=False)
                                         # If display returns False, break early
                                         if isinstance(result, bool) and not result:
-                                            logger.debug(f"Display returned False, breaking early")
+                                            logger.debug("Display returned False, breaking early")
                                             break
                                     except Exception as e:
                                         logger.error(f"Error during display update: {e}")
+                                    
+                                    self._poll_on_demand_requests()
+                                    self._check_on_demand_expiration()
+                                    if self.current_display_mode != active_mode:
+                                        logger.debug("Mode changed during display loop, breaking early")
+                                        break
                     else:
                         # For non-plugin modes, use the original behavior
                         time.sleep(duration)
                 
                 # Move to next mode
+                if self.on_demand_active:
+                    # Stay on the same mode while on-demand is active
+                    self._publish_on_demand_state()
+                    continue
+
                 self.current_mode_index = (self.current_mode_index + 1) % len(self.available_modes)
                 self.current_display_mode = self.available_modes[self.current_mode_index]
                 self.last_mode_change = time.time()

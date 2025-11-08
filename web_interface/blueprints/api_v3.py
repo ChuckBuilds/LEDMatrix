@@ -20,6 +20,92 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 
 api_v3 = Blueprint('api_v3', __name__)
 
+def _ensure_cache_manager():
+    """Ensure cache manager is initialized."""
+    global cache_manager
+    if cache_manager is None:
+        from src.cache_manager import CacheManager
+        cache_manager = CacheManager()
+    return cache_manager
+
+def _get_display_service_status():
+    """Return status information about the ledmatrix service."""
+    try:
+        result = subprocess.run(
+            ['systemctl', 'is-active', 'ledmatrix'],
+            capture_output=True,
+            text=True,
+            timeout=3
+        )
+        return {
+            'active': result.stdout.strip() == 'active',
+            'returncode': result.returncode,
+            'stdout': result.stdout.strip(),
+            'stderr': result.stderr.strip()
+        }
+    except subprocess.TimeoutExpired:
+        return {
+            'active': False,
+            'returncode': -1,
+            'stdout': '',
+            'stderr': 'timeout'
+        }
+    except Exception as err:
+        return {
+            'active': False,
+            'returncode': -1,
+            'stdout': '',
+            'stderr': str(err)
+        }
+
+def _run_systemctl_command(args):
+    """Run a systemctl command safely."""
+    try:
+        result = subprocess.run(
+            args,
+            capture_output=True,
+            text=True,
+            timeout=15
+        )
+        return {
+            'returncode': result.returncode,
+            'stdout': result.stdout,
+            'stderr': result.stderr
+        }
+    except subprocess.TimeoutExpired:
+        return {
+            'returncode': -1,
+            'stdout': '',
+            'stderr': 'timeout'
+        }
+    except Exception as err:
+        return {
+            'returncode': -1,
+            'stdout': '',
+            'stderr': str(err)
+        }
+
+def _ensure_display_service_running():
+    """Ensure the ledmatrix display service is running."""
+    status = _get_display_service_status()
+    if status.get('active'):
+        status['started'] = False
+        return status
+    result = _run_systemctl_command(['sudo', 'systemctl', 'start', 'ledmatrix'])
+    service_status = _get_display_service_status()
+    result['started'] = result.get('returncode') == 0
+    result['active'] = service_status.get('active')
+    result['status'] = service_status
+    return result
+
+def _stop_display_service():
+    """Stop the ledmatrix display service."""
+    result = _run_systemctl_command(['sudo', 'systemctl', 'stop', 'ledmatrix'])
+    status = _get_display_service_status()
+    result['active'] = status.get('active')
+    result['status'] = status
+    return result
+
 @api_v3.route('/config/main', methods=['GET'])
 def get_main_config():
     """Get main configuration"""
@@ -509,6 +595,138 @@ def get_display_current():
         return jsonify({'status': 'success', 'data': display_data})
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)}), 500
+
+@api_v3.route('/display/on-demand/status', methods=['GET'])
+def get_on_demand_status():
+    """Return the current on-demand display state."""
+    try:
+        cache = _ensure_cache_manager()
+        state = cache.get('display_on_demand_state', max_age=120)
+        if state is None:
+            state = {
+                'active': False,
+                'status': 'idle',
+                'last_updated': None
+            }
+        service_status = _get_display_service_status()
+        return jsonify({
+            'status': 'success',
+            'data': {
+                'state': state,
+                'service': service_status
+            }
+        })
+    except Exception as exc:
+        import traceback
+        error_details = traceback.format_exc()
+        print(f"Error in get_on_demand_status: {exc}")
+        print(error_details)
+        return jsonify({'status': 'error', 'message': str(exc)}), 500
+
+@api_v3.route('/display/on-demand/start', methods=['POST'])
+def start_on_demand_display():
+    """Request the display controller to run a specific plugin on-demand."""
+    try:
+        data = request.get_json() or {}
+        plugin_id = data.get('plugin_id')
+        mode = data.get('mode')
+        duration = data.get('duration')
+        pinned = bool(data.get('pinned', False))
+        start_service = data.get('start_service', True)
+
+        if not plugin_id and not mode:
+            return jsonify({'status': 'error', 'message': 'plugin_id or mode is required'}), 400
+
+        resolved_plugin = plugin_id
+        resolved_mode = mode
+
+        if api_v3.plugin_manager:
+            if resolved_plugin and resolved_plugin not in api_v3.plugin_manager.plugin_manifests:
+                return jsonify({'status': 'error', 'message': f'Plugin {resolved_plugin} not found'}), 404
+
+            if resolved_plugin and not resolved_mode:
+                modes = api_v3.plugin_manager.get_plugin_display_modes(resolved_plugin)
+                resolved_mode = modes[0] if modes else resolved_plugin
+            elif resolved_mode and not resolved_plugin:
+                resolved_plugin = api_v3.plugin_manager.find_plugin_for_mode(resolved_mode)
+                if not resolved_plugin:
+                    return jsonify({'status': 'error', 'message': f'Mode {resolved_mode} not found'}), 404
+
+        if api_v3.config_manager and resolved_plugin:
+            config = api_v3.config_manager.load_config()
+            plugin_config = config.get(resolved_plugin, {})
+            if 'enabled' in plugin_config and not plugin_config.get('enabled', False):
+                return jsonify({
+                    'status': 'error',
+                    'message': f'Plugin {resolved_plugin} is disabled in configuration'
+                }), 400
+
+        cache = _ensure_cache_manager()
+        request_id = data.get('request_id') or str(uuid.uuid4())
+        request_payload = {
+            'request_id': request_id,
+            'action': 'start',
+            'plugin_id': resolved_plugin,
+            'mode': resolved_mode,
+            'duration': duration,
+            'pinned': pinned,
+            'timestamp': time.time()
+        }
+        cache.set('display_on_demand_request', request_payload)
+
+        service_result = None
+        if start_service:
+            service_result = _ensure_display_service_running()
+
+        response_data = {
+            'request_id': request_id,
+            'plugin_id': resolved_plugin,
+            'mode': resolved_mode,
+            'duration': duration,
+            'pinned': pinned,
+            'service': service_result
+        }
+        return jsonify({'status': 'success', 'data': response_data})
+    except Exception as exc:
+        import traceback
+        error_details = traceback.format_exc()
+        print(f"Error in start_on_demand_display: {exc}")
+        print(error_details)
+        return jsonify({'status': 'error', 'message': str(exc)}), 500
+
+@api_v3.route('/display/on-demand/stop', methods=['POST'])
+def stop_on_demand_display():
+    """Request the display controller to stop on-demand mode."""
+    try:
+        data = request.get_json(silent=True) or {}
+        stop_service = data.get('stop_service', False)
+
+        cache = _ensure_cache_manager()
+        request_id = data.get('request_id') or str(uuid.uuid4())
+        request_payload = {
+            'request_id': request_id,
+            'action': 'stop',
+            'timestamp': time.time()
+        }
+        cache.set('display_on_demand_request', request_payload)
+
+        service_result = None
+        if stop_service:
+            service_result = _stop_display_service()
+
+        return jsonify({
+            'status': 'success',
+            'data': {
+                'request_id': request_id,
+                'service': service_result
+            }
+        })
+    except Exception as exc:
+        import traceback
+        error_details = traceback.format_exc()
+        print(f"Error in stop_on_demand_display: {exc}")
+        print(error_details)
+        return jsonify({'status': 'error', 'message': str(exc)}), 500
 
 @api_v3.route('/plugins/installed', methods=['GET'])
 def get_installed_plugins():
