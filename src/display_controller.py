@@ -525,8 +525,8 @@ class DisplayController:
                     time.sleep(60)
                     continue
                 
-                # Update data for all modules first
-                self._update_modules()
+                # Plugins update on their own schedules - no forced sync updates needed
+                # Each plugin has its own update_interval and background services
                 
                 # Process any deferred updates that may have accumulated
                 self.display_manager.process_deferred_updates()
