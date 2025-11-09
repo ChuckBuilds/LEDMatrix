@@ -412,6 +412,27 @@ class DisplayController:
             logger.info("On-demand mode '%s' expired", self.on_demand_mode)
             self._clear_on_demand(reason='expired')
 
+    def _check_live_priority(self):
+        """
+        Check all plugins for live priority content.
+        Returns the mode that should be displayed if live content is found, None otherwise.
+        """
+        for mode_name, plugin_instance in self.plugin_modes.items():
+            if hasattr(plugin_instance, 'has_live_priority') and hasattr(plugin_instance, 'has_live_content'):
+                try:
+                    if plugin_instance.has_live_priority() and plugin_instance.has_live_content():
+                        # Get the specific live mode from the plugin if available
+                        if hasattr(plugin_instance, 'get_live_modes'):
+                            live_modes = plugin_instance.get_live_modes()
+                            if live_modes and len(live_modes) > 0:
+                                return live_modes[0]  # Return the first live mode
+                        # Fallback: if this mode ends with _live, return it
+                        if mode_name.endswith('_live'):
+                            return mode_name
+                except Exception as e:
+                    logger.warning("Error checking live priority for %s: %s", mode_name, e)
+        return None
+
     def run(self):
         """Run the display controller, switching between displays."""
         if not self.available_modes:
@@ -451,6 +472,19 @@ class DisplayController:
                 
                 # Process any deferred updates that may have accumulated
                 self.display_manager.process_deferred_updates()
+
+                # Check for live priority content and switch to it immediately
+                if not self.on_demand_active:
+                    live_priority_mode = self._check_live_priority()
+                    if live_priority_mode and self.current_display_mode != live_priority_mode:
+                        logger.info("Live content detected - switching immediately to %s", live_priority_mode)
+                        self.current_display_mode = live_priority_mode
+                        self.force_change = True
+                        # Update mode index to match the new mode
+                        try:
+                            self.current_mode_index = self.available_modes.index(live_priority_mode)
+                        except ValueError:
+                            pass
 
                 if self.on_demand_active and self.on_demand_mode:
                     active_mode = self.on_demand_mode
