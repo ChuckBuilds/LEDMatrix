@@ -661,6 +661,15 @@ def start_on_demand_display():
                     'message': f'Plugin {resolved_plugin} is disabled in configuration'
                 }), 400
 
+        # Check if display service is running (or will be started)
+        service_status = _get_display_service_status()
+        if not service_status.get('active') and not start_service:
+            return jsonify({
+                'status': 'error',
+                'message': 'Display service is not running. Please start the display service or enable "Start Service" option.',
+                'service_status': service_status
+            }), 400
+
         cache = _ensure_cache_manager()
         request_id = data.get('request_id') or str(uuid.uuid4())
         request_payload = {
@@ -677,6 +686,13 @@ def start_on_demand_display():
         service_result = None
         if start_service:
             service_result = _ensure_display_service_running()
+            # Check if service actually started
+            if service_result and not service_result.get('active'):
+                return jsonify({
+                    'status': 'error',
+                    'message': 'Failed to start display service. Please check service logs or start it manually.',
+                    'service_result': service_result
+                }), 500
 
         response_data = {
             'request_id': request_id,

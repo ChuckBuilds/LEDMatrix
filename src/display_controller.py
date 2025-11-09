@@ -482,9 +482,16 @@ class DisplayController:
                         self.force_change = True
                         display_result = False
                 
-                # If display() returned False, skip to next mode immediately
+                # If display() returned False, skip to next mode immediately (unless on-demand)
                 if not display_result:
-                    logger.info("No content to display for %s, skipping to next mode", active_mode)
+                    if self.on_demand_active:
+                        # Stay on on-demand mode even if no content - show "waiting" message
+                        logger.info("No content for on-demand mode %s, staying on mode", active_mode)
+                        time.sleep(5)  # Wait 5 seconds before retrying
+                        self._publish_on_demand_state()
+                        continue
+                    else:
+                        logger.info("No content to display for %s, skipping to next mode", active_mode)
                 else:
                     # Get duration for current mode
                     duration = self._get_display_duration(active_mode)
