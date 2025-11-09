@@ -4,6 +4,7 @@ import sys
 import os
 from typing import Dict, Any, List, Optional
 from datetime import datetime
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # Configure logging
 logging.basicConfig(
@@ -106,12 +107,58 @@ class DisplayController:
             discovered_plugins = self.plugin_manager.discover_plugins()
             logger.info("Discovered %d plugin(s)", len(discovered_plugins))
 
-            # Load enabled plugins
-            for plugin_id in discovered_plugins:
-                plugin_config = self.config.get(plugin_id, {})
-                if plugin_config.get('enabled', False):
+            # Count enabled plugins for progress tracking
+            enabled_plugins = [p for p in discovered_plugins if self.config.get(p, {}).get('enabled', False)]
+            enabled_count = len(enabled_plugins)
+            logger.info("Loading %d enabled plugin(s) in parallel (max 4 concurrent)...", enabled_count)
+            
+            # Helper function for parallel loading
+            def load_single_plugin(plugin_id):
+                """Load a single plugin and return result."""
+                plugin_load_start = time.time()
+                try:
                     if self.plugin_manager.load_plugin(plugin_id):
-                        logger.info("Loaded plugin: %s", plugin_id)
+                        plugin_load_time = time.time() - plugin_load_start
+                        return {
+                            'success': True,
+                            'plugin_id': plugin_id,
+                            'load_time': plugin_load_time,
+                            'error': None
+                        }
+                    else:
+                        return {
+                            'success': False,
+                            'plugin_id': plugin_id,
+                            'load_time': time.time() - plugin_load_start,
+                            'error': 'Load returned False'
+                        }
+                except Exception as e:
+                    return {
+                        'success': False,
+                        'plugin_id': plugin_id,
+                        'load_time': time.time() - plugin_load_start,
+                        'error': str(e)
+                    }
+            
+            # Load enabled plugins in parallel with up to 4 concurrent workers
+            loaded_count = 0
+            with ThreadPoolExecutor(max_workers=4) as executor:
+                # Submit all enabled plugins for loading
+                future_to_plugin = {
+                    executor.submit(load_single_plugin, plugin_id): plugin_id
+                    for plugin_id in discovered_plugins
+                    if self.config.get(plugin_id, {}).get('enabled', False)
+                }
+                
+                # Process results as they complete
+                for future in as_completed(future_to_plugin):
+                    result = future.result()
+                    loaded_count += 1
+                    
+                    if result['success']:
+                        plugin_id = result['plugin_id']
+                        logger.info("✓ Loaded plugin %s in %.3f seconds (%d/%d)", 
+                                  plugin_id, result['load_time'], loaded_count, enabled_count)
                         
                         # Get plugin instance and manifest
                         plugin_instance = self.plugin_manager.get_plugin(plugin_id)
@@ -128,11 +175,21 @@ class DisplayController:
                             self.available_modes.append(mode)
                             self.plugin_modes[mode] = plugin_instance
                             self.mode_to_plugin_id[mode] = plugin_id
-                            logger.info("Added plugin mode: %s", mode)
+                            logger.debug("  Added mode: %s", mode)
+                        
+                        # Show progress
+                        progress_pct = int((loaded_count / enabled_count) * 100)
+                        elapsed = time.time() - plugin_time
+                        logger.info("Progress: %d%% (%d/%d plugins, %.1fs elapsed)", 
+                                  progress_pct, loaded_count, enabled_count, elapsed)
                     else:
-                        logger.warning("Failed to load plugin: %s", plugin_id)
-                else:
-                    logger.info("Plugin %s is disabled", plugin_id)
+                        logger.warning("✗ Failed to load plugin %s: %s", 
+                                     result['plugin_id'], result['error'])
+            
+            # Log disabled plugins
+            disabled_count = len(discovered_plugins) - enabled_count
+            if disabled_count > 0:
+                logger.debug("%d plugin(s) disabled in config", disabled_count)
 
             logger.info("Plugin system initialized in %.3f seconds", time.time() - plugin_time)
             logger.info("Total available modes: %d", len(self.available_modes))
@@ -445,11 +502,8 @@ class DisplayController:
             return
              
         try:
-            logger.info("Clearing cache and refetching data to prevent stale data issues...")
-            self.cache_manager.clear_cache()
-            self._update_modules()
-            logger.info("Cache cleared, waiting 5 seconds for fresh data fetch...")
-            time.sleep(5)
+            # Initialize with cached data for fast startup - let background updates refresh naturally
+            logger.info("Starting display with cached data (fast startup mode)")
             self.current_display_mode = self.available_modes[self.current_mode_index] if self.available_modes else 'none'
             
             while True:

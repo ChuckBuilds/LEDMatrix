@@ -115,6 +115,72 @@ class PluginManager:
         self.logger.info(f"Discovered {len(discovered)} plugin(s)")
         return discovered
 
+    def _get_dependency_marker_path(self, plugin_id: str) -> Path:
+        """
+        Get path to the dependency installation marker file for a plugin.
+        
+        Args:
+            plugin_id: Plugin identifier
+            
+        Returns:
+            Path to marker file
+        """
+        # Use /var/cache/ledmatrix for system-wide cache
+        cache_dir = Path('/var/cache/ledmatrix')
+        if not cache_dir.exists():
+            # Fallback to local cache if /var/cache not available
+            cache_dir = Path.home() / '.cache' / 'ledmatrix'
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        return cache_dir / f"plugin_{plugin_id}_deps_installed"
+    
+    def _check_dependencies_installed(self, plugin_id: str) -> bool:
+        """
+        Check if dependencies for a plugin have already been installed.
+        
+        Args:
+            plugin_id: Plugin identifier
+            
+        Returns:
+            True if dependencies are marked as installed, False otherwise
+        """
+        marker_path = self._get_dependency_marker_path(plugin_id)
+        return marker_path.exists()
+    
+    def _mark_dependencies_installed(self, plugin_id: str) -> None:
+        """
+        Mark that dependencies for a plugin have been installed.
+        
+        Creates a marker file with installation timestamp.
+        
+        Args:
+            plugin_id: Plugin identifier
+        """
+        try:
+            from datetime import datetime
+            marker_path = self._get_dependency_marker_path(plugin_id)
+            timestamp = datetime.now().isoformat()
+            marker_path.write_text(timestamp)
+            self.logger.debug(f"Marked dependencies as installed for {plugin_id}")
+        except Exception as e:
+            self.logger.warning(f"Failed to create dependency marker for {plugin_id}: {e}")
+    
+    def _remove_dependency_marker(self, plugin_id: str) -> None:
+        """
+        Remove the dependency installation marker for a plugin.
+        
+        Should be called when plugin is uninstalled.
+        
+        Args:
+            plugin_id: Plugin identifier
+        """
+        try:
+            marker_path = self._get_dependency_marker_path(plugin_id)
+            if marker_path.exists():
+                marker_path.unlink()
+                self.logger.debug(f"Removed dependency marker for {plugin_id}")
+        except Exception as e:
+            self.logger.warning(f"Failed to remove dependency marker for {plugin_id}: {e}")
+
     def _install_plugin_dependencies(self, requirements_file: Path) -> bool:
         """
         Install Python dependencies for a plugin.
@@ -291,10 +357,15 @@ class PluginManager:
                 self.logger.error(f"Entry point not found: {entry_file}")
                 return False
 
-            # Install plugin dependencies if requirements.txt exists
+            # Install plugin dependencies if requirements.txt exists and not already installed
             requirements_file = plugin_dir / "requirements.txt"
             if requirements_file.exists():
-                self._install_plugin_dependencies(requirements_file)
+                if self._check_dependencies_installed(plugin_id):
+                    self.logger.debug(f"Dependencies already installed for {plugin_id}, skipping")
+                else:
+                    self.logger.info(f"Installing dependencies for {plugin_id} (first time)")
+                    if self._install_plugin_dependencies(requirements_file):
+                        self._mark_dependencies_installed(plugin_id)
 
             # Add plugin directory to Python path so plugin can import its own modules
             plugin_dir_str = str(plugin_dir)
@@ -406,6 +477,9 @@ class PluginManager:
             # Remove from plugin_modules
             if plugin_id in self.plugin_modules:
                 del self.plugin_modules[plugin_id]
+            
+            # Remove dependency marker (dependencies should be reinstalled if plugin is reinstalled)
+            self._remove_dependency_marker(plugin_id)
             
             self.logger.info(f"Unloaded plugin: {plugin_id}")
             return True
