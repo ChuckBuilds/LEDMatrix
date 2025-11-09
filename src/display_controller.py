@@ -574,11 +574,24 @@ class DisplayController:
                     self._publish_on_demand_state()
                     continue
 
-                self.current_mode_index = (self.current_mode_index + 1) % len(self.available_modes)
-                self.current_display_mode = self.available_modes[self.current_mode_index]
-                self.last_mode_change = time.time()
+                # Check for live priority - don't rotate if current plugin has live content
+                should_rotate = True
+                if active_mode in self.plugin_modes:
+                    plugin_instance = self.plugin_modes[active_mode]
+                    if hasattr(plugin_instance, 'has_live_priority') and hasattr(plugin_instance, 'has_live_content'):
+                        try:
+                            if plugin_instance.has_live_priority() and plugin_instance.has_live_content():
+                                logger.info("Live priority active for %s - staying on current mode", active_mode)
+                                should_rotate = False
+                        except Exception as e:
+                            logger.warning("Error checking live priority for %s: %s", active_mode, e)
                 
-                logger.info("Switching to mode: %s", self.current_display_mode)
+                if should_rotate:
+                    self.current_mode_index = (self.current_mode_index + 1) % len(self.available_modes)
+                    self.current_display_mode = self.available_modes[self.current_mode_index]
+                    self.last_mode_change = time.time()
+                    
+                    logger.info("Switching to mode: %s", self.current_display_mode)
 
         except KeyboardInterrupt:
             logger.info("Received interrupt signal, shutting down...")
