@@ -425,7 +425,11 @@ class DisplayController:
                         if hasattr(plugin_instance, 'get_live_modes'):
                             live_modes = plugin_instance.get_live_modes()
                             if live_modes and len(live_modes) > 0:
-                                return live_modes[0]  # Return the first live mode
+                                # Verify the mode actually exists before returning it
+                                for suggested_mode in live_modes:
+                                    if suggested_mode in self.plugin_modes:
+                                        return suggested_mode
+                                # If suggested modes don't exist, fall through to check current mode
                         # Fallback: if this mode ends with _live, return it
                         if mode_name.endswith('_live'):
                             return mode_name
