@@ -1347,8 +1347,17 @@ function generatePluginConfigForm(pluginId, config) {
             let pluginInfo = null;
             if (pluginsData.status === 'success' && pluginsData.data && pluginsData.data.plugins) {
                 pluginInfo = pluginsData.data.plugins.find(p => p.id === pluginId);
+                console.log('[DEBUG] Plugin info found:', pluginInfo ? 'yes' : 'no');
+                if (pluginInfo) {
+                    console.log('[DEBUG] Plugin info keys:', Object.keys(pluginInfo));
+                    console.log('[DEBUG] web_ui_actions in pluginInfo:', 'web_ui_actions' in pluginInfo);
+                    console.log('[DEBUG] web_ui_actions value:', pluginInfo.web_ui_actions);
+                }
+            } else {
+                console.log('[DEBUG] pluginsData status:', pluginsData.status);
             }
             const webUiActions = pluginInfo ? (pluginInfo.web_ui_actions || []) : [];
+            console.log('[DEBUG] Final webUiActions:', webUiActions, 'length:', webUiActions.length);
             
             if (schemaData.status === 'success' && schemaData.data.schema) {
                 console.log('[DEBUG] Schema has properties:', Object.keys(schemaData.data.schema.properties || {}));
