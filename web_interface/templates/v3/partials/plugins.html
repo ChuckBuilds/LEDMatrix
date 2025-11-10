@@ -1198,7 +1198,21 @@ function handlePluginConfigSubmit(e) {
     
     // Process form data with type conversion (using dot notation for nested fields)
     for (const [key, value] of formData.entries()) {
-        const propSchema = getSchemaPropertyType(schema, key);
+        // Try to get schema property - handle both dot notation and underscore notation
+        let propSchema = getSchemaPropertyType(schema, key);
+        let actualKey = key;
+        let actualValue = value;
+        
+        // If not found with dots, try converting underscores to dots (for nested fields)
+        if (!propSchema && key.includes('_')) {
+            const dotKey = key.replace(/_/g, '.');
+            propSchema = getSchemaPropertyType(schema, dotKey);
+            if (propSchema) {
+                // Use the dot notation key for consistency
+                actualKey = dotKey;
+                actualValue = value;
+            }
+        }
         
         if (propSchema) {
             const propType = propSchema.type;
@@ -1208,42 +1222,71 @@ function handlePluginConfigSubmit(e) {
                 if (propSchema['x-widget'] === 'file-upload') {
                     // Try to parse as JSON first (for file uploads)
                     try {
-                        const jsonValue = JSON.parse(value);
+                        // Handle HTML entity encoding (from hidden input)
+                        let decodedValue = actualValue;
+                        if (typeof actualValue === 'string') {
+                            // Decode HTML entities if present
+                            const tempDiv = document.createElement('div');
+                            tempDiv.innerHTML = actualValue;
+                            decodedValue = tempDiv.textContent || tempDiv.innerText || actualValue;
+                        }
+                        
+                        const jsonValue = JSON.parse(decodedValue);
                         if (Array.isArray(jsonValue)) {
-                            flatConfig[key] = jsonValue;
-                            console.log(`File upload array field ${key}: parsed JSON array with ${jsonValue.length} items`);
+                            flatConfig[actualKey] = jsonValue;
+                            console.log(`File upload array field ${actualKey}: parsed JSON array with ${jsonValue.length} items`);
                         } else {
                             // Fallback to comma-separated
-                            const arrayValue = value ? value.split(',').map(v => v.trim()).filter(v => v) : [];
-                            flatConfig[key] = arrayValue;
+                            const arrayValue = decodedValue ? decodedValue.split(',').map(v => v.trim()).filter(v => v) : [];
+                            flatConfig[actualKey] = arrayValue;
                         }
                     } catch (e) {
                         // Not JSON, use comma-separated
-                const arrayValue = value ? value.split(',').map(v => v.trim()).filter(v => v) : [];
-                flatConfig[key] = arrayValue;
-                console.log(`Array field ${key}: "${value}" -> `, arrayValue);
+                        const arrayValue = actualValue ? actualValue.split(',').map(v => v.trim()).filter(v => v) : [];
+                        flatConfig[actualKey] = arrayValue;
+                        console.log(`Array field ${actualKey}: "${actualValue}" -> `, arrayValue);
                     }
                 } else {
                     // Regular array: convert comma-separated string to array
-                    const arrayValue = value ? value.split(',').map(v => v.trim()).filter(v => v) : [];
-                    flatConfig[key] = arrayValue;
-                    console.log(`Array field ${key}: "${value}" -> `, arrayValue);
+                    const arrayValue = actualValue ? actualValue.split(',').map(v => v.trim()).filter(v => v) : [];
+                    flatConfig[actualKey] = arrayValue;
+                    console.log(`Array field ${actualKey}: "${actualValue}" -> `, arrayValue);
                 }
             } else if (propType === 'integer') {
-                flatConfig[key] = parseInt(value, 10);
+                flatConfig[actualKey] = parseInt(actualValue, 10);
             } else if (propType === 'number') {
-                flatConfig[key] = parseFloat(value);
+                flatConfig[actualKey] = parseFloat(actualValue);
             } else if (propType === 'boolean') {
-                flatConfig[key] = form.elements[key].checked;
+                const formElement = form.elements[actualKey] || form.elements[key];
+                flatConfig[actualKey] = formElement ? formElement.checked : (actualValue === 'true' || actualValue === true);
             } else {
-                flatConfig[key] = value;
+                flatConfig[actualKey] = actualValue;
             }
         } else {
             // No schema, try to infer type
-            if (form.elements[key] && form.elements[key].type === 'checkbox') {
-                flatConfig[key] = form.elements[key].checked;
+            // Check if value looks like a JSON string (starts with [ or {)
+            if (typeof actualValue === 'string' && (actualValue.trim().startsWith('[') || actualValue.trim().startsWith('{'))) {
+                try {
+                    // Handle HTML entity encoding
+                    let decodedValue = actualValue;
+                    const tempDiv = document.createElement('div');
+                    tempDiv.innerHTML = actualValue;
+                    decodedValue = tempDiv.textContent || tempDiv.innerText || actualValue;
+                    
+                    const parsed = JSON.parse(decodedValue);
+                    flatConfig[actualKey] = parsed;
+                    console.log(`No schema for ${actualKey}, but parsed as JSON:`, parsed);
+                } catch (e) {
+                    // Not valid JSON, save as string
+                    flatConfig[actualKey] = actualValue;
+                }
             } else {
-                flatConfig[key] = value;
+                const formElement = form.elements[actualKey] || form.elements[key];
+                if (formElement && formElement.type === 'checkbox') {
+                    flatConfig[actualKey] = formElement.checked;
+                } else {
+                    flatConfig[actualKey] = actualValue;
+                }
             }
         }
     }
