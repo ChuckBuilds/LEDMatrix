@@ -16,24 +16,6 @@
         </div>
     </div>
 
-    <!-- On-Demand Status -->
-    <div id="on-demand-status-card" class="mb-6 p-4 border border-blue-200 rounded-lg bg-blue-50 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-        <div>
-            <h3 class="text-base font-semibold text-blue-900">On-Demand Display</h3>
-            <p id="on-demand-status-text" class="text-sm text-blue-700">No on-demand session active.</p>
-            <p id="on-demand-service-hint" class="text-xs text-blue-600 mt-1"></p>
-        </div>
-        <div class="flex gap-2">
-            <button id="on-demand-refresh-btn" class="px-3 py-2 text-sm bg-blue-600 hover:bg-blue-700 text-white rounded-md">
-                <i class="fas fa-sync mr-1"></i>Refresh
-            </button>
-            <button id="stop-on-demand-btn" class="px-3 py-2 text-sm bg-red-600 hover:bg-red-700 text-white rounded-md hidden"
-                    title="Shift-click to stop the display service as well">
-                <i class="fas fa-stop mr-1"></i>Stop On-Demand
-            </button>
-        </div>
-    </div>
-
     <!-- Plugin Content Area -->
     <div id="plugins-content" class="space-y-8">
         <!-- Installed Plugins Section (Always visible at top) -->
@@ -430,6 +412,87 @@ window.currentPluginConfig = null;
     const CACHE_DURATION = 5 * 60 * 1000; // 5 minutes in milliseconds
     let onDemandStatusInterval = null;
     let currentOnDemandPluginId = null;
+    let hasLoadedOnDemandStatus = false;
+
+    // Shared on-demand status store (mirrors Alpine store when available)
+    window.__onDemandStore = window.__onDemandStore || {
+        loading: true,
+        state: {},
+        service: {},
+        error: null,
+        lastUpdated: null
+    };
+
+    function ensureOnDemandStore() {
+        if (window.Alpine && typeof Alpine.store === 'function') {
+            if (!Alpine.store('onDemand')) {
+                Alpine.store('onDemand', {
+                    loading: window.__onDemandStore.loading,
+                    state: window.__onDemandStore.state,
+                    service: window.__onDemandStore.service,
+                    error: window.__onDemandStore.error,
+                    lastUpdated: window.__onDemandStore.lastUpdated
+                });
+            }
+            const store = Alpine.store('onDemand');
+            window.__onDemandStore = store;
+            return store;
+        }
+        return window.__onDemandStore;
+    }
+
+    function markOnDemandLoading() {
+        const store = ensureOnDemandStore();
+        store.loading = true;
+        store.error = null;
+    }
+
+    function updateOnDemandSnapshot(store) {
+        if (!window.__onDemandStore) {
+            window.__onDemandStore = {};
+        }
+        window.__onDemandStore.loading = store.loading;
+        window.__onDemandStore.state = store.state;
+        window.__onDemandStore.service = store.service;
+        window.__onDemandStore.error = store.error;
+        window.__onDemandStore.lastUpdated = store.lastUpdated;
+    }
+
+    function updateOnDemandStore(data) {
+        const store = ensureOnDemandStore();
+        store.loading = false;
+        store.state = data?.state || {};
+        store.service = data?.service || {};
+        store.error = (data?.state?.status === 'error') ? (data.state.error || data.message || 'On-demand error') : null;
+        store.lastUpdated = Date.now();
+        updateOnDemandSnapshot(store);
+        document.dispatchEvent(new CustomEvent('onDemand:updated', {
+            detail: {
+                state: store.state,
+                service: store.service,
+                error: store.error,
+                lastUpdated: store.lastUpdated
+            }
+        }));
+    }
+
+    function setOnDemandError(message) {
+        const store = ensureOnDemandStore();
+        store.loading = false;
+        store.state = {};
+        store.service = {};
+        store.error = message || 'Failed to load on-demand status';
+        store.lastUpdated = Date.now();
+        updateOnDemandSnapshot(store);
+        document.dispatchEvent(new CustomEvent('onDemand:updated', {
+            detail: {
+                state: store.state,
+                service: store.service,
+                error: store.error,
+                lastUpdated: store.lastUpdated
+            }
+        }));
+    }
 
 // Initialize when DOM is ready or when HTMX loads content
 window.initPluginsPage = function() {
@@ -440,8 +503,6 @@ window.initPluginsPage = function() {
     const restartBtn = document.getElementById('restart-display-btn');
     const searchBtn = document.getElementById('search-plugins-btn');
     const closeBtn = document.getElementById('close-plugin-config');
-    const onDemandRefreshBtn = document.getElementById('on-demand-refresh-btn');
-    const stopOnDemandBtn = document.getElementById('stop-on-demand-btn');
     const closeOnDemandModalBtn = document.getElementById('close-on-demand-modal');
     const cancelOnDemandBtn = document.getElementById('cancel-on-demand');
     const onDemandForm = document.getElementById('on-demand-form');
@@ -463,14 +524,6 @@ window.initPluginsPage = function() {
         closeBtn.replaceWith(closeBtn.cloneNode(true));
         document.getElementById('close-plugin-config').addEventListener('click', closePluginConfigModal);
     }
-    if (onDemandRefreshBtn) {
-        onDemandRefreshBtn.replaceWith(onDemandRefreshBtn.cloneNode(true));
-        document.getElementById('on-demand-refresh-btn').addEventListener('click', () => loadOnDemandStatus(true));
-    }
-    if (stopOnDemandBtn) {
-        stopOnDemandBtn.replaceWith(stopOnDemandBtn.cloneNode(true));
-        document.getElementById('stop-on-demand-btn').addEventListener('click', (event) => stopOnDemand(event));
-    }
     if (closeOnDemandModalBtn) {
         closeOnDemandModalBtn.replaceWith(closeOnDemandModalBtn.cloneNode(true));
         document.getElementById('close-on-demand-modal').addEventListener('click', closeOnDemandModal);
@@ -487,7 +540,7 @@ window.initPluginsPage = function() {
         onDemandModal.onclick = closeOnDemandModalOnBackdrop;
     }
 
-    loadOnDemandStatus();
+    loadOnDemandStatus(true);
     startOnDemandStatusPolling();
 }
 
@@ -646,11 +699,6 @@ function renderInstalledPlugins(plugins) {
                         class="btn bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md text-sm flex-1 font-semibold">
                     <i class="fas fa-cog mr-2"></i>Configure
                 </button>
-                <button onclick="openOnDemandModal('${plugin.id}')"
-                        class="btn bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-md text-sm flex-1 font-semibold ${plugin.enabled ? '' : 'opacity-60 cursor-not-allowed'}"
-                        ${plugin.enabled ? '' : 'disabled'}>
-                    <i class="fas fa-play-circle mr-2"></i>Run On-Demand
-                </button>
                 <button onclick="updatePlugin('${plugin.id}')"
                         class="btn bg-gray-600 hover:bg-gray-700 text-white px-4 py-2 rounded-md text-sm flex-1 font-semibold">
                     <i class="fas fa-sync mr-2"></i>Update
@@ -679,91 +727,31 @@ function resolvePluginDisplayName(pluginId) {
     return plugin.name || pluginId;
 }
 
-function formatSeconds(seconds) {
-    if (seconds === undefined || seconds === null) {
-        return '';
-    }
-    const total = Math.max(0, Math.round(seconds));
-    const minutes = Math.floor(total / 60);
-    const remainingSeconds = total % 60;
-    if (minutes > 0) {
-        return `${minutes}m${remainingSeconds > 0 ? ` ${remainingSeconds}s` : ''}`;
-    }
-    return `${remainingSeconds}s`;
-}
-
-function updateOnDemandStatusCard(data) {
-    const statusEl = document.getElementById('on-demand-status-text');
-    const hintEl = document.getElementById('on-demand-service-hint');
-    const stopBtn = document.getElementById('stop-on-demand-btn');
-    if (!statusEl || !hintEl || !stopBtn) {
-        return;
-    }
-
-    const state = data?.state || {};
-    const service = data?.service || {};
-    const status = state.status || (state.active ? 'active' : 'idle');
-    const pluginName = state.plugin_id ? resolvePluginDisplayName(state.plugin_id) : '';
-
-    statusEl.classList.remove('text-blue-700', 'text-green-700', 'text-red-700');
-
-    if (status === 'error') {
-        statusEl.classList.add('text-red-700');
-        statusEl.textContent = state.error ? `On-demand error: ${state.error}` : 'On-demand encountered an error.';
-        stopBtn.classList.remove('hidden');
-    } else if (state.active) {
-        statusEl.classList.add('text-green-700');
-        const modeLabel = state.mode ? ` (${state.mode})` : '';
-        const remaining = formatSeconds(state.remaining);
-        const duration = state.duration ? formatSeconds(state.duration) : null;
-        let message = `${pluginName}${modeLabel} is running on-demand`;
-        if (remaining) {
-            message += ` — ${remaining} remaining`;
-        } else if (duration) {
-            message += ` — duration ${duration}`;
-        } else {
-            message += ' — until stopped';
-        }
-        statusEl.textContent = message;
-        stopBtn.classList.remove('hidden');
-    } else {
-        statusEl.classList.add('text-blue-700');
-        const lastEvent = state.last_event ? state.last_event.replace(/-/g, ' ') : null;
-        statusEl.textContent = lastEvent && lastEvent !== 'cleared'
-            ? `No on-demand session active (last event: ${lastEvent})`
-            : 'No on-demand session active.';
-        stopBtn.classList.add('hidden');
-    }
-
-    if (service.active) {
-        hintEl.textContent = 'Display service is running.';
-        hintEl.classList.remove('text-red-600');
-        hintEl.classList.add('text-blue-600');
-    } else {
-        const serviceError = service.stderr || service.error;
-        hintEl.textContent = serviceError ? `Display service inactive (${serviceError})` : 'Display service is not running.';
-        hintEl.classList.remove('text-blue-600');
-        hintEl.classList.add('text-red-600');
-    }
-}
-
 function loadOnDemandStatus(fromRefreshButton = false) {
-    fetch('/api/v3/display/on-demand/status')
+    if (!hasLoadedOnDemandStatus || fromRefreshButton) {
+        markOnDemandLoading();
+    }
+
+    return fetch('/api/v3/display/on-demand/status')
         .then(response => response.json())
         .then(result => {
             if (result.status === 'success') {
-                updateOnDemandStatusCard(result.data);
+                updateOnDemandStore(result.data);
+                hasLoadedOnDemandStatus = true;
                 if (fromRefreshButton && typeof showNotification === 'function') {
                     showNotification('On-demand status refreshed', 'success');
                 }
             } else {
+                const message = result.message || 'Failed to load on-demand status';
+                setOnDemandError(message);
                 if (typeof showNotification === 'function') {
-                    showNotification(result.message || 'Failed to load on-demand status', 'error');
+                    showNotification(message, 'error');
                 }
             }
         })
         .catch(error => {
             console.error('Error fetching on-demand status:', error);
+            setOnDemandError(error?.message || 'Error fetching on-demand status');
             if (typeof showNotification === 'function') {
                 showNotification('Error fetching on-demand status: ' + error.message, 'error');
             }
@@ -776,6 +764,8 @@ function startOnDemandStatusPolling() {
     }
     onDemandStatusInterval = setInterval(() => loadOnDemandStatus(false), 15000);
 }
+
+window.loadOnDemandStatus = loadOnDemandStatus;
 
 window.openOnDemandModal = function(pluginId) {
     const plugin = findInstalledPlugin(pluginId);
@@ -898,6 +888,8 @@ function submitOnDemandRequest(event) {
         }
     }
 
+    markOnDemandLoading();
+
     fetch('/api/v3/display/on-demand/start', {
         method: 'POST',
         headers: {
@@ -928,13 +920,9 @@ function submitOnDemandRequest(event) {
         });
 }
 
-function stopOnDemand(event) {
-    const stopBtn = document.getElementById('stop-on-demand-btn');
-    const stopService = event && event.shiftKey;
-    if (stopBtn) {
-        stopBtn.disabled = true;
-    }
-    fetch('/api/v3/display/on-demand/stop', {
+function requestOnDemandStop({ stopService = false } = {}) {
+    markOnDemandLoading();
+    return fetch('/api/v3/display/on-demand/stop', {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json'
@@ -964,13 +952,15 @@ function stopOnDemand(event) {
             if (typeof showNotification === 'function') {
                 showNotification('Error stopping on-demand mode: ' + error.message, 'error');
             }
-        })
-        .finally(() => {
-            if (stopBtn) {
-                stopBtn.disabled = false;
-            }
         });
 }
+
+function stopOnDemand(event) {
+    const stopService = event && event.shiftKey;
+    requestOnDemandStop({ stopService });
+}
+
+window.requestOnDemandStop = requestOnDemandStop;
 
 function closeOnDemandModalOnBackdrop(event) {
     if (event.target === event.currentTarget) {

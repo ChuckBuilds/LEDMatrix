@@ -299,7 +299,184 @@
 
                         <!-- Plugin Configuration Form -->
                         <div>
-                            <div x-data="{ loading: true, config: {}, schema: {} }" x-init="loadPluginConfig(plugin.id)">
+                            <div x-data="{
+                                    loading: true,
+                                    config: {},
+                                    schema: {},
+                                    onDemandRefreshing: false,
+                                    onDemandStopping: false,
+                                    get onDemandStore() {
+                                        if (window.Alpine && typeof Alpine.store === 'function' && Alpine.store('onDemand')) {
+                                            return Alpine.store('onDemand');
+                                        }
+                                        return window.__onDemandStore || { loading: true, state: {}, service: {}, error: null, lastUpdated: null };
+                                    },
+                                    get isOnDemandLoading() {
+                                        const store = this.onDemandStore || {};
+                                        return !!store.loading;
+                                    },
+                                    get onDemandState() {
+                                        const store = this.onDemandStore || {};
+                                        return store.state || {};
+                                    },
+                                    get onDemandService() {
+                                        const store = this.onDemandStore || {};
+                                        return store.service || {};
+                                    },
+                                    get onDemandError() {
+                                        const store = this.onDemandStore || {};
+                                        return store.error || null;
+                                    },
+                                    get onDemandActive() {
+                                        const state = this.onDemandState;
+                                        return !!(state.active && state.plugin_id === plugin.id);
+                                    },
+                                    resolvePluginName() {
+                                        return plugin.name || plugin.id;
+                                    },
+                                    resolvePluginDisplayName(id) {
+                                        if (!id) {
+                                            return 'Another plugin';
+                                        }
+                                        const list = window.installedPlugins || [];
+                                        const match = Array.isArray(list) ? list.find(p => p.id === id) : null;
+                                        return match ? (match.name || match.id) : id;
+                                    },
+                                    formatDuration(value) {
+                                        if (value === undefined || value === null) {
+                                            return '';
+                                        }
+                                        const total = Number(value);
+                                        if (Number.isNaN(total)) {
+                                            return '';
+                                        }
+                                        const seconds = Math.max(0, Math.round(total));
+                                        const minutes = Math.floor(seconds / 60);
+                                        const remainingSeconds = seconds % 60;
+                                        if (minutes > 0) {
+                                            return `${minutes}m${remainingSeconds > 0 ? ` ${remainingSeconds}s` : ''}`;
+                                        }
+                                        return `${remainingSeconds}s`;
+                                    },
+                                    get onDemandStatusText() {
+                                        if (this.isOnDemandLoading) {
+                                            return 'Loading on-demand status...';
+                                        }
+                                        if (this.onDemandError) {
+                                            return `On-demand error: ${this.onDemandError}`;
+                                        }
+                                        const state = this.onDemandState;
+                                        if (state.active) {
+                                            const activeName = this.resolvePluginDisplayName(state.plugin_id);
+                                            if (state.plugin_id !== plugin.id) {
+                                                return `${activeName} is running on-demand.`;
+                                            }
+                                            const modeLabel = state.mode ? ` (${state.mode})` : '';
+                                            const remaining = this.formatDuration(state.remaining);
+                                            const duration = this.formatDuration(state.duration);
+                                            let message = `${this.resolvePluginName()}${modeLabel} is running on-demand`;
+                                            if (remaining) {
+                                                message += ` — ${remaining} remaining`;
+                                            } else if (duration) {
+                                                message += ` — duration ${duration}`;
+                                            } else {
+                                                message += ' — until stopped';
+                                            }
+                                            return message;
+                                        }
+                                        const lastEvent = state.last_event ? state.last_event.replace(/-/g, ' ') : null;
+                                        if (lastEvent && lastEvent !== 'cleared') {
+                                            return `No on-demand session active (last event: ${lastEvent})`;
+                                        }
+                                        return 'No on-demand session active.';
+                                    },
+                                    get onDemandStatusClass() {
+                                        if (this.isOnDemandLoading) return 'text-blue-600';
+                                        if (this.onDemandError) return 'text-red-600';
+                                        if (this.onDemandActive) return 'text-green-600';
+                                        return 'text-blue-600';
+                                    },
+                                    get onDemandServiceText() {
+                                        if (this.isOnDemandLoading) {
+                                            return 'Checking display service status...';
+                                        }
+                                        if (this.onDemandError) {
+                                            return 'Display service status unavailable.';
+                                        }
+                                        if (this.onDemandService.active) {
+                                            return 'Display service is running.';
+                                        }
+                                        const serviceError = this.onDemandService.stderr || this.onDemandService.error;
+                                        return serviceError ? `Display service inactive (${serviceError})` : 'Display service is not running.';
+                                    },
+                                    get onDemandServiceClass() {
+                                        if (this.isOnDemandLoading) return 'text-blue-500';
+                                        if (this.onDemandError) return 'text-red-500';
+                                        return this.onDemandService.active ? 'text-blue-500' : 'text-red-500';
+                                    },
+                                    get onDemandLastUpdated() {
+                                        const store = this.onDemandStore || {};
+                                        if (!store.lastUpdated) {
+                                            return '';
+                                        }
+                                        const deltaSeconds = Math.round((Date.now() - store.lastUpdated) / 1000);
+                                        if (deltaSeconds < 5) return 'Just now';
+                                        if (deltaSeconds < 60) return `${deltaSeconds}s ago`;
+                                        const minutes = Math.round(deltaSeconds / 60);
+                                        if (minutes < 60) return `${minutes}m ago`;
+                                        const hours = Math.round(minutes / 60);
+                                        return `${hours}h ago`;
+                                    },
+                                    get canStopOnDemand() {
+                                        if (this.isOnDemandLoading) return false;
+                                        if (this.onDemandError) return true;
+                                        return this.onDemandActive;
+                                    },
+                                    get disableRunButton() {
+                                        return !plugin.enabled;
+                                    },
+                                    get showEnableHint() {
+                                        return !plugin.enabled;
+                                    },
+                                    notify(message, type = 'info') {
+                                        if (typeof showNotification === 'function') {
+                                            showNotification(message, type);
+                                        }
+                                    },
+                                    refreshOnDemandStatus() {
+                                        if (typeof window.loadOnDemandStatus !== 'function') {
+                                            this.notify('On-demand status controls unavailable. Refresh the Plugin Manager tab.', 'error');
+                                            return;
+                                        }
+                                        this.onDemandRefreshing = true;
+                                        Promise.resolve(window.loadOnDemandStatus(true))
+                                            .finally(() => {
+                                                this.onDemandRefreshing = false;
+                                            });
+                                    },
+                                    runOnDemand() {
+                                        if (!plugin.enabled) {
+                                            this.notify('Enable the plugin before running it on-demand.', 'warning');
+                                            return;
+                                        }
+                                        if (typeof window.openOnDemandModal === 'function') {
+                                            window.openOnDemandModal(plugin.id);
+                                        } else {
+                                            this.notify('On-demand modal unavailable. Refresh the Plugin Manager tab.', 'error');
+                                        }
+                                    },
+                                    stopOnDemandWithEvent(stopService = false) {
+                                        if (typeof window.requestOnDemandStop !== 'function') {
+                                            this.notify('Unable to stop on-demand mode. Refresh the Plugin Manager tab.', 'error');
+                                            return;
+                                        }
+                                        this.onDemandStopping = true;
+                                        Promise.resolve(window.requestOnDemandStop({ stopService }))
+                                            .finally(() => {
+                                                this.onDemandStopping = false;
+                                            });
+                                    }
+                                }" x-init="loadPluginConfig(plugin.id)">
                                 <form x-on:submit.prevent="savePluginConfig(plugin.id)">
                                     <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
                                         <!-- Plugin Info -->
@@ -331,6 +508,51 @@
                                                     </dd>
                                                 </div>
                                             </dl>
+                                            <div class="mt-4 pt-4 border-t border-gray-200 space-y-3">
+                                                <div class="flex items-center justify-between">
+                                                    <div class="flex items-center gap-2">
+                                                        <i class="fas fa-bolt text-blue-500"></i>
+                                                        <span class="text-sm font-semibold text-gray-900">On-Demand Controls</span>
+                                                    </div>
+                                                    <div class="flex items-center gap-2">
+                                                        <span x-show="!isOnDemandLoading && onDemandLastUpdated" class="text-xs text-gray-500" x-text="onDemandLastUpdated ? ('Updated ' + onDemandLastUpdated) : ''"></span>
+                                                        <button type="button"
+                                                                class="px-3 py-1.5 text-xs bg-blue-600 hover:bg-blue-700 text-white rounded-md flex items-center gap-1 transition-colors"
+                                                                :class="{'opacity-60 cursor-not-allowed': onDemandRefreshing}"
+                                                                :disabled="onDemandRefreshing"
+                                                                x-on:click="refreshOnDemandStatus">
+                                                            <i class="fas fa-sync" :class="onDemandRefreshing ? 'fa-spin' : ''"></i>
+                                                            <span>Refresh</span>
+                                                        </button>
+                                                    </div>
+                                                </div>
+                                                <p class="text-sm leading-relaxed" :class="onDemandStatusClass" x-text="onDemandStatusText"></p>
+                                                <p class="text-xs" :class="onDemandServiceClass" x-text="onDemandServiceText"></p>
+                                                <div class="flex flex-wrap gap-2">
+                                                    <button type="button"
+                                                            class="px-3 py-2 text-sm bg-green-600 hover:bg-green-700 text-white rounded-md flex items-center gap-2 transition-colors"
+                                                            :class="{'opacity-60 cursor-not-allowed': disableRunButton || onDemandStopping || onDemandRefreshing}"
+                                                            :disabled="disableRunButton || onDemandStopping || onDemandRefreshing"
+                                                            x-on:click="runOnDemand">
+                                                        <i class="fas fa-play-circle"></i>
+                                                        <span>Run On-Demand</span>
+                                                    </button>
+                                                    <button type="button"
+                                                            class="px-3 py-2 text-sm bg-red-600 hover:bg-red-700 text-white rounded-md flex items-center gap-2 transition-colors"
+                                                            :class="{'opacity-60 cursor-not-allowed': !canStopOnDemand || onDemandStopping}"
+                                                            :disabled="!canStopOnDemand || onDemandStopping"
+                                                            x-on:click="stopOnDemandWithEvent($event.shiftKey)">
+                                                        <i class="fas fa-stop"></i>
+                                                        <span>Stop On-Demand</span>
+                                                    </button>
+                                                </div>
+                                                <p class="text-xs text-amber-600" x-show="showEnableHint">
+                                                    Enable this plugin before launching on-demand.
+                                                </p>
+                                                <p class="text-xs text-gray-400">
+                                                    Hold Shift while stopping to also stop the display service.
+                                                </p>
+                                            </div>
                                         </div>
 
                                         <!-- Configuration Schema -->
@@ -466,6 +688,27 @@
                     'text-lg font-medium text-red-600';
             }
         }
+
+        window.__onDemandStore = window.__onDemandStore || {
+            loading: true,
+            state: {},
+            service: {},
+            error: null,
+            lastUpdated: null
+        };
+
+        document.addEventListener('alpine:init', () => {
+            if (!Alpine.store('onDemand')) {
+                Alpine.store('onDemand', {
+                    loading: window.__onDemandStore.loading,
+                    state: window.__onDemandStore.state,
+                    service: window.__onDemandStore.service,
+                    error: window.__onDemandStore.error,
+                    lastUpdated: window.__onDemandStore.lastUpdated
+                });
+            }
+            window.__onDemandStore = Alpine.store('onDemand');
+        });
 
         // Alpine.js app function
         function app() {
