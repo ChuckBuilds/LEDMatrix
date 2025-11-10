@@ -1586,6 +1586,203 @@ def get_plugin_schema():
         print(error_details)
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
+@api_v3.route('/plugins/authenticate/spotify', methods=['POST'])
+def authenticate_spotify():
+    """Run Spotify authentication script"""
+    try:
+        data = request.get_json() or {}
+        redirect_url = data.get('redirect_url', '').strip()
+        
+        # Get plugin directory
+        plugin_id = 'ledmatrix-music'
+        if api_v3.plugin_manager:
+            plugin_dir = api_v3.plugin_manager.get_plugin_directory(plugin_id)
+        else:
+            plugin_dir = PROJECT_ROOT / 'plugins' / plugin_id
+        
+        if not plugin_dir or not Path(plugin_dir).exists():
+            return jsonify({'status': 'error', 'message': f'Plugin {plugin_id} not found'}), 404
+        
+        auth_script = Path(plugin_dir) / 'authenticate_spotify.py'
+        if not auth_script.exists():
+            return jsonify({'status': 'error', 'message': 'Authentication script not found'}), 404
+        
+        # Set LEDMATRIX_ROOT environment variable
+        env = os.environ.copy()
+        env['LEDMATRIX_ROOT'] = str(PROJECT_ROOT)
+        
+        if redirect_url:
+            # Step 2: Complete authentication with redirect URL
+            # Create a wrapper script that provides the redirect URL as input
+            import tempfile
+            
+            # Create a wrapper script that provides the redirect URL
+            import json
+            redirect_url_escaped = json.dumps(redirect_url)  # Properly escape the URL
+            with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as wrapper:
+                wrapper.write(f'''import sys
+import subprocess
+import os
+
+# Set LEDMATRIX_ROOT
+os.environ['LEDMATRIX_ROOT'] = r"{PROJECT_ROOT}"
+
+# Run the auth script and provide redirect URL
+proc = subprocess.Popen(
+    [sys.executable, r"{auth_script}"],
+    stdin=subprocess.PIPE,
+    stdout=subprocess.PIPE,
+    stderr=subprocess.STDOUT,
+    text=True,
+    env=os.environ
+)
+
+# Send redirect URL to stdin
+redirect_url = {redirect_url_escaped}
+stdout, _ = proc.communicate(input=redirect_url + "\\n", timeout=120)
+print(stdout)
+sys.exit(proc.returncode)
+''')
+                wrapper_path = wrapper.name
+            
+            try:
+                result = subprocess.run(
+                    ['python3', wrapper_path],
+                    capture_output=True,
+                    text=True,
+                    timeout=120,
+                    env=env
+                )
+                os.unlink(wrapper_path)
+                
+                if result.returncode == 0:
+                    return jsonify({
+                        'status': 'success',
+                        'message': 'Spotify authentication completed successfully',
+                        'output': result.stdout
+                    })
+                else:
+                    return jsonify({
+                        'status': 'error',
+                        'message': 'Spotify authentication failed',
+                        'output': result.stdout + result.stderr
+                    }), 400
+            except subprocess.TimeoutExpired:
+                if os.path.exists(wrapper_path):
+                    os.unlink(wrapper_path)
+                return jsonify({'status': 'error', 'message': 'Authentication timed out'}), 408
+        else:
+            # Step 1: Get authorization URL
+            # Import the script's functions directly to get the auth URL
+            import sys
+            import importlib.util
+            
+            # Load the authentication script as a module
+            spec = importlib.util.spec_from_file_location("auth_spotify", auth_script)
+            auth_module = importlib.util.module_from_spec(spec)
+            sys.modules["auth_spotify"] = auth_module
+            
+            # Set LEDMATRIX_ROOT before loading
+            os.environ['LEDMATRIX_ROOT'] = str(PROJECT_ROOT)
+            
+            try:
+                spec.loader.exec_module(auth_module)
+                
+                # Get credentials and create OAuth object
+                client_id, client_secret, redirect_uri = auth_module.load_spotify_credentials()
+                if not all([client_id, client_secret, redirect_uri]):
+                    return jsonify({
+                        'status': 'error',
+                        'message': 'Could not load Spotify credentials. Please check config/config_secrets.json.'
+                    }), 400
+                
+                from spotipy.oauth2 import SpotifyOAuth
+                sp_oauth = SpotifyOAuth(
+                    client_id=client_id,
+                    client_secret=client_secret,
+                    redirect_uri=redirect_uri,
+                    scope=auth_module.SCOPE,
+                    cache_path=auth_module.SPOTIFY_AUTH_CACHE_PATH,
+                    open_browser=False
+                )
+                
+                auth_url = sp_oauth.get_authorize_url()
+                
+                return jsonify({
+                    'status': 'success',
+                    'message': 'Authorization URL generated',
+                    'auth_url': auth_url
+                })
+            except Exception as e:
+                import traceback
+                error_details = traceback.format_exc()
+                print(f"Error getting Spotify auth URL: {e}")
+                print(error_details)
+                return jsonify({
+                    'status': 'error',
+                    'message': f'Error generating authorization URL: {str(e)}'
+                }), 500
+                
+    except Exception as e:
+        import traceback
+        error_details = traceback.format_exc()
+        print(f"Error in authenticate_spotify: {str(e)}")
+        print(error_details)
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+@api_v3.route('/plugins/authenticate/ytm', methods=['POST'])
+def authenticate_ytm():
+    """Run YouTube Music authentication script"""
+    try:
+        # Get plugin directory
+        plugin_id = 'ledmatrix-music'
+        if api_v3.plugin_manager:
+            plugin_dir = api_v3.plugin_manager.get_plugin_directory(plugin_id)
+        else:
+            plugin_dir = PROJECT_ROOT / 'plugins' / plugin_id
+        
+        if not plugin_dir or not Path(plugin_dir).exists():
+            return jsonify({'status': 'error', 'message': f'Plugin {plugin_id} not found'}), 404
+        
+        auth_script = Path(plugin_dir) / 'authenticate_ytm.py'
+        if not auth_script.exists():
+            return jsonify({'status': 'error', 'message': 'Authentication script not found'}), 404
+        
+        # Set LEDMATRIX_ROOT environment variable
+        env = os.environ.copy()
+        env['LEDMATRIX_ROOT'] = str(PROJECT_ROOT)
+        
+        # Run the authentication script
+        result = subprocess.run(
+            ['python3', str(auth_script)],
+            capture_output=True,
+            text=True,
+            timeout=60,
+            env=env
+        )
+        
+        if result.returncode == 0:
+            return jsonify({
+                'status': 'success',
+                'message': 'YouTube Music authentication completed successfully',
+                'output': result.stdout
+            })
+        else:
+            return jsonify({
+                'status': 'error',
+                'message': 'YouTube Music authentication failed',
+                'output': result.stdout + result.stderr
+            }), 400
+            
+    except subprocess.TimeoutExpired:
+        return jsonify({'status': 'error', 'message': 'Authentication timed out'}), 408
+    except Exception as e:
+        import traceback
+        error_details = traceback.format_exc()
+        print(f"Error in authenticate_ytm: {str(e)}")
+        print(error_details)
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
 @api_v3.route('/fonts/catalog', methods=['GET'])
 def get_fonts_catalog():
     """Get fonts catalog"""

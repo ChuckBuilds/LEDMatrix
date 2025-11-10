@@ -1615,6 +1615,57 @@ function generateFormFromSchema(schema, config) {
         });
     }
 
+    // Add authentication buttons for ledmatrix-music plugin
+    const pluginId = currentPluginConfig?.pluginId;
+    if (pluginId === 'ledmatrix-music') {
+        formHtml += `
+            <div class="border-t border-gray-200 pt-4 mt-4">
+                <h3 class="text-lg font-semibold text-gray-900 mb-3">Authentication</h3>
+                <p class="text-sm text-gray-600 mb-4">Authenticate with Spotify or YouTube Music to enable music playback display.</p>
+                
+                <div class="space-y-3">
+                    <!-- Spotify Authentication -->
+                    <div class="bg-green-50 border border-green-200 rounded-lg p-4">
+                        <div class="flex items-center justify-between">
+                            <div class="flex-1">
+                                <h4 class="font-medium text-green-900 mb-1">
+                                    <i class="fab fa-spotify mr-2"></i>Spotify Authentication
+                                </h4>
+                                <p class="text-sm text-green-700">Click to authenticate with Spotify</p>
+                            </div>
+                            <button type="button" 
+                                    id="spotify-auth-btn"
+                                    onclick="authenticateSpotify()" 
+                                    class="btn bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-md whitespace-nowrap">
+                                <i class="fab fa-spotify mr-2"></i>Authenticate Spotify
+                            </button>
+                        </div>
+                        <div id="spotify-auth-status" class="mt-3 hidden"></div>
+                    </div>
+                    
+                    <!-- YouTube Music Authentication -->
+                    <div class="bg-red-50 border border-red-200 rounded-lg p-4">
+                        <div class="flex items-center justify-between">
+                            <div class="flex-1">
+                                <h4 class="font-medium text-red-900 mb-1">
+                                    <i class="fab fa-youtube mr-2"></i>YouTube Music Authentication
+                                </h4>
+                                <p class="text-sm text-red-700">Click to authenticate with YouTube Music</p>
+                            </div>
+                            <button type="button" 
+                                    id="ytm-auth-btn"
+                                    onclick="authenticateYTM()" 
+                                    class="btn bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-md whitespace-nowrap">
+                                <i class="fab fa-youtube mr-2"></i>Authenticate YTM
+                            </button>
+                        </div>
+                        <div id="ytm-auth-status" class="mt-3 hidden"></div>
+                    </div>
+                </div>
+            </div>
+        `;
+    }
+
     formHtml += `
         <div class="flex justify-end space-x-2 pt-4 border-t border-gray-200">
             <button type="button" onclick="closePluginConfigModal()" class="btn bg-gray-600 hover:bg-gray-700 text-white px-4 py-2 rounded-md">
@@ -1676,6 +1727,163 @@ window.closePluginConfigModal = function() {
     modal.style.display = 'none';
         currentPluginConfig = null;
     console.log('Modal closed');
+}
+
+// Spotify Authentication Handler
+window.authenticateSpotify = function() {
+    const btn = document.getElementById('spotify-auth-btn');
+    const statusDiv = document.getElementById('spotify-auth-status');
+    
+    // Check if we're in step 2 (completing auth with redirect URL)
+    if (btn.dataset.step === '2') {
+        const redirectUrl = prompt('Please paste the full redirect URL from Spotify after authorization:');
+        if (!redirectUrl || !redirectUrl.trim()) {
+            return;
+        }
+        
+        // Complete authentication
+        btn.disabled = true;
+        btn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>Completing Authentication...';
+        statusDiv.classList.remove('hidden');
+        statusDiv.innerHTML = '<div class="text-blue-600"><i class="fas fa-spinner fa-spin mr-2"></i>Completing authentication...</div>';
+        
+        fetch('/api/v3/plugins/authenticate/spotify', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({redirect_url: redirectUrl.trim()})
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.status === 'success') {
+                statusDiv.innerHTML = `<div class="text-green-600"><i class="fas fa-check-circle mr-2"></i>${data.message}</div>`;
+                btn.innerHTML = '<i class="fab fa-spotify mr-2"></i>Authenticate Spotify';
+                btn.disabled = false;
+                delete btn.dataset.step;
+                if (typeof showNotification === 'function') {
+                    showNotification('Spotify authentication completed successfully!', 'success');
+                }
+            } else {
+                statusDiv.innerHTML = `<div class="text-red-600"><i class="fas fa-exclamation-circle mr-2"></i>${data.message}</div>`;
+                if (data.output) {
+                    statusDiv.innerHTML += `<pre class="mt-2 text-xs bg-red-50 p-2 rounded overflow-auto max-h-32">${data.output}</pre>`;
+                }
+                btn.innerHTML = '<i class="fab fa-spotify mr-2"></i>Authenticate Spotify';
+                btn.disabled = false;
+                delete btn.dataset.step;
+            }
+        })
+        .catch(error => {
+            statusDiv.innerHTML = `<div class="text-red-600"><i class="fas fa-exclamation-circle mr-2"></i>Error: ${error.message}</div>`;
+            btn.innerHTML = '<i class="fab fa-spotify mr-2"></i>Authenticate Spotify';
+            btn.disabled = false;
+            delete btn.dataset.step;
+        });
+        return;
+    }
+    
+    // Step 1: Get authorization URL
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>Getting Auth URL...';
+    statusDiv.classList.remove('hidden');
+    statusDiv.innerHTML = '<div class="text-blue-600"><i class="fas fa-spinner fa-spin mr-2"></i>Generating authorization URL...</div>';
+    
+    fetch('/api/v3/plugins/authenticate/spotify', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({})
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.status === 'success' && data.auth_url) {
+            statusDiv.innerHTML = `
+                <div class="bg-blue-50 border border-blue-200 rounded p-3">
+                    <div class="text-blue-900 font-medium mb-2">
+                        <i class="fas fa-link mr-2"></i>Authorization URL Generated
+                    </div>
+                    <div class="mb-3">
+                        <p class="text-sm text-blue-700 mb-2">1. Click the link below to authorize:</p>
+                        <a href="${data.auth_url}" target="_blank" class="text-blue-600 hover:text-blue-800 underline break-all">
+                            ${data.auth_url}
+                        </a>
+                    </div>
+                    <div class="mb-2">
+                        <p class="text-sm text-blue-700 mb-2">2. After authorization, copy the FULL redirect URL from your browser.</p>
+                        <p class="text-sm text-blue-600">3. Click the button again and paste the redirect URL when prompted.</p>
+                    </div>
+                </div>
+            `;
+            btn.innerHTML = '<i class="fab fa-spotify mr-2"></i>Complete Authentication';
+            btn.dataset.step = '2';
+            btn.disabled = false;
+            if (typeof showNotification === 'function') {
+                showNotification('Authorization URL generated. Please authorize and paste the redirect URL.', 'info');
+            }
+        } else {
+            statusDiv.innerHTML = `<div class="text-red-600"><i class="fas fa-exclamation-circle mr-2"></i>${data.message || 'Failed to generate authorization URL'}</div>`;
+            if (data.output) {
+                statusDiv.innerHTML += `<pre class="mt-2 text-xs bg-red-50 p-2 rounded overflow-auto max-h-32">${data.output}</pre>`;
+            }
+            btn.innerHTML = '<i class="fab fa-spotify mr-2"></i>Authenticate Spotify';
+            btn.disabled = false;
+        }
+    })
+    .catch(error => {
+        statusDiv.innerHTML = `<div class="text-red-600"><i class="fas fa-exclamation-circle mr-2"></i>Error: ${error.message}</div>`;
+        btn.innerHTML = '<i class="fab fa-spotify mr-2"></i>Authenticate Spotify';
+        btn.disabled = false;
+    });
+}
+
+// YouTube Music Authentication Handler
+window.authenticateYTM = function() {
+    const btn = document.getElementById('ytm-auth-btn');
+    const statusDiv = document.getElementById('ytm-auth-status');
+    
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>Authenticating...';
+    statusDiv.classList.remove('hidden');
+    statusDiv.innerHTML = '<div class="text-blue-600"><i class="fas fa-spinner fa-spin mr-2"></i>Starting YouTube Music authentication...</div>';
+    
+    fetch('/api/v3/plugins/authenticate/ytm', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({})
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.status === 'success') {
+            statusDiv.innerHTML = `
+                <div class="bg-green-50 border border-green-200 rounded p-3">
+                    <div class="text-green-900 font-medium mb-2">
+                        <i class="fas fa-check-circle mr-2"></i>${data.message}
+                    </div>
+                    ${data.output ? `<pre class="mt-2 text-xs bg-green-50 p-2 rounded overflow-auto max-h-32">${data.output}</pre>` : ''}
+                </div>
+            `;
+            btn.innerHTML = '<i class="fab fa-youtube mr-2"></i>Authenticate YTM';
+            btn.disabled = false;
+            if (typeof showNotification === 'function') {
+                showNotification('YouTube Music authentication completed successfully!', 'success');
+            }
+        } else {
+            statusDiv.innerHTML = `
+                <div class="bg-red-50 border border-red-200 rounded p-3">
+                    <div class="text-red-900 font-medium mb-2">
+                        <i class="fas fa-exclamation-circle mr-2"></i>${data.message || 'Authentication failed'}
+                    </div>
+                    ${data.output ? `<pre class="mt-2 text-xs bg-red-50 p-2 rounded overflow-auto max-h-32">${data.output}</pre>` : ''}
+                    <p class="text-sm text-red-700 mt-2">Make sure the YTM Desktop Companion app is running and you approve the request within 30 seconds.</p>
+                </div>
+            `;
+            btn.innerHTML = '<i class="fab fa-youtube mr-2"></i>Authenticate YTM';
+            btn.disabled = false;
+        }
+    })
+    .catch(error => {
+        statusDiv.innerHTML = `<div class="text-red-600"><i class="fas fa-exclamation-circle mr-2"></i>Error: ${error.message}</div>`;
+        btn.innerHTML = '<i class="fab fa-youtube mr-2"></i>Authenticate YTM';
+        btn.disabled = false;
+    });
 }
 
 window.togglePlugin = function(pluginId, enabled) {
