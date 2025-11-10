@@ -71,6 +71,9 @@
         "display_durations": {
             "calendar": 30
         },
+        "dynamic_duration": {
+            "max_duration_seconds": 180
+        },
         "use_short_date_format": true
     },
     "calendar": {
@@ -85,6 +88,13 @@
         "plugins_directory": "plugin-repos",
         "auto_discover": true,
         "auto_load_enabled": true
+    },
+    "football-scoreboard": {
+        "enabled": false,
+        "dynamic_duration": {
+            "enabled": false,
+            "max_duration_seconds": 240
+        }
     },
     "web-ui-info": {
         "enabled": true,

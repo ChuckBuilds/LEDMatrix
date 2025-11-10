@@ -72,22 +72,24 @@ class BasePlugin(ABC):
             try:
                 self.transition_manager = create_high_performance_transition_manager(display_manager)
                 self.logger.info("High-performance transition system enabled (120 FPS)")
-            except Exception as e:
-                self.logger.warning(f"Failed to initialize high-performance transitions: {e}")
+            except Exception as e:  # pylint: disable=broad-except
+                self.logger.warning(
+                    "Failed to initialize high-performance transitions: %s", e
+                )
                 self.transition_manager = None
         
         if not self.transition_manager and DisplayTransitions and display_manager:
             try:
                 self.transition_manager = DisplayTransitions(display_manager)
                 self.logger.info("Standard transition system enabled (30 FPS)")
-            except Exception as e:
-                self.logger.warning(f"Failed to initialize transition system: {e}")
+            except Exception as e:  # pylint: disable=broad-except
+                self.logger.warning("Failed to initialize transition system: %s", e)
                 self.transition_manager = None
 
         # Load transition configuration
         self.transition_config = self._load_transition_config()
 
-        self.logger.info(f"Initialized plugin: {plugin_id}")
+        self.logger.info("Initialized plugin: %s", plugin_id)
 
     @abstractmethod
     def update(self) -> None:
@@ -112,7 +114,7 @@ class BasePlugin(ABC):
                 self.data = self._fetch_from_api()
                 self.cache_manager.set(cache_key, self.data)
         """
-        pass
+        raise NotImplementedError("Plugins must implement update()")
 
     @abstractmethod
     def display(self, force_clear: bool = False) -> None:
@@ -139,7 +141,7 @@ class BasePlugin(ABC):
 
                 self.display_manager.update_display()
         """
-        pass
+        raise NotImplementedError("Plugins must implement display()")
 
     def get_display_duration(self) -> float:
         """
@@ -152,6 +154,80 @@ class BasePlugin(ABC):
             Duration in seconds to display this plugin's content
         """
         return self.config.get("display_duration", 15.0)
+
+    # ---------------------------------------------------------------------
+    # Dynamic duration support hooks
+    # ---------------------------------------------------------------------
+    def _get_dynamic_duration_config(self) -> Dict[str, Any]:
+        """
+        Retrieve dynamic duration configuration block from plugin config.
+
+        Returns:
+            Dict with configuration values or empty dict if not configured.
+        """
+        value = self.config.get("dynamic_duration", {})
+        if isinstance(value, dict):
+            return value
+        return {}
+
+    def supports_dynamic_duration(self) -> bool:
+        """
+        Determine whether this plugin should use dynamic display durations.
+
+        Plugins can override to implement custom logic. By default this reads the
+        `dynamic_duration.enabled` flag from plugin configuration.
+        """
+        config = self._get_dynamic_duration_config()
+        return bool(config.get("enabled", False))
+
+    def get_dynamic_duration_cap(self) -> Optional[float]:
+        """
+        Return the maximum duration (in seconds) the controller should wait for
+        this plugin to complete its display cycle when using dynamic duration.
+
+        Returns:
+            Positive float value for explicit cap, or None to indicate no
+            additional cap beyond global defaults.
+        """
+        config = self._get_dynamic_duration_config()
+        cap_value = config.get("max_duration_seconds")
+        if cap_value is None:
+            return None
+        try:
+            cap = float(cap_value)
+            if cap <= 0:
+                return None
+            return cap
+        except (TypeError, ValueError):
+            self.logger.warning(
+                "Invalid dynamic_duration.max_duration_seconds for %s: %s",
+                self.plugin_id,
+                cap_value,
+            )
+            return None
+
+    def is_cycle_complete(self) -> bool:
+        """
+        Indicate whether the plugin has completed a full display cycle.
+
+        The display controller calls this after each display iteration when
+        dynamic duration is enabled. Plugins that render multi-step content
+        should override this method and return True only after all content has
+        been shown once.
+
+        Returns:
+            True if the plugin cycle is complete (default behaviour).
+        """
+        return True
+
+    def reset_cycle_state(self) -> None:
+        """
+        Reset any internal counters/state related to cycle tracking.
+
+        Called by the display controller before beginning a new dynamic-duration
+        session. Override in plugins that maintain custom tracking data.
+        """
+        return
 
     def has_live_priority(self) -> bool:
         """
@@ -224,7 +300,7 @@ class BasePlugin(ABC):
                 required_fields = ['api_key', 'city']
                 for field in required_fields:
                     if field not in self.config:
-                        self.logger.error(f"Missing required field: {field}")
+                self.logger.error("Missing required field: %s", field)
                         return False
                 return True
         """
@@ -265,7 +341,7 @@ class BasePlugin(ABC):
         )
 
         if not is_valid:
-            self.logger.error(f"Invalid transition configuration: {error_msg}")
+            self.logger.error("Invalid transition configuration: %s", error_msg)
             return False
 
         # Log warnings for potentially problematic configurations
@@ -276,8 +352,11 @@ class BasePlugin(ABC):
 
             if transition_type in avoid_list:
                 self.logger.warning(
-                    f"Transition type '{transition_type}' may not work well with "
-                    f"{recommendations['aspect_ratio']} display ({self.transition_manager.width}x{self.transition_manager.height})"
+                    "Transition type '%s' may not work well with %s display (%sx%s)",
+                    transition_type,
+                    recommendations["aspect_ratio"],
+                    self.transition_manager.width,
+                    self.transition_manager.height,
                 )
 
         return True
@@ -299,7 +378,7 @@ class BasePlugin(ABC):
                 if hasattr(self, 'worker_thread'):
                     self.worker_thread.stop()
         """
-        self.logger.info(f"Cleaning up plugin: {self.plugin_id}")
+        self.logger.info("Cleaning up plugin: %s", self.plugin_id)
 
     def on_config_change(self, new_config: Dict[str, Any]) -> None:
         """
@@ -323,8 +402,10 @@ class BasePlugin(ABC):
         # Rebuild transition configuration if provided
         try:
             self.transition_config = self._load_transition_config()
-        except Exception as e:
-            self.logger.warning(f"Failed to refresh transition configuration after config change: {e}")
+        except Exception as e:  # pylint: disable=broad-except
+            self.logger.warning(
+                "Failed to refresh transition configuration after config change: %s", e
+            )
 
     def get_info(self) -> Dict[str, Any]:
         """
@@ -358,7 +439,7 @@ class BasePlugin(ABC):
         plugin is enabled (e.g., start background tasks, open connections).
         """
         self.enabled = True
-        self.logger.info(f"Plugin enabled: {self.plugin_id}")
+        self.logger.info("Plugin enabled: %s", self.plugin_id)
 
     def on_disable(self) -> None:
         """
@@ -368,7 +449,7 @@ class BasePlugin(ABC):
         plugin is disabled (e.g., stop background tasks, close connections).
         """
         self.enabled = False
-        self.logger.info(f"Plugin disabled: {self.plugin_id}")
+        self.logger.info("Plugin disabled: %s", self.plugin_id)
 
     def _load_transition_config(self) -> Dict[str, Any]:
         """

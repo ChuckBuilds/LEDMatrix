@@ -213,6 +213,31 @@ class MyPluginManager(BasePlugin):
         return self.config.get('duration', 30)
 ```
 
+### Dynamic Duration Configuration
+
+Plugins that render multi-step content (scrolling leaderboards, tickers, etc.) can opt-in to dynamic durations so the display controller waits for a full cycle.
+
+```json
+{
+    "football-scoreboard": {
+        "enabled": true,
+        "dynamic_duration": {
+            "enabled": true,
+            "max_duration_seconds": 240
+        }
+    },
+    "display": {
+        "dynamic_duration": {
+            "max_duration_seconds": 180
+        }
+    }
+}
+```
+
+- Set `dynamic_duration.enabled` per plugin to toggle the behaviour.
+- Optional `dynamic_duration.max_duration_seconds` on the plugin overrides the global cap (defined under `display.dynamic_duration.max_duration_seconds`, default 180s).
+- Plugins should override `supports_dynamic_duration()`, `is_cycle_complete()`, and `reset_cycle_state()` (see `BasePlugin`) to control when a cycle completes.
+
 ## Best Practices
 
 1. **Keep main config minimal**: Only include core system settings

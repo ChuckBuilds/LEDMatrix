@@ -388,6 +388,31 @@ The system automatically handles configuration updates:
 
 Everything is configured via `config/config.json` and `config/config_secrets.json`. The `config.json` file is not tracked by Git to prevent conflicts during updates.
 
+### Dynamic Duration Controls
+
+Scrolling, ticker, and leaderboard plugins can extend their display time automatically until a full content cycle is shown. Enable it per plugin:
+
+```json
+{
+    "display": {
+        "dynamic_duration": {
+            "max_duration_seconds": 180
+        }
+    },
+    "football-scoreboard": {
+        "enabled": true,
+        "dynamic_duration": {
+            "enabled": true,
+            "max_duration_seconds": 240
+        }
+    }
+}
+```
+
+- `dynamic_duration.enabled` toggles the feature for a plugin.
+- Optional `dynamic_duration.max_duration_seconds` sets a plugin-specific cap; otherwise the global `display.dynamic_duration.max_duration_seconds` (default 180s) applies.
+- Plugins must implement the cycle hooks in `BasePlugin` so the controller knows when to rotate.
+
 </details>
 
 

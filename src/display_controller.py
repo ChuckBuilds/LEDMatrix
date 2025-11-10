@@ -22,6 +22,7 @@ from src.font_manager import FontManager
 
 # Get logger without configuring
 logger = logging.getLogger(__name__)
+DEFAULT_DYNAMIC_DURATION_CAP = 180.0
 
 class DisplayController:
     def __init__(self):
@@ -204,6 +205,10 @@ class DisplayController:
         self.current_display_mode = None
         self.last_mode_change = time.time()
         self.mode_duration = 30  # Default duration
+        self.global_dynamic_config = (
+            self.config.get("display", {}).get("dynamic_duration", {}) or {}
+        )
+        self._active_dynamic_mode: Optional[str] = None
         
         # Schedule management
         self.is_display_active = True
@@ -323,6 +328,73 @@ class DisplayController:
         # Fall back to config
         display_durations = self.config.get('display', {}).get('display_durations', {})
         return display_durations.get(mode_key, 30)
+
+    def _get_global_dynamic_cap(self) -> Optional[float]:
+        """Return global fallback dynamic duration cap."""
+        cap_value = self.global_dynamic_config.get("max_duration_seconds")
+        if cap_value is None:
+            return DEFAULT_DYNAMIC_DURATION_CAP
+        try:
+            cap = float(cap_value)
+            if cap <= 0:
+                return None
+            return cap
+        except (TypeError, ValueError):
+            logger.warning("Invalid global dynamic duration cap: %s", cap_value)
+            return None
+
+    def _plugin_supports_dynamic(self, plugin_instance) -> bool:
+        """Safely determine whether plugin supports dynamic duration."""
+        supports_fn = getattr(plugin_instance, "supports_dynamic_duration", None)
+        if not callable(supports_fn):
+            return False
+        try:
+            return bool(supports_fn())
+        except Exception as exc:  # pylint: disable=broad-except
+            plugin_id = getattr(plugin_instance, "plugin_id", "unknown")
+            logger.warning(
+                "Failed to query dynamic duration support for %s: %s", plugin_id, exc
+            )
+            return False
+
+    def _plugin_dynamic_cap(self, plugin_instance) -> Optional[float]:
+        """Fetch plugin-specific dynamic duration cap."""
+        cap_fn = getattr(plugin_instance, "get_dynamic_duration_cap", None)
+        if not callable(cap_fn):
+            return None
+        try:
+            return cap_fn()
+        except Exception as exc:  # pylint: disable=broad-except
+            plugin_id = getattr(plugin_instance, "plugin_id", "unknown")
+            logger.warning(
+                "Failed to read dynamic duration cap for %s: %s", plugin_id, exc
+            )
+            return None
+
+    def _plugin_reset_cycle(self, plugin_instance) -> None:
+        """Reset plugin cycle tracking if supported."""
+        reset_fn = getattr(plugin_instance, "reset_cycle_state", None)
+        if not callable(reset_fn):
+            return
+        try:
+            reset_fn()
+        except Exception as exc:  # pylint: disable=broad-except
+            plugin_id = getattr(plugin_instance, "plugin_id", "unknown")
+            logger.warning("Failed to reset cycle state for %s: %s", plugin_id, exc)
+
+    def _plugin_cycle_complete(self, plugin_instance) -> bool:
+        """Determine if plugin reports cycle completion."""
+        complete_fn = getattr(plugin_instance, "is_cycle_complete", None)
+        if not callable(complete_fn):
+            return True
+        try:
+            return bool(complete_fn())
+        except Exception as exc:  # pylint: disable=broad-except
+            plugin_id = getattr(plugin_instance, "plugin_id", "unknown")
+            logger.warning(
+                "Failed to read cycle completion for %s: %s", plugin_id, exc
+            )
+            return True
 
     def _get_on_demand_remaining(self) -> Optional[float]:
         """Calculate remaining time for an active on-demand session."""
@@ -588,6 +660,9 @@ class DisplayController:
                 else:
                     active_mode = self.current_display_mode
 
+                if self._active_dynamic_mode and self._active_dynamic_mode != active_mode:
+                    self._active_dynamic_mode = None
+
                 manager_to_display = None
                 
                 # Handle plugin-based display modes
@@ -622,16 +697,46 @@ class DisplayController:
                     else:
                         logger.info("No content to display for %s, skipping to next mode", active_mode)
                 else:
-                    # Get duration for current mode
-                    duration = self._get_display_duration(active_mode)
+                    # Get base duration for current mode
+                    base_duration = self._get_display_duration(active_mode)
+                    dynamic_enabled = (
+                        manager_to_display and self._plugin_supports_dynamic(manager_to_display)
+                    )
+
+                    if dynamic_enabled and (
+                        self._active_dynamic_mode != active_mode or self.force_change
+                    ):
+                        self._plugin_reset_cycle(manager_to_display)
+                        self._active_dynamic_mode = active_mode
+                    elif not dynamic_enabled and self._active_dynamic_mode == active_mode:
+                        self._active_dynamic_mode = None
+
+                    min_duration = base_duration
+                    if dynamic_enabled:
+                        plugin_cap = self._plugin_dynamic_cap(manager_to_display)
+                        global_cap = self._get_global_dynamic_cap()
+                        cap_candidates = [
+                            cap
+                            for cap in (plugin_cap, global_cap)
+                            if cap is not None
+                        ]
+                        if cap_candidates:
+                            chosen_cap = min(cap_candidates)
+                        else:
+                            chosen_cap = DEFAULT_DYNAMIC_DURATION_CAP
+                        max_duration = max(min_duration, chosen_cap)
+                    else:
+                        max_duration = base_duration
+
                     if self.on_demand_active:
                         remaining = self._get_on_demand_remaining()
                         if remaining is not None:
-                            duration = min(duration, remaining)
-                            if duration <= 0:
+                            min_duration = min(min_duration, remaining)
+                            max_duration = min(max_duration, remaining)
+                            if max_duration <= 0:
                                 self._check_on_demand_expiration()
                                 continue
-                    
+
                     # For plugins, call display multiple times to allow game rotation
                     if manager_to_display and hasattr(manager_to_display, 'display'):
                         # Check if plugin needs high FPS (like stock ticker)
@@ -650,60 +755,122 @@ class DisplayController:
                                 enable_scrolling_value,
                                 needs_high_fps,
                             )
-                        
+
+                        target_duration = max_duration
+                        start_time = time.time()
+
+                        def _should_exit_dynamic(elapsed_time: float) -> bool:
+                            if not dynamic_enabled:
+                                return False
+                            if elapsed_time < min_duration:
+                                return False
+                            return self._plugin_cycle_complete(manager_to_display)
+
+                        loop_completed = False
+
                         if needs_high_fps:
                             # Ultra-smooth FPS for scrolling plugins (8ms = 125 FPS)
                             display_interval = 0.008
-                            
-                            # Call display continuously for high-FPS plugins
-                            elapsed = 0
-                            while elapsed < duration:
+
+                            while True:
                                 try:
                                     result = manager_to_display.display(force_clear=False)
-                                    # If display returns False, break early
                                     if isinstance(result, bool) and not result:
                                         logger.debug("Display returned False, breaking early")
                                         break
                                 except Exception:  # pylint: disable=broad-except
                                     logger.exception("Error during display update")
-                                
+
                                 time.sleep(display_interval)
                                 self._tick_plugin_updates()
-                                elapsed += display_interval
                                 self._poll_on_demand_requests()
                                 self._check_on_demand_expiration()
+
                                 if self.current_display_mode != active_mode:
                                     logger.debug("Mode changed during high-FPS loop, breaking early")
+                                    break
+
+                                elapsed = time.time() - start_time
+                                if elapsed >= target_duration:
+                                    logger.debug(
+                                        "Reached high-FPS target duration %.2fs for mode %s",
+                                        target_duration,
+                                        active_mode,
+                                    )
+                                    loop_completed = True
+                                    break
+                                if _should_exit_dynamic(elapsed):
+                                    logger.debug(
+                                        "Dynamic duration cycle complete for %s after %.2fs",
+                                        active_mode,
+                                        elapsed,
+                                    )
+                                    loop_completed = True
                                     break
                         else:
                             # Normal FPS for other plugins (1 second)
                             display_interval = 1.0
-                            
-                            elapsed = 0
-                            while elapsed < duration:
+
+                            while True:
                                 time.sleep(display_interval)
                                 self._tick_plugin_updates()
-                                elapsed += display_interval
-                                
-                                # Call display again to allow game rotation
-                                if elapsed < duration:  # Don't call on the last iteration
-                                    try:
-                                        result = manager_to_display.display(force_clear=False)
-                                        # If display returns False, break early
-                                        if isinstance(result, bool) and not result:
-                                            logger.debug("Display returned False, breaking early")
-                                            break
-                                    except Exception:  # pylint: disable=broad-except
-                                        logger.exception("Error during display update")
-                                    
-                                    self._poll_on_demand_requests()
-                                    self._check_on_demand_expiration()
-                                    if self.current_display_mode != active_mode:
-                                        logger.debug("Mode changed during display loop, breaking early")
+
+                                elapsed = time.time() - start_time
+                                if elapsed >= target_duration:
+                                    logger.debug(
+                                        "Reached standard target duration %.2fs for mode %s",
+                                        target_duration,
+                                        active_mode,
+                                    )
+                                    loop_completed = True
+                                    break
+
+                                try:
+                                    result = manager_to_display.display(force_clear=False)
+                                    if isinstance(result, bool) and not result:
+                                        logger.debug("Display returned False, breaking early")
                                         break
+                                except Exception:  # pylint: disable=broad-except
+                                    logger.exception("Error during display update")
+
+                                self._poll_on_demand_requests()
+                                self._check_on_demand_expiration()
+                                if self.current_display_mode != active_mode:
+                                    logger.debug("Mode changed during display loop, breaking early")
+                                    break
+
+                                if _should_exit_dynamic(elapsed):
+                                    logger.debug(
+                                        "Dynamic duration cycle complete for %s after %.2fs",
+                                        active_mode,
+                                        elapsed,
+                                    )
+                                    loop_completed = True
+                                    break
+
+                        # Ensure we honour minimum duration when not dynamic and loop ended early
+                        if (
+                            not dynamic_enabled
+                            and not loop_completed
+                            and not needs_high_fps
+                        ):
+                            elapsed = time.time() - start_time
+                            remaining_sleep = max(0.0, max_duration - elapsed)
+                            if remaining_sleep > 0:
+                                self._sleep_with_plugin_updates(remaining_sleep)
+
+                        if dynamic_enabled:
+                            elapsed_total = time.time() - start_time
+                            cycle_done = self._plugin_cycle_complete(manager_to_display)
+                            if not cycle_done and elapsed_total >= max_duration:
+                                logger.info(
+                                    "Dynamic duration cap reached before cycle completion for %s (%.2fs)",
+                                    active_mode,
+                                    elapsed_total,
+                                )
                     else:
                         # For non-plugin modes, use the original behavior
-                        self._sleep_with_plugin_updates(duration)
+                        self._sleep_with_plugin_updates(max_duration)
                 
                 # Move to next mode
                 if self.on_demand_active:
