@@ -1145,28 +1145,34 @@ class PluginStoreManager:
         
         try:
             self.logger.info(f"Checking for updates to plugin {plugin_id}")
-            self.fetch_registry(force_refresh=True)
-            plugin_info_remote = self.get_plugin_info(plugin_id, fetch_latest_from_github=True)
-            if not plugin_info_remote:
-                self.logger.warning(f"Plugin {plugin_id} not found in registry metadata; attempting reinstall using existing files")
-                return self.install_plugin(plugin_id)
-
-            repo_url = plugin_info_remote.get('repo')
-            remote_sha = plugin_info_remote.get('last_commit_sha')
-            remote_branch = plugin_info_remote.get('branch') or plugin_info_remote.get('default_branch')
-
+            
+            # First check if it's a git repository - if so, we can update directly
             git_info = self._get_local_git_info(plugin_path)
-
+            
             if git_info:
+                # Plugin is a git repository - try to update via git
+                local_branch = git_info.get('branch') or 'main'
                 local_sha = git_info.get('sha')
-                local_branch = git_info.get('branch') or remote_branch or 'main'
-
-                if remote_sha and local_sha and remote_sha.startswith(local_sha):
-                    self.logger.info(f"Plugin {plugin_id} already matches remote commit {remote_sha[:7]}")
-                    return True
-
+                
+                # Try to get remote info from registry (optional)
+                self.fetch_registry(force_refresh=True)
+                plugin_info_remote = self.get_plugin_info(plugin_id, fetch_latest_from_github=True)
+                remote_branch = None
+                remote_sha = None
+                
+                if plugin_info_remote:
+                    remote_branch = plugin_info_remote.get('branch') or plugin_info_remote.get('default_branch')
+                    remote_sha = plugin_info_remote.get('last_commit_sha')
+                    
+                    # Check if already up to date
+                    if remote_sha and local_sha and remote_sha.startswith(local_sha):
+                        self.logger.info(f"Plugin {plugin_id} already matches remote commit {remote_sha[:7]}")
+                        return True
+                
+                # Update via git pull
                 self.logger.info(f"Updating {plugin_id} via git pull (branch {local_branch})...")
                 try:
+                    # Fetch latest changes
                     subprocess.run(
                         ['git', '-C', str(plugin_path), 'fetch', 'origin'],
                         capture_output=True,
@@ -1175,7 +1181,10 @@ class PluginStoreManager:
                         check=True
                     )
 
+                    # Use remote branch if available, otherwise use local branch
                     pull_branch = remote_branch or local_branch
+                    
+                    # Checkout the branch
                     subprocess.run(
                         ['git', '-C', str(plugin_path), 'checkout', pull_branch],
                         capture_output=True,
@@ -1184,6 +1193,7 @@ class PluginStoreManager:
                         check=True
                     )
 
+                    # Pull latest changes
                     pull_result = subprocess.run(
                         ['git', '-C', str(plugin_path), 'pull', 'origin', pull_branch],
                         capture_output=True,
@@ -1206,11 +1216,24 @@ class PluginStoreManager:
 
                 except subprocess.CalledProcessError as git_error:
                     self.logger.warning(f"Git update failed for {plugin_id}: {git_error.stderr}")
+                    return False
                 except subprocess.TimeoutExpired:
                     self.logger.warning(f"Git update timed out for {plugin_id}")
+                    return False
+            
+            # Not a git repository - try registry-based update
+            self.fetch_registry(force_refresh=True)
+            plugin_info_remote = self.get_plugin_info(plugin_id, fetch_latest_from_github=True)
+            if not plugin_info_remote:
+                self.logger.warning(f"Plugin {plugin_id} not found in registry and not a git repository; cannot update automatically")
+                return False
 
-            else:
-                self.logger.info(f"Plugin {plugin_id} not installed via git; re-installing latest archive")
+            repo_url = plugin_info_remote.get('repo')
+            remote_sha = plugin_info_remote.get('last_commit_sha')
+            remote_branch = plugin_info_remote.get('branch') or plugin_info_remote.get('default_branch')
+
+            # If we get here, plugin is not a git repo but is in registry - reinstall
+            self.logger.info(f"Plugin {plugin_id} not installed via git; re-installing latest archive")
 
             # Remove directory and reinstall fresh
             shutil.rmtree(plugin_path, ignore_errors=True)
