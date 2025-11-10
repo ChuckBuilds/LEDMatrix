@@ -1808,12 +1808,33 @@ window.closePluginConfigModal = function() {
 }
 
 // Generic Plugin Action Handler
-window.executePluginAction = function(actionId, actionIndex) {
-    const pluginId = currentPluginConfig?.pluginId;
+window.executePluginAction = function(actionId, actionIndex, pluginIdParam = null) {
+    // Get plugin ID from parameter, currentPluginConfig, or try to find from context
+    let pluginId = pluginIdParam || currentPluginConfig?.pluginId;
+    
+    // If still no pluginId, try to find it from the button's context or Alpine.js
     if (!pluginId) {
-        console.error('No plugin ID available');
+        // Try to get from Alpine.js context if we're in a plugin tab
+        if (window.Alpine && document.querySelector('[x-data*="plugin"]')) {
+            const pluginTab = document.querySelector(`[x-show*="activeTab === plugin.id"]`);
+            if (pluginTab) {
+                const pluginData = Alpine.$data(pluginTab.closest('[x-data]'));
+                if (pluginData && pluginData.plugin) {
+                    pluginId = pluginData.plugin.id;
+                }
+            }
+        }
+    }
+    
+    if (!pluginId) {
+        console.error('No plugin ID available. actionId:', actionId, 'actionIndex:', actionIndex);
+        if (typeof showNotification === 'function') {
+            showNotification('Unable to determine plugin ID. Please refresh the page.', 'error');
+        }
         return;
     }
+    
+    console.log('[DEBUG] executePluginAction - pluginId:', pluginId, 'actionId:', actionId, 'actionIndex:', actionIndex);
     
     const actionIdFull = `action-${actionId}-${actionIndex}`;
     const statusId = `action-status-${actionId}-${actionIndex}`;
@@ -1825,12 +1846,30 @@ window.executePluginAction = function(actionId, actionIndex) {
         return;
     }
     
-    // Get action definition from current config
-    const action = currentPluginConfig?.webUiActions?.[actionIndex];
+    // Get action definition - try currentPluginConfig first, then fetch from API
+    let action = currentPluginConfig?.webUiActions?.[actionIndex];
+    
     if (!action) {
-        console.error(`Action not found: ${actionId}`);
+        // Try to get from installed plugins
+        if (window.installedPlugins) {
+            const plugin = window.installedPlugins.find(p => p.id === pluginId);
+            if (plugin && plugin.web_ui_actions) {
+                action = plugin.web_ui_actions[actionIndex];
+            }
+        }
+    }
+    
+    if (!action) {
+        console.error(`Action not found: ${actionId} for plugin ${pluginId}`);
+        console.log('[DEBUG] currentPluginConfig:', currentPluginConfig);
+        console.log('[DEBUG] installedPlugins:', window.installedPlugins);
+        if (typeof showNotification === 'function') {
+            showNotification(`Action ${actionId} not found. Please refresh the page.`, 'error');
+        }
         return;
     }
+    
+    console.log('[DEBUG] Found action:', action);
     
     // Check if we're in step 2 (completing OAuth flow)
     if (btn.dataset.step === '2') {
