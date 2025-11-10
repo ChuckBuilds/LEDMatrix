@@ -12,6 +12,7 @@ import json
 import importlib
 import importlib.util
 import sys
+import time
 from pathlib import Path
 from typing import Dict, List, Optional, Any
 import logging
@@ -52,6 +53,7 @@ class PluginManager:
         self.plugins: Dict[str, Any] = {}
         self.plugin_manifests: Dict[str, Dict] = {}
         self.plugin_modules: Dict[str, Any] = {}
+        self.plugin_last_update: Dict[str, float] = {}
         
         # Ensure plugins directory exists
         self.plugins_dir.mkdir(exist_ok=True)
@@ -422,6 +424,7 @@ class PluginManager:
             
             # Store the plugin
             self.plugins[plugin_id] = plugin_instance
+        self.plugin_last_update[plugin_id] = 0.0
             version_info = manifest.get('version')
             if version_info:
                 self.logger.info(f"Loaded plugin: {plugin_id} (version {version_info})")
@@ -468,6 +471,8 @@ class PluginManager:
             
             # Remove from active plugins
             del self.plugins[plugin_id]
+        if plugin_id in self.plugin_last_update:
+            del self.plugin_last_update[plugin_id]
             
             # Remove module from sys.modules if present
             module_name = f"plugin_{plugin_id.replace('-', '_')}"
@@ -644,4 +649,70 @@ class PluginManager:
                 if plugin_id.lower() == normalized_mode:
                     return plugin_id
         return None
+
+    def _get_plugin_update_interval(self, plugin_id: str, plugin_instance: Any) -> Optional[float]:
+        """
+        Determine the update interval for a plugin instance.
+
+        Priority order:
+            1. Plugin attribute `update_interval`
+            2. Plugin configuration value `update_interval`
+            3. Manifest `update_interval`
+            4. Default of 60 seconds
+        """
+        interval = None
+
+        if hasattr(plugin_instance, "update_interval"):
+            interval = getattr(plugin_instance, "update_interval")
+
+        if (interval is None or interval <= 0) and hasattr(plugin_instance, "config"):
+            interval = plugin_instance.config.get("update_interval")
+
+        if (interval is None or interval <= 0) and plugin_id in self.plugin_manifests:
+            interval = self.plugin_manifests[plugin_id].get("update_interval")
+
+        if interval is None:
+            interval = 60
+
+        try:
+            interval = float(interval)
+        except (TypeError, ValueError):
+            self.logger.debug(
+                "Invalid update interval for plugin %s: %s",
+                plugin_id,
+                interval,
+            )
+            return None
+
+        if interval <= 0:
+            return None
+
+        return interval
+
+    def run_scheduled_updates(self, current_time: Optional[float] = None) -> None:
+        """
+        Trigger plugin updates based on their defined update intervals.
+        """
+        if current_time is None:
+            current_time = time.time()
+
+        for plugin_id, plugin_instance in list(self.plugins.items()):
+            if not getattr(plugin_instance, "enabled", True):
+                continue
+
+            if not hasattr(plugin_instance, "update"):
+                continue
+
+            interval = self._get_plugin_update_interval(plugin_id, plugin_instance)
+            if interval is None:
+                continue
+
+            last_update = self.plugin_last_update.get(plugin_id, 0.0)
+
+            if last_update == 0.0 or (current_time - last_update) >= interval:
+                try:
+                    plugin_instance.update()
+                    self.plugin_last_update[plugin_id] = current_time
+                except Exception as exc:  # pylint: disable=broad-except
+                    self.logger.exception("Error updating plugin %s: %s", plugin_id, exc)
 

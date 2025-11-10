@@ -279,8 +279,38 @@ class DisplayController:
             try:
                 if hasattr(plugin_instance, 'update'):
                     plugin_instance.update()
+                    if hasattr(self.plugin_manager, 'plugin_last_update'):
+                        self.plugin_manager.plugin_last_update[plugin_id] = time.time()
             except Exception:  # pylint: disable=broad-except
                 logger.exception("Error updating plugin %s", plugin_id)
+
+    def _tick_plugin_updates(self):
+        """Run scheduled plugin updates if the plugin manager supports them."""
+        if not self.plugin_manager:
+            return
+
+        if hasattr(self.plugin_manager, "run_scheduled_updates"):
+            try:
+                self.plugin_manager.run_scheduled_updates()
+            except Exception:  # pylint: disable=broad-except
+                logger.exception("Error running scheduled plugin updates")
+
+    def _sleep_with_plugin_updates(self, duration: float, tick_interval: float = 1.0):
+        """Sleep while continuing to service plugin update schedules."""
+        if duration <= 0:
+            return
+
+        end_time = time.time() + duration
+        tick_interval = max(0.001, tick_interval)
+
+        while True:
+            remaining = end_time - time.time()
+            if remaining <= 0:
+                break
+
+            sleep_time = min(tick_interval, remaining)
+            time.sleep(sleep_time)
+            self._tick_plugin_updates()
 
     def _get_display_duration(self, mode_key):
         """Get display duration for a mode."""
@@ -516,6 +546,7 @@ class DisplayController:
                 # Handle on-demand commands before rendering
                 self._poll_on_demand_requests()
                 self._check_on_demand_expiration()
+                self._tick_plugin_updates()
 
                 # Check the schedule
                 self._check_schedule()
@@ -528,7 +559,7 @@ class DisplayController:
                     self.on_demand_schedule_override = False
 
                 if not self.is_display_active:
-                    time.sleep(60)
+                    self._sleep_with_plugin_updates(60)
                     continue
                 
                 # Plugins update on their own schedules - no forced sync updates needed
@@ -585,7 +616,7 @@ class DisplayController:
                     if self.on_demand_active:
                         # Stay on on-demand mode even if no content - show "waiting" message
                         logger.info("No content for on-demand mode %s, staying on mode", active_mode)
-                        time.sleep(5)  # Wait 5 seconds before retrying
+                        self._sleep_with_plugin_updates(5)
                         self._publish_on_demand_state()
                         continue
                     else:
@@ -631,6 +662,7 @@ class DisplayController:
                                     logger.exception("Error during display update")
                                 
                                 time.sleep(display_interval)
+                                self._tick_plugin_updates()
                                 elapsed += display_interval
                                 self._poll_on_demand_requests()
                                 self._check_on_demand_expiration()
@@ -644,6 +676,7 @@ class DisplayController:
                             elapsed = 0
                             while elapsed < duration:
                                 time.sleep(display_interval)
+                                self._tick_plugin_updates()
                                 elapsed += display_interval
                                 
                                 # Call display again to allow game rotation
@@ -664,7 +697,7 @@ class DisplayController:
                                         break
                     else:
                         # For non-plugin modes, use the original behavior
-                        time.sleep(duration)
+                        self._sleep_with_plugin_updates(duration)
                 
                 # Move to next mode
                 if self.on_demand_active:
