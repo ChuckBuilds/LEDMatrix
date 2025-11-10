@@ -32,4 +32,6 @@ cache/
 # Allow git submodules
 plugins/*
 !plugins/.gitkeep
+!plugins/odds-ticker
+!plugins/odds-ticker/
 !plugins/*/.git

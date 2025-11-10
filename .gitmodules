@@ -1,0 +1,3 @@
+[submodule "plugins/odds-ticker"]
+	path = plugins/odds-ticker
+	url = https://github.com/ChuckBuilds/ledmatrix-odds-ticker.git

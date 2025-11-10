@@ -443,7 +443,7 @@ The odds ticker displays betting odds for upcoming sports games. To configure it
 1. In `config/config.json`, add the following section:
 ```json
 {
-    "odds_ticker": {
+    "odds-ticker": {
         "enabled": true,
         "enabled_leagues": ["nfl", "nba", "mlb", "ncaa_fb"],
         "update_interval": 3600,
