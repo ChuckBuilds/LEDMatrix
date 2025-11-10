@@ -214,6 +214,12 @@ class DisplayController:
         except (OSError, ValueError, RuntimeError) as err:
             logger.debug("Initial on-demand state publish failed: %s", err, exc_info=True)
 
+        # Initial data update for plugins (ensures data available on first display)
+        logger.info("Performing initial plugin data update...")
+        update_start = time.time()
+        self._update_modules()
+        logger.info("Initial plugin update completed in %.3f seconds", time.time() - update_start)
+
         logger.info("DisplayController initialization completed in %.3f seconds", time.time() - start_time)
 
     def _check_schedule(self):
