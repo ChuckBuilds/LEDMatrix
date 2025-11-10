@@ -477,7 +477,7 @@
                                             });
                                     }
                                 }" x-init="loadPluginConfig(plugin.id)">
-                                <form x-on:submit.prevent="savePluginConfig(plugin.id)">
+                                <form x-on:submit.prevent="savePluginConfig(plugin.id, $event)">
                                     <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
                                         <!-- Plugin Info -->
                                         <div class="bg-gray-50 rounded-lg p-4">
@@ -1113,33 +1113,178 @@
                     `;
                 },
 
-                async savePluginConfig(pluginId) {
+                // Helper function to get schema property type for a field path
+                getSchemaPropertyType(schema, path) {
+                    if (!schema || !schema.properties) return null;
+                    
+                    const parts = path.split('.');
+                    let current = schema.properties;
+                    
+                    for (let i = 0; i < parts.length; i++) {
+                        const part = parts[i];
+                        if (current && current[part]) {
+                            if (i === parts.length - 1) {
+                                return current[part];
+                            } else if (current[part].properties) {
+                                current = current[part].properties;
+                            } else {
+                                return null;
+                            }
+                        } else {
+                            return null;
+                        }
+                    }
+                    return null;
+                },
+
+                async savePluginConfig(pluginId, event) {
                     try {
                         // Get the form element for this plugin
-                        const form = event.target;
+                        const form = event ? event.target : null;
+                        if (!form) {
+                            throw new Error('Form element not found');
+                        }
                         const formData = new FormData(form);
+                        const schema = this.schema || {};
                         
-                        // Convert FormData to object with dot notation
+                        // First, collect all checkbox states (including unchecked ones)
+                        // Unchecked checkboxes don't appear in FormData, so we need to iterate form elements
                         const flatConfig = {};
-                        for (const [key, value] of formData.entries()) {
-                            // Handle checkboxes and other types
-                            if (form.elements[key] && form.elements[key].type === 'checkbox') {
-                                flatConfig[key] = form.elements[key].checked;
-                            } else if (key.includes('display_duration') || key.includes('game_display_duration')) {
-                                flatConfig[key] = parseInt(value, 10);
-                            } else if (!isNaN(value) && value !== '') {
-                                flatConfig[key] = parseFloat(value);
-                            } else {
-                                flatConfig[key] = value;
+                        
+                        // Process all form elements to capture all field states
+                        for (let i = 0; i < form.elements.length; i++) {
+                            const element = form.elements[i];
+                            const name = element.name;
+                            
+                            // Skip elements without names or submit buttons
+                            if (!name || element.type === 'submit' || element.type === 'button') {
+                                continue;
+                            }
+                            
+                            // Handle checkboxes explicitly (both checked and unchecked)
+                            if (element.type === 'checkbox') {
+                                flatConfig[name] = element.checked;
+                            }
+                            // Handle radio buttons
+                            else if (element.type === 'radio') {
+                                if (element.checked) {
+                                    flatConfig[name] = element.value;
+                                }
+                            }
+                            // Handle select elements (including multi-select)
+                            else if (element.tagName === 'SELECT') {
+                                if (element.multiple) {
+                                    // Multi-select: get all selected options
+                                    const selectedValues = Array.from(element.selectedOptions).map(opt => opt.value);
+                                    flatConfig[name] = selectedValues;
+                                } else {
+                                    // Single select: handled by FormData, but ensure it's captured
+                                    if (!(name in flatConfig)) {
+                                        flatConfig[name] = element.value;
+                                    }
+                                }
+                            }
+                            // Handle textarea
+                            else if (element.tagName === 'TEXTAREA') {
+                                // Textarea: handled by FormData, but ensure it's captured
+                                if (!(name in flatConfig)) {
+                                    flatConfig[name] = element.value;
+                                }
                             }
                         }
                         
-                        // Convert comma-separated arrays
-                        Object.keys(flatConfig).forEach(key => {
-                            if (typeof flatConfig[key] === 'string' && key.includes('favorite_teams')) {
-                                flatConfig[key] = flatConfig[key].split(',').map(v => v.trim()).filter(v => v);
+                        // Now process FormData for other field types
+                        for (const [key, value] of formData.entries()) {
+                            // Skip checkboxes - we already handled them above
+                            const element = form.elements[key];
+                            if (element && element.type === 'checkbox') {
+                                continue; // Already processed
                             }
-                        });
+                            // Skip multi-select - we already handled them above
+                            if (element && element.tagName === 'SELECT' && element.multiple) {
+                                continue; // Already processed
+                            }
+                            
+                            // Get schema property type if available
+                            const propSchema = this.getSchemaPropertyType(schema, key);
+                            const propType = propSchema ? propSchema.type : null;
+                            
+                            // Handle based on schema type or field name patterns
+                            if (propType === 'array') {
+                                // Check if this is a file upload widget (JSON array in hidden input)
+                                if (propSchema && propSchema['x-widget'] === 'file-upload') {
+                                    try {
+                                        const jsonValue = JSON.parse(value);
+                                        if (Array.isArray(jsonValue)) {
+                                            flatConfig[key] = jsonValue;
+                                            console.log(`File upload array field ${key}: parsed JSON array with ${jsonValue.length} items`);
+                                        } else {
+                                            // Fallback to empty array
+                                            flatConfig[key] = [];
+                                        }
+                                    } catch (e) {
+                                        // Not valid JSON, use empty array or try comma-separated
+                                        if (value && value.trim()) {
+                                            const arrayValue = value.split(',').map(v => v.trim()).filter(v => v);
+                                            flatConfig[key] = arrayValue;
+                                        } else {
+                                            flatConfig[key] = [];
+                                        }
+                                    }
+                                } else {
+                                    // Regular array: convert comma-separated string to array
+                                    const arrayValue = value ? value.split(',').map(v => v.trim()).filter(v => v) : [];
+                                    flatConfig[key] = arrayValue;
+                                }
+                            } else if (propType === 'integer') {
+                                const numValue = parseInt(value, 10);
+                                flatConfig[key] = isNaN(numValue) ? (propSchema && propSchema.default !== undefined ? propSchema.default : 0) : numValue;
+                            } else if (propType === 'number') {
+                                const numValue = parseFloat(value);
+                                flatConfig[key] = isNaN(numValue) ? (propSchema && propSchema.default !== undefined ? propSchema.default : 0) : numValue;
+                            } else if (propType === 'boolean') {
+                                // Boolean from FormData (shouldn't happen for checkboxes, but handle it)
+                                flatConfig[key] = value === 'on' || value === 'true' || value === true;
+                            } else {
+                                // String or other types
+                                // Check if it's a number field by name pattern (fallback if no schema)
+                                if (!propType && (key.includes('duration') || key.includes('interval') || 
+                                    key.includes('timeout') || key.includes('teams') || key.includes('fps') ||
+                                    key.includes('bits') || key.includes('nanoseconds') || key.includes('hz'))) {
+                                    const numValue = parseFloat(value);
+                                    if (!isNaN(numValue)) {
+                                        flatConfig[key] = Number.isInteger(numValue) ? parseInt(value, 10) : numValue;
+                                    } else {
+                                        flatConfig[key] = value;
+                                    }
+                                } else {
+                                    flatConfig[key] = value;
+                                }
+                            }
+                        }
+                        
+                        // Handle unchecked checkboxes using schema (if available)
+                        if (schema && schema.properties) {
+                            const collectBooleanFields = (props, prefix = '') => {
+                                const boolFields = [];
+                                for (const [key, prop] of Object.entries(props)) {
+                                    const fullKey = prefix ? `${prefix}.${key}` : key;
+                                    if (prop.type === 'boolean') {
+                                        boolFields.push(fullKey);
+                                    } else if (prop.type === 'object' && prop.properties) {
+                                        boolFields.push(...collectBooleanFields(prop.properties, fullKey));
+                                    }
+                                }
+                                return boolFields;
+                            };
+                            
+                            const allBoolFields = collectBooleanFields(schema.properties);
+                            allBoolFields.forEach(key => {
+                                if (!(key in flatConfig)) {
+                                    flatConfig[key] = false;
+                                }
+                            });
+                        }
                         
                         // Convert dot notation to nested object
                         const dotToNested = (obj) => {
@@ -1161,6 +1306,7 @@
                         const config = dotToNested(flatConfig);
                         
                         console.log('Saving config for', pluginId, ':', config);
+                        console.log('Flat config before nesting:', flatConfig);
                         
                         // Save to backend
                         const response = await fetch('/api/v3/plugins/config', {
@@ -1176,6 +1322,8 @@
                         
                         if (data.status === 'success') {
                             this.showNotification('Configuration saved successfully', 'success');
+                            // Reload plugin config to reflect changes
+                            await this.loadPluginConfig(pluginId);
                         } else {
                             this.showNotification('Error saving configuration: ' + data.message, 'error');
                         }
@@ -1405,9 +1553,45 @@
             }
         }
 
+        // Helper function to get schema property type for a field path
+        function getSchemaPropertyType(schema, path) {
+            if (!schema || !schema.properties) return null;
+            
+            const parts = path.split('.');
+            let current = schema.properties;
+            
+            for (let i = 0; i < parts.length; i++) {
+                const part = parts[i];
+                if (current && current[part]) {
+                    if (i === parts.length - 1) {
+                        return current[part];
+                    } else if (current[part].properties) {
+                        current = current[part].properties;
+                    } else {
+                        return null;
+                    }
+                } else {
+                    return null;
+                }
+            }
+            return null;
+        }
+
         async function savePluginConfig(pluginId) {
             try {
                 console.log('Saving config for plugin:', pluginId);
+                
+                // Load schema for type detection
+                let schema = {};
+                try {
+                    const schemaResponse = await fetch(`/api/v3/plugins/schema?plugin_id=${pluginId}`);
+                    const schemaData = await schemaResponse.json();
+                    if (schemaData.status === 'success' && schemaData.data.schema) {
+                        schema = schemaData.data.schema;
+                    }
+                } catch (e) {
+                    console.warn('Could not load schema for type detection:', e);
+                }
                 
                 // Find the form in the active plugin tab
                 // Alpine.js hides/shows elements with display:none, so we look for the currently visible one
@@ -1429,20 +1613,165 @@
                 }
 
                 const formData = new FormData(form);
-                const config = {};
+                const flatConfig = {};
 
-                // Convert form data to config object
-                for (let [key, value] of formData.entries()) {
-                    if (key === 'enabled') {
-                        config[key] = value === 'on';
-                    } else if (key === 'display_duration') {
-                        config[key] = parseInt(value);
-                    } else {
-                        config[key] = value;
+                // First, collect all checkbox states (including unchecked ones)
+                // Unchecked checkboxes don't appear in FormData, so we need to iterate form elements
+                for (let i = 0; i < form.elements.length; i++) {
+                    const element = form.elements[i];
+                    const name = element.name;
+                    
+                    // Skip elements without names or submit buttons
+                    if (!name || element.type === 'submit' || element.type === 'button') {
+                        continue;
+                    }
+                    
+                    // Handle checkboxes explicitly (both checked and unchecked)
+                    if (element.type === 'checkbox') {
+                        flatConfig[name] = element.checked;
+                    }
+                    // Handle radio buttons
+                    else if (element.type === 'radio') {
+                        if (element.checked) {
+                            flatConfig[name] = element.value;
+                        }
+                    }
+                    // Handle select elements (including multi-select)
+                    else if (element.tagName === 'SELECT') {
+                        if (element.multiple) {
+                            // Multi-select: get all selected options
+                            const selectedValues = Array.from(element.selectedOptions).map(opt => opt.value);
+                            flatConfig[name] = selectedValues;
+                        } else {
+                            // Single select: handled by FormData, but ensure it's captured
+                            if (!(name in flatConfig)) {
+                                flatConfig[name] = element.value;
+                            }
+                        }
+                    }
+                    // Handle textarea
+                    else if (element.tagName === 'TEXTAREA') {
+                        // Textarea: handled by FormData, but ensure it's captured
+                        if (!(name in flatConfig)) {
+                            flatConfig[name] = element.value;
+                        }
                     }
                 }
 
+                // Now process FormData for other field types
+                for (const [key, value] of formData.entries()) {
+                    // Skip checkboxes - we already handled them above
+                    const element = form.elements[key];
+                    if (element && element.type === 'checkbox') {
+                        continue; // Already processed
+                    }
+                    // Skip multi-select - we already handled them above
+                    if (element && element.tagName === 'SELECT' && element.multiple) {
+                        continue; // Already processed
+                    }
+                    
+                    // Get schema property type if available
+                    const propSchema = getSchemaPropertyType(schema, key);
+                    const propType = propSchema ? propSchema.type : null;
+                    
+                    // Handle based on schema type or field name patterns
+                    if (propType === 'array') {
+                        // Check if this is a file upload widget (JSON array in hidden input)
+                        if (propSchema && propSchema['x-widget'] === 'file-upload') {
+                            try {
+                                const jsonValue = JSON.parse(value);
+                                if (Array.isArray(jsonValue)) {
+                                    flatConfig[key] = jsonValue;
+                                    console.log(`File upload array field ${key}: parsed JSON array with ${jsonValue.length} items`);
+                                } else {
+                                    // Fallback to empty array
+                                    flatConfig[key] = [];
+                                }
+                            } catch (e) {
+                                // Not valid JSON, use empty array or try comma-separated
+                                if (value && value.trim()) {
+                                    const arrayValue = value.split(',').map(v => v.trim()).filter(v => v);
+                                    flatConfig[key] = arrayValue;
+                                } else {
+                                    flatConfig[key] = [];
+                                }
+                            }
+                        } else {
+                            // Regular array: convert comma-separated string to array
+                            const arrayValue = value ? value.split(',').map(v => v.trim()).filter(v => v) : [];
+                            flatConfig[key] = arrayValue;
+                        }
+                    } else if (propType === 'integer') {
+                        const numValue = parseInt(value, 10);
+                        flatConfig[key] = isNaN(numValue) ? (propSchema && propSchema.default !== undefined ? propSchema.default : 0) : numValue;
+                    } else if (propType === 'number') {
+                        const numValue = parseFloat(value);
+                        flatConfig[key] = isNaN(numValue) ? (propSchema && propSchema.default !== undefined ? propSchema.default : 0) : numValue;
+                    } else if (propType === 'boolean') {
+                        // Boolean from FormData (shouldn't happen for checkboxes, but handle it)
+                        flatConfig[key] = value === 'on' || value === 'true' || value === true;
+                    } else {
+                        // String or other types
+                        // Check if it's a number field by name pattern (fallback if no schema)
+                        if (!propType && (key.includes('duration') || key.includes('interval') || 
+                            key.includes('timeout') || key.includes('teams') || key.includes('fps') ||
+                            key.includes('bits') || key.includes('nanoseconds') || key.includes('hz'))) {
+                            const numValue = parseFloat(value);
+                            if (!isNaN(numValue)) {
+                                flatConfig[key] = Number.isInteger(numValue) ? parseInt(value, 10) : numValue;
+                            } else {
+                                flatConfig[key] = value;
+                            }
+                        } else {
+                            flatConfig[key] = value;
+                        }
+                    }
+                }
+
+                // Handle unchecked checkboxes using schema (if available)
+                if (schema && schema.properties) {
+                    const collectBooleanFields = (props, prefix = '') => {
+                        const boolFields = [];
+                        for (const [key, prop] of Object.entries(props)) {
+                            const fullKey = prefix ? `${prefix}.${key}` : key;
+                            if (prop.type === 'boolean') {
+                                boolFields.push(fullKey);
+                            } else if (prop.type === 'object' && prop.properties) {
+                                boolFields.push(...collectBooleanFields(prop.properties, fullKey));
+                            }
+                        }
+                        return boolFields;
+                    };
+                    
+                    const allBoolFields = collectBooleanFields(schema.properties);
+                    allBoolFields.forEach(key => {
+                        if (!(key in flatConfig)) {
+                            flatConfig[key] = false;
+                        }
+                    });
+                }
+
+                // Convert dot notation to nested object
+                const dotToNested = (obj) => {
+                    const result = {};
+                    for (const key in obj) {
+                        const parts = key.split('.');
+                        let current = result;
+                        for (let i = 0; i < parts.length - 1; i++) {
+                            if (!current[parts[i]]) {
+                                current[parts[i]] = {};
+                            }
+                            current = current[parts[i]];
+                        }
+                        current[parts[parts.length - 1]] = obj[key];
+                    }
+                    return result;
+                };
+
+                const config = dotToNested(flatConfig);
+
                 console.log('Saving config for', pluginId, ':', config);
+                console.log('Flat config before nesting:', flatConfig);
 
                 // Save to backend
                 const response = await fetch('/api/v3/plugins/config', {
