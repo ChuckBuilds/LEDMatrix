@@ -635,15 +635,21 @@ class DisplayController:
                     # For plugins, call display multiple times to allow game rotation
                     if manager_to_display and hasattr(manager_to_display, 'display'):
                         # Check if plugin needs high FPS (like stock ticker)
-                        has_enable_scrolling = hasattr(manager_to_display, 'enable_scrolling')
-                        enable_scrolling_value = getattr(manager_to_display, 'enable_scrolling', False)
-                        needs_high_fps = has_enable_scrolling and enable_scrolling_value
-                        logger.debug(
-                            "FPS check - has_enable_scrolling: %s, enable_scrolling_value: %s, needs_high_fps: %s",
-                            has_enable_scrolling,
-                            enable_scrolling_value,
-                            needs_high_fps,
-                        )
+                        # Always enable high-FPS for static-image plugin (for GIF animation support)
+                        plugin_id = getattr(manager_to_display, 'plugin_id', None)
+                        if plugin_id == 'static-image':
+                            needs_high_fps = True
+                            logger.debug("FPS check - static-image plugin: forcing high-FPS mode for GIF support")
+                        else:
+                            has_enable_scrolling = hasattr(manager_to_display, 'enable_scrolling')
+                            enable_scrolling_value = getattr(manager_to_display, 'enable_scrolling', False)
+                            needs_high_fps = has_enable_scrolling and enable_scrolling_value
+                            logger.debug(
+                                "FPS check - has_enable_scrolling: %s, enable_scrolling_value: %s, needs_high_fps: %s",
+                                has_enable_scrolling,
+                                enable_scrolling_value,
+                                needs_high_fps,
+                            )
                         
                         if needs_high_fps:
                             # Ultra-smooth FPS for scrolling plugins (8ms = 125 FPS)
