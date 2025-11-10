@@ -4,7 +4,7 @@ import sys
 import os
 from typing import Dict, Any, List, Optional
 from datetime import datetime
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor, as_completed  # pylint: disable=no-name-in-module
 
 # Configure logging
 logging.basicConfig(

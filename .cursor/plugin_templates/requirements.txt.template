@@ -1,0 +1,13 @@
+# Plugin Dependencies
+# Add your plugin's Python dependencies here
+
+# Example dependencies (uncomment and modify as needed):
+# requests>=2.28.0
+# pillow>=9.0.0
+# python-dateutil>=2.8.0
+
+# Note: Core LEDMatrix dependencies are already available:
+# - PIL/Pillow (for image handling)
+# - Core plugin system classes
+# - Display manager, cache manager, config manager
+

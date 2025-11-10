@@ -1,0 +1,54 @@
+{
+  "id": "PLUGIN_ID",
+  "name": "Plugin Name",
+  "version": "1.0.0",
+  "author": "Your Name",
+  "description": "Brief description of what this plugin does",
+  "homepage": "https://github.com/username/ledmatrix-PLUGIN_ID",
+  "entry_point": "manager.py",
+  "class_name": "PluginClassName",
+  "category": "custom",
+  "tags": ["custom", "example"],
+  "icon": "fas fa-icon-name",
+  "compatible_versions": [">=2.0.0"],
+  "ledmatrix_version": "2.0.0",
+  "requires": {
+    "python": ">=3.9",
+    "display_size": {
+      "min_width": 64,
+      "min_height": 32
+    }
+  },
+  "config_schema": "config_schema.json",
+  "assets": {
+    "logos": "Optional: Description of asset requirements"
+  },
+  "update_interval": 60,
+  "default_duration": 15,
+  "display_modes": [
+    "PLUGIN_ID"
+  ],
+  "api_requirements": [
+    {
+      "name": "API Name",
+      "required": false,
+      "description": "Description of API requirements",
+      "url": "https://api.example.com",
+      "rate_limit": "Rate limit information"
+    }
+  ],
+  "download_url_template": "https://github.com/username/ledmatrix-PLUGIN_ID/archive/refs/tags/v{version}.zip",
+  "versions": [
+    {
+      "released": "2025-01-01",
+      "version": "1.0.0",
+      "ledmatrix_min": "2.0.0"
+    }
+  ],
+  "last_updated": "2025-01-01",
+  "stars": 0,
+  "downloads": 0,
+  "verified": false,
+  "screenshot": ""
+}
+

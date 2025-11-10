@@ -179,9 +179,11 @@ or
 
 
 ## Mount/Stand
-I 3D printed stands to keep the panels upright and snug. STL Files are included in the Repo but are also available at https://www.thingiverse.com/thing:5169867 Thanks to "Randomwire" for making these for the 4mm Pixel Pitch LED Matrix.
+I 3D printed stands to keep the panels upright and snug.
 
-Special Thanks for Rmatze for making:
+Thanks to "Randomwire" for making these for the 4mm Pixel Pitch LED Matrix : https://www.thingiverse.com/thing:5169867
+
+Thanks for Rmatze for making:
 - 3mm Pixel Pitch RGB Stand for 32x64 Display : https://www.thingiverse.com/thing:7149818 
 - 4mm Pixel Pitch RGB Stand for 32x64 Display : https://www.thingiverse.com/thing:7165993
 
