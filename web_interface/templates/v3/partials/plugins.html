@@ -10,6 +10,9 @@
             <button id="refresh-plugins-btn" class="btn bg-gray-600 hover:bg-gray-700 text-white px-4 py-2 rounded-md">
                 <i class="fas fa-sync-alt mr-2"></i>Refresh Plugins
             </button>
+            <button id="update-all-plugins-btn" class="btn bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-md flex items-center">
+                <i class="fas fa-cloud-download-alt mr-2"></i>Check &amp; Update All
+            </button>
             <button id="restart-display-btn" class="btn bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md">
                 <i class="fas fa-redo mr-2"></i>Restart Display
             </button>
@@ -500,6 +503,7 @@ window.initPluginsPage = function() {
 
     // Event listeners (remove old ones first to prevent duplicates)
     const refreshBtn = document.getElementById('refresh-plugins-btn');
+    const updateAllBtn = document.getElementById('update-all-plugins-btn');
     const restartBtn = document.getElementById('restart-display-btn');
     const searchBtn = document.getElementById('search-plugins-btn');
     const closeBtn = document.getElementById('close-plugin-config');
@@ -511,6 +515,10 @@ window.initPluginsPage = function() {
     if (refreshBtn) {
         refreshBtn.replaceWith(refreshBtn.cloneNode(true));
         document.getElementById('refresh-plugins-btn').addEventListener('click', refreshPlugins);
+    }
+    if (updateAllBtn) {
+        updateAllBtn.replaceWith(updateAllBtn.cloneNode(true));
+        document.getElementById('update-all-plugins-btn').addEventListener('click', runUpdateAllPlugins);
     }
     if (restartBtn) {
         restartBtn.replaceWith(restartBtn.cloneNode(true));
@@ -766,6 +774,52 @@ function startOnDemandStatusPolling() {
 }
 
 window.loadOnDemandStatus = loadOnDemandStatus;
+
+function runUpdateAllPlugins() {
+    const button = document.getElementById('update-all-plugins-btn');
+
+    if (!button) {
+        if (typeof showNotification === 'function') {
+            showNotification('Unable to locate bulk update controls. Refresh the Plugin Manager tab.', 'error');
+        } else {
+            console.error('update-all-plugins-btn element not found');
+        }
+        return;
+    }
+
+    if (button.dataset.running === 'true') {
+        return;
+    }
+
+    if (typeof window.updateAllPlugins !== 'function') {
+        if (typeof showNotification === 'function') {
+            showNotification('Bulk update handler unavailable. Refresh the Plugin Manager tab.', 'error');
+        } else {
+            console.error('window.updateAllPlugins is not defined');
+        }
+        return;
+    }
+
+    const originalContent = button.innerHTML;
+    button.dataset.running = 'true';
+    button.disabled = true;
+    button.classList.add('opacity-60', 'cursor-wait');
+    button.innerHTML = '<i class="fas fa-sync fa-spin mr-2"></i>Updating...';
+
+    Promise.resolve(window.updateAllPlugins())
+        .catch(error => {
+            console.error('Error updating all plugins:', error);
+            if (typeof showNotification === 'function') {
+                showNotification('Error updating all plugins: ' + error.message, 'error');
+            }
+        })
+        .finally(() => {
+            button.innerHTML = originalContent;
+            button.disabled = false;
+            button.classList.remove('opacity-60', 'cursor-wait');
+            button.dataset.running = 'false';
+        });
+}
 
 window.openOnDemandModal = function(pluginId) {
     const plugin = findInstalledPlugin(pluginId);

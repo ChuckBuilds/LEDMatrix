@@ -1488,6 +1488,16 @@
             }, 3000);
         }
 
+        function getAppComponent() {
+            if (window.Alpine) {
+                const appElement = document.querySelector('[x-data="app()"]');
+                if (appElement && appElement._x_dataStack && appElement._x_dataStack[0]) {
+                    return appElement._x_dataStack[0];
+                }
+            }
+            return null;
+        }
+
         async function updatePlugin(pluginId) {
             try {
                 showNotification(`Updating ${pluginId}...`, 'info');
@@ -1503,12 +1513,76 @@
 
                 if (data.status === 'success') {
                     // Refresh the plugin list
-                    await app.loadInstalledPlugins();
+                    const appComponent = getAppComponent();
+                    if (appComponent && typeof appComponent.loadInstalledPlugins === 'function') {
+                        await appComponent.loadInstalledPlugins();
+                    }
                 }
             } catch (error) {
                 showNotification('Error updating plugin: ' + error.message, 'error');
             }
         }
+
+        async function updateAllPlugins() {
+            try {
+                const plugins = Array.isArray(window.installedPlugins) ? window.installedPlugins : [];
+
+                if (!plugins.length) {
+                    showNotification('No installed plugins to update.', 'warning');
+                    return;
+                }
+
+                showNotification(`Checking ${plugins.length} plugin${plugins.length === 1 ? '' : 's'} for updates...`, 'info');
+
+                let successCount = 0;
+                let failureCount = 0;
+
+                for (const plugin of plugins) {
+                    const pluginId = plugin.id;
+                    const pluginName = plugin.name || pluginId;
+
+                    try {
+                        const response = await fetch('/api/v3/plugins/update', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ plugin_id: pluginId })
+                        });
+
+                        const data = await response.json();
+                        const status = data.status || 'info';
+                        const message = data.message || `Checked ${pluginName}`;
+
+                        showNotification(message, status);
+
+                        if (status === 'success') {
+                            successCount += 1;
+                        } else {
+                            failureCount += 1;
+                        }
+                    } catch (error) {
+                        failureCount += 1;
+                        showNotification(`Error updating ${pluginName}: ${error.message}`, 'error');
+                    }
+                }
+
+                const appComponent = getAppComponent();
+                if (appComponent && typeof appComponent.loadInstalledPlugins === 'function') {
+                    await appComponent.loadInstalledPlugins();
+                }
+
+                if (failureCount === 0) {
+                    showNotification(`Finished checking ${successCount} plugin${successCount === 1 ? '' : 's'} for updates.`, 'success');
+                } else {
+                    showNotification(`Updated ${successCount} plugin${successCount === 1 ? '' : 's'} with ${failureCount} failure${failureCount === 1 ? '' : 's'}. Check logs for details.`, 'error');
+                }
+            } catch (error) {
+                console.error('Bulk plugin update failed:', error);
+                showNotification('Failed to update all plugins: ' + error.message, 'error');
+            }
+        }
+
+        window.updateAllPlugins = updateAllPlugins;
+
 
         async function uninstallPlugin(pluginId) {
             try {
