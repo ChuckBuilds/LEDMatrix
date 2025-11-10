@@ -424,7 +424,7 @@ class PluginManager:
             
             # Store the plugin
             self.plugins[plugin_id] = plugin_instance
-        self.plugin_last_update[plugin_id] = 0.0
+            self.plugin_last_update[plugin_id] = 0.0
             version_info = manifest.get('version')
             if version_info:
                 self.logger.info(f"Loaded plugin: {plugin_id} (version {version_info})")
@@ -471,8 +471,8 @@ class PluginManager:
             
             # Remove from active plugins
             del self.plugins[plugin_id]
-        if plugin_id in self.plugin_last_update:
-            del self.plugin_last_update[plugin_id]
+            if plugin_id in self.plugin_last_update:
+                del self.plugin_last_update[plugin_id]
             
             # Remove module from sys.modules if present
             module_name = f"plugin_{plugin_id.replace('-', '_')}"
