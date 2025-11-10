@@ -808,6 +808,9 @@ def get_installed_plugins():
                 last_commit_message = last_commit_message or store_info.get('last_commit_message')
                 branch = branch or store_info.get('branch') or store_info.get('default_branch')
             
+            # Get web_ui_actions from manifest if available
+            web_ui_actions = plugin_info.get('web_ui_actions', [])
+            
             plugins.append({
                 'id': plugin_id,
                 'name': plugin_info.get('name', plugin_id),
@@ -821,7 +824,8 @@ def get_installed_plugins():
                 'last_updated': last_updated,
                 'last_commit': last_commit,
                 'last_commit_message': last_commit_message,
-                'branch': branch
+                'branch': branch,
+                'web_ui_actions': web_ui_actions
             })
         
         return jsonify({'status': 'success', 'data': {'plugins': plugins}})
@@ -1583,6 +1587,218 @@ def get_plugin_schema():
         import traceback
         error_details = traceback.format_exc()
         print(f"Error in get_plugin_schema: {str(e)}")
+        print(error_details)
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+@api_v3.route('/plugins/action', methods=['POST'])
+def execute_plugin_action():
+    """Execute a plugin-defined action (e.g., authentication)"""
+    try:
+        data = request.get_json() or {}
+        plugin_id = data.get('plugin_id')
+        action_id = data.get('action_id')
+        action_params = data.get('params', {})
+        
+        if not plugin_id or not action_id:
+            return jsonify({'status': 'error', 'message': 'plugin_id and action_id required'}), 400
+        
+        # Get plugin directory
+        if api_v3.plugin_manager:
+            plugin_dir = api_v3.plugin_manager.get_plugin_directory(plugin_id)
+        else:
+            plugin_dir = PROJECT_ROOT / 'plugins' / plugin_id
+        
+        if not plugin_dir or not Path(plugin_dir).exists():
+            return jsonify({'status': 'error', 'message': f'Plugin {plugin_id} not found'}), 404
+        
+        # Load manifest to get action definition
+        manifest_path = Path(plugin_dir) / 'manifest.json'
+        if not manifest_path.exists():
+            return jsonify({'status': 'error', 'message': 'Plugin manifest not found'}), 404
+        
+        with open(manifest_path, 'r', encoding='utf-8') as f:
+            manifest = json.load(f)
+        
+        web_ui_actions = manifest.get('web_ui_actions', [])
+        action_def = None
+        for action in web_ui_actions:
+            if action.get('id') == action_id:
+                action_def = action
+                break
+        
+        if not action_def:
+            return jsonify({'status': 'error', 'message': f'Action {action_id} not found in plugin manifest'}), 404
+        
+        # Set LEDMATRIX_ROOT environment variable
+        env = os.environ.copy()
+        env['LEDMATRIX_ROOT'] = str(PROJECT_ROOT)
+        
+        # Execute action based on type
+        action_type = action_def.get('type', 'script')
+        
+        if action_type == 'script':
+            # Execute a Python script
+            script_path = action_def.get('script')
+            if not script_path:
+                return jsonify({'status': 'error', 'message': 'Script path not defined for action'}), 400
+            
+            script_file = Path(plugin_dir) / script_path
+            if not script_file.exists():
+                return jsonify({'status': 'error', 'message': f'Script not found: {script_path}'}), 404
+            
+            # Handle multi-step actions (like Spotify OAuth)
+            step = action_params.get('step')
+            
+            if step == '2' and action_params.get('redirect_url'):
+                # Step 2: Complete authentication with redirect URL
+                redirect_url = action_params.get('redirect_url')
+                import tempfile
+                import json as json_lib
+                
+                redirect_url_escaped = json_lib.dumps(redirect_url)
+                with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as wrapper:
+                    wrapper.write(f'''import sys
+import subprocess
+import os
+
+# Set LEDMATRIX_ROOT
+os.environ['LEDMATRIX_ROOT'] = r"{PROJECT_ROOT}"
+
+# Run the script and provide redirect URL
+proc = subprocess.Popen(
+    [sys.executable, r"{script_file}"],
+    stdin=subprocess.PIPE,
+    stdout=subprocess.PIPE,
+    stderr=subprocess.STDOUT,
+    text=True,
+    env=os.environ
+)
+
+# Send redirect URL to stdin
+redirect_url = {redirect_url_escaped}
+stdout, _ = proc.communicate(input=redirect_url + "\\n", timeout=120)
+print(stdout)
+sys.exit(proc.returncode)
+''')
+                    wrapper_path = wrapper.name
+                
+                try:
+                    result = subprocess.run(
+                        ['python3', wrapper_path],
+                        capture_output=True,
+                        text=True,
+                        timeout=120,
+                        env=env
+                    )
+                    os.unlink(wrapper_path)
+                    
+                    if result.returncode == 0:
+                        return jsonify({
+                            'status': 'success',
+                            'message': action_def.get('success_message', 'Action completed successfully'),
+                            'output': result.stdout
+                        })
+                    else:
+                        return jsonify({
+                            'status': 'error',
+                            'message': action_def.get('error_message', 'Action failed'),
+                            'output': result.stdout + result.stderr
+                        }), 400
+                except subprocess.TimeoutExpired:
+                    if os.path.exists(wrapper_path):
+                        os.unlink(wrapper_path)
+                    return jsonify({'status': 'error', 'message': 'Action timed out'}), 408
+            else:
+                # Step 1: Get initial data (like auth URL)
+                # For OAuth flows, we might need to import the script as a module
+                if action_def.get('oauth_flow'):
+                    # Import script as module to get auth URL
+                    import sys
+                    import importlib.util
+                    
+                    spec = importlib.util.spec_from_file_location("plugin_action", script_file)
+                    action_module = importlib.util.module_from_spec(spec)
+                    sys.modules["plugin_action"] = action_module
+                    
+                    try:
+                        spec.loader.exec_module(action_module)
+                        
+                        # Try to get auth URL using common patterns
+                        auth_url = None
+                        if hasattr(action_module, 'get_auth_url'):
+                            auth_url = action_module.get_auth_url()
+                        elif hasattr(action_module, 'load_spotify_credentials'):
+                            # Spotify-specific pattern
+                            client_id, client_secret, redirect_uri = action_module.load_spotify_credentials()
+                            if all([client_id, client_secret, redirect_uri]):
+                                from spotipy.oauth2 import SpotifyOAuth
+                                sp_oauth = SpotifyOAuth(
+                                    client_id=client_id,
+                                    client_secret=client_secret,
+                                    redirect_uri=redirect_uri,
+                                    scope=getattr(action_module, 'SCOPE', ''),
+                                    cache_path=getattr(action_module, 'SPOTIFY_AUTH_CACHE_PATH', None),
+                                    open_browser=False
+                                )
+                                auth_url = sp_oauth.get_authorize_url()
+                        
+                        if auth_url:
+                            return jsonify({
+                                'status': 'success',
+                                'message': action_def.get('step1_message', 'Authorization URL generated'),
+                                'auth_url': auth_url,
+                                'requires_step2': True
+                            })
+                        else:
+                            return jsonify({
+                                'status': 'error',
+                                'message': 'Could not generate authorization URL'
+                            }), 400
+                    except Exception as e:
+                        import traceback
+                        error_details = traceback.format_exc()
+                        print(f"Error executing action step 1: {e}")
+                        print(error_details)
+                        return jsonify({
+                            'status': 'error',
+                            'message': f'Error executing action: {str(e)}'
+                        }), 500
+                else:
+                    # Simple script execution
+                    result = subprocess.run(
+                        ['python3', str(script_file)],
+                        capture_output=True,
+                        text=True,
+                        timeout=60,
+                        env=env
+                    )
+                    
+                    if result.returncode == 0:
+                        return jsonify({
+                            'status': 'success',
+                            'message': action_def.get('success_message', 'Action completed successfully'),
+                            'output': result.stdout
+                        })
+                    else:
+                        return jsonify({
+                            'status': 'error',
+                            'message': action_def.get('error_message', 'Action failed'),
+                            'output': result.stdout + result.stderr
+                        }), 400
+        
+        elif action_type == 'endpoint':
+            # Call a plugin-defined HTTP endpoint (future feature)
+            return jsonify({'status': 'error', 'message': 'Endpoint actions not yet implemented'}), 501
+        
+        else:
+            return jsonify({'status': 'error', 'message': f'Unknown action type: {action_type}'}), 400
+            
+    except subprocess.TimeoutExpired:
+        return jsonify({'status': 'error', 'message': 'Action timed out'}), 408
+    except Exception as e:
+        import traceback
+        error_details = traceback.format_exc()
+        print(f"Error in execute_plugin_action: {str(e)}")
         print(error_details)
         return jsonify({'status': 'error', 'message': str(e)}), 500
 

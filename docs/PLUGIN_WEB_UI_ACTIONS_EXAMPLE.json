@@ -1,0 +1,78 @@
+{
+  "id": "ledmatrix-music",
+  "name": "Music Player - Now Playing",
+  "version": "1.0.3",
+  "description": "Real-time now playing display for Spotify and YouTube Music with album art, scrolling text, and progress bars",
+  "author": "ChuckBuilds",
+  "entry_point": "manager.py",
+  "class_name": "MusicPlugin",
+  "api_version": "1.0.0",
+  "display_modes": ["now_playing"],
+  "update_interval": 2,
+  "dependencies": [
+    "spotipy",
+    "python-socketio[client]",
+    "requests",
+    "pillow"
+  ],
+  "config_schema": "config_schema.json",
+  "requirements_file": "requirements.txt",
+  "tags": ["music", "spotify", "youtube-music", "now-playing", "album-art"],
+  "homepage": "https://github.com/ChuckBuilds/ledmatrix-music",
+  "website": "https://github.com/ChuckBuilds/ledmatrix-music",
+  "license": "MIT",
+  "compatible_versions": [">=2.0.0"],
+  "ledmatrix_version": "2.0.0",
+  "min_ledmatrix_version": "2.0.0",
+  "max_ledmatrix_version": "3.0.0",
+  "download_url_template": "https://github.com/ChuckBuilds/ledmatrix-music/archive/refs/tags/v{version}.zip",
+  "web_ui_actions": [
+    {
+      "id": "authenticate-spotify",
+      "type": "script",
+      "title": "Spotify Authentication",
+      "description": "Click to authenticate with Spotify",
+      "button_text": "Authenticate Spotify",
+      "icon": "fab fa-spotify",
+      "color": "green",
+      "script": "authenticate_spotify.py",
+      "oauth_flow": true,
+      "section_description": "Authenticate with Spotify or YouTube Music to enable music playback display.",
+      "success_message": "Spotify authentication completed successfully",
+      "error_message": "Spotify authentication failed",
+      "step1_message": "Authorization URL generated",
+      "step2_prompt": "Please paste the full redirect URL from Spotify after authorization:",
+      "step2_button_text": "Complete Authentication"
+    },
+    {
+      "id": "authenticate-ytm",
+      "type": "script",
+      "title": "YouTube Music Authentication",
+      "description": "Click to authenticate with YouTube Music",
+      "button_text": "Authenticate YTM",
+      "icon": "fab fa-youtube",
+      "color": "red",
+      "script": "authenticate_ytm.py",
+      "success_message": "YouTube Music authentication completed successfully",
+      "error_message": "YouTube Music authentication failed"
+    }
+  ],
+  "versions": [
+    {
+      "version": "1.0.3",
+      "ledmatrix_min": "2.0.0",
+      "released": "2025-11-05"
+    },
+    {
+      "version": "1.0.0",
+      "ledmatrix_min": "2.0.0",
+      "released": "2025-01-16"
+    }
+  ],
+  "last_updated": "2025-11-05",
+  "stars": 0,
+  "downloads": 0,
+  "verified": true,
+  "screenshot": ""
+}
+
