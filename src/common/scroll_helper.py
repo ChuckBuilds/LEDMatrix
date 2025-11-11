@@ -166,9 +166,10 @@ class ScrollHelper:
         self.scroll_position += pixels_to_move
         self.total_distance_scrolled += pixels_to_move
         
-        # Calculate required total distance: display_width + total_scroll_width
-        # This ensures all content scrolls fully off the left edge
-        required_total_distance = self.display_width + self.total_scroll_width
+        # Calculate required total distance: just total_scroll_width
+        # The image already includes display_width padding at the start, so we only need
+        # to scroll total_scroll_width pixels to show all content once without looping
+        required_total_distance = self.total_scroll_width
         
         # Handle wrap-around - keep scrolling continuously
         if self.scroll_position >= self.total_scroll_width:
@@ -202,7 +203,8 @@ class ScrollHelper:
             and current_time - self.last_progress_log_time >= self.progress_log_interval
         ):
             elapsed_time = current_time - (self.scroll_start_time or current_time)
-            required_total_distance = self.display_width + self.total_scroll_width
+            # The image already includes display_width padding, so we only need total_scroll_width
+            required_total_distance = self.total_scroll_width
             self.logger.info(
                 "Scroll progress: elapsed=%.2fs, target=%.2fs, total_scrolled=%.0f/%d px (%.1f%%)",
                 elapsed_time,
@@ -262,8 +264,9 @@ class ScrollHelper:
         
         try:
             # Calculate total scroll distance needed
-            # Content needs to scroll from right edge to completely off left edge
-            total_scroll_distance = self.display_width + self.total_scroll_width
+            # The image already includes display_width padding at the start, so we only need
+            # to scroll total_scroll_width pixels to show all content once without looping
+            total_scroll_distance = self.total_scroll_width
             
             # Calculate time based on scroll speed (pixels per second)
             # scroll_speed is pixels per second
@@ -421,7 +424,8 @@ class ScrollHelper:
         Returns:
             Dictionary with scroll state information
         """
-        required_total_distance = self.display_width + self.total_scroll_width if self.total_scroll_width > 0 else 0
+        # The image already includes display_width padding, so we only need total_scroll_width
+        required_total_distance = self.total_scroll_width if self.total_scroll_width > 0 else 0
         return {
             'scroll_position': self.scroll_position,
             'total_distance_scrolled': self.total_distance_scrolled,
