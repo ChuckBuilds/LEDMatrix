@@ -267,7 +267,8 @@ def save_main_config():
         # Handle display settings
         display_fields = ['rows', 'cols', 'chain_length', 'parallel', 'brightness', 'hardware_mapping', 
                          'gpio_slowdown', 'scan_mode', 'disable_hardware_pulsing', 'inverse_colors', 'show_refresh_rate',
-                         'pwm_bits', 'pwm_dither_bits', 'pwm_lsb_nanoseconds', 'limit_refresh_rate_hz', 'use_short_date_format']
+                         'pwm_bits', 'pwm_dither_bits', 'pwm_lsb_nanoseconds', 'limit_refresh_rate_hz', 'use_short_date_format',
+                         'max_dynamic_duration_seconds']
         
         if any(k in data for k in display_fields):
             if 'display' not in current_config:
@@ -298,6 +299,12 @@ def save_main_config():
             # Handle display-level checkboxes
             if 'use_short_date_format' in data:
                 current_config['display']['use_short_date_format'] = data.get('use_short_date_format', False)
+            
+            # Handle dynamic duration settings
+            if 'max_dynamic_duration_seconds' in data:
+                if 'dynamic_duration' not in current_config['display']:
+                    current_config['display']['dynamic_duration'] = {}
+                current_config['display']['dynamic_duration']['max_duration_seconds'] = int(data['max_dynamic_duration_seconds'])
 
         # Handle display durations
         duration_fields = [k for k in data.keys() if k.endswith('_duration') or k in ['default_duration', 'transition_duration']]

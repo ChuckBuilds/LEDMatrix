@@ -216,6 +216,24 @@
                     </label>
                 </div>
             </div>
+
+            <!-- Dynamic Duration Settings -->
+            <div class="mt-6 pt-4 border-t border-gray-300">
+                <h4 class="text-sm font-medium text-gray-900 mb-3">Dynamic Duration</h4>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div class="form-group">
+                        <label for="max_dynamic_duration_seconds" class="block text-sm font-medium text-gray-700">Max Dynamic Duration (seconds)</label>
+                        <input type="number"
+                               id="max_dynamic_duration_seconds"
+                               name="max_dynamic_duration_seconds"
+                               value="{{ main_config.display.get('dynamic_duration', {}).get('max_duration_seconds', 180) }}"
+                               min="30"
+                               max="1800"
+                               class="form-control">
+                        <p class="mt-1 text-sm text-gray-600">Maximum time plugins can extend display duration (30-1800 seconds)</p>
+                    </div>
+                </div>
+            </div>
         </div>
 
         <!-- Submit Button -->
