@@ -1022,9 +1022,32 @@ function closeOnDemandModalOnBackdrop(event) {
     }
 }
 
-window.configurePlugin = function(pluginId) {
+window.configurePlugin = async function(pluginId) {
     console.log('[DEBUG] ===== configurePlugin called =====');
     console.log('[DEBUG] Plugin ID:', pluginId);
+    
+    // Ensure plugin data is fresh - refresh from API if needed
+    const plugin = window.installedPlugins?.find(p => p.id === pluginId);
+    if (!plugin || !plugin.last_commit) {
+        console.log('[DEBUG] Plugin data missing commit info, refreshing...');
+        try {
+            const response = await fetch('/api/v3/plugins/installed');
+            const data = await response.json();
+            if (data.status === 'success' && data.data.plugins) {
+                window.installedPlugins = data.data.plugins;
+                // Update Alpine.js app data
+                if (window.Alpine && document.querySelector('[x-data="app()"]')) {
+                    const appElement = document.querySelector('[x-data="app()"]');
+                    if (appElement && appElement._x_dataStack && appElement._x_dataStack[0]) {
+                        appElement._x_dataStack[0].installedPlugins = data.data.plugins;
+                        appElement._x_dataStack[0].updatePluginTabs();
+                    }
+                }
+            }
+        } catch (error) {
+            console.error('[DEBUG] Error refreshing plugin data:', error);
+        }
+    }
     
     // Navigate to the plugin's configuration tab
     if (window.Alpine && document.querySelector('[x-data="app()"]')) {
@@ -1036,8 +1059,8 @@ window.configurePlugin = function(pluginId) {
             
             // Show a notification to confirm navigation
             if (appData.showNotification) {
-                const plugin = window.installedPlugins?.find(p => p.id === pluginId);
-                const pluginName = plugin ? (plugin.name || pluginId) : pluginId;
+                const updatedPlugin = window.installedPlugins?.find(p => p.id === pluginId);
+                const pluginName = updatedPlugin ? (updatedPlugin.name || pluginId) : pluginId;
                 appData.showNotification(`Opening ${pluginName} configuration`, 'info');
             }
         } else {
