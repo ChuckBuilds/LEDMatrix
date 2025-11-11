@@ -1,8 +1,9 @@
-import time
 import logging
 import sys
-from typing import Dict, Any, List
-from datetime import datetime, time as time_obj
+import time
+from datetime import datetime
+from datetime import time as time_obj
+from typing import Any, Dict, List
 
 # Configure logging
 logging.basicConfig(
@@ -12,35 +13,64 @@ logging.basicConfig(
     stream=sys.stdout
 )
 
-from src.clock import Clock
-from src.weather_manager import WeatherManager
-from src.display_manager import DisplayManager
-from src.config_manager import ConfigManager
 from src.cache_manager import CacheManager
+from src.calendar_manager import CalendarManager
+from src.clock import Clock
+from src.config_manager import ConfigManager
+from src.display_manager import DisplayManager
+from src.leaderboard_manager import LeaderboardManager
+from src.milb_manager import MiLBLiveManager, MiLBRecentManager, MiLBUpcomingManager
+from src.mlb_manager import MLBLiveManager, MLBRecentManager, MLBUpcomingManager
+from src.music_manager import MusicManager, SkipModuleException
+from src.nba_managers import NBALiveManager, NBARecentManager, NBAUpcomingManager
+from src.ncaa_baseball_managers import (
+    NCAABaseballLiveManager,
+    NCAABaseballRecentManager,
+    NCAABaseballUpcomingManager,
+)
+from src.ncaa_fb_managers import (
+    NCAAFBLiveManager,
+    NCAAFBRecentManager,
+    NCAAFBUpcomingManager,
+)
+from src.ncaam_basketball_managers import (
+    NCAAMBasketballLiveManager,
+    NCAAMBasketballRecentManager,
+    NCAAMBasketballUpcomingManager,
+)
+from src.ncaam_hockey_managers import (
+    NCAAMHockeyLiveManager,
+    NCAAMHockeyRecentManager,
+    NCAAMHockeyUpcomingManager,
+)
+from src.ncaaw_basketball_managers import (
+    NCAAWBasketballLiveManager,
+    NCAAWBasketballRecentManager,
+    NCAAWBasketballUpcomingManager,
+)
+from src.ncaaw_hockey_managers import (
+    NCAAWHockeyLiveManager,
+    NCAAWHockeyRecentManager,
+    NCAAWHockeyUpcomingManager,
+)
+from src.news_manager import NewsManager
+from src.nfl_managers import NFLLiveManager, NFLRecentManager, NFLUpcomingManager
+from src.nhl_managers import NHLLiveManager, NHLRecentManager, NHLUpcomingManager
+from src.odds_ticker_manager import OddsTickerManager
+from src.of_the_day_manager import OfTheDayManager
+from src.soccer_managers import (
+    SoccerLiveManager,
+    SoccerRecentManager,
+    SoccerUpcomingManager,
+)
+from src.static_image_manager import StaticImageManager
 from src.stock_manager import StockManager
 from src.stock_news_manager import StockNewsManager
-from src.odds_ticker_manager import OddsTickerManager
-from src.leaderboard_manager import LeaderboardManager
-from src.nhl_managers import NHLLiveManager, NHLRecentManager, NHLUpcomingManager
-from src.nba_managers import NBALiveManager, NBARecentManager, NBAUpcomingManager
-from src.wnba_managers import WNBALiveManager, WNBARecentManager, WNBAUpcomingManager
-from src.mlb_manager import MLBLiveManager, MLBRecentManager, MLBUpcomingManager
-from src.milb_manager import MiLBLiveManager, MiLBRecentManager, MiLBUpcomingManager
-from src.soccer_managers import SoccerLiveManager, SoccerRecentManager, SoccerUpcomingManager
-from src.nfl_managers import NFLLiveManager, NFLRecentManager, NFLUpcomingManager
-from src.ncaa_fb_managers import NCAAFBLiveManager, NCAAFBRecentManager, NCAAFBUpcomingManager
-from src.ncaa_baseball_managers import NCAABaseballLiveManager, NCAABaseballRecentManager, NCAABaseballUpcomingManager
-from src.ncaam_basketball_managers import NCAAMBasketballLiveManager, NCAAMBasketballRecentManager, NCAAMBasketballUpcomingManager
-from src.ncaaw_basketball_managers import NCAAWBasketballLiveManager, NCAAWBasketballRecentManager, NCAAWBasketballUpcomingManager
-from src.ncaam_hockey_managers import NCAAMHockeyLiveManager, NCAAMHockeyRecentManager, NCAAMHockeyUpcomingManager
-from src.ncaaw_hockey_managers import NCAAWHockeyLiveManager, NCAAWHockeyRecentManager, NCAAWHockeyUpcomingManager
-from src.youtube_display import YouTubeDisplay
-from src.calendar_manager import CalendarManager
 from src.text_display import TextDisplay
-from src.static_image_manager import StaticImageManager
-from src.music_manager import MusicManager, SkipModuleException
-from src.of_the_day_manager import OfTheDayManager
-from src.news_manager import NewsManager
+from src.ufc_mananger import UFCLiveManager, UFCRecentManager, UFCUpcomingManager
+from src.weather_manager import WeatherManager
+from src.wnba_managers import WNBALiveManager, WNBARecentManager, WNBAUpcomingManager
+from src.youtube_display import YouTubeDisplay
 
 # Get logger without configuring
 logger = logging.getLogger(__name__)
@@ -306,6 +336,21 @@ class DisplayController:
             self.ncaaw_hockey_recent = None
             self.ncaaw_hockey_upcoming = None
         logger.info("NCAA Men's Hockey managers initialized in %.3f seconds", time.time() - ncaaw_hockey_time)
+
+        # Initialize UFC managers if enabled
+        ufc_time = time.time()
+        ufc_enabled = self.config.get('ufc_scoreboard', {}).get('enabled', False)
+        ufc_display_modes = self.config.get('ufc_scoreboard', {}).get('display_modes', {})
+
+        if ufc_enabled:
+            self.ufc_live = UFCLiveManager(self.config, self.display_manager, self.cache_manager) if ufc_display_modes.get('ufc_live', True) else None
+            self.ufc_recent = UFCRecentManager(self.config, self.display_manager, self.cache_manager) if ufc_display_modes.get('ufc_recent', True) else None
+            self.ufc_upcoming = UFCUpcomingManager(self.config, self.display_manager, self.cache_manager) if ufc_display_modes.get('ufc_upcoming', True) else None
+        else:
+            self.ufc_live = None
+            self.ufc_recent = None
+            self.ufc_upcoming = None
+        logger.info("UFC managers initialized in %.3f seconds", time.time() - ufc_time)
         
         # Track MLB rotation state
         self.mlb_current_team_index = 0
@@ -327,6 +372,7 @@ class DisplayController:
         self.ncaaw_basketball_live_priority = self.config.get('ncaaw_basketball_scoreboard', {}).get('live_priority', True)
         self.ncaam_hockey_live_priority = self.config.get('ncaam_hockey_scoreboard', {}).get('live_priority', True)
         self.ncaaw_hockey_live_priority = self.config.get('ncaaw_hockey_scoreboard', {}).get('live_priority', True)
+        self.ufc_live_priority = self.config.get('ufc_scoreboard', {}).get('live_priority', True)
         self.music_live_priority = self.config.get('music', {}).get('live_priority', True)
 
         # Live priority logging throttling
@@ -391,6 +437,9 @@ class DisplayController:
         if ncaaw_hockey_enabled:
             if self.ncaaw_hockey_recent: self.available_modes.append('ncaaw_hockey_recent')
             if self.ncaaw_hockey_upcoming: self.available_modes.append('ncaaw_hockey_upcoming')
+        if ufc_enabled:
+            if self.ufc_recent: self.available_modes.append('ufc_recent')
+            if self.ufc_upcoming: self.available_modes.append('ufc_upcoming')
         # Add live modes to rotation if live_priority is False and there are live games
         self._update_live_modes_in_rotation()
         
@@ -515,9 +564,12 @@ class DisplayController:
             'ncaam_hockey_live': 30, # Added NCAA Men's Hockey durations
             'ncaam_hockey_recent': 15,
             'ncaam_hockey_upcoming': 15,
-            'ncaaw_hockey_live': 30, # Added NCAA Men's Hockey durations
+            'ncaaw_hockey_live': 30, # Added NCAA Women's Hockey durations
             'ncaaw_hockey_recent': 15,
-            'ncaaw_hockey_upcoming': 15
+            'ncaaw_hockey_upcoming': 15,
+            'ufc_live': 30, # Added UFC durations
+            'ufc_recent': 15,
+            'ufc_upcoming': 15
         }
         # Merge loaded durations with defaults
         for key, value in default_durations.items():
@@ -799,6 +851,10 @@ class DisplayController:
             if self.ncaaw_hockey_live: self.ncaaw_hockey_live.update()
             if self.ncaaw_hockey_recent: self.ncaaw_hockey_recent.update()
             if self.ncaaw_hockey_upcoming: self.ncaaw_hockey_upcoming.update()
+        elif current_sport == 'ufc':
+            if self.ufc_live: self.ufc_live.update()
+            if self.ufc_recent: self.ufc_recent.update()
+            if self.ufc_upcoming: self.ufc_upcoming.update()
         else:
             # If no specific sport is active, update all managers (fallback behavior)
             # This ensures data is available when switching to a sport
@@ -854,6 +910,10 @@ class DisplayController:
             if self.ncaaw_hockey_recent: self.ncaaw_hockey_recent.update()
             if self.ncaaw_hockey_upcoming: self.ncaaw_hockey_upcoming.update()
 
+            if self.ufc_live: self.ufc_live.update()
+            if self.ufc_recent: self.ufc_recent.update()
+            if self.ufc_upcoming: self.ufc_upcoming.update()
+
     def _check_live_games(self) -> tuple:
         """
         Check if there are any live games available.
@@ -889,6 +949,8 @@ class DisplayController:
             live_checks['ncaam_hockey'] = self.ncaam_hockey_live and self.ncaam_hockey_live.live_games
         if 'ncaaw_hockey_scoreboard' in self.config and self.config['ncaaw_hockey_scoreboard'].get('enabled', False):
             live_checks['ncaaw_hockey'] = self.ncaaw_hockey_live and self.ncaaw_hockey_live.live_games
+        if 'ufc_scoreboard' in self.config and self.config['ufc_scoreboard'].get('enabled', False):
+            live_checks['ufc'] = self.ufc_live and self.ufc_live.live_games
 
         for sport, has_live_games in live_checks.items():
             if has_live_games:
@@ -1105,6 +1167,7 @@ class DisplayController:
         ncaaw_basketball_enabled = self.config.get('ncaaw_basketball_scoreboard', {}).get('enabled', False)
         ncaam_hockey_enabled = self.config.get('ncaam_hockey_scoreboard', {}).get('enabled', False)
         ncaaw_hockey_enabled = self.config.get('ncaaw_hockey_scoreboard', {}).get('enabled', False)
+        ufc_enabled = self.config.get('ufc_scoreboard', {}).get('enabled', False)
         
         update_mode('nhl_live', getattr(self, 'nhl_live', None), self.nhl_live_priority, nhl_enabled)
         update_mode('nba_live', getattr(self, 'nba_live', None), self.nba_live_priority, nba_enabled)
@@ -1119,6 +1182,7 @@ class DisplayController:
         update_mode('ncaaw_basketball_live', getattr(self, 'ncaaw_basketball_live', None), self.ncaaw_basketball_live_priority, ncaaw_basketball_enabled)
         update_mode('ncaam_hockey_live', getattr(self, 'ncaam_hockey_live', None), self.ncaam_hockey_live_priority, ncaam_hockey_enabled)
         update_mode('ncaaw_hockey_live', getattr(self, 'ncaaw_hockey_live', None), self.ncaaw_hockey_live_priority, ncaaw_hockey_enabled)
+        update_mode('ufc_live', getattr(self, 'ufc_live', None), self.ufc_live_priority, ufc_enabled)
         # Add music to live priority rotation if enabled and music is playing
         music_enabled = self.config.get('music', {}).get('enabled', False)
         # Throttle debug logging - only log every 30 seconds
@@ -1206,7 +1270,8 @@ class DisplayController:
                     ('ncaam_basketball', 'ncaam_basketball_live', self.ncaam_basketball_live_priority),
                     ('ncaaw_basketball', 'ncaaw_basketball_live', self.ncaaw_basketball_live_priority),
                     ('ncaam_hockey', 'ncaam_hockey_live', self.ncaam_hockey_live_priority),
-                    ('ncaaw_hockey', 'ncaaw_hockey_live', self.ncaaw_hockey_live_priority)
+                    ('ncaaw_hockey', 'ncaaw_hockey_live', self.ncaaw_hockey_live_priority),
+                    ('ufc', 'ufc_live', self.ufc_live_priority)
                 ]:
                     manager = getattr(self, attr, None)
 
@@ -1466,6 +1531,12 @@ class DisplayController:
                                 manager_to_display = self.milb_live
                             elif self.current_display_mode == 'soccer_live' and self.soccer_live:
                                 manager_to_display = self.soccer_live
+                            elif self.current_display_mode == 'ufc_live' and self.ufc_live:
+                                manager_to_display = self.ufc_live
+                            elif self.current_display_mode == 'ufc_recent' and self.ufc_recent:
+                                manager_to_display = self.ufc_recent
+                            elif self.current_display_mode == 'ufc_upcoming' and self.ufc_upcoming:
+                                manager_to_display = self.ufc_upcoming
 
                 # --- Perform Display Update ---
                 try:
@@ -1551,6 +1622,10 @@ class DisplayController:
                             self.ncaaw_hockey_recent.display(force_clear=self.force_clear)
                         elif self.current_display_mode == 'ncaaw_hockey_upcoming' and self.ncaaw_hockey_upcoming:
                             self.ncaaw_hockey_upcoming.display(force_clear=self.force_clear)
+                        elif self.current_display_mode == 'ufc_recent' and self.ufc_recent:
+                            self.ufc_recent.display(force_clear=self.force_clear)
+                        elif self.current_display_mode == 'ufc_upcoming' and self.ufc_upcoming:
+                            self.ufc_upcoming.display(force_clear=self.force_clear)
                         elif self.current_display_mode == 'milb_live' and self.milb_live and len(self.milb_live.live_games) > 0:
                             logger.debug(f"[DisplayController] Calling MiLB live display with {len(self.milb_live.live_games)} live games")
                             # Update data before displaying for live managers
