@@ -47,6 +47,7 @@ class ScrollHelper:
         
         # Scrolling state
         self.scroll_position = 0.0
+        self.total_distance_scrolled = 0.0  # Track total distance including wrap-arounds
         self.scroll_speed = 1.0
         self.scroll_delay = 0.001  # Minimal delay for high FPS (1ms)
         self.cached_image: Optional[Image.Image] = None
@@ -121,6 +122,7 @@ class ScrollHelper:
         self.cached_image = full_image
         self.total_scroll_width = total_width
         self.scroll_position = 0.0
+        self.total_distance_scrolled = 0.0
         self.scroll_complete = False
         
         # Calculate dynamic duration
@@ -162,14 +164,32 @@ class ScrollHelper:
         # scroll_speed is now pixels per second, not per frame
         pixels_to_move = self.scroll_speed * delta_time
         self.scroll_position += pixels_to_move
+        self.total_distance_scrolled += pixels_to_move
+        
+        # Calculate required total distance: display_width + total_scroll_width
+        # This ensures all content scrolls fully off the left edge
+        required_total_distance = self.display_width + self.total_scroll_width
         
         # Handle wrap-around - keep scrolling continuously
         if self.scroll_position >= self.total_scroll_width:
             elapsed = current_time - self.scroll_start_time
             self.scroll_position = self.scroll_position - self.total_scroll_width
+            self.logger.info(
+                "Scroll wrap-around detected: position reset, total_distance=%.0f/%d px (elapsed %.2fs, target %.2fs)",
+                self.total_distance_scrolled,
+                required_total_distance,
+                elapsed,
+                self.calculated_duration,
+            )
+        
+        # Mark complete only when we've scrolled the full required distance
+        if self.total_distance_scrolled >= required_total_distance:
+            elapsed = current_time - self.scroll_start_time
             self.scroll_complete = True
             self.logger.info(
-                "Scroll cycle wrap detected after %.2fs (target %.2fs)",
+                "Scroll cycle COMPLETE: scrolled %.0f/%d px (elapsed %.2fs, target %.2fs)",
+                self.total_distance_scrolled,
+                required_total_distance,
                 elapsed,
                 self.calculated_duration,
             )
@@ -182,12 +202,14 @@ class ScrollHelper:
             and current_time - self.last_progress_log_time >= self.progress_log_interval
         ):
             elapsed_time = current_time - (self.scroll_start_time or current_time)
+            required_total_distance = self.display_width + self.total_scroll_width
             self.logger.info(
-                "Scroll progress: elapsed=%.2fs, target=%.2fs, position=%.0f/%d px",
+                "Scroll progress: elapsed=%.2fs, target=%.2fs, total_scrolled=%.0f/%d px (%.1f%%)",
                 elapsed_time,
                 self.calculated_duration,
-                self.scroll_position,
-                self.total_scroll_width,
+                self.total_distance_scrolled,
+                required_total_distance,
+                (self.total_distance_scrolled / required_total_distance * 100) if required_total_distance > 0 else 0.0,
             )
             self.last_progress_log_time = current_time
     
@@ -288,6 +310,7 @@ class ScrollHelper:
         Reset scroll position to beginning.
         """
         self.scroll_position = 0.0
+        self.total_distance_scrolled = 0.0
         self.scroll_complete = False
         now = time.time()
         self.scroll_start_time = now
@@ -385,6 +408,7 @@ class ScrollHelper:
         self.cached_image = None
         self.total_scroll_width = 0
         self.scroll_position = 0.0
+        self.total_distance_scrolled = 0.0
         self.scroll_complete = False
         self.scroll_start_time = None
         self.last_progress_log_time = None
@@ -397,8 +421,11 @@ class ScrollHelper:
         Returns:
             Dictionary with scroll state information
         """
+        required_total_distance = self.display_width + self.total_scroll_width if self.total_scroll_width > 0 else 0
         return {
             'scroll_position': self.scroll_position,
+            'total_distance_scrolled': self.total_distance_scrolled,
+            'required_total_distance': required_total_distance,
             'scroll_speed': self.scroll_speed,
             'scroll_delay': self.scroll_delay,
             'total_width': self.total_scroll_width,
