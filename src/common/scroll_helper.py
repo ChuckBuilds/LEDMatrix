@@ -62,6 +62,9 @@ class ScrollHelper:
         self.max_duration = 300
         self.duration_buffer = 0.1
         self.calculated_duration = 60
+        self.scroll_start_time: Optional[float] = None
+        self.last_progress_log_time: Optional[float] = None
+        self.progress_log_interval = 5.0  # seconds
         
         # Frame rate tracking
         self.frame_count = 0
@@ -122,6 +125,16 @@ class ScrollHelper:
         
         # Calculate dynamic duration
         self._calculate_dynamic_duration()
+        now = time.time()
+        self.scroll_start_time = now
+        self.last_progress_log_time = now
+        self.logger.info(
+            "Dynamic duration target set to %ds (min=%ds, max=%ds, buffer=%.2f)",
+            self.calculated_duration,
+            self.min_duration,
+            self.max_duration,
+            self.duration_buffer,
+        )
         
         self.logger.debug(f"Created scrolling image: {total_width}x{self.display_height}")
         return full_image
@@ -140,6 +153,10 @@ class ScrollHelper:
         
         delta_time = current_time - self.last_update_time
         self.last_update_time = current_time
+
+        if self.scroll_start_time is None:
+            self.scroll_start_time = current_time
+            self.last_progress_log_time = current_time
         
         # Update scroll position based on time delta for consistent speed
         # scroll_speed is now pixels per second, not per frame
@@ -148,10 +165,31 @@ class ScrollHelper:
         
         # Handle wrap-around - keep scrolling continuously
         if self.scroll_position >= self.total_scroll_width:
+            elapsed = current_time - self.scroll_start_time
             self.scroll_position = self.scroll_position - self.total_scroll_width
             self.scroll_complete = True
+            self.logger.info(
+                "Scroll cycle wrap detected after %.2fs (target %.2fs)",
+                elapsed,
+                self.calculated_duration,
+            )
         else:
             self.scroll_complete = False
+
+        if (
+            self.dynamic_duration_enabled
+            and self.last_progress_log_time is not None
+            and current_time - self.last_progress_log_time >= self.progress_log_interval
+        ):
+            elapsed_time = current_time - (self.scroll_start_time or current_time)
+            self.logger.info(
+                "Scroll progress: elapsed=%.2fs, target=%.2fs, position=%.0f/%d px",
+                elapsed_time,
+                self.calculated_duration,
+                self.scroll_position,
+                self.total_scroll_width,
+            )
+            self.last_progress_log_time = current_time
     
     def get_visible_portion(self) -> Optional[Image.Image]:
         """
@@ -251,6 +289,9 @@ class ScrollHelper:
         """
         self.scroll_position = 0.0
         self.scroll_complete = False
+        now = time.time()
+        self.scroll_start_time = now
+        self.last_progress_log_time = now
         self.logger.debug("Scroll position reset")
     
     def set_scroll_speed(self, speed: float) -> None:
@@ -345,6 +386,8 @@ class ScrollHelper:
         self.total_scroll_width = 0
         self.scroll_position = 0.0
         self.scroll_complete = False
+        self.scroll_start_time = None
+        self.last_progress_log_time = None
         self.logger.debug("Scroll cache cleared")
     
     def get_scroll_info(self) -> Dict[str, Any]:
@@ -362,5 +405,8 @@ class ScrollHelper:
             'is_scrolling': self.is_scrolling,
             'scroll_complete': self.scroll_complete,
             'dynamic_duration': self.calculated_duration,
+            'elapsed_time': (time.time() - self.scroll_start_time)
+            if self.scroll_start_time
+            else None,
             'cached_image_size': (self.cached_image.width, self.cached_image.height) if self.cached_image else None
         }
