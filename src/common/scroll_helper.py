@@ -5,18 +5,21 @@ Handles scrolling text and image content for LED matrix displays.
 Extracted from LEDMatrix core to provide reusable functionality for plugins.
 
 Features:
-- Pre-rendered scrolling image caching
+- Pre-rendered scrolling image caching with numpy array optimization
+- Fast numpy-based image slicing for high-performance scrolling (100+ FPS)
 - Scroll position management with wrap-around
 - Dynamic duration calculation based on content width
 - Frame rate tracking and logging
 - Scrolling state management integration with display_manager
 - Support for both continuous and bounded scrolling modes
+- Pre-allocated buffers to minimize memory allocations
 """
 
 import logging
 import time
 from typing import Optional, Dict, Any
 from PIL import Image
+import numpy as np
 
 
 class ScrollHelper:
@@ -24,11 +27,19 @@ class ScrollHelper:
     Helper class for scrolling text and image content on LED displays.
     
     Provides functionality for:
-    - Creating and caching scrolling images
+    - Creating and caching scrolling images (with numpy array optimization)
+    - Fast numpy-based image slicing for high-performance scrolling
     - Managing scroll position with wrap-around
     - Calculating dynamic display duration
     - Frame rate tracking and performance monitoring
     - Integration with display manager scrolling state
+    - Pre-allocated buffers for minimal memory allocations
+    
+    Performance optimizations:
+    - Uses numpy arrays for fast array slicing instead of PIL crop operations
+    - Pre-computes numpy array from PIL image to avoid repeated conversions
+    - Reuses pre-allocated frame buffer to minimize allocations
+    - Optimized for 100+ FPS scrolling performance
     """
     
     def __init__(self, display_width: int, display_height: int,
@@ -51,7 +62,14 @@ class ScrollHelper:
         self.scroll_speed = 1.0
         self.scroll_delay = 0.001  # Minimal delay for high FPS (1ms)
         self.cached_image: Optional[Image.Image] = None
+        self.cached_array: Optional[np.ndarray] = None  # Numpy array cache for fast operations
         self.total_scroll_width = 0
+        
+        # Pre-allocated buffer for output frame (reused to avoid allocations)
+        self._frame_buffer: Optional[np.ndarray] = None
+        
+        # Time tracking for scroll updates
+        self.last_update_time: Optional[float] = None
         
         # High FPS settings
         self.target_fps = 120  # Target 120 FPS for smooth scrolling
@@ -120,10 +138,16 @@ class ScrollHelper:
         
         # Store the image and update scroll width
         self.cached_image = full_image
+        # Convert to numpy array for fast operations
+        self.cached_array = np.array(full_image)
         self.total_scroll_width = total_width
         self.scroll_position = 0.0
         self.total_distance_scrolled = 0.0
         self.scroll_complete = False
+        
+        # Pre-allocate frame buffer if needed
+        if self._frame_buffer is None or self._frame_buffer.shape != (self.display_height, self.display_width, 3):
+            self._frame_buffer = np.zeros((self.display_height, self.display_width, 3), dtype=np.uint8)
         
         # Calculate dynamic duration
         self._calculate_dynamic_duration()
@@ -150,7 +174,7 @@ class ScrollHelper:
         
         # Calculate frame time for consistent scroll speed regardless of FPS
         current_time = time.time()
-        if not hasattr(self, 'last_update_time'):
+        if self.last_update_time is None:
             self.last_update_time = current_time
         
         delta_time = current_time - self.last_update_time
@@ -217,40 +241,45 @@ class ScrollHelper:
     
     def get_visible_portion(self) -> Optional[Image.Image]:
         """
-        Get the currently visible portion of the scrolling image.
+        Get the currently visible portion of the scrolling image using fast numpy operations.
         
         Returns:
             PIL Image showing the visible portion, or None if no cached image
         """
-        if not self.cached_image:
+        if not self.cached_image or self.cached_array is None:
             return None
         
         # Calculate visible region
         start_x = int(self.scroll_position)
         end_x = start_x + self.display_width
         
-        # Handle wrap-around if needed
+        # Fast numpy array slicing for normal case (no wrap-around)
         if end_x <= self.cached_image.width:
-            # Normal case: single crop
-            return self.cached_image.crop((start_x, 0, end_x, self.display_height))
+            # Normal case: single slice - fastest path
+            frame_array = self.cached_array[:, start_x:end_x]
+            # Convert to PIL Image (minimal overhead)
+            return Image.fromarray(frame_array)
         else:
-            # Wrap-around case: combine two crops
+            # Wrap-around case: combine two slices using numpy
             width1 = self.cached_image.width - start_x
             if width1 > 0:
-                # First part from end of image
-                part1 = self.cached_image.crop((start_x, 0, self.cached_image.width, self.display_height))
+                # Use pre-allocated buffer for output
+                if self._frame_buffer is None or self._frame_buffer.shape != (self.display_height, self.display_width, 3):
+                    self._frame_buffer = np.zeros((self.display_height, self.display_width, 3), dtype=np.uint8)
+                
+                # First part from end of image (fast numpy slice)
+                self._frame_buffer[:, :width1] = self.cached_array[:, start_x:]
+                
                 # Second part from beginning of image
                 remaining_width = self.display_width - width1
-                part2 = self.cached_image.crop((0, 0, remaining_width, self.display_height))
+                self._frame_buffer[:, width1:] = self.cached_array[:, :remaining_width]
                 
-                # Combine the parts
-                combined = Image.new('RGB', (self.display_width, self.display_height), (0, 0, 0))
-                combined.paste(part1, (0, 0))
-                combined.paste(part2, (width1, 0))
-                return combined
+                # Convert combined buffer to PIL Image
+                return Image.fromarray(self._frame_buffer)
             else:
-                # Edge case: start_x >= image width
-                return self.cached_image.crop((0, 0, self.display_width, self.display_height))
+                # Edge case: start_x >= image width, wrap to beginning
+                frame_array = self.cached_array[:, :self.display_width]
+                return Image.fromarray(frame_array)
     
     def calculate_dynamic_duration(self) -> int:
         """
@@ -340,6 +369,17 @@ class ScrollHelper:
         self.scroll_delay = max(0.001, min(1.0, delay))
         self.logger.debug(f"Scroll delay set to: {self.scroll_delay}")
     
+    def set_target_fps(self, fps: float) -> None:
+        """
+        Set the target frames per second for scrolling.
+        
+        Args:
+            fps: Target FPS (typically 30-200, default 120)
+        """
+        self.target_fps = max(30.0, min(200.0, fps))
+        self.frame_time_target = 1.0 / self.target_fps
+        self.logger.debug(f"Target FPS set to: {self.target_fps} FPS (frame_time_target: {self.frame_time_target:.4f}s)")
+    
     def set_dynamic_duration_settings(self, enabled: bool = True,
                                     min_duration: int = 30,
                                     max_duration: int = 300,
@@ -409,6 +449,7 @@ class ScrollHelper:
         Clear the cached scrolling image.
         """
         self.cached_image = None
+        self.cached_array = None
         self.total_scroll_width = 0
         self.scroll_position = 0.0
         self.total_distance_scrolled = 0.0
