@@ -797,16 +797,30 @@ def get_installed_plugins():
             store_info = api_v3.plugin_store_manager.get_plugin_info(plugin_id)
             verified = store_info.get('verified', False) if store_info else False
 
-            last_updated = plugin_info.get('last_updated')
-            last_commit = plugin_info.get('last_commit') or plugin_info.get('last_commit_sha')
-            last_commit_message = plugin_info.get('last_commit_message')
-            branch = plugin_info.get('branch')
+            # Get local git info for installed plugin (actual installed version)
+            plugin_path = Path(api_v3.plugin_manager.plugins_dir) / plugin_id
+            local_git_info = api_v3.plugin_store_manager._get_local_git_info(plugin_path) if plugin_path.exists() else None
 
-            if store_info:
-                last_updated = last_updated or store_info.get('last_updated') or store_info.get('last_updated_iso')
-                last_commit = last_commit or store_info.get('last_commit') or store_info.get('last_commit_sha')
-                last_commit_message = last_commit_message or store_info.get('last_commit_message')
-                branch = branch or store_info.get('branch') or store_info.get('default_branch')
+            # Use local git info if available (actual installed version), otherwise fall back to manifest/store info
+            if local_git_info:
+                last_commit = local_git_info.get('short_sha') or local_git_info.get('sha', '')[:7] if local_git_info.get('sha') else None
+                branch = local_git_info.get('branch')
+                # Use commit date from git if available
+                last_updated = local_git_info.get('date_iso') or local_git_info.get('date')
+            else:
+                # Fall back to manifest/store info if no local git info
+                last_updated = plugin_info.get('last_updated')
+                last_commit = plugin_info.get('last_commit') or plugin_info.get('last_commit_sha')
+                branch = plugin_info.get('branch')
+
+                if store_info:
+                    last_updated = last_updated or store_info.get('last_updated') or store_info.get('last_updated_iso')
+                    last_commit = last_commit or store_info.get('last_commit') or store_info.get('last_commit_sha')
+                    branch = branch or store_info.get('branch') or store_info.get('default_branch')
+
+            last_commit_message = plugin_info.get('last_commit_message')
+            if store_info and not last_commit_message:
+                last_commit_message = store_info.get('last_commit_message')
             
             # Get web_ui_actions from manifest if available
             web_ui_actions = plugin_info.get('web_ui_actions', [])

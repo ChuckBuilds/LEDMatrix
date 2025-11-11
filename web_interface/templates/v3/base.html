@@ -493,8 +493,12 @@
                                                     <dd class="text-sm text-gray-900" x-text="plugin.author || 'Unknown'"></dd>
                                                 </div>
                                                 <div>
-                                                    <dt class="text-sm font-medium text-gray-500">Version</dt>
-                                                    <dd class="text-sm text-gray-900" x-text="plugin.version || '1.0.0'"></dd>
+                                                    <dt class="text-sm font-medium text-gray-500">Commit</dt>
+                                                    <dd class="text-sm text-gray-900" x-text="$root.formatCommitInfo(plugin.last_commit, plugin.branch)"></dd>
+                                                </div>
+                                                <div>
+                                                    <dt class="text-sm font-medium text-gray-500">Date</dt>
+                                                    <dd class="text-sm text-gray-900" x-text="$root.formatDateInfo(plugin.last_updated)"></dd>
                                                 </div>
                                                 <div>
                                                     <dt class="text-sm font-medium text-gray-500">Category</dt>
@@ -1448,6 +1452,50 @@
                         console.error('Error saving plugin config:', error);
                         this.showNotification('Error saving configuration: ' + error.message, 'error');
                     }
+                },
+
+                formatCommitInfo(commit, branch) {
+                    if (!commit && !branch) return 'Unknown';
+                    const shortCommit = commit ? String(commit).substring(0, 7) : '';
+                    const branchText = branch ? String(branch) : '';
+
+                    if (branchText && shortCommit) {
+                        return `${branchText} · ${shortCommit}`;
+                    }
+                    if (branchText) {
+                        return branchText;
+                    }
+                    if (shortCommit) {
+                        return shortCommit;
+                    }
+                    return 'Latest';
+                },
+
+                formatDateInfo(dateString) {
+                    if (!dateString) return 'Unknown';
+                    
+                    try {
+                        const date = new Date(dateString);
+                        const now = new Date();
+                        const diffTime = Math.abs(now - date);
+                        const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+                        
+                        if (diffDays < 1) {
+                            return 'Today';
+                        } else if (diffDays < 2) {
+                            return 'Yesterday';
+                        } else if (diffDays < 7) {
+                            return `${diffDays} days ago`;
+                        } else if (diffDays < 30) {
+                            const weeks = Math.floor(diffDays / 7);
+                            return `${weeks} ${weeks === 1 ? 'week' : 'weeks'} ago`;
+                        } else {
+                            // Return formatted date for older items
+                            return date.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
+                        }
+                    } catch (e) {
+                        return dateString;
+                    }
                 }
             }
         }
@@ -2076,6 +2124,56 @@
                 app.showNotification('Error refreshing plugin: ' + error.message, 'error');
             }
         }
+
+        // Format commit information for display
+        function formatCommitInfo(commit, branch) {
+            if (!commit && !branch) return 'Unknown';
+            const shortCommit = commit ? String(commit).substring(0, 7) : '';
+            const branchText = branch ? String(branch) : '';
+
+            if (branchText && shortCommit) {
+                return `${branchText} · ${shortCommit}`;
+            }
+            if (branchText) {
+                return branchText;
+            }
+            if (shortCommit) {
+                return shortCommit;
+            }
+            return 'Latest';
+        }
+
+        // Format date for display
+        function formatDateInfo(dateString) {
+            if (!dateString) return 'Unknown';
+            
+            try {
+                const date = new Date(dateString);
+                const now = new Date();
+                const diffTime = Math.abs(now - date);
+                const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+                
+                if (diffDays < 1) {
+                    return 'Today';
+                } else if (diffDays < 2) {
+                    return 'Yesterday';
+                } else if (diffDays < 7) {
+                    return `${diffDays} days ago`;
+                } else if (diffDays < 30) {
+                    const weeks = Math.floor(diffDays / 7);
+                    return `${weeks} ${weeks === 1 ? 'week' : 'weeks'} ago`;
+                } else {
+                    // Return formatted date for older items
+                    return date.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
+                }
+            } catch (e) {
+                return dateString;
+            }
+        }
+
+        // Make functions available to Alpine.js
+        window.formatCommitInfo = formatCommitInfo;
+        window.formatDateInfo = formatDateInfo;
 
     </script>
 

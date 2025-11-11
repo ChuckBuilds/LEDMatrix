@@ -1050,7 +1050,7 @@ class PluginStoreManager:
             return False
 
     def _get_local_git_info(self, plugin_path: Path) -> Optional[Dict[str, str]]:
-        """Return local git branch and commit hash if the plugin is a git checkout."""
+        """Return local git branch, commit hash, and commit date if the plugin is a git checkout."""
         git_dir = plugin_path / '.git'
         if not git_dir.exists():
             return None
@@ -1077,11 +1077,28 @@ class PluginStoreManager:
             if branch == 'HEAD':
                 branch = ''
 
-            return {
+            # Get commit date in ISO format
+            date_result = subprocess.run(
+                ['git', '-C', str(plugin_path), 'log', '-1', '--format=%cI', 'HEAD'],
+                capture_output=True,
+                text=True,
+                timeout=10,
+                check=True
+            )
+            commit_date_iso = date_result.stdout.strip()
+
+            result = {
                 'sha': sha,
                 'short_sha': sha[:7] if sha else '',
                 'branch': branch
             }
+
+            # Add commit date if available
+            if commit_date_iso:
+                result['date_iso'] = commit_date_iso
+                result['date'] = self._iso_to_date(commit_date_iso)
+
+            return result
         except subprocess.CalledProcessError as err:
             self.logger.debug(f"Failed to read git info for {plugin_path.name}: {err}")
         except subprocess.TimeoutExpired:
