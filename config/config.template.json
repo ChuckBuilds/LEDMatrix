@@ -96,6 +96,13 @@
             "max_duration_seconds": 240
         }
     },
+    "leaderboard": {
+        "enabled": true,
+        "dynamic_duration": {
+            "enabled": true,
+            "max_duration_seconds": 300
+        }
+    },
     "web-ui-info": {
         "enabled": true,
         "display_duration": 10,
