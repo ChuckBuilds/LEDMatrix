@@ -56,8 +56,24 @@ class PluginManager:
         self.plugin_last_update: Dict[str, float] = {}
         
         # Ensure plugins directory exists
-        self.plugins_dir.mkdir(exist_ok=True)
-        self.logger.info(f"Plugin Manager initialized with plugins directory: {self.plugins_dir}")
+        try:
+            self.plugins_dir.mkdir(exist_ok=True)
+            self.logger.info(f"Plugin Manager initialized with plugins directory: {self.plugins_dir}")
+        except PermissionError as e:
+            self.logger.error(
+                f"Permission denied creating plugins directory: {self.plugins_dir}. "
+                f"Error: {e}. "
+                f"Please ensure the directory exists and has proper permissions. "
+                f"Run: sudo bash scripts/fix_perms/fix_plugin_permissions.sh"
+            )
+            raise
+        except OSError as e:
+            self.logger.error(
+                f"Failed to create plugins directory: {self.plugins_dir}. "
+                f"Error: {e}. "
+                f"Please check the path and permissions."
+            )
+            raise
         
     def discover_plugins(self) -> List[str]:
         """

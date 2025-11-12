@@ -302,6 +302,28 @@ else
     
     echo "✓ Plugin permissions fixed manually"
 fi
+
+# Also ensure plugin-repos directory exists with proper permissions
+# This is where plugins installed via the plugin store are stored
+PLUGIN_REPOS_DIR="$PROJECT_ROOT_DIR/plugin-repos"
+if [ ! -d "$PLUGIN_REPOS_DIR" ]; then
+    echo "Creating plugin-repos directory..."
+    mkdir -p "$PLUGIN_REPOS_DIR"
+fi
+
+# Set ownership to root:ACTUAL_USER for mixed access
+echo "Setting ownership of plugin-repos to root:$ACTUAL_USER..."
+chown -R root:"$ACTUAL_USER" "$PLUGIN_REPOS_DIR"
+
+# Set directory permissions (775: rwxrwxr-x)
+echo "Setting plugin-repos directory permissions to 775..."
+find "$PLUGIN_REPOS_DIR" -type d -exec chmod 775 {} \;
+
+# Set file permissions (664: rw-rw-r--)
+echo "Setting plugin-repos file permissions to 664..."
+find "$PLUGIN_REPOS_DIR" -type f -exec chmod 664 {} \;
+
+echo "✓ Plugin-repos directory permissions fixed"
 echo ""
 
 CURRENT_STEP="Install main LED Matrix service"

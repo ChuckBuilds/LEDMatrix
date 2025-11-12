@@ -15,9 +15,11 @@ fi
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 PROJECT_ROOT_DIR="$( cd "$SCRIPT_DIR/../.." && pwd )"
 PLUGINS_DIR="$PROJECT_ROOT_DIR/plugins"
+PLUGIN_REPOS_DIR="$PROJECT_ROOT_DIR/plugin-repos"
 
 echo "Project root directory: $PROJECT_ROOT_DIR"
 echo "Plugins directory: $PLUGINS_DIR"
+echo "Plugin-repos directory: $PLUGIN_REPOS_DIR"
 echo "Actual user: $ACTUAL_USER"
 
 # Ensure plugins directory exists
@@ -41,10 +43,30 @@ find "$PLUGINS_DIR" -type d -exec sudo chmod 775 {} \;
 echo "Setting file permissions to 664..."
 find "$PLUGINS_DIR" -type f -exec sudo chmod 664 {} \;
 
+# Also ensure plugin-repos directory exists with proper permissions
+# This is where plugins installed via the plugin store are stored
+if [ ! -d "$PLUGIN_REPOS_DIR" ]; then
+    echo "Creating plugin-repos directory..."
+    mkdir -p "$PLUGIN_REPOS_DIR"
+fi
+
+echo "Setting ownership of plugin-repos to root:$ACTUAL_USER..."
+sudo chown -R root:"$ACTUAL_USER" "$PLUGIN_REPOS_DIR"
+
+echo "Setting plugin-repos directory permissions to 775..."
+find "$PLUGIN_REPOS_DIR" -type d -exec sudo chmod 775 {} \;
+
+echo "Setting plugin-repos file permissions to 664..."
+find "$PLUGIN_REPOS_DIR" -type f -exec sudo chmod 664 {} \;
+
 echo "Plugin permissions fixed successfully!"
 echo ""
 echo "Directory structure:"
-ls -la "$PLUGINS_DIR"
+echo "plugins/:"
+ls -la "$PLUGINS_DIR" 2>/dev/null || echo "  (empty or not accessible)"
+echo ""
+echo "plugin-repos/:"
+ls -la "$PLUGIN_REPOS_DIR" 2>/dev/null || echo "  (empty or not accessible)"
 echo ""
 echo "Permissions summary:"
 echo "- Root service: Can read/write plugins (for PWM hardware access)"
