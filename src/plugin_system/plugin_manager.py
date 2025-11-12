@@ -56,29 +56,39 @@ class PluginManager:
         self.plugin_last_update: Dict[str, float] = {}
         
         # Ensure plugins directory exists
-        # Check if directory already exists first
-        if self.plugins_dir.exists():
-            self.logger.info(f"Plugin Manager initialized with plugins directory: {self.plugins_dir}")
-        else:
-            # Try to create the directory
-            try:
-                self.plugins_dir.mkdir(parents=True, exist_ok=True)
+        # Check if directory already exists first (handle permission errors gracefully)
+        try:
+            if self.plugins_dir.exists():
                 self.logger.info(f"Plugin Manager initialized with plugins directory: {self.plugins_dir}")
-            except PermissionError as e:
-                self.logger.warning(
-                    f"Permission denied creating plugins directory: {self.plugins_dir}. "
-                    f"Error: {e}. "
-                    f"Plugin system will be disabled until the directory is created with proper permissions. "
-                    f"To fix, run: sudo bash scripts/fix_perms/fix_plugin_permissions.sh"
-                )
-                # Don't raise - allow system to continue without plugins
-            except OSError as e:
-                self.logger.warning(
-                    f"Failed to create plugins directory: {self.plugins_dir}. "
-                    f"Error: {e}. "
-                    f"Plugin system will be disabled. Please check the path and permissions."
-                )
-                # Don't raise - allow system to continue without plugins
+            else:
+                # Try to create the directory
+                try:
+                    self.plugins_dir.mkdir(parents=True, exist_ok=True)
+                    self.logger.info(f"Plugin Manager initialized with plugins directory: {self.plugins_dir}")
+                except PermissionError as e:
+                    self.logger.warning(
+                        f"Permission denied creating plugins directory: {self.plugins_dir}. "
+                        f"Error: {e}. "
+                        f"Plugin system will be disabled until the directory is created with proper permissions. "
+                        f"To fix, run: sudo bash scripts/fix_perms/fix_plugin_permissions.sh"
+                    )
+                    # Don't raise - allow system to continue without plugins
+                except OSError as e:
+                    self.logger.warning(
+                        f"Failed to create plugins directory: {self.plugins_dir}. "
+                        f"Error: {e}. "
+                        f"Plugin system will be disabled. Please check the path and permissions."
+                    )
+                    # Don't raise - allow system to continue without plugins
+        except PermissionError as e:
+            # Can't even check if directory exists (parent directory not accessible)
+            self.logger.warning(
+                f"Permission denied accessing plugins directory: {self.plugins_dir}. "
+                f"Error: {e}. "
+                f"Plugin system will be disabled. The directory may need to be created with proper permissions. "
+                f"To fix, run: sudo bash scripts/fix_perms/fix_plugin_permissions.sh"
+            )
+            # Don't raise - allow system to continue without plugins
         
     def discover_plugins(self) -> List[str]:
         """
