@@ -50,8 +50,11 @@ def main():
 
     autostart_enabled = config_data.get("web_display_autostart", False)
 
-    if autostart_enabled is True: # Explicitly check for True
-        print("Configuration 'web_display_autostart' is true. Starting web interface...")
+    # Handle both boolean True and string "on"/"true" values
+    is_enabled = (autostart_enabled is True) or (isinstance(autostart_enabled, str) and autostart_enabled.lower() in ("on", "true", "yes", "1"))
+
+    if is_enabled:
+        print("Configuration 'web_display_autostart' is enabled. Starting web interface...")
         
         # Install dependencies
         if not install_dependencies():
