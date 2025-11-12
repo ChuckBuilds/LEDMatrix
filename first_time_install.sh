@@ -439,9 +439,17 @@ if [ -f "$PROJECT_ROOT_DIR/requirements.txt" ]; then
     PACKAGE_NUM=0
     
     while IFS= read -r line || [ -n "$line" ]; do
-        # Skip comments and empty lines
-        line=$(echo "$line" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
-        if [[ "$line" =~ ^#.*$ ]] || [[ -z "$line" ]]; then
+        # Remove inline comments (everything after #) but preserve comment-only lines
+        # First check if line starts with # (comment-only line)
+        if [[ "$line" =~ ^[[:space:]]*# ]]; then
+            continue
+        fi
+        
+        # Remove inline comments and trim whitespace
+        line=$(echo "$line" | sed 's/[[:space:]]*#.*$//' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+        
+        # Skip empty lines
+        if [[ -z "$line" ]]; then
             continue
         fi
         
