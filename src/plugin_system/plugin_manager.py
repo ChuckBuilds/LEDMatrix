@@ -56,24 +56,29 @@ class PluginManager:
         self.plugin_last_update: Dict[str, float] = {}
         
         # Ensure plugins directory exists
-        try:
-            self.plugins_dir.mkdir(exist_ok=True)
+        # Check if directory already exists first
+        if self.plugins_dir.exists():
             self.logger.info(f"Plugin Manager initialized with plugins directory: {self.plugins_dir}")
-        except PermissionError as e:
-            self.logger.error(
-                f"Permission denied creating plugins directory: {self.plugins_dir}. "
-                f"Error: {e}. "
-                f"Please ensure the directory exists and has proper permissions. "
-                f"Run: sudo bash scripts/fix_perms/fix_plugin_permissions.sh"
-            )
-            raise
-        except OSError as e:
-            self.logger.error(
-                f"Failed to create plugins directory: {self.plugins_dir}. "
-                f"Error: {e}. "
-                f"Please check the path and permissions."
-            )
-            raise
+        else:
+            # Try to create the directory
+            try:
+                self.plugins_dir.mkdir(parents=True, exist_ok=True)
+                self.logger.info(f"Plugin Manager initialized with plugins directory: {self.plugins_dir}")
+            except PermissionError as e:
+                self.logger.warning(
+                    f"Permission denied creating plugins directory: {self.plugins_dir}. "
+                    f"Error: {e}. "
+                    f"Plugin system will be disabled until the directory is created with proper permissions. "
+                    f"To fix, run: sudo bash scripts/fix_perms/fix_plugin_permissions.sh"
+                )
+                # Don't raise - allow system to continue without plugins
+            except OSError as e:
+                self.logger.warning(
+                    f"Failed to create plugins directory: {self.plugins_dir}. "
+                    f"Error: {e}. "
+                    f"Plugin system will be disabled. Please check the path and permissions."
+                )
+                # Don't raise - allow system to continue without plugins
         
     def discover_plugins(self) -> List[str]:
         """
