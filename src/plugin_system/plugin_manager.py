@@ -101,11 +101,40 @@ class PluginManager:
         """
         discovered = []
         
-        if not self.plugins_dir.exists():
-            self.logger.warning(f"Plugins directory not found: {self.plugins_dir}")
+        # Check if directory exists (handle permission errors gracefully)
+        try:
+            if not self.plugins_dir.exists():
+                self.logger.warning(f"Plugins directory not found: {self.plugins_dir}")
+                return discovered
+        except PermissionError as e:
+            self.logger.warning(
+                f"Permission denied accessing plugins directory: {self.plugins_dir}. "
+                f"Error: {e}. Plugin discovery skipped."
+            )
+            return discovered
+        except OSError as e:
+            self.logger.warning(
+                f"Error accessing plugins directory: {self.plugins_dir}. "
+                f"Error: {e}. Plugin discovery skipped."
+            )
             return discovered
         
-        for item in self.plugins_dir.iterdir():
+        try:
+            items = list(self.plugins_dir.iterdir())
+        except PermissionError as e:
+            self.logger.warning(
+                f"Permission denied reading plugins directory: {self.plugins_dir}. "
+                f"Error: {e}. Plugin discovery skipped."
+            )
+            return discovered
+        except OSError as e:
+            self.logger.warning(
+                f"Error reading plugins directory: {self.plugins_dir}. "
+                f"Error: {e}. Plugin discovery skipped."
+            )
+            return discovered
+        
+        for item in items:
             if not item.is_dir():
                 continue
             
