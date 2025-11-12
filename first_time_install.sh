@@ -416,12 +416,133 @@ echo "-----------------------------------------------"
 # Install main project Python dependencies
 cd "$PROJECT_ROOT_DIR"
 if [ -f "$PROJECT_ROOT_DIR/requirements.txt" ]; then
-    python3 -m pip install --break-system-packages -r "$PROJECT_ROOT_DIR/requirements.txt"
+    echo "Reading requirements from: $PROJECT_ROOT_DIR/requirements.txt"
+    
+    # Check pip version and upgrade if needed
+    echo "Checking pip version..."
+    python3 -m pip --version
+    
+    # Upgrade pip, setuptools, and wheel for better compatibility
+    echo "Upgrading pip, setuptools, and wheel..."
+    python3 -m pip install --break-system-packages --upgrade pip setuptools wheel || {
+        echo "⚠ Warning: Failed to upgrade pip/setuptools/wheel, continuing anyway..."
+    }
+    
+    # Count total packages for progress
+    TOTAL_PACKAGES=$(grep -v '^#' "$PROJECT_ROOT_DIR/requirements.txt" | grep -v '^$' | wc -l)
+    echo "Found $TOTAL_PACKAGES package(s) to install"
+    echo ""
+    
+    # Install packages one at a time for better diagnostics
+    INSTALLED=0
+    FAILED=0
+    PACKAGE_NUM=0
+    
+    while IFS= read -r line || [ -n "$line" ]; do
+        # Skip comments and empty lines
+        line=$(echo "$line" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+        if [[ "$line" =~ ^#.*$ ]] || [[ -z "$line" ]]; then
+            continue
+        fi
+        
+        PACKAGE_NUM=$((PACKAGE_NUM + 1))
+        echo "[$PACKAGE_NUM/$TOTAL_PACKAGES] Installing: $line"
+        
+        # Check if package is already installed (basic check - may not catch all cases)
+        PACKAGE_NAME=$(echo "$line" | sed -E 's/[<>=!].*$//' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+        
+        # Try installing with verbose output and timeout (if available)
+        # Use --no-cache-dir to avoid cache issues, --verbose for diagnostics
+        INSTALL_OUTPUT=$(mktemp)
+        INSTALL_SUCCESS=false
+        
+        if command -v timeout >/dev/null 2>&1; then
+            # Use timeout if available (10 minutes = 600 seconds)
+            if timeout 600 python3 -m pip install --break-system-packages --no-cache-dir --verbose "$line" > "$INSTALL_OUTPUT" 2>&1; then
+                INSTALL_SUCCESS=true
+            else
+                EXIT_CODE=$?
+                if [ "$EXIT_CODE" -eq 124 ]; then
+                    echo "✗ Timeout (10 minutes) installing: $line"
+                    echo "  This package may require building from source, which can be slow on Raspberry Pi."
+                    echo "  You can try installing it manually later with:"
+                    echo "    python3 -m pip install --break-system-packages --no-cache-dir --verbose '$line'"
+                else
+                    echo "✗ Failed to install: $line (exit code: $EXIT_CODE)"
+                fi
+            fi
+        else
+            # No timeout command available, install without timeout
+            echo "  Note: timeout command not available, installation may take a while..."
+            if python3 -m pip install --break-system-packages --no-cache-dir --verbose "$line" > "$INSTALL_OUTPUT" 2>&1; then
+                INSTALL_SUCCESS=true
+            else
+                EXIT_CODE=$?
+                echo "✗ Failed to install: $line (exit code: $EXIT_CODE)"
+            fi
+        fi
+        
+        # Show relevant output (filtered for readability)
+        if [ -f "$INSTALL_OUTPUT" ]; then
+            echo "  Output:"
+            grep -E "(Collecting|Installing|Successfully|Preparing metadata|Building|ERROR|WARNING|Using cached|Downloading)" "$INSTALL_OUTPUT" | head -15 | sed 's/^/    /' || true
+            # Log full output to log file
+            cat "$INSTALL_OUTPUT" >> "$LOG_FILE"
+            rm -f "$INSTALL_OUTPUT"
+        fi
+        
+        if [ "$INSTALL_SUCCESS" = true ]; then
+            INSTALLED=$((INSTALLED + 1))
+            echo "✓ Successfully installed: $line"
+        else
+            FAILED=$((FAILED + 1))
+            
+            # Ask if user wants to continue (unless in non-interactive mode)
+            if [ "$ASSUME_YES" != "1" ]; then
+                read -p "  Continue with remaining packages? (Y/n): " -n 1 -r
+                echo
+                if [[ $REPLY =~ ^[Nn]$ ]]; then
+                    echo "Installation cancelled by user"
+                    exit 1
+                fi
+            fi
+        fi
+        echo ""
+    done < "$PROJECT_ROOT_DIR/requirements.txt"
+    
+    echo "-----------------------------------------------"
+    echo "Installation summary:"
+    echo "  Installed: $INSTALLED"
+    echo "  Failed: $FAILED"
+    echo "  Total: $TOTAL_PACKAGES"
+    echo ""
+    
+    if [ "$FAILED" -gt 0 ]; then
+        echo "⚠ Some packages failed to install. The installation will continue, but"
+        echo "  you may need to install them manually later. Check the log for details:"
+        echo "  $LOG_FILE"
+        echo ""
+        echo "Common fixes for 'Preparing metadata' issues:"
+        echo "  1. Ensure you have enough disk space: df -h"
+        echo "  2. Check available memory: free -h"
+        echo "  3. Try installing failed packages individually with verbose output:"
+        echo "     python3 -m pip install --break-system-packages --no-cache-dir --verbose <package>"
+        echo "  4. For packages that build from source (like numpy), consider:"
+        echo "     - Installing pre-built wheels: python3 -m pip install --only-binary :all: <package>"
+        echo "     - Or installing via apt if available: sudo apt install python3-<package>"
+        echo ""
+    fi
+    
+    if [ "$INSTALLED" -gt 0 ]; then
+        echo "✓ Project Python dependencies installed ($INSTALLED/$TOTAL_PACKAGES successful)"
+    else
+        echo "✗ No packages were successfully installed"
+        echo "  Check the log file for details: $LOG_FILE"
+        exit 1
+    fi
 else
     echo "⚠ requirements.txt not found; skipping main dependency install"
 fi
-
-echo "✓ Project Python dependencies installed"
 echo ""
 
 CURRENT_STEP="Build and install rpi-rgb-led-matrix"

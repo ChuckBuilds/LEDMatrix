@@ -249,6 +249,38 @@ sudo ./first_time_install.sh
 
 This single script installs services, dependencies, configures permissions and sudoers, and validates the setup.
 
+**Troubleshooting Installation Issues:**
+
+If the installation script gets stuck on "Preparing metadata (pyproject.toml)" during Step 5 (installing Python dependencies):
+
+1. **Run the diagnostic script** to identify the issue:
+   ```bash
+   bash scripts/diagnose_dependencies.sh
+   ```
+
+2. **Common fixes:**
+   - Ensure build tools are installed: `sudo apt install -y build-essential python3-dev python3-setuptools python3-wheel cython3`
+   - Upgrade pip: `python3 -m pip install --break-system-packages --upgrade pip setuptools wheel`
+   - Clear pip cache: `python3 -m pip cache purge`
+   - Check disk space: `df -h` (building packages requires temporary space)
+   - Check memory: `free -h` (consider increasing swap if low)
+
+3. **The improved installation script now:**
+   - Installs packages one at a time for better diagnostics
+   - Shows which package is being installed with progress indicators
+   - Uses timeouts to identify problematic packages
+   - Provides verbose output for troubleshooting
+   - Continues with remaining packages if one fails
+
+4. **If a specific package fails**, try installing it manually:
+   ```bash
+   python3 -m pip install --break-system-packages --no-cache-dir --verbose <package-name>
+   ```
+
+5. **For packages that build from source** (like numpy), consider:
+   - Installing pre-built wheels: `python3 -m pip install --break-system-packages --only-binary :all: <package>`
+   - Or installing via apt if available: `sudo apt install python3-<package>`
+
 </details>
 
 <details>
