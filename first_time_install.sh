@@ -273,6 +273,18 @@ CURRENT_STEP="Fix plugin directory permissions"
 echo "Step 3.1: Fixing plugin directory permissions..."
 echo "----------------------------------------------"
 
+# Ensure home directory is traversable by root (needed for service access)
+USER_HOME=$(eval echo ~$ACTUAL_USER)
+if [ -d "$USER_HOME" ]; then
+    HOME_PERMS=$(stat -c "%a" "$USER_HOME" 2>/dev/null || echo "unknown")
+    if [ "$HOME_PERMS" = "700" ]; then
+        echo "Fixing home directory permissions (700 -> 755) so root service can access subdirectories..."
+        chmod 755 "$USER_HOME"
+        echo "✓ Home directory permissions fixed"
+    fi
+fi
+echo ""
+
 # Run the plugin permissions fix
 if [ -f "$PROJECT_ROOT_DIR/scripts/fix_perms/fix_plugin_permissions.sh" ]; then
     echo "Running plugin permissions fix..."

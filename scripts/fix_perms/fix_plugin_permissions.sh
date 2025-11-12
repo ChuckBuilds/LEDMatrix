@@ -21,6 +21,24 @@ echo "Project root directory: $PROJECT_ROOT_DIR"
 echo "Plugins directory: $PLUGINS_DIR"
 echo "Plugin-repos directory: $PLUGIN_REPOS_DIR"
 echo "Actual user: $ACTUAL_USER"
+echo ""
+
+# Check and fix home directory permissions if needed
+# Home directory needs at least 755 (or 750) so root can traverse it
+USER_HOME=$(eval echo ~$ACTUAL_USER)
+if [ -d "$USER_HOME" ]; then
+    HOME_PERMS=$(stat -c "%a" "$USER_HOME")
+    if [ "$HOME_PERMS" = "700" ]; then
+        echo "⚠ Home directory has restrictive permissions (700)"
+        echo "  Root cannot traverse /home/$ACTUAL_USER to access subdirectories"
+        echo "  Fixing home directory permissions to 755..."
+        chmod 755 "$USER_HOME"
+        echo "✓ Home directory permissions fixed"
+    else
+        echo "✓ Home directory permissions OK ($HOME_PERMS)"
+    fi
+fi
+echo ""
 
 # Ensure plugins directory exists
 if [ ! -d "$PLUGINS_DIR" ]; then
