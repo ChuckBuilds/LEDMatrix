@@ -783,8 +783,13 @@ echo "Step 11: Setting proper file ownership..."
 echo "----------------------------------------"
 
 # Set ownership of project files to the user
-echo "Setting project file ownership..."
-chown -R "$ACTUAL_USER:$ACTUAL_USER" "$PROJECT_ROOT_DIR"
+# Exclude plugin directories which need special permissions for root service access
+echo "Setting project file ownership (excluding plugin directories)..."
+find "$PROJECT_ROOT_DIR" \
+    -path "$PROJECT_ROOT_DIR/plugins" -prune -o \
+    -path "$PROJECT_ROOT_DIR/plugin-repos" -prune -o \
+    -path "*/.git*" -prune -o \
+    -exec chown "$ACTUAL_USER:$ACTUAL_USER" {} +
 
 # Set proper permissions for config files
 if [ -f "$PROJECT_ROOT_DIR/config/config.json" ]; then
@@ -806,6 +811,19 @@ if [ -f "$PROJECT_ROOT_DIR/config/ytm_auth.json" ]; then
     echo "✓ YTM auth file permissions set"
 fi
 
+# Re-apply plugin directory permissions (they need root:user ownership for service access)
+echo "Re-applying plugin directory permissions..."
+if [ -d "$PROJECT_ROOT_DIR/plugins" ]; then
+    chown -R root:"$ACTUAL_USER" "$PROJECT_ROOT_DIR/plugins"
+    find "$PROJECT_ROOT_DIR/plugins" -type d -exec chmod 775 {} \;
+    find "$PROJECT_ROOT_DIR/plugins" -type f -exec chmod 664 {} \;
+fi
+if [ -d "$PROJECT_ROOT_DIR/plugin-repos" ]; then
+    chown -R root:"$ACTUAL_USER" "$PROJECT_ROOT_DIR/plugin-repos"
+    find "$PROJECT_ROOT_DIR/plugin-repos" -type d -exec chmod 775 {} \;
+    find "$PROJECT_ROOT_DIR/plugin-repos" -type f -exec chmod 664 {} \;
+fi
+
 echo "✓ File ownership configured"
 echo ""
 
@@ -813,11 +831,19 @@ CURRENT_STEP="Normalize project file permissions"
 echo "Step 11.1: Normalizing project file and directory permissions..."
 echo "--------------------------------------------------------------"
 
-# Normalize directory permissions (exclude VCS metadata)
-find "$PROJECT_ROOT_DIR" -path "*/.git*" -prune -o -type d -exec chmod 755 {} +
+# Normalize directory permissions (exclude VCS metadata and plugin directories)
+find "$PROJECT_ROOT_DIR" \
+    -path "$PROJECT_ROOT_DIR/plugins" -prune -o \
+    -path "$PROJECT_ROOT_DIR/plugin-repos" -prune -o \
+    -path "*/.git*" -prune -o \
+    -type d -exec chmod 755 {} +
 
-# Set default file permissions
-find "$PROJECT_ROOT_DIR" -path "*/.git*" -prune -o -type f -exec chmod 644 {} +
+# Set default file permissions (exclude plugin directories)
+find "$PROJECT_ROOT_DIR" \
+    -path "$PROJECT_ROOT_DIR/plugins" -prune -o \
+    -path "$PROJECT_ROOT_DIR/plugin-repos" -prune -o \
+    -path "*/.git*" -prune -o \
+    -type f -exec chmod 644 {} +
 
 # Ensure shell scripts are executable
 find "$PROJECT_ROOT_DIR" -path "*/.git*" -prune -o -type f -name "*.sh" -exec chmod 755 {} +
