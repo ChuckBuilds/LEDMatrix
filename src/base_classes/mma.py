@@ -128,7 +128,7 @@ class MMA(SportsCore):
             )
             return None
 
-    def _extract_game_details(self, game_event: dict) -> dict | None:
+    def _extract_game_details(self, game_event: dict) -> Dict | None:
         if not game_event:
             return None
         try:
@@ -160,12 +160,16 @@ class MMA(SportsCore):
 
             try:
                 fighter1_name = fighter1["athlete"]["fullName"]
+                fighter1_name_short = fighter1["athlete"]["shortName"]
             except KeyError:
                 fighter1_name = ""
+                fighter1_name_short = ""
             try:
                 fighter2_name = fighter2["athlete"]["fullName"]
+                fighter2_name_short = fighter2["athlete"]["shortName"]
             except KeyError:
                 fighter2_name = ""
+                fighter2_name_short = ""
 
             # Check if this is a favorite team game BEFORE doing expensive logging
             is_favorite_game = (
@@ -217,6 +221,7 @@ class MMA(SportsCore):
 
             details = {
                 "event_id": game_event.get("id"),
+                "comp_id": competition.get("id"),
                 "id": competition.get("id"),
                 "game_time": game_time,
                 "game_date": game_date,
@@ -235,6 +240,7 @@ class MMA(SportsCore):
                 == "STATUS_END_PERIOD",  # Added Period Break check
                 "fight_class": fight_class,
                 "fighter1_name": fighter1_name,
+                "fighter1_name_short": fighter1_name_short,
                 "fighter1_id": fighter1["id"],
                 # "home_score": home_team.get("score", "0"),
                 "fighter1_image_path": self.logo_dir
@@ -245,6 +251,7 @@ class MMA(SportsCore):
                 .get("href", ""),
                 "fighter1_record": fighter1_record,
                 "fighter2_name": fighter2_name,
+                "fighter2_name_short": fighter2_name_short,
                 "fighter2_id": fighter2["id"],
                 # "home_score": home_team.get("score", "0"),
                 "fighter2_image_path": self.logo_dir
@@ -361,8 +368,10 @@ class MMARecent(MMA, SportsRecent):
                 draw_overlay, status_text, (status_x, status_y), self.fonts["time"]
             )
 
-            # if 'odds' in game and game['odds']:
-            #     self._draw_dynamic_odds(draw_overlay, game['odds'], self.display_width, self.display_height)
+            if "odds" in game and game["odds"]:
+                self._draw_dynamic_odds(
+                    draw_overlay, game["odds"], self.display_width, self.display_height
+                )
 
             # Draw records or rankings if enabled
             if self.show_records:
@@ -619,6 +628,330 @@ class MMAUpcoming(MMA, SportsUpcoming):
         sport_key: str,
     ):
         super().__init__(config, display_manager, cache_manager, logger, sport_key)
+
+    def _draw_scorebug_layout(self, game: Dict, force_clear: bool = False) -> None:
+        """Draw the layout for a recently completed NCAA FB game."""  # Updated docstring
+        try:
+            main_img = Image.new(
+                "RGBA", (self.display_width, self.display_height), (0, 0, 0, 255)
+            )
+            overlay = Image.new(
+                "RGBA", (self.display_width, self.display_height), (0, 0, 0, 0)
+            )
+            draw_overlay = ImageDraw.Draw(overlay)
+
+            fighter1_image = self._load_and_resize_logo(
+                game["fighter1_id"],
+                game["fighter1_name"],
+                game["fighter1_image_path"],
+                game["fighter1_image_url"],
+            )
+            fighter2_image = self._load_and_resize_logo(
+                game["fighter2_id"],
+                game["fighter2_name"],
+                game["fighter2_image_path"],
+                game["fighter2_image_url"],
+            )
+
+            # fighter1_flag_image = self._load_and_resize_logo(
+            #     game["fighter1_id"],
+            #     game["fighter1_name"],
+            #     game["fighter1_image_path"],
+            #     game["fighter1_country_url"],
+            # )
+            # fighter2_flag_image = self._load_and_resize_logo(
+            #     game["fighter1_id"]+"_flag",
+            #     game["fighter1_name"],
+            #     game["fighter1_image_path"],
+            #     game["fighter2_country_url"],
+            # )
+
+            if not fighter1_image or not fighter2_image:
+                self.logger.error(
+                    f"Failed to load logos for game: {game.get('id')}"
+                )  # Changed log prefix
+                draw_final = ImageDraw.Draw(main_img.convert("RGB"))
+                self._draw_text_with_outline(
+                    draw_final, "Logo Error", (5, 5), self.fonts["status"]
+                )
+                self.display_manager.image.paste(main_img.convert("RGB"), (0, 0))
+                self.display_manager.update_display()
+                return
+
+            center_y = self.display_height // 2
+
+            # MLB-style logo positions
+            home_x = (
+                self.display_width
+                - fighter1_image.width
+                + fighter1_image.width // 4
+                + 2
+            )
+            home_y = center_y - (fighter1_image.height // 2)
+            main_img.paste(fighter1_image, (home_x, home_y), fighter1_image)
+            fighter1_name = game.get(
+                "fighter1_name_short", ""
+            )  # Use formatted period text (e.g., "Final/OT") or default "Final"
+            status_x = 1
+            status_y = 1
+            self._draw_text_with_outline(
+                draw_overlay, fighter1_name, (status_x, status_y), self.fonts["odds"]
+            )
+
+            away_x = -2 - fighter2_image.width // 4
+            away_y = center_y - (fighter2_image.height // 2)
+            main_img.paste(fighter2_image, (away_x, away_y), fighter2_image)
+            fighter2_name = game.get(
+                "fighter2_name_short", ""
+            )  # Use formatted period text (e.g., "Final/OT") or default "Final"
+            status_width = draw_overlay.textlength(
+                fighter2_name, font=self.fonts["odds"]
+            )
+            status_x = self.display_width - status_width - 1
+            status_y = 1
+            self._draw_text_with_outline(
+                draw_overlay, fighter2_name, (status_x, status_y), self.fonts["odds"]
+            )
+
+            # Final Scores (Centered, same position as live)
+            score_text = f"Some score here"
+            score_width = draw_overlay.textlength(score_text, font=self.fonts["score"])
+            score_x = (self.display_width - score_width) // 2
+            score_y = self.display_height - 14
+            self._draw_text_with_outline(
+                draw_overlay, score_text, (score_x, score_y), self.fonts["score"]
+            )
+
+            # "Final" text (Top center)
+            status_text = game.get(
+                "period_text", "Final"
+            )  # Use formatted period text (e.g., "Final/OT") or default "Final"
+            status_width = draw_overlay.textlength(status_text, font=self.fonts["time"])
+            status_x = (self.display_width - status_width) // 2
+            status_y = 1
+            self._draw_text_with_outline(
+                draw_overlay, status_text, (status_x, status_y), self.fonts["time"]
+            )
+            if "odds" in game and game["odds"]:
+                self._draw_dynamic_odds(
+                    draw_overlay, game["odds"], self.display_width, self.display_height
+                )
+
+            # Draw records or rankings if enabled
+            if self.show_records:
+                try:
+                    record_font = ImageFont.truetype("assets/fonts/4x6-font.ttf", 6)
+                    self.logger.debug(f"Loaded 6px record font successfully")
+                except IOError:
+                    record_font = ImageFont.load_default()
+                    self.logger.warning(
+                        f"Failed to load 6px font, using default font (size: {record_font.size})"
+                    )
+
+                # Get team abbreviations
+                fighter1_record = game.get("fighter1_record", "")
+                fighter2_record = game.get("fighter2_record", "")
+
+                record_bbox = draw_overlay.textbbox((0, 0), "0-0-0", font=record_font)
+                record_height = record_bbox[3] - record_bbox[1]
+                record_y = self.display_height - record_height
+                self.logger.debug(
+                    f"Record positioning: height={record_height}, record_y={record_y}, display_height={self.display_height}"
+                )
+
+                # Display away team info
+                if fighter1_record:
+                    away_text = fighter1_record
+                    away_record_x = 0
+                    self.logger.debug(
+                        f"Drawing away ranking '{away_text}' at ({away_record_x}, {record_y}) with font size {record_font.size if hasattr(record_font, 'size') else 'unknown'}"
+                    )
+                    self._draw_text_with_outline(
+                        draw_overlay, away_text, (away_record_x, record_y), record_font
+                    )
+
+                # Display home team info
+                if fighter2_record:
+                    home_text = fighter2_record
+                    home_record_bbox = draw_overlay.textbbox(
+                        (0, 0), home_text, font=record_font
+                    )
+                    home_record_width = home_record_bbox[2] - home_record_bbox[0]
+                    home_record_x = self.display_width - home_record_width
+                    self.logger.debug(
+                        f"Drawing away ranking '{away_text}' at ({away_record_x}, {record_y}) with font size {record_font.size if hasattr(record_font, 'size') else 'unknown'}"
+                    )
+                    self._draw_text_with_outline(
+                        draw_overlay, home_text, (home_record_x, record_y), record_font
+                    )
+
+            self._custom_scorebug_layout(game, draw_overlay)
+            # Composite and display
+            main_img = Image.alpha_composite(main_img, overlay)
+            main_img = main_img.convert("RGB")
+            self.display_manager.image.paste(main_img, (0, 0))
+            self.display_manager.update_display()  # Update display here
+
+        except Exception as e:
+            self.logger.error(
+                f"Error displaying recent game: {e}", exc_info=True
+            )  # Changed log prefix
+
+    def update(self):
+        """Update recent games data."""
+        if not self.is_enabled:
+            return
+        current_time = time.time()
+        if current_time - self.last_update < self.update_interval:
+            return
+
+        self.last_update = current_time  # Update time even if fetch fails
+
+        try:
+            data = self._fetch_data()  # Uses shared cache
+            if not data or "events" not in data:
+                self.logger.warning(
+                    "No events found in shared data."
+                )  # Changed log prefix
+                if not self.games_list:
+                    self.current_game = None  # Clear display if no games were showing
+                return
+
+            events = data["events"]
+            self.logger.info(
+                f"Processing {len(events)} events from shared data."
+            )  # Changed log prefix
+
+            # Process games and filter for final games, date range & favorite teams
+            processed_games = []
+            all_upcoming_games = 0  # Count all upcoming games regardless of favorites
+            flattened_events = [
+                {
+                    **{k: v for k, v in event.items() if k != "competitions"},
+                    "competitions": [comp],
+                }
+                for event in data["events"]
+                for comp in event.get("competitions", [])
+            ]
+            for event in flattened_events:
+                game = self._extract_game_details(event)
+                # Filter criteria: must be final AND within recent date range
+                if game and game["is_upcoming"]:
+                    all_upcoming_games += 1
+                if game and game["is_upcoming"]:
+                    if self.show_favorite_teams_only and (
+                        len(self.favorite_fighters) > 0
+                        or len(self.favorite_weight_class) > 0
+                    ):
+                        if (
+                            not (
+                                game["fighter1_name"].lower() in self.favorite_fighters
+                                or game["fighter2_name"].lower()
+                                in self.favorite_fighters
+                            )
+                            and not game["fight_class"].lower()
+                            in self.favorite_weight_class
+                        ):
+                            continue
+                        else:
+                            favorite_games_found += 1
+                if self.show_odds:
+                    self._fetch_odds(game)
+                processed_games.append(game)
+
+            # Enhanced logging for debugging
+            self.logger.info(f"Found {all_upcoming_games} total upcoming games in data")
+            self.logger.info(
+                f"Found {len(processed_games)} upcoming games after filtering"
+            )
+
+            if processed_games:
+                for game in processed_games[:3]:  # Show first 3
+                    self.logger.info(
+                        f"  {game['fighter1_name']} vs {game['fighter2_name']} - {game['start_time_utc']}"
+                    )
+
+            # if self.favorite_teams and all_upcoming_games > 0:
+            #     self.logger.info(f"Favorite teams: {self.favorite_teams}")
+            #     self.logger.info(f"Found {favorite_games_found} favorite team upcoming games")
+            team_games = processed_games  # Show all upcoming if no favorites
+            # Sort by game time, earliest first
+            team_games.sort(
+                key=lambda g: g.get("start_time_utc")
+                or datetime.max.replace(tzinfo=timezone.utc)
+            )
+            # Limit to the specified number of upcoming games
+            team_games = team_games[: self.upcoming_games_to_show]
+            # Log changes or periodically
+            should_log = (
+                current_time - self.last_log_time >= self.log_interval
+                or len(team_games) != len(self.games_list)
+                or any(
+                    g1["id"] != g2.get("id")
+                    for g1, g2 in zip(self.games_list, team_games)
+                )
+                or (not self.games_list and team_games)
+            )
+
+            # Check if the list of games to display has changed
+            new_game_ids = {g["id"] for g in team_games}
+            current_game_ids = {g["id"] for g in self.games_list}
+
+            if new_game_ids != current_game_ids:
+                self.logger.info(
+                    f"Found {len(team_games)} upcoming games within window for display."
+                )  # Changed log prefix
+                self.games_list = team_games
+                if (
+                    not self.current_game
+                    or not self.games_list
+                    or self.current_game["id"] not in new_game_ids
+                ):
+                    self.current_game_index = 0
+                    self.current_game = self.games_list[0] if self.games_list else None
+                    self.last_game_switch = current_time
+                else:
+                    try:
+                        self.current_game_index = next(
+                            i
+                            for i, g in enumerate(self.games_list)
+                            if g["id"] == self.current_game["id"]
+                        )
+                        self.current_game = self.games_list[self.current_game_index]
+                    except StopIteration:
+                        self.current_game_index = 0
+                        self.current_game = self.games_list[0]
+                        self.last_game_switch = current_time
+
+            elif self.games_list:
+                self.current_game = self.games_list[
+                    self.current_game_index
+                ]  # Update data
+
+            if not self.games_list:
+                self.logger.info(
+                    "No relevant upcoming games found to display."
+                )  # Changed log prefix
+                self.current_game = None
+
+            if should_log and not self.games_list:
+                # Log favorite teams only if no games are found and logging is needed
+                self.logger.debug(
+                    f"Favorite teams: {self.favorite_teams}"
+                )  # Changed log prefix
+                self.logger.debug(
+                    f"Total upcoming games before filtering: {len(processed_games)}"
+                )  # Changed log prefix
+                self.last_log_time = current_time
+            elif should_log:
+                self.last_log_time = current_time
+
+        except Exception as e:
+            self.logger.error(
+                f"Error updating recent games: {e}", exc_info=True
+            )  # Changed log prefix
+            # Don't clear current game on error, keep showing last known state
+            # self.current_game = None # Decide if we want to clear display on error
 
 
 class MMALive(MMA, SportsLive):

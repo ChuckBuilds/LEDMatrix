@@ -37,8 +37,8 @@ class SportsCore(ABC):
         self.display_height = self.display_manager.matrix.height
 
         self.sport_key = sport_key
-        self.sport = None
-        self.league = None
+        self.sport = ""
+        self.league = ""
         
         # Initialize new architecture components (will be overridden by sport-specific classes)
         self.sport_config = None
@@ -161,6 +161,7 @@ class SportsCore(ABC):
             fonts['status'] = ImageFont.truetype("assets/fonts/4x6-font.ttf", 6) # Using 4x6 for status
             fonts['detail'] = ImageFont.truetype("assets/fonts/4x6-font.ttf", 6) # Added detail font
             fonts['rank'] = ImageFont.truetype("assets/fonts/PressStart2P-Regular.ttf", 10)
+            fonts['odds'] = ImageFont.truetype("assets/fonts/4x6-font.ttf", 6)
             logging.info("Successfully loaded fonts") # Changed log prefix
         except IOError:
             logging.warning("Fonts not found, using default PIL font.") # Changed log prefix
@@ -170,6 +171,7 @@ class SportsCore(ABC):
             fonts['status'] = ImageFont.load_default()
             fonts['detail'] = ImageFont.load_default()
             fonts['rank'] = ImageFont.load_default()
+            fonts['odds'] = ImageFont.load_default()
         return fonts
 
     def _draw_dynamic_odds(self, draw: ImageDraw.Draw, odds: Dict[str, Any], width: int, height: int) -> None:
@@ -320,11 +322,14 @@ class SportsCore(ABC):
             update_interval = self.mode_config.get("live_odds_update_interval", 60) if is_live \
                 else self.mode_config.get("odds_update_interval", 3600)
             
+            event_id = game.get("event_id","")
+            comp_id = game.get("comp_id","")
             # Fetch odds using OddsManager
             odds_data = self.odds_manager.get_odds(
                 sport=self.sport,
                 league=self.league,
-                event_id=game['id'],
+                event_id=event_id,
+                comp_id=comp_id,
                 update_interval_seconds=update_interval
             )
             
@@ -454,6 +459,8 @@ class SportsCore(ABC):
 
             details = {
                 "id": game_event.get("id"),
+                "event_id": game_event.get("id"),
+                "comp_id": competition.get("id"),
                 "game_time": game_time,
                 "game_date": game_date,
                 "start_time_utc": start_time_utc,
