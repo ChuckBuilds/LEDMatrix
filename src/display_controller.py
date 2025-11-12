@@ -676,7 +676,13 @@ class DisplayController:
                 if manager_to_display:
                     try:
                         if hasattr(manager_to_display, 'display'):
-                            result = manager_to_display.display(force_clear=self.force_change)
+                            # Check if plugin accepts display_mode parameter
+                            import inspect
+                            sig = inspect.signature(manager_to_display.display)
+                            if 'display_mode' in sig.parameters:
+                                result = manager_to_display.display(display_mode=active_mode, force_clear=self.force_change)
+                            else:
+                                result = manager_to_display.display(force_clear=self.force_change)
                             # Check if display() returned a boolean (new behavior)
                             if isinstance(result, bool):
                                 display_result = result
