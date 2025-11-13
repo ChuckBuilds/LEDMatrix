@@ -1187,9 +1187,9 @@ class PluginStoreManager:
                         return True
                 
                 # Update via git pull
-                self.logger.info(f"Updating {plugin_id} via git pull (branch {local_branch})...")
+                self.logger.info(f"Updating {plugin_id} via git pull (local branch: {local_branch})...")
                 try:
-                    # Fetch latest changes
+                    # Fetch latest changes first to get all remote branch info
                     subprocess.run(
                         ['git', '-C', str(plugin_path), 'fetch', 'origin'],
                         capture_output=True,
@@ -1198,21 +1198,90 @@ class PluginStoreManager:
                         check=True
                     )
 
-                    # Use remote branch if available, otherwise use local branch
-                    pull_branch = remote_branch or local_branch
+                    # Determine which remote branch to pull from
+                    # Strategy: Use what the local branch is tracking, or find the best match
+                    remote_pull_branch = None
                     
-                    # Checkout the branch
+                    # First, check what the local branch is tracking
+                    tracking_result = subprocess.run(
+                        ['git', '-C', str(plugin_path), 'rev-parse', '--abbrev-ref', '--symbolic-full-name', f'{local_branch}@{{upstream}}'],
+                        capture_output=True,
+                        text=True,
+                        timeout=10,
+                        check=False
+                    )
+                    
+                    if tracking_result.returncode == 0 and tracking_result.stdout.strip():
+                        # Local branch is tracking a remote branch
+                        tracking_ref = tracking_result.stdout.strip()
+                        # Extract branch name from refs/remotes/origin/branch-name or origin/branch-name
+                        if tracking_ref.startswith('refs/remotes/origin/'):
+                            remote_pull_branch = tracking_ref.replace('refs/remotes/origin/', '')
+                            self.logger.info(f"Local branch {local_branch} is tracking origin/{remote_pull_branch}")
+                        elif tracking_ref.startswith('origin/'):
+                            remote_pull_branch = tracking_ref.replace('origin/', '')
+                            self.logger.info(f"Local branch {local_branch} is tracking origin/{remote_pull_branch}")
+                    
+                    # If not tracking anything, try to find the best remote branch match
+                    if not remote_pull_branch:
+                        # Check if remote branch from registry exists
+                        if remote_branch:
+                            remote_check = subprocess.run(
+                                ['git', '-C', str(plugin_path), 'ls-remote', '--heads', 'origin', remote_branch],
+                                capture_output=True,
+                                text=True,
+                                timeout=10,
+                                check=False
+                            )
+                            if remote_check.returncode == 0 and remote_check.stdout.strip():
+                                remote_pull_branch = remote_branch
+                                self.logger.info(f"Using remote branch {remote_branch} from registry")
+                        
+                        # If registry branch doesn't exist, check if local branch name exists on remote
+                        if not remote_pull_branch:
+                            local_as_remote_check = subprocess.run(
+                                ['git', '-C', str(plugin_path), 'ls-remote', '--heads', 'origin', local_branch],
+                                capture_output=True,
+                                text=True,
+                                timeout=10,
+                                check=False
+                            )
+                            if local_as_remote_check.returncode == 0 and local_as_remote_check.stdout.strip():
+                                remote_pull_branch = local_branch
+                                self.logger.info(f"Using local branch name {local_branch} as remote branch")
+                        
+                        # Last resort: try to get remote's default branch
+                        if not remote_pull_branch:
+                            default_branch_result = subprocess.run(
+                                ['git', '-C', str(plugin_path), 'symbolic-ref', 'refs/remotes/origin/HEAD'],
+                                capture_output=True,
+                                text=True,
+                                timeout=10,
+                                check=False
+                            )
+                            if default_branch_result.returncode == 0:
+                                default_ref = default_branch_result.stdout.strip()
+                                if default_ref.startswith('refs/remotes/origin/'):
+                                    remote_pull_branch = default_ref.replace('refs/remotes/origin/', '')
+                                    self.logger.info(f"Using remote default branch {remote_pull_branch}")
+                    
+                    # If we still don't have a remote branch, use local branch name (git will handle it)
+                    if not remote_pull_branch:
+                        remote_pull_branch = local_branch
+                        self.logger.info(f"Falling back to local branch name {local_branch} for pull")
+                    
+                    # Ensure we're on the local branch
                     subprocess.run(
-                        ['git', '-C', str(plugin_path), 'checkout', pull_branch],
+                        ['git', '-C', str(plugin_path), 'checkout', local_branch],
                         capture_output=True,
                         text=True,
                         timeout=30,
                         check=True
                     )
 
-                    # Pull latest changes
+                    # Pull from the determined remote branch
                     pull_result = subprocess.run(
-                        ['git', '-C', str(plugin_path), 'pull', 'origin', pull_branch],
+                        ['git', '-C', str(plugin_path), 'pull', 'origin', remote_pull_branch],
                         capture_output=True,
                         text=True,
                         timeout=120,

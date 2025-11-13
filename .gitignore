@@ -34,4 +34,6 @@ plugins/*
 !plugins/.gitkeep
 !plugins/odds-ticker
 !plugins/odds-ticker/
+!plugins/clock-simple
+!plugins/clock-simple/
 !plugins/*/.git

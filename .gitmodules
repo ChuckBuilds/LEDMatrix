@@ -1,3 +1,9 @@
 [submodule "plugins/odds-ticker"]
 	path = plugins/odds-ticker
 	url = https://github.com/ChuckBuilds/ledmatrix-odds-ticker.git
+[submodule "plugins/clock-simple"]
+	path = plugins/clock-simple
+	url = https://github.com/ChuckBuilds/ledmatrix-clock-simple
+[submodule "plugins/text-display"]
+	path = plugins/text-display
+	url = https://github.com/ChuckBuilds/ledmatrix-text-display
