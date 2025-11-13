@@ -453,7 +453,8 @@ if ! python3 -c "import numpy" >/dev/null 2>&1; then
     apt_install python3-numpy
     echo "✓ numpy installed via apt"
 else
-    echo "✓ numpy already installed"
+    NUMPY_VERSION=$(python3 -c "import numpy; print(numpy.__version__)" 2>/dev/null || echo "unknown")
+    echo "✓ numpy already installed (version: $NUMPY_VERSION)"
 fi
 echo ""
 

@@ -4,7 +4,7 @@
 
 # Image processing
 Pillow>=10.4.0,<12.0.0
-numpy>=1.24.0,<2.0.0  # For fast array operations in ScrollHelper
+numpy>=1.24.0  # For fast array operations in ScrollHelper (compatible with 2.x)
 
 # Timezone handling
 pytz>=2024.2,<2025.0  # Updated for latest timezone data
