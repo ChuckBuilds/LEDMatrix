@@ -238,12 +238,18 @@ git clone https://github.com/ChuckBuilds/LEDMatrix.git
 cd LEDMatrix
 ```
 
+REMOVE ME BEFORE PR:
+To use the Plugins branch type:
+```bash
+git checkout plugins
+git pull
+```
 
 4. First-time installation (recommended)
 
 ```bash
 chmod +x first_time_install.sh
-sudo ./first_time_install.sh
+sudo bash ./first_time_install.sh
 ```
 
 This single script installs services, dependencies, configures permissions and sudoers, and validates the setup.
