@@ -657,6 +657,7 @@ class DisplayController:
                     active_mode = self.on_demand_mode
                     if self.current_display_mode != active_mode:
                         self.current_display_mode = active_mode
+                        self.force_change = True
                 else:
                     active_mode = self.current_display_mode
 
@@ -900,6 +901,7 @@ class DisplayController:
                     self.current_mode_index = (self.current_mode_index + 1) % len(self.available_modes)
                     self.current_display_mode = self.available_modes[self.current_mode_index]
                     self.last_mode_change = time.time()
+                    self.force_change = True
                     
                     logger.info("Switching to mode: %s", self.current_display_mode)
 
