@@ -447,6 +447,16 @@ CURRENT_STEP="Install project Python dependencies"
 echo "Step 5: Installing Python project dependencies..."
 echo "-----------------------------------------------"
 
+# Install numpy via apt first (pre-built binary, much faster than building from source)
+echo "Installing numpy via apt (pre-built binary for faster installation)..."
+if ! python3 -c "import numpy" >/dev/null 2>&1; then
+    apt_install python3-numpy
+    echo "✓ numpy installed via apt"
+else
+    echo "✓ numpy already installed"
+fi
+echo ""
+
 # Install main project Python dependencies
 cd "$PROJECT_ROOT_DIR"
 if [ -f "$PROJECT_ROOT_DIR/requirements.txt" ]; then
