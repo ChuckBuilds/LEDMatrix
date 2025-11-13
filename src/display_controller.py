@@ -671,11 +671,17 @@ class DisplayController:
                     plugin_instance = self.plugin_modes[active_mode]
                     if hasattr(plugin_instance, 'display'):
                         manager_to_display = plugin_instance
+                        logger.debug(f"Found plugin manager for mode {active_mode}: {type(plugin_instance).__name__}")
+                    else:
+                        logger.warning(f"Plugin {active_mode} found but has no display() method")
+                else:
+                    logger.debug(f"Mode {active_mode} not found in plugin_modes (available: {list(self.plugin_modes.keys())})")
                 
                 # Display the current mode
                 display_result = True  # Default to True for backward compatibility
                 if manager_to_display:
                     try:
+                        logger.debug(f"Calling display() for {active_mode} with force_clear={self.force_change}")
                         if hasattr(manager_to_display, 'display'):
                             # Check if plugin accepts display_mode parameter
                             import inspect
@@ -684,6 +690,7 @@ class DisplayController:
                                 result = manager_to_display.display(display_mode=active_mode, force_clear=self.force_change)
                             else:
                                 result = manager_to_display.display(force_clear=self.force_change)
+                            logger.debug(f"display() returned: {result}")
                             # Check if display() returned a boolean (new behavior)
                             if isinstance(result, bool):
                                 display_result = result
