@@ -570,6 +570,7 @@ class FontManager:
     def _initialize_fonts(self):
         """Initialize font catalog and validate configuration."""
         self._scan_fonts_directory()
+        self._register_common_fonts()
         self._load_overrides()
 
     def _scan_fonts_directory(self):
@@ -586,6 +587,17 @@ class FontManager:
                 family_name = filename.rsplit('.', 1)[0].lower()
                 self.font_catalog[family_name] = filepath
                 logger.debug(f"Found font: {family_name} -> {filepath}")
+
+    def _register_common_fonts(self):
+        """Register common font aliases from common_fonts dictionary."""
+        for family_name, font_path in self.common_fonts.items():
+            # Check if font file exists
+            if os.path.exists(font_path):
+                # Register the common font name (overrides auto-generated name if exists)
+                self.font_catalog[family_name] = font_path
+                logger.debug(f"Registered common font: {family_name} -> {font_path}")
+            else:
+                logger.warning(f"Common font file not found: {font_path} (family: {family_name})")
 
     def _load_overrides(self):
         """Load font overrides from configuration."""
