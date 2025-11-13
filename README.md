@@ -238,7 +238,19 @@ sudo apt install -y git python3-pip cython3 build-essential python3-dev python3-
 git clone https://github.com/ChuckBuilds/LEDMatrix.git
 cd LEDMatrix
 ```
+REMOVE ME BEFORE PR:
+To use the Plugins branch type:
+```bash
+git checkout plugins
+git pull
+```
 
+4. First-time installation (recommended)
+
+```bash
+chmod +x first_time_install.sh
+sudo bash ./first_time_install.sh
+```
 
 4. First-time installation (recommended)
 
