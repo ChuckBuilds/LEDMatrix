@@ -1546,7 +1546,10 @@ def get_plugin_schema():
         if api_v3.plugin_manager:
             plugin_dir = api_v3.plugin_manager.get_plugin_directory(plugin_id)
             if plugin_dir:
-                schema_path = Path(plugin_dir) / 'config_schema.json'
+                potential_path = Path(plugin_dir) / 'config_schema.json'
+                # Only use this path if it actually exists
+                if potential_path.exists():
+                    schema_path = potential_path
         
         # Fallback to direct path if plugin manager not available or path doesn't exist
         if schema_path is None or not schema_path.exists():
@@ -1563,7 +1566,8 @@ def get_plugin_schema():
                 possible_dirs.append(PROJECT_ROOT / plugins_dir_name)
             
             # Also check the standard 'plugins' directory (common location)
-            possible_dirs.append(PROJECT_ROOT / 'plugins')
+            # This should be checked first since it's a common location for installed plugins
+            possible_dirs.insert(0, PROJECT_ROOT / 'plugins')
             
             # Try each possible directory
             for plugins_dir in possible_dirs:
