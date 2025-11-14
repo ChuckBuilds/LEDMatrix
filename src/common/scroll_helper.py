@@ -349,6 +349,51 @@ class ScrollHelper:
         self.last_progress_log_time = now
         self.logger.debug("Scroll position reset")
     
+    def set_scrolling_image(self, image: Image.Image) -> None:
+        """
+        Set a pre-rendered scrolling image and initialize all required state.
+        
+        This method should be used when plugins create their own scrolling image
+        instead of using create_scrolling_image(). It properly initializes both
+        cached_image and cached_array, and updates all related state.
+        
+        Args:
+            image: PIL Image containing the scrolling content
+        """
+        if image is None:
+            self.logger.warning("Attempted to set None as scrolling image, clearing cache instead")
+            self.clear_cache()
+            return
+        
+        # Set the cached image
+        self.cached_image = image
+        
+        # Convert to numpy array for fast operations (required for get_visible_portion)
+        self.cached_array = np.array(image)
+        
+        # Update scroll width
+        self.total_scroll_width = image.width
+        
+        # Reset scroll position
+        self.scroll_position = 0.0
+        self.total_distance_scrolled = 0.0
+        self.scroll_complete = False
+        
+        # Pre-allocate frame buffer if needed
+        if self._frame_buffer is None or self._frame_buffer.shape != (self.display_height, self.display_width, 3):
+            self._frame_buffer = np.zeros((self.display_height, self.display_width, 3), dtype=np.uint8)
+        
+        # Calculate dynamic duration
+        self._calculate_dynamic_duration()
+        
+        # Reset timing
+        now = time.time()
+        self.scroll_start_time = now
+        self.last_progress_log_time = now
+        
+        self.logger.debug("Set scrolling image: %dx%d, total_scroll_width=%d", 
+                         image.width, image.height, self.total_scroll_width)
+    
     def set_scroll_speed(self, speed: float) -> None:
         """
         Set the scroll speed in pixels per second.
