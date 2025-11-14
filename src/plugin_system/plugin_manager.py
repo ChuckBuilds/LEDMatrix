@@ -410,16 +410,30 @@ class PluginManager:
             return False
         
         try:
-            # Get plugin directory - try both plugin_id and ledmatrix-plugin_id formats
-            plugin_dir = self.plugins_dir / plugin_id
-            if not plugin_dir.exists():
-                # Try with ledmatrix- prefix
-                plugin_dir = self.plugins_dir / f"ledmatrix-{plugin_id}"
+            # First, try to use the plugin_directories mapping from discovery
+            # This handles cases where directory name doesn't match manifest ID
+            plugin_dir = None
+            if hasattr(self, 'plugin_directories') and plugin_id in self.plugin_directories:
+                plugin_dir = self.plugin_directories[plugin_id]
+                if plugin_dir.exists():
+                    self.logger.debug(f"Using plugin directory from discovery mapping: {plugin_dir}")
+                else:
+                    plugin_dir = None
+            
+            # If not found via mapping, try direct paths
+            if plugin_dir is None:
+                plugin_dir = self.plugins_dir / plugin_id
+                if not plugin_dir.exists():
+                    # Try with ledmatrix- prefix
+                    plugin_dir = self.plugins_dir / f"ledmatrix-{plugin_id}"
 
             if not plugin_dir.exists():
-                # Perform a case-insensitive lookup to handle filesystem casing mismatches
+                # Perform a comprehensive search: case-insensitive and manifest-based lookup
+                # This handles various naming mismatches (case, prefixes, etc.)
                 normalized_id = plugin_id.lower()
                 found_dir = None
+                
+                # First, try case-insensitive directory name matching
                 for item in self.plugins_dir.iterdir():
                     if not item.is_dir():
                         continue
@@ -433,15 +447,52 @@ class PluginManager:
                         found_dir = item
                         break
 
+                # If still not found, search all directories by reading their manifests
+                # This is the most robust fallback - finds plugin by manifest ID regardless of directory name
+                if found_dir is None:
+                    self.logger.debug(f"Directory name search failed for {plugin_id}, searching by manifest...")
+                    for item in self.plugins_dir.iterdir():
+                        if not item.is_dir():
+                            continue
+                        
+                        # Skip if we already checked this directory
+                        if item.name.lower() == normalized_id or item.name.lower() == f"ledmatrix-{plugin_id}".lower():
+                            continue
+                        
+                        manifest_path = item / "manifest.json"
+                        if manifest_path.exists():
+                            try:
+                                with open(manifest_path, 'r', encoding='utf-8') as f:
+                                    item_manifest = json.load(f)
+                                    item_manifest_id = item_manifest.get('id')
+                                    if item_manifest_id == plugin_id:
+                                        found_dir = item
+                                        self.logger.info(
+                                            "Found plugin %s in directory %s (manifest ID matches)",
+                                            plugin_id,
+                                            item.name
+                                        )
+                                        break
+                            except (json.JSONDecodeError, Exception) as e:
+                                # Skip invalid manifests, continue searching
+                                self.logger.debug(f"Skipping {item.name} due to manifest error: {e}")
+                                continue
+
                 if found_dir is not None:
                     plugin_dir = found_dir
+                    # Update the mapping for future lookups
+                    if not hasattr(self, 'plugin_directories'):
+                        self.plugin_directories = {}
+                    self.plugin_directories[plugin_id] = plugin_dir
                     self.logger.warning(
-                        "Plugin directory case mismatch detected for %s. Using %s",
+                        "Plugin directory name mismatch for %s. Using %s (discovered via manifest search)",
                         plugin_id,
                         plugin_dir,
                     )
                 else:
-                    self.logger.error(f"Plugin directory not found: {plugin_id} or ledmatrix-{plugin_id}")
+                    self.logger.error(f"Plugin directory not found: {plugin_id}")
+                    self.logger.error(f"Searched in: {self.plugins_dir}")
+                    self.logger.error("Tried: direct path, case-insensitive match, and manifest-based search")
                     return False
             
             # Get entry point

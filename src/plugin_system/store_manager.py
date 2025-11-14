@@ -583,6 +583,9 @@ class PluginStoreManager:
             'master'
         ])
 
+        # Use manifest ID for directory name (not registry plugin_id) to ensure consistency
+        # We'll read the manifest after installation to get the actual ID
+        # For now, use plugin_id but we'll correct it after reading manifest
         plugin_path = self.plugins_dir / plugin_id
         if plugin_path.exists():
             self.logger.warning(f"Plugin directory already exists: {plugin_id}. Removing it before reinstall.")
@@ -626,6 +629,29 @@ class PluginStoreManager:
             try:
                 with open(manifest_path, 'r', encoding='utf-8') as mf:
                     manifest = json.load(mf)
+
+                # Get the actual plugin ID from manifest (source of truth)
+                manifest_plugin_id = manifest.get('id')
+                if not manifest_plugin_id:
+                    self.logger.error(f"Plugin manifest missing 'id' field")
+                    shutil.rmtree(plugin_path, ignore_errors=True)
+                    return False
+                
+                # If manifest ID doesn't match directory name, rename directory to match manifest
+                if manifest_plugin_id != plugin_id:
+                    self.logger.warning(
+                        f"Manifest ID '{manifest_plugin_id}' doesn't match registry ID '{plugin_id}'. "
+                        f"Renaming directory to match manifest ID."
+                    )
+                    correct_path = self.plugins_dir / manifest_plugin_id
+                    if correct_path.exists():
+                        self.logger.warning(f"Target directory {manifest_plugin_id} already exists, removing it")
+                        shutil.rmtree(correct_path)
+                    shutil.move(str(plugin_path), str(correct_path))
+                    plugin_path = correct_path
+                    manifest_path = plugin_path / "manifest.json"
+                    # Update plugin_id to match manifest for rest of function
+                    plugin_id = manifest_plugin_id
 
                 required_fields = ['id', 'name', 'class_name']
                 missing = [field for field in required_fields if field not in manifest]
@@ -770,7 +796,8 @@ class PluginStoreManager:
                     json.dump(manifest, f, indent=2)
                 self.logger.info(f"Added missing entry_point field to {plugin_id} manifest (defaulted to manager.py)")
             
-            # Move to plugins directory
+            # Move to plugins directory - use manifest ID as source of truth
+            # This ensures directory name always matches manifest ID
             final_path = self.plugins_dir / plugin_id
             if final_path.exists():
                 self.logger.warning(f"Plugin {plugin_id} already exists, removing existing copy")
@@ -778,6 +805,8 @@ class PluginStoreManager:
             
             shutil.move(str(temp_dir), str(final_path))
             temp_dir = None  # Prevent cleanup since we moved it
+            
+            # Note: plugin_id here is already from manifest (line 749), so directory name matches manifest ID
             
             # Install dependencies
             self._install_dependencies(final_path)
