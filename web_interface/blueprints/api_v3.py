@@ -1550,19 +1550,27 @@ def get_plugin_schema():
         
         # Fallback to direct path if plugin manager not available or path doesn't exist
         if schema_path is None or not schema_path.exists():
+            # Try multiple possible plugin directory locations
+            possible_dirs = []
+            
             # Read plugins directory from config
             config = api_v3.config_manager.load_config()
             plugin_system_config = config.get('plugin_system', {})
             plugins_dir_name = plugin_system_config.get('plugins_directory', 'plugin-repos')
             if os.path.isabs(plugins_dir_name):
-                plugins_dir = Path(plugins_dir_name)
+                possible_dirs.append(Path(plugins_dir_name))
             else:
-                plugins_dir = PROJECT_ROOT / plugins_dir_name
-            fallback_schema_path = plugins_dir / plugin_id / 'config_schema.json'
+                possible_dirs.append(PROJECT_ROOT / plugins_dir_name)
             
-            # Use fallback path if it exists and original path doesn't
-            if fallback_schema_path.exists() and (schema_path is None or not schema_path.exists()):
-                schema_path = fallback_schema_path
+            # Also check the standard 'plugins' directory (common location)
+            possible_dirs.append(PROJECT_ROOT / 'plugins')
+            
+            # Try each possible directory
+            for plugins_dir in possible_dirs:
+                fallback_schema_path = plugins_dir / plugin_id / 'config_schema.json'
+                if fallback_schema_path.exists():
+                    schema_path = fallback_schema_path
+                    break
 
         if schema_path and schema_path.exists():
             try:
