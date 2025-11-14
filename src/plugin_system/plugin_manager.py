@@ -90,48 +90,25 @@ class PluginManager:
             )
             # Don't raise - allow system to continue without plugins
         
-    def discover_plugins(self) -> List[str]:
+    def _scan_directory_for_plugins(self, directory: Path) -> List[str]:
         """
-        Scan plugins directory for installed plugins.
+        Scan a specific directory for plugins.
         
-        A valid plugin directory must contain a manifest.json file.
-        
+        Args:
+            directory: Directory to scan
+            
         Returns:
-            List of plugin IDs that were discovered
+            List of plugin IDs discovered in this directory
         """
         discovered = []
         
-        # Check if directory exists (handle permission errors gracefully)
-        try:
-            if not self.plugins_dir.exists():
-                self.logger.warning(f"Plugins directory not found: {self.plugins_dir}")
-                return discovered
-        except PermissionError as e:
-            self.logger.warning(
-                f"Permission denied accessing plugins directory: {self.plugins_dir}. "
-                f"Error: {e}. Plugin discovery skipped."
-            )
-            return discovered
-        except OSError as e:
-            self.logger.warning(
-                f"Error accessing plugins directory: {self.plugins_dir}. "
-                f"Error: {e}. Plugin discovery skipped."
-            )
+        if not directory.exists():
             return discovered
         
         try:
-            items = list(self.plugins_dir.iterdir())
-        except PermissionError as e:
-            self.logger.warning(
-                f"Permission denied reading plugins directory: {self.plugins_dir}. "
-                f"Error: {e}. Plugin discovery skipped."
-            )
-            return discovered
-        except OSError as e:
-            self.logger.warning(
-                f"Error reading plugins directory: {self.plugins_dir}. "
-                f"Error: {e}. Plugin discovery skipped."
-            )
+            items = list(directory.iterdir())
+        except (PermissionError, OSError) as e:
+            self.logger.debug(f"Could not read directory {directory}: {e}")
             return discovered
         
         for item in items:
@@ -159,22 +136,78 @@ class PluginManager:
                         )
                     
                     discovered.append(plugin_id)
+                    # Store manifest with directory path for later lookup
                     self.plugin_manifests[plugin_id] = manifest
+                    # Store the directory path for this plugin
+                    if not hasattr(self, 'plugin_directories'):
+                        self.plugin_directories = {}
+                    self.plugin_directories[plugin_id] = item
+                    
                     version_info = manifest.get('version')
                     last_updated = manifest.get('last_updated')
                     if version_info:
-                        self.logger.info(f"Discovered plugin: {plugin_id} (version {version_info})")
+                        self.logger.info(f"Discovered plugin: {plugin_id} (version {version_info}) in {directory.name}/")
                     elif last_updated:
-                        self.logger.info(f"Discovered plugin: {plugin_id} (last updated {last_updated})")
+                        self.logger.info(f"Discovered plugin: {plugin_id} (last updated {last_updated}) in {directory.name}/")
                     else:
-                        self.logger.info(f"Discovered plugin: {plugin_id}")
+                        self.logger.info(f"Discovered plugin: {plugin_id} in {directory.name}/")
                     
                 except json.JSONDecodeError as e:
                     self.logger.error(f"Invalid JSON in manifest {manifest_path}: {e}")
                 except Exception as e:
                     self.logger.error(f"Error reading manifest in {item}: {e}")
         
-        self.logger.info(f"Discovered {len(discovered)} plugin(s)")
+        return discovered
+    
+    def discover_plugins(self) -> List[str]:
+        """
+        Scan plugins directories for installed plugins.
+        
+        Checks both the configured plugins directory and the standard 'plugins/' directory.
+        A valid plugin directory must contain a manifest.json file.
+        
+        Returns:
+            List of plugin IDs that were discovered
+        """
+        discovered = []
+        all_plugin_ids = set()
+        
+        # Initialize plugin_directories dict if it doesn't exist
+        if not hasattr(self, 'plugin_directories'):
+            self.plugin_directories = {}
+        
+        # Scan the configured plugins directory first
+        dirs_scanned = []
+        if self.plugins_dir.exists():
+            dirs_scanned.append(self.plugins_dir)
+            found = self._scan_directory_for_plugins(self.plugins_dir)
+            for plugin_id in found:
+                if plugin_id not in all_plugin_ids:
+                    discovered.append(plugin_id)
+                    all_plugin_ids.add(plugin_id)
+        
+        # Also scan the standard 'plugins/' directory if it's different
+        # This handles the case where plugins are in plugins/ but config says plugin-repos/
+        try:
+            # Try to determine project root from plugins_dir
+            if self.plugins_dir.is_absolute():
+                project_root = self.plugins_dir.parent
+            else:
+                project_root = self.plugins_dir.resolve().parent
+            
+            standard_plugins_dir = project_root / 'plugins'
+            if standard_plugins_dir.exists() and standard_plugins_dir != self.plugins_dir:
+                dirs_scanned.append(standard_plugins_dir)
+                found = self._scan_directory_for_plugins(standard_plugins_dir)
+                for plugin_id in found:
+                    if plugin_id not in all_plugin_ids:
+                        discovered.append(plugin_id)
+                        all_plugin_ids.add(plugin_id)
+        except (OSError, ValueError):
+            # Can't resolve path, skip
+            pass
+        
+        self.logger.info(f"Discovered {len(discovered)} plugin(s) from {len(dirs_scanned)} directory(ies)")
         return discovered
 
     def _get_dependency_marker_path(self, plugin_id: str) -> Path:
@@ -666,9 +699,28 @@ class PluginManager:
         if plugin_id not in self.plugin_manifests:
             return None
         
+        # Use stored directory path if available (from discovery)
+        if hasattr(self, 'plugin_directories') and plugin_id in self.plugin_directories:
+            return str(self.plugin_directories[plugin_id])
+        
+        # Fallback: check configured directory
         plugin_dir = self.plugins_dir / plugin_id
         if plugin_dir.exists():
             return str(plugin_dir)
+        
+        # Fallback: check standard plugins directory
+        try:
+            if self.plugins_dir.is_absolute():
+                project_root = self.plugins_dir.parent
+            else:
+                project_root = self.plugins_dir.resolve().parent
+            standard_plugins_dir = project_root / 'plugins'
+            if standard_plugins_dir.exists():
+                plugin_dir = standard_plugins_dir / plugin_id
+                if plugin_dir.exists():
+                    return str(plugin_dir)
+        except (OSError, ValueError):
+            pass
         
         return None
 

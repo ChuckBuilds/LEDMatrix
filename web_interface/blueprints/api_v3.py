@@ -1021,9 +1021,22 @@ def update_plugin():
             # Provide more detailed error message
             error_msg = f'Failed to update plugin {plugin_id}'
             
-            # Check if plugin exists
-            plugin_path_dir = Path(api_v3.plugin_store_manager.plugins_dir) / plugin_id
-            if not plugin_path_dir.exists():
+            # Check if plugin exists using the same logic as update_plugin
+            # Use the internal helper method if available, otherwise check multiple locations
+            plugin_path_dir = None
+            if hasattr(api_v3.plugin_store_manager, '_find_plugin_path'):
+                plugin_path_dir = api_v3.plugin_store_manager._find_plugin_path(plugin_id)
+            else:
+                # Fallback: check configured directory and common locations
+                plugin_path_dir = Path(api_v3.plugin_store_manager.plugins_dir) / plugin_id
+                if not plugin_path_dir.exists():
+                    # Try plugins directory
+                    project_root = PROJECT_ROOT
+                    fallback_path = project_root / 'plugins' / plugin_id
+                    if fallback_path.exists():
+                        plugin_path_dir = fallback_path
+            
+            if plugin_path_dir is None or not plugin_path_dir.exists():
                 error_msg += ': Plugin not found'
             else:
                 # Check if it's in registry

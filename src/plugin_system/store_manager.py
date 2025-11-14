@@ -1106,6 +1106,39 @@ class PluginStoreManager:
 
         return None
     
+    def _find_plugin_path(self, plugin_id: str) -> Optional[Path]:
+        """
+        Find the plugin path by checking the configured directory and standard plugins directory.
+        
+        Args:
+            plugin_id: Plugin identifier
+            
+        Returns:
+            Path to plugin directory if found, None otherwise
+        """
+        # First check the configured plugins directory
+        plugin_path = self.plugins_dir / plugin_id
+        if plugin_path.exists():
+            return plugin_path
+        
+        # Also check the standard 'plugins/' directory if it's different
+        # This handles the case where plugins are in plugins/ but config says plugin-repos/
+        try:
+            if self.plugins_dir.is_absolute():
+                project_root = self.plugins_dir.parent
+            else:
+                project_root = self.plugins_dir.resolve().parent
+            
+            standard_plugins_dir = project_root / 'plugins'
+            if standard_plugins_dir.exists() and standard_plugins_dir != self.plugins_dir:
+                plugin_path = standard_plugins_dir / plugin_id
+                if plugin_path.exists():
+                    return plugin_path
+        except (OSError, ValueError):
+            pass
+        
+        return None
+    
     def uninstall_plugin(self, plugin_id: str) -> bool:
         """
         Uninstall a plugin by removing its directory.
@@ -1116,30 +1149,11 @@ class PluginStoreManager:
         Returns:
             True if uninstalled successfully (or already not installed)
         """
-        plugin_path = self.plugins_dir / plugin_id
+        plugin_path = self._find_plugin_path(plugin_id)
         
-        if not plugin_path.exists():
-            # Plugin already not installed - check if it might be in a different directory
-            # (e.g., if plugin_id in manifest doesn't match directory name)
-            found = False
-            if self.plugins_dir.exists():
-                for item in self.plugins_dir.iterdir():
-                    if item.is_dir() and (item / "manifest.json").exists():
-                        try:
-                            with open(item / "manifest.json", 'r', encoding='utf-8') as f:
-                                manifest = json.load(f)
-                                if manifest.get('id') == plugin_id:
-                                    # Found plugin with matching ID but different directory name
-                                    plugin_path = item
-                                    found = True
-                                    self.logger.info(f"Found plugin {plugin_id} in directory {item.name}")
-                                    break
-                        except Exception:
-                            continue
-            
-            if not found:
-                self.logger.info(f"Plugin {plugin_id} not found (already uninstalled)")
-                return True  # Already uninstalled, consider this success
+        if plugin_path is None or not plugin_path.exists():
+            self.logger.info(f"Plugin {plugin_id} not found (already uninstalled)")
+            return True  # Already uninstalled, consider this success
         
         try:
             self.logger.info(f"Uninstalling plugin: {plugin_id}")
@@ -1154,9 +1168,9 @@ class PluginStoreManager:
         """
         Update a plugin to the latest commit on its upstream branch.
         """
-        plugin_path = self.plugins_dir / plugin_id
+        plugin_path = self._find_plugin_path(plugin_id)
         
-        if not plugin_path.exists():
+        if plugin_path is None or not plugin_path.exists():
             self.logger.error(f"Plugin not installed: {plugin_id}")
             return False
         
