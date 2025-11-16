@@ -318,19 +318,119 @@ def save_main_config():
                 if field in data:
                     current_config['display']['display_durations'][field] = int(data[field])
 
-        # Merge sports configurations
-        if 'nfl_scoreboard' in data:
-            current_config['nfl_scoreboard'] = data['nfl_scoreboard']
-        if 'mlb_scoreboard' in data:
-            current_config['mlb_scoreboard'] = data['mlb_scoreboard']
-        if 'nhl_scoreboard' in data:
-            current_config['nhl_scoreboard'] = data['nhl_scoreboard']
-        if 'nba_scoreboard' in data:
-            current_config['nba_scoreboard'] = data['nba_scoreboard']
-        if 'ncaa_fb_scoreboard' in data:
-            current_config['ncaa_fb_scoreboard'] = data['ncaa_fb_scoreboard']
-        if 'soccer_scoreboard' in data:
-            current_config['soccer_scoreboard'] = data['soccer_scoreboard']
+        # Handle plugin configurations dynamically
+        # Any key that matches a plugin ID should be saved as plugin config
+        # This includes proper secret field handling from schema
+        plugin_keys_to_remove = []
+        for key in data:
+            # Check if this key is a plugin ID
+            if api_v3.plugin_manager and key in api_v3.plugin_manager.plugin_manifests:
+                plugin_id = key
+                plugin_config = data[key]
+                
+                # Load plugin schema to identify secret fields (same logic as save_plugin_config)
+                secret_fields = set()
+                if api_v3.plugin_manager:
+                    plugins_dir = api_v3.plugin_manager.plugins_dir
+                else:
+                    plugin_system_config = current_config.get('plugin_system', {})
+                    plugins_dir_name = plugin_system_config.get('plugins_directory', 'plugin-repos')
+                    if os.path.isabs(plugins_dir_name):
+                        plugins_dir = Path(plugins_dir_name)
+                    else:
+                        plugins_dir = PROJECT_ROOT / plugins_dir_name
+                schema_path = plugins_dir / plugin_id / 'config_schema.json'
+                
+                def find_secret_fields(properties, prefix=''):
+                    """Recursively find fields marked with x-secret: true"""
+                    fields = set()
+                    for field_name, field_props in properties.items():
+                        full_path = f"{prefix}.{field_name}" if prefix else field_name
+                        if field_props.get('x-secret', False):
+                            fields.add(full_path)
+                        # Check nested objects
+                        if field_props.get('type') == 'object' and 'properties' in field_props:
+                            fields.update(find_secret_fields(field_props['properties'], full_path))
+                    return fields
+                
+                if schema_path.exists():
+                    try:
+                        with open(schema_path, 'r', encoding='utf-8') as f:
+                            schema = json.load(f)
+                            if 'properties' in schema:
+                                secret_fields = find_secret_fields(schema['properties'])
+                    except Exception as e:
+                        print(f"Error reading schema for secret detection: {e}")
+                
+                # Separate secrets from regular config (same logic as save_plugin_config)
+                def separate_secrets(config, secrets_set, prefix=''):
+                    """Recursively separate secret fields from regular config"""
+                    regular = {}
+                    secrets = {}
+                    for key, value in config.items():
+                        full_path = f"{prefix}.{key}" if prefix else key
+                        if isinstance(value, dict):
+                            nested_regular, nested_secrets = separate_secrets(value, secrets_set, full_path)
+                            if nested_regular:
+                                regular[key] = nested_regular
+                            if nested_secrets:
+                                secrets[key] = nested_secrets
+                        elif full_path in secrets_set:
+                            secrets[key] = value
+                        else:
+                            regular[key] = value
+                    return regular, secrets
+                
+                regular_config, secrets_config = separate_secrets(plugin_config, secret_fields)
+                
+                # Get current secrets config
+                current_secrets = api_v3.config_manager.get_raw_file_content('secrets')
+                
+                # Deep merge regular config into main config
+                if plugin_id not in current_config:
+                    current_config[plugin_id] = {}
+                current_config[plugin_id] = deep_merge(current_config[plugin_id], regular_config)
+                
+                # Deep merge secrets into secrets config
+                if secrets_config:
+                    if plugin_id not in current_secrets:
+                        current_secrets[plugin_id] = {}
+                    current_secrets[plugin_id] = deep_merge(current_secrets[plugin_id], secrets_config)
+                    # Save secrets file
+                    api_v3.config_manager.save_raw_file_content('secrets', current_secrets)
+                
+                # Mark for removal from data dict (already processed)
+                plugin_keys_to_remove.append(key)
+                
+                # Notify plugin of config change if loaded (with merged config including secrets)
+                try:
+                    if api_v3.plugin_manager:
+                        plugin_instance = api_v3.plugin_manager.get_plugin(plugin_id)
+                        if plugin_instance:
+                            # Reload merged config (includes secrets) and pass the plugin-specific section
+                            merged_config = api_v3.config_manager.load_config()
+                            plugin_full_config = merged_config.get(plugin_id, {})
+                            if hasattr(plugin_instance, 'on_config_change'):
+                                plugin_instance.on_config_change(plugin_full_config)
+                except Exception as hook_err:
+                    # Don't fail the save if hook fails
+                    print(f"Warning: on_config_change failed for {plugin_id}: {hook_err}")
+        
+        # Remove processed plugin keys from data (they're already in current_config)
+        for key in plugin_keys_to_remove:
+            del data[key]
+        
+        # Handle any remaining non-plugin configs (legacy sports managers, etc.)
+        # These are kept for backwards compatibility but plugins should use plugin config endpoint
+        for key in data:
+            if key.endswith('_scoreboard') or key in ['timezone', 'city', 'state', 'country', 
+                                                       'web_display_autostart', 'auto_discover', 
+                                                       'auto_load_enabled', 'development_mode', 
+                                                       'plugins_directory']:
+                # These are handled above or are legacy - skip
+                continue
+            # For any other keys, merge them into current config
+            current_config[key] = data[key]
 
         # Save the merged config
         api_v3.config_manager.save_config(current_config)
