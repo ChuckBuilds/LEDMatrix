@@ -767,6 +767,12 @@
                         if (data.status === 'success') {
                             this.installedPlugins = data.data.plugins || [];
                             console.log(`Loaded ${this.installedPlugins.length} plugins:`, this.installedPlugins.map(p => p.id));
+                            
+                            // Debug: Log enabled status for each plugin
+                            this.installedPlugins.forEach(plugin => {
+                                console.log(`[DEBUG Alpine] Plugin ${plugin.id}: enabled=${plugin.enabled} (type: ${typeof plugin.enabled})`);
+                            });
+                            
                             this.updatePluginTabs();
                         } else {
                             console.error('Failed to load plugins:', data.message);

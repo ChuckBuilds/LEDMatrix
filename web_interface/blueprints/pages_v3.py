@@ -198,9 +198,24 @@ def _load_plugins_partial():
                             # If we can't read the fresh manifest, use the cached one
                             print(f"Warning: Could not read fresh manifest for {plugin_id}: {e}")
 
-                    # Get enabled status from loaded plugin or config
-                    plugin_instance = pages_v3.plugin_manager.get_plugin(plugin_id)
-                    enabled = plugin_instance.enabled if plugin_instance else False
+                    # Get enabled status from config (source of truth)
+                    # Read from config file first, fall back to plugin instance if config doesn't have the key
+                    enabled = None
+                    if pages_v3.config_manager:
+                        full_config = pages_v3.config_manager.load_config()
+                        plugin_config = full_config.get(plugin_id, {})
+                        # Check if 'enabled' key exists in config (even if False)
+                        if 'enabled' in plugin_config:
+                            enabled = bool(plugin_config['enabled'])
+                    
+                    # Fallback to plugin instance if config doesn't have enabled key
+                    if enabled is None:
+                        plugin_instance = pages_v3.plugin_manager.get_plugin(plugin_id)
+                        if plugin_instance:
+                            enabled = plugin_instance.enabled
+                        else:
+                            # Default to True if no config key and plugin not loaded (matches BasePlugin default)
+                            enabled = True
 
                     # Get verified status from store registry
                     store_info = pages_v3.plugin_store_manager.get_plugin_info(plugin_id)

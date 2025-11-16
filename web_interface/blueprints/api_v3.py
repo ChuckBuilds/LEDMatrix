@@ -889,7 +889,7 @@ def get_installed_plugins():
                 plugin_config = full_config.get(plugin_id, {})
                 # Check if 'enabled' key exists in config (even if False)
                 if 'enabled' in plugin_config:
-                    enabled = bool(plugin_config.get('enabled', True))
+                    enabled = bool(plugin_config['enabled'])
             
             # Fallback to plugin instance if config doesn't have enabled key
             if enabled is None:
