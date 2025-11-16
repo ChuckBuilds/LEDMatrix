@@ -1540,6 +1540,15 @@ def save_plugin_config():
 
         plugin_id = data['plugin_id']
         plugin_config = data.get('config', {})
+        
+        # Debug logging for live_priority
+        if plugin_id == 'football-scoreboard':
+            print(f"[DEBUG] Saving config for {plugin_id}")
+            print(f"[DEBUG] Received config: {json.dumps(plugin_config, indent=2)}")
+            if 'nfl' in plugin_config:
+                print(f"[DEBUG] NFL live_priority in received config: {plugin_config['nfl'].get('live_priority')}")
+            if 'ncaa_fb' in plugin_config:
+                print(f"[DEBUG] NCAA FB live_priority in received config: {plugin_config['ncaa_fb'].get('live_priority')}")
 
         # Load plugin schema to identify secret fields (supports nested schemas)
         # Use plugin_manager's plugins_dir if available, otherwise read from config
@@ -1611,7 +1620,18 @@ def save_plugin_config():
         # Deep merge plugin configuration in main config (preserves nested structures)
         if plugin_id not in current_config:
             current_config[plugin_id] = {}
+        
+        # Debug logging for live_priority before merge
+        if plugin_id == 'football-scoreboard':
+            print(f"[DEBUG] Before merge - current NFL live_priority: {current_config[plugin_id].get('nfl', {}).get('live_priority')}")
+            print(f"[DEBUG] Before merge - regular_config NFL live_priority: {regular_config.get('nfl', {}).get('live_priority')}")
+        
         current_config[plugin_id] = deep_merge(current_config[plugin_id], regular_config)
+        
+        # Debug logging for live_priority after merge
+        if plugin_id == 'football-scoreboard':
+            print(f"[DEBUG] After merge - NFL live_priority: {current_config[plugin_id].get('nfl', {}).get('live_priority')}")
+            print(f"[DEBUG] After merge - NCAA FB live_priority: {current_config[plugin_id].get('ncaa_fb', {}).get('live_priority')}")
 
         # Deep merge plugin secrets in secrets config
         if secrets_config:

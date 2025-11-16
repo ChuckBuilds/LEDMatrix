@@ -1452,6 +1452,13 @@
                         
                         console.log('Saving config for', pluginId, ':', config);
                         console.log('Flat config before nesting:', flatConfig);
+                        // Debug logging for live_priority
+                        if (pluginId === 'football-scoreboard') {
+                            console.log('[DEBUG] NFL live_priority in flatConfig:', flatConfig['nfl.live_priority']);
+                            console.log('[DEBUG] NCAA FB live_priority in flatConfig:', flatConfig['ncaa_fb.live_priority']);
+                            console.log('[DEBUG] NFL live_priority in nested config:', config.nfl?.live_priority);
+                            console.log('[DEBUG] NCAA FB live_priority in nested config:', config.ncaa_fb?.live_priority);
+                        }
                         
                         // Save to backend
                         const response = await fetch('/api/v3/plugins/config', {
