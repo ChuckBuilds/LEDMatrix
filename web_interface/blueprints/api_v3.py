@@ -420,17 +420,22 @@ def save_main_config():
         for key in plugin_keys_to_remove:
             del data[key]
         
-        # Handle any remaining non-plugin configs (legacy sports managers, etc.)
-        # These are kept for backwards compatibility but plugins should use plugin config endpoint
+        # Handle any remaining config keys
+        # System settings (timezone, city, etc.) are already handled above
+        # Plugin configs should use /api/v3/plugins/config endpoint, but we'll handle them here too for flexibility
         for key in data:
-            if key.endswith('_scoreboard') or key in ['timezone', 'city', 'state', 'country', 
-                                                       'web_display_autostart', 'auto_discover', 
-                                                       'auto_load_enabled', 'development_mode', 
-                                                       'plugins_directory']:
-                # These are handled above or are legacy - skip
+            # Skip system settings that are already handled above
+            if key in ['timezone', 'city', 'state', 'country', 
+                       'web_display_autostart', 'auto_discover', 
+                       'auto_load_enabled', 'development_mode', 
+                       'plugins_directory']:
                 continue
-            # For any other keys, merge them into current config
-            current_config[key] = data[key]
+            # For any remaining keys (including plugin keys), use deep merge to preserve existing settings
+            if key in current_config and isinstance(current_config[key], dict) and isinstance(data[key], dict):
+                # Deep merge to preserve existing settings
+                current_config[key] = deep_merge(current_config[key], data[key])
+            else:
+                current_config[key] = data[key]
 
         # Save the merged config
         api_v3.config_manager.save_config(current_config)

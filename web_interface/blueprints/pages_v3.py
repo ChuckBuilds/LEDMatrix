@@ -60,8 +60,6 @@ def load_partial(partial_name):
             return _load_durations_partial()
         elif partial_name == 'schedule':
             return _load_schedule_partial()
-        elif partial_name == 'sports':
-            return _load_sports_partial()
         elif partial_name == 'weather':
             return _load_weather_partial()
         elif partial_name == 'stocks':
@@ -136,16 +134,6 @@ def _load_schedule_partial():
     except Exception as e:
         return f"Error: {str(e)}", 500
 
-def _load_sports_partial():
-    """Load sports configuration partial"""
-    try:
-        if pages_v3.config_manager:
-            main_config = pages_v3.config_manager.load_config()
-            # Sports configuration would be loaded here
-            return render_template('v3/partials/sports.html',
-                                 main_config=main_config)
-    except Exception as e:
-        return f"Error: {str(e)}", 500
 
 def _load_weather_partial():
     """Load weather configuration partial"""
