@@ -969,7 +969,10 @@
                             
                             // Recursively generate fields for nested properties
                             Object.entries(prop.properties).forEach(([nestedKey, nestedProp]) => {
-                                const nestedValue = nestedConfig[nestedKey] !== undefined ? nestedConfig[nestedKey] : nestedProp.default;
+                                // Use config value if it exists and is not null (including false), otherwise use schema default
+                                // Check if key exists in config and value is not null
+                                const hasValue = nestedKey in nestedConfig && nestedConfig[nestedKey] !== null;
+                                const nestedValue = hasValue ? nestedConfig[nestedKey] : (nestedProp.default !== undefined ? nestedProp.default : false);
                                 html += generateFieldHtml(nestedKey, nestedProp, nestedValue, fullKey);
                             });
                             
@@ -1132,7 +1135,10 @@
                     Object.entries(schema.properties).forEach(([key, prop]) => {
                         // Skip the 'enabled' property - it's managed separately via the header toggle
                         if (key === 'enabled') return;
-                        const value = config[key] !== undefined ? config[key] : prop.default;
+                        // Use config value if key exists and is not null (including false), otherwise use schema default
+                        // Check if key exists in config and value is not null
+                        const hasValue = key in config && config[key] !== null;
+                        const value = hasValue ? config[key] : (prop.default !== undefined ? prop.default : false);
                         formHtml += generateFieldHtml(key, prop, value);
                     });
 
@@ -1417,6 +1423,8 @@
                             
                             const allBoolFields = collectBooleanFields(schema.properties);
                             allBoolFields.forEach(key => {
+                                // Only set to false if the field is completely missing from flatConfig
+                                // Don't override existing false values - they're explicitly set by the user
                                 if (!(key in flatConfig)) {
                                     flatConfig[key] = false;
                                 }
