@@ -14,28 +14,43 @@
         (function() {
             function setupScriptExecution() {
                 if (document.body) {
+                    // Handle HTMX errors gracefully
+                    document.body.addEventListener('htmx:responseError', function(event) {
+                        // Suppress HTMX errors to reduce console noise
+                        event.preventDefault();
+                    });
+                    
+                    document.body.addEventListener('htmx:swapError', function(event) {
+                        // Suppress HTMX swap errors to reduce console noise
+                        event.preventDefault();
+                    });
+                    
                     document.body.addEventListener('htmx:afterSwap', function(event) {
                         if (event.detail && event.detail.target) {
-                            const scripts = event.detail.target.querySelectorAll('script');
-                            scripts.forEach(function(oldScript) {
-                                try {
-                                    if (oldScript.innerHTML.trim() || oldScript.src) {
-                                        const newScript = document.createElement('script');
-                                        if (oldScript.src) newScript.src = oldScript.src;
-                                        if (oldScript.type) newScript.type = oldScript.type;
-                                        if (oldScript.innerHTML) newScript.textContent = oldScript.innerHTML;
-                                        if (oldScript.parentNode) {
-                                            oldScript.parentNode.insertBefore(newScript, oldScript);
-                                            oldScript.parentNode.removeChild(oldScript);
-                                        } else {
-                                            // If no parent, append to head or body
-                                            (document.head || document.body).appendChild(newScript);
+                            try {
+                                const scripts = event.detail.target.querySelectorAll('script');
+                                scripts.forEach(function(oldScript) {
+                                    try {
+                                        if (oldScript.innerHTML.trim() || oldScript.src) {
+                                            const newScript = document.createElement('script');
+                                            if (oldScript.src) newScript.src = oldScript.src;
+                                            if (oldScript.type) newScript.type = oldScript.type;
+                                            if (oldScript.innerHTML) newScript.textContent = oldScript.innerHTML;
+                                            if (oldScript.parentNode) {
+                                                oldScript.parentNode.insertBefore(newScript, oldScript);
+                                                oldScript.parentNode.removeChild(oldScript);
+                                            } else {
+                                                // If no parent, append to head or body
+                                                (document.head || document.body).appendChild(newScript);
+                                            }
                                         }
+                                    } catch (e) {
+                                        // Silently ignore script execution errors
                                     }
-                                } catch (e) {
-                                    // Silently ignore script execution errors to reduce console noise
-                                }
-                            });
+                                });
+                            } catch (e) {
+                                // Silently ignore errors in script processing
+                            }
                         }
                     });
                 } else {
