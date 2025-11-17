@@ -567,12 +567,19 @@ function initializePluginPageWhenReady() {
     const installedGrid = document.getElementById('installed-plugins-grid');
     const storeGrid = document.getElementById('plugin-store-grid');
     
-    if (installedGrid && storeGrid) {
-        console.log('Plugin elements found, initializing now!');
+    // Only require installed-plugins-grid to exist (plugin-store-grid may load later)
+    if (installedGrid) {
+        console.log('Plugin elements found, initializing now!', {
+            installedGrid: !!installedGrid,
+            storeGrid: !!storeGrid
+        });
         initPluginsPage();
         return true;
     } else {
-        console.warn('Plugin elements not found yet. Retrying...');
+        console.warn('Plugin elements not found yet. Retrying...', {
+            installedGrid: !!installedGrid,
+            storeGrid: !!storeGrid
+        });
         return false;
     }
 }
@@ -620,9 +627,8 @@ if (initializePluginPageWhenReady()) {
 // Also listen for HTMX load event (fires when content is swapped)
 if (typeof htmx !== 'undefined') {
     document.body.addEventListener('htmx:load', function(event) {
-        // Check if plugins content was loaded
-        if (document.getElementById('installed-plugins-grid') && 
-            document.getElementById('plugin-store-grid')) {
+        // Check if plugins content was loaded (only need installed-plugins-grid)
+        if (document.getElementById('installed-plugins-grid')) {
             console.log('HTMX load event detected, initializing plugins...');
             window.pluginManager.initialized = false;
             setTimeout(initializePluginPageWhenReady, 100);
@@ -636,8 +642,12 @@ if (typeof MutationObserver !== 'undefined') {
         const installedGrid = document.getElementById('installed-plugins-grid');
         const storeGrid = document.getElementById('plugin-store-grid');
         
-        if (installedGrid && storeGrid && (!window.pluginManager || !window.pluginManager.initialized)) {
-            console.log('MutationObserver detected plugin elements, initializing...');
+        // Only require installed-plugins-grid (storeGrid may load later)
+        if (installedGrid && (!window.pluginManager || !window.pluginManager.initialized)) {
+            console.log('MutationObserver detected plugin elements, initializing...', {
+                installedGrid: !!installedGrid,
+                storeGrid: !!storeGrid
+            });
             setTimeout(initializePluginPageWhenReady, 100);
         }
     });
