@@ -11,20 +11,34 @@
     <script src="https://unpkg.com/htmx.org/dist/ext/json-enc.js"></script>
     <script>
         // Configure HTMX to evaluate scripts in swapped content
-        document.body.addEventListener('htmx:afterSwap', function(event) {
-            // Execute any script tags in the swapped content
-            if (event.detail.target) {
-                const scripts = event.detail.target.querySelectorAll('script');
-                scripts.forEach(function(oldScript) {
-                    const newScript = document.createElement('script');
-                    Array.from(oldScript.attributes).forEach(attr => {
-                        newScript.setAttribute(attr.name, attr.value);
+        (function() {
+            function setupHTMXScriptExecution() {
+                if (document.body) {
+                    document.body.addEventListener('htmx:afterSwap', function(event) {
+                        // Execute any script tags in the swapped content
+                        if (event.detail.target) {
+                            const scripts = event.detail.target.querySelectorAll('script');
+                            scripts.forEach(function(oldScript) {
+                                const newScript = document.createElement('script');
+                                Array.from(oldScript.attributes).forEach(attr => {
+                                    newScript.setAttribute(attr.name, attr.value);
+                                });
+                                newScript.appendChild(document.createTextNode(oldScript.innerHTML));
+                                oldScript.parentNode.replaceChild(newScript, oldScript);
+                            });
+                        }
                     });
-                    newScript.appendChild(document.createTextNode(oldScript.innerHTML));
-                    oldScript.parentNode.replaceChild(newScript, oldScript);
-                });
+                } else {
+                    // Wait for body to be available
+                    if (document.readyState === 'loading') {
+                        document.addEventListener('DOMContentLoaded', setupHTMXScriptExecution);
+                    } else {
+                        setTimeout(setupHTMXScriptExecution, 100);
+                    }
+                }
             }
-        });
+            setupHTMXScriptExecution();
+        })();
     </script>
 
     <!-- Alpine.js for reactive components -->
@@ -278,13 +292,30 @@
                                         window.pluginManager.loadInstalledPlugins();
                                     } else {
                                         // Last resort: fetch and render manually
+                                        console.log('Last resort: fetching plugins directly...');
                                         fetch('/api/v3/plugins/installed')
                                             .then(r => r.json())
                                             .then(data => {
-                                                if (data.status === 'success' && window.renderInstalledPlugins) {
-                                                    window.renderInstalledPlugins(data.data.plugins || []);
+                                                console.log('Fetched plugins directly:', data);
+                                                if (data.status === 'success') {
+                                                    const plugins = data.data.plugins || [];
+                                                    const container = document.getElementById('installed-plugins-grid');
+                                                    if (container && window.renderInstalledPlugins) {
+                                                        window.renderInstalledPlugins(plugins);
+                                                    } else if (container) {
+                                                        // Manual render if function not available
+                                                        container.innerHTML = plugins.map(p => `
+                                                            <div class="plugin-card">
+                                                                <h4>${p.name || p.id}</h4>
+                                                                <p>${p.description || 'No description'}</p>
+                                                            </div>
+                                                        `).join('');
+                                                        const countEl = document.getElementById('installed-count');
+                                                        if (countEl) countEl.textContent = plugins.length + ' installed';
+                                                    }
                                                 }
-                                            });
+                                            })
+                                            .catch(err => console.error('Error fetching plugins:', err));
                                     }
                                 }
                             }
