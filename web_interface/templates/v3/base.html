@@ -61,58 +61,57 @@
                             content.innerHTML = html;
                             console.log('Plugins HTML loaded, executing scripts...');
                             
-                            // Execute scripts manually - skip if errors occur
-                            const scripts = Array.from(content.querySelectorAll('script'));
-                            scripts.forEach((oldScript, index) => {
-                                try {
-                                    // Skip if script has no content and no src
-                                    if (!oldScript.innerHTML.trim() && !oldScript.src) {
-                                        oldScript.remove();
-                                        return;
-                                    }
-                                    
-                                    // Validate script content before executing
-                                    const scriptContent = oldScript.innerHTML.trim();
-                                    if (scriptContent && !oldScript.src) {
-                                        // Basic syntax check - look for common issues
-                                        const openParens = (scriptContent.match(/\(/g) || []).length;
-                                        const closeParens = (scriptContent.match(/\)/g) || []).length;
-                                        if (openParens !== closeParens) {
-                                            console.warn('Skipping script with mismatched parentheses');
+                            // Execute scripts manually - wrap in try-catch to prevent errors from blocking
+                            try {
+                                const scripts = Array.from(content.querySelectorAll('script'));
+                                scripts.forEach((oldScript) => {
+                                    try {
+                                        // Skip if script has no content and no src
+                                        if (!oldScript.innerHTML.trim() && !oldScript.src) {
                                             oldScript.remove();
                                             return;
                                         }
+                                        
+                                        const scriptContent = oldScript.innerHTML.trim();
+                                        
+                                        // Only execute if we have valid content
+                                        if (scriptContent || oldScript.src) {
+                                            const newScript = document.createElement('script');
+                                            if (oldScript.src) {
+                                                newScript.src = oldScript.src;
+                                            }
+                                            if (oldScript.type) {
+                                                newScript.type = oldScript.type;
+                                            }
+                                            if (scriptContent) {
+                                                newScript.textContent = scriptContent;
+                                            }
+                                            
+                                            // Remove old script first, then append new one
+                                            const parent = oldScript.parentNode;
+                                            if (parent) {
+                                                oldScript.remove();
+                                                parent.appendChild(newScript);
+                                            } else {
+                                                // If no parent, append to head or body
+                                                (document.head || document.body).appendChild(newScript);
+                                            }
+                                        } else {
+                                            oldScript.remove();
+                                        }
+                                    } catch (scriptError) {
+                                        // Skip this specific script if it causes errors
+                                        try {
+                                            oldScript.remove();
+                                        } catch (removeErr) {
+                                            // Ignore removal errors
+                                        }
                                     }
-                                    
-                                    const newScript = document.createElement('script');
-                                    if (oldScript.src) {
-                                        newScript.src = oldScript.src;
-                                    }
-                                    if (oldScript.type) {
-                                        newScript.type = oldScript.type;
-                                    }
-                                    if (scriptContent) {
-                                        newScript.textContent = scriptContent;
-                                    }
-                                    
-                                    // Remove old script first, then append new one
-                                    const parent = oldScript.parentNode;
-                                    if (parent) {
-                                        oldScript.remove();
-                                        parent.appendChild(newScript);
-                                    } else {
-                                        // If no parent, append to head or body
-                                        (document.head || document.body).appendChild(newScript);
-                                    }
-                                } catch (e) {
-                                    // Silently skip problematic scripts - fallback rendering will handle it
-                                    try {
-                                        oldScript.remove();
-                                    } catch (removeErr) {
-                                        // Ignore removal errors
-                                    }
-                                }
-                            });
+                                });
+                            } catch (executionError) {
+                                // If script execution fails entirely, just continue - fallback will handle rendering
+                                console.warn('Script execution encountered errors, using fallback rendering');
+                            }
                             
                             // Wait for scripts to execute, then load plugins
                             // Retry multiple times to give scripts time to execute
