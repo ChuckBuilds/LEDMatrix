@@ -261,38 +261,53 @@
             <!-- Plugins tab -->
             <div x-show="activeTab === 'plugins'" 
                  x-transition
-                 @click="if (activeTab === 'plugins' && typeof htmx !== 'undefined') { const el = document.getElementById('plugins-content'); if (el && !el.hasAttribute('data-loaded')) { htmx.trigger(el, 'load'); } }">
-                <div id="plugins-content" 
-                     hx-get="/v3/partials/plugins" 
-                     hx-trigger="load, revealed" 
-                     hx-swap="innerHTML"
-                     hx-on::htmx:after-swap="
-                        this.setAttribute('data-loaded', 'true');
-                        console.log('Plugins content swapped, waiting for scripts...');
-                        setTimeout(() => {
-                            if (window.loadInstalledPlugins && typeof window.loadInstalledPlugins === 'function') {
-                                console.log('Calling loadInstalledPlugins directly...');
-                                window.loadInstalledPlugins();
-                            } else if (window.pluginManager && window.pluginManager.loadInstalledPlugins) {
-                                console.log('Calling pluginManager.loadInstalledPlugins...');
-                                window.pluginManager.loadInstalledPlugins();
-                            } else {
-                                console.log('loadInstalledPlugins not available yet, will retry...');
-                                const retry = setInterval(() => {
-                                    if (window.loadInstalledPlugins && typeof window.loadInstalledPlugins === 'function') {
-                                        clearInterval(retry);
-                                        console.log('Found loadInstalledPlugins, calling it...');
-                                        window.loadInstalledPlugins();
-                                    } else if (window.pluginManager && window.pluginManager.loadInstalledPlugins) {
-                                        clearInterval(retry);
-                                        console.log('Found pluginManager.loadInstalledPlugins, calling it...');
-                                        window.pluginManager.loadInstalledPlugins();
-                                    }
-                                }, 100);
-                                setTimeout(() => clearInterval(retry), 5000);
-                            }
-                        }, 500);
-                     ">
+                 x-effect="if (activeTab === 'plugins') {
+                     const content = document.getElementById('plugins-content');
+                     if (content && !content.hasAttribute('data-loaded')) {
+                         content.setAttribute('data-loaded', 'true');
+                         console.log('Loading plugins directly via fetch...');
+                         // Load the HTML structure first
+                         fetch('/v3/partials/plugins')
+                             .then(r => r.text())
+                             .then(html => {
+                                 content.innerHTML = html;
+                                 console.log('Plugins HTML loaded, executing scripts...');
+                                 // Execute scripts manually
+                                 const scripts = content.querySelectorAll('script');
+                                 scripts.forEach(oldScript => {
+                                     const newScript = document.createElement('script');
+                                     if (oldScript.src) newScript.src = oldScript.src;
+                                     if (oldScript.type) newScript.type = oldScript.type;
+                                     if (oldScript.innerHTML) newScript.textContent = oldScript.innerHTML;
+                                     if (oldScript.parentNode) {
+                                         oldScript.parentNode.insertBefore(newScript, oldScript);
+                                         oldScript.parentNode.removeChild(oldScript);
+                                     }
+                                 });
+                                 // Wait for scripts to execute, then load plugins
+                                 setTimeout(() => {
+                                     if (window.loadInstalledPlugins && typeof window.loadInstalledPlugins === 'function') {
+                                         console.log('Calling loadInstalledPlugins...');
+                                         window.loadInstalledPlugins();
+                                     } else if (window.pluginManager && window.pluginManager.loadInstalledPlugins) {
+                                         console.log('Calling pluginManager.loadInstalledPlugins...');
+                                         window.pluginManager.loadInstalledPlugins();
+                                     } else {
+                                         console.log('loadInstalledPlugins not found, fetching directly...');
+                                         fetch('/api/v3/plugins/installed')
+                                             .then(r => r.json())
+                                             .then(data => {
+                                                 if (data.status === 'success' && window.renderInstalledPlugins) {
+                                                     window.renderInstalledPlugins(data.data.plugins || []);
+                                                 }
+                                             });
+                                     }
+                                 }, 1000);
+                             })
+                             .catch(err => console.error('Error loading plugins:', err));
+                     }
+                 }">
+                <div id="plugins-content">
                     <div class="animate-pulse">
                         <div class="bg-white rounded-lg shadow p-6">
                             <div class="h-4 bg-gray-200 rounded w-1/4 mb-4"></div>
