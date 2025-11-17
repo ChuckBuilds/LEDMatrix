@@ -121,24 +121,8 @@
                                         
                                         // Only execute if we have valid content
                                         if (scriptContent || oldScript.src) {
-                                            // Basic syntax check for script content
-                                            if (scriptContent) {
-                                                // Check for balanced parentheses/brackets
-                                                const openParens = (scriptContent.match(/\(/g) || []).length;
-                                                const closeParens = (scriptContent.match(/\)/g) || []).length;
-                                                const openBrackets = (scriptContent.match(/\[/g) || []).length;
-                                                const closeBrackets = (scriptContent.match(/\]/g) || []).length;
-                                                const openBraces = (scriptContent.match(/\{/g) || []).length;
-                                                const closeBraces = (scriptContent.match(/\}/g) || []).length;
-                                                
-                                                if (openParens !== closeParens || 
-                                                    openBrackets !== closeBrackets || 
-                                                    openBraces !== closeBraces) {
-                                                    console.warn('Skipping script with unbalanced brackets/parentheses');
-                                                    oldScript.remove();
-                                                    return;
-                                                }
-                                            }
+                                            // Skip syntax validation - it's too strict and rejects valid scripts
+                                            // with brackets in strings/comments. Let the browser handle syntax errors.
                                             
                                             const newScript = document.createElement('script');
                                             if (oldScript.src) {
@@ -211,14 +195,20 @@
                             } else if (attempts >= maxAttempts) {
                                     console.log('loadInstalledPlugins not found after', maxAttempts, 'attempts, fetching and rendering directly...');
                                     clearInterval(checkInterval);
-                                    fetch('/api/v3/plugins/installed')
-                                        .then(r => r.json())
-                                        .then(data => {
-                                            console.log('Fetched plugins:', data);
-                                            if (data.status === 'success') {
-                                                const plugins = data.data.plugins || [];
-                                                const container = document.getElementById('installed-plugins-grid');
-                                                const countEl = document.getElementById('installed-count');
+                                    
+                                    // Load both installed plugins and plugin store
+                                    Promise.all([
+                                        fetch('/api/v3/plugins/installed').then(r => r.json()),
+                                        fetch('/api/v3/plugins/store/list?fetch_latest_versions=true').then(r => r.json())
+                                    ]).then(([installedData, storeData]) => {
+                                        console.log('Fetched plugins:', installedData);
+                                        console.log('Fetched store:', storeData);
+                                        
+                                        // Render installed plugins
+                                        if (installedData.status === 'success') {
+                                            const plugins = installedData.data.plugins || [];
+                                            const container = document.getElementById('installed-plugins-grid');
+                                            const countEl = document.getElementById('installed-count');
                                                 
                                                 // Try renderInstalledPlugins one more time
                                                 if (window.renderInstalledPlugins && typeof window.renderInstalledPlugins === 'function') {
@@ -283,8 +273,57 @@
                                     console.error('installed-plugins-grid container not found');
                                 }
                                             }
-                                        })
-                                        .catch(err => console.error('Error fetching plugins:', err));
+                                        
+                                        // Render plugin store
+                                        if (storeData.status === 'success') {
+                                            const storePlugins = storeData.data.plugins || [];
+                                            const storeContainer = document.getElementById('plugin-store-grid');
+                                            const storeCountEl = document.getElementById('store-count');
+                                            
+                                            if (storeContainer) {
+                                                // Try renderPluginStore if available
+                                                if (window.renderPluginStore && typeof window.renderPluginStore === 'function') {
+                                                    console.log('Using renderPluginStore...');
+                                                    window.renderPluginStore(storePlugins);
+                                                } else {
+                                                    // Manual rendering fallback
+                                                    console.log('renderPluginStore not available, rendering manually...');
+                                                    const escapeHtml = function(text) {
+                                                        if (!text) return '';
+                                                        const div = document.createElement('div');
+                                                        div.textContent = text;
+                                                        return div.innerHTML;
+                                                    };
+                                                    storeContainer.innerHTML = storePlugins.map(function(p) {
+                                                        const name = escapeHtml(p.name || p.id);
+                                                        const desc = escapeHtml(p.description || 'No description available');
+                                                        const author = escapeHtml(p.author || 'Unknown');
+                                                        const category = escapeHtml(p.category || 'General');
+                                                        const stars = p.stars || 0;
+                                                        const verified = p.verified ? '<span class="badge badge-success"><i class="fas fa-check-circle mr-1"></i>Verified</span>' : '';
+                                                        return '<div class="plugin-card"><div class="flex items-start justify-between mb-4"><div class="flex-1 min-w-0"><div class="flex items-center flex-wrap gap-2 mb-2"><h4 class="font-semibold text-gray-900 text-base">' + name + '</h4>' + verified + '</div><div class="text-sm text-gray-600 space-y-1.5 mb-3"><p class="flex items-center"><i class="fas fa-user mr-2 text-gray-400 w-4"></i>' + author + '</p><p class="flex items-center"><i class="fas fa-folder mr-2 text-gray-400 w-4"></i>' + category + '</p>' + (stars > 0 ? '<p class="flex items-center"><i class="fas fa-star mr-2 text-gray-400 w-4"></i>' + stars + ' stars</p>' : '') + '</div><p class="text-sm text-gray-700 leading-relaxed">' + desc + '</p></div></div><div class="flex flex-wrap gap-2 mt-4 pt-4 border-t border-gray-200"><button onclick="if(window.installPlugin)window.installPlugin(\'' + escapeHtml(p.id) + '\')" class="btn bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-md text-sm flex-1 font-semibold"><i class="fas fa-download mr-2"></i>Install</button></div></div>';
+                                                    }).join('');
+                                                }
+                                                
+                                                if (storeCountEl) {
+                                                    storeCountEl.innerHTML = storePlugins.length + ' available';
+                                                }
+                                                console.log('Rendered', storePlugins.length, 'store plugins');
+                                            } else {
+                                                console.error('plugin-store-grid container not found');
+                                            }
+                                        } else {
+                                            console.error('Failed to load plugin store:', storeData.message);
+                                            const storeCountEl = document.getElementById('store-count');
+                                            if (storeCountEl) {
+                                                storeCountEl.innerHTML = '<span class="text-red-600">Error loading store</span>';
+                                            }
+                                        }
+                                    })
+                                    .catch(err => {
+                                        console.error('Error fetching plugins/store:', err);
+                                        // Still try to render installed plugins if store fails
+                                    });
                                 }
                             }, 200);
                         })
