@@ -839,13 +839,14 @@
                 installedPlugins: [],
 
                 init() {
-                    // Plugin loading is handled by the pluginManager in plugins.html
-                    // when the plugins tab is loaded via HTMX
+                    // Load plugins on page load so tabs are available on any page
+                    this.loadInstalledPlugins();
 
                     // Initialize installedPlugins from global if available
                     if (typeof window.installedPlugins !== 'undefined') {
                         this.installedPlugins = window.installedPlugins;
                         console.log('Initialized installedPlugins from global:', this.installedPlugins.length);
+                        this.updatePluginTabs();
                     }
 
                     // Listen for plugin updates from pluginManager
