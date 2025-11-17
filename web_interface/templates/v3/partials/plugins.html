@@ -697,7 +697,7 @@ function initializePlugins() {
 function loadInstalledPlugins() {
     console.log('Loading installed plugins...');
 
-    fetch('/api/v3/plugins/installed')
+    return fetch('/api/v3/plugins/installed')
         .then(response => {
             console.log('Installed plugins response:', response.status);
             return response.json();
@@ -721,15 +721,22 @@ function loadInstalledPlugins() {
                 if (countEl) {
                     countEl.textContent = installedPlugins.length + ' installed';
                 }
+                return installedPlugins;
             } else {
-                showError('Failed to load installed plugins: ' + data.message);
+                const errorMsg = 'Failed to load installed plugins: ' + data.message;
+                showError(errorMsg);
+                throw new Error(errorMsg);
             }
         })
         .catch(error => {
             console.error('Error loading installed plugins:', error);
             showError('Error loading plugins: ' + error.message);
+            throw error;
         });
 }
+
+// Expose loadInstalledPlugins on window.pluginManager for Alpine.js integration
+window.pluginManager.loadInstalledPlugins = loadInstalledPlugins;
 
 function renderInstalledPlugins(plugins) {
     const container = document.getElementById('installed-plugins-grid');
