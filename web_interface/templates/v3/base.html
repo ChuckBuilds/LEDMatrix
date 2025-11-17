@@ -288,6 +288,10 @@
                          setTimeout(() => {
                              if (!content.hasAttribute('data-loaded')) {
                                  console.log('HTMX failed, loading plugins directly...');
+                                 // Ensure the plugins structure exists
+                                 if (!document.getElementById('installed-plugins-grid')) {
+                                     content.innerHTML = '<div class=\"bg-white rounded-lg shadow-md p-6\"><div class=\"section-header\"><h2 class=\"text-xl font-bold text-gray-900 mb-1\">Plugin Management</h2></div><div id=\"installed-plugins-section\" class=\"mb-8\"><div class=\"flex items-center justify-between mb-5 pb-3 border-b border-gray-200\"><div class=\"flex items-center gap-3\"><h3 class=\"text-lg font-bold text-gray-900\">Installed Plugins</h3><span id=\"installed-count\" class=\"text-sm text-gray-500 font-medium\">0 installed</span></div></div><div id=\"installed-plugins-content\" class=\"block\"><div id=\"installed-plugins-grid\" class=\"grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-6\"></div></div></div></div>';
+                                 }
                                  fetch('/api/v3/plugins/installed')
                                      .then(r => r.json())
                                      .then(data => {
@@ -311,9 +315,11 @@
                                                  if (countEl) countEl.textContent = plugins.length + ' installed';
                                                  window.installedPlugins = plugins;
                                                  content.setAttribute('data-loaded', 'true');
+                                                 console.log('Plugins loaded directly:', plugins.length);
                                              }
                                          }
-                                     });
+                                     })
+                                     .catch(err => console.error('Error loading plugins:', err));
                              }
                          }, 3000);
                      }
