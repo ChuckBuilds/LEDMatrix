@@ -111,15 +111,64 @@
                                                 if (window.renderInstalledPlugins && typeof window.renderInstalledPlugins === 'function') {
                                                     console.log('Using renderInstalledPlugins...');
                                                     window.renderInstalledPlugins(plugins);
-                                                } else if (container) {
-                                                    console.log('renderInstalledPlugins not available, using manual render...');
-                                                    // Manual render is too minimal, so just show a message
-                                                    container.innerHTML = '<div class="col-span-full text-center p-8"><p class="text-gray-600">Plugins loaded but full rendering unavailable. Please refresh the page.</p></div>';
-                                                    if (countEl) countEl.textContent = plugins.length + ' installed';
-                                                    window.installedPlugins = plugins;
-                                                } else {
-                                                    console.error('installed-plugins-grid container not found');
-                                                }
+                                } else if (container) {
+                                    console.log('renderInstalledPlugins not available, rendering full plugin cards manually...');
+                                    // Render full plugin cards with all information
+                                    const escapeHtml = function(text) {
+                                        if (!text) return '';
+                                        const div = document.createElement('div');
+                                        div.textContent = text;
+                                        return div.innerHTML;
+                                    };
+                                    const escapeAttr = function(text) {
+                                        return (text || '').replace(/'/g, "\\'").replace(/"/g, '&quot;');
+                                    };
+                                    const formatCommit = function(commit, branch) {
+                                        if (!commit && !branch) return 'Unknown';
+                                        const shortCommit = commit ? String(commit).substring(0, 7) : '';
+                                        const branchText = branch ? String(branch) : '';
+                                        if (branchText && shortCommit) return branchText + ' · ' + shortCommit;
+                                        if (branchText) return branchText;
+                                        if (shortCommit) return shortCommit;
+                                        return 'Unknown';
+                                    };
+                                    const formatDate = function(dateString) {
+                                        if (!dateString) return 'Unknown';
+                                        try {
+                                            const date = new Date(dateString);
+                                            if (isNaN(date.getTime())) return 'Unknown';
+                                            const now = new Date();
+                                            const diffDays = Math.ceil(Math.abs(now - date) / (1000 * 60 * 60 * 24));
+                                            if (diffDays < 1) return 'Today';
+                                            if (diffDays < 2) return 'Yesterday';
+                                            if (diffDays < 7) return diffDays + ' days ago';
+                                            if (diffDays < 30) {
+                                                const weeks = Math.floor(diffDays / 7);
+                                                return weeks + (weeks === 1 ? ' week' : ' weeks') + ' ago';
+                                            }
+                                            return date.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
+                                        } catch (e) {
+                                            return 'Unknown';
+                                        }
+                                    };
+                                    container.innerHTML = plugins.map(function(p) {
+                                        const name = escapeHtml(p.name || p.id);
+                                        const desc = escapeHtml(p.description || 'No description available');
+                                        const author = escapeHtml(p.author || 'Unknown');
+                                        const category = escapeHtml(p.category || 'General');
+                                        const enabled = p.enabled ? 'checked' : '';
+                                        const enabledBool = Boolean(p.enabled);
+                                        const escapedId = escapeAttr(p.id);
+                                        const verified = p.verified ? '<span class="badge badge-success"><i class="fas fa-check-circle mr-1"></i>Verified</span>' : '';
+                                        const tags = (p.tags && p.tags.length > 0) ? '<div class="flex flex-wrap gap-1.5 mb-4">' + p.tags.map(function(tag) { return '<span class="badge badge-info">' + escapeHtml(tag) + '</span>'; }).join('') + '</div>' : '';
+                                        return '<div class="plugin-card"><div class="flex items-start justify-between mb-4"><div class="flex-1 min-w-0"><div class="flex items-center flex-wrap gap-2 mb-2"><h4 class="font-semibold text-gray-900 text-base">' + name + '</h4>' + verified + '</div><div class="text-sm text-gray-600 space-y-1.5 mb-3"><p class="flex items-center"><i class="fas fa-user mr-2 text-gray-400 w-4"></i>' + author + '</p><p class="flex items-center"><i class="fas fa-code-branch mr-2 text-gray-400 w-4"></i>' + formatCommit(p.last_commit, p.branch) + '</p><p class="flex items-center"><i class="fas fa-calendar mr-2 text-gray-400 w-4"></i>' + formatDate(p.last_updated) + '</p><p class="flex items-center"><i class="fas fa-folder mr-2 text-gray-400 w-4"></i>' + category + '</p></div><p class="text-sm text-gray-700 leading-relaxed">' + desc + '</p></div><div class="flex-shrink-0 ml-4"><label class="relative inline-flex items-center cursor-pointer group"><input type="checkbox" class="sr-only peer" id="toggle-' + escapedId + '" ' + enabled + ' onchange="if(window.togglePlugin)window.togglePlugin(\'' + escapedId + '\', this.checked)"><div class="flex items-center gap-2 px-3 py-1.5 rounded-lg border-2 transition-all duration-200 ' + (enabledBool ? 'bg-green-50 border-green-500' : 'bg-gray-50 border-gray-300') + ' hover:shadow-md group-hover:scale-105"><div class="relative w-14 h-7 ' + (enabledBool ? 'bg-green-500' : 'bg-gray-300') + ' rounded-full peer peer-checked:bg-green-500 transition-colors duration-200 ease-in-out shadow-inner"><div class="absolute top-[3px] left-[3px] bg-white ' + (enabledBool ? 'translate-x-full' : '') + ' border-2 ' + (enabledBool ? 'border-green-500' : 'border-gray-400') + ' rounded-full h-5 w-5 transition-all duration-200 ease-in-out shadow-sm flex items-center justify-center">' + (enabledBool ? '<i class="fas fa-check text-green-600 text-xs"></i>' : '<i class="fas fa-times text-gray-400 text-xs"></i>') + '</div></div><span class="text-sm font-semibold ' + (enabledBool ? 'text-green-700' : 'text-gray-600') + ' flex items-center gap-1.5"><i class="fas ' + (enabledBool ? 'fa-toggle-on text-green-600' : 'fa-toggle-off text-gray-400') + '"></i><span>' + (enabledBool ? 'Enabled' : 'Disabled') + '</span></span></div></label></div></div>' + tags + '<div class="flex flex-wrap gap-2 mt-4 pt-4 border-t border-gray-200"><button onclick="if(window.configurePlugin)window.configurePlugin(\'' + escapedId + '\')" class="btn bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md text-sm flex-1 font-semibold"><i class="fas fa-cog mr-2"></i>Configure</button><button onclick="if(window.updatePlugin)window.updatePlugin(\'' + escapedId + '\')" class="btn bg-gray-600 hover:bg-gray-700 text-white px-4 py-2 rounded-md text-sm flex-1 font-semibold"><i class="fas fa-sync mr-2"></i>Update</button><button onclick="if(window.uninstallPlugin)window.uninstallPlugin(\'' + escapedId + '\')" class="btn bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-md text-sm flex-1 font-semibold"><i class="fas fa-trash mr-2"></i>Uninstall</button></div></div>';
+                                    }).join('');
+                                    if (countEl) countEl.textContent = plugins.length + ' installed';
+                                    window.installedPlugins = plugins;
+                                    console.log('Rendered', plugins.length, 'plugins with full cards');
+                                } else {
+                                    console.error('installed-plugins-grid container not found');
+                                }
                                             }
                                         })
                                         .catch(err => console.error('Error fetching plugins:', err));
