@@ -234,7 +234,23 @@
                      hx-get="/v3/partials/plugins" 
                      hx-trigger="load" 
                      hx-swap="innerHTML"
-                     hx-on::after-swap="this.setAttribute('data-loaded', 'true'); console.log('Plugins content loaded'); if (window.initPluginsPage && typeof window.initPluginsPage === 'function') { setTimeout(() => { window.pluginManager.initialized = false; window.initPluginsPage(); }, 100); }">
+                     hx-on::after-swap="
+                        this.setAttribute('data-loaded', 'true'); 
+                        console.log('Plugins content loaded, triggering initialization...'); 
+                        setTimeout(() => {
+                            if (window.initPluginsPage && typeof window.initPluginsPage === 'function') {
+                                console.log('Calling initPluginsPage...');
+                                window.pluginManager.initialized = false;
+                                window.initPluginsPage();
+                            } else if (typeof initializePluginPageWhenReady === 'function') {
+                                console.log('Calling initializePluginPageWhenReady...');
+                                window.pluginManager.initialized = false;
+                                initializePluginPageWhenReady();
+                            } else {
+                                console.error('Neither initPluginsPage nor initializePluginPageWhenReady found!');
+                            }
+                        }, 200);
+                     ">
                     <div class="animate-pulse">
                         <div class="bg-white rounded-lg shadow p-6">
                             <div class="h-4 bg-gray-200 rounded w-1/4 mb-4"></div>
