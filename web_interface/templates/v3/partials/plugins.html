@@ -3945,4 +3945,21 @@ window.updateImageScheduleDay = function(fieldId, imageId, imageIdx, day) {
 
 // Make currentPluginConfig globally accessible (outside IIFE)
 window.currentPluginConfig = null;
+
+// Force initialization immediately when script loads (for HTMX swapped content)
+console.log('Plugins script loaded, checking for elements...');
+setTimeout(function() {
+    const installedGrid = document.getElementById('installed-plugins-grid');
+    if (installedGrid) {
+        console.log('Found installed-plugins-grid, forcing initialization...');
+        window.pluginManager.initialized = false;
+        if (typeof initializePluginPageWhenReady === 'function') {
+            initializePluginPageWhenReady();
+        } else if (typeof window.initPluginsPage === 'function') {
+            window.initPluginsPage();
+        }
+    } else {
+        console.log('installed-plugins-grid not found yet, will retry via event listeners');
+    }
+}, 200);
 </script>
