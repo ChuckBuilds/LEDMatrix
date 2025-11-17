@@ -497,8 +497,17 @@ window.currentPluginConfig = null;
         }));
     }
 
+// Track initialization state
+window.pluginManager = window.pluginManager || {};
+window.pluginManager.initialized = false;
+
 // Initialize when DOM is ready or when HTMX loads content
 window.initPluginsPage = function() {
+    if (window.pluginManager.initialized) {
+        console.log('Plugin page already initialized, skipping...');
+        return;
+    }
+    window.pluginManager.initialized = true;
     initializePlugins();
 
     // Event listeners (remove old ones first to prevent duplicates)
@@ -552,18 +561,74 @@ window.initPluginsPage = function() {
     startOnDemandStatusPolling();
 }
 
-// Initialize immediately when script loads (HTMX has already swapped content)
-console.log('Plugin manager script loaded, initializing...');
-// Small delay to ensure DOM is fully painted
-setTimeout(function() {
+// Initialize when DOM is ready or when HTMX loads content
+function initializePluginPageWhenReady() {
     console.log('Checking for plugin elements...');
-    if (document.getElementById('installed-plugins-grid')) {
+    const installedGrid = document.getElementById('installed-plugins-grid');
+    const storeGrid = document.getElementById('plugin-store-grid');
+    
+    if (installedGrid && storeGrid) {
         console.log('Plugin elements found, initializing now!');
         initPluginsPage();
+        return true;
     } else {
-        console.error('Plugin elements not found!');
+        console.warn('Plugin elements not found yet. Retrying...');
+        return false;
     }
-}, 100);
+}
+
+// Try multiple initialization strategies
+console.log('Plugin manager script loaded, initializing...');
+
+// Strategy 1: Immediate check (for direct page loads)
+if (initializePluginPageWhenReady()) {
+    console.log('Initialized immediately');
+} else {
+    // Strategy 2: DOMContentLoaded (for direct page loads)
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', function() {
+            setTimeout(initializePluginPageWhenReady, 50);
+        });
+    }
+    
+    // Strategy 3: HTMX swap event (for HTMX-loaded content)
+    if (typeof htmx !== 'undefined') {
+        // Use htmx:afterSwap to detect when plugins content is loaded
+        document.body.addEventListener('htmx:afterSwap', function(event) {
+            const target = event.detail.target;
+            // Check if plugins content was swapped in
+            if (target.id === 'plugins-content' || 
+                target.querySelector('#installed-plugins-grid') ||
+                document.getElementById('installed-plugins-grid')) {
+                console.log('HTMX swap detected for plugins, initializing...');
+                // Reset initialization flag to allow re-initialization
+                window.pluginManager.initialized = false;
+                setTimeout(initializePluginPageWhenReady, 100);
+            }
+        });
+    }
+    
+    // Strategy 4: Fallback timeout (for edge cases)
+    setTimeout(function() {
+        if (!window.pluginManager || !window.pluginManager.initialized) {
+            console.log('Fallback initialization...');
+            initializePluginPageWhenReady();
+        }
+    }, 500);
+}
+
+// Also listen for HTMX load event (fires when content is swapped)
+if (typeof htmx !== 'undefined') {
+    document.body.addEventListener('htmx:load', function(event) {
+        // Check if plugins content was loaded
+        if (document.getElementById('installed-plugins-grid') && 
+            document.getElementById('plugin-store-grid')) {
+            console.log('HTMX load event detected, initializing plugins...');
+            window.pluginManager.initialized = false;
+            setTimeout(initializePluginPageWhenReady, 100);
+        }
+    });
+}
 
 function initializePlugins() {
     console.log('Initializing plugins...');
