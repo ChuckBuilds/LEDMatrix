@@ -10,34 +10,34 @@
     <script src="https://unpkg.com/htmx.org/dist/ext/sse.js"></script>
     <script src="https://unpkg.com/htmx.org/dist/ext/json-enc.js"></script>
     <script>
-        // Suppress HTMX insertBefore errors (harmless DOM manipulation errors)
-        (function() {
-            const originalError = console.error;
-            console.error = function(...args) {
-                // Filter out HTMX insertBefore errors - these are harmless
-                const errorStr = args.join(' ');
-                if (errorStr.includes("Cannot read properties of null (reading 'insertBefore')") &&
-                    errorStr.includes('htmx.org')) {
-                    return; // Suppress this specific error
-                }
-                // Pass through all other errors
-                originalError.apply(console, args);
-            };
-        })();
-        
-        // Configure HTMX to evaluate scripts in swapped content
+        // Configure HTMX to evaluate scripts in swapped content and fix insertBefore errors
         (function() {
             function setupScriptExecution() {
                 if (document.body) {
+                    // Fix HTMX insertBefore errors by validating targets before swap
+                    document.body.addEventListener('htmx:beforeSwap', function(event) {
+                        const target = event.detail.target;
+                        if (!target || !target.parentNode) {
+                            // Target or parent is null - cancel the swap
+                            event.detail.shouldSwap = false;
+                            return false;
+                        }
+                        // Ensure target is in the DOM
+                        if (!document.body.contains(target)) {
+                            event.detail.shouldSwap = false;
+                            return false;
+                        }
+                    });
+                    
                     // Handle HTMX errors gracefully
                     document.body.addEventListener('htmx:responseError', function(event) {
-                        // Suppress HTMX errors to reduce console noise
-                        event.preventDefault();
+                        // Log but don't break the app
+                        console.warn('HTMX response error:', event.detail);
                     });
                     
                     document.body.addEventListener('htmx:swapError', function(event) {
-                        // Suppress HTMX swap errors to reduce console noise
-                        event.preventDefault();
+                        // Log but don't break the app
+                        console.warn('HTMX swap error:', event.detail);
                     });
                     
                     document.body.addEventListener('htmx:afterSwap', function(event) {
@@ -363,7 +363,7 @@
         <div id="tab-content" class="space-y-6">
             <!-- Overview tab -->
             <div x-show="activeTab === 'overview'" x-transition>
-                <div id="overview-content" hx-get="/v3/partials/overview" hx-trigger="load" hx-swap="innerHTML">
+                <div id="overview-content" hx-get="/v3/partials/overview" hx-trigger="revealed" hx-swap="innerHTML">
                     <div class="animate-pulse">
                         <div class="bg-white rounded-lg shadow p-6">
                             <div class="h-4 bg-gray-200 rounded w-1/4 mb-4"></div>
@@ -375,7 +375,7 @@
 
             <!-- General tab -->
             <div x-show="activeTab === 'general'" x-transition>
-                <div id="general-content" hx-get="/v3/partials/general" hx-trigger="load" hx-swap="innerHTML">
+                <div id="general-content" hx-get="/v3/partials/general" hx-trigger="revealed" hx-swap="innerHTML">
                     <div class="animate-pulse">
                         <div class="bg-white rounded-lg shadow p-6">
                             <div class="h-4 bg-gray-200 rounded w-1/4 mb-4"></div>
@@ -391,7 +391,7 @@
 
             <!-- WiFi tab -->
             <div x-show="activeTab === 'wifi'" x-transition>
-                <div id="wifi-content" hx-get="/v3/partials/wifi" hx-trigger="load" hx-swap="innerHTML">
+                <div id="wifi-content" hx-get="/v3/partials/wifi" hx-trigger="revealed" hx-swap="innerHTML">
                     <div class="animate-pulse">
                         <div class="bg-white rounded-lg shadow p-6">
                             <div class="h-4 bg-gray-200 rounded w-1/4 mb-4"></div>
@@ -407,7 +407,7 @@
 
             <!-- Schedule tab -->
             <div x-show="activeTab === 'schedule'" x-transition>
-                <div id="schedule-content" hx-get="/v3/partials/schedule" hx-trigger="load" hx-swap="innerHTML">
+                <div id="schedule-content" hx-get="/v3/partials/schedule" hx-trigger="revealed" hx-swap="innerHTML">
                     <div class="animate-pulse">
                         <div class="bg-white rounded-lg shadow p-6">
                             <div class="h-4 bg-gray-200 rounded w-1/4 mb-4"></div>
@@ -423,7 +423,7 @@
 
             <!-- Display tab -->
             <div x-show="activeTab === 'display'" x-transition>
-                <div id="display-content" hx-get="/v3/partials/display" hx-trigger="load" hx-swap="innerHTML">
+                <div id="display-content" hx-get="/v3/partials/display" hx-trigger="revealed" hx-swap="innerHTML">
                     <div class="animate-pulse">
                         <div class="bg-white rounded-lg shadow p-6">
                             <div class="h-4 bg-gray-200 rounded w-1/4 mb-4"></div>
@@ -438,7 +438,7 @@
 
             <!-- Config Editor tab -->
             <div x-show="activeTab === 'config-editor'" x-transition>
-                <div id="config-editor-content" hx-get="/v3/partials/raw-json" hx-trigger="load" hx-swap="innerHTML">
+                <div id="config-editor-content" hx-get="/v3/partials/raw-json" hx-trigger="revealed" hx-swap="innerHTML">
                     <div class="animate-pulse">
                         <div class="bg-white rounded-lg shadow p-6">
                             <div class="h-4 bg-gray-200 rounded w-1/4 mb-4"></div>
@@ -471,7 +471,7 @@
 
             <!-- Fonts tab -->
             <div x-show="activeTab === 'fonts'" x-transition>
-                <div id="fonts-content" hx-get="/v3/partials/fonts" hx-trigger="load" hx-swap="innerHTML">
+                <div id="fonts-content" hx-get="/v3/partials/fonts" hx-trigger="revealed" hx-swap="innerHTML">
                     <div class="animate-pulse">
                         <div class="bg-white rounded-lg shadow p-6">
                             <div class="h-4 bg-gray-200 rounded w-1/4 mb-4"></div>
@@ -486,7 +486,7 @@
 
             <!-- Logs tab -->
             <div x-show="activeTab === 'logs'" x-transition>
-                <div id="logs-content" hx-get="/v3/partials/logs" hx-trigger="load" hx-swap="innerHTML">
+                <div id="logs-content" hx-get="/v3/partials/logs" hx-trigger="revealed" hx-swap="innerHTML">
                     <div class="animate-pulse">
                         <div class="bg-white rounded-lg shadow p-6">
                             <div class="h-4 bg-gray-200 rounded w-1/4 mb-4"></div>
@@ -498,7 +498,7 @@
 
             <!-- Cache tab -->
             <div x-show="activeTab === 'cache'" x-transition>
-                <div id="cache-content" hx-get="/v3/partials/cache" hx-trigger="load" hx-swap="innerHTML">
+                <div id="cache-content" hx-get="/v3/partials/cache" hx-trigger="revealed" hx-swap="innerHTML">
                     <div class="animate-pulse">
                         <div class="bg-white rounded-lg shadow p-6">
                             <div class="h-4 bg-gray-200 rounded w-1/4 mb-4"></div>
