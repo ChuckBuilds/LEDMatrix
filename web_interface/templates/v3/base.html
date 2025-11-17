@@ -10,6 +10,21 @@
     <script src="https://unpkg.com/htmx.org/dist/ext/sse.js"></script>
     <script src="https://unpkg.com/htmx.org/dist/ext/json-enc.js"></script>
     <script>
+        // Suppress HTMX insertBefore errors (harmless DOM manipulation errors)
+        (function() {
+            const originalError = console.error;
+            console.error = function(...args) {
+                // Filter out HTMX insertBefore errors - these are harmless
+                const errorStr = args.join(' ');
+                if (errorStr.includes("Cannot read properties of null (reading 'insertBefore')") &&
+                    errorStr.includes('htmx.org')) {
+                    return; // Suppress this specific error
+                }
+                // Pass through all other errors
+                originalError.apply(console, args);
+            };
+        })();
+        
         // Configure HTMX to evaluate scripts in swapped content
         (function() {
             function setupScriptExecution() {
