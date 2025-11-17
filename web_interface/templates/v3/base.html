@@ -75,15 +75,22 @@
                             });
                             
                             // Wait for scripts to execute, then load plugins
-                            setTimeout(() => {
+                            // Retry multiple times to give scripts time to execute
+                            let attempts = 0;
+                            const maxAttempts = 10;
+                            const checkInterval = setInterval(() => {
+                                attempts++;
                                 if (window.loadInstalledPlugins && typeof window.loadInstalledPlugins === 'function') {
-                                    console.log('Calling loadInstalledPlugins...');
+                                    console.log('Found loadInstalledPlugins, calling it...');
+                                    clearInterval(checkInterval);
                                     window.loadInstalledPlugins();
                                 } else if (window.pluginManager && window.pluginManager.loadInstalledPlugins) {
-                                    console.log('Calling pluginManager.loadInstalledPlugins...');
+                                    console.log('Found pluginManager.loadInstalledPlugins, calling it...');
+                                    clearInterval(checkInterval);
                                     window.pluginManager.loadInstalledPlugins();
-                                } else {
-                                    console.log('loadInstalledPlugins not found, fetching and rendering directly...');
+                                } else if (attempts >= maxAttempts) {
+                                    console.log('loadInstalledPlugins not found after', maxAttempts, 'attempts, fetching and rendering directly...');
+                                    clearInterval(checkInterval);
                                     fetch('/api/v3/plugins/installed')
                                         .then(r => r.json())
                                         .then(data => {
@@ -93,27 +100,16 @@
                                                 const container = document.getElementById('installed-plugins-grid');
                                                 const countEl = document.getElementById('installed-count');
                                                 
+                                                // Try renderInstalledPlugins one more time
                                                 if (window.renderInstalledPlugins && typeof window.renderInstalledPlugins === 'function') {
                                                     console.log('Using renderInstalledPlugins...');
                                                     window.renderInstalledPlugins(plugins);
                                                 } else if (container) {
-                                                    console.log('Rendering plugins manually...');
-                                                    const escapeHtml = function(text) {
-                                                        if (!text) return '';
-                                                        const div = document.createElement('div');
-                                                        div.textContent = text;
-                                                        return div.innerHTML;
-                                                    };
-                                                    container.innerHTML = plugins.map(function(p) {
-                                                        const name = escapeHtml(p.name || p.id);
-                                                        const desc = escapeHtml(p.description || 'No description');
-                                                        const enabled = p.enabled ? 'checked' : '';
-                                                        const escapedId = escapeHtml(p.id);
-                                                        return '<div class="plugin-card bg-white rounded-lg shadow-md p-6 border border-gray-200 hover:shadow-lg transition-shadow"><div class="flex items-start justify-between mb-4"><div class="flex-1"><h4 class="font-semibold text-gray-900">' + name + '</h4><p class="text-sm text-gray-700 mt-2">' + desc + '</p></div><label class="relative inline-flex items-center cursor-pointer"><input type="checkbox" class="sr-only peer" ' + enabled + ' onchange="if(window.togglePlugin)window.togglePlugin(\'' + escapedId + '\', this.checked)"><div class="w-14 h-7 ' + (p.enabled ? 'bg-green-500' : 'bg-gray-300') + ' rounded-full peer"></div></label></div></div>';
-                                                    }).join('');
+                                                    console.log('renderInstalledPlugins not available, using manual render...');
+                                                    // Manual render is too minimal, so just show a message
+                                                    container.innerHTML = '<div class="col-span-full text-center p-8"><p class="text-gray-600">Plugins loaded but full rendering unavailable. Please refresh the page.</p></div>';
                                                     if (countEl) countEl.textContent = plugins.length + ' installed';
                                                     window.installedPlugins = plugins;
-                                                    console.log('Rendered', plugins.length, 'plugins');
                                                 } else {
                                                     console.error('installed-plugins-grid container not found');
                                                 }
@@ -121,7 +117,7 @@
                                         })
                                         .catch(err => console.error('Error fetching plugins:', err));
                                 }
-                            }, 1000);
+                            }, 200);
                         })
                         .catch(err => console.error('Error loading plugins:', err));
                 }
