@@ -287,7 +287,7 @@
                      hx-get="/v3/partials/plugins" 
                      hx-trigger="load" 
                      hx-swap="innerHTML"
-                     hx-on::after-swap="
+                     hx-on::htmx:after-swap="
                         this.setAttribute('data-loaded', 'true'); 
                         console.log('Plugins content loaded, waiting for scripts...'); 
                         // Wait for scripts to execute, then initialize
