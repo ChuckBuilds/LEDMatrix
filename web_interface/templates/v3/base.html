@@ -11,23 +11,43 @@
     <script src="https://unpkg.com/htmx.org/dist/ext/json-enc.js"></script>
     <script>
         // Configure HTMX to evaluate scripts in swapped content
-        document.body.addEventListener('htmx:afterSwap', function(event) {
-            if (event.detail && event.detail.target) {
-                const scripts = event.detail.target.querySelectorAll('script');
-                scripts.forEach(function(oldScript) {
-                    if (oldScript.innerHTML.trim() || oldScript.src) {
-                        const newScript = document.createElement('script');
-                        if (oldScript.src) newScript.src = oldScript.src;
-                        if (oldScript.type) newScript.type = oldScript.type;
-                        if (oldScript.innerHTML) newScript.textContent = oldScript.innerHTML;
-                        if (oldScript.parentNode) {
-                            oldScript.parentNode.insertBefore(newScript, oldScript);
-                            oldScript.parentNode.removeChild(oldScript);
+        (function() {
+            function setupScriptExecution() {
+                if (document.body) {
+                    document.body.addEventListener('htmx:afterSwap', function(event) {
+                        if (event.detail && event.detail.target) {
+                            console.log('HTMX afterSwap: executing scripts in swapped content');
+                            const scripts = event.detail.target.querySelectorAll('script');
+                            console.log('Found', scripts.length, 'scripts to execute');
+                            scripts.forEach(function(oldScript) {
+                                try {
+                                    if (oldScript.innerHTML.trim() || oldScript.src) {
+                                        const newScript = document.createElement('script');
+                                        if (oldScript.src) newScript.src = oldScript.src;
+                                        if (oldScript.type) newScript.type = oldScript.type;
+                                        if (oldScript.innerHTML) newScript.textContent = oldScript.innerHTML;
+                                        if (oldScript.parentNode) {
+                                            oldScript.parentNode.insertBefore(newScript, oldScript);
+                                            oldScript.parentNode.removeChild(oldScript);
+                                            console.log('Executed script');
+                                        }
+                                    }
+                                } catch (e) {
+                                    console.error('Error executing script:', e);
+                                }
+                            });
                         }
+                    });
+                } else {
+                    if (document.readyState === 'loading') {
+                        document.addEventListener('DOMContentLoaded', setupScriptExecution);
+                    } else {
+                        setTimeout(setupScriptExecution, 100);
                     }
-                });
+                }
             }
-        });
+            setupScriptExecution();
+        })();
     </script>
 
     <!-- Alpine.js for reactive components -->
