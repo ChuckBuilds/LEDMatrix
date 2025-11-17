@@ -61,23 +61,39 @@
                             content.innerHTML = html;
                             console.log('Plugins HTML loaded, executing scripts...');
                             
-                            // Execute scripts manually
+                            // Execute scripts manually - skip if errors occur
                             const scripts = content.querySelectorAll('script');
                             scripts.forEach(oldScript => {
                                 try {
+                                    // Skip if script has no content and no src
+                                    if (!oldScript.innerHTML.trim() && !oldScript.src) {
+                                        return;
+                                    }
+                                    
                                     const newScript = document.createElement('script');
-                                    if (oldScript.src) newScript.src = oldScript.src;
-                                    if (oldScript.type) newScript.type = oldScript.type;
-                                    if (oldScript.innerHTML) newScript.textContent = oldScript.innerHTML;
-                                    if (oldScript.parentNode) {
-                                        oldScript.parentNode.insertBefore(newScript, oldScript);
-                                        oldScript.parentNode.removeChild(oldScript);
+                                    if (oldScript.src) {
+                                        newScript.src = oldScript.src;
+                                    }
+                                    if (oldScript.type) {
+                                        newScript.type = oldScript.type;
+                                    }
+                                    if (oldScript.innerHTML) {
+                                        // Use textContent to avoid HTML parsing issues
+                                        newScript.textContent = oldScript.innerHTML;
+                                    }
+                                    
+                                    // Remove old script first to avoid conflicts
+                                    const parent = oldScript.parentNode;
+                                    if (parent) {
+                                        parent.removeChild(oldScript);
+                                        parent.appendChild(newScript);
                                     } else {
-                                        // If no parent, just append to head or body
+                                        // If no parent, append to head or body
                                         (document.head || document.body).appendChild(newScript);
                                     }
                                 } catch (e) {
-                                    console.error('Error executing script:', e);
+                                    // Silently skip problematic scripts - fallback rendering will handle it
+                                    console.warn('Skipping script execution due to error:', e.message);
                                 }
                             });
                             
