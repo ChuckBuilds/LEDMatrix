@@ -3948,12 +3948,35 @@ window.currentPluginConfig = null;
 
 // Force initialization immediately when script loads (for HTMX swapped content)
 console.log('Plugins script loaded, checking for elements...');
-// Make functions globally available immediately
-window.initializePluginPageWhenReady = initializePluginPageWhenReady;
-window.initializePlugins = initializePlugins;
-window.loadInstalledPlugins = loadInstalledPlugins;
-window.renderInstalledPlugins = renderInstalledPlugins;
-window.searchPluginStore = searchPluginStore;
+
+// Ensure all functions are globally available (in case IIFE didn't expose them properly)
+// These should already be set inside the IIFE, but this ensures they're available
+if (typeof initializePluginPageWhenReady !== 'undefined') {
+    window.initializePluginPageWhenReady = initializePluginPageWhenReady;
+}
+if (typeof initializePlugins !== 'undefined') {
+    window.initializePlugins = initializePlugins;
+}
+if (typeof loadInstalledPlugins !== 'undefined') {
+    window.loadInstalledPlugins = loadInstalledPlugins;
+}
+if (typeof renderInstalledPlugins !== 'undefined') {
+    window.renderInstalledPlugins = renderInstalledPlugins;
+}
+if (typeof searchPluginStore !== 'undefined') {
+    window.searchPluginStore = searchPluginStore;
+}
+
+// Verify critical functions are available
+console.log('Plugin functions available:', {
+    configurePlugin: typeof window.configurePlugin,
+    togglePlugin: typeof window.togglePlugin,
+    updatePlugin: typeof window.updatePlugin,
+    uninstallPlugin: typeof window.uninstallPlugin,
+    initializePlugins: typeof window.initializePlugins,
+    loadInstalledPlugins: typeof window.loadInstalledPlugins,
+    renderInstalledPlugins: typeof window.renderInstalledPlugins
+});
 
 setTimeout(function() {
     const installedGrid = document.getElementById('installed-plugins-grid');

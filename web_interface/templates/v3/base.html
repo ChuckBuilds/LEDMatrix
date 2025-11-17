@@ -140,10 +140,12 @@
                             content.innerHTML = html;
                             console.log('Plugins HTML loaded, executing scripts...');
                             
-                            // Execute scripts manually - wrap in try-catch to prevent errors from blocking
+                            // Execute scripts manually - ensure they run properly
                             try {
                                 const scripts = Array.from(content.querySelectorAll('script'));
-                                scripts.forEach((oldScript) => {
+                                console.log('Found', scripts.length, 'scripts to execute');
+                                
+                                scripts.forEach((oldScript, index) => {
                                     try {
                                         // Skip if script has no content and no src
                                         if (!oldScript.innerHTML.trim() && !oldScript.src) {
@@ -155,9 +157,6 @@
                                         
                                         // Only execute if we have valid content
                                         if (scriptContent || oldScript.src) {
-                                            // Skip syntax validation - it's too strict and rejects valid scripts
-                                            // with brackets in strings/comments. Let the browser handle syntax errors.
-                                            
                                             const newScript = document.createElement('script');
                                             if (oldScript.src) {
                                                 newScript.src = oldScript.src;
@@ -169,47 +168,24 @@
                                                 newScript.textContent = scriptContent;
                                             }
                                             
-                                            // Remove old script first, then append new one
-                                            try {
-                                                // Validate script content before appending
-                                                if (scriptContent) {
-                                                    // Basic check: ensure script doesn't have obvious syntax errors
-                                                    // Check for unmatched closing parentheses at the end (common error)
-                                                    const trimmed = scriptContent.trim();
-                                                    if (trimmed.endsWith(')') && !trimmed.includes('(')) {
-                                                        console.warn('Skipping script with potential syntax error');
-                                                        oldScript.remove();
-                                                        return;
-                                                    }
-                                                }
-                                                
-                                                const parent = oldScript.parentNode;
-                                                if (parent && document.body.contains(parent)) {
-                                                    oldScript.remove();
-                                                    parent.appendChild(newScript);
-                                                } else {
-                                                    // If no parent or parent not in DOM, append to head or body
-                                                    const target = document.head || document.body;
-                                                    if (target) {
-                                                        oldScript.remove();
-                                                        target.appendChild(newScript);
-                                                    }
-                                                }
-                                            } catch (appendError) {
-                                                // If appendChild fails, try appending to body directly
+                                            // Append to body to ensure execution
+                                            document.body.appendChild(newScript);
+                                            
+                                            // Remove old script after a brief delay to ensure new one executes
+                                            setTimeout(() => {
                                                 try {
                                                     oldScript.remove();
-                                                    (document.head || document.body).appendChild(newScript);
-                                                } catch (finalError) {
-                                                    // Last resort: just remove the problematic script
-                                                    oldScript.remove();
+                                                } catch (e) {
+                                                    // Ignore removal errors
                                                 }
-                                            }
+                                            }, 0);
+                                            
+                                            console.log('Executed script', index + 1, 'of', scripts.length);
                                         } else {
                                             oldScript.remove();
                                         }
                                     } catch (scriptError) {
-                                        // Skip this specific script if it causes errors
+                                        console.warn('Error executing script', index + 1, ':', scriptError);
                                         try {
                                             oldScript.remove();
                                         } catch (removeErr) {
@@ -217,9 +193,21 @@
                                         }
                                     }
                                 });
+                                
+                                // Wait a moment for scripts to execute, then verify functions are available
+                                setTimeout(() => {
+                                    console.log('Verifying plugin functions after script execution:', {
+                                        configurePlugin: typeof window.configurePlugin,
+                                        togglePlugin: typeof window.togglePlugin,
+                                        updatePlugin: typeof window.updatePlugin,
+                                        uninstallPlugin: typeof window.uninstallPlugin,
+                                        initializePlugins: typeof window.initializePlugins,
+                                        loadInstalledPlugins: typeof window.loadInstalledPlugins,
+                                        renderInstalledPlugins: typeof window.renderInstalledPlugins
+                                    });
+                                }, 100);
                             } catch (executionError) {
-                                // If script execution fails entirely, just continue - fallback will handle rendering
-                                console.warn('Script execution encountered errors, using fallback rendering');
+                                console.error('Script execution error:', executionError);
                             }
                             
                         // Wait for scripts to execute, then load plugins
@@ -388,69 +376,6 @@
                 }
             };
         })();
-        
-        // Fallback implementations for plugin functions (in case plugins.html scripts haven't loaded)
-        if (!window.configurePlugin) {
-            window.configurePlugin = async function(pluginId) {
-                console.log('configurePlugin called (fallback) for:', pluginId);
-                // Navigate to the plugin's configuration tab
-                if (window.Alpine && document.querySelector('[x-data="app()"]')) {
-                    const appElement = document.querySelector('[x-data="app()"]');
-                    if (appElement && appElement._x_dataStack && appElement._x_dataStack[0]) {
-                        const appData = appElement._x_dataStack[0];
-                        appData.activeTab = pluginId;
-                        console.log('Switched to plugin tab:', pluginId);
-                    }
-                } else {
-                    console.error('Alpine.js not available for plugin configuration');
-                    alert('Unable to open plugin configuration. Please refresh the page.');
-                }
-            };
-        }
-        
-        if (!window.updatePlugin) {
-            window.updatePlugin = function(pluginId) {
-                console.log('updatePlugin called (fallback) for:', pluginId);
-                alert('Plugin update functionality is loading. Please refresh the page and try again.');
-            };
-        }
-        
-        if (!window.uninstallPlugin) {
-            window.uninstallPlugin = function(pluginId) {
-                console.log('uninstallPlugin called (fallback) for:', pluginId);
-                alert('Plugin uninstall functionality is loading. Please refresh the page and try again.');
-            };
-        }
-        
-        if (!window.togglePlugin) {
-            window.togglePlugin = function(pluginId, enabled) {
-                console.log('togglePlugin called (fallback) for:', pluginId, enabled);
-                // Make API call to toggle plugin
-                fetch('/api/v3/plugins/' + encodeURIComponent(pluginId) + '/toggle', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify({ enabled: enabled })
-                })
-                .then(response => response.json())
-                .then(data => {
-                    if (data.status === 'success') {
-                        console.log('Plugin toggled successfully');
-                        // Reload plugins to reflect change
-                        if (window.loadInstalledPlugins) {
-                            window.loadInstalledPlugins();
-                        }
-                    } else {
-                        alert('Failed to toggle plugin: ' + (data.message || 'Unknown error'));
-                    }
-                })
-                .catch(error => {
-                    console.error('Error toggling plugin:', error);
-                    alert('Error toggling plugin. Please try again.');
-                });
-            };
-        }
     </script>
 
     <!-- Alpine.js for reactive components -->
