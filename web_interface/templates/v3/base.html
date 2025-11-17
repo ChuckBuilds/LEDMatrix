@@ -388,6 +388,69 @@
                 }
             };
         })();
+        
+        // Fallback implementations for plugin functions (in case plugins.html scripts haven't loaded)
+        if (!window.configurePlugin) {
+            window.configurePlugin = async function(pluginId) {
+                console.log('configurePlugin called (fallback) for:', pluginId);
+                // Navigate to the plugin's configuration tab
+                if (window.Alpine && document.querySelector('[x-data="app()"]')) {
+                    const appElement = document.querySelector('[x-data="app()"]');
+                    if (appElement && appElement._x_dataStack && appElement._x_dataStack[0]) {
+                        const appData = appElement._x_dataStack[0];
+                        appData.activeTab = pluginId;
+                        console.log('Switched to plugin tab:', pluginId);
+                    }
+                } else {
+                    console.error('Alpine.js not available for plugin configuration');
+                    alert('Unable to open plugin configuration. Please refresh the page.');
+                }
+            };
+        }
+        
+        if (!window.updatePlugin) {
+            window.updatePlugin = function(pluginId) {
+                console.log('updatePlugin called (fallback) for:', pluginId);
+                alert('Plugin update functionality is loading. Please refresh the page and try again.');
+            };
+        }
+        
+        if (!window.uninstallPlugin) {
+            window.uninstallPlugin = function(pluginId) {
+                console.log('uninstallPlugin called (fallback) for:', pluginId);
+                alert('Plugin uninstall functionality is loading. Please refresh the page and try again.');
+            };
+        }
+        
+        if (!window.togglePlugin) {
+            window.togglePlugin = function(pluginId, enabled) {
+                console.log('togglePlugin called (fallback) for:', pluginId, enabled);
+                // Make API call to toggle plugin
+                fetch('/api/v3/plugins/' + encodeURIComponent(pluginId) + '/toggle', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ enabled: enabled })
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.status === 'success') {
+                        console.log('Plugin toggled successfully');
+                        // Reload plugins to reflect change
+                        if (window.loadInstalledPlugins) {
+                            window.loadInstalledPlugins();
+                        }
+                    } else {
+                        alert('Failed to toggle plugin: ' + (data.message || 'Unknown error'));
+                    }
+                })
+                .catch(error => {
+                    console.error('Error toggling plugin:', error);
+                    alert('Error toggling plugin. Please try again.');
+                });
+            };
+        }
     </script>
 
     <!-- Alpine.js for reactive components -->
