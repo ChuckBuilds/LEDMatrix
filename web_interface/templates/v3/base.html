@@ -276,11 +276,46 @@
                  x-transition
                  x-effect="if (activeTab === 'plugins') { 
                      const content = document.getElementById('plugins-content');
-                     if (content && typeof htmx !== 'undefined' && !content.hasAttribute('data-loaded')) { 
+                     if (content && !content.hasAttribute('data-loaded')) {
+                         // Try HTMX first
+                         if (typeof htmx !== 'undefined') {
+                             setTimeout(() => {
+                                 htmx.trigger('#plugins-content', 'load');
+                                 console.log('Triggered plugins content load via HTMX');
+                             }, 100);
+                         }
+                         // Fallback: load directly if HTMX fails after 3 seconds
                          setTimeout(() => {
-                             htmx.trigger('#plugins-content', 'load');
-                             console.log('Triggered plugins content load');
-                         }, 100); 
+                             if (!content.hasAttribute('data-loaded')) {
+                                 console.log('HTMX failed, loading plugins directly...');
+                                 fetch('/api/v3/plugins/installed')
+                                     .then(r => r.json())
+                                     .then(data => {
+                                         if (data.status === 'success') {
+                                             const plugins = data.data.plugins || [];
+                                             const container = document.getElementById('installed-plugins-grid');
+                                             if (container) {
+                                                 const escapeHtml = (text) => {
+                                                     if (!text) return '';
+                                                     const div = document.createElement('div');
+                                                     div.textContent = text;
+                                                     return div.innerHTML;
+                                                 };
+                                                 container.innerHTML = plugins.map(p => {
+                                                     const name = escapeHtml(p.name || p.id);
+                                                     const desc = escapeHtml(p.description || 'No description');
+                                                     const enabled = p.enabled ? 'checked' : '';
+                                                     return '<div class=\"plugin-card\"><div class=\"flex items-start justify-between mb-4\"><div class=\"flex-1\"><h4 class=\"font-semibold text-gray-900\">' + name + '</h4><p class=\"text-sm text-gray-700 mt-2\">' + desc + '</p></div><label class=\"relative inline-flex items-center cursor-pointer\"><input type=\"checkbox\" class=\"sr-only peer\" ' + enabled + '><div class=\"w-14 h-7 ' + (p.enabled ? 'bg-green-500' : 'bg-gray-300') + ' rounded-full peer\"></div></label></div></div>';
+                                                 }).join('');
+                                                 const countEl = document.getElementById('installed-count');
+                                                 if (countEl) countEl.textContent = plugins.length + ' installed';
+                                                 window.installedPlugins = plugins;
+                                                 content.setAttribute('data-loaded', 'true');
+                                             }
+                                         }
+                                     });
+                             }
+                         }, 3000);
                      }
                  }">
                 <div id="plugins-content" 
