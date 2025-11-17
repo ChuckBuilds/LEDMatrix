@@ -16,9 +16,7 @@
                 if (document.body) {
                     document.body.addEventListener('htmx:afterSwap', function(event) {
                         if (event.detail && event.detail.target) {
-                            console.log('HTMX afterSwap: executing scripts in swapped content');
                             const scripts = event.detail.target.querySelectorAll('script');
-                            console.log('Found', scripts.length, 'scripts to execute');
                             scripts.forEach(function(oldScript) {
                                 try {
                                     if (oldScript.innerHTML.trim() || oldScript.src) {
@@ -29,11 +27,13 @@
                                         if (oldScript.parentNode) {
                                             oldScript.parentNode.insertBefore(newScript, oldScript);
                                             oldScript.parentNode.removeChild(oldScript);
-                                            console.log('Executed script');
+                                        } else {
+                                            // If no parent, append to head or body
+                                            (document.head || document.body).appendChild(newScript);
                                         }
                                     }
                                 } catch (e) {
-                                    console.error('Error executing script:', e);
+                                    // Silently ignore script execution errors to reduce console noise
                                 }
                             });
                         }
@@ -64,13 +64,20 @@
                             // Execute scripts manually
                             const scripts = content.querySelectorAll('script');
                             scripts.forEach(oldScript => {
-                                const newScript = document.createElement('script');
-                                if (oldScript.src) newScript.src = oldScript.src;
-                                if (oldScript.type) newScript.type = oldScript.type;
-                                if (oldScript.innerHTML) newScript.textContent = oldScript.innerHTML;
-                                if (oldScript.parentNode) {
-                                    oldScript.parentNode.insertBefore(newScript, oldScript);
-                                    oldScript.parentNode.removeChild(oldScript);
+                                try {
+                                    const newScript = document.createElement('script');
+                                    if (oldScript.src) newScript.src = oldScript.src;
+                                    if (oldScript.type) newScript.type = oldScript.type;
+                                    if (oldScript.innerHTML) newScript.textContent = oldScript.innerHTML;
+                                    if (oldScript.parentNode) {
+                                        oldScript.parentNode.insertBefore(newScript, oldScript);
+                                        oldScript.parentNode.removeChild(oldScript);
+                                    } else {
+                                        // If no parent, just append to head or body
+                                        (document.head || document.body).appendChild(newScript);
+                                    }
+                                } catch (e) {
+                                    console.error('Error executing script:', e);
                                 }
                             });
                             
