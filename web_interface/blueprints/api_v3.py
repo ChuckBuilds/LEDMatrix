@@ -866,6 +866,10 @@ def get_installed_plugins():
         import json
         from pathlib import Path
         
+        # Re-discover plugins to ensure we have the latest list
+        # This handles cases where plugins are added/removed after app startup
+        api_v3.plugin_manager.discover_plugins()
+        
         # Get all installed plugin info from the plugin manager
         all_plugin_info = api_v3.plugin_manager.get_all_plugin_info()
         
