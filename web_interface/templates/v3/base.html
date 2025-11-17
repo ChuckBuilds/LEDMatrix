@@ -221,12 +221,20 @@
             <!-- Plugins tab -->
             <div x-show="activeTab === 'plugins'" 
                  x-transition
-                 x-effect="if (activeTab === 'plugins' && typeof htmx !== 'undefined' && !document.getElementById('plugins-content').hasAttribute('data-loaded')) { setTimeout(() => htmx.trigger('#plugins-content', 'load'), 100); }">
+                 x-effect="if (activeTab === 'plugins') { 
+                     const content = document.getElementById('plugins-content');
+                     if (content && typeof htmx !== 'undefined' && !content.hasAttribute('data-loaded')) { 
+                         setTimeout(() => {
+                             htmx.trigger('#plugins-content', 'load');
+                             console.log('Triggered plugins content load');
+                         }, 100); 
+                     }
+                 }">
                 <div id="plugins-content" 
                      hx-get="/v3/partials/plugins" 
                      hx-trigger="load" 
                      hx-swap="innerHTML"
-                     hx-on::after-swap="this.setAttribute('data-loaded', 'true')">
+                     hx-on::after-swap="this.setAttribute('data-loaded', 'true'); console.log('Plugins content loaded');">
                     <div class="animate-pulse">
                         <div class="bg-white rounded-lg shadow p-6">
                             <div class="h-4 bg-gray-200 rounded w-1/4 mb-4"></div>
