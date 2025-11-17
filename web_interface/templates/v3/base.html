@@ -16,14 +16,29 @@
                 if (document.body) {
                     // Fix HTMX insertBefore errors by validating targets before swap
                     document.body.addEventListener('htmx:beforeSwap', function(event) {
-                        const target = event.detail.target;
-                        if (!target || !target.parentNode) {
-                            // Target or parent is null - cancel the swap
-                            event.detail.shouldSwap = false;
-                            return false;
-                        }
-                        // Ensure target is in the DOM
-                        if (!document.body.contains(target)) {
+                        try {
+                            const target = event.detail.target;
+                            if (!target) {
+                                event.detail.shouldSwap = false;
+                                return false;
+                            }
+                            // Check if target has a parent node
+                            if (!target.parentNode) {
+                                event.detail.shouldSwap = false;
+                                return false;
+                            }
+                            // Ensure target is in the DOM
+                            if (!document.body.contains(target)) {
+                                event.detail.shouldSwap = false;
+                                return false;
+                            }
+                            // Additional check: ensure parent is also in DOM
+                            if (!document.body.contains(target.parentNode)) {
+                                event.detail.shouldSwap = false;
+                                return false;
+                            }
+                        } catch (e) {
+                            // If validation fails, cancel swap
                             event.detail.shouldSwap = false;
                             return false;
                         }
@@ -106,6 +121,25 @@
                                         
                                         // Only execute if we have valid content
                                         if (scriptContent || oldScript.src) {
+                                            // Basic syntax check for script content
+                                            if (scriptContent) {
+                                                // Check for balanced parentheses/brackets
+                                                const openParens = (scriptContent.match(/\(/g) || []).length;
+                                                const closeParens = (scriptContent.match(/\)/g) || []).length;
+                                                const openBrackets = (scriptContent.match(/\[/g) || []).length;
+                                                const closeBrackets = (scriptContent.match(/\]/g) || []).length;
+                                                const openBraces = (scriptContent.match(/\{/g) || []).length;
+                                                const closeBraces = (scriptContent.match(/\}/g) || []).length;
+                                                
+                                                if (openParens !== closeParens || 
+                                                    openBrackets !== closeBrackets || 
+                                                    openBraces !== closeBraces) {
+                                                    console.warn('Skipping script with unbalanced brackets/parentheses');
+                                                    oldScript.remove();
+                                                    return;
+                                                }
+                                            }
+                                            
                                             const newScript = document.createElement('script');
                                             if (oldScript.src) {
                                                 newScript.src = oldScript.src;
@@ -119,12 +153,16 @@
                                             
                                             // Remove old script first, then append new one
                                             const parent = oldScript.parentNode;
-                                            if (parent) {
+                                            if (parent && document.body.contains(parent)) {
                                                 oldScript.remove();
                                                 parent.appendChild(newScript);
                                             } else {
-                                                // If no parent, append to head or body
-                                                (document.head || document.body).appendChild(newScript);
+                                                // If no parent or parent not in DOM, append to head or body
+                                                const target = document.head || document.body;
+                                                if (target) {
+                                                    oldScript.remove();
+                                                    target.appendChild(newScript);
+                                                }
                                             }
                                         } else {
                                             oldScript.remove();
@@ -143,21 +181,34 @@
                                 console.warn('Script execution encountered errors, using fallback rendering');
                             }
                             
-                            // Wait for scripts to execute, then load plugins
-                            // Retry multiple times to give scripts time to execute
-                            let attempts = 0;
-                            const maxAttempts = 10;
-                            const checkInterval = setInterval(() => {
-                                attempts++;
-                                if (window.loadInstalledPlugins && typeof window.loadInstalledPlugins === 'function') {
-                                    console.log('Found loadInstalledPlugins, calling it...');
-                                    clearInterval(checkInterval);
-                                    window.loadInstalledPlugins();
-                                } else if (window.pluginManager && window.pluginManager.loadInstalledPlugins) {
-                                    console.log('Found pluginManager.loadInstalledPlugins, calling it...');
-                                    clearInterval(checkInterval);
-                                    window.pluginManager.loadInstalledPlugins();
-                                } else if (attempts >= maxAttempts) {
+                        // Wait for scripts to execute, then load plugins
+                        // Retry multiple times to give scripts time to execute
+                        let attempts = 0;
+                        const maxAttempts = 10;
+                        const checkInterval = setInterval(() => {
+                            attempts++;
+                            // Try to call initializePlugins first (loads both installed and store)
+                            if (window.initializePlugins && typeof window.initializePlugins === 'function') {
+                                console.log('Found initializePlugins, calling it...');
+                                clearInterval(checkInterval);
+                                window.initializePlugins();
+                            } else if (window.loadInstalledPlugins && typeof window.loadInstalledPlugins === 'function') {
+                                console.log('Found loadInstalledPlugins, calling it...');
+                                clearInterval(checkInterval);
+                                window.loadInstalledPlugins();
+                                // Also try to load plugin store
+                                if (window.searchPluginStore && typeof window.searchPluginStore === 'function') {
+                                    setTimeout(() => window.searchPluginStore(true), 500);
+                                }
+                            } else if (window.pluginManager && window.pluginManager.loadInstalledPlugins) {
+                                console.log('Found pluginManager.loadInstalledPlugins, calling it...');
+                                clearInterval(checkInterval);
+                                window.pluginManager.loadInstalledPlugins();
+                                // Also try to load plugin store
+                                if (window.searchPluginStore && typeof window.searchPluginStore === 'function') {
+                                    setTimeout(() => window.searchPluginStore(true), 500);
+                                }
+                            } else if (attempts >= maxAttempts) {
                                     console.log('loadInstalledPlugins not found after', maxAttempts, 'attempts, fetching and rendering directly...');
                                     clearInterval(checkInterval);
                                     fetch('/api/v3/plugins/installed')

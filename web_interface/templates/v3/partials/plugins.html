@@ -3950,8 +3950,10 @@ window.currentPluginConfig = null;
 console.log('Plugins script loaded, checking for elements...');
 // Make functions globally available immediately
 window.initializePluginPageWhenReady = initializePluginPageWhenReady;
+window.initializePlugins = initializePlugins;
 window.loadInstalledPlugins = loadInstalledPlugins;
 window.renderInstalledPlugins = renderInstalledPlugins;
+window.searchPluginStore = searchPluginStore;
 
 setTimeout(function() {
     const installedGrid = document.getElementById('installed-plugins-grid');
