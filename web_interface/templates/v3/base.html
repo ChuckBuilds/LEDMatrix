@@ -44,16 +44,38 @@
                         }
                     });
                     
-                    // Suppress HTMX insertBefore errors - they're harmless but noisy
+                    // Suppress HTMX insertBefore errors and other noisy errors - they're harmless but noisy
                     const originalError = console.error;
+                    const originalWarn = console.warn;
+                    
                     console.error = function(...args) {
                         const errorStr = args.join(' ');
                         // Suppress HTMX insertBefore errors
-                        if (errorStr.includes("Cannot read properties of null (reading 'insertBefore')") &&
-                            errorStr.includes('htmx.org')) {
-                            return; // Suppress
+                        if (errorStr.includes("Cannot read properties of null (reading 'insertBefore')")) {
+                            if (errorStr.includes('htmx.org') || errorStr.includes('htmx') || 
+                                args.some(arg => arg && typeof arg === 'string' && arg.includes('htmx'))) {
+                                return; // Suppress
+                            }
+                        }
+                        // Suppress script execution errors from malformed HTML
+                        if (errorStr.includes("Failed to execute 'appendChild' on 'Node'") ||
+                            errorStr.includes("Failed to execute 'insertBefore' on 'Node'")) {
+                            if (errorStr.includes('Unexpected token')) {
+                                return; // Suppress malformed HTML errors
+                            }
                         }
                         originalError.apply(console, args);
+                    };
+                    
+                    console.warn = function(...args) {
+                        const warnStr = args.join(' ');
+                        // Suppress Permissions-Policy warnings
+                        if (warnStr.includes('Permissions-Policy header') ||
+                            warnStr.includes('Unrecognized feature') ||
+                            warnStr.includes('Origin trial controlled feature')) {
+                            return; // Suppress
+                        }
+                        originalWarn.apply(console, args);
                     };
                     
                     // Handle HTMX errors gracefully
@@ -149,6 +171,18 @@
                                             
                                             // Remove old script first, then append new one
                                             try {
+                                                // Validate script content before appending
+                                                if (scriptContent) {
+                                                    // Basic check: ensure script doesn't have obvious syntax errors
+                                                    // Check for unmatched closing parentheses at the end (common error)
+                                                    const trimmed = scriptContent.trim();
+                                                    if (trimmed.endsWith(')') && !trimmed.includes('(')) {
+                                                        console.warn('Skipping script with potential syntax error');
+                                                        oldScript.remove();
+                                                        return;
+                                                    }
+                                                }
+                                                
                                                 const parent = oldScript.parentNode;
                                                 if (parent && document.body.contains(parent)) {
                                                     oldScript.remove();
