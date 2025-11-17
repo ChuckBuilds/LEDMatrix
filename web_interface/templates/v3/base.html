@@ -304,14 +304,36 @@
                                                         window.renderInstalledPlugins(plugins);
                                                     } else if (container) {
                                                         // Manual render if function not available
-                                                        container.innerHTML = plugins.map(p => `
+                                                        console.log('Manually rendering', plugins.length, 'plugins');
+                                                        const escapeHtml = (text) => {
+                                                            if (!text) return '';
+                                                            const div = document.createElement('div');
+                                                            div.textContent = text;
+                                                            return div.innerHTML;
+                                                        };
+                                                        container.innerHTML = plugins.map(p => {
+                                                            const name = escapeHtml(p.name || p.id);
+                                                            const desc = escapeHtml(p.description || 'No description');
+                                                            const enabled = p.enabled ? 'checked' : '';
+                                                            return `
                                                             <div class="plugin-card">
-                                                                <h4>${p.name || p.id}</h4>
-                                                                <p>${p.description || 'No description'}</p>
+                                                                <div class="flex items-start justify-between mb-4">
+                                                                    <div class="flex-1">
+                                                                        <h4 class="font-semibold text-gray-900">${name}</h4>
+                                                                        <p class="text-sm text-gray-700 mt-2">${desc}</p>
+                                                                    </div>
+                                                                    <label class="relative inline-flex items-center cursor-pointer">
+                                                                        <input type="checkbox" class="sr-only peer" ${enabled} onchange="if(window.togglePlugin)window.togglePlugin('${p.id}', this.checked)">
+                                                                        <div class="w-14 h-7 ${p.enabled ? 'bg-green-500' : 'bg-gray-300'} rounded-full peer"></div>
+                                                                    </label>
+                                                                </div>
                                                             </div>
-                                                        `).join('');
+                                                        `;
+                                                        }).join('');
                                                         const countEl = document.getElementById('installed-count');
                                                         if (countEl) countEl.textContent = plugins.length + ' installed';
+                                                        // Update global for tabs
+                                                        window.installedPlugins = plugins;
                                                     }
                                                 }
                                             })
