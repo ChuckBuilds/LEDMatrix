@@ -751,12 +751,20 @@ function renderInstalledPlugins(plugins) {
         return;
     }
 
+    // Helper function to escape attributes for use in HTML
+    const escapeAttr = (text) => {
+        return (text || '').replace(/'/g, "\\'").replace(/"/g, '&quot;');
+    };
+
     container.innerHTML = plugins.map(plugin => {
         // Debug: Log enabled status during rendering
         const enabledValue = plugin.enabled;
         const enabledType = typeof enabledValue;
         const enabledBool = Boolean(enabledValue);
         console.log(`[DEBUG RENDER] Plugin ${plugin.id}: enabled=${enabledValue} (type: ${enabledType}, bool: ${enabledBool})`);
+        
+        // Escape plugin ID for use in HTML attributes and JavaScript
+        const escapedPluginId = escapeAttr(plugin.id);
         
         return `
         <div class="plugin-card">
@@ -780,9 +788,9 @@ function renderInstalledPlugins(plugins) {
                     <label class="relative inline-flex items-center cursor-pointer group">
                         <input type="checkbox" 
                                class="sr-only peer" 
-                               id="toggle-${plugin.id}"
+                               id="toggle-${escapedPluginId}"
                                ${enabledBool ? 'checked' : ''}
-                               onchange="togglePlugin('${plugin.id}', this.checked)">
+                               onchange="togglePlugin('${escapedPluginId}', this.checked)">
                         <div class="flex items-center gap-2 px-3 py-1.5 rounded-lg border-2 transition-all duration-200 ${enabledBool ? 'bg-green-50 border-green-500' : 'bg-gray-50 border-gray-300'} hover:shadow-md group-hover:scale-105">
                             <!-- Toggle Switch -->
                             <div class="relative w-14 h-7 ${enabledBool ? 'bg-green-500' : 'bg-gray-300'} peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 rounded-full peer peer-checked:bg-green-500 transition-colors duration-200 ease-in-out shadow-inner">
@@ -791,7 +799,7 @@ function renderInstalledPlugins(plugins) {
                                 </div>
                             </div>
                             <!-- Label with Icon -->
-                            <span class="text-sm font-semibold ${enabledBool ? 'text-green-700' : 'text-gray-600'} flex items-center gap-1.5" id="toggle-label-${plugin.id}">
+                            <span class="text-sm font-semibold ${enabledBool ? 'text-green-700' : 'text-gray-600'} flex items-center gap-1.5" id="toggle-label-${escapedPluginId}">
                                 ${enabledBool ? '<i class="fas fa-toggle-on text-green-600"></i>' : '<i class="fas fa-toggle-off text-gray-400"></i>'}
                                 <span>${enabledBool ? 'Enabled' : 'Disabled'}</span>
                             </span>
@@ -809,15 +817,15 @@ function renderInstalledPlugins(plugins) {
 
             <!-- Plugin Actions -->
             <div class="flex flex-wrap gap-2 mt-4 pt-4 border-t border-gray-200">
-                <button onclick="configurePlugin('${plugin.id}')"
+                <button onclick="configurePlugin('${escapedPluginId}')"
                         class="btn bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md text-sm flex-1 font-semibold">
                     <i class="fas fa-cog mr-2"></i>Configure
                 </button>
-                <button onclick="updatePlugin('${plugin.id}')"
+                <button onclick="updatePlugin('${escapedPluginId}')"
                         class="btn bg-gray-600 hover:bg-gray-700 text-white px-4 py-2 rounded-md text-sm flex-1 font-semibold">
                     <i class="fas fa-sync mr-2"></i>Update
                 </button>
-                <button onclick="uninstallPlugin('${plugin.id}')"
+                <button onclick="uninstallPlugin('${escapedPluginId}')"
                         class="btn bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-md text-sm flex-1 font-semibold">
                     <i class="fas fa-trash mr-2"></i>Uninstall
                 </button>
