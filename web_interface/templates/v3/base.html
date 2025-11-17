@@ -62,12 +62,26 @@
                             console.log('Plugins HTML loaded, executing scripts...');
                             
                             // Execute scripts manually - skip if errors occur
-                            const scripts = content.querySelectorAll('script');
-                            scripts.forEach(oldScript => {
+                            const scripts = Array.from(content.querySelectorAll('script'));
+                            scripts.forEach((oldScript, index) => {
                                 try {
                                     // Skip if script has no content and no src
                                     if (!oldScript.innerHTML.trim() && !oldScript.src) {
+                                        oldScript.remove();
                                         return;
+                                    }
+                                    
+                                    // Validate script content before executing
+                                    const scriptContent = oldScript.innerHTML.trim();
+                                    if (scriptContent && !oldScript.src) {
+                                        // Basic syntax check - look for common issues
+                                        const openParens = (scriptContent.match(/\(/g) || []).length;
+                                        const closeParens = (scriptContent.match(/\)/g) || []).length;
+                                        if (openParens !== closeParens) {
+                                            console.warn('Skipping script with mismatched parentheses');
+                                            oldScript.remove();
+                                            return;
+                                        }
                                     }
                                     
                                     const newScript = document.createElement('script');
@@ -77,15 +91,14 @@
                                     if (oldScript.type) {
                                         newScript.type = oldScript.type;
                                     }
-                                    if (oldScript.innerHTML) {
-                                        // Use textContent to avoid HTML parsing issues
-                                        newScript.textContent = oldScript.innerHTML;
+                                    if (scriptContent) {
+                                        newScript.textContent = scriptContent;
                                     }
                                     
-                                    // Remove old script first to avoid conflicts
+                                    // Remove old script first, then append new one
                                     const parent = oldScript.parentNode;
                                     if (parent) {
-                                        parent.removeChild(oldScript);
+                                        oldScript.remove();
                                         parent.appendChild(newScript);
                                     } else {
                                         // If no parent, append to head or body
@@ -93,7 +106,11 @@
                                     }
                                 } catch (e) {
                                     // Silently skip problematic scripts - fallback rendering will handle it
-                                    console.warn('Skipping script execution due to error:', e.message);
+                                    try {
+                                        oldScript.remove();
+                                    } catch (removeErr) {
+                                        // Ignore removal errors
+                                    }
                                 }
                             });
                             
