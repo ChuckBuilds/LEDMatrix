@@ -236,20 +236,43 @@
                      hx-swap="innerHTML"
                      hx-on::after-swap="
                         this.setAttribute('data-loaded', 'true'); 
-                        console.log('Plugins content loaded, triggering initialization...'); 
-                        setTimeout(() => {
+                        console.log('Plugins content loaded, waiting for scripts...'); 
+                        // Wait for scripts to execute, then initialize
+                        const initInterval = setInterval(() => {
                             if (window.initPluginsPage && typeof window.initPluginsPage === 'function') {
-                                console.log('Calling initPluginsPage...');
+                                console.log('Found initPluginsPage, calling it...');
+                                clearInterval(initInterval);
                                 window.pluginManager.initialized = false;
                                 window.initPluginsPage();
                             } else if (typeof initializePluginPageWhenReady === 'function') {
-                                console.log('Calling initializePluginPageWhenReady...');
+                                console.log('Found initializePluginPageWhenReady, calling it...');
+                                clearInterval(initInterval);
                                 window.pluginManager.initialized = false;
                                 initializePluginPageWhenReady();
                             } else {
-                                console.error('Neither initPluginsPage nor initializePluginPageWhenReady found!');
+                                // Keep trying for up to 2 seconds
+                                if (Date.now() - (window.pluginInitStartTime || Date.now()) > 2000) {
+                                    console.error('Functions not found after 2 seconds, forcing manual init...');
+                                    clearInterval(initInterval);
+                                    // Force load plugins directly
+                                    if (typeof loadInstalledPlugins === 'function') {
+                                        loadInstalledPlugins();
+                                    } else if (window.pluginManager && window.pluginManager.loadInstalledPlugins) {
+                                        window.pluginManager.loadInstalledPlugins();
+                                    } else {
+                                        // Last resort: fetch and render manually
+                                        fetch('/api/v3/plugins/installed')
+                                            .then(r => r.json())
+                                            .then(data => {
+                                                if (data.status === 'success' && window.renderInstalledPlugins) {
+                                                    window.renderInstalledPlugins(data.data.plugins || []);
+                                                }
+                                            });
+                                    }
+                                }
                             }
-                        }, 200);
+                        }, 50);
+                        window.pluginInitStartTime = Date.now();
                      ">
                     <div class="animate-pulse">
                         <div class="bg-white rounded-lg shadow p-6">
