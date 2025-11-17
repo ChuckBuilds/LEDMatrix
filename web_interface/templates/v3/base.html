@@ -116,7 +116,7 @@
             <!-- Second row - Plugin tabs (populated dynamically) -->
             <div id="plugin-tabs-row" class="border-b border-gray-200">
                 <nav class="-mb-px flex space-x-4 lg:space-x-6 xl:space-x-8 overflow-x-auto">
-                    <button @click="activeTab = 'plugins'"
+                    <button @click="activeTab = 'plugins'; $nextTick(() => { if (typeof htmx !== 'undefined' && !document.getElementById('plugins-content').hasAttribute('data-loaded')) { htmx.trigger('#plugins-content', 'load'); } })"
                             :class="activeTab === 'plugins' ? 'border-blue-600 text-blue-600 font-semibold' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'"
                             class="whitespace-nowrap py-2 px-1 lg:px-2 xl:px-3 border-b-2 font-medium text-sm transition-colors">
                         <i class="fas fa-plug mr-2"></i>Plugin Manager
@@ -219,8 +219,14 @@
             </div>
 
             <!-- Plugins tab -->
-            <div x-show="activeTab === 'plugins'" x-transition>
-                <div id="plugins-content" hx-get="/v3/partials/plugins" hx-trigger="load" hx-swap="innerHTML">
+            <div x-show="activeTab === 'plugins'" 
+                 x-transition
+                 x-effect="if (activeTab === 'plugins' && typeof htmx !== 'undefined' && !document.getElementById('plugins-content').hasAttribute('data-loaded')) { setTimeout(() => htmx.trigger('#plugins-content', 'load'), 100); }">
+                <div id="plugins-content" 
+                     hx-get="/v3/partials/plugins" 
+                     hx-trigger="load" 
+                     hx-swap="innerHTML"
+                     hx-on::after-swap="this.setAttribute('data-loaded', 'true')">
                     <div class="animate-pulse">
                         <div class="bg-white rounded-lg shadow p-6">
                             <div class="h-4 bg-gray-200 rounded w-1/4 mb-4"></div>
