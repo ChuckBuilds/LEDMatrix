@@ -136,6 +136,7 @@
 </div>
 
 <script>
+// Ensure wifiSetup is available globally for Alpine.js
 function wifiSetup() {
     return {
         status: {
@@ -277,6 +278,11 @@ function wifiSetup() {
             }
         }
     }
+};
+
+// Also make it available as a global function for Alpine.js
+if (typeof window !== 'undefined') {
+    window.wifiSetup = wifiSetup;
 }
 </script>
 
