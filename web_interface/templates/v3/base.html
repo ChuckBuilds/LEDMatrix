@@ -9,6 +9,23 @@
     <script src="https://unpkg.com/htmx.org@1.9.10"></script>
     <script src="https://unpkg.com/htmx.org/dist/ext/sse.js"></script>
     <script src="https://unpkg.com/htmx.org/dist/ext/json-enc.js"></script>
+    <script>
+        // Configure HTMX to evaluate scripts in swapped content
+        document.body.addEventListener('htmx:afterSwap', function(event) {
+            // Execute any script tags in the swapped content
+            if (event.detail.target) {
+                const scripts = event.detail.target.querySelectorAll('script');
+                scripts.forEach(function(oldScript) {
+                    const newScript = document.createElement('script');
+                    Array.from(oldScript.attributes).forEach(attr => {
+                        newScript.setAttribute(attr.name, attr.value);
+                    });
+                    newScript.appendChild(document.createTextNode(oldScript.innerHTML));
+                    oldScript.parentNode.replaceChild(newScript, oldScript);
+                });
+            }
+        });
+    </script>
 
     <!-- Alpine.js for reactive components -->
     <script defer src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js"></script>
