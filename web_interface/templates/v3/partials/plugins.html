@@ -630,6 +630,34 @@ if (typeof htmx !== 'undefined') {
     });
 }
 
+// Use MutationObserver as a final fallback to detect when elements are added
+if (typeof MutationObserver !== 'undefined') {
+    const observer = new MutationObserver(function(mutations) {
+        const installedGrid = document.getElementById('installed-plugins-grid');
+        const storeGrid = document.getElementById('plugin-store-grid');
+        
+        if (installedGrid && storeGrid && (!window.pluginManager || !window.pluginManager.initialized)) {
+            console.log('MutationObserver detected plugin elements, initializing...');
+            setTimeout(initializePluginPageWhenReady, 100);
+        }
+    });
+    
+    // Start observing when DOM is ready
+    if (document.body) {
+        observer.observe(document.body, {
+            childList: true,
+            subtree: true
+        });
+    } else {
+        document.addEventListener('DOMContentLoaded', function() {
+            observer.observe(document.body, {
+                childList: true,
+                subtree: true
+            });
+        });
+    }
+}
+
 function initializePlugins() {
     console.log('Initializing plugins...');
 
