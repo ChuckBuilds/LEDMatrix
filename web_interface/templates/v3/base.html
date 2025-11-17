@@ -16,16 +16,38 @@
                 if (document.body) {
                     document.body.addEventListener('htmx:afterSwap', function(event) {
                         // Execute any script tags in the swapped content
-                        if (event.detail.target) {
-                            const scripts = event.detail.target.querySelectorAll('script');
-                            scripts.forEach(function(oldScript) {
-                                const newScript = document.createElement('script');
-                                Array.from(oldScript.attributes).forEach(attr => {
-                                    newScript.setAttribute(attr.name, attr.value);
+                        if (event.detail && event.detail.target) {
+                            try {
+                                const scripts = event.detail.target.querySelectorAll('script');
+                                scripts.forEach(function(oldScript) {
+                                    try {
+                                        // Only execute if script has content or src
+                                        if (oldScript.innerHTML.trim() || oldScript.src) {
+                                            const newScript = document.createElement('script');
+                                            // Copy attributes
+                                            if (oldScript.src) {
+                                                newScript.src = oldScript.src;
+                                            }
+                                            if (oldScript.type) {
+                                                newScript.type = oldScript.type;
+                                            }
+                                            // Copy inner content
+                                            if (oldScript.innerHTML) {
+                                                newScript.textContent = oldScript.innerHTML;
+                                            }
+                                            // Insert new script and remove old one
+                                            if (oldScript.parentNode) {
+                                                oldScript.parentNode.insertBefore(newScript, oldScript);
+                                                oldScript.parentNode.removeChild(oldScript);
+                                            }
+                                        }
+                                    } catch (scriptError) {
+                                        console.error('Error executing script:', scriptError);
+                                    }
                                 });
-                                newScript.appendChild(document.createTextNode(oldScript.innerHTML));
-                                oldScript.parentNode.replaceChild(newScript, oldScript);
-                            });
+                            } catch (e) {
+                                console.error('Error processing scripts:', e);
+                            }
                         }
                     });
                 } else {
