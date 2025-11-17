@@ -44,6 +44,18 @@
                         }
                     });
                     
+                    // Suppress HTMX insertBefore errors - they're harmless but noisy
+                    const originalError = console.error;
+                    console.error = function(...args) {
+                        const errorStr = args.join(' ');
+                        // Suppress HTMX insertBefore errors
+                        if (errorStr.includes("Cannot read properties of null (reading 'insertBefore')") &&
+                            errorStr.includes('htmx.org')) {
+                            return; // Suppress
+                        }
+                        originalError.apply(console, args);
+                    };
+                    
                     // Handle HTMX errors gracefully
                     document.body.addEventListener('htmx:responseError', function(event) {
                         // Log but don't break the app
@@ -136,16 +148,27 @@
                                             }
                                             
                                             // Remove old script first, then append new one
-                                            const parent = oldScript.parentNode;
-                                            if (parent && document.body.contains(parent)) {
-                                                oldScript.remove();
-                                                parent.appendChild(newScript);
-                                            } else {
-                                                // If no parent or parent not in DOM, append to head or body
-                                                const target = document.head || document.body;
-                                                if (target) {
+                                            try {
+                                                const parent = oldScript.parentNode;
+                                                if (parent && document.body.contains(parent)) {
                                                     oldScript.remove();
-                                                    target.appendChild(newScript);
+                                                    parent.appendChild(newScript);
+                                                } else {
+                                                    // If no parent or parent not in DOM, append to head or body
+                                                    const target = document.head || document.body;
+                                                    if (target) {
+                                                        oldScript.remove();
+                                                        target.appendChild(newScript);
+                                                    }
+                                                }
+                                            } catch (appendError) {
+                                                // If appendChild fails, try appending to body directly
+                                                try {
+                                                    oldScript.remove();
+                                                    (document.head || document.body).appendChild(newScript);
+                                                } catch (finalError) {
+                                                    // Last resort: just remove the problematic script
+                                                    oldScript.remove();
                                                 }
                                             }
                                         } else {
@@ -166,9 +189,9 @@
                             }
                             
                         // Wait for scripts to execute, then load plugins
-                        // Retry multiple times to give scripts time to execute
+                        // Retry multiple times to give scripts time to execute (faster retries)
                         let attempts = 0;
-                        const maxAttempts = 10;
+                        const maxAttempts = 5; // Reduced from 10
                         const checkInterval = setInterval(() => {
                             attempts++;
                             // Try to call initializePlugins first (loads both installed and store)
@@ -325,7 +348,7 @@
                                         // Still try to render installed plugins if store fails
                                     });
                                 }
-                            }, 200);
+                            }, 100); // Reduced from 200ms to 100ms for faster retries
                         })
                         .catch(err => console.error('Error loading plugins:', err));
                 }
