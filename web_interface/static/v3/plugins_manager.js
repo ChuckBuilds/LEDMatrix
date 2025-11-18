@@ -1,6 +1,23 @@
 // Define critical functions immediately so they're available before any HTML is rendered
 console.log('[PLUGINS SCRIPT] Defining configurePlugin and togglePlugin at top level...');
 
+// Cleanup orphaned modals from previous executions to prevent duplicates when moving to body
+try {
+    const existingModals = document.querySelectorAll('#plugin-config-modal');
+    if (existingModals.length > 0) {
+        existingModals.forEach(el => {
+            // Only remove modals that were moved to body (orphaned from previous loads)
+            // The new modal in the current content should be inside a container, not direct body child
+            if (el.parentElement === document.body) {
+                console.log('[PLUGINS SCRIPT] Cleaning up orphaned plugin modal');
+                el.remove();
+            }
+        });
+    }
+} catch (e) {
+    console.warn('[PLUGINS SCRIPT] Error cleaning up modals:', e);
+}
+
 // Track pending render data for when DOM isn't ready yet
 window.__pendingInstalledPlugins = window.__pendingInstalledPlugins || null;
 window.__pendingStorePlugins = window.__pendingStorePlugins || null;
@@ -784,7 +801,16 @@ function handlePluginAction(event) {
     switch(action) {
         case 'toggle':
             // For toggle, get the checked state from the input
-            const isChecked = button.type === 'checkbox' ? button.checked : false;
+            // Note: Since we preventDefault() on click, the checked state hasn't changed yet if it was a click
+            // If it was a change event, it has already changed
+            let isChecked = button.type === 'checkbox' ? button.checked : false;
+            
+            // If triggered by click on a checkbox, we need to invert the current state
+            // because preventDefault() stopped the browser from toggling it
+            if (event.type === 'click' && button.type === 'checkbox') {
+                isChecked = !isChecked;
+            }
+
             waitForFunction('togglePlugin', 10, 50)
                 .then(toggleFunc => {
                     toggleFunc(pluginId, isChecked);
@@ -1204,6 +1230,11 @@ window.showPluginConfigModal = function(pluginId, config) {
     // Show loading state while form is generated
     content.innerHTML = '<div class="flex items-center justify-center py-8"><i class="fas fa-spinner fa-spin text-2xl text-blue-600"></i></div>';
     
+    // Move modal to body to avoid z-index/overflow issues
+    if (modal.parentElement !== document.body) {
+        document.body.appendChild(modal);
+    }
+
     // Show modal immediately
     modal.style.display = 'flex';
     console.log('[DEBUG] Modal display set to flex');
