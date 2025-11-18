@@ -3218,12 +3218,10 @@ function renderPluginStore(plugins) {
 
             <!-- Store Actions -->
             <div class="flex gap-2 mt-4 pt-4 border-t border-gray-200">
-                <button onclick='if(window.installPlugin){window.installPlugin(${escapeJs(plugin.id)})}else{console.error("installPlugin not available")}'
-                        class="btn bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-md text-sm flex-1 font-semibold">
+                <button onclick='if(window.installPlugin){window.installPlugin(${escapeJs(plugin.id)})}else{console.error("installPlugin not available")}' class="btn bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-md text-sm flex-1 font-semibold">
                     <i class="fas fa-download mr-2"></i>Install
                 </button>
-                <button onclick='window.open(${escapeJs(plugin.repo || '#')}, "_blank")'
-                        class="btn bg-gray-600 hover:bg-gray-700 text-white px-4 py-2 rounded-md text-sm flex-1 font-semibold">
+                <button onclick='window.open(${escapeJs(plugin.repo || '#')}, "_blank")' class="btn bg-gray-600 hover:bg-gray-700 text-white px-4 py-2 rounded-md text-sm flex-1 font-semibold">
                     <i class="fas fa-external-link-alt mr-2"></i>View
                 </button>
             </div>
@@ -3379,9 +3377,7 @@ function renderSavedRepositories(repositories) {
                     </div>
                     <p class="text-xs text-gray-500 truncate" title="${repoUrl}">${escapeHtml(repoUrl)}</p>
                 </div>
-                <button onclick='if(window.removeSavedRepository){window.removeSavedRepository(${escapeJs(repoUrl)})}else{console.error("removeSavedRepository not available")}'
-                        class="ml-2 text-red-600 hover:text-red-800 text-xs px-2 py-1" 
-                        title="Remove repository">
+                <button onclick='if(window.removeSavedRepository){window.removeSavedRepository(${escapeJs(repoUrl)})}else{console.error("removeSavedRepository not available")}' class="ml-2 text-red-600 hover:text-red-800 text-xs px-2 py-1" title="Remove repository">
                     <i class="fas fa-trash"></i>
                 </button>
             </div>
