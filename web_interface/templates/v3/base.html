@@ -190,27 +190,62 @@
                                         
                                         // Only execute if we have valid content
                                         if (scriptContent || oldScript.src) {
-                                            // For inline scripts, use eval() for more reliable execution
+                                            // For inline scripts, use appendChild for reliable execution
                                             if (scriptContent && !oldScript.src) {
                                                 try {
-                                                    // Execute in global scope
-                                                    (function() {
-                                                        eval(scriptContent);
-                                                    })();
-                                                    console.log('Executed inline script', index + 1, 'of', scripts.length, 'via eval');
-                                                } catch (evalError) {
-                                                    console.warn('Eval failed, trying appendChild method:', evalError);
-                                                    // Fallback to appendChild method
+                                                    // Create new script element and append to head/body
+                                                    // This ensures proper execution context and window attachment
                                                     const newScript = document.createElement('script');
                                                     if (oldScript.type) {
                                                         newScript.type = oldScript.type;
                                                     }
-                                                    newScript.textContent = scriptContent;
-                                                    // Use head instead of body for better compatibility
-                                                    const target = document.head || document.body;
-                                                    if (target) {
-                                                        target.appendChild(newScript);
-                                                    }
+                                                    
+                                                    // Wrap in a promise to wait for execution
+                                                    const scriptPromise = new Promise((resolve, reject) => {
+                                                        // Set up error handler
+                                                        newScript.onerror = (error) => {
+                                                            reject(error);
+                                                        };
+                                                        
+                                                        // For inline scripts, execution happens synchronously when appended
+                                                        // But we'll use a small delay to ensure it completes
+                                                        try {
+                                                            // Set textContent (not innerHTML) to avoid execution issues
+                                                            newScript.textContent = scriptContent;
+                                                            
+                                                            // Append to head for better execution context
+                                                            const target = document.head || document.body;
+                                                            if (target) {
+                                                                target.appendChild(newScript);
+                                                                // Give script a moment to execute
+                                                                setTimeout(() => {
+                                                                    console.log('Executed inline script', index + 1, 'of', scripts.length, 'via appendChild');
+                                                                    resolve();
+                                                                }, 10);
+                                                            } else {
+                                                                reject(new Error('No target found for script execution'));
+                                                            }
+                                                        } catch (appendError) {
+                                                            reject(appendError);
+                                                        }
+                                                    });
+                                                    
+                                                    // Wait for script to execute (with timeout)
+                                                    Promise.race([
+                                                        scriptPromise,
+                                                        new Promise((_, reject) => setTimeout(() => reject(new Error('Script execution timeout')), 1000))
+                                                    ]).catch(error => {
+                                                        console.warn('Script execution issue, trying fallback:', error);
+                                                        // Fallback: try Function constructor
+                                                        try {
+                                                            new Function(scriptContent)();
+                                                            console.log('Executed inline script', index + 1, 'via Function constructor (fallback)');
+                                                        } catch (evalError) {
+                                                            console.error('All script execution methods failed:', evalError);
+                                                        }
+                                                    });
+                                                } catch (appendError) {
+                                                    console.error('Failed to execute script:', appendError);
                                                 }
                                             } else if (oldScript.src) {
                                                 // For external scripts, use appendChild
@@ -248,8 +283,12 @@
                                 });
                                 
                                 // Wait a moment for scripts to execute, then verify functions are available
-                                setTimeout(() => {
-                                    console.log('Verifying plugin functions after script execution:', {
+                                // Use multiple checks to ensure scripts have time to execute
+                                let checkCount = 0;
+                                const maxChecks = 10;
+                                const checkInterval = setInterval(() => {
+                                    checkCount++;
+                                    const funcs = {
                                         configurePlugin: typeof window.configurePlugin,
                                         togglePlugin: typeof window.togglePlugin,
                                         updatePlugin: typeof window.updatePlugin,
@@ -257,26 +296,61 @@
                                         initializePlugins: typeof window.initializePlugins,
                                         loadInstalledPlugins: typeof window.loadInstalledPlugins,
                                         renderInstalledPlugins: typeof window.renderInstalledPlugins
-                                    });
+                                    };
+                                    
+                                    if (checkCount === 1 || checkCount === maxChecks) {
+                                        console.log('Verifying plugin functions after script execution (check', checkCount, '):', funcs);
+                                    }
+                                    
+                                    // Stop checking once critical functions are available or max checks reached
+                                    if ((funcs.configurePlugin === 'function' && funcs.togglePlugin === 'function') || checkCount >= maxChecks) {
+                                        clearInterval(checkInterval);
+                                        if (funcs.configurePlugin !== 'function' || funcs.togglePlugin !== 'function') {
+                                            console.error('Critical plugin functions not available after', checkCount, 'checks');
+                                        }
+                                    }
                                 }, 100);
                             } catch (executionError) {
                                 console.error('Script execution error:', executionError);
                             }
                             
                         // Wait for scripts to execute, then load plugins
-                        // Retry multiple times to give scripts time to execute (faster retries)
+                        // CRITICAL: Wait for configurePlugin and togglePlugin to be defined before proceeding
                         let attempts = 0;
-                        const maxAttempts = 5; // Reduced from 10
+                        const maxAttempts = 20; // Increased to give more time
                         const checkInterval = setInterval(() => {
                             attempts++;
-                            // Try to call initializePlugins first (loads both installed and store)
+                            
+                            // First, ensure critical functions are available
+                            const criticalFunctionsReady = 
+                                window.configurePlugin && typeof window.configurePlugin === 'function' &&
+                                window.togglePlugin && typeof window.togglePlugin === 'function';
+                            
+                            if (!criticalFunctionsReady && attempts < maxAttempts) {
+                                if (attempts % 5 === 0) { // Log every 5th attempt
+                                    console.log(`Waiting for critical functions... (attempt ${attempts}/${maxAttempts})`, {
+                                        configurePlugin: typeof window.configurePlugin,
+                                        togglePlugin: typeof window.togglePlugin
+                                    });
+                                }
+                                return; // Keep waiting
+                            }
+                            
+                            if (!criticalFunctionsReady) {
+                                console.error('Critical functions (configurePlugin, togglePlugin) not available after', maxAttempts, 'attempts');
+                                clearInterval(checkInterval);
+                                return;
+                            }
+                            
+                            console.log('Critical functions ready, proceeding with plugin initialization...');
+                            clearInterval(checkInterval);
+                            
+                            // Now try to call initializePlugins first (loads both installed and store)
                             if (window.initializePlugins && typeof window.initializePlugins === 'function') {
                                 console.log('Found initializePlugins, calling it...');
-                                clearInterval(checkInterval);
                                 window.initializePlugins();
                             } else if (window.loadInstalledPlugins && typeof window.loadInstalledPlugins === 'function') {
                                 console.log('Found loadInstalledPlugins, calling it...');
-                                clearInterval(checkInterval);
                                 window.loadInstalledPlugins();
                                 // Also try to load plugin store
                                 if (window.searchPluginStore && typeof window.searchPluginStore === 'function') {
@@ -284,7 +358,6 @@
                                 }
                             } else if (window.pluginManager && window.pluginManager.loadInstalledPlugins) {
                                 console.log('Found pluginManager.loadInstalledPlugins, calling it...');
-                                clearInterval(checkInterval);
                                 window.pluginManager.loadInstalledPlugins();
                                 // Also try to load plugin store
                                 if (window.searchPluginStore && typeof window.searchPluginStore === 'function') {

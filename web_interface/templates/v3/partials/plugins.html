@@ -493,19 +493,51 @@ console.log('[PLUGINS SCRIPT] Defining configurePlugin and togglePlugin at top l
                        event.target.closest('input[data-action][data-plugin-id]');
         if (!button) return;
         
-        // If handlePluginAction exists, use it; otherwise set up delegation
+        const action = button.getAttribute('data-action');
+        const pluginId = button.getAttribute('data-plugin-id');
+        
+        // For toggle and configure, ensure functions are available
+        if (action === 'toggle' || action === 'configure') {
+            const funcName = action === 'toggle' ? 'togglePlugin' : 'configurePlugin';
+            if (!window[funcName] || typeof window[funcName] !== 'function') {
+                console.warn(`[GLOBAL DELEGATION] ${funcName} not available yet, waiting...`);
+                // Wait for function to be available
+                let attempts = 0;
+                const maxAttempts = 20; // 1 second total
+                const checkInterval = setInterval(() => {
+                    attempts++;
+                    if (window[funcName] && typeof window[funcName] === 'function') {
+                        clearInterval(checkInterval);
+                        // Call the function directly
+                        if (action === 'toggle') {
+                            const isChecked = button.type === 'checkbox' ? button.checked : false;
+                            window.togglePlugin(pluginId, isChecked);
+                        } else {
+                            window.configurePlugin(pluginId);
+                        }
+                    } else if (attempts >= maxAttempts) {
+                        clearInterval(checkInterval);
+                        console.error(`[GLOBAL DELEGATION] ${funcName} not available after ${maxAttempts} attempts`);
+                        if (typeof showNotification === 'function') {
+                            showNotification(`${funcName} not loaded. Please refresh the page.`, 'error');
+                        }
+                    }
+                }, 50);
+                return; // Don't proceed with normal handling
+            }
+        }
+        
+        // If handlePluginAction exists, use it; otherwise handle directly
         if (typeof handlePluginAction === 'function') {
             handlePluginAction(event);
         } else {
-            // Fallback: wait for handlePluginAction to be defined
-            const checkInterval = setInterval(() => {
-                if (typeof handlePluginAction === 'function') {
-                    clearInterval(checkInterval);
-                    handlePluginAction(event);
-                }
-            }, 50);
-            // Stop checking after 2 seconds
-            setTimeout(() => clearInterval(checkInterval), 2000);
+            // Fallback: handle directly if functions are available
+            if (action === 'toggle' && window.togglePlugin) {
+                const isChecked = button.type === 'checkbox' ? button.checked : false;
+                window.togglePlugin(pluginId, isChecked);
+            } else if (action === 'configure' && window.configurePlugin) {
+                window.configurePlugin(pluginId);
+            }
         }
     };
     
@@ -657,11 +689,24 @@ window.togglePlugin = window.togglePlugin || function(pluginId, enabled) {
     });
 };
 
-// Verify functions are defined
+// Verify functions are defined immediately after assignment
 console.log('[PLUGINS SCRIPT] Functions defined:', {
     configurePlugin: typeof window.configurePlugin,
     togglePlugin: typeof window.togglePlugin
 });
+
+// Double-check that functions are actually callable
+if (typeof window.configurePlugin === 'function') {
+    console.log('[PLUGINS SCRIPT] ✓ configurePlugin is a function and ready');
+} else {
+    console.error('[PLUGINS SCRIPT] ✗ configurePlugin is NOT a function!');
+}
+
+if (typeof window.togglePlugin === 'function') {
+    console.log('[PLUGINS SCRIPT] ✓ togglePlugin is a function and ready');
+} else {
+    console.error('[PLUGINS SCRIPT] ✗ togglePlugin is NOT a function!');
+}
 
 (function() {
     'use strict';
