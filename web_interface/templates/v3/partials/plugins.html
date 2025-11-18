@@ -482,6 +482,8 @@
 
 <script>
 // Define critical functions immediately so they're available before any HTML is rendered
+console.log('[PLUGINS SCRIPT] Defining configurePlugin and togglePlugin at top level...');
+
 window.configurePlugin = window.configurePlugin || async function(pluginId) {
     console.log('[DEBUG] ===== configurePlugin called =====');
     console.log('[DEBUG] Plugin ID:', pluginId);
@@ -516,6 +518,8 @@ window.configurePlugin = window.configurePlugin || async function(pluginId) {
 };
 
 window.togglePlugin = window.togglePlugin || function(pluginId, enabled) {
+    console.log('[DEBUG] ===== togglePlugin called =====');
+    console.log('[DEBUG] Plugin ID:', pluginId, 'Enabled:', enabled);
     const plugin = (window.installedPlugins || []).find(p => p.id === pluginId);
     const pluginName = plugin ? (plugin.name || pluginId) : pluginId;
     const action = enabled ? 'enabling' : 'disabling';
@@ -621,6 +625,12 @@ window.togglePlugin = window.togglePlugin || function(pluginId, enabled) {
         }
     });
 };
+
+// Verify functions are defined
+console.log('[PLUGINS SCRIPT] Functions defined:', {
+    configurePlugin: typeof window.configurePlugin,
+    togglePlugin: typeof window.togglePlugin
+});
 
 (function() {
     'use strict';
@@ -1044,7 +1054,7 @@ function renderInstalledPlugins(plugins) {
                                class="sr-only peer" 
                                id="toggle-${escapedPluginId}"
                                ${enabledBool ? 'checked' : ''}
-                               onchange='if(window.togglePlugin){window.togglePlugin(${escapeJs(plugin.id)}, this.checked)}else{console.error("togglePlugin not available")}'
+                               onchange='if(window.togglePlugin&&typeof window.togglePlugin==="function"){window.togglePlugin(${escapeJs(plugin.id)}, this.checked)}else{console.error("togglePlugin not available - event delegation should handle this")}'
                                data-plugin-id="${escapedPluginId}"
                                data-action="toggle">
                         <div class="flex items-center gap-2 px-3 py-1.5 rounded-lg border-2 transition-all duration-200 ${enabledBool ? 'bg-green-50 border-green-500' : 'bg-gray-50 border-gray-300'} hover:shadow-md group-hover:scale-105">
@@ -1073,19 +1083,19 @@ function renderInstalledPlugins(plugins) {
 
             <!-- Plugin Actions -->
             <div class="flex flex-wrap gap-2 mt-4 pt-4 border-t border-gray-200">
-                <button onclick='if(window.configurePlugin){window.configurePlugin(${escapeJs(plugin.id)})}else{console.error("configurePlugin not available")}'
+                <button onclick='if(window.configurePlugin&&typeof window.configurePlugin==="function"){window.configurePlugin(${escapeJs(plugin.id)});event.stopPropagation()}else{console.error("configurePlugin not available - event delegation should handle this")}'
                         class="btn bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md text-sm flex-1 font-semibold"
                         data-plugin-id="${escapedPluginId}"
                         data-action="configure">
                     <i class="fas fa-cog mr-2"></i>Configure
                 </button>
-                <button onclick='if(window.updatePlugin){window.updatePlugin(${escapeJs(plugin.id)})}else{console.error("updatePlugin not available")}'
+                <button onclick='if(window.updatePlugin&&typeof window.updatePlugin==="function"){window.updatePlugin(${escapeJs(plugin.id)});event.stopPropagation()}else{console.error("updatePlugin not available - event delegation should handle this")}'
                         class="btn bg-gray-600 hover:bg-gray-700 text-white px-4 py-2 rounded-md text-sm flex-1 font-semibold"
                         data-plugin-id="${escapedPluginId}"
                         data-action="update">
                     <i class="fas fa-sync mr-2"></i>Update
                 </button>
-                <button onclick='if(window.uninstallPlugin){window.uninstallPlugin(${escapeJs(plugin.id)})}else{console.error("uninstallPlugin not available")}'
+                <button onclick='if(window.uninstallPlugin&&typeof window.uninstallPlugin==="function"){window.uninstallPlugin(${escapeJs(plugin.id)});event.stopPropagation()}else{console.error("uninstallPlugin not available - event delegation should handle this")}'
                         class="btn bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-md text-sm flex-1 font-semibold"
                         data-plugin-id="${escapedPluginId}"
                         data-action="uninstall">
@@ -1096,17 +1106,32 @@ function renderInstalledPlugins(plugins) {
     `).join('');
     
     // Set up event delegation for plugin action buttons (fallback if onclick doesn't work)
-    setTimeout(() => {
+    // Set up immediately and also retry to ensure it's attached
+    const setupEventDelegation = () => {
         const container = document.getElementById('installed-plugins-grid');
         if (container) {
-            // Remove old listeners if any
-            container.removeEventListener('click', handlePluginAction);
-            container.removeEventListener('change', handlePluginAction);
+            // Remove old listeners if any (use a named function reference)
+            const oldHandler = container._pluginActionHandler;
+            if (oldHandler) {
+                container.removeEventListener('click', oldHandler);
+                container.removeEventListener('change', oldHandler);
+            }
+            // Store reference for future removal
+            container._pluginActionHandler = handlePluginAction;
             // Add new listeners for both click and change events
-            container.addEventListener('click', handlePluginAction);
-            container.addEventListener('change', handlePluginAction);
+            container.addEventListener('click', handlePluginAction, true); // Use capture phase
+            container.addEventListener('change', handlePluginAction, true); // Use capture phase
+            console.log('[RENDER] Event delegation set up for installed-plugins-grid');
+        } else {
+            console.warn('[RENDER] installed-plugins-grid not found for event delegation');
         }
-    }, 100);
+    };
+    
+    // Set up immediately
+    setupEventDelegation();
+    
+    // Also retry after a short delay to ensure it's attached even if container wasn't ready
+    setTimeout(setupEventDelegation, 100);
 }
 
 function handlePluginAction(event) {
@@ -1122,25 +1147,45 @@ function handlePluginAction(event) {
     event.preventDefault();
     event.stopPropagation();
     
-    console.log('Plugin action clicked:', action, pluginId);
+    console.log('[EVENT DELEGATION] Plugin action clicked:', action, pluginId);
+    console.log('[EVENT DELEGATION] Functions available:', {
+        configurePlugin: typeof window.configurePlugin,
+        togglePlugin: typeof window.togglePlugin
+    });
     
     switch(action) {
         case 'toggle':
             // For toggle, get the checked state from the input
             const isChecked = button.type === 'checkbox' ? button.checked : false;
-            if (window.togglePlugin) {
+            if (window.togglePlugin && typeof window.togglePlugin === 'function') {
                 window.togglePlugin(pluginId, isChecked);
             } else {
-                console.error('togglePlugin not available');
-                alert('Toggle function not loaded. Please refresh the page.');
+                console.error('[EVENT DELEGATION] togglePlugin not available, retrying in 100ms...');
+                // Retry after a short delay in case script is still loading
+                setTimeout(() => {
+                    if (window.togglePlugin && typeof window.togglePlugin === 'function') {
+                        window.togglePlugin(pluginId, isChecked);
+                    } else {
+                        console.error('[EVENT DELEGATION] togglePlugin still not available after retry');
+                        alert('Toggle function not loaded. Please refresh the page.');
+                    }
+                }, 100);
             }
             break;
         case 'configure':
-            if (window.configurePlugin) {
+            if (window.configurePlugin && typeof window.configurePlugin === 'function') {
                 window.configurePlugin(pluginId);
             } else {
-                console.error('configurePlugin not available');
-                alert('Configure function not loaded. Please refresh the page.');
+                console.error('[EVENT DELEGATION] configurePlugin not available, retrying in 100ms...');
+                // Retry after a short delay in case script is still loading
+                setTimeout(() => {
+                    if (window.configurePlugin && typeof window.configurePlugin === 'function') {
+                        window.configurePlugin(pluginId);
+                    } else {
+                        console.error('[EVENT DELEGATION] configurePlugin still not available after retry');
+                        alert('Configure function not loaded. Please refresh the page.');
+                    }
+                }, 100);
             }
             break;
         case 'update':
