@@ -1,6 +1,11 @@
 // Define critical functions immediately so they're available before any HTML is rendered
 console.log('[PLUGINS SCRIPT] Defining configurePlugin and togglePlugin at top level...');
 
+// Track pending render data for when DOM isn't ready yet
+window.__pendingInstalledPlugins = window.__pendingInstalledPlugins || null;
+window.__pendingStorePlugins = window.__pendingStorePlugins || null;
+window.__pluginDomReady = window.__pluginDomReady || false;
+
 // Set up global event delegation for plugin actions (works even before plugins are loaded)
 (function setupGlobalEventDelegation() {
     // Use document-level delegation so it works for dynamically added content
@@ -331,6 +336,20 @@ window.initPluginsPage = function() {
         return;
     }
     window.pluginManager.initialized = true;
+    window.__pluginDomReady = true;
+    
+    // If we fetched data before the DOM existed, render it now
+    if (window.__pendingInstalledPlugins) {
+        console.log('[RENDER] Applying pending installed plugins data');
+        renderInstalledPlugins(window.__pendingInstalledPlugins);
+        window.__pendingInstalledPlugins = null;
+    }
+    if (window.__pendingStorePlugins) {
+        console.log('[RENDER] Applying pending plugin store data');
+        renderPluginStore(window.__pendingStorePlugins);
+        window.__pendingStorePlugins = null;
+    }
+
     initializePlugins();
 
     // Event listeners (remove old ones first to prevent duplicates)
@@ -575,8 +594,8 @@ window.pluginManager.loadInstalledPlugins = loadInstalledPlugins;
 function renderInstalledPlugins(plugins) {
     const container = document.getElementById('installed-plugins-grid');
     if (!container) {
-        console.warn('[RENDER] installed-plugins-grid not yet available, retrying...');
-        setTimeout(() => renderInstalledPlugins(plugins), 100);
+        console.warn('[RENDER] installed-plugins-grid not yet available, deferring render until plugin tab loads');
+        window.__pendingInstalledPlugins = plugins;
         return;
     }
     
@@ -2687,8 +2706,8 @@ function showStoreLoading(show) {
 function renderPluginStore(plugins) {
     const container = document.getElementById('plugin-store-grid');
     if (!container) {
-        console.warn('[RENDER] plugin-store-grid not yet available, retrying...');
-        setTimeout(() => renderPluginStore(plugins), 100);
+        console.warn('[RENDER] plugin-store-grid not yet available, deferring render until plugin tab loads');
+        window.__pendingStorePlugins = plugins;
         return;
     }
     
