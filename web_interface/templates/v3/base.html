@@ -186,7 +186,9 @@
                                             return;
                                         }
                                         
-                                        const scriptContent = oldScript.innerHTML.trim();
+                                        // Get script content - use textContent for better reliability with large scripts
+                                        // innerHTML can sometimes have issues with special characters
+                                        const scriptContent = oldScript.textContent || oldScript.innerHTML.trim();
                                         
                                         // Log script info for debugging
                                         if (scriptContent) {
