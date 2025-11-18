@@ -692,7 +692,8 @@ function renderInstalledPlugins(plugins) {
                 </button>
             </div>
         </div>
-    `).join('');
+        `;
+    }).join('');
     
     // Set up event delegation for plugin action buttons (fallback if onclick doesn't work)
     // Set up immediately and also retry to ensure it's attached
