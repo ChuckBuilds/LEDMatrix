@@ -281,14 +281,18 @@
                                                                 const beforeConfigurePlugin = typeof window.configurePlugin === 'function';
                                                                 const beforeTogglePlugin = typeof window.togglePlugin === 'function';
                                                                 
+                                                                // Declare variables in outer scope so setTimeout can access them
+                                                                let afterConfigurePlugin = beforeConfigurePlugin;
+                                                                let afterTogglePlugin = beforeTogglePlugin;
+                                                                
                                                                 // Append and execute (execution is synchronous for inline scripts)
                                                                 // Wrap in try-catch to catch any execution errors
                                                                 try {
                                                                     target.appendChild(newScript);
                                                                     
                                                                     // Check immediately after append (inline scripts execute synchronously)
-                                                                    const afterConfigurePlugin = typeof window.configurePlugin === 'function';
-                                                                    const afterTogglePlugin = typeof window.togglePlugin === 'function';
+                                                                    afterConfigurePlugin = typeof window.configurePlugin === 'function';
+                                                                    afterTogglePlugin = typeof window.togglePlugin === 'function';
                                                                     
                                                                     console.log(`[SCRIPT ${index + 1}] Immediate check after appendChild:`, {
                                                                         configurePlugin: { before: beforeConfigurePlugin, after: afterConfigurePlugin },
@@ -311,6 +315,21 @@
                                                                         executed = true;
                                                                     } catch (funcError) {
                                                                         console.warn(`[SCRIPT ${index + 1}] Function constructor failed:`, funcError.message);
+                                                                        if (funcError.stack) {
+                                                                            console.warn(`[SCRIPT ${index + 1}] Function constructor stack:`, funcError.stack);
+                                                                        }
+                                                                        // Try to find the line number if available
+                                                                        if (funcError.message.includes('line')) {
+                                                                            const lineMatch = funcError.message.match(/line (\d+)/);
+                                                                            if (lineMatch) {
+                                                                                const lineNum = parseInt(lineMatch[1]);
+                                                                                const lines = scriptContent.split('\n');
+                                                                                const start = Math.max(0, lineNum - 5);
+                                                                                const end = Math.min(lines.length, lineNum + 5);
+                                                                                console.warn(`[SCRIPT ${index + 1}] Context around error (lines ${start}-${end}):`, 
+                                                                                    lines.slice(start, end).join('\n'));
+                                                                            }
+                                                                        }
                                                                     }
                                                                     
                                                                     // Method 2: Indirect eval
@@ -321,6 +340,9 @@
                                                                             executed = true;
                                                                         } catch (evalError) {
                                                                             console.warn(`[SCRIPT ${index + 1}] Indirect eval failed:`, evalError.message);
+                                                                            if (evalError.stack) {
+                                                                                console.warn(`[SCRIPT ${index + 1}] Indirect eval stack:`, evalError.stack);
+                                                                            }
                                                                         }
                                                                     }
                                                                     
@@ -346,6 +368,7 @@
                                                                     const delayedConfigurePlugin = typeof window.configurePlugin === 'function';
                                                                     const delayedTogglePlugin = typeof window.togglePlugin === 'function';
                                                                     
+                                                                    // Use the variables from the outer scope
                                                                     if (delayedConfigurePlugin !== afterConfigurePlugin || delayedTogglePlugin !== afterTogglePlugin) {
                                                                         console.log(`[SCRIPT ${index + 1}] Functions appeared after delay:`, {
                                                                             configurePlugin: { immediate: afterConfigurePlugin, delayed: delayedConfigurePlugin },
@@ -355,6 +378,11 @@
                                                                     
                                                                     resolve();
                                                                 }, 100); // Small delay to catch any async definitions
+                                                            } catch (appendError) {
+                                                                // If appendChild fails, try fallback methods
+                                                                console.error(`[SCRIPT ${index + 1}] Error during appendChild:`, appendError);
+                                                                reject(appendError);
+                                                            }
                                                             } else {
                                                                 reject(new Error('No target found for script execution'));
                                                             }
