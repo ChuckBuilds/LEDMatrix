@@ -203,6 +203,48 @@
                                         if (scriptContent || oldScript.src) {
                                             // For inline scripts, use appendChild for reliable execution
                                             if (scriptContent && !oldScript.src) {
+                                                // For very large scripts (>100KB), try fallback methods first
+                                                // as appendChild can sometimes have issues with large scripts
+                                                const isLargeScript = scriptContent.length > 100000;
+                                                
+                                                if (isLargeScript) {
+                                                    console.log(`[SCRIPT ${index + 1}] Large script detected (${scriptContent.length} chars), trying fallback methods first...`);
+                                                    
+                                                    // Try Function constructor first for large scripts
+                                                    let executed = false;
+                                                    try {
+                                                        const func = new Function('window', scriptContent);
+                                                        func(window);
+                                                        console.log(`[SCRIPT ${index + 1}] ✓ Executed large script via Function constructor`);
+                                                        executed = true;
+                                                    } catch (funcError) {
+                                                        console.warn(`[SCRIPT ${index + 1}] Function constructor failed:`, funcError.message);
+                                                    }
+                                                    
+                                                    // If Function constructor failed, try indirect eval
+                                                    if (!executed) {
+                                                        try {
+                                                            (0, eval)(scriptContent);
+                                                            console.log(`[SCRIPT ${index + 1}] ✓ Executed large script via indirect eval`);
+                                                            executed = true;
+                                                        } catch (evalError) {
+                                                            console.warn(`[SCRIPT ${index + 1}] Indirect eval failed:`, evalError.message);
+                                                        }
+                                                    }
+                                                    
+                                                    // If both fallbacks worked, skip appendChild
+                                                    if (executed) {
+                                                        // Verify functions were defined
+                                                        setTimeout(() => {
+                                                            console.log(`[SCRIPT ${index + 1}] After fallback execution:`, {
+                                                                configurePlugin: typeof window.configurePlugin,
+                                                                togglePlugin: typeof window.togglePlugin
+                                                            });
+                                                        }, 50);
+                                                        continue; // Skip to next script
+                                                    }
+                                                }
+                                                
                                                 try {
                                                     // Create new script element and append to head/body
                                                     // This ensures proper execution context and window attachment
@@ -240,16 +282,64 @@
                                                                 const beforeTogglePlugin = typeof window.togglePlugin === 'function';
                                                                 
                                                                 // Append and execute (execution is synchronous for inline scripts)
-                                                                target.appendChild(newScript);
-                                                                
-                                                                // Check immediately after append (inline scripts execute synchronously)
-                                                                const afterConfigurePlugin = typeof window.configurePlugin === 'function';
-                                                                const afterTogglePlugin = typeof window.togglePlugin === 'function';
-                                                                
-                                                                console.log(`[SCRIPT ${index + 1}] Immediate check after appendChild:`, {
-                                                                    configurePlugin: { before: beforeConfigurePlugin, after: afterConfigurePlugin },
-                                                                    togglePlugin: { before: beforeTogglePlugin, after: afterTogglePlugin }
-                                                                });
+                                                                // Wrap in try-catch to catch any execution errors
+                                                                try {
+                                                                    target.appendChild(newScript);
+                                                                    
+                                                                    // Check immediately after append (inline scripts execute synchronously)
+                                                                    const afterConfigurePlugin = typeof window.configurePlugin === 'function';
+                                                                    const afterTogglePlugin = typeof window.togglePlugin === 'function';
+                                                                    
+                                                                    console.log(`[SCRIPT ${index + 1}] Immediate check after appendChild:`, {
+                                                                        configurePlugin: { before: beforeConfigurePlugin, after: afterConfigurePlugin },
+                                                                        togglePlugin: { before: beforeTogglePlugin, after: afterTogglePlugin }
+                                                                    });
+                                                                } catch (appendError) {
+                                                                    console.error(`[SCRIPT ${index + 1}] Error during appendChild:`, appendError);
+                                                                    console.error(`[SCRIPT ${index + 1}] Error message:`, appendError.message);
+                                                                    console.error(`[SCRIPT ${index + 1}] Error stack:`, appendError.stack);
+                                                                    
+                                                                    // Try fallback execution methods immediately
+                                                                    console.warn(`[SCRIPT ${index + 1}] Attempting fallback execution methods...`);
+                                                                    let executed = false;
+                                                                    
+                                                                    // Method 1: Function constructor
+                                                                    try {
+                                                                        const func = new Function('window', scriptContent);
+                                                                        func(window);
+                                                                        console.log(`[SCRIPT ${index + 1}] ✓ Executed via Function constructor (fallback)`);
+                                                                        executed = true;
+                                                                    } catch (funcError) {
+                                                                        console.warn(`[SCRIPT ${index + 1}] Function constructor failed:`, funcError.message);
+                                                                    }
+                                                                    
+                                                                    // Method 2: Indirect eval
+                                                                    if (!executed) {
+                                                                        try {
+                                                                            (0, eval)(scriptContent);
+                                                                            console.log(`[SCRIPT ${index + 1}] ✓ Executed via indirect eval (fallback)`);
+                                                                            executed = true;
+                                                                        } catch (evalError) {
+                                                                            console.warn(`[SCRIPT ${index + 1}] Indirect eval failed:`, evalError.message);
+                                                                        }
+                                                                    }
+                                                                    
+                                                                    // Check if functions are now defined
+                                                                    const fallbackConfigurePlugin = typeof window.configurePlugin === 'function';
+                                                                    const fallbackTogglePlugin = typeof window.togglePlugin === 'function';
+                                                                    
+                                                                    console.log(`[SCRIPT ${index + 1}] After fallback attempts:`, {
+                                                                        configurePlugin: fallbackConfigurePlugin,
+                                                                        togglePlugin: fallbackTogglePlugin,
+                                                                        executed: executed
+                                                                    });
+                                                                    
+                                                                    if (!executed) {
+                                                                        reject(appendError);
+                                                                    } else {
+                                                                        resolve();
+                                                                    }
+                                                                }
                                                                 
                                                                 // Also check after a small delay to catch any async definitions
                                                                 setTimeout(() => {
