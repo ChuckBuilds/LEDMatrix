@@ -19,26 +19,44 @@
                         try {
                             const target = event.detail.target;
                             if (!target) {
+                                console.warn('[HTMX] Target is null, skipping swap');
                                 event.detail.shouldSwap = false;
                                 return false;
                             }
-                            // Check if target has a parent node
+                            
+                            // Check if target is a valid DOM element
+                            if (!(target instanceof Element)) {
+                                console.warn('[HTMX] Target is not a valid Element, skipping swap');
+                                event.detail.shouldSwap = false;
+                                return false;
+                            }
+                            
+                            // Check if target has a parent node (required for insertBefore)
                             if (!target.parentNode) {
+                                console.warn('[HTMX] Target has no parent node, skipping swap');
                                 event.detail.shouldSwap = false;
                                 return false;
                             }
+                            
                             // Ensure target is in the DOM
-                            if (!document.body.contains(target)) {
+                            if (!document.body.contains(target) && !document.head.contains(target)) {
+                                console.warn('[HTMX] Target is not in DOM, skipping swap');
                                 event.detail.shouldSwap = false;
                                 return false;
                             }
+                            
                             // Additional check: ensure parent is also in DOM
-                            if (!document.body.contains(target.parentNode)) {
+                            if (target.parentNode && !document.body.contains(target.parentNode) && !document.head.contains(target.parentNode)) {
+                                console.warn('[HTMX] Target parent is not in DOM, skipping swap');
                                 event.detail.shouldSwap = false;
                                 return false;
                             }
+                            
+                            // All checks passed, allow swap
+                            return true;
                         } catch (e) {
                             // If validation fails, cancel swap
+                            console.warn('[HTMX] Error validating target:', e);
                             event.detail.shouldSwap = false;
                             return false;
                         }
@@ -172,21 +190,43 @@
                                         
                                         // Only execute if we have valid content
                                         if (scriptContent || oldScript.src) {
-                                            const newScript = document.createElement('script');
-                                            if (oldScript.src) {
+                                            // For inline scripts, use eval() for more reliable execution
+                                            if (scriptContent && !oldScript.src) {
+                                                try {
+                                                    // Execute in global scope
+                                                    (function() {
+                                                        eval(scriptContent);
+                                                    })();
+                                                    console.log('Executed inline script', index + 1, 'of', scripts.length, 'via eval');
+                                                } catch (evalError) {
+                                                    console.warn('Eval failed, trying appendChild method:', evalError);
+                                                    // Fallback to appendChild method
+                                                    const newScript = document.createElement('script');
+                                                    if (oldScript.type) {
+                                                        newScript.type = oldScript.type;
+                                                    }
+                                                    newScript.textContent = scriptContent;
+                                                    // Use head instead of body for better compatibility
+                                                    const target = document.head || document.body;
+                                                    if (target) {
+                                                        target.appendChild(newScript);
+                                                    }
+                                                }
+                                            } else if (oldScript.src) {
+                                                // For external scripts, use appendChild
+                                                const newScript = document.createElement('script');
                                                 newScript.src = oldScript.src;
-                                            }
-                                            if (oldScript.type) {
-                                                newScript.type = oldScript.type;
-                                            }
-                                            if (scriptContent) {
-                                                newScript.textContent = scriptContent;
+                                                if (oldScript.type) {
+                                                    newScript.type = oldScript.type;
+                                                }
+                                                const target = document.head || document.body;
+                                                if (target) {
+                                                    target.appendChild(newScript);
+                                                }
+                                                console.log('Loaded external script', index + 1, 'of', scripts.length);
                                             }
                                             
-                                            // Append to body to ensure execution
-                                            document.body.appendChild(newScript);
-                                            
-                                            // Remove old script after a brief delay to ensure new one executes
+                                            // Remove old script after execution
                                             setTimeout(() => {
                                                 try {
                                                     oldScript.remove();
@@ -194,8 +234,6 @@
                                                     // Ignore removal errors
                                                 }
                                             }, 0);
-                                            
-                                            console.log('Executed script', index + 1, 'of', scripts.length);
                                         } else {
                                             oldScript.remove();
                                         }
@@ -1188,6 +1226,20 @@
                 updatePluginTabs(retryCount = 0) {
                     const maxRetries = 5;
 
+                    // Debounce: Clear any pending update
+                    if (this._updatePluginTabsTimeout) {
+                        clearTimeout(this._updatePluginTabsTimeout);
+                    }
+                    
+                    // Debounce: Schedule update after a short delay
+                    this._updatePluginTabsTimeout = setTimeout(() => {
+                        this._doUpdatePluginTabs(retryCount);
+                    }, 50);
+                },
+                
+                _doUpdatePluginTabs(retryCount = 0) {
+                    const maxRetries = 5;
+
                     // Use global installedPlugins if available, otherwise use component's
                     const pluginsToShow = window.installedPlugins || this.installedPlugins || [];
                     console.log('updatePluginTabs called with:', pluginsToShow.length, 'plugins (attempt', retryCount + 1, ')');
@@ -1206,7 +1258,7 @@
                         if (retryCount < maxRetries) {
                             console.log('Plugin tabs container not found, retrying...');
                             setTimeout(() => {
-                                this.updatePluginTabs(retryCount + 1);
+                                this._doUpdatePluginTabs(retryCount + 1);
                             }, 500);
                         } else {
                             console.error('Plugin tabs container not found after maximum retries');
