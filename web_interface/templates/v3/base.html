@@ -380,11 +380,6 @@
                                                                     
                                                                     resolve();
                                                                 }, 100); // Small delay to catch any async definitions
-                                                            } catch (appendError) {
-                                                                // If appendChild fails, try fallback methods
-                                                                console.error(`[SCRIPT ${index + 1}] Error during appendChild:`, appendError);
-                                                                reject(appendError);
-                                                            }
                                                             } else {
                                                                 reject(new Error('No target found for script execution'));
                                                             }
