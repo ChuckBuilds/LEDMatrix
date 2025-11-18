@@ -241,7 +241,7 @@
                                                                 togglePlugin: typeof window.togglePlugin
                                                             });
                                                         }, 50);
-                                                        continue; // Skip to next script
+                                                        return; // Skip to next script (use return, not continue, in forEach)
                                                     }
                                                 }
                                                 
