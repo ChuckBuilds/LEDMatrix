@@ -864,6 +864,7 @@ function renderInstalledPlugins(plugins) {
     };
     
     // Helper function to escape for JavaScript strings (use JSON.stringify for proper escaping)
+    // JSON.stringify returns a quoted string, so we can use it directly in JavaScript
     const escapeJs = (text) => {
         return JSON.stringify(text || '');
     };
@@ -902,7 +903,7 @@ function renderInstalledPlugins(plugins) {
                                class="sr-only peer" 
                                id="toggle-${escapedPluginId}"
                                ${enabledBool ? 'checked' : ''}
-                               onchange="if(window.togglePlugin){window.togglePlugin(${escapeJs(plugin.id)}, this.checked)}else{console.error('togglePlugin not available')}"
+                               onchange='if(window.togglePlugin){window.togglePlugin(${escapeJs(plugin.id)}, this.checked)}else{console.error("togglePlugin not available")}'
                                data-plugin-id="${escapedPluginId}"
                                data-action="toggle">
                         <div class="flex items-center gap-2 px-3 py-1.5 rounded-lg border-2 transition-all duration-200 ${enabledBool ? 'bg-green-50 border-green-500' : 'bg-gray-50 border-gray-300'} hover:shadow-md group-hover:scale-105">
@@ -931,19 +932,19 @@ function renderInstalledPlugins(plugins) {
 
             <!-- Plugin Actions -->
             <div class="flex flex-wrap gap-2 mt-4 pt-4 border-t border-gray-200">
-                <button onclick="if(window.configurePlugin){window.configurePlugin(${escapeJs(plugin.id)})}else{console.error('configurePlugin not available')}"
+                <button onclick='if(window.configurePlugin){window.configurePlugin(${escapeJs(plugin.id)})}else{console.error("configurePlugin not available")}'
                         class="btn bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md text-sm flex-1 font-semibold"
                         data-plugin-id="${escapedPluginId}"
                         data-action="configure">
                     <i class="fas fa-cog mr-2"></i>Configure
                 </button>
-                <button onclick="if(window.updatePlugin){window.updatePlugin(${escapeJs(plugin.id)})}else{console.error('updatePlugin not available')}"
+                <button onclick='if(window.updatePlugin){window.updatePlugin(${escapeJs(plugin.id)})}else{console.error("updatePlugin not available")}'
                         class="btn bg-gray-600 hover:bg-gray-700 text-white px-4 py-2 rounded-md text-sm flex-1 font-semibold"
                         data-plugin-id="${escapedPluginId}"
                         data-action="update">
                     <i class="fas fa-sync mr-2"></i>Update
                 </button>
-                <button onclick="if(window.uninstallPlugin){window.uninstallPlugin(${escapeJs(plugin.id)})}else{console.error('uninstallPlugin not available')}"
+                <button onclick='if(window.uninstallPlugin){window.uninstallPlugin(${escapeJs(plugin.id)})}else{console.error("uninstallPlugin not available")}'
                         class="btn bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-md text-sm flex-1 font-semibold"
                         data-plugin-id="${escapedPluginId}"
                         data-action="uninstall">
@@ -1354,27 +1355,39 @@ window.showPluginConfigModal = function(pluginId, config) {
     const modal = document.getElementById('plugin-config-modal');
     const title = document.getElementById('plugin-config-title');
     const content = document.getElementById('plugin-config-content');
+    
+    if (!modal) {
+        console.error('[DEBUG] Plugin config modal element not found');
+        if (typeof showError === 'function') {
+            showError('Plugin configuration modal not found. Please refresh the page.');
+        } else if (typeof showNotification === 'function') {
+            showNotification('Plugin configuration modal not found. Please refresh the page.', 'error');
+        }
+        return;
+    }
 
     console.log('[DEBUG] ===== Opening plugin config modal =====');
     console.log('[DEBUG] Plugin ID:', pluginId);
     console.log('[DEBUG] Config:', config);
     
-    // Check if modal elements exist
-    if (!modal) {
-        console.error('[DEBUG] Plugin config modal element not found');
-        showError('Plugin configuration modal not found. Please refresh the page.');
-        return;
-    }
-    
+    // Check if modal elements exist (already checked above, but double-check for safety)
     if (!title) {
         console.error('[DEBUG] Plugin config title element not found');
-        showError('Plugin configuration title element not found.');
+        if (typeof showError === 'function') {
+            showError('Plugin configuration title element not found.');
+        } else if (typeof showNotification === 'function') {
+            showNotification('Plugin configuration title element not found.', 'error');
+        }
         return;
     }
     
     if (!content) {
         console.error('[DEBUG] Plugin config content element not found');
-        showError('Plugin configuration content element not found.');
+        if (typeof showError === 'function') {
+            showError('Plugin configuration content element not found.');
+        } else if (typeof showNotification === 'function') {
+            showNotification('Plugin configuration content element not found.', 'error');
+        }
         return;
     }
     
@@ -3008,6 +3021,11 @@ function renderPluginStore(plugins) {
         return;
     }
 
+    // Helper function to escape for JavaScript strings
+    const escapeJs = (text) => {
+        return JSON.stringify(text || '');
+    };
+
     container.innerHTML = plugins.map(plugin => `
         <div class="plugin-card">
             <div class="flex items-start justify-between mb-4">
@@ -3038,11 +3056,11 @@ function renderPluginStore(plugins) {
 
             <!-- Store Actions -->
             <div class="flex gap-2 mt-4 pt-4 border-t border-gray-200">
-                <button onclick="installPlugin('${plugin.id}')"
+                <button onclick='if(window.installPlugin){window.installPlugin(${escapeJs(plugin.id)})}else{console.error("installPlugin not available")}'
                         class="btn bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-md text-sm flex-1 font-semibold">
                     <i class="fas fa-download mr-2"></i>Install
                 </button>
-                <button onclick="window.open('${plugin.repo || '#'}', '_blank')"
+                <button onclick='window.open(${escapeJs(plugin.repo || '#')}, "_blank")'
                         class="btn bg-gray-600 hover:bg-gray-700 text-white px-4 py-2 rounded-md text-sm flex-1 font-semibold">
                     <i class="fas fa-external-link-alt mr-2"></i>View
                 </button>
@@ -3180,6 +3198,11 @@ function renderSavedRepositories(repositories) {
         return;
     }
     
+    // Helper function to escape for JavaScript strings
+    const escapeJs = (text) => {
+        return JSON.stringify(text || '');
+    };
+    
     container.innerHTML = repositories.map(repo => {
         const repoUrl = repo.url || '';
         const repoName = repo.name || repoUrl;
@@ -3194,7 +3217,7 @@ function renderSavedRepositories(repositories) {
                     </div>
                     <p class="text-xs text-gray-500 truncate" title="${repoUrl}">${escapeHtml(repoUrl)}</p>
                 </div>
-                <button onclick="removeSavedRepository('${escapeAttr(repoUrl)}')" 
+                <button onclick='if(window.removeSavedRepository){window.removeSavedRepository(${escapeJs(repoUrl)})}else{console.error("removeSavedRepository not available")}'
                         class="ml-2 text-red-600 hover:text-red-800 text-xs px-2 py-1" 
                         title="Remove repository">
                     <i class="fas fa-trash"></i>
@@ -3450,20 +3473,20 @@ function renderCustomRegistryPlugins(plugins, registryUrl) {
         return div.innerHTML;
     };
     
-    // Escape URL and path for onclick handler
-    const escapeAttr = (text) => {
-        return (text || '').replace(/'/g, "\\'").replace(/"/g, '&quot;');
+    // Helper function to escape for JavaScript strings
+    const escapeJs = (text) => {
+        return JSON.stringify(text || '');
     };
     
     container.innerHTML = plugins.map(plugin => {
         const isInstalled = installedPlugins.some(p => p.id === plugin.id);
-        const pluginId = escapeAttr(plugin.id);
-        const escapedUrl = escapeAttr(registryUrl);
-        const pluginPath = escapeAttr(plugin.plugin_path || '');
+        const pluginIdJs = escapeJs(plugin.id);
+        const escapedUrlJs = escapeJs(registryUrl);
+        const pluginPathJs = escapeJs(plugin.plugin_path || '');
         
         const installBtn = isInstalled 
             ? '<button class="px-3 py-1 text-xs bg-gray-400 text-white rounded cursor-not-allowed" disabled><i class="fas fa-check mr-1"></i>Installed</button>'
-            : `<button onclick="installFromCustomRegistry('${pluginId}', '${escapedUrl}', '${pluginPath}')" class="px-3 py-1 text-xs bg-blue-600 hover:bg-blue-700 text-white rounded"><i class="fas fa-download mr-1"></i>Install</button>`;
+            : `<button onclick='if(window.installFromCustomRegistry){window.installFromCustomRegistry(${pluginIdJs}, ${escapedUrlJs}, ${pluginPathJs})}else{console.error("installFromCustomRegistry not available")}' class="px-3 py-1 text-xs bg-blue-600 hover:bg-blue-700 text-white rounded"><i class="fas fa-download mr-1"></i>Install</button>`;
         
         return `
             <div class="bg-white border border-gray-200 rounded-lg p-3">
