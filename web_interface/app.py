@@ -13,6 +13,7 @@ from src.config_manager import ConfigManager
 from src.plugin_system.plugin_manager import PluginManager
 from src.plugin_system.store_manager import PluginStoreManager
 from src.plugin_system.saved_repositories import SavedRepositoriesManager
+from src.plugin_system.schema_manager import SchemaManager
 
 # Create Flask app
 app = Flask(__name__)
@@ -41,6 +42,13 @@ plugin_manager = PluginManager(
 plugin_store_manager = PluginStoreManager(plugins_dir=str(plugins_dir))
 saved_repositories_manager = SavedRepositoriesManager()
 
+# Initialize schema manager
+schema_manager = SchemaManager(
+    plugins_dir=plugins_dir,
+    project_root=project_root,
+    logger=None
+)
+
 # Discover and load plugins
 plugin_manager.discover_plugins()
 # Note: We don't auto-load plugins here since we only need metadata for the web interface
@@ -59,6 +67,7 @@ api_v3.config_manager = config_manager
 api_v3.plugin_manager = plugin_manager
 api_v3.plugin_store_manager = plugin_store_manager
 api_v3.saved_repositories_manager = saved_repositories_manager
+api_v3.schema_manager = schema_manager
 # Initialize cache manager for API endpoints
 from src.cache_manager import CacheManager
 api_v3.cache_manager = CacheManager()

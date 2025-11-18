@@ -271,15 +271,58 @@
 
     <!-- Plugin Configuration Modal -->
     <div id="plugin-config-modal" class="fixed inset-0 modal-backdrop flex items-center justify-center z-50" style="display: none;">
-        <div class="modal-content p-6 w-full max-w-2xl max-h-[90vh] overflow-y-auto">
+        <div class="modal-content p-6 w-full max-w-4xl max-h-[90vh] overflow-y-auto">
             <div class="flex justify-between items-center mb-4">
                 <h3 id="plugin-config-title" class="text-lg font-semibold">Plugin Configuration</h3>
-                <button id="close-plugin-config" class="text-gray-400 hover:text-gray-600">
-                    <i class="fas fa-times"></i>
-                </button>
+                <div class="flex items-center space-x-2">
+                    <!-- View Toggle -->
+                    <div class="flex items-center bg-gray-100 rounded-lg p-1">
+                        <button id="view-toggle-form" class="view-toggle-btn active px-3 py-1 rounded text-sm font-medium transition-colors" data-view="form">
+                            <i class="fas fa-list mr-1"></i>Form
+                        </button>
+                        <button id="view-toggle-json" class="view-toggle-btn px-3 py-1 rounded text-sm font-medium transition-colors" data-view="json">
+                            <i class="fas fa-code mr-1"></i>JSON
+                        </button>
+                    </div>
+                    <!-- Reset Button -->
+                    <button id="reset-to-defaults-btn" class="px-3 py-1 text-sm bg-yellow-500 hover:bg-yellow-600 text-white rounded transition-colors" title="Reset to defaults">
+                        <i class="fas fa-undo mr-1"></i>Reset
+                    </button>
+                    <button id="close-plugin-config" class="text-gray-400 hover:text-gray-600">
+                        <i class="fas fa-times"></i>
+                    </button>
+                </div>
             </div>
-            <div id="plugin-config-content">
-                <!-- Plugin config form will be loaded here -->
+            <!-- Validation Errors Display -->
+            <div id="plugin-config-validation-errors" class="hidden mb-4 p-3 bg-red-50 border border-red-200 rounded-md">
+                <div class="flex items-start">
+                    <i class="fas fa-exclamation-circle text-red-600 mt-0.5 mr-2"></i>
+                    <div class="flex-1">
+                        <p class="text-sm font-medium text-red-800 mb-2">Configuration Validation Errors</p>
+                        <ul id="validation-errors-list" class="text-sm text-red-700 list-disc list-inside space-y-1"></ul>
+                    </div>
+                </div>
+            </div>
+            <!-- Form View -->
+            <div id="plugin-config-form-view" class="plugin-config-view">
+                <div id="plugin-config-content">
+                    <!-- Plugin config form will be loaded here -->
+                </div>
+            </div>
+            <!-- JSON Editor View -->
+            <div id="plugin-config-json-view" class="plugin-config-view hidden">
+                <div class="mb-2">
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Configuration JSON</label>
+                    <textarea id="plugin-config-json-editor" class="w-full border border-gray-300 rounded-md font-mono text-sm" rows="20"></textarea>
+                </div>
+                <div class="flex justify-end space-x-2 pt-2 border-t border-gray-200">
+                    <button type="button" onclick="closePluginConfigModal()" class="btn bg-gray-600 hover:bg-gray-700 text-white px-4 py-2 rounded-md">
+                        Cancel
+                    </button>
+                    <button type="button" id="save-json-config-btn" class="btn bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md">
+                        <i class="fas fa-save mr-2"></i>Save Configuration
+                    </button>
+                </div>
             </div>
         </div>
     </div>
@@ -356,6 +399,42 @@
 </div>
 
 <style>
+/* View toggle button styles */
+.view-toggle-btn {
+    transition: all 0.2s ease;
+}
+
+.view-toggle-btn.active {
+    background-color: #2563eb;
+    color: white;
+}
+
+.view-toggle-btn:not(.active) {
+    color: #374151;
+}
+
+.view-toggle-btn:not(.active):hover {
+    background-color: #e5e7eb;
+}
+
+/* CodeMirror editor styles */
+.CodeMirror {
+    border: 1px solid #d1d5db;
+    border-radius: 0.375rem;
+    font-size: 14px;
+    height: auto;
+    min-height: 400px;
+}
+
+.CodeMirror.cm-error {
+    border-color: #ef4444;
+}
+
+/* Plugin config view styles */
+.plugin-config-view {
+    transition: opacity 0.2s ease;
+}
+
 /* Nested config section styles */
 .nested-section {
     transition: all 0.2s ease;
@@ -540,6 +619,16 @@ window.initPluginsPage = function() {
     if (closeBtn) {
         closeBtn.replaceWith(closeBtn.cloneNode(true));
         document.getElementById('close-plugin-config').addEventListener('click', closePluginConfigModal);
+        
+        // View toggle buttons
+        document.getElementById('view-toggle-form')?.addEventListener('click', () => switchPluginConfigView('form'));
+        document.getElementById('view-toggle-json')?.addEventListener('click', () => switchPluginConfigView('json'));
+        
+        // Reset to defaults button
+        document.getElementById('reset-to-defaults-btn')?.addEventListener('click', resetPluginConfigToDefaults);
+        
+        // JSON editor save button
+        document.getElementById('save-json-config-btn')?.addEventListener('click', saveConfigFromJsonEditor);
     }
     if (closeOnDemandModalBtn) {
         closeOnDemandModalBtn.replaceWith(closeOnDemandModalBtn.cloneNode(true));
@@ -1291,6 +1380,17 @@ function showPluginConfigModal(pluginId, config) {
         return;
     }
     
+    // Initialize state
+    currentPluginConfigState.pluginId = pluginId;
+    currentPluginConfigState.config = config || {};
+    currentPluginConfigState.jsonEditor = null;
+    
+    // Reset view to form
+    switchPluginConfigView('form');
+    
+    // Hide validation errors
+    displayValidationErrors([]);
+    
     title.textContent = `Configure ${pluginId}`;
     
     // Show loading state while form is generated
@@ -1299,6 +1399,16 @@ function showPluginConfigModal(pluginId, config) {
     // Show modal immediately
     modal.style.display = 'flex';
     console.log('[DEBUG] Modal display set to flex');
+    
+    // Load schema for validation
+    fetch(`/api/v3/plugins/schema?plugin_id=${pluginId}`)
+        .then(r => r.json())
+        .then(schemaData => {
+            if (schemaData.status === 'success' && schemaData.data?.schema) {
+                currentPluginConfigState.schema = schemaData.data.schema;
+            }
+        })
+        .catch(err => console.warn('Could not load schema:', err));
     
     // Generate form asynchronously
     generatePluginConfigForm(pluginId, config)
@@ -1532,10 +1642,16 @@ function handlePluginConfigSubmit(e) {
     .then(response => response.json())
     .then(data => {
         if (data.status === 'success') {
+            // Hide validation errors on success
+            displayValidationErrors([]);
             showNotification('Configuration saved successfully', 'success');
             closePluginConfigModal();
             loadInstalledPlugins(); // Refresh to show updated config
         } else {
+            // Display validation errors if present
+            if (data.validation_errors && Array.isArray(data.validation_errors)) {
+                displayValidationErrors(data.validation_errors);
+            }
             showNotification('Error saving configuration: ' + data.message, 'error');
         }
     })
@@ -1580,6 +1696,8 @@ function generatePluginConfigForm(pluginId, config) {
                     schema: schemaData.data.schema,
                     webUiActions: webUiActions
                 };
+                // Also update state
+                currentPluginConfigState.schema = schemaData.data.schema;
                 console.log('[DEBUG] Calling generateFormFromSchema...');
                 return generateFormFromSchema(schemaData.data.schema, config, webUiActions);
             } else {
@@ -2013,10 +2131,307 @@ function generateSimpleConfigForm(config, webUiActions = []) {
     `;
 }
 
+// Plugin config modal state
+let currentPluginConfigState = {
+    pluginId: null,
+    config: {},
+    schema: null,
+    jsonEditor: null,
+    formData: {}
+};
+
+// Initialize JSON editor
+function initJsonEditor() {
+    const textarea = document.getElementById('plugin-config-json-editor');
+    if (!textarea) return null;
+    
+    // Check if CodeMirror is available
+    if (typeof CodeMirror === 'undefined') {
+        console.error('CodeMirror not loaded. Please refresh the page.');
+        showNotification('JSON editor not available. Please refresh the page.', 'error');
+        return null;
+    }
+    
+    if (currentPluginConfigState.jsonEditor) {
+        currentPluginConfigState.jsonEditor.toTextArea();
+        currentPluginConfigState.jsonEditor = null;
+    }
+    
+    const editor = CodeMirror.fromTextArea(textarea, {
+        mode: 'application/json',
+        theme: 'monokai',
+        lineNumbers: true,
+        lineWrapping: true,
+        indentUnit: 2,
+        tabSize: 2,
+        autoCloseBrackets: true,
+        matchBrackets: true,
+        foldGutter: true,
+        gutters: ['CodeMirror-linenumbers', 'CodeMirror-foldgutter']
+    });
+    
+    // Validate JSON on change
+    editor.on('change', function() {
+        const value = editor.getValue();
+        try {
+            JSON.parse(value);
+            editor.setOption('class', '');
+        } catch (e) {
+            editor.setOption('class', 'cm-error');
+        }
+    });
+    
+    return editor;
+}
+
+// Switch between form and JSON views
+function switchPluginConfigView(view) {
+    const formView = document.getElementById('plugin-config-form-view');
+    const jsonView = document.getElementById('plugin-config-json-view');
+    const formBtn = document.getElementById('view-toggle-form');
+    const jsonBtn = document.getElementById('view-toggle-json');
+    
+    if (view === 'json') {
+        formView.classList.add('hidden');
+        jsonView.classList.remove('hidden');
+        formBtn.classList.remove('active', 'bg-blue-600', 'text-white');
+        formBtn.classList.add('text-gray-700', 'hover:bg-gray-200');
+        jsonBtn.classList.add('active', 'bg-blue-600', 'text-white');
+        jsonBtn.classList.remove('text-gray-700', 'hover:bg-gray-200');
+        
+        // Sync form data to JSON editor
+        syncFormToJson();
+        
+        // Initialize editor if not already done
+        if (!currentPluginConfigState.jsonEditor) {
+            // Small delay to ensure textarea is visible
+            setTimeout(() => {
+                currentPluginConfigState.jsonEditor = initJsonEditor();
+                if (currentPluginConfigState.jsonEditor) {
+                    const jsonText = JSON.stringify(currentPluginConfigState.config, null, 2);
+                    currentPluginConfigState.jsonEditor.setValue(jsonText);
+                    currentPluginConfigState.jsonEditor.refresh();
+                }
+            }, 50);
+        } else {
+            // Update editor content if already initialized
+            const jsonText = JSON.stringify(currentPluginConfigState.config, null, 2);
+            currentPluginConfigState.jsonEditor.setValue(jsonText);
+            currentPluginConfigState.jsonEditor.refresh();
+        }
+    } else {
+        jsonView.classList.add('hidden');
+        formView.classList.remove('hidden');
+        jsonBtn.classList.remove('active', 'bg-blue-600', 'text-white');
+        jsonBtn.classList.add('text-gray-700', 'hover:bg-gray-200');
+        formBtn.classList.add('active', 'bg-blue-600', 'text-white');
+        formBtn.classList.remove('text-gray-700', 'hover:bg-gray-200');
+        
+        // Sync JSON to form if JSON was edited
+        syncJsonToForm();
+    }
+}
+
+// Sync form data to JSON config
+function syncFormToJson() {
+    const form = document.getElementById('plugin-config-form');
+    if (!form) return;
+    
+    const formData = new FormData(form);
+    const config = {};
+    
+    // Get schema for type conversion
+    const schema = currentPluginConfigState.schema;
+    
+    for (let [key, value] of formData.entries()) {
+        if (key === 'enabled') continue; // Skip enabled, managed separately
+        
+        // Handle nested keys (dot notation)
+        const keys = key.split('.');
+        let current = config;
+        for (let i = 0; i < keys.length - 1; i++) {
+            if (!current[keys[i]]) {
+                current[keys[i]] = {};
+            }
+            current = current[keys[i]];
+        }
+        
+        const finalKey = keys[keys.length - 1];
+        const prop = schema?.properties?.[finalKey] || (keys.length > 1 ? null : schema?.properties?.[key]);
+        
+        // Type conversion based on schema
+        if (prop?.type === 'array') {
+            current[finalKey] = value.split(',').map(item => item.trim()).filter(item => item.length > 0);
+        } else if (prop?.type === 'integer' || key === 'display_duration') {
+            current[finalKey] = parseInt(value) || 0;
+        } else if (prop?.type === 'number') {
+            current[finalKey] = parseFloat(value) || 0;
+        } else if (prop?.type === 'boolean') {
+            current[finalKey] = value === 'true' || value === true;
+        } else {
+            current[finalKey] = value;
+        }
+    }
+    
+    // Deep merge with existing config to preserve nested structures
+    function deepMerge(target, source) {
+        for (const key in source) {
+            if (source[key] && typeof source[key] === 'object' && !Array.isArray(source[key])) {
+                if (!target[key] || typeof target[key] !== 'object' || Array.isArray(target[key])) {
+                    target[key] = {};
+                }
+                deepMerge(target[key], source[key]);
+            } else {
+                target[key] = source[key];
+            }
+        }
+        return target;
+    }
+    
+    // Deep merge new form data into existing config
+    currentPluginConfigState.config = deepMerge(
+        JSON.parse(JSON.stringify(currentPluginConfigState.config)), // Deep clone
+        config
+    );
+}
+
+// Sync JSON editor content to form
+function syncJsonToForm() {
+    if (!currentPluginConfigState.jsonEditor) return;
+    
+    try {
+        const jsonText = currentPluginConfigState.jsonEditor.getValue();
+        const config = JSON.parse(jsonText);
+        currentPluginConfigState.config = config;
+        
+        // Update form fields (this is complex, so we'll reload the form)
+        // For now, just update the config state - form will be regenerated on next open
+        console.log('JSON synced to config state');
+    } catch (e) {
+        console.error('Invalid JSON in editor:', e);
+        showNotification('Invalid JSON in editor. Please fix errors before switching views.', 'error');
+    }
+}
+
+// Reset plugin config to defaults
+async function resetPluginConfigToDefaults() {
+    if (!currentPluginConfigState.pluginId) {
+        showNotification('No plugin selected', 'error');
+        return;
+    }
+    
+    if (!confirm('Are you sure you want to reset this plugin configuration to defaults? This will replace all current settings.')) {
+        return;
+    }
+    
+    try {
+        const response = await fetch('/api/v3/plugins/config/reset', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                plugin_id: currentPluginConfigState.pluginId,
+                preserve_secrets: true
+            })
+        });
+        
+        const data = await response.json();
+        
+        if (data.status === 'success') {
+            showNotification(data.message, 'success');
+            
+            // Reload the config form with defaults
+            const newConfig = data.data?.config || {};
+            currentPluginConfigState.config = newConfig;
+            
+            // Regenerate form
+            const content = document.getElementById('plugin-config-content');
+            if (content) {
+                content.innerHTML = '<div class="flex items-center justify-center py-8"><i class="fas fa-spinner fa-spin text-2xl text-blue-600"></i></div>';
+                generatePluginConfigForm(currentPluginConfigState.pluginId, newConfig)
+                    .then(formHtml => {
+                        content.innerHTML = formHtml;
+                        const form = document.getElementById('plugin-config-form');
+                        if (form) {
+                            form.addEventListener('submit', handlePluginConfigSubmit);
+                        }
+                    });
+            }
+            
+            // Update JSON editor if it's visible
+            if (currentPluginConfigState.jsonEditor) {
+                const jsonText = JSON.stringify(newConfig, null, 2);
+                currentPluginConfigState.jsonEditor.setValue(jsonText);
+            }
+        } else {
+            showNotification(data.message || 'Failed to reset configuration', 'error');
+        }
+    } catch (error) {
+        console.error('Error resetting config:', error);
+        showNotification('Error resetting configuration: ' + error.message, 'error');
+    }
+}
+
+// Display validation errors
+function displayValidationErrors(errors) {
+    const errorContainer = document.getElementById('plugin-config-validation-errors');
+    const errorList = document.getElementById('validation-errors-list');
+    
+    if (!errorContainer || !errorList) return;
+    
+    if (errors && errors.length > 0) {
+        errorContainer.classList.remove('hidden');
+        errorList.innerHTML = errors.map(error => `<li>${escapeHtml(error)}</li>`).join('');
+    } else {
+        errorContainer.classList.add('hidden');
+        errorList.innerHTML = '';
+    }
+}
+
+// Save configuration from JSON editor
+async function saveConfigFromJsonEditor() {
+    if (!currentPluginConfigState.jsonEditor || !currentPluginConfigState.pluginId) {
+        return;
+    }
+    
+    try {
+        const jsonText = currentPluginConfigState.jsonEditor.getValue();
+        const config = JSON.parse(jsonText);
+        
+        // Update state
+        currentPluginConfigState.config = config;
+        
+        // Save the configuration (will handle validation errors)
+        savePluginConfiguration(currentPluginConfigState.pluginId, config);
+    } catch (e) {
+        console.error('Error saving JSON config:', e);
+        if (e instanceof SyntaxError) {
+            showNotification('Invalid JSON. Please fix syntax errors before saving.', 'error');
+            displayValidationErrors([`JSON Syntax Error: ${e.message}`]);
+        } else {
+            showNotification('Error saving configuration: ' + e.message, 'error');
+        }
+    }
+}
+
 window.closePluginConfigModal = function() {
         const modal = document.getElementById('plugin-config-modal');
     modal.style.display = 'none';
-        currentPluginConfig = null;
+    
+    // Clean up JSON editor
+    if (currentPluginConfigState.jsonEditor) {
+        currentPluginConfigState.jsonEditor.toTextArea();
+        currentPluginConfigState.jsonEditor = null;
+    }
+    
+    // Reset state
+    currentPluginConfig = null;
+    currentPluginConfigState.pluginId = null;
+    currentPluginConfigState.config = {};
+    currentPluginConfigState.schema = null;
+    
+    // Hide validation errors
+    displayValidationErrors([]);
+    
     console.log('Modal closed');
 }
 
@@ -3143,14 +3558,23 @@ function savePluginConfiguration(pluginId, config) {
     })
     .then(response => response.json())
     .then(data => {
-        showNotification(data.message, data.status);
         if (data.status === 'success') {
+            // Hide validation errors on success
+            displayValidationErrors([]);
+            showNotification(data.message, data.status);
             closePluginConfigModal();
             // Refresh the installed plugins to update the UI
             loadInstalledPlugins();
+        } else {
+            // Display validation errors if present
+            if (data.validation_errors && Array.isArray(data.validation_errors)) {
+                displayValidationErrors(data.validation_errors);
+            }
+            showNotification(data.message || 'Error saving configuration', 'error');
         }
     })
     .catch(error => {
+        console.error('Error saving plugin config:', error);
         showNotification('Error saving plugin configuration: ' + error.message, 'error');
     });
 }

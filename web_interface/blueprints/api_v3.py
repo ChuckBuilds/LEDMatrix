@@ -14,6 +14,7 @@ plugin_manager = None
 plugin_store_manager = None
 saved_repositories_manager = None
 cache_manager = None
+schema_manager = None
 
 # Get project root directory (web_interface/../..)
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -1112,6 +1113,10 @@ def update_plugin():
             if remote_commit_short and updated_commit and remote_commit_short != updated_commit[:7]:
                 message += f' (remote latest {remote_commit_short})'
 
+            # Invalidate schema cache for this plugin (will reload on next access)
+            if api_v3.schema_manager:
+                api_v3.schema_manager.invalidate_cache(plugin_id)
+            
             # Rediscover plugins to refresh manifest info
             if api_v3.plugin_manager:
                 api_v3.plugin_manager.discover_plugins()
@@ -1171,11 +1176,12 @@ def uninstall_plugin():
         if not api_v3.plugin_store_manager:
             return jsonify({'status': 'error', 'message': 'Plugin store manager not initialized'}), 500
         
-        data = request.get_json()
+        data = request.get_json() or {}
         if not data or 'plugin_id' not in data:
             return jsonify({'status': 'error', 'message': 'plugin_id required'}), 400
 
         plugin_id = data['plugin_id']
+        preserve_config = data.get('preserve_config', False)
         
         # Unload the plugin first if it's loaded
         if api_v3.plugin_manager and plugin_id in api_v3.plugin_manager.plugins:
@@ -1185,6 +1191,17 @@ def uninstall_plugin():
         success = api_v3.plugin_store_manager.uninstall_plugin(plugin_id)
         
         if success:
+            # Invalidate schema cache for this plugin
+            if api_v3.schema_manager:
+                api_v3.schema_manager.invalidate_cache(plugin_id)
+            
+            # Clean up plugin configuration if not preserving
+            if not preserve_config:
+                try:
+                    api_v3.config_manager.cleanup_plugin_config(plugin_id, remove_secrets=True)
+                except Exception as cleanup_err:
+                    print(f"Warning: Failed to cleanup config for {plugin_id}: {cleanup_err}")
+            
             return jsonify({'status': 'success', 'message': f'Plugin {plugin_id} uninstalled successfully'})
         else:
             return jsonify({'status': 'error', 'message': f'Failed to uninstall plugin {plugin_id}'}), 500
@@ -1217,6 +1234,10 @@ def install_plugin():
         success = api_v3.plugin_store_manager.install_plugin(plugin_id)
         
         if success:
+            # Invalidate schema cache for this plugin (will reload on next access)
+            if api_v3.schema_manager:
+                api_v3.schema_manager.invalidate_cache(plugin_id)
+            
             # Discover and load the new plugin
             if api_v3.plugin_manager:
                 api_v3.plugin_manager.discover_plugins()
@@ -1264,8 +1285,12 @@ def install_plugin_from_url():
         )
         
         if result.get('success'):
-            # Discover and load the new plugin
+            # Invalidate schema cache for the installed plugin
             installed_plugin_id = result.get('plugin_id')
+            if api_v3.schema_manager and installed_plugin_id:
+                api_v3.schema_manager.invalidate_cache(installed_plugin_id)
+            
+            # Discover and load the new plugin
             if api_v3.plugin_manager and installed_plugin_id:
                 api_v3.plugin_manager.discover_plugins()
                 api_v3.plugin_manager.load_plugin(installed_plugin_id)
@@ -1545,52 +1570,50 @@ def save_plugin_config():
         plugin_id = data['plugin_id']
         plugin_config = data.get('config', {})
         
-        # Debug logging for live_priority
-        if plugin_id == 'football-scoreboard':
-            print(f"[DEBUG] Saving config for {plugin_id}")
-            print(f"[DEBUG] Received config: {json.dumps(plugin_config, indent=2)}")
-            if 'nfl' in plugin_config:
-                print(f"[DEBUG] NFL live_priority in received config: {plugin_config['nfl'].get('live_priority')}")
-            if 'ncaa_fb' in plugin_config:
-                print(f"[DEBUG] NCAA FB live_priority in received config: {plugin_config['ncaa_fb'].get('live_priority')}")
-
-        # Load plugin schema to identify secret fields (supports nested schemas)
-        # Use plugin_manager's plugins_dir if available, otherwise read from config
-        if api_v3.plugin_manager:
-            plugins_dir = api_v3.plugin_manager.plugins_dir
-        else:
-            # Fallback: read from config
-            config = api_v3.config_manager.load_config()
-            plugin_system_config = config.get('plugin_system', {})
-            plugins_dir_name = plugin_system_config.get('plugins_directory', 'plugin-repos')
-            if os.path.isabs(plugins_dir_name):
-                plugins_dir = Path(plugins_dir_name)
-            else:
-                plugins_dir = PROJECT_ROOT / plugins_dir_name
-        schema_path = plugins_dir / plugin_id / 'config_schema.json'
+        # Get schema manager instance
+        schema_mgr = api_v3.schema_manager
+        if not schema_mgr:
+            return jsonify({'status': 'error', 'message': 'Schema manager not initialized'}), 500
+        
+        # Load plugin schema using SchemaManager
+        schema = schema_mgr.load_schema(plugin_id, use_cache=True)
+        
+        # Find secret fields (supports nested schemas)
         secret_fields = set()
         
         def find_secret_fields(properties, prefix=''):
             """Recursively find fields marked with x-secret: true"""
             fields = set()
+            if not isinstance(properties, dict):
+                return fields
             for field_name, field_props in properties.items():
                 full_path = f"{prefix}.{field_name}" if prefix else field_name
-                if field_props.get('x-secret', False):
+                if isinstance(field_props, dict) and field_props.get('x-secret', False):
                     fields.add(full_path)
                 # Check nested objects
-                if field_props.get('type') == 'object' and 'properties' in field_props:
+                if isinstance(field_props, dict) and field_props.get('type') == 'object' and 'properties' in field_props:
                     fields.update(find_secret_fields(field_props['properties'], full_path))
             return fields
         
-        if schema_path.exists():
-            try:
-                with open(schema_path, 'r', encoding='utf-8') as f:
-                    schema = json.load(f)
-                    # Find fields marked with x-secret: true (supports nested)
-                    if 'properties' in schema:
-                        secret_fields = find_secret_fields(schema['properties'])
-            except Exception as e:
-                print(f"Error reading schema for secret detection: {e}")
+        if schema and 'properties' in schema:
+            secret_fields = find_secret_fields(schema['properties'])
+        
+        # Validate configuration against schema before saving
+        if schema:
+            is_valid, validation_errors = schema_mgr.validate_config_against_schema(
+                plugin_config, schema, plugin_id
+            )
+            if not is_valid:
+                return jsonify({
+                    'status': 'error',
+                    'message': 'Configuration validation failed',
+                    'validation_errors': validation_errors
+                }), 400
+        
+        # Apply defaults from schema to config (merge defaults where values are missing)
+        if schema:
+            defaults = schema_mgr.generate_default_config(plugin_id, use_cache=True)
+            plugin_config = schema_mgr.merge_with_defaults(plugin_config, defaults)
 
         # Separate secrets from regular config (handles nested configs)
         def separate_secrets(config, secrets_set, prefix=''):
@@ -1683,61 +1706,19 @@ def get_plugin_schema():
         if not plugin_id:
             return jsonify({'status': 'error', 'message': 'plugin_id required'}), 400
 
-        # Try to get the plugin directory using plugin manager if available
-        schema_path = None
-        if api_v3.plugin_manager:
-            plugin_dir = api_v3.plugin_manager.get_plugin_directory(plugin_id)
-            if plugin_dir:
-                potential_path = Path(plugin_dir) / 'config_schema.json'
-                # Only use this path if it actually exists
-                if potential_path.exists():
-                    schema_path = potential_path
+        # Get schema manager instance
+        schema_mgr = api_v3.schema_manager
+        if not schema_mgr:
+            return jsonify({'status': 'error', 'message': 'Schema manager not initialized'}), 500
         
-        # Fallback to direct path if plugin manager not available or path doesn't exist
-        if schema_path is None or not schema_path.exists():
-            # Try multiple possible plugin directory locations
-            possible_dirs = []
-            
-            # Read plugins directory from config
-            config = api_v3.config_manager.load_config()
-            plugin_system_config = config.get('plugin_system', {})
-            plugins_dir_name = plugin_system_config.get('plugins_directory', 'plugin-repos')
-            if os.path.isabs(plugins_dir_name):
-                possible_dirs.append(Path(plugins_dir_name))
-            else:
-                possible_dirs.append(PROJECT_ROOT / plugins_dir_name)
-            
-            # Also check the standard 'plugins' directory (common location)
-            # This should be checked first since it's a common location for installed plugins
-            possible_dirs.insert(0, PROJECT_ROOT / 'plugins')
-            
-            # Try each possible directory
-            for plugins_dir in possible_dirs:
-                fallback_schema_path = plugins_dir / plugin_id / 'config_schema.json'
-                if fallback_schema_path.exists():
-                    schema_path = fallback_schema_path
-                    break
-
-        if schema_path and schema_path.exists():
-            try:
-                with open(schema_path, 'r', encoding='utf-8') as f:
-                    schema = json.load(f)
-                return jsonify({'status': 'success', 'data': {'schema': schema}})
-            except Exception as e:
-                import traceback
-                error_details = traceback.format_exc()
-                print(f"Error reading schema file for {plugin_id}: {e}")
-                print(f"Path attempted: {schema_path}")
-                print(f"Traceback: {error_details}")
-                # Return error instead of falling through to default schema
-                return jsonify({
-                    'status': 'error',
-                    'message': f'Error reading schema file: {str(e)}',
-                    'data': {'schema': None}
-                }), 500
+        # Load schema using SchemaManager (uses caching)
+        schema = schema_mgr.load_schema(plugin_id, use_cache=True)
+        
+        if schema:
+            return jsonify({'status': 'success', 'data': {'schema': schema}})
 
         # Return a simple default schema if file not found
-        schema = {
+        default_schema = {
             'type': 'object',
             'properties': {
                 'enabled': {
@@ -1757,11 +1738,125 @@ def get_plugin_schema():
             }
         }
 
-        return jsonify({'status': 'success', 'data': {'schema': schema}})
+        return jsonify({'status': 'success', 'data': {'schema': default_schema}})
     except Exception as e:
         import traceback
         error_details = traceback.format_exc()
         print(f"Error in get_plugin_schema: {str(e)}")
+        print(error_details)
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+@api_v3.route('/plugins/config/reset', methods=['POST'])
+def reset_plugin_config():
+    """Reset plugin configuration to schema defaults"""
+    try:
+        if not api_v3.config_manager:
+            return jsonify({'status': 'error', 'message': 'Config manager not initialized'}), 500
+
+        data = request.get_json() or {}
+        plugin_id = data.get('plugin_id')
+        preserve_secrets = data.get('preserve_secrets', True)
+        
+        if not plugin_id:
+            return jsonify({'status': 'error', 'message': 'plugin_id required'}), 400
+        
+        # Get schema manager instance
+        schema_mgr = api_v3.schema_manager
+        if not schema_mgr:
+            return jsonify({'status': 'error', 'message': 'Schema manager not initialized'}), 500
+        
+        # Generate defaults from schema
+        defaults = schema_mgr.generate_default_config(plugin_id, use_cache=True)
+        
+        # Get current configs
+        current_config = api_v3.config_manager.load_config()
+        current_secrets = api_v3.config_manager.get_raw_file_content('secrets')
+        
+        # Load schema to identify secret fields
+        schema = schema_mgr.load_schema(plugin_id, use_cache=True)
+        secret_fields = set()
+        
+        def find_secret_fields(properties, prefix=''):
+            """Recursively find fields marked with x-secret: true"""
+            fields = set()
+            if not isinstance(properties, dict):
+                return fields
+            for field_name, field_props in properties.items():
+                full_path = f"{prefix}.{field_name}" if prefix else field_name
+                if isinstance(field_props, dict) and field_props.get('x-secret', False):
+                    fields.add(full_path)
+                if isinstance(field_props, dict) and field_props.get('type') == 'object' and 'properties' in field_props:
+                    fields.update(find_secret_fields(field_props['properties'], full_path))
+            return fields
+        
+        if schema and 'properties' in schema:
+            secret_fields = find_secret_fields(schema['properties'])
+        
+        # Separate defaults into regular and secret configs
+        def separate_secrets(config, secrets_set, prefix=''):
+            """Recursively separate secret fields from regular config"""
+            regular = {}
+            secrets = {}
+            for key, value in config.items():
+                full_path = f"{prefix}.{key}" if prefix else key
+                if isinstance(value, dict):
+                    nested_regular, nested_secrets = separate_secrets(value, secrets_set, full_path)
+                    if nested_regular:
+                        regular[key] = nested_regular
+                    if nested_secrets:
+                        secrets[key] = nested_secrets
+                elif full_path in secrets_set:
+                    secrets[key] = value
+                else:
+                    regular[key] = value
+            return regular, secrets
+        
+        default_regular, default_secrets = separate_secrets(defaults, secret_fields)
+        
+        # Update main config with defaults
+        current_config[plugin_id] = default_regular
+        
+        # Update secrets config (preserve existing secrets if preserve_secrets=True)
+        if preserve_secrets:
+            # Keep existing secrets for this plugin
+            if plugin_id in current_secrets:
+                # Merge defaults with existing secrets
+                existing_secrets = current_secrets[plugin_id]
+                for key, value in default_secrets.items():
+                    if key not in existing_secrets or not existing_secrets[key]:
+                        existing_secrets[key] = value
+            else:
+                current_secrets[plugin_id] = default_secrets
+        else:
+            # Replace all secrets with defaults
+            current_secrets[plugin_id] = default_secrets
+        
+        # Save updated configs
+        api_v3.config_manager.save_config(current_config)
+        if default_secrets or not preserve_secrets:
+            api_v3.config_manager.save_raw_file_content('secrets', current_secrets)
+        
+        # Notify plugin of config change if loaded
+        try:
+            if api_v3.plugin_manager:
+                plugin_instance = api_v3.plugin_manager.get_plugin(plugin_id)
+                if plugin_instance:
+                    merged_config = api_v3.config_manager.load_config()
+                    plugin_full_config = merged_config.get(plugin_id, {})
+                    if hasattr(plugin_instance, 'on_config_change'):
+                        plugin_instance.on_config_change(plugin_full_config)
+        except Exception as hook_err:
+            print(f"Warning: on_config_change failed for {plugin_id}: {hook_err}")
+        
+        return jsonify({
+            'status': 'success',
+            'message': f'Plugin {plugin_id} configuration reset to defaults',
+            'data': {'config': defaults}
+        })
+    except Exception as e:
+        import traceback
+        error_details = traceback.format_exc()
+        print(f"Error in reset_plugin_config: {str(e)}")
         print(error_details)
         return jsonify({'status': 'error', 'message': str(e)}), 500
 

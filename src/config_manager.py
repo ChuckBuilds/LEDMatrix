@@ -282,4 +282,134 @@ class ConfigManager:
             raise
         except Exception as e:
             print(f"An unexpected error occurred while saving {file_type} configuration: {str(e)}")
-            raise 
+            raise
+    
+    def cleanup_plugin_config(self, plugin_id: str, remove_secrets: bool = True) -> None:
+        """
+        Remove plugin configuration from both main config and secrets config.
+        
+        Args:
+            plugin_id: Plugin identifier to remove
+            remove_secrets: If True, also remove plugin secrets
+        """
+        try:
+            # Load current configs
+            main_config = self.get_raw_file_content('main')
+            secrets_config = self.get_raw_file_content('secrets') if os.path.exists(self.secrets_path) else {}
+            
+            # Remove plugin from main config
+            if plugin_id in main_config:
+                del main_config[plugin_id]
+                self.save_raw_file_content('main', main_config)
+                print(f"Removed plugin {plugin_id} from main configuration")
+            
+            # Remove plugin from secrets config if requested
+            if remove_secrets and plugin_id in secrets_config:
+                del secrets_config[plugin_id]
+                self.save_raw_file_content('secrets', secrets_config)
+                print(f"Removed plugin {plugin_id} from secrets configuration")
+                
+        except Exception as e:
+            print(f"Error cleaning up plugin config for {plugin_id}: {e}")
+            raise
+    
+    def cleanup_orphaned_plugin_configs(self, valid_plugin_ids: list) -> list:
+        """
+        Remove configuration sections for plugins that are no longer installed.
+        
+        Args:
+            valid_plugin_ids: List of currently installed plugin IDs
+            
+        Returns:
+            List of plugin IDs that were removed
+        """
+        removed = []
+        try:
+            # Load current configs
+            main_config = self.get_raw_file_content('main')
+            secrets_config = self.get_raw_file_content('secrets') if os.path.exists(self.secrets_path) else {}
+            
+            valid_set = set(valid_plugin_ids)
+            
+            # Find orphaned plugins in main config
+            main_plugins = set(main_config.keys())
+            orphaned_main = main_plugins - valid_set
+            
+            # Find orphaned plugins in secrets config
+            secrets_plugins = set(secrets_config.keys())
+            orphaned_secrets = secrets_plugins - valid_set
+            
+            all_orphaned = orphaned_main | orphaned_secrets
+            
+            if all_orphaned:
+                # Remove from main config
+                for plugin_id in orphaned_main:
+                    del main_config[plugin_id]
+                    removed.append(plugin_id)
+                
+                # Remove from secrets config
+                for plugin_id in orphaned_secrets:
+                    del secrets_config[plugin_id]
+                
+                # Save updated configs
+                if orphaned_main:
+                    self.save_raw_file_content('main', main_config)
+                if orphaned_secrets:
+                    self.save_raw_file_content('secrets', secrets_config)
+                
+                print(f"Cleaned up orphaned plugin configs: {', '.join(all_orphaned)}")
+            
+            return removed
+            
+        except Exception as e:
+            print(f"Error cleaning up orphaned plugin configs: {e}")
+            return removed
+    
+    def validate_all_plugin_configs(self, plugin_schema_manager=None) -> Dict[str, Dict[str, Any]]:
+        """
+        Validate all plugin configurations against their schemas.
+        
+        Args:
+            plugin_schema_manager: Optional SchemaManager instance for validation
+            
+        Returns:
+            Dict mapping plugin_id to validation results: {
+                'valid': bool,
+                'errors': list of error messages
+            }
+        """
+        results = {}
+        
+        if not plugin_schema_manager:
+            return results
+        
+        try:
+            main_config = self.get_raw_file_content('main')
+            
+            for plugin_id, plugin_config in main_config.items():
+                if not isinstance(plugin_config, dict):
+                    continue
+                
+                # Skip non-plugin config sections
+                if plugin_id in ['display', 'schedule', 'timezone', 'plugin_system']:
+                    continue
+                
+                schema = plugin_schema_manager.load_schema(plugin_id, use_cache=True)
+                if schema:
+                    is_valid, errors = plugin_schema_manager.validate_config_against_schema(
+                        plugin_config, schema, plugin_id
+                    )
+                    results[plugin_id] = {
+                        'valid': is_valid,
+                        'errors': errors
+                    }
+                else:
+                    results[plugin_id] = {
+                        'valid': True,  # No schema = can't validate, but not an error
+                        'errors': []
+                    }
+                    
+        except Exception as e:
+            print(f"Error validating plugin configs: {e}")
+        
+        return results
