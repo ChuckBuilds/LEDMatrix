@@ -862,6 +862,11 @@ function renderInstalledPlugins(plugins) {
     const escapeAttr = (text) => {
         return (text || '').replace(/'/g, "\\'").replace(/"/g, '&quot;');
     };
+    
+    // Helper function to escape for JavaScript strings (use JSON.stringify for proper escaping)
+    const escapeJs = (text) => {
+        return JSON.stringify(text || '');
+    };
 
     container.innerHTML = plugins.map(plugin => {
         // Debug: Log enabled status during rendering
@@ -897,7 +902,9 @@ function renderInstalledPlugins(plugins) {
                                class="sr-only peer" 
                                id="toggle-${escapedPluginId}"
                                ${enabledBool ? 'checked' : ''}
-                               onchange="togglePlugin('${escapedPluginId}', this.checked)">
+                               onchange="if(window.togglePlugin){window.togglePlugin(${escapeJs(plugin.id)}, this.checked)}else{console.error('togglePlugin not available')}"
+                               data-plugin-id="${escapedPluginId}"
+                               data-action="toggle">
                         <div class="flex items-center gap-2 px-3 py-1.5 rounded-lg border-2 transition-all duration-200 ${enabledBool ? 'bg-green-50 border-green-500' : 'bg-gray-50 border-gray-300'} hover:shadow-md group-hover:scale-105">
                             <!-- Toggle Switch -->
                             <div class="relative w-14 h-7 ${enabledBool ? 'bg-green-500' : 'bg-gray-300'} peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 rounded-full peer peer-checked:bg-green-500 transition-colors duration-200 ease-in-out shadow-inner">
@@ -924,19 +931,19 @@ function renderInstalledPlugins(plugins) {
 
             <!-- Plugin Actions -->
             <div class="flex flex-wrap gap-2 mt-4 pt-4 border-t border-gray-200">
-                <button onclick="if(window.configurePlugin){window.configurePlugin('${escapedPluginId}')}else{console.error('configurePlugin not available')}"
+                <button onclick="if(window.configurePlugin){window.configurePlugin(${escapeJs(plugin.id)})}else{console.error('configurePlugin not available')}"
                         class="btn bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md text-sm flex-1 font-semibold"
                         data-plugin-id="${escapedPluginId}"
                         data-action="configure">
                     <i class="fas fa-cog mr-2"></i>Configure
                 </button>
-                <button onclick="if(window.updatePlugin){window.updatePlugin('${escapedPluginId}')}else{console.error('updatePlugin not available')}"
+                <button onclick="if(window.updatePlugin){window.updatePlugin(${escapeJs(plugin.id)})}else{console.error('updatePlugin not available')}"
                         class="btn bg-gray-600 hover:bg-gray-700 text-white px-4 py-2 rounded-md text-sm flex-1 font-semibold"
                         data-plugin-id="${escapedPluginId}"
                         data-action="update">
                     <i class="fas fa-sync mr-2"></i>Update
                 </button>
-                <button onclick="if(window.uninstallPlugin){window.uninstallPlugin('${escapedPluginId}')}else{console.error('uninstallPlugin not available')}"
+                <button onclick="if(window.uninstallPlugin){window.uninstallPlugin(${escapeJs(plugin.id)})}else{console.error('uninstallPlugin not available')}"
                         class="btn bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-md text-sm flex-1 font-semibold"
                         data-plugin-id="${escapedPluginId}"
                         data-action="uninstall">
@@ -952,14 +959,17 @@ function renderInstalledPlugins(plugins) {
         if (container) {
             // Remove old listeners if any
             container.removeEventListener('click', handlePluginAction);
-            // Add new listener
+            container.removeEventListener('change', handlePluginAction);
+            // Add new listeners for both click and change events
             container.addEventListener('click', handlePluginAction);
+            container.addEventListener('change', handlePluginAction);
         }
     }, 100);
 }
 
 function handlePluginAction(event) {
-    const button = event.target.closest('button[data-action]');
+    // Check for both button and input (for toggle)
+    const button = event.target.closest('button[data-action]') || event.target.closest('input[data-action]');
     if (!button) return;
     
     const action = button.getAttribute('data-action');
@@ -973,6 +983,16 @@ function handlePluginAction(event) {
     console.log('Plugin action clicked:', action, pluginId);
     
     switch(action) {
+        case 'toggle':
+            // For toggle, get the checked state from the input
+            const isChecked = button.type === 'checkbox' ? button.checked : false;
+            if (window.togglePlugin) {
+                window.togglePlugin(pluginId, isChecked);
+            } else {
+                console.error('togglePlugin not available');
+                alert('Toggle function not loaded. Please refresh the page.');
+            }
+            break;
         case 'configure':
             if (window.configurePlugin) {
                 window.configurePlugin(pluginId);
