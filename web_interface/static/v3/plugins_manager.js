@@ -574,6 +574,11 @@ window.pluginManager.loadInstalledPlugins = loadInstalledPlugins;
 
 function renderInstalledPlugins(plugins) {
     const container = document.getElementById('installed-plugins-grid');
+    if (!container) {
+        console.warn('[RENDER] installed-plugins-grid not yet available, retrying...');
+        setTimeout(() => renderInstalledPlugins(plugins), 100);
+        return;
+    }
     
     // Update global installedPlugins for navigation tabs
     window.installedPlugins = plugins;
@@ -2681,6 +2686,11 @@ function showStoreLoading(show) {
 
 function renderPluginStore(plugins) {
     const container = document.getElementById('plugin-store-grid');
+    if (!container) {
+        console.warn('[RENDER] plugin-store-grid not yet available, retrying...');
+        setTimeout(() => renderPluginStore(plugins), 100);
+        return;
+    }
     
     if (!container) {
         console.error('plugin-store-grid element not found');
