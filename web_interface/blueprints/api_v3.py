@@ -993,12 +993,20 @@ def toggle_plugin():
         api_v3.config_manager.save_config(config)
         
         # If plugin is loaded, also call its lifecycle methods
+        # Wrap in try/except to prevent lifecycle errors from failing the toggle
         plugin = api_v3.plugin_manager.get_plugin(plugin_id)
         if plugin:
-            if enabled:
-                plugin.on_enable()
-            else:
-                plugin.on_disable()
+            try:
+                if enabled:
+                    if hasattr(plugin, 'on_enable'):
+                        plugin.on_enable()
+                else:
+                    if hasattr(plugin, 'on_disable'):
+                        plugin.on_disable()
+            except Exception as lifecycle_error:
+                # Log the error but don't fail the toggle - config is already saved
+                import logging
+                logging.warning(f"Lifecycle method error for {plugin_id}: {lifecycle_error}", exc_info=True)
         
         return jsonify({'status': 'success', 'message': f'Plugin {plugin_id} {"enabled" if enabled else "disabled"}'})
     except Exception as e:

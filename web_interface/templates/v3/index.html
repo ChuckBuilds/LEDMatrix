@@ -73,6 +73,7 @@
             <button hx-post="/api/v3/system/action"
                     hx-vals='{"action": "start_display"}'
                     hx-swap="none"
+                    hx-on:htmx:after-request="if (typeof showNotification !== 'undefined' && event.detail.xhr && event.detail.xhr.responseJSON) { showNotification(event.detail.xhr.responseJSON.message || 'Display started', event.detail.xhr.responseJSON.status || 'success'); }"
                     class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-green-600 hover:bg-green-700">
                 <i class="fas fa-play mr-2"></i>
                 Start Display
@@ -81,6 +82,7 @@
             <button hx-post="/api/v3/system/action"
                     hx-vals='{"action": "stop_display"}'
                     hx-swap="none"
+                    hx-on:htmx:after-request="if (typeof showNotification !== 'undefined' && event.detail.xhr && event.detail.xhr.responseJSON) { showNotification(event.detail.xhr.responseJSON.message || 'Display stopped', event.detail.xhr.responseJSON.status || 'success'); }"
                     class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-red-600 hover:bg-red-700">
                 <i class="fas fa-stop mr-2"></i>
                 Stop Display
@@ -89,6 +91,7 @@
             <button hx-post="/api/v3/system/action"
                     hx-vals='{"action": "git_pull"}'
                     hx-swap="none"
+                    hx-on:htmx:after-request="if (typeof showNotification !== 'undefined' && event.detail.xhr && event.detail.xhr.responseJSON) { showNotification(event.detail.xhr.responseJSON.message || 'Code update completed', event.detail.xhr.responseJSON.status || 'info'); }"
                     class="inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50">
                 <i class="fas fa-download mr-2"></i>
                 Update Code

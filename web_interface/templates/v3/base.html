@@ -73,11 +73,24 @@
                         // Suppress HTMX insertBefore errors (comprehensive check)
                         // These occur when HTMX tries to swap content but the target element is null
                         // Usually happens due to timing/race conditions and is harmless
-                        if (errorStr.includes("insertBefore") || errorStr.includes("Cannot read properties of null")) {
+                        if (errorStr.includes("insertBefore") || 
+                            errorStr.includes("Cannot read properties of null") ||
+                            errorStr.includes("reading 'insertBefore'")) {
                             // Check if it's from HTMX by looking at stack trace or error string
-                            const isHtmxError = errorStr.includes('htmx.org') || errorStr.includes('htmx') || 
+                            // Also check the call stack if available
+                            const isHtmxError = errorStr.includes('htmx.org') || 
+                                               errorStr.includes('htmx') || 
                                                errorStack.includes('htmx') ||
-                                               args.some(arg => arg && typeof arg === 'string' && (arg.includes('htmx.org') || arg.includes('htmx')));
+                                               args.some(arg => {
+                                                   if (typeof arg === 'string') {
+                                                       return arg.includes('htmx.org') || arg.includes('htmx');
+                                                   }
+                                                   // Check error objects for stack traces
+                                                   if (arg && typeof arg === 'object' && arg.stack) {
+                                                       return arg.stack.includes('htmx');
+                                                   }
+                                                   return false;
+                                               });
                             
                             if (isHtmxError) {
                                 return; // Suppress - this is a harmless HTMX timing/race condition issue
