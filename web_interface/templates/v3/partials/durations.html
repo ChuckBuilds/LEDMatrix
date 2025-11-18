@@ -9,7 +9,9 @@
           hx-headers='{"Content-Type": "application/json"}'
           hx-swap="none"
           hx-on:htmx:after-request="showNotification(event.detail.xhr.responseJSON?.message || 'Durations saved', event.detail.xhr.responseJSON?.status || 'success')"
-          class="space-y-6">
+          class="space-y-6"
+          novalidate
+          onsubmit="fixInvalidNumberInputs(this); return true;">
 
         <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {% for key, value in main_config.display.display_durations.items() %}

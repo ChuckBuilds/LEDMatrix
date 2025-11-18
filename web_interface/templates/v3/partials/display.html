@@ -9,7 +9,9 @@
           hx-headers='{"Content-Type": "application/json"}'
           hx-swap="none"
           hx-on:htmx:after-request="showNotification(event.detail.xhr.responseJSON?.message || 'Display settings saved', event.detail.xhr.responseJSON?.status || 'success')"
-          class="space-y-6">
+          class="space-y-6"
+          novalidate
+          onsubmit="fixInvalidNumberInputs(this); return true;">
 
         <!-- Hardware Settings -->
         <div class="bg-gray-50 rounded-lg p-4">
@@ -253,4 +255,25 @@ document.getElementById('brightness').addEventListener('input', function() {
     document.getElementById('brightness-value').textContent = this.value;
     document.getElementById('brightness-display').textContent = this.value;
 });
+
+// Fix invalid number inputs function (if not already defined globally)
+if (typeof window.fixInvalidNumberInputs !== 'function') {
+    window.fixInvalidNumberInputs = function(form) {
+        if (!form) return;
+        const allInputs = form.querySelectorAll('input[type="number"]');
+        allInputs.forEach(input => {
+            const min = parseFloat(input.getAttribute('min'));
+            const max = parseFloat(input.getAttribute('max'));
+            const value = parseFloat(input.value);
+            
+            if (!isNaN(value)) {
+                if (!isNaN(min) && value < min) {
+                    input.value = min;
+                } else if (!isNaN(max) && value > max) {
+                    input.value = max;
+                }
+            }
+        });
+    };
+}
 </script>

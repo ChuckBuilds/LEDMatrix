@@ -1382,7 +1382,29 @@
                             const min = prop.minimum !== undefined ? `min="${prop.minimum}"` : '';
                             const max = prop.maximum !== undefined ? `max="${prop.maximum}"` : '';
                             const step = prop.type === 'integer' ? 'step="1"' : 'step="any"';
-                            html += `<input type="number" name="${fullKey}" value="${value !== undefined ? value : ''}" ${min} ${max} ${step} class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm">`;
+                            
+                            // Ensure value respects min/max constraints
+                            let fieldValue = value !== undefined ? value : (prop.default !== undefined ? prop.default : '');
+                            if (fieldValue !== '' && fieldValue !== undefined && fieldValue !== null) {
+                                const numValue = typeof fieldValue === 'string' ? parseFloat(fieldValue) : fieldValue;
+                                if (!isNaN(numValue)) {
+                                    // Clamp value to min/max if constraints exist
+                                    if (prop.minimum !== undefined && numValue < prop.minimum) {
+                                        fieldValue = prop.minimum;
+                                    } else if (prop.maximum !== undefined && numValue > prop.maximum) {
+                                        fieldValue = prop.maximum;
+                                    } else {
+                                        fieldValue = numValue;
+                                    }
+                                }
+                            }
+                            
+                            // If still empty and we have a default, use it
+                            if (fieldValue === '' && prop.default !== undefined) {
+                                fieldValue = prop.default;
+                            }
+                            
+                            html += `<input type="number" name="${fullKey}" value="${fieldValue}" ${min} ${max} ${step} class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm">`;
                         } else if (prop.type === 'array') {
                             // Check if this is a file upload widget
                             if (prop['x-widget'] === 'file-upload') {
@@ -1629,7 +1651,7 @@
                     return `
                         <div class="form-group">
                             <label class="block text-sm font-medium text-gray-700 mb-1">Display Duration (seconds)</label>
-                            <input type="number" name="display_duration" value="${config.display_duration || 30}" min="5" max="300" class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm">
+                            <input type="number" name="display_duration" value="${Math.max(5, Math.min(300, config.display_duration || 30))}" min="5" max="300" class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm">
                             <p class="text-sm text-gray-600 mt-1">How long to show this plugin's content</p>
                         </div>
                         ${actionsHtml}
@@ -2382,6 +2404,26 @@
         }
         
         // Notification helper function
+        // Fix invalid number inputs before form submission
+        // This prevents "invalid form control is not focusable" errors
+        window.fixInvalidNumberInputs = function(form) {
+            if (!form) return;
+            const allInputs = form.querySelectorAll('input[type="number"]');
+            allInputs.forEach(input => {
+                const min = parseFloat(input.getAttribute('min'));
+                const max = parseFloat(input.getAttribute('max'));
+                const value = parseFloat(input.value);
+                
+                if (!isNaN(value)) {
+                    if (!isNaN(min) && value < min) {
+                        input.value = min;
+                    } else if (!isNaN(max) && value > max) {
+                        input.value = max;
+                    }
+                }
+            });
+        };
+        
         function showNotification(message, type = 'info') {
             console.log(`[${type.toUpperCase()}]`, message);
             
