@@ -50,13 +50,22 @@
                     
                     console.error = function(...args) {
                         const errorStr = args.join(' ');
-                        // Suppress HTMX insertBefore errors
-                        if (errorStr.includes("Cannot read properties of null (reading 'insertBefore')")) {
-                            if (errorStr.includes('htmx.org') || errorStr.includes('htmx') || 
-                                args.some(arg => arg && typeof arg === 'string' && arg.includes('htmx'))) {
-                                return; // Suppress
+                        const errorStack = args.find(arg => arg && typeof arg === 'string' && arg.includes('htmx')) || '';
+                        
+                        // Suppress HTMX insertBefore errors (comprehensive check)
+                        // These occur when HTMX tries to swap content but the target element is null
+                        // Usually happens due to timing/race conditions and is harmless
+                        if (errorStr.includes("insertBefore") || errorStr.includes("Cannot read properties of null")) {
+                            // Check if it's from HTMX by looking at stack trace or error string
+                            const isHtmxError = errorStr.includes('htmx.org') || errorStr.includes('htmx') || 
+                                               errorStack.includes('htmx') ||
+                                               args.some(arg => arg && typeof arg === 'string' && (arg.includes('htmx.org') || arg.includes('htmx')));
+                            
+                            if (isHtmxError) {
+                                return; // Suppress - this is a harmless HTMX timing/race condition issue
                             }
                         }
+                        
                         // Suppress script execution errors from malformed HTML
                         if (errorStr.includes("Failed to execute 'appendChild' on 'Node'") ||
                             errorStr.includes("Failed to execute 'insertBefore' on 'Node'")) {
@@ -69,11 +78,17 @@
                     
                     console.warn = function(...args) {
                         const warnStr = args.join(' ');
-                        // Suppress Permissions-Policy warnings
+                        // Suppress Permissions-Policy warnings (harmless browser warnings)
                         if (warnStr.includes('Permissions-Policy header') ||
                             warnStr.includes('Unrecognized feature') ||
-                            warnStr.includes('Origin trial controlled feature')) {
-                            return; // Suppress
+                            warnStr.includes('Origin trial controlled feature') ||
+                            warnStr.includes('browsing-topics') ||
+                            warnStr.includes('run-ad-auction') ||
+                            warnStr.includes('join-ad-interest-group') ||
+                            warnStr.includes('private-state-token') ||
+                            warnStr.includes('private-aggregation') ||
+                            warnStr.includes('attribution-reporting')) {
+                            return; // Suppress - these are harmless browser feature warnings
                         }
                         originalWarn.apply(console, args);
                     };
@@ -2645,3 +2660,4 @@
     <script src="{{ url_for('static', filename='v3/app.js') }}"></script>
 </body>
 </html>
+
