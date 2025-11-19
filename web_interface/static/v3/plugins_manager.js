@@ -1232,11 +1232,15 @@ window.showPluginConfigModal = function(pluginId, config) {
     
     // Move modal to body to avoid z-index/overflow issues
     if (modal.parentElement !== document.body) {
+        // Clone the modal before appending to remove any event listeners or data bindings that might be tied to the old location
+        // This helps prevent issues with HTMX or other libraries
+        // However, we need to re-attach event listeners if we clone
+        // For now, just move it directly
         document.body.appendChild(modal);
     }
 
-    // Show modal immediately
-    modal.style.display = 'flex';
+    // Show modal immediately - use important to override any other styles
+    modal.style.setProperty('display', 'flex', 'important');
     console.log('[DEBUG] Modal display set to flex');
     
     // Load schema for validation
