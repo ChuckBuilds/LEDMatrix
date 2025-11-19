@@ -92,9 +92,20 @@ window.configurePlugin = window.configurePlugin || async function(pluginId) {
     
     // Switch to the plugin's configuration tab instead of opening a modal
     // This matches the behavior of clicking the plugin tab at the top
-    if (window.app && typeof window.app === 'object') {
+    function getAppComponent() {
+        if (window.Alpine) {
+            const appElement = document.querySelector('[x-data="app()"]');
+            if (appElement && appElement._x_dataStack && appElement._x_dataStack[0]) {
+                return appElement._x_dataStack[0];
+            }
+        }
+        return null;
+    }
+    
+    const appComponent = getAppComponent();
+    if (appComponent) {
         // Set the active tab to the plugin ID
-        window.app.activeTab = pluginId;
+        appComponent.activeTab = pluginId;
         console.log('[DEBUG] Switched to plugin tab:', pluginId);
         
         // Scroll to top of page to ensure the tab is visible
