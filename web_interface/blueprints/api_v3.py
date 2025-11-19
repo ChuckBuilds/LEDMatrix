@@ -1583,8 +1583,8 @@ def save_plugin_config():
         if not schema_mgr:
             return jsonify({'status': 'error', 'message': 'Schema manager not initialized'}), 500
         
-        # Load plugin schema using SchemaManager
-        schema = schema_mgr.load_schema(plugin_id, use_cache=True)
+        # Load plugin schema using SchemaManager (force refresh to get latest schema)
+        schema = schema_mgr.load_schema(plugin_id, use_cache=False)
         
         # Find secret fields (supports nested schemas)
         secret_fields = set()
@@ -1606,22 +1606,31 @@ def save_plugin_config():
         if schema and 'properties' in schema:
             secret_fields = find_secret_fields(schema['properties'])
         
+        # Apply defaults from schema to config BEFORE validation
+        # This ensures required fields with defaults are present before validation
+        if schema:
+            defaults = schema_mgr.generate_default_config(plugin_id, use_cache=True)
+            plugin_config = schema_mgr.merge_with_defaults(plugin_config, defaults)
+        
         # Validate configuration against schema before saving
         if schema:
+            # Log what we're validating for debugging
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.info(f"Validating config for {plugin_id}: {plugin_config}")
+            
             is_valid, validation_errors = schema_mgr.validate_config_against_schema(
                 plugin_config, schema, plugin_id
             )
             if not is_valid:
+                # Log validation errors for debugging
+                logger.error(f"Config validation failed for {plugin_id}: {validation_errors}")
+                logger.error(f"Config that failed: {plugin_config}")
                 return jsonify({
                     'status': 'error',
                     'message': 'Configuration validation failed',
                     'validation_errors': validation_errors
                 }), 400
-        
-        # Apply defaults from schema to config (merge defaults where values are missing)
-        if schema:
-            defaults = schema_mgr.generate_default_config(plugin_id, use_cache=True)
-            plugin_config = schema_mgr.merge_with_defaults(plugin_config, defaults)
 
         # Separate secrets from regular config (handles nested configs)
         def separate_secrets(config, secrets_set, prefix=''):
