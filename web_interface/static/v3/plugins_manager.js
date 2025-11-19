@@ -90,31 +90,19 @@ window.configurePlugin = window.configurePlugin || async function(pluginId) {
     console.log('[DEBUG] ===== configurePlugin called =====');
     console.log('[DEBUG] Plugin ID:', pluginId);
     
-    // Load plugin configuration
-    try {
-        const response = await fetch(`/api/v3/plugins/config?plugin_id=${encodeURIComponent(pluginId)}`);
-        const data = await response.json();
+    // Switch to the plugin's configuration tab instead of opening a modal
+    // This matches the behavior of clicking the plugin tab at the top
+    if (window.app && typeof window.app === 'object') {
+        // Set the active tab to the plugin ID
+        window.app.activeTab = pluginId;
+        console.log('[DEBUG] Switched to plugin tab:', pluginId);
         
-        if (data.status === 'success') {
-            const config = data.data?.config || {};
-            // Show the configuration modal
-            if (typeof showPluginConfigModal === 'function') {
-                showPluginConfigModal(pluginId, config);
-            } else {
-                console.error('showPluginConfigModal function not found');
-                if (typeof showNotification === 'function') {
-                    showNotification('Configuration modal not available. Please refresh the page.', 'error');
-                }
-            }
-        } else {
-            if (typeof showNotification === 'function') {
-                showNotification(data.message || 'Failed to load plugin configuration', 'error');
-            }
-        }
-    } catch (error) {
-        console.error('Error loading plugin configuration:', error);
+        // Scroll to top of page to ensure the tab is visible
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+    } else {
+        console.error('Alpine.js app instance not found');
         if (typeof showNotification === 'function') {
-            showNotification('Error loading plugin configuration: ' + error.message, 'error');
+            showNotification('Unable to switch to plugin configuration. Please refresh the page.', 'error');
         }
     }
 };
