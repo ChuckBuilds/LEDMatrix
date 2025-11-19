@@ -45,13 +45,12 @@ window.__pluginDomReady = window.__pluginDomReady || false;
 
                 console.warn(`[GLOBAL DELEGATION] ${funcName} not available yet, waiting...`);
                 
-                // Capture state synchronously
+                // Capture state synchronously from plugin data (source of truth)
                 let targetChecked = false;
                 if (action === 'toggle') {
-                    targetChecked = button.type === 'checkbox' ? button.checked : false;
-                    if (event.type === 'click' && button.type === 'checkbox') {
-                        targetChecked = !targetChecked;
-                    }
+                    const plugin = (window.installedPlugins || []).find(p => p.id === pluginId);
+                    const currentEnabled = plugin ? Boolean(plugin.enabled) : (button.type === 'checkbox' ? button.checked : false);
+                    targetChecked = !currentEnabled; // Toggle to opposite state
                 }
 
                 // Wait for function to be available
@@ -79,22 +78,28 @@ window.__pluginDomReady = window.__pluginDomReady || false;
             }
         }
         
+        // Prevent default and stop propagation to avoid double handling
+        event.preventDefault();
+        event.stopPropagation();
+        
         // If handlePluginAction exists, use it; otherwise handle directly
         if (typeof handlePluginAction === 'function') {
             handlePluginAction(event);
         } else {
             // Fallback: handle directly if functions are available
             if (action === 'toggle' && window.togglePlugin) {
-                let isChecked = button.type === 'checkbox' ? button.checked : false;
+                // Get the current enabled state from plugin data (source of truth)
+                const plugin = (window.installedPlugins || []).find(p => p.id === pluginId);
+                const currentEnabled = plugin ? Boolean(plugin.enabled) : (button.type === 'checkbox' ? button.checked : false);
+                
+                // Toggle the state - we want the opposite of current state
+                const isChecked = !currentEnabled;
                 
                 // Prevent default behavior to avoid double-toggling and change event
                 event.preventDefault();
                 event.stopPropagation();
                 
-                // If it was a click on checkbox, we need to manually invert because we prevented default
-                if (event.type === 'click' && button.type === 'checkbox') {
-                    isChecked = !isChecked;
-                }
+                console.log('[DEBUG toggle fallback] Plugin:', pluginId, 'Current enabled (from data):', currentEnabled, 'New state:', isChecked);
                 
                 window.togglePlugin(pluginId, isChecked);
             } else if (action === 'configure' && window.configurePlugin) {
@@ -824,16 +829,15 @@ function handlePluginAction(event) {
     
     switch(action) {
         case 'toggle':
-            // For toggle, get the checked state from the input
-            // Note: Since we preventDefault() on click, the checked state hasn't changed yet if it was a click
-            // If it was a change event, it has already changed
-            let isChecked = button.type === 'checkbox' ? button.checked : false;
+            // Get the current enabled state from plugin data (source of truth)
+            // rather than from the checkbox DOM which might be out of sync
+            const plugin = (window.installedPlugins || []).find(p => p.id === pluginId);
+            const currentEnabled = plugin ? Boolean(plugin.enabled) : (button.type === 'checkbox' ? button.checked : false);
             
-            // If triggered by click on a checkbox, we need to invert the current state
-            // because preventDefault() stopped the browser from toggling it
-            if (event.type === 'click' && button.type === 'checkbox') {
-                isChecked = !isChecked;
-            }
+            // Toggle the state - we want the opposite of current state
+            const isChecked = !currentEnabled;
+            
+            console.log('[DEBUG toggle] Plugin:', pluginId, 'Current enabled (from data):', currentEnabled, 'New state:', isChecked, 'Event type:', event.type);
 
             waitForFunction('togglePlugin', 10, 50)
                 .then(toggleFunc => {
