@@ -1232,16 +1232,48 @@ window.showPluginConfigModal = function(pluginId, config) {
     
     // Move modal to body to avoid z-index/overflow issues
     if (modal.parentElement !== document.body) {
-        // Clone the modal before appending to remove any event listeners or data bindings that might be tied to the old location
-        // This helps prevent issues with HTMX or other libraries
-        // However, we need to re-attach event listeners if we clone
-        // For now, just move it directly
         document.body.appendChild(modal);
     }
 
+    // Remove any inline display:none that might be in the HTML FIRST
+    // This is critical because the HTML template has style="display: none;" inline
+    // We need to remove it before setting new styles
+    let currentStyle = modal.getAttribute('style') || '';
+    if (currentStyle.includes('display: none') || currentStyle.includes('display:none')) {
+        currentStyle = currentStyle.replace(/display:\s*none[;]?/gi, '').trim();
+        // Clean up any double semicolons or trailing semicolons
+        currentStyle = currentStyle.replace(/;;+/g, ';').replace(/^;|;$/g, '');
+        if (currentStyle) {
+            modal.setAttribute('style', currentStyle);
+        } else {
+            modal.removeAttribute('style');
+        }
+    }
+
     // Show modal immediately - use important to override any other styles
+    // Also ensure visibility, opacity, and z-index are set correctly
     modal.style.setProperty('display', 'flex', 'important');
+    modal.style.setProperty('visibility', 'visible', 'important');
+    modal.style.setProperty('opacity', '1', 'important');
+    modal.style.setProperty('z-index', '9999', 'important');
+    modal.style.setProperty('position', 'fixed', 'important');
+    
+    // Ensure modal content is also visible
+    const modalContent = modal.querySelector('.modal-content');
+    if (modalContent) {
+        modalContent.style.setProperty('display', 'block', 'important');
+        modalContent.style.setProperty('visibility', 'visible', 'important');
+        modalContent.style.setProperty('opacity', '1', 'important');
+    }
+    
     console.log('[DEBUG] Modal display set to flex');
+    console.log('[DEBUG] Modal computed style:', window.getComputedStyle(modal).display);
+    console.log('[DEBUG] Modal z-index:', window.getComputedStyle(modal).zIndex);
+    console.log('[DEBUG] Modal visibility:', window.getComputedStyle(modal).visibility);
+    console.log('[DEBUG] Modal opacity:', window.getComputedStyle(modal).opacity);
+    console.log('[DEBUG] Modal in DOM:', document.body.contains(modal));
+    console.log('[DEBUG] Modal parent:', modal.parentElement?.tagName);
+    console.log('[DEBUG] Modal rect:', modal.getBoundingClientRect());
     
     // Load schema for validation
     fetch(`/api/v3/plugins/schema?plugin_id=${pluginId}`)
