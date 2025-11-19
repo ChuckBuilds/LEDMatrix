@@ -1612,6 +1612,93 @@ def save_plugin_config():
             defaults = schema_mgr.generate_default_config(plugin_id, use_cache=True)
             plugin_config = schema_mgr.merge_with_defaults(plugin_config, defaults)
         
+        # Normalize config data: convert string numbers to integers/floats where schema expects numbers
+        # This handles form data which sends everything as strings
+        def normalize_config_values(config, schema_props, prefix=''):
+            """Recursively normalize config values based on schema types"""
+            if not isinstance(config, dict) or not isinstance(schema_props, dict):
+                return config
+            
+            normalized = {}
+            for key, value in config.items():
+                field_path = f"{prefix}.{key}" if prefix else key
+                
+                if key not in schema_props:
+                    # Field not in schema, keep as-is (will be caught by additionalProperties check if needed)
+                    normalized[key] = value
+                    continue
+                
+                prop_schema = schema_props[key]
+                
+                if isinstance(value, dict) and prop_schema.get('type') == 'object' and 'properties' in prop_schema:
+                    # Recursively normalize nested objects
+                    normalized[key] = normalize_config_values(value, prop_schema['properties'], field_path)
+                elif isinstance(value, list) and prop_schema.get('type') == 'array' and 'items' in prop_schema:
+                    # Normalize array items
+                    items_schema = prop_schema['items']
+                    item_type = items_schema.get('type')
+                    
+                    if item_type == 'integer':
+                        # Convert string numbers to integers
+                        normalized_array = []
+                        for v in value:
+                            if isinstance(v, str):
+                                try:
+                                    normalized_array.append(int(v))
+                                except (ValueError, TypeError):
+                                    normalized_array.append(v)
+                            elif isinstance(v, (int, float)):
+                                normalized_array.append(int(v))
+                            else:
+                                normalized_array.append(v)
+                        normalized[key] = normalized_array
+                    elif item_type == 'number':
+                        # Convert string numbers to floats
+                        normalized_array = []
+                        for v in value:
+                            if isinstance(v, str):
+                                try:
+                                    normalized_array.append(float(v))
+                                except (ValueError, TypeError):
+                                    normalized_array.append(v)
+                            else:
+                                normalized_array.append(v)
+                        normalized[key] = normalized_array
+                    else:
+                        normalized[key] = value
+                elif prop_schema.get('type') == 'integer':
+                    # Convert string to integer
+                    if isinstance(value, str):
+                        try:
+                            normalized[key] = int(value)
+                        except (ValueError, TypeError):
+                            normalized[key] = value
+                    else:
+                        normalized[key] = value
+                elif prop_schema.get('type') == 'number':
+                    # Convert string to float
+                    if isinstance(value, str):
+                        try:
+                            normalized[key] = float(value)
+                        except (ValueError, TypeError):
+                            normalized[key] = value
+                    else:
+                        normalized[key] = value
+                elif prop_schema.get('type') == 'boolean':
+                    # Convert string booleans
+                    if isinstance(value, str):
+                        normalized[key] = value.lower() in ('true', '1', 'on', 'yes')
+                    else:
+                        normalized[key] = value
+                else:
+                    normalized[key] = value
+            
+            return normalized
+        
+        # Normalize config before validation
+        if schema and 'properties' in schema:
+            plugin_config = normalize_config_values(plugin_config, schema['properties'])
+        
         # Validate configuration against schema before saving
         if schema:
             # Log what we're validating for debugging
