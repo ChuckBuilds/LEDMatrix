@@ -39,7 +39,21 @@ window.__pluginDomReady = window.__pluginDomReady || false;
         if (action === 'toggle' || action === 'configure') {
             const funcName = action === 'toggle' ? 'togglePlugin' : 'configurePlugin';
             if (!window[funcName] || typeof window[funcName] !== 'function') {
+                // Prevent default and stop propagation immediately to avoid double handling
+                event.preventDefault();
+                event.stopPropagation();
+
                 console.warn(`[GLOBAL DELEGATION] ${funcName} not available yet, waiting...`);
+                
+                // Capture state synchronously
+                let targetChecked = false;
+                if (action === 'toggle') {
+                    targetChecked = button.type === 'checkbox' ? button.checked : false;
+                    if (event.type === 'click' && button.type === 'checkbox') {
+                        targetChecked = !targetChecked;
+                    }
+                }
+
                 // Wait for function to be available
                 let attempts = 0;
                 const maxAttempts = 20; // 1 second total
@@ -49,8 +63,7 @@ window.__pluginDomReady = window.__pluginDomReady || false;
                         clearInterval(checkInterval);
                         // Call the function directly
                         if (action === 'toggle') {
-                            const isChecked = button.type === 'checkbox' ? button.checked : false;
-                            window.togglePlugin(pluginId, isChecked);
+                            window.togglePlugin(pluginId, targetChecked);
                         } else {
                             window.configurePlugin(pluginId);
                         }
@@ -72,9 +85,21 @@ window.__pluginDomReady = window.__pluginDomReady || false;
         } else {
             // Fallback: handle directly if functions are available
             if (action === 'toggle' && window.togglePlugin) {
-                const isChecked = button.type === 'checkbox' ? button.checked : false;
+                let isChecked = button.type === 'checkbox' ? button.checked : false;
+                
+                // Prevent default behavior to avoid double-toggling and change event
+                event.preventDefault();
+                event.stopPropagation();
+                
+                // If it was a click on checkbox, we need to manually invert because we prevented default
+                if (event.type === 'click' && button.type === 'checkbox') {
+                    isChecked = !isChecked;
+                }
+                
                 window.togglePlugin(pluginId, isChecked);
             } else if (action === 'configure' && window.configurePlugin) {
+                event.preventDefault();
+                event.stopPropagation();
                 window.configurePlugin(pluginId);
             }
         }
