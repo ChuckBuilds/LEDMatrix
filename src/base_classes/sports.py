@@ -213,6 +213,15 @@ class SportsCore(ABC):
              return False
 
         if not self.current_game:
+            # Clear display if force_clear is True, even when there's no content
+            # This prevents black screens when switching to modes with no content
+            if force_clear:
+                try:
+                    self.display_manager.clear()
+                    self.display_manager.update_display()
+                except Exception as e:
+                    self.logger.debug(f"Error clearing display when no content: {e}")
+            
             current_time = time.time()
             if not hasattr(self, '_last_warning_time'):
                 self._last_warning_time = 0
