@@ -49,7 +49,16 @@ window.__pluginDomReady = window.__pluginDomReady || false;
                 let targetChecked = false;
                 if (action === 'toggle') {
                     const plugin = (window.installedPlugins || []).find(p => p.id === pluginId);
-                    const currentEnabled = plugin ? Boolean(plugin.enabled) : (button.type === 'checkbox' ? button.checked : false);
+                    
+                    let currentEnabled;
+                    if (plugin) {
+                        currentEnabled = Boolean(plugin.enabled);
+                    } else if (button.type === 'checkbox') {
+                        currentEnabled = button.checked;
+                    } else {
+                        currentEnabled = false;
+                    }
+                    
                     targetChecked = !currentEnabled; // Toggle to opposite state
                 }
 
@@ -90,12 +99,21 @@ window.__pluginDomReady = window.__pluginDomReady || false;
             if (action === 'toggle' && window.togglePlugin) {
                 // Get the current enabled state from plugin data (source of truth)
                 const plugin = (window.installedPlugins || []).find(p => p.id === pluginId);
-                const currentEnabled = plugin ? Boolean(plugin.enabled) : (button.type === 'checkbox' ? button.checked : false);
+                
+                let currentEnabled;
+                if (plugin) {
+                    currentEnabled = Boolean(plugin.enabled);
+                } else if (button.type === 'checkbox') {
+                    currentEnabled = button.checked;
+                } else {
+                    currentEnabled = false;
+                }
                 
                 // Toggle the state - we want the opposite of current state
                 const isChecked = !currentEnabled;
                 
                 // Prevent default behavior to avoid double-toggling and change event
+                // (Already done at start of function, but safe to repeat)
                 event.preventDefault();
                 event.stopPropagation();
                 
@@ -832,8 +850,31 @@ function handlePluginAction(event) {
             // Get the current enabled state from plugin data (source of truth)
             // rather than from the checkbox DOM which might be out of sync
             const plugin = (window.installedPlugins || []).find(p => p.id === pluginId);
-            const currentEnabled = plugin ? Boolean(plugin.enabled) : (button.type === 'checkbox' ? button.checked : false);
             
+            // Special handling: If plugin data isn't found or is stale, fallback to DOM but be careful
+            // If the user clicked the checkbox, the 'checked' property has *already* toggled in the DOM
+            // (even though we preventDefault later, sometimes it's too late for the property read)
+            // However, we used preventDefault() in the global handler, so the checkbox state *should* be reliable if we didn't touch it.
+            
+            // BUT: The issue is that 'currentEnabled' calculation might be wrong if window.installedPlugins is outdated.
+            // If the user toggles ON, enabled becomes true. If they click again, we want enabled=false.
+            
+            // Let's try a simpler approach: Use the checkbox state as the source of truth for the *desired* state
+            // Since we preventDefault(), the checkbox state reflects the *old* state (before the click)
+            // wait... if we preventDefault() on 'click', the checkbox does NOT change visually or internally.
+            // So button.checked is the OLD state.
+            // We want the NEW state to be !button.checked.
+            
+            let currentEnabled;
+            
+            if (plugin) {
+                currentEnabled = Boolean(plugin.enabled);
+            } else if (button.type === 'checkbox') {
+                currentEnabled = button.checked;
+            } else {
+                currentEnabled = false;
+            }
+
             // Toggle the state - we want the opposite of current state
             const isChecked = !currentEnabled;
             
