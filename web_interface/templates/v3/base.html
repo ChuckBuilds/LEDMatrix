@@ -2499,16 +2499,38 @@
 
                 showNotification(data.message, data.status);
 
-                // Update the plugin in window.installedPlugins
-                if (window.installedPlugins) {
-                    const plugin = window.installedPlugins.find(p => p.id === pluginId);
-                    if (plugin) {
-                        plugin.enabled = enabled;
+                if (data.status === 'success') {
+                    // Update the plugin in window.installedPlugins
+                    if (window.installedPlugins) {
+                        const plugin = window.installedPlugins.find(p => p.id === pluginId);
+                        if (plugin) {
+                            plugin.enabled = enabled;
+                        }
+                    }
+                    
+                    // Refresh the plugin list to ensure both management page and config page stay in sync
+                    if (typeof loadInstalledPlugins === 'function') {
+                        loadInstalledPlugins();
+                    }
+                } else {
+                    // Revert the toggle if API call failed
+                    if (window.installedPlugins) {
+                        const plugin = window.installedPlugins.find(p => p.id === pluginId);
+                        if (plugin) {
+                            plugin.enabled = !enabled;
+                        }
                     }
                 }
 
             } catch (error) {
                 showNotification('Error toggling plugin: ' + error.message, 'error');
+                // Revert on error
+                if (window.installedPlugins) {
+                    const plugin = window.installedPlugins.find(p => p.id === pluginId);
+                    if (plugin) {
+                        plugin.enabled = !enabled;
+                    }
+                }
             }
         }
 
