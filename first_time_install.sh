@@ -236,9 +236,10 @@ else
     echo "Setting ownership of assets directory..."
     chown -R "$ACTUAL_USER:$ACTUAL_USER" "$PROJECT_ROOT_DIR/assets"
     
-    # Set permissions to allow read/write for owner and group, read for others
+    # Set permissions to allow read/write for owner, group, and others (for root service user)
+    # Note: 777 allows root (service user) to write, which is necessary when service runs as root
     echo "Setting permissions for assets directory..."
-    chmod -R 775 "$PROJECT_ROOT_DIR/assets"
+    chmod -R 777 "$PROJECT_ROOT_DIR/assets"
     
     # Specifically ensure the sports logos directories are writable
     SPORTS_DIRS=(
@@ -255,13 +256,13 @@ else
     for SPORTS_DIR in "${SPORTS_DIRS[@]}"; do
         FULL_PATH="$PROJECT_ROOT_DIR/assets/$SPORTS_DIR"
         if [ -d "$FULL_PATH" ]; then
-            chmod 775 "$FULL_PATH"
+            chmod 777 "$FULL_PATH"
             chown "$ACTUAL_USER:$ACTUAL_USER" "$FULL_PATH"
         else
             echo "Creating directory: $FULL_PATH"
             mkdir -p "$FULL_PATH"
             chown "$ACTUAL_USER:$ACTUAL_USER" "$FULL_PATH"
-            chmod 775 "$FULL_PATH"
+            chmod 777 "$FULL_PATH"
         fi
     done
     
