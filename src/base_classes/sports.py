@@ -1030,8 +1030,8 @@ class SportsRecent(SportsCore):
                     game_time = game.get('start_time_utc')
                     if game_time and game_time >= recent_cutoff:
                         processed_games.append(game)
-            # Filter for favorite teams
-            if self.favorite_teams:
+            # Filter for favorite teams only if the config is set
+            if self.show_favorite_teams_only:
                 # Get all games involving favorite teams
                 favorite_team_games = [game for game in processed_games
                                       if game['home_abbr'] in self.favorite_teams or
@@ -1057,12 +1057,11 @@ class SportsRecent(SportsCore):
                 for i, game in enumerate(team_games):
                     self.logger.info(f"Game {i+1} for display: {game['away_abbr']} @ {game['home_abbr']} - {game.get('start_time_utc')} - Score: {game['away_score']}-{game['home_score']}")
             else:
-                 team_games = processed_games # Show all recent games if no favorites defined
-                 self.logger.info(f"Found {len(processed_games)} total final games within last 21 days (no favorite teams configured)")
-                 # Sort by game time, most recent first
-                 team_games.sort(key=lambda g: g.get('start_time_utc') or datetime.min.replace(tzinfo=timezone.utc), reverse=True)
-                 # Limit to the specified number of recent games
-                 team_games = team_games[:self.recent_games_to_show]
+                team_games = processed_games # Show all recent games if no favorites defined
+                self.logger.info(f"Found {len(processed_games)} total final games within last 21 days (no favorite teams filtering)")
+                # Sort games by start time, most recent first, and limit to recent_games_to_show
+                team_games.sort(key=lambda g: g.get('start_time_utc') or datetime.min.replace(tzinfo=timezone.utc), reverse=True)
+                team_games = team_games[:self.recent_games_to_show]
 
             # Check if the list of games to display has changed
             new_game_ids = {g['id'] for g in team_games}

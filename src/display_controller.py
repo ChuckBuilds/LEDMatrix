@@ -322,8 +322,8 @@ class DisplayController:
         # Check plugin-specific duration first
         if mode_key in self.plugin_modes:
             plugin_instance = self.plugin_modes[mode_key]
-            if hasattr(plugin_instance, 'get_duration'):
-                return plugin_instance.get_duration()
+            if hasattr(plugin_instance, 'get_display_duration'):
+                return plugin_instance.get_display_duration()
         
         # Fall back to config
         display_durations = self.config.get('display', {}).get('display_durations', {})
