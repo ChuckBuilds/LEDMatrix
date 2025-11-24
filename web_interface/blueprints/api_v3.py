@@ -1937,19 +1937,30 @@ def save_plugin_config():
             # Log what we're validating for debugging
             import logging
             logger = logging.getLogger(__name__)
-            logger.info(f"Validating config for {plugin_id}: {plugin_config}")
+            logger.info(f"Validating config for {plugin_id}")
+            logger.info(f"Config keys being validated: {list(plugin_config.keys())}")
+            logger.info(f"Full config: {plugin_config}")
             
             is_valid, validation_errors = schema_mgr.validate_config_against_schema(
                 plugin_config, schema, plugin_id
             )
             if not is_valid:
                 # Log validation errors for debugging
-                logger.error(f"Config validation failed for {plugin_id}: {validation_errors}")
+                logger.error(f"Config validation failed for {plugin_id}")
+                logger.error(f"Validation errors: {validation_errors}")
                 logger.error(f"Config that failed: {plugin_config}")
+                logger.error(f"Schema properties: {list(schema.get('properties', {}).keys())}")
+                # Also print to console for immediate visibility
+                print(f"[ERROR] Config validation failed for {plugin_id}")
+                print(f"[ERROR] Validation errors: {validation_errors}")
+                print(f"[ERROR] Config keys: {list(plugin_config.keys())}")
+                print(f"[ERROR] Schema property keys: {list(schema.get('properties', {}).keys())}")
                 return jsonify({
                     'status': 'error',
                     'message': 'Configuration validation failed',
-                    'validation_errors': validation_errors
+                    'validation_errors': validation_errors,
+                    'config_keys': list(plugin_config.keys()),
+                    'schema_keys': list(schema.get('properties', {}).keys())
                 }), 400
 
         # Separate secrets from regular config (handles nested configs)

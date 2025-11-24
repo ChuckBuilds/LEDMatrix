@@ -2216,16 +2216,35 @@
                         try {
                             data = await response.json();
                         } catch (e) {
+                            console.error('Failed to parse JSON response:', e);
+                            console.error('Response status:', response.status, response.statusText);
+                            console.error('Response text:', await response.text());
                             throw new Error(`Failed to parse server response: ${response.status} ${response.statusText}`);
                         }
+                        
+                        console.log('Response status:', response.status, 'Response OK:', response.ok);
+                        console.log('Response data:', JSON.stringify(data, null, 2));
                         
                         if (!response.ok || data.status !== 'success') {
                             let errorMessage = data.message || 'Failed to save configuration';
                             if (data.validation_errors && Array.isArray(data.validation_errors)) {
+                                console.error('Validation errors:', data.validation_errors);
                                 errorMessage += '\n\nValidation errors:\n' + data.validation_errors.join('\n');
                             }
+                            if (data.config_keys && data.schema_keys) {
+                                console.error('Config keys sent:', data.config_keys);
+                                console.error('Schema keys expected:', data.schema_keys);
+                                const extraKeys = data.config_keys.filter(k => !data.schema_keys.includes(k));
+                                const missingKeys = data.schema_keys.filter(k => !data.config_keys.includes(k));
+                                if (extraKeys.length > 0) {
+                                    errorMessage += '\n\nExtra keys (not in schema): ' + extraKeys.join(', ');
+                                }
+                                if (missingKeys.length > 0) {
+                                    errorMessage += '\n\nMissing keys (in schema): ' + missingKeys.join(', ');
+                                }
+                            }
                             this.showNotification(errorMessage, 'error');
-                            console.error('Config save failed:', data);
+                            console.error('Config save failed - Full error response:', JSON.stringify(data, null, 2));
                         } else {
                             this.showNotification('Configuration saved successfully', 'success');
                             // Reload plugin config to reflect changes
