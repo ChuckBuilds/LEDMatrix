@@ -1800,7 +1800,12 @@ def save_plugin_config():
             return jsonify({'status': 'error', 'message': 'Config manager not initialized'}), 500
 
         data = request.get_json()
-        if not data or 'plugin_id' not in data:
+        if not data:
+            return jsonify({
+                'status': 'error', 
+                'message': 'Invalid JSON or missing request body. Ensure Content-Type is application/json.'
+            }), 400
+        if 'plugin_id' not in data:
             return jsonify({'status': 'error', 'message': 'plugin_id required'}), 400
 
         plugin_id = data['plugin_id']

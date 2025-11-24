@@ -3463,21 +3463,42 @@ function savePluginConfiguration(pluginId, config) {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ plugin_id: pluginId, config })
     })
-    .then(response => response.json())
+    .then(response => {
+        if (!response.ok) {
+            // Try to parse error response
+            return response.json().then(data => {
+                // Return error data with status
+                return { error: true, status: response.status, ...data };
+            }).catch(() => {
+                // If JSON parsing fails, return generic error
+                return { 
+                    error: true, 
+                    status: response.status, 
+                    message: `Server error: ${response.status} ${response.statusText}` 
+                };
+            });
+        }
+        return response.json();
+    })
     .then(data => {
-        if (data.status === 'success') {
-            // Hide validation errors on success
-            displayValidationErrors([]);
-            showNotification(data.message, data.status);
-            closePluginConfigModal();
-            // Refresh the installed plugins to update the UI
-            loadInstalledPlugins();
-        } else {
+        if (data.error || data.status !== 'success') {
             // Display validation errors if present
             if (data.validation_errors && Array.isArray(data.validation_errors)) {
                 displayValidationErrors(data.validation_errors);
             }
-            showNotification(data.message || 'Error saving configuration', 'error');
+            let errorMessage = data.message || 'Error saving configuration';
+            if (data.validation_errors && Array.isArray(data.validation_errors) && data.validation_errors.length > 0) {
+                errorMessage += '\n\nValidation errors:\n' + data.validation_errors.join('\n');
+            }
+            showNotification(errorMessage, 'error');
+            console.error('Config save failed:', data);
+        } else {
+            // Hide validation errors on success
+            displayValidationErrors([]);
+            showNotification(data.message || 'Configuration saved successfully', data.status);
+            closePluginConfigModal();
+            // Refresh the installed plugins to update the UI
+            loadInstalledPlugins();
         }
     })
     .catch(error => {

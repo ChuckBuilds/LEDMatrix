@@ -2202,16 +2202,6 @@
                         
                         const config = dotToNested(flatConfig);
                         
-                        console.log('Saving config for', pluginId, ':', config);
-                        console.log('Flat config before nesting:', flatConfig);
-                        // Debug logging for live_priority
-                        if (pluginId === 'football-scoreboard') {
-                            console.log('[DEBUG] NFL live_priority in flatConfig:', flatConfig['nfl.live_priority']);
-                            console.log('[DEBUG] NCAA FB live_priority in flatConfig:', flatConfig['ncaa_fb.live_priority']);
-                            console.log('[DEBUG] NFL live_priority in nested config:', config.nfl?.live_priority);
-                            console.log('[DEBUG] NCAA FB live_priority in nested config:', config.ncaa_fb?.live_priority);
-                        }
-                        
                         // Save to backend
                         const response = await fetch('/api/v3/plugins/config', {
                             method: 'POST',
@@ -2222,14 +2212,24 @@
                             })
                         });
                         
-                        const data = await response.json();
+                        let data;
+                        try {
+                            data = await response.json();
+                        } catch (e) {
+                            throw new Error(`Failed to parse server response: ${response.status} ${response.statusText}`);
+                        }
                         
-                        if (data.status === 'success') {
+                        if (!response.ok || data.status !== 'success') {
+                            let errorMessage = data.message || 'Failed to save configuration';
+                            if (data.validation_errors && Array.isArray(data.validation_errors)) {
+                                errorMessage += '\n\nValidation errors:\n' + data.validation_errors.join('\n');
+                            }
+                            this.showNotification(errorMessage, 'error');
+                            console.error('Config save failed:', data);
+                        } else {
                             this.showNotification('Configuration saved successfully', 'success');
                             // Reload plugin config to reflect changes
                             await this.loadPluginConfig(pluginId);
-                        } else {
-                            this.showNotification('Error saving configuration: ' + data.message, 'error');
                         }
                     } catch (error) {
                         console.error('Error saving plugin config:', error);
@@ -2761,12 +2761,21 @@
                     body: JSON.stringify({ plugin_id: pluginId, config })
                 });
 
-                const data = await response.json();
+                let data;
+                try {
+                    data = await response.json();
+                } catch (e) {
+                    throw new Error(`Failed to parse server response: ${response.status} ${response.statusText}`);
+                }
 
-                if (data.status === 'success') {
-                    showNotification(`Configuration saved for ${pluginId}`, 'success');
+                if (!response.ok || data.status !== 'success') {
+                    let errorMessage = data.message || 'Failed to save configuration';
+                    if (data.validation_errors && Array.isArray(data.validation_errors)) {
+                        errorMessage += '\n\nValidation errors:\n' + data.validation_errors.join('\n');
+                    }
+                    throw new Error(errorMessage);
                 } else {
-                    throw new Error(data.message || 'Failed to save configuration');
+                    showNotification(`Configuration saved for ${pluginId}`, 'success');
                 }
 
             } catch (error) {
