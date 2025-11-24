@@ -627,8 +627,15 @@ class PluginManager:
             if plugin_id in self.plugin_modules:
                 del self.plugin_modules[plugin_id]
             
+            # Remove from plugin_manifests to free memory
+            if plugin_id in self.plugin_manifests:
+                del self.plugin_manifests[plugin_id]
+            
             # Remove dependency marker (dependencies should be reinstalled if plugin is reinstalled)
             self._remove_dependency_marker(plugin_id)
+            
+            # Explicitly clear plugin reference to help garbage collection
+            plugin = None
             
             self.logger.info(f"Unloaded plugin: {plugin_id}")
             return True

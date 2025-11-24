@@ -73,6 +73,10 @@ class LogoHelper:
         cache_key = f"{team_abbr}_{logo_path}"
         if cache_key in self._logo_cache:
             self.logger.debug(f"Using cached logo for {team_abbr}")
+            # Update LRU order (move to end)
+            if cache_key in self._cache_order:
+                self._cache_order.remove(cache_key)
+            self._cache_order.append(cache_key)
             return self._logo_cache[cache_key]
         
         try:

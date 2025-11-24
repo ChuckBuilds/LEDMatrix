@@ -36,6 +36,11 @@ class CacheManager:
         self._memory_cache_timestamps = {}
         self._cache_lock = threading.Lock()
         
+        # Memory cache limits and cleanup tracking
+        self._max_memory_cache_size = 1000  # Maximum entries in memory cache
+        self._memory_cache_cleanup_interval = 300.0  # Cleanup every 5 minutes
+        self._last_memory_cache_cleanup = time.time()
+        
         # Initialize config manager for sport-specific intervals
         try:
             from src.config_manager import ConfigManager
@@ -134,6 +139,71 @@ class CacheManager:
     def _ensure_cache_dir(self):
         """This method is deprecated and no longer needed."""
         pass
+    
+    def _cleanup_memory_cache(self, force: bool = False) -> int:
+        """
+        Clean up expired entries from memory cache and enforce size limits.
+        
+        Args:
+            force: If True, perform cleanup regardless of time interval
+            
+        Returns:
+            Number of entries removed
+        """
+        now = time.time()
+        
+        # Check if cleanup is needed
+        if not force and (now - self._last_memory_cache_cleanup) < self._memory_cache_cleanup_interval:
+            return 0
+        
+        with self._cache_lock:
+            removed_count = 0
+            current_time = time.time()
+            
+            # Remove expired entries (entries older than 1 hour without access are considered expired)
+            # We use a conservative TTL of 1 hour for cleanup
+            max_age_for_cleanup = 3600  # 1 hour
+            
+            expired_keys = []
+            for key, timestamp in list(self._memory_cache_timestamps.items()):
+                if isinstance(timestamp, str):
+                    try:
+                        timestamp = float(timestamp)
+                    except ValueError:
+                        timestamp = None
+                
+                if timestamp is None or (current_time - timestamp) > max_age_for_cleanup:
+                    expired_keys.append(key)
+            
+            # Remove expired entries
+            for key in expired_keys:
+                self._memory_cache.pop(key, None)
+                self._memory_cache_timestamps.pop(key, None)
+                removed_count += 1
+            
+            # Enforce size limit by removing oldest entries if cache is too large
+            if len(self._memory_cache) > self._max_memory_cache_size:
+                # Sort by timestamp (oldest first)
+                sorted_entries = sorted(
+                    self._memory_cache_timestamps.items(),
+                    key=lambda x: float(x[1]) if isinstance(x[1], (int, float)) else 0
+                )
+                
+                # Remove oldest entries until we're under the limit
+                excess_count = len(self._memory_cache) - self._max_memory_cache_size
+                for i in range(excess_count):
+                    if i < len(sorted_entries):
+                        key = sorted_entries[i][0]
+                        self._memory_cache.pop(key, None)
+                        self._memory_cache_timestamps.pop(key, None)
+                        removed_count += 1
+            
+            self._last_memory_cache_cleanup = current_time
+            
+            if removed_count > 0:
+                self.logger.debug(f"Memory cache cleanup: removed {removed_count} entries (current size: {len(self._memory_cache)})")
+            
+            return removed_count
             
     def _get_cache_path(self, key: str) -> Optional[str]:
         """Get the path for a cache file."""
@@ -147,6 +217,9 @@ class CacheManager:
         - memory_ttl: TTL for in-memory entry; defaults to max_age if not provided
         - max_age: TTL for persisted (on-disk) entry based on the stored timestamp
         """
+        # Periodic cleanup of memory cache
+        self._cleanup_memory_cache()
+        
         now = time.time()
         in_memory_ttl = memory_ttl if memory_ttl is not None else max_age
 
@@ -218,6 +291,9 @@ class CacheManager:
             data: Data to cache
         """
         try:
+            # Periodic cleanup before adding new entries
+            self._cleanup_memory_cache()
+            
             # Update memory cache first
             self._memory_cache[key] = data
             self._memory_cache_timestamps[key] = time.time()
@@ -942,3 +1018,26 @@ class CacheManager:
                         f"Background Hit Rate: {metrics['background_hit_rate']:.2%}, "
                         f"API Calls Saved: {metrics['api_calls_saved']}, "
                         f"Avg Fetch Time: {metrics['average_fetch_time']:.2f}s")
+    
+    def get_memory_cache_stats(self) -> Dict[str, Any]:
+        """
+        Get statistics about the memory cache.
+        
+        Returns:
+            Dictionary with memory cache statistics
+        """
+        with self._cache_lock:
+            return {
+                'size': len(self._memory_cache),
+                'max_size': self._max_memory_cache_size,
+                'usage_percent': (len(self._memory_cache) / self._max_memory_cache_size * 100) if self._max_memory_cache_size > 0 else 0,
+                'last_cleanup': self._last_memory_cache_cleanup,
+                'cleanup_interval': self._memory_cache_cleanup_interval
+            }
+    
+    def log_memory_cache_stats(self):
+        """Log current memory cache statistics."""
+        stats = self.get_memory_cache_stats()
+        self.logger.info(f"Memory Cache - Size: {stats['size']}/{stats['max_size']} "
+                        f"({stats['usage_percent']:.1f}%), "
+                        f"Last cleanup: {time.time() - stats['last_cleanup']:.1f}s ago")

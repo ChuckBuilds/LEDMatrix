@@ -69,6 +69,7 @@ class FetchResult:
     cached: bool = False
     fetch_time: float = 0.0
     retry_count: int = 0
+    completed_at: float = field(default_factory=time.time)  # Timestamp when request completed
 
 class BackgroundDataService:
     """
@@ -100,6 +101,11 @@ class BackgroundDataService:
         # Thread safety
         self._lock = threading.RLock()
         self._shutdown = False
+        
+        # Cleanup tracking
+        self._max_completed_requests = 500  # Maximum completed requests to keep
+        self._completed_requests_cleanup_interval = 600.0  # Cleanup every 10 minutes
+        self._last_completed_requests_cleanup = time.time()
         
         # Statistics
         self.stats = {
@@ -322,6 +328,9 @@ class BackgroundDataService:
                     (self.stats['completed_requests'] + self.stats['failed_requests'])
                 )
             
+            # Periodic cleanup after storing result
+            self._cleanup_completed_requests()
+            
             # Call callback if provided
             if request.callback:
                 try:
@@ -380,6 +389,9 @@ class BackgroundDataService:
         Returns:
             Fetch result if available, None otherwise
         """
+        # Periodic cleanup
+        self._cleanup_completed_requests()
+        
         with self._lock:
             return self.completed_requests.get(request_id)
     
@@ -393,6 +405,9 @@ class BackgroundDataService:
         Returns:
             True if request is complete, False otherwise
         """
+        # Periodic cleanup
+        self._cleanup_completed_requests()
+        
         with self._lock:
             return request_id in self.completed_requests
     
@@ -445,8 +460,77 @@ class BackgroundDataService:
                 **self.stats,
                 'active_requests': len(self.active_requests),
                 'completed_requests_count': len(self.completed_requests),
-                'queue_size': self.request_queue.qsize()
+                'max_completed_requests': self._max_completed_requests,
+                'completed_requests_usage_percent': (len(self.completed_requests) / self._max_completed_requests * 100) if self._max_completed_requests > 0 else 0,
+                'queue_size': self.request_queue.qsize(),
+                'last_cleanup': self._last_completed_requests_cleanup,
+                'cleanup_interval': self._completed_requests_cleanup_interval
             }
+    
+    def log_memory_stats(self):
+        """Log current memory usage statistics."""
+        stats = self.get_statistics()
+        logger.info(f"BackgroundDataService Memory - Active: {stats['active_requests']}, "
+                   f"Completed: {stats['completed_requests_count']}/{stats['max_completed_requests']} "
+                   f"({stats['completed_requests_usage_percent']:.1f}%), "
+                   f"Last cleanup: {time.time() - stats['last_cleanup']:.1f}s ago")
+    
+    def _cleanup_completed_requests(self, force: bool = False) -> int:
+        """
+        Automatically clean up old completed requests.
+        
+        Args:
+            force: If True, perform cleanup regardless of time interval
+            
+        Returns:
+            Number of requests removed
+        """
+        now = time.time()
+        
+        # Check if cleanup is needed
+        if not force and (now - self._last_completed_requests_cleanup) < self._completed_requests_cleanup_interval:
+            return 0
+        
+        with self._lock:
+            removed_count = 0
+            current_time = time.time()
+            
+            # Remove requests older than 1 hour
+            cutoff_time = current_time - 3600  # 1 hour
+            
+            to_remove = []
+            for request_id, result in self.completed_requests.items():
+                # Check if request is old enough to remove
+                if result.completed_at < cutoff_time:
+                    to_remove.append(request_id)
+            
+            # Also enforce size limit if we have too many requests
+            if len(self.completed_requests) > self._max_completed_requests:
+                # Sort by completion time (oldest first)
+                sorted_requests = sorted(
+                    self.completed_requests.items(),
+                    key=lambda x: x[1].completed_at
+                )
+                
+                # Remove oldest entries until we're under the limit
+                excess_count = len(self.completed_requests) - self._max_completed_requests
+                for i in range(excess_count):
+                    if i < len(sorted_requests):
+                        request_id = sorted_requests[i][0]
+                        if request_id not in to_remove:
+                            to_remove.append(request_id)
+            
+            # Remove the requests
+            for request_id in to_remove:
+                del self.completed_requests[request_id]
+                removed_count += 1
+            
+            self._last_completed_requests_cleanup = current_time
+            
+            if removed_count > 0:
+                logger.debug(f"Cleaned up {removed_count} old completed requests (remaining: {len(self.completed_requests)})")
+            
+            return removed_count
     
     def clear_completed_requests(self, older_than_hours: int = 24):
         """
@@ -460,9 +544,7 @@ class BackgroundDataService:
         with self._lock:
             to_remove = []
             for request_id, result in self.completed_requests.items():
-                # We don't store creation time in results, so we'll use a simple count-based approach
-                # In a real implementation, you'd want to store timestamps
-                if len(self.completed_requests) > 1000:  # Keep last 1000 results
+                if result.completed_at < cutoff_time:
                     to_remove.append(request_id)
             
             for request_id in to_remove:

@@ -228,10 +228,22 @@ class DisplayManager:
         try:
             if self.matrix is None:
                 # Fallback mode - just clear the image
-                self.image = Image.new('RGB', (self.image.width, self.image.height))
+                # Explicitly clear old image reference to help garbage collection
+                old_image = getattr(self, 'image', None)
+                width = old_image.width if old_image else 64
+                height = old_image.height if old_image else 64
+                if old_image is not None:
+                    del old_image
+                
+                self.image = Image.new('RGB', (width, height))
                 self.draw = ImageDraw.Draw(self.image)
                 logger.debug("Cleared display in fallback mode")
                 return
+                
+            # Explicitly clear old image reference to help garbage collection
+            old_image = getattr(self, 'image', None)
+            if old_image is not None:
+                del old_image
                 
             # Create a new black image
             self.image = Image.new('RGB', (self.matrix.width, self.matrix.height))
@@ -717,16 +729,17 @@ class DisplayManager:
 
     def process_deferred_updates(self):
         """Process any deferred updates if not currently scrolling."""
+        current_time = time.time()
+        
+        # Always clean up expired updates, even if scrolling
+        # This prevents memory leaks from accumulated expired updates
+        self._cleanup_expired_deferred_updates(current_time)
+        
         if self.is_currently_scrolling():
             return
             
         if not self._scrolling_state['deferred_updates']:
             return
-        
-        current_time = time.time()
-        
-        # Clean up expired updates first
-        self._cleanup_expired_deferred_updates(current_time)
             
         if not self._scrolling_state['deferred_updates']:
             return

@@ -210,6 +210,11 @@ class DisplayController:
         )
         self._active_dynamic_mode: Optional[str] = None
         
+        # Memory monitoring
+        self._memory_log_interval = 3600.0  # Log memory stats every hour
+        self._last_memory_log = time.time()
+        self._enable_memory_logging = self.config.get("display", {}).get("memory_logging", False)
+        
         # Schedule management
         self.is_display_active = True
         
@@ -576,6 +581,40 @@ class DisplayController:
         if time.time() >= self.on_demand_expires_at:
             logger.info("On-demand mode '%s' expired", self.on_demand_mode)
             self._clear_on_demand(reason='expired')
+    
+    def _log_memory_stats_if_due(self) -> None:
+        """Log memory statistics if logging is enabled and interval has elapsed."""
+        if not self._enable_memory_logging:
+            return
+        
+        current_time = time.time()
+        if (current_time - self._last_memory_log) < self._memory_log_interval:
+            return
+        
+        self._last_memory_log = current_time
+        
+        try:
+            # Log cache manager memory stats
+            if hasattr(self.cache_manager, 'log_memory_cache_stats'):
+                self.cache_manager.log_memory_cache_stats()
+            
+            # Log background service memory stats if available
+            try:
+                from src.background_data_service import get_background_service
+                bg_service = get_background_service()
+                if bg_service and hasattr(bg_service, 'log_memory_stats'):
+                    bg_service.log_memory_stats()
+            except Exception:
+                pass  # Background service may not be initialized
+            
+            # Log deferred updates stats
+            if hasattr(self.display_manager, '_scrolling_state'):
+                deferred_count = len(self.display_manager._scrolling_state.get('deferred_updates', []))
+                if deferred_count > 0:
+                    logger.info(f"Deferred Updates Queue: {deferred_count} pending updates")
+            
+        except Exception as e:
+            logger.debug(f"Error logging memory stats: {e}")
 
     def _check_live_priority(self):
         """
@@ -619,6 +658,10 @@ class DisplayController:
                 self._poll_on_demand_requests()
                 self._check_on_demand_expiration()
                 self._tick_plugin_updates()
+                
+                # Periodic memory monitoring (if enabled)
+                if self._enable_memory_logging:
+                    self._log_memory_stats_if_due()
 
                 # Check the schedule
                 self._check_schedule()
@@ -638,6 +681,7 @@ class DisplayController:
                 # Each plugin has its own update_interval and background services
                 
                 # Process any deferred updates that may have accumulated
+                # This also cleans up expired updates to prevent memory leaks
                 self.display_manager.process_deferred_updates()
 
                 # Check for live priority content and switch to it immediately
