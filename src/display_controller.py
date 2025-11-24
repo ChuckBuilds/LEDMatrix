@@ -286,13 +286,25 @@ class DisplayController:
         # Update all loaded plugins
         plugins_dict = getattr(self.plugin_manager, 'loaded_plugins', None) or getattr(self.plugin_manager, 'plugins', {})
         for plugin_id, plugin_instance in plugins_dict.items():
+            # Check circuit breaker before attempting update
+            if hasattr(self.plugin_manager, 'health_tracker') and self.plugin_manager.health_tracker:
+                if self.plugin_manager.health_tracker.should_skip_plugin(plugin_id):
+                    logger.debug(f"Skipping update for plugin {plugin_id} due to circuit breaker")
+                    continue
+            
             try:
                 if hasattr(plugin_instance, 'update'):
                     plugin_instance.update()
                     if hasattr(self.plugin_manager, 'plugin_last_update'):
                         self.plugin_manager.plugin_last_update[plugin_id] = time.time()
-            except Exception:  # pylint: disable=broad-except
+                    # Record success
+                    if hasattr(self.plugin_manager, 'health_tracker') and self.plugin_manager.health_tracker:
+                        self.plugin_manager.health_tracker.record_success(plugin_id)
+            except Exception as exc:  # pylint: disable=broad-except
                 logger.exception("Error updating plugin %s", plugin_id)
+                # Record failure
+                if hasattr(self.plugin_manager, 'health_tracker') and self.plugin_manager.health_tracker:
+                    self.plugin_manager.health_tracker.record_failure(plugin_id, exc)
 
     def _tick_plugin_updates(self):
         """Run scheduled plugin updates if the plugin manager supports them."""
@@ -714,6 +726,17 @@ class DisplayController:
                 if active_mode in self.plugin_modes:
                     plugin_instance = self.plugin_modes[active_mode]
                     if hasattr(plugin_instance, 'display'):
+                        # Check plugin health before attempting to display
+                        plugin_id = getattr(plugin_instance, 'plugin_id', active_mode)
+                        should_skip = False
+                        if self.plugin_manager and hasattr(self.plugin_manager, 'health_tracker') and self.plugin_manager.health_tracker:
+                            should_skip = self.plugin_manager.health_tracker.should_skip_plugin(plugin_id)
+                            if should_skip:
+                                logger.debug(f"Skipping plugin {plugin_id} due to circuit breaker (mode: {active_mode})")
+                                display_result = False
+                                # Skip to next mode - let existing logic handle it
+                                manager_to_display = None
+                        
                         manager_to_display = plugin_instance
                         logger.debug(f"Found plugin manager for mode {active_mode}: {type(plugin_instance).__name__}")
                     else:
@@ -724,23 +747,43 @@ class DisplayController:
                 # Display the current mode
                 display_result = True  # Default to True for backward compatibility
                 if manager_to_display:
+                    plugin_id = getattr(manager_to_display, 'plugin_id', active_mode)
                     try:
                         logger.debug(f"Calling display() for {active_mode} with force_clear={self.force_change}")
                         if hasattr(manager_to_display, 'display'):
                             # Check if plugin accepts display_mode parameter
                             import inspect
                             sig = inspect.signature(manager_to_display.display)
-                            if 'display_mode' in sig.parameters:
-                                result = manager_to_display.display(display_mode=active_mode, force_clear=self.force_change)
+                            
+                            # Monitor resource usage if available
+                            if self.plugin_manager and hasattr(self.plugin_manager, 'resource_monitor') and self.plugin_manager.resource_monitor:
+                                def display_wrapper():
+                                    if 'display_mode' in sig.parameters:
+                                        return manager_to_display.display(display_mode=active_mode, force_clear=self.force_change)
+                                    else:
+                                        return manager_to_display.display(force_clear=self.force_change)
+                                result = self.plugin_manager.resource_monitor.monitor_call(plugin_id, display_wrapper)
                             else:
-                                result = manager_to_display.display(force_clear=self.force_change)
+                                if 'display_mode' in sig.parameters:
+                                    result = manager_to_display.display(display_mode=active_mode, force_clear=self.force_change)
+                                else:
+                                    result = manager_to_display.display(force_clear=self.force_change)
+                            
                             logger.debug(f"display() returned: {result}")
                             # Check if display() returned a boolean (new behavior)
                             if isinstance(result, bool):
                                 display_result = result
+                        
+                        # Record success if display completed without exception
+                        if self.plugin_manager and hasattr(self.plugin_manager, 'health_tracker') and self.plugin_manager.health_tracker:
+                            self.plugin_manager.health_tracker.record_success(plugin_id)
+                        
                         self.force_change = False
-                    except Exception:  # pylint: disable=broad-except
+                    except Exception as exc:  # pylint: disable=broad-except
                         logger.exception("Error displaying %s", self.current_display_mode)
+                        # Record failure
+                        if self.plugin_manager and hasattr(self.plugin_manager, 'health_tracker') and self.plugin_manager.health_tracker:
+                            self.plugin_manager.health_tracker.record_failure(plugin_id, exc)
                         self.force_change = True
                         display_result = False
                 

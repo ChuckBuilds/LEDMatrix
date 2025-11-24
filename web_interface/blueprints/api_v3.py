@@ -967,6 +967,234 @@ def get_installed_plugins():
         print(error_details)
         return jsonify({'status': 'error', 'message': str(e), 'details': error_details}), 500
 
+@api_v3.route('/plugins/health', methods=['GET'])
+def get_plugin_health():
+    """Get health metrics for all plugins"""
+    try:
+        if not api_v3.plugin_manager:
+            return jsonify({'status': 'error', 'message': 'Plugin manager not initialized'}), 500
+        
+        # Check if health tracker is available
+        if not hasattr(api_v3.plugin_manager, 'health_tracker') or not api_v3.plugin_manager.health_tracker:
+            return jsonify({
+                'status': 'success',
+                'data': {},
+                'message': 'Health tracking not available'
+            })
+        
+        # Get health summaries for all plugins
+        health_summaries = api_v3.plugin_manager.health_tracker.get_all_health_summaries()
+        
+        return jsonify({
+            'status': 'success',
+            'data': health_summaries
+        })
+    except Exception as e:
+        import traceback
+        error_details = traceback.format_exc()
+        print(f"Error in get_plugin_health: {str(e)}")
+        print(error_details)
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+@api_v3.route('/plugins/health/<plugin_id>', methods=['GET'])
+def get_plugin_health_single(plugin_id):
+    """Get health metrics for a specific plugin"""
+    try:
+        if not api_v3.plugin_manager:
+            return jsonify({'status': 'error', 'message': 'Plugin manager not initialized'}), 500
+        
+        # Check if health tracker is available
+        if not hasattr(api_v3.plugin_manager, 'health_tracker') or not api_v3.plugin_manager.health_tracker:
+            return jsonify({
+                'status': 'error',
+                'message': 'Health tracking not available'
+            }), 503
+        
+        # Get health summary for specific plugin
+        health_summary = api_v3.plugin_manager.health_tracker.get_health_summary(plugin_id)
+        
+        return jsonify({
+            'status': 'success',
+            'data': health_summary
+        })
+    except Exception as e:
+        import traceback
+        error_details = traceback.format_exc()
+        print(f"Error in get_plugin_health_single: {str(e)}")
+        print(error_details)
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+@api_v3.route('/plugins/health/<plugin_id>/reset', methods=['POST'])
+def reset_plugin_health(plugin_id):
+    """Reset health state for a plugin (manual recovery)"""
+    try:
+        if not api_v3.plugin_manager:
+            return jsonify({'status': 'error', 'message': 'Plugin manager not initialized'}), 500
+        
+        # Check if health tracker is available
+        if not hasattr(api_v3.plugin_manager, 'health_tracker') or not api_v3.plugin_manager.health_tracker:
+            return jsonify({
+                'status': 'error',
+                'message': 'Health tracking not available'
+            }), 503
+        
+        # Reset health state
+        api_v3.plugin_manager.health_tracker.reset_health(plugin_id)
+        
+        return jsonify({
+            'status': 'success',
+            'message': f'Health state reset for plugin {plugin_id}'
+        })
+    except Exception as e:
+        import traceback
+        error_details = traceback.format_exc()
+        print(f"Error in reset_plugin_health: {str(e)}")
+        print(error_details)
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+@api_v3.route('/plugins/metrics', methods=['GET'])
+def get_plugin_metrics():
+    """Get resource metrics for all plugins"""
+    try:
+        if not api_v3.plugin_manager:
+            return jsonify({'status': 'error', 'message': 'Plugin manager not initialized'}), 500
+        
+        # Check if resource monitor is available
+        if not hasattr(api_v3.plugin_manager, 'resource_monitor') or not api_v3.plugin_manager.resource_monitor:
+            return jsonify({
+                'status': 'success',
+                'data': {},
+                'message': 'Resource monitoring not available'
+            })
+        
+        # Get metrics summaries for all plugins
+        metrics_summaries = api_v3.plugin_manager.resource_monitor.get_all_metrics_summaries()
+        
+        return jsonify({
+            'status': 'success',
+            'data': metrics_summaries
+        })
+    except Exception as e:
+        import traceback
+        error_details = traceback.format_exc()
+        print(f"Error in get_plugin_metrics: {str(e)}")
+        print(error_details)
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+@api_v3.route('/plugins/metrics/<plugin_id>', methods=['GET'])
+def get_plugin_metrics_single(plugin_id):
+    """Get resource metrics for a specific plugin"""
+    try:
+        if not api_v3.plugin_manager:
+            return jsonify({'status': 'error', 'message': 'Plugin manager not initialized'}), 500
+        
+        # Check if resource monitor is available
+        if not hasattr(api_v3.plugin_manager, 'resource_monitor') or not api_v3.plugin_manager.resource_monitor:
+            return jsonify({
+                'status': 'error',
+                'message': 'Resource monitoring not available'
+            }), 503
+        
+        # Get metrics summary for specific plugin
+        metrics_summary = api_v3.plugin_manager.resource_monitor.get_metrics_summary(plugin_id)
+        
+        return jsonify({
+            'status': 'success',
+            'data': metrics_summary
+        })
+    except Exception as e:
+        import traceback
+        error_details = traceback.format_exc()
+        print(f"Error in get_plugin_metrics_single: {str(e)}")
+        print(error_details)
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+@api_v3.route('/plugins/metrics/<plugin_id>/reset', methods=['POST'])
+def reset_plugin_metrics(plugin_id):
+    """Reset metrics for a plugin"""
+    try:
+        if not api_v3.plugin_manager:
+            return jsonify({'status': 'error', 'message': 'Plugin manager not initialized'}), 500
+        
+        # Check if resource monitor is available
+        if not hasattr(api_v3.plugin_manager, 'resource_monitor') or not api_v3.plugin_manager.resource_monitor:
+            return jsonify({
+                'status': 'error',
+                'message': 'Resource monitoring not available'
+            }), 503
+        
+        # Reset metrics
+        api_v3.plugin_manager.resource_monitor.reset_metrics(plugin_id)
+        
+        return jsonify({
+            'status': 'success',
+            'message': f'Metrics reset for plugin {plugin_id}'
+        })
+    except Exception as e:
+        import traceback
+        error_details = traceback.format_exc()
+        print(f"Error in reset_plugin_metrics: {str(e)}")
+        print(error_details)
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+@api_v3.route('/plugins/limits/<plugin_id>', methods=['GET', 'POST'])
+def manage_plugin_limits(plugin_id):
+    """Get or set resource limits for a plugin"""
+    try:
+        if not api_v3.plugin_manager:
+            return jsonify({'status': 'error', 'message': 'Plugin manager not initialized'}), 500
+        
+        # Check if resource monitor is available
+        if not hasattr(api_v3.plugin_manager, 'resource_monitor') or not api_v3.plugin_manager.resource_monitor:
+            return jsonify({
+                'status': 'error',
+                'message': 'Resource monitoring not available'
+            }), 503
+        
+        if request.method == 'GET':
+            # Get limits
+            limits = api_v3.plugin_manager.resource_monitor.get_limits(plugin_id)
+            if limits:
+                return jsonify({
+                    'status': 'success',
+                    'data': {
+                        'max_memory_mb': limits.max_memory_mb,
+                        'max_cpu_percent': limits.max_cpu_percent,
+                        'max_execution_time': limits.max_execution_time,
+                        'warning_threshold': limits.warning_threshold
+                    }
+                })
+            else:
+                return jsonify({
+                    'status': 'success',
+                    'data': None,
+                    'message': 'No limits configured for this plugin'
+                })
+        else:
+            # POST - Set limits
+            data = request.get_json() or {}
+            from src.plugin_system.resource_monitor import ResourceLimits
+            
+            limits = ResourceLimits(
+                max_memory_mb=data.get('max_memory_mb'),
+                max_cpu_percent=data.get('max_cpu_percent'),
+                max_execution_time=data.get('max_execution_time'),
+                warning_threshold=data.get('warning_threshold', 0.8)
+            )
+            
+            api_v3.plugin_manager.resource_monitor.set_limits(plugin_id, limits)
+            
+            return jsonify({
+                'status': 'success',
+                'message': f'Resource limits updated for plugin {plugin_id}'
+            })
+    except Exception as e:
+        import traceback
+        error_details = traceback.format_exc()
+        print(f"Error in manage_plugin_limits: {str(e)}")
+        print(error_details)
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
 @api_v3.route('/plugins/toggle', methods=['POST'])
 def toggle_plugin():
     """Toggle plugin enabled/disabled"""

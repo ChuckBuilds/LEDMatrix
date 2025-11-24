@@ -55,6 +55,24 @@ class PluginManager:
         self.plugin_modules: Dict[str, Any] = {}
         self.plugin_last_update: Dict[str, float] = {}
         
+        # Initialize health tracker
+        try:
+            from .plugin_health import PluginHealthTracker
+            self.health_tracker = PluginHealthTracker(cache_manager)
+            self.logger.info("Plugin health tracking enabled")
+        except Exception as e:  # pylint: disable=broad-except
+            self.logger.warning(f"Failed to initialize health tracker: {e}")
+            self.health_tracker = None
+        
+        # Initialize resource monitor
+        try:
+            from .resource_monitor import PluginResourceMonitor
+            self.resource_monitor = PluginResourceMonitor(cache_manager)
+            self.logger.info("Plugin resource monitoring enabled")
+        except Exception as e:  # pylint: disable=broad-except
+            self.logger.warning(f"Failed to initialize resource monitor: {e}")
+            self.resource_monitor = None
+        
         # Ensure plugins directory exists
         # Check if directory already exists first (handle permission errors gracefully)
         try:
@@ -862,6 +880,7 @@ class PluginManager:
     def run_scheduled_updates(self, current_time: Optional[float] = None) -> None:
         """
         Trigger plugin updates based on their defined update intervals.
+        Includes health tracking and circuit breaker logic.
         """
         if current_time is None:
             current_time = time.time()
@@ -873,6 +892,10 @@ class PluginManager:
             if not hasattr(plugin_instance, "update"):
                 continue
 
+            # Check circuit breaker before attempting update
+            if self.health_tracker and self.health_tracker.should_skip_plugin(plugin_id):
+                continue
+
             interval = self._get_plugin_update_interval(plugin_id, plugin_instance)
             if interval is None:
                 continue
@@ -881,8 +904,18 @@ class PluginManager:
 
             if last_update == 0.0 or (current_time - last_update) >= interval:
                 try:
-                    plugin_instance.update()
+                    # Monitor resource usage
+                    if self.resource_monitor:
+                        self.resource_monitor.monitor_call(plugin_id, plugin_instance.update)
+                    else:
+                        plugin_instance.update()
                     self.plugin_last_update[plugin_id] = current_time
+                    # Record success
+                    if self.health_tracker:
+                        self.health_tracker.record_success(plugin_id)
                 except Exception as exc:  # pylint: disable=broad-except
                     self.logger.exception("Error updating plugin %s: %s", plugin_id, exc)
+                    # Record failure
+                    if self.health_tracker:
+                        self.health_tracker.record_failure(plugin_id, exc)
 
