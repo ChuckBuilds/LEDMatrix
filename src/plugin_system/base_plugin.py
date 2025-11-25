@@ -9,7 +9,7 @@ Stability: Stable - maintains backward compatibility
 """
 
 from abc import ABC, abstractmethod
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 import logging
 from PIL import Image
 
@@ -42,10 +42,10 @@ class BasePlugin(ABC):
         self,
         plugin_id: str,
         config: Dict[str, Any],
-        display_manager,
-        cache_manager,
-        plugin_manager,
-    ):
+        display_manager: Any,
+        cache_manager: Any,
+        plugin_manager: Any,
+    ) -> None:
         """
         Standard initialization for all plugins.
 
@@ -56,40 +56,56 @@ class BasePlugin(ABC):
             cache_manager: Shared cache manager instance for data persistence
             plugin_manager: Reference to plugin manager for inter-plugin communication
         """
-        self.plugin_id = plugin_id
-        self.config = config
-        self.display_manager = display_manager
-        self.cache_manager = cache_manager
-        self.plugin_manager = plugin_manager
-        self.logger = logging.getLogger(f"plugin.{plugin_id}")
-        self.enabled = config.get("enabled", True)
+        self.plugin_id: str = plugin_id
+        self.config: Dict[str, Any] = config
+        self.display_manager: Any = display_manager
+        self.cache_manager: Any = cache_manager
+        self.plugin_manager: Any = plugin_manager
+        self.logger: logging.Logger = get_logger(f"plugin.{plugin_id}", plugin_id=plugin_id)
+        self.enabled: bool = config.get("enabled", True)
 
         # Initialize transition system
-        self.transition_manager = None
-        self.high_performance_mode = config.get("high_performance_transitions", False)
+        self.transition_manager: Optional[Any] = None
+        self.high_performance_mode: bool = config.get("high_performance_transitions", False)
+        self.transition_manager = self._initialize_transitions(display_manager)
+
+        # Load transition configuration
+        self.transition_config: Dict[str, Any] = self._load_transition_config()
+
+        self.logger.info("Initialized plugin: %s", plugin_id)
+
+    def _initialize_transitions(self, display_manager: Any) -> Optional[Any]:
+        """
+        Initialize the transition system based on configuration.
         
+        Tries high-performance transitions first if enabled, falls back to
+        standard transitions if available.
+        
+        Args:
+            display_manager: Display manager instance
+            
+        Returns:
+            Transition manager instance or None if unavailable
+        """
         if self.high_performance_mode and HighPerformanceDisplayTransitions:
             try:
-                self.transition_manager = create_high_performance_transition_manager(display_manager)
+                transition_manager = create_high_performance_transition_manager(display_manager)
                 self.logger.info("High-performance transition system enabled (120 FPS)")
+                return transition_manager
             except Exception as e:  # pylint: disable=broad-except
                 self.logger.warning(
                     "Failed to initialize high-performance transitions: %s", e
                 )
-                self.transition_manager = None
         
-        if not self.transition_manager and DisplayTransitions and display_manager:
+        if DisplayTransitions and display_manager:
             try:
-                self.transition_manager = DisplayTransitions(display_manager)
+                transition_manager = DisplayTransitions(display_manager)
                 self.logger.info("Standard transition system enabled (30 FPS)")
+                return transition_manager
             except Exception as e:  # pylint: disable=broad-except
                 self.logger.warning("Failed to initialize transition system: %s", e)
-                self.transition_manager = None
-
-        # Load transition configuration
-        self.transition_config = self._load_transition_config()
-
-        self.logger.info("Initialized plugin: %s", plugin_id)
+        
+        return None
 
     @abstractmethod
     def update(self) -> None:
@@ -264,7 +280,7 @@ class BasePlugin(ABC):
         """
         return False
 
-    def get_live_modes(self) -> list:
+    def get_live_modes(self) -> List[str]:
         """
         Get list of display modes that should be used during live priority takeover.
 

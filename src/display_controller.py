@@ -6,22 +6,15 @@ from typing import Dict, Any, List, Optional
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed  # pylint: disable=no-name-in-module
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s.%(msecs)03d - %(levelname)s:%(name)s:%(message)s',
-    datefmt='%H:%M:%S',
-    stream=sys.stdout
-)
-
 # Core system imports only - all functionality now handled via plugins
 from src.display_manager import DisplayManager
 from src.config_manager import ConfigManager
 from src.cache_manager import CacheManager
 from src.font_manager import FontManager
+from src.logging_config import get_logger
 
-# Get logger without configuring
-logger = logging.getLogger(__name__)
+# Get logger with consistent configuration
+logger = get_logger(__name__)
 DEFAULT_DYNAMIC_DURATION_CAP = 180.0
 
 class DisplayController:
@@ -33,6 +26,24 @@ class DisplayController:
         self.config = self.config_manager.load_config()
         self.cache_manager = CacheManager()
         logger.info("Config loaded in %.3f seconds", time.time() - start_time)
+        
+        # Validate startup configuration
+        try:
+            from src.startup_validator import StartupValidator
+            validator = StartupValidator(self.config_manager)
+            is_valid, errors, warnings = validator.validate_all()
+            
+            if warnings:
+                for warning in warnings:
+                    logger.warning(f"Startup validation warning: {warning}")
+            
+            if not is_valid:
+                error_msg = "Startup validation failed:\n" + "\n".join(f"  - {e}" for e in errors)
+                logger.error(error_msg)
+                # For now, log errors but continue - can be made stricter later
+                # validator.raise_on_errors()  # Uncomment to fail fast on errors
+        except Exception as e:
+            logger.warning(f"Startup validation could not be completed: {e}")
         
         config_time = time.time()
         self.display_manager = DisplayManager(self.config)
@@ -103,6 +114,22 @@ class DisplayController:
                 cache_manager=self.cache_manager,
                 font_manager=self.font_manager
             )
+            
+            # Validate plugins after plugin manager is created
+            try:
+                from src.startup_validator import StartupValidator
+                validator = StartupValidator(self.config_manager, self.plugin_manager)
+                is_valid, errors, warnings = validator.validate_all()
+                
+                if warnings:
+                    for warning in warnings:
+                        logger.warning(f"Plugin validation warning: {warning}")
+                
+                if not is_valid:
+                    error_msg = "Plugin validation failed:\n" + "\n".join(f"  - {e}" for e in errors)
+                    logger.error(error_msg)
+            except Exception as e:
+                logger.warning(f"Plugin validation could not be completed: {e}")
 
             # Discover plugins
             discovered_plugins = self.plugin_manager.discover_plugins()

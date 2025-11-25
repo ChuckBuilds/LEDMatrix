@@ -301,6 +301,9 @@ def get_logger(name: str, level: int = logging.INFO) -> logging.Logger:
     """
     Get a logger with consistent configuration.
     
+    Note: This function is deprecated. Use src.logging_config.get_logger() instead.
+    This function is kept for backward compatibility.
+    
     Args:
         name: Logger name
         level: Log level
@@ -308,15 +311,21 @@ def get_logger(name: str, level: int = logging.INFO) -> logging.Logger:
     Returns:
         Configured logger
     """
-    logger = logging.getLogger(name)
-    logger.setLevel(level)
-    
-    if not logger.handlers:
-        handler = logging.StreamHandler()
-        formatter = logging.Formatter(
-            '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-        )
-        handler.setFormatter(formatter)
-        logger.addHandler(handler)
-    
-    return logger
+    # Use centralized logging configuration
+    try:
+        from src.logging_config import get_logger as get_logger_centralized
+        return get_logger_centralized(name)
+    except ImportError:
+        # Fallback to basic logging if centralized config not available
+        logger = logging.getLogger(name)
+        logger.setLevel(level)
+        
+        if not logger.handlers:
+            handler = logging.StreamHandler()
+            formatter = logging.Formatter(
+                '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+            )
+            handler.setFormatter(formatter)
+            logger.addHandler(handler)
+        
+        return logger

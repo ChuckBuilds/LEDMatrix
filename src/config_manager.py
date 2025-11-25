@@ -1,14 +1,17 @@
 import json
 import os
+import logging
 from typing import Dict, Any, Optional
+from src.exceptions import ConfigError
 
 class ConfigManager:
-    def __init__(self, config_path: str = None, secrets_path: str = None):
+    def __init__(self, config_path: Optional[str] = None, secrets_path: Optional[str] = None) -> None:
         # Use current working directory as base
-        self.config_path = config_path or "config/config.json"
-        self.secrets_path = secrets_path or "config/config_secrets.json"
-        self.template_path = "config/config.template.json"
+        self.config_path: str = config_path or "config/config.json"
+        self.secrets_path: str = secrets_path or "config/config_secrets.json"
+        self.template_path: str = "config/config.template.json"
         self.config: Dict[str, Any] = {}
+        self.logger: logging.Logger = get_logger(__name__)
 
     def get_config_path(self) -> str:
         return self.config_path
@@ -24,7 +27,7 @@ class ConfigManager:
                 self._create_config_from_template()
             
             # Load main config
-            print(f"Attempting to load config from: {os.path.abspath(self.config_path)}")
+            self.logger.info(f"Attempting to load config from: {os.path.abspath(self.config_path)}")
             with open(self.config_path, 'r') as f:
                 self.config = json.load(f)
 
@@ -39,23 +42,30 @@ class ConfigManager:
                         # Deep merge secrets into config
                         self._deep_merge(self.config, secrets)
                 except PermissionError as e:
-                    print(f"Secrets file not readable ({self.secrets_path}): {e}. Continuing without secrets.")
+                    self.logger.warning(f"Secrets file not readable ({self.secrets_path}): {e}. Continuing without secrets.")
                 except (json.JSONDecodeError, OSError) as e:
-                    print(f"Error reading secrets file ({self.secrets_path}): {e}. Continuing without secrets.")
+                    self.logger.warning(f"Error reading secrets file ({self.secrets_path}): {e}. Continuing without secrets.")
             
             return self.config
             
         except FileNotFoundError as e:
             if str(e).find('config_secrets.json') == -1:  # Only raise if main config is missing
-                print(f"Configuration file not found at {os.path.abspath(self.config_path)}")
-                raise
+                error_msg = f"Configuration file not found at {os.path.abspath(self.config_path)}"
+                self.logger.error(error_msg, exc_info=True)
+                raise ConfigError(error_msg, config_path=self.config_path) from e
             return self.config
-        except json.JSONDecodeError:
-            print("Error parsing configuration file")
-            raise
+        except json.JSONDecodeError as e:
+            error_msg = f"Error parsing configuration file {os.path.abspath(self.config_path)}"
+            self.logger.error(error_msg, exc_info=True)
+            raise ConfigError(error_msg, config_path=self.config_path) from e
+        except (IOError, OSError, PermissionError) as e:
+            error_msg = f"Error loading configuration from {os.path.abspath(self.config_path)}"
+            self.logger.error(error_msg, exc_info=True)
+            raise ConfigError(error_msg, config_path=self.config_path) from e
         except Exception as e:
-            print(f"Error loading configuration: {str(e)}")
-            raise
+            error_msg = f"Unexpected error loading configuration: {str(e)}"
+            self.logger.error(error_msg, exc_info=True)
+            raise ConfigError(error_msg, config_path=self.config_path) from e
 
     def _strip_secrets_recursive(self, data_to_filter: Dict[str, Any], secrets: Dict[str, Any]) -> Dict[str, Any]:
         """Recursively remove secret keys from a dictionary."""
@@ -81,7 +91,7 @@ class ConfigManager:
                 with open(self.secrets_path, 'r') as f_secrets:
                     secrets_content = json.load(f_secrets)
             except Exception as e:
-                print(f"Warning: Could not load secrets file {self.secrets_path} during save: {e}")
+                self.logger.warning(f"Could not load secrets file {self.secrets_path} during save: {e}")
                 # Continue without stripping if secrets can't be loaded, or handle as critical error
                 # For now, we'll proceed cautiously and save the full new_config_data if secrets are unreadable
                 # to prevent accidental data loss if the secrets file is temporarily corrupt.
@@ -95,16 +105,18 @@ class ConfigManager:
             
             # Update the in-memory config to the new state (which includes secrets for runtime)
             self.config = new_config_data 
-            print(f"Configuration successfully saved to {os.path.abspath(self.config_path)}")
+            self.logger.info(f"Configuration successfully saved to {os.path.abspath(self.config_path)}")
             if secrets_content:
-                 print("Secret values were preserved in memory and not written to the main config file.")
+                 self.logger.info("Secret values were preserved in memory and not written to the main config file.")
 
-        except IOError as e:
-            print(f"Error writing configuration to file {os.path.abspath(self.config_path)}: {e}")
-            raise
+        except (IOError, OSError, PermissionError) as e:
+            error_msg = f"Error writing configuration to file {os.path.abspath(self.config_path)}"
+            self.logger.error(error_msg, exc_info=True)
+            raise ConfigError(error_msg, config_path=self.config_path) from e
         except Exception as e:
-            print(f"An unexpected error occurred while saving configuration: {str(e)}")
-            raise
+            error_msg = f"Unexpected error occurred while saving configuration: {str(e)}"
+            self.logger.error(error_msg, exc_info=True)
+            raise ConfigError(error_msg, config_path=self.config_path) from e
 
     def get_secret(self, key: str) -> Optional[Any]:
         """Get a secret value by key."""
@@ -115,10 +127,10 @@ class ConfigManager:
                 secrets = json.load(f)
                 return secrets.get(key)
         except (json.JSONDecodeError, IOError) as e:
-            print(f"Error reading secrets file: {e}")
+            self.logger.error(f"Error reading secrets file: {e}")
             return None
 
-    def _deep_merge(self, target: Dict, source: Dict) -> None:
+    def _deep_merge(self, target: Dict[str, Any], source: Dict[str, Any]) -> None:
         """Deep merge source dict into target dict."""
         for key, value in source.items():
             if key in target and isinstance(target[key], dict) and isinstance(value, dict):
@@ -129,9 +141,11 @@ class ConfigManager:
     def _create_config_from_template(self) -> None:
         """Create config.json from template if it doesn't exist."""
         if not os.path.exists(self.template_path):
-            raise FileNotFoundError(f"Template file not found at {os.path.abspath(self.template_path)}")
+            error_msg = f"Template file not found at {os.path.abspath(self.template_path)}"
+            self.logger.error(error_msg)
+            raise ConfigError(error_msg, config_path=self.template_path)
         
-        print(f"Creating config.json from template at {os.path.abspath(self.template_path)}")
+        self.logger.info(f"Creating config.json from template at {os.path.abspath(self.template_path)}")
         
         # Ensure config directory exists
         os.makedirs(os.path.dirname(self.config_path), exist_ok=True)
@@ -143,12 +157,12 @@ class ConfigManager:
         with open(self.config_path, 'w') as config_file:
             json.dump(template_data, config_file, indent=4)
         
-        print(f"Created config.json from template at {os.path.abspath(self.config_path)}")
+        self.logger.info(f"Created config.json from template at {os.path.abspath(self.config_path)}")
 
     def _migrate_config(self) -> None:
         """Migrate config to add new items from template with defaults."""
         if not os.path.exists(self.template_path):
-            print(f"Template file not found at {os.path.abspath(self.template_path)}, skipping migration")
+            self.logger.warning(f"Template file not found at {os.path.abspath(self.template_path)}, skipping migration")
             return
         
         try:
@@ -157,13 +171,13 @@ class ConfigManager:
             
             # Check if migration is needed
             if self._config_needs_migration(self.config, template_config):
-                print("Config migration needed - adding new configuration items with defaults")
+                self.logger.info("Config migration needed - adding new configuration items with defaults")
                 
                 # Create backup of current config
                 backup_path = f"{self.config_path}.backup"
                 with open(backup_path, 'w') as backup_file:
                     json.dump(self.config, backup_file, indent=4)
-                print(f"Created backup of current config at {os.path.abspath(backup_path)}")
+                self.logger.info(f"Created backup of current config at {os.path.abspath(backup_path)}")
                 
                 # Merge template defaults into current config
                 self._merge_template_defaults(self.config, template_config)
@@ -172,12 +186,12 @@ class ConfigManager:
                 with open(self.config_path, 'w') as f:
                     json.dump(self.config, f, indent=4)
                 
-                print(f"Config migration completed and saved to {os.path.abspath(self.config_path)}")
+                self.logger.info(f"Config migration completed and saved to {os.path.abspath(self.config_path)}")
             else:
-                print("Config is up to date, no migration needed")
+                self.logger.debug("Config is up to date, no migration needed")
                 
         except Exception as e:
-            print(f"Error during config migration: {e}")
+            self.logger.error(f"Error during config migration: {e}")
             # Don't raise - continue with current config
 
     def _config_needs_migration(self, current_config: Dict[str, Any], template_config: Dict[str, Any]) -> bool:
@@ -200,7 +214,7 @@ class ConfigManager:
             if key not in current:
                 # Add new key with template value
                 current[key] = value
-                print(f"Added new config key: {key}")
+                self.logger.debug(f"Added new config key: {key}")
             elif isinstance(value, dict) and isinstance(current[key], dict):
                 # Recursively merge nested dictionaries
                 self._merge_template_defaults(current[key], value)
@@ -242,18 +256,25 @@ class ConfigManager:
             # If a secrets file doesn't exist, it's not an error, just return empty
             if file_type == "secrets":
                 return {}
-            print(f"{file_type.capitalize()} configuration file not found at {os.path.abspath(path_to_load)}")
-            raise FileNotFoundError(f"{file_type.capitalize()} configuration file not found at {os.path.abspath(path_to_load)}")
+            error_msg = f"{file_type.capitalize()} configuration file not found at {os.path.abspath(path_to_load)}"
+            self.logger.error(error_msg)
+            raise ConfigError(error_msg, config_path=path_to_load)
 
         try:
             with open(path_to_load, 'r') as f:
                 return json.load(f)
-        except json.JSONDecodeError:
-            print(f"Error parsing {file_type} configuration file: {path_to_load}")
-            raise
+        except json.JSONDecodeError as e:
+            error_msg = f"Error parsing {file_type} configuration file: {path_to_load}"
+            self.logger.error(error_msg, exc_info=True)
+            raise ConfigError(error_msg, config_path=path_to_load) from e
+        except (IOError, OSError, PermissionError) as e:
+            error_msg = f"Error loading {file_type} configuration file {path_to_load}: {str(e)}"
+            self.logger.error(error_msg, exc_info=True)
+            raise ConfigError(error_msg, config_path=path_to_load) from e
         except Exception as e:
-            print(f"Error loading {file_type} configuration file {path_to_load}: {str(e)}")
-            raise
+            error_msg = f"Unexpected error loading {file_type} configuration file {path_to_load}: {str(e)}"
+            self.logger.error(error_msg, exc_info=True)
+            raise ConfigError(error_msg, config_path=path_to_load) from e
 
     def save_raw_file_content(self, file_type: str, data: Dict[str, Any]) -> None:
         """Save data directly to 'main' config or 'secrets' config file."""
@@ -270,19 +291,21 @@ class ConfigManager:
             os.makedirs(os.path.dirname(path_to_save), exist_ok=True)
             with open(path_to_save, 'w') as f:
                 json.dump(data, f, indent=4)
-            print(f"{file_type.capitalize()} configuration successfully saved to {os.path.abspath(path_to_save)}")
+            self.logger.info(f"{file_type.capitalize()} configuration successfully saved to {os.path.abspath(path_to_save)}")
             
             # If we just saved the main config or secrets, the merged self.config might be stale.
             # Reload it to reflect the new state.
             if file_type == "main" or file_type == "secrets":
                 self.load_config()
 
-        except IOError as e:
-            print(f"Error writing {file_type} configuration to file {os.path.abspath(path_to_save)}: {e}")
-            raise
+        except (IOError, OSError, PermissionError) as e:
+            error_msg = f"Error writing {file_type} configuration to file {os.path.abspath(path_to_save)}"
+            self.logger.error(error_msg, exc_info=True)
+            raise ConfigError(error_msg, config_path=path_to_save) from e
         except Exception as e:
-            print(f"An unexpected error occurred while saving {file_type} configuration: {str(e)}")
-            raise
+            error_msg = f"Unexpected error occurred while saving {file_type} configuration: {str(e)}"
+            self.logger.error(error_msg, exc_info=True)
+            raise ConfigError(error_msg, config_path=path_to_save) from e
     
     def cleanup_plugin_config(self, plugin_id: str, remove_secrets: bool = True) -> None:
         """
@@ -301,19 +324,20 @@ class ConfigManager:
             if plugin_id in main_config:
                 del main_config[plugin_id]
                 self.save_raw_file_content('main', main_config)
-                print(f"Removed plugin {plugin_id} from main configuration")
+                self.logger.info(f"Removed plugin {plugin_id} from main configuration")
             
             # Remove plugin from secrets config if requested
             if remove_secrets and plugin_id in secrets_config:
                 del secrets_config[plugin_id]
                 self.save_raw_file_content('secrets', secrets_config)
-                print(f"Removed plugin {plugin_id} from secrets configuration")
+                self.logger.info(f"Removed plugin {plugin_id} from secrets configuration")
                 
         except Exception as e:
-            print(f"Error cleaning up plugin config for {plugin_id}: {e}")
-            raise
+            error_msg = f"Error cleaning up plugin config for {plugin_id}"
+            self.logger.error(error_msg, exc_info=True)
+            raise ConfigError(error_msg, config_path=self.config_path, field=plugin_id) from e
     
-    def cleanup_orphaned_plugin_configs(self, valid_plugin_ids: list) -> list:
+    def cleanup_orphaned_plugin_configs(self, valid_plugin_ids: List[str]) -> List[str]:
         """
         Remove configuration sections for plugins that are no longer installed.
         
@@ -357,12 +381,12 @@ class ConfigManager:
                 if orphaned_secrets:
                     self.save_raw_file_content('secrets', secrets_config)
                 
-                print(f"Cleaned up orphaned plugin configs: {', '.join(all_orphaned)}")
+                self.logger.info(f"Cleaned up orphaned plugin configs: {', '.join(all_orphaned)}")
             
             return removed
             
         except Exception as e:
-            print(f"Error cleaning up orphaned plugin configs: {e}")
+            self.logger.error(f"Error cleaning up orphaned plugin configs: {e}")
             return removed
     
     def validate_all_plugin_configs(self, plugin_schema_manager=None) -> Dict[str, Dict[str, Any]]:
@@ -410,6 +434,6 @@ class ConfigManager:
                     }
                     
         except Exception as e:
-            print(f"Error validating plugin configs: {e}")
+            self.logger.error(f"Error validating plugin configs: {e}")
         
         return results

@@ -16,6 +16,8 @@ import time
 from pathlib import Path
 from typing import Dict, List, Optional, Any
 import logging
+from src.exceptions import PluginError
+from src.logging_config import get_logger
 
 
 class PluginManager:
@@ -31,7 +33,10 @@ class PluginManager:
     """
     
     def __init__(self, plugins_dir: str = "plugins", 
-                 config_manager=None, display_manager=None, cache_manager=None, font_manager=None):
+                 config_manager: Optional[Any] = None, 
+                 display_manager: Optional[Any] = None, 
+                 cache_manager: Optional[Any] = None, 
+                 font_manager: Optional[Any] = None) -> None:
         """
         Initialize the Plugin Manager.
         
@@ -42,16 +47,16 @@ class PluginManager:
             cache_manager: Cache manager instance
             font_manager: Font manager instance
         """
-        self.plugins_dir = Path(plugins_dir)
-        self.config_manager = config_manager
-        self.display_manager = display_manager
-        self.cache_manager = cache_manager
-        self.font_manager = font_manager
-        self.logger = logging.getLogger(__name__)
+        self.plugins_dir: Path = Path(plugins_dir)
+        self.config_manager: Optional[Any] = config_manager
+        self.display_manager: Optional[Any] = display_manager
+        self.cache_manager: Optional[Any] = cache_manager
+        self.font_manager: Optional[Any] = font_manager
+        self.logger: logging.Logger = get_logger(__name__)
         
         # Active plugins
         self.plugins: Dict[str, Any] = {}
-        self.plugin_manifests: Dict[str, Dict] = {}
+        self.plugin_manifests: Dict[str, Dict[str, Any]] = {}
         self.plugin_modules: Dict[str, Any] = {}
         self.plugin_last_update: Dict[str, float] = {}
         
@@ -173,7 +178,7 @@ class PluginManager:
                 except json.JSONDecodeError as e:
                     self.logger.error(f"Invalid JSON in manifest {manifest_path}: {e}")
                 except Exception as e:
-                    self.logger.error(f"Error reading manifest in {item}: {e}")
+                    self.logger.error(f"Error reading manifest in {item}: {e}", exc_info=True)
         
         return discovered
     
@@ -558,8 +563,9 @@ class PluginManager:
                 return False
             
             if not hasattr(module, class_name):
-                self.logger.error(f"Class {class_name} not found in {entry_file}")
-                return False
+                error_msg = f"Class {class_name} not found in {entry_file} for plugin {plugin_id}"
+                self.logger.error(error_msg)
+                raise PluginError(error_msg, plugin_id=plugin_id, context={'class_name': class_name, 'entry_file': str(entry_file)})
             
             plugin_class = getattr(module, class_name)
             
@@ -581,8 +587,9 @@ class PluginManager:
             
             # Validate configuration
             if not plugin_instance.validate_config():
-                self.logger.error(f"Config validation failed for {plugin_id}")
-                return False
+                error_msg = f"Config validation failed for {plugin_id}"
+                self.logger.error(error_msg)
+                raise PluginError(error_msg, plugin_id=plugin_id, context={'error_type': 'ConfigValidationError'})
             
             # Store the plugin
             self.plugins[plugin_id] = plugin_instance
@@ -599,9 +606,18 @@ class PluginManager:
             
             return True
             
+        except ImportError as e:
+            error_msg = f"Failed to import plugin {plugin_id}"
+            self.logger.error(error_msg, exc_info=True)
+            raise PluginError(error_msg, plugin_id=plugin_id, context={'error_type': 'ImportError'}) from e
+        except (AttributeError, TypeError) as e:
+            error_msg = f"Plugin {plugin_id} has invalid structure"
+            self.logger.error(error_msg, exc_info=True)
+            raise PluginError(error_msg, plugin_id=plugin_id, context={'error_type': type(e).__name__}) from e
         except Exception as e:
-            self.logger.error(f"Error loading plugin {plugin_id}: {e}", exc_info=True)
-            return False
+            error_msg = f"Unexpected error loading plugin {plugin_id}"
+            self.logger.error(error_msg, exc_info=True)
+            raise PluginError(error_msg, plugin_id=plugin_id, context={'error_type': type(e).__name__}) from e
     
     def unload_plugin(self, plugin_id: str) -> bool:
         """
@@ -659,8 +675,9 @@ class PluginManager:
             return True
             
         except Exception as e:
-            self.logger.error(f"Error unloading plugin {plugin_id}: {e}", exc_info=True)
-            return False
+            error_msg = f"Error unloading plugin {plugin_id}"
+            self.logger.error(error_msg, exc_info=True)
+            raise PluginError(error_msg, plugin_id=plugin_id, context={'error_type': type(e).__name__}) from e
     
     def reload_plugin(self, plugin_id: str) -> bool:
         """

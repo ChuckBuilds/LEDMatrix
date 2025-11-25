@@ -1,46 +1,32 @@
 """
-LEDMatrix Common Utilities
+Common utilities and helpers for LEDMatrix.
 
-A shared library of common utilities for LEDMatrix plugins.
-Provides logo loading, text rendering, API helpers, and more.
+This package provides reusable functionality for plugins and core modules:
+- Error handling utilities
+- API helpers
+- Configuration helpers
+- Display helpers
+- Game/team helpers
+- Logo helpers
+- Text/scroll helpers
+- General utilities
 """
 
-__version__ = "1.0.0"
-__author__ = "LEDMatrix Team"
-__email__ = "contact@ledmatrix.dev"
-
-# Import main helper classes
-from .logo_helper import LogoHelper
-from .text_helper import TextHelper
-from .api_helper import APIHelper
-from .display_helper import DisplayHelper
-from .game_helper import GameHelper
-from .config_helper import ConfigHelper
-from .scroll_helper import ScrollHelper
-
-# Import utility functions
-from .utils import (
-    normalize_team_abbreviation,
-    format_time,
-    format_date,
-    get_timezone,
-    validate_dimensions,
+# Export commonly used utilities
+from src.common.error_handler import (
+    handle_file_operation,
+    handle_json_operation,
+    safe_execute,
+    retry_on_failure,
+    log_and_continue,
+    log_and_raise
 )
 
 __all__ = [
-    # Main helper classes
-    "LogoHelper",
-    "TextHelper", 
-    "APIHelper",
-    "DisplayHelper",
-    "GameHelper",
-    "ConfigHelper",
-    "ScrollHelper",
-    
-    # Utility functions
-    "normalize_team_abbreviation",
-    "format_time",
-    "format_date", 
-    "get_timezone",
-    "validate_dimensions",
+    'handle_file_operation',
+    'handle_json_operation',
+    'safe_execute',
+    'retry_on_failure',
+    'log_and_continue',
+    'log_and_raise',
 ]
