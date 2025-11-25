@@ -12,6 +12,7 @@ from abc import ABC, abstractmethod
 from typing import Dict, Any, Optional, List
 import logging
 from PIL import Image
+from src.logging_config import get_logger
 
 # Import transition systems
 try:
