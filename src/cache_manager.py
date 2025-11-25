@@ -135,10 +135,6 @@ class CacheManager:
 
         # Return None if no directory is writable
         return None
-
-    def _ensure_cache_dir(self):
-        """This method is deprecated and no longer needed."""
-        pass
     
     def _cleanup_memory_cache(self, force: bool = False) -> int:
         """
@@ -606,12 +602,22 @@ class CacheManager:
             return cached_data['data']
         return cached_data
 
-    def set(self, key: str, data: Dict) -> None:
-        """Store data in cache with current timestamp."""
+    def set(self, key: str, data: Dict, ttl: Optional[int] = None) -> None:
+        """
+        Store data in cache with current timestamp.
+        
+        Args:
+            key: Cache key
+            data: Data to cache
+            ttl: Optional time-to-live in seconds (stored for compatibility but
+                 expiration is still controlled via max_age when reading)
+        """
         cache_data = {
             'data': data,
             'timestamp': time.time()
         }
+        if ttl is not None:
+            cache_data['ttl'] = ttl
         self.save_cache(key, cache_data)
 
     def setup_persistent_cache(self) -> bool:
