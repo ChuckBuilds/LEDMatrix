@@ -5,6 +5,7 @@ Manages plugin configuration schemas with caching, validation, and reliable path
 Provides utilities for extracting defaults, validating configurations, and managing schema lifecycle.
 """
 
+import copy
 import json
 import logging
 import os
@@ -247,6 +248,8 @@ class SchemaManager:
         Validate configuration against a JSON Schema.
         
         Uses jsonschema library for comprehensive validation.
+        Automatically injects core plugin properties (enabled, display_duration, etc.)
+        into the schema before validation to ensure they're always allowed.
         
         Args:
             config: Configuration dictionary to validate
@@ -259,8 +262,46 @@ class SchemaManager:
         errors = []
         
         try:
-            # Create validator
-            validator = Draft7Validator(schema)
+            # Core plugin properties that should always be allowed
+            # These are handled by the base plugin system and should not cause validation failures
+            core_properties = {
+                "enabled": {
+                    "type": "boolean",
+                    "description": "Enable or disable this plugin"
+                },
+                "display_duration": {
+                    "type": "number",
+                    "minimum": 1,
+                    "maximum": 300,
+                    "description": "How long to display this plugin in seconds"
+                },
+                "live_priority": {
+                    "type": "boolean",
+                    "description": "Enable live priority takeover when plugin has live content"
+                },
+                "high_performance_transitions": {
+                    "type": "boolean",
+                    "description": "Use high-performance transitions (120 FPS) instead of standard (30 FPS)"
+                },
+                "transition": {
+                    "type": "object",
+                    "description": "Transition configuration for this plugin"
+                }
+            }
+            
+            # Create a deep copy of the schema to modify (to avoid mutating the original)
+            enhanced_schema = copy.deepcopy(schema)
+            if "properties" not in enhanced_schema:
+                enhanced_schema["properties"] = {}
+            
+            # Inject core properties if they're not already defined in the schema
+            # This ensures core properties are always allowed even if not in the plugin's schema
+            for prop_name, prop_def in core_properties.items():
+                if prop_name not in enhanced_schema["properties"]:
+                    enhanced_schema["properties"][prop_name] = copy.deepcopy(prop_def)
+            
+            # Create validator with enhanced schema
+            validator = Draft7Validator(enhanced_schema)
             
             # Collect all validation errors
             for error in validator.iter_errors(config):
@@ -268,7 +309,7 @@ class SchemaManager:
                 errors.append(error_msg)
             
             # Check required fields
-            required_fields = schema.get('required', [])
+            required_fields = enhanced_schema.get('required', [])
             for field in required_fields:
                 if field not in config:
                     errors.append(f"Missing required field: '{field}'")
