@@ -1941,6 +1941,21 @@ def save_plugin_config():
             logger.info(f"Config keys being validated: {list(plugin_config.keys())}")
             logger.info(f"Full config: {plugin_config}")
             
+            # Get enhanced schema keys (including injected core properties)
+            # We need to create an enhanced schema to get the actual allowed keys
+            import copy
+            enhanced_schema = copy.deepcopy(schema)
+            if "properties" not in enhanced_schema:
+                enhanced_schema["properties"] = {}
+            
+            # Core properties that are always injected during validation
+            core_properties = ["enabled", "display_duration", "live_priority", 
+                             "high_performance_transitions", "transition"]
+            for prop_name in core_properties:
+                if prop_name not in enhanced_schema["properties"]:
+                    # Add placeholder to get the full list of allowed keys
+                    enhanced_schema["properties"][prop_name] = {"type": "any"}
+            
             is_valid, validation_errors = schema_mgr.validate_config_against_schema(
                 plugin_config, schema, plugin_id
             )
@@ -1949,18 +1964,18 @@ def save_plugin_config():
                 logger.error(f"Config validation failed for {plugin_id}")
                 logger.error(f"Validation errors: {validation_errors}")
                 logger.error(f"Config that failed: {plugin_config}")
-                logger.error(f"Schema properties: {list(schema.get('properties', {}).keys())}")
+                logger.error(f"Schema properties: {list(enhanced_schema.get('properties', {}).keys())}")
                 # Also print to console for immediate visibility
                 print(f"[ERROR] Config validation failed for {plugin_id}")
                 print(f"[ERROR] Validation errors: {validation_errors}")
                 print(f"[ERROR] Config keys: {list(plugin_config.keys())}")
-                print(f"[ERROR] Schema property keys: {list(schema.get('properties', {}).keys())}")
+                print(f"[ERROR] Schema property keys: {list(enhanced_schema.get('properties', {}).keys())}")
                 return jsonify({
                     'status': 'error',
                     'message': 'Configuration validation failed',
                     'validation_errors': validation_errors,
                     'config_keys': list(plugin_config.keys()),
-                    'schema_keys': list(schema.get('properties', {}).keys())
+                    'schema_keys': list(enhanced_schema.get('properties', {}).keys())
                 }), 400
 
         # Separate secrets from regular config (handles nested configs)
