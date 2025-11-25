@@ -30,8 +30,8 @@ emulator_config.json
 htmlcov/
 .mypy_cache/
 
-# Cache directory
-cache/
+# Cache directory (root level only, not src/cache which is source code)
+/cache/
 
 # Development plugins directory (contains symlinks to plugin repos)
 # Plugins are installed via plugin store to plugin-repos/ in production
