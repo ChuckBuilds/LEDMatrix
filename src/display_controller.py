@@ -9,6 +9,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed  # pylint: disab
 # Core system imports only - all functionality now handled via plugins
 from src.display_manager import DisplayManager
 from src.config_manager import ConfigManager
+from src.config_service import ConfigService
 from src.cache_manager import CacheManager
 from src.font_manager import FontManager
 from src.logging_config import get_logger
@@ -22,10 +23,17 @@ class DisplayController:
         start_time = time.time()
         logger.info("Starting DisplayController initialization")
         
-        self.config_manager = ConfigManager()
-        self.config = self.config_manager.load_config()
+        # Initialize ConfigManager and wrap with ConfigService for hot-reload
+        config_manager = ConfigManager()
+        enable_hot_reload = os.environ.get('LEDMATRIX_HOT_RELOAD', 'true').lower() == 'true'
+        self.config_service = ConfigService(
+            config_manager=config_manager,
+            enable_hot_reload=enable_hot_reload
+        )
+        self.config_manager = config_manager  # Keep for backward compatibility
+        self.config = self.config_service.get_config()
         self.cache_manager = CacheManager()
-        logger.info("Config loaded in %.3f seconds", time.time() - start_time)
+        logger.info("Config loaded in %.3f seconds (hot-reload: %s)", time.time() - start_time, enable_hot_reload)
         
         # Validate startup configuration
         try:
@@ -198,6 +206,19 @@ class DisplayController:
                             display_modes = [plugin_id]
                             self.plugin_display_modes[plugin_id] = list(display_modes)
                         
+                        # Subscribe plugin to config changes for hot-reload
+                        if hasattr(self, 'config_service') and hasattr(plugin_instance, 'on_config_change'):
+                            def config_change_callback(old_config: Dict[str, Any], new_config: Dict[str, Any]) -> None:
+                                """Callback for plugin config changes."""
+                                try:
+                                    plugin_instance.on_config_change(new_config)
+                                    logger.debug("Plugin %s notified of config change", plugin_id)
+                                except Exception as e:
+                                    logger.error("Error in plugin %s config change handler: %s", plugin_id, e, exc_info=True)
+                            
+                            self.config_service.subscribe(config_change_callback, plugin_id=plugin_id)
+                            logger.debug("Subscribed plugin %s to config changes", plugin_id)
+                        
                         # Add plugin modes to available modes
                         for mode in display_modes:
                             self.available_modes.append(mode)
@@ -319,19 +340,26 @@ class DisplayController:
                     logger.debug(f"Skipping update for plugin {plugin_id} due to circuit breaker")
                     continue
             
-            try:
-                if hasattr(plugin_instance, 'update'):
-                    plugin_instance.update()
-                    if hasattr(self.plugin_manager, 'plugin_last_update'):
-                        self.plugin_manager.plugin_last_update[plugin_id] = time.time()
-                    # Record success
+            # Use PluginExecutor if available for safe execution
+            if hasattr(self.plugin_manager, 'plugin_executor'):
+                success = self.plugin_manager.plugin_executor.execute_update(plugin_instance, plugin_id)
+                if success and hasattr(self.plugin_manager, 'plugin_last_update'):
+                    self.plugin_manager.plugin_last_update[plugin_id] = time.time()
+            else:
+                # Fallback to direct call
+                try:
+                    if hasattr(plugin_instance, 'update'):
+                        plugin_instance.update()
+                        if hasattr(self.plugin_manager, 'plugin_last_update'):
+                            self.plugin_manager.plugin_last_update[plugin_id] = time.time()
+                        # Record success
+                        if hasattr(self.plugin_manager, 'health_tracker') and self.plugin_manager.health_tracker:
+                            self.plugin_manager.health_tracker.record_success(plugin_id)
+                except Exception as exc:  # pylint: disable=broad-except
+                    logger.exception("Error updating plugin %s", plugin_id)
+                    # Record failure
                     if hasattr(self.plugin_manager, 'health_tracker') and self.plugin_manager.health_tracker:
-                        self.plugin_manager.health_tracker.record_success(plugin_id)
-            except Exception as exc:  # pylint: disable=broad-except
-                logger.exception("Error updating plugin %s", plugin_id)
-                # Record failure
-                if hasattr(self.plugin_manager, 'health_tracker') and self.plugin_manager.health_tracker:
-                    self.plugin_manager.health_tracker.record_failure(plugin_id, exc)
+                        self.plugin_manager.health_tracker.record_failure(plugin_id, exc)
 
     def _tick_plugin_updates(self):
         """Run scheduled plugin updates if the plugin manager supports them."""
@@ -782,15 +810,21 @@ class DisplayController:
                             import inspect
                             sig = inspect.signature(manager_to_display.display)
                             
-                            # Monitor resource usage if available
-                            if self.plugin_manager and hasattr(self.plugin_manager, 'resource_monitor') and self.plugin_manager.resource_monitor:
-                                def display_wrapper():
-                                    if 'display_mode' in sig.parameters:
-                                        return manager_to_display.display(display_mode=active_mode, force_clear=self.force_change)
-                                    else:
-                                        return manager_to_display.display(force_clear=self.force_change)
-                                result = self.plugin_manager.resource_monitor.monitor_call(plugin_id, display_wrapper)
+                            # Use PluginExecutor for safe execution with timeout
+                            if self.plugin_manager and hasattr(self.plugin_manager, 'plugin_executor'):
+                                result = self.plugin_manager.plugin_executor.execute_display(
+                                    manager_to_display,
+                                    plugin_id,
+                                    force_clear=self.force_change,
+                                    display_mode=active_mode if 'display_mode' in sig.parameters else None
+                                )
+                                # execute_display returns bool, convert to expected format
+                                if result:
+                                    result = True  # Success
+                                else:
+                                    result = False  # Failed
                             else:
+                                # Fallback to direct call if executor not available
                                 if 'display_mode' in sig.parameters:
                                     result = manager_to_display.display(display_mode=active_mode, force_clear=self.force_change)
                                 else:
@@ -1043,6 +1077,12 @@ class DisplayController:
 
     def cleanup(self):
         """Clean up resources."""
+        # Shutdown config service if it exists
+        if hasattr(self, 'config_service'):
+            try:
+                self.config_service.shutdown()
+            except Exception as e:
+                logger.warning("Error shutting down config service: %s", e)
         logger.info("Cleaning up display controller...")
         if hasattr(self, 'display_manager'):
             self.display_manager.cleanup()

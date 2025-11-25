@@ -12,12 +12,16 @@ import json
 import importlib
 import importlib.util
 import sys
+import subprocess
 import time
 from pathlib import Path
 from typing import Dict, List, Optional, Any
 import logging
 from src.exceptions import PluginError
 from src.logging_config import get_logger
+from src.plugin_system.plugin_loader import PluginLoader
+from src.plugin_system.plugin_executor import PluginExecutor
+from src.plugin_system.plugin_state import PluginStateManager, PluginState
 
 
 class PluginManager:
@@ -30,6 +34,11 @@ class PluginManager:
     - Managing plugin lifecycle (load, unload, reload)
     - Providing access to loaded plugins
     - Maintaining plugin manifests
+    
+    Uses composition with specialized components:
+    - PluginLoader: Handles module loading and dependency installation
+    - PluginExecutor: Handles plugin execution with timeout and error isolation
+    - PluginStateManager: Manages plugin state machine
     """
     
     def __init__(self, plugins_dir: str = "plugins", 
@@ -54,355 +63,146 @@ class PluginManager:
         self.font_manager: Optional[Any] = font_manager
         self.logger: logging.Logger = get_logger(__name__)
         
+        # Initialize plugin system components
+        self.plugin_loader = PluginLoader(logger=self.logger)
+        self.plugin_executor = PluginExecutor(default_timeout=30.0, logger=self.logger)
+        self.state_manager = PluginStateManager(logger=self.logger)
+        
         # Active plugins
         self.plugins: Dict[str, Any] = {}
         self.plugin_manifests: Dict[str, Dict[str, Any]] = {}
         self.plugin_modules: Dict[str, Any] = {}
         self.plugin_last_update: Dict[str, float] = {}
         
-        # Initialize health tracker
-        try:
-            from .plugin_health import PluginHealthTracker
-            self.health_tracker = PluginHealthTracker(cache_manager)
-            self.logger.info("Plugin health tracking enabled")
-        except Exception as e:  # pylint: disable=broad-except
-            self.logger.warning(f"Failed to initialize health tracker: {e}")
-            self.health_tracker = None
-        
-        # Initialize resource monitor
-        try:
-            from .resource_monitor import PluginResourceMonitor
-            self.resource_monitor = PluginResourceMonitor(cache_manager)
-            self.logger.info("Plugin resource monitoring enabled")
-        except Exception as e:  # pylint: disable=broad-except
-            self.logger.warning(f"Failed to initialize resource monitor: {e}")
-            self.resource_monitor = None
+        # Health tracking (optional, set by display_controller if available)
+        self.health_tracker = None
+        self.resource_monitor = None
         
         # Ensure plugins directory exists
-        # Check if directory already exists first (handle permission errors gracefully)
         try:
-            if self.plugins_dir.exists():
-                self.logger.info(f"Plugin Manager initialized with plugins directory: {self.plugins_dir}")
-            else:
-                # Try to create the directory
-                try:
-                    self.plugins_dir.mkdir(parents=True, exist_ok=True)
-                    self.logger.info(f"Plugin Manager initialized with plugins directory: {self.plugins_dir}")
-                except PermissionError as e:
-                    self.logger.warning(
-                        f"Permission denied creating plugins directory: {self.plugins_dir}. "
-                        f"Error: {e}. "
-                        f"Plugin system will be disabled until the directory is created with proper permissions. "
-                        f"To fix, run: sudo bash scripts/fix_perms/fix_plugin_permissions.sh"
-                    )
-                    # Don't raise - allow system to continue without plugins
-                except OSError as e:
-                    self.logger.warning(
-                        f"Failed to create plugins directory: {self.plugins_dir}. "
-                        f"Error: {e}. "
-                        f"Plugin system will be disabled. Please check the path and permissions."
-                    )
-                    # Don't raise - allow system to continue without plugins
-        except PermissionError as e:
-            # Can't even check if directory exists (parent directory not accessible)
-            self.logger.warning(
-                f"Permission denied accessing plugins directory: {self.plugins_dir}. "
-                f"Error: {e}. "
-                f"Plugin system will be disabled. The directory may need to be created with proper permissions. "
-                f"To fix, run: sudo bash scripts/fix_perms/fix_plugin_permissions.sh"
-            )
-            # Don't raise - allow system to continue without plugins
-        
+            self.plugins_dir.mkdir(parents=True, exist_ok=True)
+        except (OSError, PermissionError) as e:
+            self.logger.error("Could not create plugins directory %s: %s", self.plugins_dir, e, exc_info=True)
+            raise PluginError(f"Could not create plugins directory: {self.plugins_dir}", context={'error': str(e)}) from e
+
     def _scan_directory_for_plugins(self, directory: Path) -> List[str]:
         """
-        Scan a specific directory for plugins.
+        Scan a directory for plugins.
         
         Args:
             directory: Directory to scan
             
         Returns:
-            List of plugin IDs discovered in this directory
+            List of plugin IDs found
         """
-        discovered = []
+        plugin_ids = []
         
         if not directory.exists():
-            return discovered
+            return plugin_ids
         
         try:
-            items = list(directory.iterdir())
-        except (PermissionError, OSError) as e:
-            self.logger.debug(f"Could not read directory {directory}: {e}")
-            return discovered
-        
-        for item in items:
-            if not item.is_dir():
-                continue
-            
-            # Skip hidden directories and temp directories
-            if item.name.startswith('.') or item.name.startswith('_'):
-                continue
-            
-            manifest_path = item / "manifest.json"
-            if manifest_path.exists():
-                try:
-                    with open(manifest_path, 'r', encoding='utf-8') as f:
-                        manifest = json.load(f)
-                    
-                    plugin_id = manifest.get('id')
-                    if not plugin_id:
-                        self.logger.error(f"No 'id' field in manifest: {manifest_path}")
+            for item in directory.iterdir():
+                if not item.is_dir():
+                    continue
+                
+                manifest_path = item / "manifest.json"
+                if manifest_path.exists():
+                    try:
+                        with open(manifest_path, 'r', encoding='utf-8') as f:
+                            manifest = json.load(f)
+                            plugin_id = manifest.get('id')
+                            if plugin_id:
+                                plugin_ids.append(plugin_id)
+                                self.plugin_manifests[plugin_id] = manifest
+                                
+                                # Store directory mapping
+                                if not hasattr(self, 'plugin_directories'):
+                                    self.plugin_directories = {}
+                                self.plugin_directories[plugin_id] = item
+                    except (json.JSONDecodeError, PermissionError, OSError) as e:
+                        self.logger.warning("Error reading manifest from %s: %s", manifest_path, e, exc_info=True)
                         continue
-                    
-                    if plugin_id != item.name:
-                        self.logger.warning(
-                            f"Plugin ID '{plugin_id}' doesn't match directory name '{item.name}'"
-                        )
-                    
-                    discovered.append(plugin_id)
-                    # Store manifest with directory path for later lookup
-                    self.plugin_manifests[plugin_id] = manifest
-                    # Store the directory path for this plugin
-                    if not hasattr(self, 'plugin_directories'):
-                        self.plugin_directories = {}
-                    self.plugin_directories[plugin_id] = item
-                    
-                    version_info = manifest.get('version')
-                    last_updated = manifest.get('last_updated')
-                    if version_info:
-                        self.logger.info(f"Discovered plugin: {plugin_id} (version {version_info}) in {directory.name}/")
-                    elif last_updated:
-                        self.logger.info(f"Discovered plugin: {plugin_id} (last updated {last_updated}) in {directory.name}/")
-                    else:
-                        self.logger.info(f"Discovered plugin: {plugin_id} in {directory.name}/")
-                    
-                except json.JSONDecodeError as e:
-                    self.logger.error(f"Invalid JSON in manifest {manifest_path}: {e}")
-                except Exception as e:
-                    self.logger.error(f"Error reading manifest in {item}: {e}", exc_info=True)
+        except (OSError, PermissionError) as e:
+            self.logger.error("Error scanning directory %s: %s", directory, e, exc_info=True)
         
-        return discovered
+        return plugin_ids
     
     def discover_plugins(self) -> List[str]:
         """
-        Scan plugins directories for installed plugins.
-        
-        Checks both the configured plugins directory and the standard 'plugins/' directory.
-        A valid plugin directory must contain a manifest.json file.
+        Discover all plugins in the plugins directory.
         
         Returns:
-            List of plugin IDs that were discovered
+            List of plugin IDs
         """
-        discovered = []
-        all_plugin_ids = set()
-        
-        # Initialize plugin_directories dict if it doesn't exist
-        if not hasattr(self, 'plugin_directories'):
-            self.plugin_directories = {}
-        
-        # Scan the configured plugins directory first
-        dirs_scanned = []
-        if self.plugins_dir.exists():
-            dirs_scanned.append(self.plugins_dir)
-            found = self._scan_directory_for_plugins(self.plugins_dir)
-            for plugin_id in found:
-                if plugin_id not in all_plugin_ids:
-                    discovered.append(plugin_id)
-                    all_plugin_ids.add(plugin_id)
-        
-        # Also scan the standard 'plugins/' directory if it's different
-        # This handles the case where plugins are in plugins/ but config says plugin-repos/
-        try:
-            # Try to determine project root from plugins_dir
-            if self.plugins_dir.is_absolute():
-                project_root = self.plugins_dir.parent
-            else:
-                project_root = self.plugins_dir.resolve().parent
-            
-            standard_plugins_dir = project_root / 'plugins'
-            if standard_plugins_dir.exists() and standard_plugins_dir != self.plugins_dir:
-                dirs_scanned.append(standard_plugins_dir)
-                found = self._scan_directory_for_plugins(standard_plugins_dir)
-                for plugin_id in found:
-                    if plugin_id not in all_plugin_ids:
-                        discovered.append(plugin_id)
-                        all_plugin_ids.add(plugin_id)
-        except (OSError, ValueError):
-            # Can't resolve path, skip
-            pass
-        
-        self.logger.info(f"Discovered {len(discovered)} plugin(s) from {len(dirs_scanned)} directory(ies)")
-        return discovered
+        self.logger.info("Discovering plugins in %s", self.plugins_dir)
+        plugin_ids = self._scan_directory_for_plugins(self.plugins_dir)
+        self.logger.info("Discovered %d plugin(s)", len(plugin_ids))
+        return plugin_ids
 
     def _get_dependency_marker_path(self, plugin_id: str) -> Path:
-        """
-        Get path to the dependency installation marker file for a plugin.
-        
-        Args:
-            plugin_id: Plugin identifier
-            
-        Returns:
-            Path to marker file
-        """
-        # Use /var/cache/ledmatrix for system-wide cache
-        cache_dir = Path('/var/cache/ledmatrix')
-        if not cache_dir.exists():
-            # Fallback to local cache if /var/cache not available
-            cache_dir = Path.home() / '.cache' / 'ledmatrix'
-        cache_dir.mkdir(parents=True, exist_ok=True)
-        return cache_dir / f"plugin_{plugin_id}_deps_installed"
-    
+        """Get path to dependency installation marker file."""
+        plugin_dir = self.plugins_dir / plugin_id
+        if not plugin_dir.exists():
+            # Try with ledmatrix- prefix
+            plugin_dir = self.plugins_dir / f"ledmatrix-{plugin_id}"
+        return plugin_dir / ".dependencies_installed"
+
     def _check_dependencies_installed(self, plugin_id: str) -> bool:
-        """
-        Check if dependencies for a plugin have already been installed.
-        
-        Args:
-            plugin_id: Plugin identifier
-            
-        Returns:
-            True if dependencies are marked as installed, False otherwise
-        """
+        """Check if dependencies are already installed for a plugin."""
         marker_path = self._get_dependency_marker_path(plugin_id)
         return marker_path.exists()
-    
+
     def _mark_dependencies_installed(self, plugin_id: str) -> None:
-        """
-        Mark that dependencies for a plugin have been installed.
-        
-        Creates a marker file with installation timestamp.
-        
-        Args:
-            plugin_id: Plugin identifier
-        """
+        """Mark dependencies as installed for a plugin."""
+        marker_path = self._get_dependency_marker_path(plugin_id)
         try:
-            from datetime import datetime
-            marker_path = self._get_dependency_marker_path(plugin_id)
-            timestamp = datetime.now().isoformat()
-            marker_path.write_text(timestamp)
-            self.logger.debug(f"Marked dependencies as installed for {plugin_id}")
-        except Exception as e:
-            self.logger.warning(f"Failed to create dependency marker for {plugin_id}: {e}")
-    
+            marker_path.touch()
+        except (OSError, PermissionError) as e:
+            self.logger.warning("Could not create dependency marker for %s: %s", plugin_id, e)
+
     def _remove_dependency_marker(self, plugin_id: str) -> None:
-        """
-        Remove the dependency installation marker for a plugin.
-        
-        Should be called when plugin is uninstalled.
-        
-        Args:
-            plugin_id: Plugin identifier
-        """
+        """Remove dependency installation marker."""
+        marker_path = self._get_dependency_marker_path(plugin_id)
         try:
-            marker_path = self._get_dependency_marker_path(plugin_id)
             if marker_path.exists():
                 marker_path.unlink()
-                self.logger.debug(f"Removed dependency marker for {plugin_id}")
-        except Exception as e:
-            self.logger.warning(f"Failed to remove dependency marker for {plugin_id}: {e}")
+        except (OSError, PermissionError) as e:
+            self.logger.warning("Could not remove dependency marker for %s: %s", plugin_id, e)
 
     def _install_plugin_dependencies(self, requirements_file: Path) -> bool:
         """
-        Install Python dependencies for a plugin.
-
+        Install plugin dependencies from requirements.txt.
+        
         Args:
-            requirements_file: Path to requirements.txt file
-
+            requirements_file: Path to requirements.txt
+            
         Returns:
-            True if successful or no dependencies needed, False on error
+            True if installation succeeded or not needed, False on error
         """
         try:
-            import subprocess
-            import os
-
-            # First, check if dependencies are already satisfied using --dry-run
-            try:
-                dry_run_result = subprocess.run(
-                    ['pip3', 'install', '--dry-run', '-r', str(requirements_file)],
-                    capture_output=True,
-                    text=True,
-                    timeout=10
-                )
-                # If nothing would be installed, dependencies are already satisfied
-                # Check for "Requirement already satisfied" which indicates no action needed
-                if 'Requirement already satisfied' in dry_run_result.stdout and 'Would install' not in dry_run_result.stdout:
-                    self.logger.debug(f"Dependencies already satisfied for {requirements_file}")
-                    return True
-            except (subprocess.SubprocessError, FileNotFoundError):
-                # If pip check fails or doesn't exist, proceed with installation
-                pass
-
-            self.logger.info(f"Installing dependencies for plugin from {requirements_file}")
-
-            # Check if running as root (systemd service context)
-            running_as_root = os.geteuid() == 0 if hasattr(os, 'geteuid') else False
-            
-            # Prepare environment to avoid permission issues
-            env = os.environ.copy()
-            env['PYTHONUNBUFFERED'] = '1'
-            
-            if running_as_root:
-                # System-wide installation for root (systemd service)
-                # Use --no-cache-dir to avoid cache permission issues
-                cmd = [
-                    'pip3', 'install', 
-                    '--break-system-packages',
-                    '--no-cache-dir',
-                    '-r', str(requirements_file)
-                ]
-                self.logger.info("Installing plugin dependencies system-wide (running as root)")
-            else:
-                # User installation for development/testing
-                # Note: If you're testing manually as a non-root user, these dependencies
-                # will be installed to ~/.local/ and won't be accessible to the root service.
-                # For production plugin installation, always use the web interface or restart the service.
-                # Need --break-system-packages for Debian 12+ (PEP 668) even with --user
-                try:
-                    import pwd
-                    user_home = Path(pwd.getpwuid(os.getuid()).pw_dir)
-                except Exception as home_error:
-                    self.logger.debug(f"Falling back to environment HOME for plugin dependency install: {home_error}")
-                    user_home = Path(env.get('HOME', str(Path.cwd())))
-
-                env['HOME'] = str(user_home)
-                env.setdefault('PYTHONUSERBASE', str(user_home / '.local'))
-                env.setdefault('PIP_USER', '1')
-
-                cmd = [
-                    'pip3', 'install', 
-                    '--user', 
-                    '--break-system-packages',
-                    '--no-cache-dir',
-                    '-r', str(requirements_file)
-                ]
-                self.logger.warning(
-                    "Installing plugin dependencies for current user (not root). "
-                    "These will NOT be accessible to the systemd service. "
-                    "For production use, install plugins via the web interface or restart the ledmatrix service."
-                )
-
+            self.logger.info("Installing dependencies from %s", requirements_file)
             result = subprocess.run(
-                cmd,
-                check=True,
+                [sys.executable, "-m", "pip", "install", "-r", str(requirements_file)],
                 capture_output=True,
                 text=True,
-                env=env
+                timeout=300,
+                check=False
             )
-
-            self.logger.info(f"Successfully installed dependencies for {requirements_file}")
-            if result.stdout:
-                self.logger.debug(f"pip output: {result.stdout}")
-            return True
-
-        except subprocess.CalledProcessError as e:
-            self.logger.error(f"Error installing dependencies: {e.stderr}")
-            self.logger.info("Dependencies may need to be installed manually. Plugin loading will continue.")
-            # Don't fail plugin loading if dependencies fail to install
-            # User can manually install them
-            return True
+            
+            if result.returncode == 0:
+                self.logger.info("Dependencies installed successfully")
+                return True
+            else:
+                self.logger.warning("Dependency installation returned non-zero exit code: %s", result.stderr)
+                return False
+        except subprocess.TimeoutExpired:
+            self.logger.error("Dependency installation timed out")
+            return False
         except FileNotFoundError as e:
-            self.logger.warning(f"Command not found: {e}. Skipping dependency installation")
+            self.logger.warning("Command not found: %s. Skipping dependency installation", e)
             return True
         except Exception as e:
-            self.logger.error(f"Unexpected error installing dependencies: {e}")
+            self.logger.error("Unexpected error installing dependencies: %s", e, exc_info=True)
             return True
 
     def load_plugin(self, plugin_id: str) -> bool:
@@ -412,10 +212,10 @@ class PluginManager:
         This method:
         1. Checks if plugin is already loaded
         2. Validates the manifest exists
-        3. Imports the plugin module
-        4. Instantiates the plugin class
-        5. Validates the plugin configuration
-        6. Stores the plugin instance
+        3. Uses PluginLoader to import module and instantiate plugin
+        4. Validates the plugin configuration
+        5. Stores the plugin instance
+        6. Updates plugin state
         
         Args:
             plugin_id: Plugin identifier
@@ -424,150 +224,38 @@ class PluginManager:
             True if loaded successfully, False otherwise
         """
         if plugin_id in self.plugins:
-            self.logger.warning(f"Plugin {plugin_id} already loaded")
+            self.logger.warning("Plugin %s already loaded", plugin_id)
             return True
         
         manifest = self.plugin_manifests.get(plugin_id)
         if not manifest:
-            self.logger.error(f"No manifest found for plugin: {plugin_id}")
+            self.logger.error("No manifest found for plugin: %s", plugin_id)
+            self.state_manager.set_state(plugin_id, PluginState.ERROR)
             return False
         
         try:
-            # First, try to use the plugin_directories mapping from discovery
-            # This handles cases where directory name doesn't match manifest ID
-            plugin_dir = None
-            if hasattr(self, 'plugin_directories') and plugin_id in self.plugin_directories:
-                plugin_dir = self.plugin_directories[plugin_id]
-                if plugin_dir.exists():
-                    self.logger.debug(f"Using plugin directory from discovery mapping: {plugin_dir}")
-                else:
-                    plugin_dir = None
+            # Update state to LOADED
+            self.state_manager.set_state(plugin_id, PluginState.LOADED)
             
-            # If not found via mapping, try direct paths
+            # Find plugin directory using PluginLoader
+            plugin_directories = getattr(self, 'plugin_directories', None)
+            plugin_dir = self.plugin_loader.find_plugin_directory(
+                plugin_id,
+                self.plugins_dir,
+                plugin_directories
+            )
+            
             if plugin_dir is None:
-                plugin_dir = self.plugins_dir / plugin_id
-                if not plugin_dir.exists():
-                    # Try with ledmatrix- prefix
-                    plugin_dir = self.plugins_dir / f"ledmatrix-{plugin_id}"
-
-            if not plugin_dir.exists():
-                # Perform a comprehensive search: case-insensitive and manifest-based lookup
-                # This handles various naming mismatches (case, prefixes, etc.)
-                normalized_id = plugin_id.lower()
-                found_dir = None
-                
-                # First, try case-insensitive directory name matching
-                for item in self.plugins_dir.iterdir():
-                    if not item.is_dir():
-                        continue
-
-                    item_name = item.name
-                    if item_name.lower() == normalized_id:
-                        found_dir = item
-                        break
-
-                    if item_name.lower() == f"ledmatrix-{plugin_id}".lower():
-                        found_dir = item
-                        break
-
-                # If still not found, search all directories by reading their manifests
-                # This is the most robust fallback - finds plugin by manifest ID regardless of directory name
-                if found_dir is None:
-                    self.logger.debug(f"Directory name search failed for {plugin_id}, searching by manifest...")
-                    for item in self.plugins_dir.iterdir():
-                        if not item.is_dir():
-                            continue
-                        
-                        # Skip if we already checked this directory
-                        if item.name.lower() == normalized_id or item.name.lower() == f"ledmatrix-{plugin_id}".lower():
-                            continue
-                        
-                        manifest_path = item / "manifest.json"
-                        if manifest_path.exists():
-                            try:
-                                with open(manifest_path, 'r', encoding='utf-8') as f:
-                                    item_manifest = json.load(f)
-                                    item_manifest_id = item_manifest.get('id')
-                                    if item_manifest_id == plugin_id:
-                                        found_dir = item
-                                        self.logger.info(
-                                            "Found plugin %s in directory %s (manifest ID matches)",
-                                            plugin_id,
-                                            item.name
-                                        )
-                                        break
-                            except (json.JSONDecodeError, Exception) as e:
-                                # Skip invalid manifests, continue searching
-                                self.logger.debug(f"Skipping {item.name} due to manifest error: {e}")
-                                continue
-
-                if found_dir is not None:
-                    plugin_dir = found_dir
-                    # Update the mapping for future lookups
-                    if not hasattr(self, 'plugin_directories'):
-                        self.plugin_directories = {}
-                    self.plugin_directories[plugin_id] = plugin_dir
-                    self.logger.warning(
-                        "Plugin directory name mismatch for %s. Using %s (discovered via manifest search)",
-                        plugin_id,
-                        plugin_dir,
-                    )
-                else:
-                    self.logger.error(f"Plugin directory not found: {plugin_id}")
-                    self.logger.error(f"Searched in: {self.plugins_dir}")
-                    self.logger.error("Tried: direct path, case-insensitive match, and manifest-based search")
-                    return False
-            
-            # Get entry point
-            entry_point = manifest.get('entry_point', 'manager.py')
-            entry_file = plugin_dir / entry_point
-            
-            if not entry_file.exists():
-                self.logger.error(f"Entry point not found: {entry_file}")
-                return False
-
-            # Install plugin dependencies if requirements.txt exists and not already installed
-            requirements_file = plugin_dir / "requirements.txt"
-            if requirements_file.exists():
-                if self._check_dependencies_installed(plugin_id):
-                    self.logger.debug(f"Dependencies already installed for {plugin_id}, skipping")
-                else:
-                    self.logger.info(f"Installing dependencies for {plugin_id} (first time)")
-                    if self._install_plugin_dependencies(requirements_file):
-                        self._mark_dependencies_installed(plugin_id)
-
-            # Add plugin directory to Python path so plugin can import its own modules
-            plugin_dir_str = str(plugin_dir)
-            if plugin_dir_str not in sys.path:
-                sys.path.insert(0, plugin_dir_str)
-                self.logger.debug(f"Added plugin directory to sys.path: {plugin_dir_str}")
-
-            # Import the plugin module
-            module_name = f"plugin_{plugin_id.replace('-', '_')}"
-            spec = importlib.util.spec_from_file_location(module_name, entry_file)
-
-            if spec is None or spec.loader is None:
-                self.logger.error(f"Could not create module spec for {entry_file}")
-                return False
-
-            module = importlib.util.module_from_spec(spec)
-            sys.modules[module_name] = module
-            spec.loader.exec_module(module)
-            
-            self.plugin_modules[plugin_id] = module
-            
-            # Get the plugin class
-            class_name = manifest.get('class_name')
-            if not class_name:
-                self.logger.error(f"No class_name in manifest for {plugin_id}")
+                self.logger.error("Plugin directory not found: %s", plugin_id)
+                self.logger.error("Searched in: %s", self.plugins_dir)
+                self.state_manager.set_state(plugin_id, PluginState.ERROR)
                 return False
             
-            if not hasattr(module, class_name):
-                error_msg = f"Class {class_name} not found in {entry_file} for plugin {plugin_id}"
-                self.logger.error(error_msg)
-                raise PluginError(error_msg, plugin_id=plugin_id, context={'class_name': class_name, 'entry_file': str(entry_file)})
-            
-            plugin_class = getattr(module, class_name)
+            # Update mapping if found via search
+            if plugin_directories is None or plugin_id not in plugin_directories:
+                if not hasattr(self, 'plugin_directories'):
+                    self.plugin_directories = {}
+                self.plugin_directories[plugin_id] = plugin_dir
             
             # Get plugin config
             if self.config_manager:
@@ -576,57 +264,66 @@ class PluginManager:
             else:
                 config = {}
             
-            # Instantiate the plugin
-            plugin_instance = plugin_class(
+            # Use PluginLoader to load plugin
+            plugin_instance, module = self.plugin_loader.load_plugin(
                 plugin_id=plugin_id,
+                manifest=manifest,
+                plugin_dir=plugin_dir,
                 config=config,
                 display_manager=self.display_manager,
                 cache_manager=self.cache_manager,
-                plugin_manager=self
+                plugin_manager=self,
+                install_deps=True
             )
             
-            # Validate configuration
-            if not plugin_instance.validate_config():
-                error_msg = f"Config validation failed for {plugin_id}"
-                self.logger.error(error_msg)
-                raise PluginError(error_msg, plugin_id=plugin_id, context={'error_type': 'ConfigValidationError'})
+            # Store module
+            self.plugin_modules[plugin_id] = module
             
-            # Store the plugin
+            # Validate configuration
+            if hasattr(plugin_instance, 'validate_config'):
+                try:
+                    if not plugin_instance.validate_config():
+                        self.logger.error("Plugin %s configuration validation failed", plugin_id)
+                        self.state_manager.set_state(plugin_id, PluginState.ERROR)
+                        return False
+                except Exception as e:
+                    self.logger.error("Error validating plugin %s config: %s", plugin_id, e, exc_info=True)
+                    self.state_manager.set_state(plugin_id, PluginState.ERROR, error=e)
+                    return False
+            
+            # Store plugin instance
             self.plugins[plugin_id] = plugin_instance
             self.plugin_last_update[plugin_id] = 0.0
+            
+            # Update state based on enabled status
+            if config.get('enabled', True):
+                self.state_manager.set_state(plugin_id, PluginState.ENABLED)
+                # Call on_enable if plugin is enabled
+                if hasattr(plugin_instance, 'on_enable'):
+                    plugin_instance.on_enable()
+            else:
+                self.state_manager.set_state(plugin_id, PluginState.DISABLED)
+            
             version_info = manifest.get('version')
             if version_info:
-                self.logger.info(f"Loaded plugin: {plugin_id} (version {version_info})")
+                self.logger.info("Loaded plugin: %s (version %s)", plugin_id, version_info)
             else:
-                self.logger.info(f"Loaded plugin: {plugin_id}")
-            
-            # Call on_enable if plugin is enabled
-            if plugin_instance.enabled:
-                plugin_instance.on_enable()
+                self.logger.info("Loaded plugin: %s", plugin_id)
             
             return True
             
-        except ImportError as e:
-            error_msg = f"Failed to import plugin {plugin_id}"
-            self.logger.error(error_msg, exc_info=True)
-            raise PluginError(error_msg, plugin_id=plugin_id, context={'error_type': 'ImportError'}) from e
-        except (AttributeError, TypeError) as e:
-            error_msg = f"Plugin {plugin_id} has invalid structure"
-            self.logger.error(error_msg, exc_info=True)
-            raise PluginError(error_msg, plugin_id=plugin_id, context={'error_type': type(e).__name__}) from e
+        except PluginError as e:
+            self.logger.error("Plugin error loading %s: %s", plugin_id, e, exc_info=True)
+            self.state_manager.set_state(plugin_id, PluginState.ERROR, error=e)
+            return False
         except Exception as e:
-            error_msg = f"Unexpected error loading plugin {plugin_id}"
-            self.logger.error(error_msg, exc_info=True)
-            raise PluginError(error_msg, plugin_id=plugin_id, context={'error_type': type(e).__name__}) from e
+            self.logger.error("Unexpected error loading plugin %s: %s", plugin_id, e, exc_info=True)
+            self.state_manager.set_state(plugin_id, PluginState.ERROR, error=e)
+            return False
     
     def unload_plugin(self, plugin_id: str) -> bool:
         """
         Unload a plugin by ID.
-        
-        This method:
-        1. Calls the plugin's cleanup() method
-        2. Removes the plugin from active plugins
-        3. Removes the plugin module from sys.modules
         
         Args:
             plugin_id: Plugin identifier
@@ -635,17 +332,25 @@ class PluginManager:
             True if unloaded successfully, False otherwise
         """
         if plugin_id not in self.plugins:
-            self.logger.warning(f"Plugin {plugin_id} not loaded")
+            self.logger.warning("Plugin %s not loaded", plugin_id)
             return False
         
         try:
             plugin = self.plugins[plugin_id]
             
-            # Call cleanup
-            plugin.cleanup()
+            # Call cleanup if available
+            if hasattr(plugin, 'cleanup'):
+                try:
+                    plugin.cleanup()
+                except Exception as e:
+                    self.logger.warning("Error during plugin cleanup: %s", e)
             
-            # Call on_disable
-            plugin.on_disable()
+            # Call on_disable if available
+            if hasattr(plugin, 'on_disable'):
+                try:
+                    plugin.on_disable()
+                except Exception as e:
+                    self.logger.warning("Error during plugin on_disable: %s", e)
             
             # Remove from active plugins
             del self.plugins[plugin_id]
@@ -658,32 +363,23 @@ class PluginManager:
                 del sys.modules[module_name]
             
             # Remove from plugin_modules
-            if plugin_id in self.plugin_modules:
-                del self.plugin_modules[plugin_id]
+            self.plugin_modules.pop(plugin_id, None)
             
-            # Remove from plugin_manifests to free memory
-            if plugin_id in self.plugin_manifests:
-                del self.plugin_manifests[plugin_id]
+            # Update state
+            self.state_manager.set_state(plugin_id, PluginState.UNLOADED)
+            self.state_manager.clear_state(plugin_id)
             
-            # Remove dependency marker (dependencies should be reinstalled if plugin is reinstalled)
-            self._remove_dependency_marker(plugin_id)
-            
-            # Explicitly clear plugin reference to help garbage collection
-            plugin = None
-            
-            self.logger.info(f"Unloaded plugin: {plugin_id}")
+            self.logger.info("Unloaded plugin: %s", plugin_id)
             return True
             
         except Exception as e:
-            error_msg = f"Error unloading plugin {plugin_id}"
-            self.logger.error(error_msg, exc_info=True)
-            raise PluginError(error_msg, plugin_id=plugin_id, context={'error_type': type(e).__name__}) from e
+            self.logger.error("Error unloading plugin %s: %s", plugin_id, e, exc_info=True)
+            self.state_manager.set_state(plugin_id, PluginState.ERROR, error=e)
+            return False
     
     def reload_plugin(self, plugin_id: str) -> bool:
         """
         Reload a plugin (unload and load).
-        
-        Useful for development and when plugin files have been updated.
         
         Args:
             plugin_id: Plugin identifier
@@ -691,8 +387,9 @@ class PluginManager:
         Returns:
             True if reloaded successfully, False otherwise
         """
-        self.logger.info(f"Reloading plugin: {plugin_id}")
+        self.logger.info("Reloading plugin: %s", plugin_id)
         
+        # Unload first
         if plugin_id in self.plugins:
             if not self.unload_plugin(plugin_id):
                 return False
@@ -704,7 +401,7 @@ class PluginManager:
                 with open(manifest_path, 'r', encoding='utf-8') as f:
                     self.plugin_manifests[plugin_id] = json.load(f)
             except Exception as e:
-                self.logger.error(f"Error reading manifest: {e}")
+                self.logger.error("Error reading manifest: %s", e, exc_info=True)
                 return False
         
         return self.load_plugin(plugin_id)
@@ -759,88 +456,74 @@ class PluginManager:
         plugin = self.plugins.get(plugin_id)
         if plugin:
             info['loaded'] = True
-            info['runtime_info'] = plugin.get_info()
+            if hasattr(plugin, 'get_info'):
+                info['runtime_info'] = plugin.get_info()
         else:
             info['loaded'] = False
+        
+        # Add state information
+        info['state'] = self.state_manager.get_state_info(plugin_id)
         
         return info
     
     def get_all_plugin_info(self) -> List[Dict[str, Any]]:
         """
-        Get information about all discovered plugins.
+        Get information about all plugins.
         
         Returns:
-            List of plugin information dicts
+            List of plugin info dictionaries
         """
-        result = []
-        for plugin_id in self.plugin_manifests.keys():
-            plugin_info = self.get_plugin_info(plugin_id)
-            if plugin_info is not None:
-                result.append(plugin_info)
-        return result
+        return [info for info in [self.get_plugin_info(pid) for pid in self.plugin_manifests.keys()] if info]
     
     def get_plugin_directory(self, plugin_id: str) -> Optional[str]:
         """
-        Get the filesystem directory path for a plugin.
+        Get the directory path for a plugin.
         
         Args:
             plugin_id: Plugin identifier
             
         Returns:
-            Path to plugin directory as string, or None if plugin not found
+            Directory path as string or None if not found
         """
-        if plugin_id not in self.plugin_manifests:
-            return None
-        
-        # Use stored directory path if available (from discovery)
         if hasattr(self, 'plugin_directories') and plugin_id in self.plugin_directories:
             return str(self.plugin_directories[plugin_id])
         
-        # Fallback: check configured directory
         plugin_dir = self.plugins_dir / plugin_id
         if plugin_dir.exists():
             return str(plugin_dir)
         
-        # Fallback: check standard plugins directory
-        try:
-            if self.plugins_dir.is_absolute():
-                project_root = self.plugins_dir.parent
-            else:
-                project_root = self.plugins_dir.resolve().parent
-            standard_plugins_dir = project_root / 'plugins'
-            if standard_plugins_dir.exists():
-                plugin_dir = standard_plugins_dir / plugin_id
-                if plugin_dir.exists():
-                    return str(plugin_dir)
-        except (OSError, ValueError):
-            pass
+        plugin_dir = self.plugins_dir / f"ledmatrix-{plugin_id}"
+        if plugin_dir.exists():
+            return str(plugin_dir)
         
         return None
-
+    
     def get_plugin_display_modes(self, plugin_id: str) -> List[str]:
         """
-        Get declared display modes for a plugin.
-
+        Get display modes provided by a plugin.
+        
         Args:
             plugin_id: Plugin identifier
-
+            
         Returns:
-            List of display mode identifiers. Falls back to [plugin_id] if none declared.
+            List of display mode names
         """
-        manifest = self.plugin_manifests.get(plugin_id, {})
-        display_modes = manifest.get('display_modes')
-        if isinstance(display_modes, list) and display_modes:
+        manifest = self.plugin_manifests.get(plugin_id)
+        if not manifest:
+            return []
+        
+        display_modes = manifest.get('display_modes', [])
+        if isinstance(display_modes, list):
             return display_modes
-        fallback = manifest.get('id') or plugin_id
-        return [fallback]
-
+        return []
+    
     def find_plugin_for_mode(self, mode: str) -> Optional[str]:
         """
-        Find the plugin that owns a specific display mode.
-
+        Find which plugin provides a given display mode.
+        
         Args:
             mode: Display mode identifier
-
+            
         Returns:
             Plugin identifier or None if not found.
         """
@@ -850,54 +533,52 @@ class PluginManager:
             if isinstance(display_modes, list) and display_modes:
                 if any(m.lower() == normalized_mode for m in display_modes):
                     return plugin_id
-            else:
-                if plugin_id.lower() == normalized_mode:
-                    return plugin_id
+        
         return None
 
     def _get_plugin_update_interval(self, plugin_id: str, plugin_instance: Any) -> Optional[float]:
         """
-        Determine the update interval for a plugin instance.
-
-        Priority order:
-            1. Plugin attribute `update_interval`
-            2. Plugin configuration value `update_interval`
-            3. Manifest `update_interval`
-            4. Default of 60 seconds
+        Get the update interval for a plugin.
+        
+        Args:
+            plugin_id: Plugin identifier
+            plugin_instance: Plugin instance
+            
+        Returns:
+            Update interval in seconds or None if not configured
         """
-        interval = None
-
-        if hasattr(plugin_instance, "update_interval"):
-            interval = getattr(plugin_instance, "update_interval")
-
-        if (interval is None or interval <= 0) and hasattr(plugin_instance, "config"):
-            interval = plugin_instance.config.get("update_interval")
-
-        if (interval is None or interval <= 0) and plugin_id in self.plugin_manifests:
-            interval = self.plugin_manifests[plugin_id].get("update_interval")
-
-        if interval is None:
-            interval = 60
-
-        try:
-            interval = float(interval)
-        except (TypeError, ValueError):
-            self.logger.debug(
-                "Invalid update interval for plugin %s: %s",
-                plugin_id,
-                interval,
-            )
-            return None
-
-        if interval <= 0:
-            return None
-
-        return interval
+        # Check manifest first
+        manifest = self.plugin_manifests.get(plugin_id, {})
+        update_interval = manifest.get('update_interval')
+        
+        if update_interval:
+            try:
+                return float(update_interval)
+            except (ValueError, TypeError):
+                pass
+        
+        # Check plugin config
+        if self.config_manager:
+            try:
+                config = self.config_manager.get_config()
+                plugin_config = config.get(plugin_id, {})
+                update_interval = plugin_config.get('update_interval')
+                if update_interval:
+                    try:
+                        return float(update_interval)
+                    except (ValueError, TypeError):
+                        pass
+            except Exception as e:
+                self.logger.debug("Could not get update interval from config: %s", e)
+        
+        # Default: 60 seconds
+        return 60.0
 
     def run_scheduled_updates(self, current_time: Optional[float] = None) -> None:
         """
         Trigger plugin updates based on their defined update intervals.
         Includes health tracking and circuit breaker logic.
+        Uses PluginExecutor for safe execution with timeout.
         """
         if current_time is None:
             current_time = time.time()
@@ -913,6 +594,10 @@ class PluginManager:
             if self.health_tracker and self.health_tracker.should_skip_plugin(plugin_id):
                 continue
 
+            # Check if plugin can execute
+            if not self.state_manager.can_execute(plugin_id):
+                continue
+
             interval = self._get_plugin_update_interval(plugin_id, plugin_instance)
             if interval is None:
                 continue
@@ -920,19 +605,134 @@ class PluginManager:
             last_update = self.plugin_last_update.get(plugin_id, 0.0)
 
             if last_update == 0.0 or (current_time - last_update) >= interval:
+                # Update state to RUNNING
+                self.state_manager.set_state(plugin_id, PluginState.RUNNING)
+                
                 try:
-                    # Monitor resource usage
+                    # Use PluginExecutor for safe execution
+                    success = False
                     if self.resource_monitor:
-                        self.resource_monitor.monitor_call(plugin_id, plugin_instance.update)
+                        # If resource monitor exists, wrap the call
+                        def monitored_update():
+                            self.resource_monitor.monitor_call(plugin_id, plugin_instance.update)
+                        success = self.plugin_executor.execute_update(
+                            type('obj', (object,), {'update': monitored_update})(),
+                            plugin_id
+                        )
                     else:
-                        plugin_instance.update()
-                    self.plugin_last_update[plugin_id] = current_time
-                    # Record success
-                    if self.health_tracker:
-                        self.health_tracker.record_success(plugin_id)
+                        success = self.plugin_executor.execute_update(plugin_instance, plugin_id)
+                    
+                    if success:
+                        self.plugin_last_update[plugin_id] = current_time
+                        self.state_manager.record_update(plugin_id)
+                        # Update state back to ENABLED
+                        self.state_manager.set_state(plugin_id, PluginState.ENABLED)
+                        # Record success
+                        if self.health_tracker:
+                            self.health_tracker.record_success(plugin_id)
+                    else:
+                        # Execution failed (timeout or error)
+                        self.state_manager.set_state(plugin_id, PluginState.ERROR)
+                        if self.health_tracker:
+                            self.health_tracker.record_failure(plugin_id, Exception("Plugin execution failed"))
                 except Exception as exc:  # pylint: disable=broad-except
                     self.logger.exception("Error updating plugin %s: %s", plugin_id, exc)
+                    self.state_manager.set_state(plugin_id, PluginState.ERROR, error=exc)
                     # Record failure
                     if self.health_tracker:
                         self.health_tracker.record_failure(plugin_id, exc)
 
+    def update_all_plugins(self) -> None:
+        """
+        Update all enabled plugins.
+        Calls update() on each enabled plugin using PluginExecutor.
+        """
+        for plugin_id, plugin_instance in list(self.plugins.items()):
+            if not getattr(plugin_instance, "enabled", True):
+                continue
+            
+            if not hasattr(plugin_instance, "update"):
+                continue
+            
+            # Check if plugin can execute
+            if not self.state_manager.can_execute(plugin_id):
+                continue
+            
+            # Update state to RUNNING
+            self.state_manager.set_state(plugin_id, PluginState.RUNNING)
+            
+            try:
+                success = self.plugin_executor.execute_update(plugin_instance, plugin_id)
+                if success:
+                    self.plugin_last_update[plugin_id] = time.time()
+                    self.state_manager.record_update(plugin_id)
+                    # Update state back to ENABLED
+                    self.state_manager.set_state(plugin_id, PluginState.ENABLED)
+                else:
+                    # Execution failed
+                    self.state_manager.set_state(plugin_id, PluginState.ERROR)
+            except Exception as exc:  # pylint: disable=broad-except
+                self.logger.exception("Error updating plugin %s: %s", plugin_id, exc)
+                self.state_manager.set_state(plugin_id, PluginState.ERROR, error=exc)
+    
+    def get_plugin_health_metrics(self) -> Dict[str, Any]:
+        """
+        Get health metrics for all plugins.
+        
+        Returns:
+            Dictionary mapping plugin_id to health metrics
+        """
+        metrics = {}
+        for plugin_id in self.plugins.keys():
+            plugin_metrics = {}
+            
+            # Get state information
+            state_info = self.state_manager.get_state_info(plugin_id)
+            plugin_metrics.update(state_info)
+            
+            # Get health tracker metrics if available
+            if self.health_tracker:
+                health_info = self.health_tracker.get_plugin_health(plugin_id)
+                plugin_metrics['health'] = health_info
+            else:
+                plugin_metrics['health'] = {'status': 'unknown'}
+            
+            metrics[plugin_id] = plugin_metrics
+        return metrics
+    
+    def get_plugin_resource_metrics(self) -> Dict[str, Any]:
+        """
+        Get resource usage metrics for all plugins.
+        
+        Returns:
+            Dictionary mapping plugin_id to resource metrics
+        """
+        metrics = {}
+        for plugin_id in self.plugins.keys():
+            plugin_metrics = {}
+            
+            # Get state information
+            state_info = self.state_manager.get_state_info(plugin_id)
+            plugin_metrics.update(state_info)
+            
+            # Get resource monitor metrics if available
+            if self.resource_monitor:
+                resource_info = self.resource_monitor.get_plugin_metrics(plugin_id)
+                plugin_metrics['resources'] = resource_info
+            else:
+                plugin_metrics['resources'] = {'status': 'unknown'}
+            
+            metrics[plugin_id] = plugin_metrics
+        return metrics
+    
+    def get_plugin_state(self, plugin_id: str) -> Dict[str, Any]:
+        """
+        Get comprehensive state information for a plugin.
+        
+        Args:
+            plugin_id: Plugin identifier
+            
+        Returns:
+            Dictionary with state information
+        """
+        return self.state_manager.get_state_info(plugin_id)
