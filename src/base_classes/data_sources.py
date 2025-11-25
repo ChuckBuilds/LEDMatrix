@@ -111,25 +111,34 @@ class ESPNDataSource(DataSource):
     
     def fetch_standings(self, sport: str, league: str) -> Dict:
         """Fetch standings from ESPN API."""
+        # Try standings endpoint first (for professional leagues like NFL, NBA, etc.)
         try:
-            # Try standings endpoint first (for professional leagues like NFL, NBA, etc.)
             url = f"{self.base_url}/{sport}/{league}/standings"
             response = self.session.get(url, headers=self.get_headers(), timeout=15)
-            
-            # If standings doesn't exist, try rankings (for college sports)
-            if response.status_code == 404:
-                url = f"{self.base_url}/{sport}/{league}/rankings"
-                response = self.session.get(url, headers=self.get_headers(), timeout=15)
-            
             response.raise_for_status()
             
             data = response.json()
             self.logger.debug(f"Fetched standings for {sport}/{league}")
             return data
-            
         except Exception as e:
-            self.logger.error(f"Error fetching standings from ESPN: {e}")
-            return {}
+            # If standings doesn't exist, try rankings (for college sports)
+            if hasattr(e, 'response') and hasattr(e.response, 'status_code') and e.response.status_code == 404:
+                try:
+                    url = f"{self.base_url}/{sport}/{league}/rankings"
+                    response = self.session.get(url, headers=self.get_headers(), timeout=15)
+                    response.raise_for_status()
+                    
+                    data = response.json()
+                    self.logger.debug(f"Fetched rankings for {sport}/{league}")
+                    return data
+                except Exception:
+                    # Both endpoints failed - standings/rankings may not be available for this sport/league
+                    self.logger.debug(f"Standings/rankings not available for {sport}/{league} from ESPN API")
+                    return {}
+            else:
+                # Non-404 error - log at debug level since standings are optional
+                self.logger.debug(f"Error fetching standings from ESPN for {sport}/{league}: {e}")
+                return {}
 
 
 class MLBAPIDataSource(DataSource):
