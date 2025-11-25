@@ -296,9 +296,17 @@ class SchemaManager:
             
             # Inject core properties if they're not already defined in the schema
             # This ensures core properties are always allowed even if not in the plugin's schema
+            properties_added = []
             for prop_name, prop_def in core_properties.items():
                 if prop_name not in enhanced_schema["properties"]:
                     enhanced_schema["properties"][prop_name] = copy.deepcopy(prop_def)
+                    properties_added.append(prop_name)
+            
+            # Log if we added any core properties (for debugging)
+            if properties_added and plugin_id:
+                self.logger.debug(
+                    f"Injected core properties into schema for {plugin_id}: {properties_added}"
+                )
             
             # Create validator with enhanced schema
             validator = Draft7Validator(enhanced_schema)
