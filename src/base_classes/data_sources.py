@@ -112,8 +112,15 @@ class ESPNDataSource(DataSource):
     def fetch_standings(self, sport: str, league: str) -> Dict:
         """Fetch standings from ESPN API."""
         try:
-            url = f"{self.base_url}/{sport}/{league}/rankings"
+            # Try standings endpoint first (for professional leagues like NFL, NBA, etc.)
+            url = f"{self.base_url}/{sport}/{league}/standings"
             response = self.session.get(url, headers=self.get_headers(), timeout=15)
+            
+            # If standings doesn't exist, try rankings (for college sports)
+            if response.status_code == 404:
+                url = f"{self.base_url}/{sport}/{league}/rankings"
+                response = self.session.get(url, headers=self.get_headers(), timeout=15)
+            
             response.raise_for_status()
             
             data = response.json()
