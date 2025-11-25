@@ -76,7 +76,7 @@ class PluginHealthTracker:
     def _save_health_state(self, plugin_id: str, state: Dict[str, Any]) -> None:
         """Save health state to cache."""
         cache_key = self._get_health_key(plugin_id)
-        self.cache_manager.set(cache_key, state, ttl=None)  # Persist indefinitely
+        self.cache_manager.set(cache_key, state)  # Persist indefinitely
         self._health_state[plugin_id] = state
     
     def get_health_state(self, plugin_id: str) -> Dict[str, Any]:
