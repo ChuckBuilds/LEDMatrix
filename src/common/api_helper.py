@@ -251,10 +251,10 @@ class APIHelper:
         Args:
             key: Cache key
             data: Data to cache
-            ttl: Time-to-live in seconds
+            ttl: Time-to-live in seconds (ignored - CacheManager doesn't support TTL)
         """
         if self.cache_manager:
-            self.cache_manager.set(key, data, ttl)
+            self.cache_manager.set(key, data)
     
     def get_cache(self, key: str) -> Optional[Any]:
         """
@@ -297,7 +297,7 @@ class APIHelper:
     def _set_cache(self, key: str, data: Any, ttl: int) -> None:
         """Set data in cache."""
         if self.cache_manager:
-            self.cache_manager.set(key, data, ttl)
+            self.cache_manager.set(key, data)
     
     def _enforce_rate_limit(self) -> None:
         """Enforce rate limiting between requests."""

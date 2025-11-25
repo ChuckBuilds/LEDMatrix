@@ -121,7 +121,7 @@ class PluginResourceMonitor:
                 'max_cpu_percent': limits.max_cpu_percent,
                 'max_execution_time': limits.max_execution_time,
                 'warning_threshold': limits.warning_threshold
-            }, ttl=None)
+            })
     
     def get_limits(self, plugin_id: str) -> Optional[ResourceLimits]:
         """Get resource limits for a plugin."""
@@ -218,7 +218,7 @@ class PluginResourceMonitor:
                     'max_execution_time': metrics.max_execution_time,
                     'min_execution_time': metrics.min_execution_time if metrics.min_execution_time != float('inf') else 0.0,
                     'last_update_time': metrics.last_update_time
-                }, ttl=None)
+                })
             
             # Check limits
             if limits:
