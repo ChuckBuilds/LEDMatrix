@@ -1,8 +1,9 @@
 import json
 import os
 import logging
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 from src.exceptions import ConfigError
+from src.logging_config import get_logger
 
 class ConfigManager:
     def __init__(self, config_path: Optional[str] = None, secrets_path: Optional[str] = None) -> None:
