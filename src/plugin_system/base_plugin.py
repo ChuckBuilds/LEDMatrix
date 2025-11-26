@@ -163,13 +163,27 @@ class BasePlugin(ABC):
     def get_display_duration(self) -> float:
         """
         Get the display duration for this plugin instance.
-
+        
+        Automatically detects duration from:
+        1. self.display_duration instance variable (if exists)
+        2. self.config.get("display_duration", 15.0) (fallback)
+        
         Can be overridden by plugins to provide dynamic durations based
         on content (e.g., longer duration for more complex displays).
 
         Returns:
             Duration in seconds to display this plugin's content
         """
+        # Check for instance variable first (common pattern in scoreboard plugins)
+        if hasattr(self, 'display_duration'):
+            try:
+                duration = getattr(self, 'display_duration')
+                if isinstance(duration, (int, float)) and duration > 0:
+                    return float(duration)
+            except (TypeError, ValueError):
+                pass  # Fall through to config
+        
+        # Fall back to config
         return self.config.get("display_duration", 15.0)
 
     # ---------------------------------------------------------------------
