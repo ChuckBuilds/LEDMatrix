@@ -1797,9 +1797,6 @@ def update_plugin():
                     error_msg,
                     status_code=500
                 )
-                    error_msg += '. Check logs for details'
-            
-            return jsonify({'status': 'error', 'message': error_msg}), 500
             
     except Exception as e:
         from src.web_interface.errors import WebInterfaceError
