@@ -400,6 +400,22 @@ echo "------------------------------------------------"
 mkdir -p "$PROJECT_ROOT_DIR/config"
 chmod 755 "$PROJECT_ROOT_DIR/config" || true
 
+# Create ledmatrix group if it doesn't exist (needed for shared access)
+LEDMATRIX_GROUP="ledmatrix"
+if ! getent group "$LEDMATRIX_GROUP" > /dev/null 2>&1; then
+    groupadd "$LEDMATRIX_GROUP" || true
+    echo "Created group: $LEDMATRIX_GROUP"
+fi
+
+# Add root to ledmatrix group so service can read config files
+if ! id -nG root | grep -qw "$LEDMATRIX_GROUP" 2>/dev/null; then
+    usermod -a -G "$LEDMATRIX_GROUP" root || true
+    echo "Added root to group: $LEDMATRIX_GROUP"
+fi
+
+# Set config directory ownership to user:ledmatrix group
+chown "$ACTUAL_USER:$LEDMATRIX_GROUP" "$PROJECT_ROOT_DIR/config" || true
+
 # Create config.json from template if missing
 if [ ! -f "$PROJECT_ROOT_DIR/config/config.json" ]; then
     if [ -f "$PROJECT_ROOT_DIR/config/config.template.json" ]; then
