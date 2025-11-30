@@ -823,6 +823,11 @@
                             class="whitespace-nowrap py-2 px-1 lg:px-2 xl:px-3 border-b-2 font-medium text-sm transition-colors">
                         <i class="fas fa-database mr-2"></i>Cache
                     </button>
+                    <button @click="activeTab = 'operation-history'"
+                            :class="activeTab === 'operation-history' ? 'border-blue-600 text-blue-600 font-semibold' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'"
+                            class="whitespace-nowrap py-2 px-1 lg:px-2 xl:px-3 border-b-2 font-medium text-sm transition-colors">
+                        <i class="fas fa-history mr-2"></i>Operation History
+                    </button>
                 </nav>
             </div>
 
@@ -979,6 +984,18 @@
             <!-- Cache tab -->
             <div x-show="activeTab === 'cache'" x-transition>
                 <div id="cache-content" hx-get="/v3/partials/cache" hx-trigger="revealed" hx-swap="innerHTML">
+                    <div class="animate-pulse">
+                        <div class="bg-white rounded-lg shadow p-6">
+                            <div class="h-4 bg-gray-200 rounded w-1/4 mb-4"></div>
+                            <div class="h-64 bg-gray-200 rounded"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Operation History tab -->
+            <div x-show="activeTab === 'operation-history'" x-transition>
+                <div id="operation-history-content" hx-get="/v3/partials/operation-history" hx-trigger="revealed" hx-swap="innerHTML">
                     <div class="animate-pulse">
                         <div class="bg-white rounded-lg shadow p-6">
                             <div class="h-4 bg-gray-200 rounded w-1/4 mb-4"></div>
@@ -3043,6 +3060,24 @@
 
     <!-- Custom v3 JavaScript -->
     <script src="{{ url_for('static', filename='v3/app.js') }}"></script>
+    
+    <!-- Modular Plugin Management JavaScript -->
+    <!-- Load utilities first -->
+    <script src="{{ url_for('static', filename='v3/js/utils/error_handler.js') }}"></script>
+    
+    <!-- Load core API client first (used by other modules) -->
+    <script src="{{ url_for('static', filename='v3/js/plugins/api_client.js') }}"></script>
+    
+    <!-- Load plugin management modules -->
+    <script src="{{ url_for('static', filename='v3/js/plugins/store_manager.js') }}"></script>
+    <script src="{{ url_for('static', filename='v3/js/plugins/state_manager.js') }}"></script>
+    <script src="{{ url_for('static', filename='v3/js/plugins/config_manager.js') }}"></script>
+    <script src="{{ url_for('static', filename='v3/js/plugins/install_manager.js') }}"></script>
+    
+    <!-- Load config utilities -->
+    <script src="{{ url_for('static', filename='v3/js/config/diff_viewer.js') }}"></script>
+    
+    <!-- Legacy plugins_manager.js (for backward compatibility during migration) -->
     <script src="{{ url_for('static', filename='v3/plugins_manager.js') }}"></script>
 </body>
 </html>

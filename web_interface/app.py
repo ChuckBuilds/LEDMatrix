@@ -17,6 +17,7 @@ from src.plugin_system.schema_manager import SchemaManager
 from src.plugin_system.operation_queue import PluginOperationQueue
 from src.plugin_system.state_manager import PluginStateManager
 from src.plugin_system.operation_history import OperationHistory
+from src.plugin_system.health_monitor import PluginHealthMonitor
 
 # Create Flask app
 app = Flask(__name__)
@@ -70,6 +71,22 @@ operation_history = OperationHistory(
     max_records=1000
 )
 
+# Initialize health monitoring (if health tracker is available)
+health_monitor = None
+if hasattr(plugin_manager, 'health_tracker') and plugin_manager.health_tracker:
+    try:
+        health_monitor = PluginHealthMonitor(
+            health_tracker=plugin_manager.health_tracker,
+            check_interval=60.0,  # Check every minute
+            degraded_threshold=0.5,
+            unhealthy_threshold=0.8,
+            max_response_time=5.0
+        )
+        health_monitor.start_monitoring()
+        print("✓ Plugin health monitoring started")
+    except Exception as e:
+        print(f"⚠ Could not start health monitoring: {e}")
+
 # Discover and load plugins
 plugin_manager.discover_plugins()
 # Note: We don't auto-load plugins here since we only need metadata for the web interface
@@ -92,6 +109,7 @@ api_v3.schema_manager = schema_manager
 api_v3.operation_queue = operation_queue
 api_v3.plugin_state_manager = plugin_state_manager
 api_v3.operation_history = operation_history
+api_v3.health_monitor = health_monitor
 # Initialize cache manager for API endpoints
 from src.cache_manager import CacheManager
 api_v3.cache_manager = CacheManager()

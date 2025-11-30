@@ -1,0 +1,368 @@
+<div class="bg-white rounded-lg shadow p-6">
+    <div class="border-b border-gray-200 pb-4 mb-6">
+        <h2 class="text-lg font-semibold text-gray-900">Operation History</h2>
+        <p class="mt-1 text-sm text-gray-600">View history of plugin operations and configuration changes for debugging and auditing.</p>
+    </div>
+
+    <!-- Controls -->
+    <div class="flex flex-wrap items-center justify-between gap-4 mb-6">
+        <div class="flex items-center space-x-4">
+            <!-- Filter by Plugin -->
+            <select id="history-plugin-filter" class="form-control text-sm">
+                <option value="">All Plugins</option>
+            </select>
+
+            <!-- Filter by Operation Type -->
+            <select id="history-type-filter" class="form-control text-sm">
+                <option value="">All Operations</option>
+                <option value="install">Install</option>
+                <option value="update">Update</option>
+                <option value="uninstall">Uninstall</option>
+                <option value="enable">Enable</option>
+                <option value="disable">Disable</option>
+                <option value="config_save">Config Save</option>
+            </select>
+
+            <!-- Filter by Status -->
+            <select id="history-status-filter" class="form-control text-sm">
+                <option value="">All Statuses</option>
+                <option value="completed">Completed</option>
+                <option value="success">Success</option>
+                <option value="failed">Failed</option>
+                <option value="error">Error</option>
+                <option value="in_progress">In Progress</option>
+            </select>
+
+            <!-- Search -->
+            <div class="relative">
+                <input type="text" id="history-search" placeholder="Search operations..." class="form-control text-sm pl-8 pr-4 py-1 w-48">
+                <i class="fas fa-search absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 text-xs"></i>
+            </div>
+        </div>
+
+        <div class="flex items-center space-x-2">
+            <!-- Refresh -->
+            <button id="refresh-history-btn" class="btn bg-blue-600 hover:bg-blue-700 text-white px-3 py-1 rounded text-sm">
+                <i class="fas fa-sync-alt mr-1"></i>Refresh
+            </button>
+
+            <!-- Clear History -->
+            <button id="clear-history-btn" class="btn bg-red-600 hover:bg-red-700 text-white px-3 py-1 rounded text-sm">
+                <i class="fas fa-trash mr-1"></i>Clear
+            </button>
+        </div>
+    </div>
+
+    <!-- History Table -->
+    <div class="overflow-x-auto">
+        <table class="min-w-full divide-y divide-gray-200">
+            <thead class="bg-gray-50">
+                <tr>
+                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Timestamp</th>
+                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Operation</th>
+                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Plugin</th>
+                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
+                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">User</th>
+                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Details</th>
+                </tr>
+            </thead>
+            <tbody id="history-table-body" class="bg-white divide-y divide-gray-200">
+                <tr>
+                    <td colspan="6" class="px-6 py-4 text-center text-gray-500">
+                        <div class="animate-pulse">
+                            <div class="h-4 bg-gray-200 rounded w-1/4 mx-auto"></div>
+                        </div>
+                    </td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+
+    <!-- Pagination -->
+    <div class="mt-4 flex items-center justify-between">
+        <div class="text-sm text-gray-700">
+            Showing <span id="history-start">0</span> to <span id="history-end">0</span> of <span id="history-total">0</span> operations
+        </div>
+        <div class="flex space-x-2">
+            <button id="history-prev-btn" class="btn bg-gray-600 hover:bg-gray-700 text-white px-3 py-1 rounded text-sm disabled:opacity-50" disabled>
+                <i class="fas fa-chevron-left mr-1"></i>Previous
+            </button>
+            <button id="history-next-btn" class="btn bg-gray-600 hover:bg-gray-700 text-white px-3 py-1 rounded text-sm disabled:opacity-50" disabled>
+                Next<i class="fas fa-chevron-right ml-1"></i>
+            </button>
+        </div>
+    </div>
+</div>
+
+<script>
+(function() {
+    let currentPage = 1;
+    const pageSize = 50;
+    let allHistory = [];
+    let filteredHistory = [];
+
+    // Load operation history
+    async function loadHistory() {
+        try {
+            const response = await fetch('/api/v3/plugins/operation/history?limit=1000');
+            const data = await response.json();
+            
+            if (data.status === 'success') {
+                allHistory = data.data || [];
+                applyFilters();
+            } else {
+                console.error('Failed to load history:', data.message);
+                showError('Failed to load operation history');
+            }
+        } catch (error) {
+            console.error('Error loading history:', error);
+            showError('Error loading operation history');
+        }
+    }
+
+    // Apply filters
+    function applyFilters() {
+        const pluginFilter = document.getElementById('history-plugin-filter')?.value || '';
+        const typeFilter = document.getElementById('history-type-filter')?.value || '';
+        const statusFilter = document.getElementById('history-status-filter')?.value || '';
+        const searchTerm = (document.getElementById('history-search')?.value || '').toLowerCase();
+
+        filteredHistory = allHistory.filter(record => {
+            if (pluginFilter && record.plugin_id !== pluginFilter) return false;
+            if (typeFilter && record.operation_type !== typeFilter) return false;
+            if (statusFilter && record.status !== statusFilter) return false;
+            if (searchTerm) {
+                const searchable = [
+                    record.operation_type,
+                    record.plugin_id,
+                    record.status,
+                    record.user,
+                    record.error,
+                    JSON.stringify(record.details || {})
+                ].join(' ').toLowerCase();
+                if (!searchable.includes(searchTerm)) return false;
+            }
+            return true;
+        });
+
+        renderHistory();
+    }
+
+    // Render history table
+    function renderHistory() {
+        const tbody = document.getElementById('history-table-body');
+        if (!tbody) return;
+
+        const start = (currentPage - 1) * pageSize;
+        const end = Math.min(start + pageSize, filteredHistory.length);
+        const pageData = filteredHistory.slice(start, end);
+
+        if (pageData.length === 0) {
+            tbody.innerHTML = `
+                <tr>
+                    <td colspan="6" class="px-6 py-4 text-center text-gray-500">
+                        No operations found
+                    </td>
+                </tr>
+            `;
+            return;
+        }
+
+        tbody.innerHTML = pageData.map(record => {
+            const timestamp = new Date(record.timestamp || record.created_at || Date.now());
+            const timeStr = timestamp.toLocaleString();
+            const statusClass = getStatusClass(record.status);
+            const operationType = record.operation_type || 'unknown';
+            const pluginId = record.plugin_id || '-';
+            const user = record.user || '-';
+            const details = record.details ? JSON.stringify(record.details, null, 2) : '';
+            const error = record.error ? `<div class="text-red-600 text-xs mt-1">${escapeHtml(record.error)}</div>` : '';
+
+            return `
+                <tr class="hover:bg-gray-50">
+                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">${escapeHtml(timeStr)}</td>
+                    <td class="px-6 py-4 whitespace-nowrap text-sm">
+                        <span class="px-2 py-1 text-xs font-medium rounded ${getOperationTypeClass(operationType)}">
+                            ${escapeHtml(operationType)}
+                        </span>
+                    </td>
+                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">${escapeHtml(pluginId)}</td>
+                    <td class="px-6 py-4 whitespace-nowrap text-sm">
+                        <span class="px-2 py-1 text-xs font-medium rounded ${statusClass}">
+                            ${escapeHtml(record.status || 'unknown')}
+                        </span>
+                    </td>
+                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">${escapeHtml(user)}</td>
+                    <td class="px-6 py-4 text-sm text-gray-500">
+                        ${details ? `<details class="cursor-pointer"><summary class="text-blue-600 hover:text-blue-800">View Details</summary><pre class="mt-2 text-xs bg-gray-100 p-2 rounded overflow-auto max-h-32">${escapeHtml(details)}</pre></details>` : '-'}
+                        ${error}
+                    </td>
+                </tr>
+            `;
+        }).join('');
+
+        // Update pagination
+        document.getElementById('history-start').textContent = filteredHistory.length > 0 ? start + 1 : 0;
+        document.getElementById('history-end').textContent = end;
+        document.getElementById('history-total').textContent = filteredHistory.length;
+
+        // Update pagination buttons
+        const prevBtn = document.getElementById('history-prev-btn');
+        const nextBtn = document.getElementById('history-next-btn');
+        if (prevBtn) prevBtn.disabled = currentPage === 1;
+        if (nextBtn) nextBtn.disabled = end >= filteredHistory.length;
+    }
+
+    // Helper functions
+    function getStatusClass(status) {
+        const statusLower = (status || '').toLowerCase();
+        if (statusLower === 'success' || statusLower === 'completed') {
+            return 'bg-green-100 text-green-800';
+        } else if (statusLower === 'failed' || statusLower === 'error') {
+            return 'bg-red-100 text-red-800';
+        } else if (statusLower === 'in_progress' || statusLower === 'pending') {
+            return 'bg-yellow-100 text-yellow-800';
+        }
+        return 'bg-gray-100 text-gray-800';
+    }
+
+    function getOperationTypeClass(type) {
+        const typeLower = (type || '').toLowerCase();
+        if (typeLower === 'install') {
+            return 'bg-blue-100 text-blue-800';
+        } else if (typeLower === 'update') {
+            return 'bg-purple-100 text-purple-800';
+        } else if (typeLower === 'uninstall') {
+            return 'bg-red-100 text-red-800';
+        } else if (typeLower === 'enable' || typeLower === 'disable') {
+            return 'bg-yellow-100 text-yellow-800';
+        } else if (typeLower === 'config_save') {
+            return 'bg-green-100 text-green-800';
+        }
+        return 'bg-gray-100 text-gray-800';
+    }
+
+    function escapeHtml(text) {
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+    }
+
+    function showError(message) {
+        if (typeof showNotification === 'function') {
+            showNotification(message, 'error');
+        } else {
+            alert(message);
+        }
+    }
+
+    // Populate plugin filter
+    async function populatePluginFilter() {
+        try {
+            const response = await fetch('/api/v3/plugins/installed');
+            const data = await response.json();
+            
+            if (data.status === 'success' && data.data) {
+                const select = document.getElementById('history-plugin-filter');
+                if (select) {
+                    const plugins = Object.keys(data.data);
+                    plugins.forEach(pluginId => {
+                        const option = document.createElement('option');
+                        option.value = pluginId;
+                        option.textContent = pluginId;
+                        select.appendChild(option);
+                    });
+                }
+            }
+        } catch (error) {
+            console.error('Error loading plugins for filter:', error);
+        }
+    }
+
+    // Event listeners
+    function setupEventListeners() {
+        const refreshBtn = document.getElementById('refresh-history-btn');
+        if (refreshBtn) {
+            refreshBtn.addEventListener('click', () => {
+                loadHistory();
+            });
+        }
+
+        const clearBtn = document.getElementById('clear-history-btn');
+        if (clearBtn) {
+            clearBtn.addEventListener('click', () => {
+                if (confirm('Are you sure you want to clear the operation history? This cannot be undone.')) {
+                    // TODO: Implement clear history API endpoint
+                    showError('Clear history not yet implemented');
+                }
+            });
+        }
+
+        const prevBtn = document.getElementById('history-prev-btn');
+        if (prevBtn) {
+            prevBtn.addEventListener('click', () => {
+                if (currentPage > 1) {
+                    currentPage--;
+                    renderHistory();
+                }
+            });
+        }
+
+        const nextBtn = document.getElementById('history-next-btn');
+        if (nextBtn) {
+            nextBtn.addEventListener('click', () => {
+                const start = (currentPage - 1) * pageSize;
+                const end = Math.min(start + pageSize, filteredHistory.length);
+                if (end < filteredHistory.length) {
+                    currentPage++;
+                    renderHistory();
+                }
+            });
+        }
+
+        // Filter change listeners
+        ['history-plugin-filter', 'history-type-filter', 'history-status-filter'].forEach(id => {
+            const element = document.getElementById(id);
+            if (element) {
+                element.addEventListener('change', () => {
+                    currentPage = 1;
+                    applyFilters();
+                });
+            }
+        });
+
+        const searchInput = document.getElementById('history-search');
+        if (searchInput) {
+            let searchTimeout;
+            searchInput.addEventListener('input', () => {
+                clearTimeout(searchTimeout);
+                searchTimeout = setTimeout(() => {
+                    currentPage = 1;
+                    applyFilters();
+                }, 300);
+            });
+        }
+    }
+
+    // Initialize
+    document.addEventListener('DOMContentLoaded', () => {
+        setupEventListeners();
+        populatePluginFilter();
+        loadHistory();
+    });
+
+    // Also initialize if script runs after DOM is ready
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', () => {
+            setupEventListeners();
+            populatePluginFilter();
+            loadHistory();
+        });
+    } else {
+        setupEventListeners();
+        populatePluginFilter();
+        loadHistory();
+    }
+})();
+</script>
+
