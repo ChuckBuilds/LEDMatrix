@@ -105,6 +105,10 @@ class DiskCache:
             except OSError as remove_error:
                 self.logger.warning("Could not remove corrupted cache file %s: %s", cache_path, remove_error)
             return None
+        except PermissionError as e:
+            # Permission errors are recoverable - cache just won't be available
+            self.logger.warning("Permission denied loading cache for %s from %s: %s. Cache unavailable for this key.", key, cache_path, e)
+            return None
         except (IOError, OSError) as e:
             self.logger.error("Error loading cache for %s from %s: %s", key, cache_path, e, exc_info=True)
             return None
