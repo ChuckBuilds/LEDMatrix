@@ -4,6 +4,10 @@ import logging
 from typing import Dict, Any, Optional, List
 from src.exceptions import ConfigError
 from src.logging_config import get_logger
+from src.config_manager_atomic import (
+    AtomicConfigManager, SaveResult, SaveResultStatus,
+    BackupInfo, ValidationResult
+)
 
 class ConfigManager:
     def __init__(self, config_path: Optional[str] = None, secrets_path: Optional[str] = None) -> None:
@@ -13,12 +17,125 @@ class ConfigManager:
         self.template_path: str = "config/config.template.json"
         self.config: Dict[str, Any] = {}
         self.logger: logging.Logger = get_logger(__name__)
+        
+        # Initialize atomic config manager
+        self._atomic_manager: Optional[AtomicConfigManager] = None
 
     def get_config_path(self) -> str:
         return self.config_path
 
     def get_secrets_path(self) -> str:
         return self.secrets_path
+    
+    def _get_atomic_manager(self) -> AtomicConfigManager:
+        """Get or create atomic config manager instance."""
+        if self._atomic_manager is None:
+            self._atomic_manager = AtomicConfigManager(
+                config_path=self.config_path,
+                secrets_path=self.secrets_path
+            )
+        return self._atomic_manager
+    
+    def save_config_atomic(
+        self,
+        new_config_data: Dict[str, Any],
+        create_backup: bool = True,
+        validate_after_write: bool = True
+    ) -> SaveResult:
+        """
+        Save configuration atomically with backup and rollback support.
+        
+        This method provides atomic file operations to prevent corruption
+        and enables recovery from failed saves.
+        
+        Args:
+            new_config_data: New configuration data to save
+            create_backup: Whether to create backup before saving (default: True)
+            validate_after_write: Whether to validate after writing (default: True)
+            
+        Returns:
+            SaveResult with status and details
+        """
+        # Load current secrets to preserve them
+        secrets_content = {}
+        if os.path.exists(self.secrets_path):
+            try:
+                with open(self.secrets_path, 'r') as f_secrets:
+                    secrets_content = json.load(f_secrets)
+            except Exception as e:
+                self.logger.warning(f"Could not load secrets file {self.secrets_path} during save: {e}")
+        
+        # Strip secrets from main config before saving
+        config_to_write = self._strip_secrets_recursive(new_config_data, secrets_content)
+        
+        # Use atomic manager to save
+        atomic_mgr = self._get_atomic_manager()
+        result = atomic_mgr.save_config_atomic(
+            new_config=config_to_write,
+            new_secrets=secrets_content if secrets_content else None,
+            create_backup=create_backup,
+            validate_after_write=validate_after_write
+        )
+        
+        # Update in-memory config if save was successful
+        if result.status == SaveResultStatus.SUCCESS:
+            self.config = new_config_data
+            self.logger.info(f"Configuration successfully saved atomically to {os.path.abspath(self.config_path)}")
+        elif result.status == SaveResultStatus.ROLLED_BACK:
+            # Reload config from file after rollback
+            try:
+                self.load_config()
+            except Exception as e:
+                self.logger.error(f"Error reloading config after rollback: {e}")
+        
+        return result
+    
+    def rollback_config(self, backup_version: Optional[str] = None) -> bool:
+        """
+        Rollback configuration to a previous backup.
+        
+        Args:
+            backup_version: Specific backup version to restore (timestamp string).
+                          If None, restores most recent backup.
+        
+        Returns:
+            True if rollback successful, False otherwise
+        """
+        atomic_mgr = self._get_atomic_manager()
+        success = atomic_mgr.rollback_config(backup_version)
+        
+        if success:
+            # Reload config after rollback
+            try:
+                self.load_config()
+            except Exception as e:
+                self.logger.error(f"Error reloading config after rollback: {e}")
+                return False
+        
+        return success
+    
+    def list_backups(self) -> List[BackupInfo]:
+        """
+        List all available configuration backups.
+        
+        Returns:
+            List of BackupInfo objects, sorted by timestamp (newest first)
+        """
+        atomic_mgr = self._get_atomic_manager()
+        return atomic_mgr.list_backups()
+    
+    def validate_config_file(self, config_path: Optional[str] = None) -> ValidationResult:
+        """
+        Validate a configuration file.
+        
+        Args:
+            config_path: Path to config file. If None, validates current config_path.
+        
+        Returns:
+            ValidationResult with validation status and errors
+        """
+        atomic_mgr = self._get_atomic_manager()
+        return atomic_mgr.validate_config_file(config_path)
 
     def load_config(self) -> Dict[str, Any]:
         """Load configuration from JSON files."""

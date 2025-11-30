@@ -8,6 +8,12 @@ import uuid
 from datetime import datetime
 from pathlib import Path
 
+# Import new infrastructure
+from src.web_interface.api_helpers import success_response, error_response, validate_request_json
+from src.web_interface.errors import ErrorCode
+from src.plugin_system.operation_types import OperationType
+from src.web_interface.logging_config import log_plugin_operation, log_config_change
+
 # Will be initialized when blueprint is registered
 config_manager = None
 plugin_manager = None
@@ -15,6 +21,9 @@ plugin_store_manager = None
 saved_repositories_manager = None
 cache_manager = None
 schema_manager = None
+operation_queue = None
+plugin_state_manager = None
+operation_history = None
 
 # Get project root directory (web_interface/../..)
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -28,6 +37,25 @@ def _ensure_cache_manager():
         from src.cache_manager import CacheManager
         cache_manager = CacheManager()
     return cache_manager
+
+def _save_config_atomic(config_manager, config_data, create_backup=True):
+    """
+    Save configuration using atomic save if available, fallback to regular save.
+    
+    Returns:
+        tuple: (success: bool, error_message: str or None)
+    """
+    if hasattr(config_manager, 'save_config_atomic'):
+        result = config_manager.save_config_atomic(config_data, create_backup=create_backup)
+        if result.status.value != 'success':
+            return False, result.message
+        return True, None
+    else:
+        try:
+            config_manager.save_config(config_data)
+            return True, None
+        except Exception as e:
+            return False, str(e)
 
 def _get_display_service_status():
     """Return status information about the ledmatrix service."""
@@ -185,11 +213,17 @@ def save_schedule_config():
                 
                 schedule_config['days'][day] = day_config
         
-        # Update and save config
+        # Update and save config using atomic save
         current_config['schedule'] = schedule_config
-        api_v3.config_manager.save_config(current_config)
+        success, error_msg = _save_config_atomic(api_v3.config_manager, current_config, create_backup=True)
+        if not success:
+            return error_response(
+                ErrorCode.CONFIG_SAVE_FAILED,
+                f"Failed to save schedule configuration: {error_msg}",
+                status_code=500
+            )
         
-        return jsonify({'status': 'success', 'message': 'Schedule configuration saved successfully'})
+        return success_response(message='Schedule configuration saved successfully')
     except Exception as e:
         import logging
         import traceback
@@ -438,10 +472,16 @@ def save_main_config():
             else:
                 current_config[key] = data[key]
 
-        # Save the merged config
-        api_v3.config_manager.save_config(current_config)
+        # Save the merged config using atomic save
+        success, error_msg = _save_config_atomic(api_v3.config_manager, current_config, create_backup=True)
+        if not success:
+            return error_response(
+                ErrorCode.CONFIG_SAVE_FAILED,
+                f"Failed to save configuration: {error_msg}",
+                status_code=500
+            )
 
-        return jsonify({'status': 'success', 'message': 'Configuration saved successfully'})
+        return success_response(message='Configuration saved successfully')
     except Exception as e:
         import logging
         import traceback
@@ -1218,7 +1258,31 @@ def toggle_plugin():
         if plugin_id not in config:
             config[plugin_id] = {}
         config[plugin_id]['enabled'] = enabled
-        api_v3.config_manager.save_config(config)
+        
+        # Use atomic save if available
+        if hasattr(api_v3.config_manager, 'save_config_atomic'):
+            result = api_v3.config_manager.save_config_atomic(config, create_backup=True)
+            if result.status.value != 'success':
+                return error_response(
+                    ErrorCode.CONFIG_SAVE_FAILED,
+                    f"Failed to save configuration: {result.message}",
+                    status_code=500
+                )
+        else:
+            api_v3.config_manager.save_config(config)
+        
+        # Update state manager if available
+        if api_v3.plugin_state_manager:
+            api_v3.plugin_state_manager.set_plugin_enabled(plugin_id, enabled)
+        
+        # Log operation
+        if api_v3.operation_history:
+            api_v3.operation_history.record_operation(
+                "toggle",
+                plugin_id=plugin_id,
+                status="success" if enabled else "disabled",
+                details={"enabled": enabled}
+            )
         
         # If plugin is loaded, also call its lifecycle methods
         # Wrap in try/except to prevent lifecycle errors from failing the toggle
@@ -1236,24 +1300,215 @@ def toggle_plugin():
                 import logging
                 logging.warning(f"Lifecycle method error for {plugin_id}: {lifecycle_error}", exc_info=True)
         
-        return jsonify({'status': 'success', 'message': f'Plugin {plugin_id} {"enabled" if enabled else "disabled"}'})
+        return success_response(
+            message=f"Plugin {plugin_id} {'enabled' if enabled else 'disabled'} successfully"
+        )
     except Exception as e:
-        import traceback
-        error_details = traceback.format_exc()
-        print(f"Error in toggle_plugin: {str(e)}")
-        print(error_details)
-        return jsonify({'status': 'error', 'message': str(e)}), 500
+        from src.web_interface.errors import WebInterfaceError
+        error = WebInterfaceError.from_exception(e, ErrorCode.PLUGIN_OPERATION_CONFLICT)
+        if api_v3.operation_history:
+            api_v3.operation_history.record_operation(
+                "toggle",
+                plugin_id=data.get('plugin_id') if 'data' in locals() else None,
+                status="failed",
+                error=str(e)
+            )
+        return error_response(
+            error.error_code,
+            error.message,
+            details=error.details,
+            context=error.context,
+            status_code=500
+        )
+
+@api_v3.route('/plugins/operation/<operation_id>', methods=['GET'])
+def get_operation_status(operation_id):
+    """Get status of a plugin operation"""
+    try:
+        if not api_v3.operation_queue:
+            return error_response(
+                ErrorCode.SYSTEM_ERROR,
+                'Operation queue not initialized',
+                status_code=500
+            )
+        
+        operation = api_v3.operation_queue.get_operation_status(operation_id)
+        if not operation:
+            return error_response(
+                ErrorCode.PLUGIN_NOT_FOUND,
+                f'Operation {operation_id} not found',
+                status_code=404
+            )
+        
+        return success_response(data=operation.to_dict())
+    except Exception as e:
+        from src.web_interface.errors import WebInterfaceError
+        error = WebInterfaceError.from_exception(e, ErrorCode.SYSTEM_ERROR)
+        return error_response(
+            error.error_code,
+            error.message,
+            details=error.details,
+            status_code=500
+        )
+
+@api_v3.route('/plugins/operation/history', methods=['GET'])
+def get_operation_history():
+    """Get operation history"""
+    try:
+        if not api_v3.operation_queue:
+            return error_response(
+                ErrorCode.SYSTEM_ERROR,
+                'Operation queue not initialized',
+                status_code=500
+            )
+        
+        limit = request.args.get('limit', 50, type=int)
+        plugin_id = request.args.get('plugin_id')
+        
+        history = api_v3.operation_queue.get_operation_history(limit=limit)
+        
+        # Filter by plugin_id if provided
+        if plugin_id:
+            history = [op for op in history if op.plugin_id == plugin_id]
+        
+        return success_response(data=[op.to_dict() for op in history])
+    except Exception as e:
+        from src.web_interface.errors import WebInterfaceError
+        error = WebInterfaceError.from_exception(e, ErrorCode.SYSTEM_ERROR)
+        return error_response(
+            error.error_code,
+            error.message,
+            details=error.details,
+            status_code=500
+        )
+
+@api_v3.route('/plugins/state', methods=['GET'])
+def get_plugin_state():
+    """Get plugin state from state manager"""
+    try:
+        if not api_v3.plugin_state_manager:
+            return error_response(
+                ErrorCode.SYSTEM_ERROR,
+                'State manager not initialized',
+                status_code=500
+            )
+        
+        plugin_id = request.args.get('plugin_id')
+        
+        if plugin_id:
+            # Get state for specific plugin
+            state = api_v3.plugin_state_manager.get_plugin_state(plugin_id)
+            if not state:
+                return error_response(
+                    ErrorCode.PLUGIN_NOT_FOUND,
+                    f'Plugin {plugin_id} not found in state manager',
+                    context={'plugin_id': plugin_id},
+                    status_code=404
+                )
+            return success_response(data=state.to_dict())
+        else:
+            # Get all plugin states
+            all_states = api_v3.plugin_state_manager.get_all_states()
+            return success_response(data={
+                plugin_id: state.to_dict()
+                for plugin_id, state in all_states.items()
+            })
+    except Exception as e:
+        from src.web_interface.errors import WebInterfaceError
+        error = WebInterfaceError.from_exception(e, ErrorCode.SYSTEM_ERROR)
+        return error_response(
+            error.error_code,
+            error.message,
+            details=error.details,
+            context=error.context,
+            status_code=500
+        )
+
+@api_v3.route('/plugins/state/reconcile', methods=['POST'])
+def reconcile_plugin_state():
+    """Reconcile plugin state across all sources"""
+    try:
+        if not api_v3.plugin_state_manager or not api_v3.plugin_manager:
+            return error_response(
+                ErrorCode.SYSTEM_ERROR,
+                'State manager or plugin manager not initialized',
+                status_code=500
+            )
+        
+        from src.plugin_system.state_reconciliation import StateReconciliation
+        
+        reconciler = StateReconciliation(
+            state_manager=api_v3.plugin_state_manager,
+            config_manager=api_v3.config_manager,
+            plugin_manager=api_v3.plugin_manager,
+            plugins_dir=Path(api_v3.plugin_manager.plugins_dir)
+        )
+        
+        result = reconciler.reconcile_state()
+        
+        return success_response(
+            data={
+                'inconsistencies_found': len(result.inconsistencies_found),
+                'inconsistencies_fixed': len(result.inconsistencies_fixed),
+                'inconsistencies_manual': len(result.inconsistencies_manual),
+                'inconsistencies': [
+                    {
+                        'plugin_id': inc.plugin_id,
+                        'type': inc.inconsistency_type.value,
+                        'description': inc.description,
+                        'fix_action': inc.fix_action.value
+                    }
+                    for inc in result.inconsistencies_found
+                ],
+                'fixed': [
+                    {
+                        'plugin_id': inc.plugin_id,
+                        'type': inc.inconsistency_type.value,
+                        'description': inc.description
+                    }
+                    for inc in result.inconsistencies_fixed
+                ],
+                'manual_fix_required': [
+                    {
+                        'plugin_id': inc.plugin_id,
+                        'type': inc.inconsistency_type.value,
+                        'description': inc.description
+                    }
+                    for inc in result.inconsistencies_manual
+                ]
+            },
+            message=result.message
+        )
+    except Exception as e:
+        from src.web_interface.errors import WebInterfaceError
+        error = WebInterfaceError.from_exception(e, ErrorCode.SYSTEM_ERROR)
+        return error_response(
+            error.error_code,
+            error.message,
+            details=error.details,
+            context=error.context,
+            status_code=500
+        )
 
 @api_v3.route('/plugins/config', methods=['GET'])
 def get_plugin_config():
     """Get plugin configuration"""
     try:
         if not api_v3.config_manager:
-            return jsonify({'status': 'error', 'message': 'Config manager not initialized'}), 500
+            return error_response(
+                ErrorCode.SYSTEM_ERROR,
+                'Config manager not initialized',
+                status_code=500
+            )
         
         plugin_id = request.args.get('plugin_id')
         if not plugin_id:
-            return jsonify({'status': 'error', 'message': 'plugin_id required'}), 400
+            return error_response(
+                ErrorCode.INVALID_INPUT,
+                'plugin_id required',
+                context={'missing_params': ['plugin_id']},
+                status_code=400
+            )
 
         # Get plugin configuration from config manager
         main_config = api_v3.config_manager.load_config()
@@ -1266,188 +1521,449 @@ def get_plugin_config():
                 'display_duration': 30
             }
 
-        return jsonify({'status': 'success', 'data': plugin_config})
+        return success_response(data=plugin_config)
     except Exception as e:
-        import traceback
-        error_details = traceback.format_exc()
-        print(f"Error in get_plugin_config: {str(e)}")
-        print(error_details)
-        return jsonify({'status': 'error', 'message': str(e)}), 500
+        from src.web_interface.errors import WebInterfaceError
+        error = WebInterfaceError.from_exception(e, ErrorCode.CONFIG_LOAD_FAILED)
+        return error_response(
+            error.error_code,
+            error.message,
+            details=error.details,
+            context=error.context,
+            status_code=500
+        )
 
 @api_v3.route('/plugins/update', methods=['POST'])
 def update_plugin():
     """Update plugin"""
     try:
-        if not api_v3.plugin_store_manager:
-            return jsonify({'status': 'error', 'message': 'Plugin store manager not initialized'}), 500
+        # Validate request
+        data, error = validate_request_json(['plugin_id'])
+        if error:
+            return error
         
-        data = request.get_json()
-        if not data or 'plugin_id' not in data:
-            return jsonify({'status': 'error', 'message': 'plugin_id required'}), 400
+        if not api_v3.plugin_store_manager:
+            return error_response(
+                ErrorCode.SYSTEM_ERROR,
+                'Plugin store manager not initialized',
+                status_code=500
+            )
 
         plugin_id = data['plugin_id']
         
-        plugin_dir = Path(api_v3.plugin_store_manager.plugins_dir) / plugin_id
-        manifest_path = plugin_dir / "manifest.json"
+        # Use operation queue if available
+        if api_v3.operation_queue:
+            def update_callback(operation):
+                """Callback to execute plugin update."""
+                plugin_dir = Path(api_v3.plugin_store_manager.plugins_dir) / plugin_id
+                manifest_path = plugin_dir / "manifest.json"
 
-        current_last_updated = None
-        current_commit = None
-        current_branch = None
+                current_last_updated = None
+                current_commit = None
+                current_branch = None
 
-        if manifest_path.exists():
-            try:
-                import json
-                with open(manifest_path, 'r', encoding='utf-8') as f:
-                    manifest = json.load(f)
-                    current_last_updated = manifest.get('last_updated')
-            except Exception as e:
-                print(f"Warning: Could not read local manifest for {plugin_id}: {e}")
-
-        if api_v3.plugin_store_manager:
-            git_info_before = api_v3.plugin_store_manager._get_local_git_info(plugin_dir)
-            if git_info_before:
-                current_commit = git_info_before.get('sha')
-                current_branch = git_info_before.get('branch')
-
-        remote_info = api_v3.plugin_store_manager.get_plugin_info(plugin_id, fetch_latest_from_github=True)
-        remote_commit = remote_info.get('last_commit_sha') if remote_info else None
-        remote_branch = remote_info.get('branch') if remote_info else None
-
-        # Update the plugin
-        success = api_v3.plugin_store_manager.update_plugin(plugin_id)
-        
-        if success:
-            updated_last_updated = current_last_updated
-            try:
                 if manifest_path.exists():
+                    try:
+                        import json
+                        with open(manifest_path, 'r', encoding='utf-8') as f:
+                            manifest = json.load(f)
+                            current_last_updated = manifest.get('last_updated')
+                    except Exception as e:
+                        print(f"Warning: Could not read local manifest for {plugin_id}: {e}")
+
+                if api_v3.plugin_store_manager:
+                    git_info_before = api_v3.plugin_store_manager._get_local_git_info(plugin_dir)
+                    if git_info_before:
+                        current_commit = git_info_before.get('sha')
+                        current_branch = git_info_before.get('branch')
+
+                remote_info = api_v3.plugin_store_manager.get_plugin_info(plugin_id, fetch_latest_from_github=True)
+                remote_commit = remote_info.get('last_commit_sha') if remote_info else None
+                remote_branch = remote_info.get('branch') if remote_info else None
+
+                # Update the plugin
+                success = api_v3.plugin_store_manager.update_plugin(plugin_id)
+                
+                if not success:
+                    error_msg = f'Failed to update plugin {plugin_id}'
+                    if api_v3.operation_history:
+                        api_v3.operation_history.record_operation(
+                            "update",
+                            plugin_id=plugin_id,
+                            status="failed",
+                            error=error_msg
+                        )
+                    raise Exception(error_msg)
+                
+                # Get updated info
+                updated_last_updated = current_last_updated
+                try:
+                    if manifest_path.exists():
+                        import json
+                        with open(manifest_path, 'r', encoding='utf-8') as f:
+                            manifest = json.load(f)
+                            updated_last_updated = manifest.get('last_updated', current_last_updated)
+                except Exception as e:
+                    print(f"Warning: Could not read updated manifest for {plugin_id}: {e}")
+
+                updated_commit = None
+                updated_branch = remote_branch or current_branch
+                if api_v3.plugin_store_manager:
+                    git_info_after = api_v3.plugin_store_manager._get_local_git_info(plugin_dir)
+                    if git_info_after:
+                        updated_commit = git_info_after.get('sha')
+                        updated_branch = git_info_after.get('branch') or updated_branch
+
+                message = f'Plugin {plugin_id} updated successfully'
+                if current_commit and updated_commit and current_commit == updated_commit:
+                    message = f'Plugin {plugin_id} already up to date (commit {updated_commit[:7]})'
+                elif updated_commit:
+                    message = f'Plugin {plugin_id} updated to commit {updated_commit[:7]}'
+                    if updated_branch:
+                        message += f' on branch {updated_branch}'
+                elif updated_last_updated and updated_last_updated != current_last_updated:
+                    message = f'Plugin {plugin_id} refreshed (Last Updated {updated_last_updated})'
+
+                remote_commit_short = remote_commit[:7] if remote_commit else None
+                if remote_commit_short and updated_commit and remote_commit_short != updated_commit[:7]:
+                    message += f' (remote latest {remote_commit_short})'
+
+                # Invalidate schema cache
+                if api_v3.schema_manager:
+                    api_v3.schema_manager.invalidate_cache(plugin_id)
+                
+                # Rediscover plugins
+                if api_v3.plugin_manager:
+                    api_v3.plugin_manager.discover_plugins()
+                    if plugin_id in api_v3.plugin_manager.plugins:
+                        api_v3.plugin_manager.reload_plugin(plugin_id)
+                
+                # Update state manager
+                if api_v3.plugin_state_manager:
+                    api_v3.plugin_state_manager.update_plugin_state(
+                        plugin_id,
+                        {'last_updated': datetime.now()}
+                    )
+                
+                # Record in history
+                if api_v3.operation_history:
+                    api_v3.operation_history.record_operation(
+                        "update",
+                        plugin_id=plugin_id,
+                        status="success",
+                        details={
+                            "commit": updated_commit,
+                            "branch": updated_branch,
+                            "last_updated": updated_last_updated
+                        }
+                    )
+                
+                return {
+                    'success': True,
+                    'message': message,
+                    'last_updated': updated_last_updated,
+                    'commit': updated_commit
+                }
+            
+            # Enqueue operation
+            operation_id = api_v3.operation_queue.enqueue_operation(
+                OperationType.UPDATE,
+                plugin_id,
+                operation_callback=update_callback
+            )
+            
+            return success_response(
+                data={'operation_id': operation_id},
+                message=f'Plugin {plugin_id} update queued'
+            )
+        else:
+            # Fallback to direct update
+            plugin_dir = Path(api_v3.plugin_store_manager.plugins_dir) / plugin_id
+            manifest_path = plugin_dir / "manifest.json"
+
+            current_last_updated = None
+            current_commit = None
+            current_branch = None
+
+            if manifest_path.exists():
+                try:
                     import json
                     with open(manifest_path, 'r', encoding='utf-8') as f:
                         manifest = json.load(f)
-                        updated_last_updated = manifest.get('last_updated', current_last_updated)
-            except Exception as e:
-                print(f"Warning: Could not read updated manifest for {plugin_id}: {e}")
+                        current_last_updated = manifest.get('last_updated')
+                except Exception as e:
+                    print(f"Warning: Could not read local manifest for {plugin_id}: {e}")
 
-            updated_commit = None
-            updated_branch = remote_branch or current_branch
             if api_v3.plugin_store_manager:
-                git_info_after = api_v3.plugin_store_manager._get_local_git_info(plugin_dir)
-                if git_info_after:
-                    updated_commit = git_info_after.get('sha')
-                    updated_branch = git_info_after.get('branch') or updated_branch
+                git_info_before = api_v3.plugin_store_manager._get_local_git_info(plugin_dir)
+                if git_info_before:
+                    current_commit = git_info_before.get('sha')
+                    current_branch = git_info_before.get('branch')
 
-            message = f'Plugin {plugin_id} updated successfully'
-            if current_commit and updated_commit and current_commit == updated_commit:
-                message = f'Plugin {plugin_id} already up to date (commit {updated_commit[:7]})'
-            elif updated_commit:
-                message = f'Plugin {plugin_id} updated to commit {updated_commit[:7]}'
-                if updated_branch:
-                    message += f' on branch {updated_branch}'
-            elif updated_last_updated and updated_last_updated != current_last_updated:
-                message = f'Plugin {plugin_id} refreshed (Last Updated {updated_last_updated})'
+            remote_info = api_v3.plugin_store_manager.get_plugin_info(plugin_id, fetch_latest_from_github=True)
+            remote_commit = remote_info.get('last_commit_sha') if remote_info else None
+            remote_branch = remote_info.get('branch') if remote_info else None
 
-            remote_commit_short = remote_commit[:7] if remote_commit else None
-            if remote_commit_short and updated_commit and remote_commit_short != updated_commit[:7]:
-                message += f' (remote latest {remote_commit_short})'
+            # Update the plugin
+            success = api_v3.plugin_store_manager.update_plugin(plugin_id)
+        
+            if success:
+                updated_last_updated = current_last_updated
+                try:
+                    if manifest_path.exists():
+                        import json
+                        with open(manifest_path, 'r', encoding='utf-8') as f:
+                            manifest = json.load(f)
+                            updated_last_updated = manifest.get('last_updated', current_last_updated)
+                except Exception as e:
+                    print(f"Warning: Could not read updated manifest for {plugin_id}: {e}")
 
-            # Invalidate schema cache for this plugin (will reload on next access)
-            if api_v3.schema_manager:
-                api_v3.schema_manager.invalidate_cache(plugin_id)
-            
-            # Rediscover plugins to refresh manifest info
-            if api_v3.plugin_manager:
-                api_v3.plugin_manager.discover_plugins()
+                updated_commit = None
+                updated_branch = remote_branch or current_branch
+                if api_v3.plugin_store_manager:
+                    git_info_after = api_v3.plugin_store_manager._get_local_git_info(plugin_dir)
+                    if git_info_after:
+                        updated_commit = git_info_after.get('sha')
+                        updated_branch = git_info_after.get('branch') or updated_branch
+
+                message = f'Plugin {plugin_id} updated successfully'
+                if current_commit and updated_commit and current_commit == updated_commit:
+                    message = f'Plugin {plugin_id} already up to date (commit {updated_commit[:7]})'
+                elif updated_commit:
+                    message = f'Plugin {plugin_id} updated to commit {updated_commit[:7]}'
+                    if updated_branch:
+                        message += f' on branch {updated_branch}'
+                elif updated_last_updated and updated_last_updated != current_last_updated:
+                    message = f'Plugin {plugin_id} refreshed (Last Updated {updated_last_updated})'
+
+                remote_commit_short = remote_commit[:7] if remote_commit else None
+                if remote_commit_short and updated_commit and remote_commit_short != updated_commit[:7]:
+                    message += f' (remote latest {remote_commit_short})'
+
+                # Invalidate schema cache
+                if api_v3.schema_manager:
+                    api_v3.schema_manager.invalidate_cache(plugin_id)
                 
-                # Reload the plugin if it was loaded
-                if plugin_id in api_v3.plugin_manager.plugins:
-                    api_v3.plugin_manager.reload_plugin(plugin_id)
-            
-            return jsonify({
-                'status': 'success', 
-                'message': message,
-                'last_updated': updated_last_updated,
-                'commit': updated_commit
-            })
-        else:
-            # Provide more detailed error message
-            error_msg = f'Failed to update plugin {plugin_id}'
-            
-            # Check if plugin exists using the same logic as update_plugin
-            # Use the internal helper method if available, otherwise check multiple locations
-            plugin_path_dir = None
-            if hasattr(api_v3.plugin_store_manager, '_find_plugin_path'):
-                plugin_path_dir = api_v3.plugin_store_manager._find_plugin_path(plugin_id)
+                # Rediscover plugins
+                if api_v3.plugin_manager:
+                    api_v3.plugin_manager.discover_plugins()
+                    if plugin_id in api_v3.plugin_manager.plugins:
+                        api_v3.plugin_manager.reload_plugin(plugin_id)
+                
+                # Update state and history
+                if api_v3.plugin_state_manager:
+                    api_v3.plugin_state_manager.update_plugin_state(
+                        plugin_id,
+                        {'last_updated': datetime.now()}
+                    )
+                if api_v3.operation_history:
+                    api_v3.operation_history.record_operation(
+                        "update",
+                        plugin_id=plugin_id,
+                        status="success",
+                        details={
+                            "last_updated": updated_last_updated,
+                            "commit": updated_commit
+                        }
+                    )
+                
+                return success_response(
+                    data={
+                        'last_updated': updated_last_updated,
+                        'commit': updated_commit
+                    },
+                    message=message
+                )
             else:
-                # Fallback: check configured directory and common locations
+                error_msg = f'Failed to update plugin {plugin_id}'
                 plugin_path_dir = Path(api_v3.plugin_store_manager.plugins_dir) / plugin_id
                 if not plugin_path_dir.exists():
-                    # Try plugins directory
-                    project_root = PROJECT_ROOT
-                    fallback_path = project_root / 'plugins' / plugin_id
-                    if fallback_path.exists():
-                        plugin_path_dir = fallback_path
-            
-            if plugin_path_dir is None or not plugin_path_dir.exists():
-                error_msg += ': Plugin not found'
-            else:
-                # Check if it's in registry
-                plugin_info = api_v3.plugin_store_manager.get_plugin_info(plugin_id)
-                if not plugin_info:
-                    error_msg += ': Plugin not found in registry and cannot be updated automatically'
+                    error_msg += ': Plugin not found'
                 else:
+                    plugin_info = api_v3.plugin_store_manager.get_plugin_info(plugin_id)
+                    if not plugin_info:
+                        error_msg += ': Plugin not found in registry'
+                
+                if api_v3.operation_history:
+                    api_v3.operation_history.record_operation(
+                        "update",
+                        plugin_id=plugin_id,
+                        status="failed",
+                        error=error_msg
+                    )
+                
+                return error_response(
+                    ErrorCode.PLUGIN_UPDATE_FAILED,
+                    error_msg,
+                    status_code=500
+                )
                     error_msg += '. Check logs for details'
             
             return jsonify({'status': 'error', 'message': error_msg}), 500
             
     except Exception as e:
-        import traceback
-        error_details = traceback.format_exc()
-        print(f"Error in update_plugin: {str(e)}")
-        print(error_details)
-        return jsonify({'status': 'error', 'message': f'Error updating plugin: {str(e)}'}), 500
+        from src.web_interface.errors import WebInterfaceError
+        error = WebInterfaceError.from_exception(e, ErrorCode.PLUGIN_UPDATE_FAILED)
+        if api_v3.operation_history:
+            api_v3.operation_history.record_operation(
+                "update",
+                plugin_id=data.get('plugin_id') if 'data' in locals() else None,
+                status="failed",
+                error=str(e)
+            )
+        return error_response(
+            error.error_code,
+            error.message,
+            details=error.details,
+            context=error.context,
+            status_code=500
+        )
 
 @api_v3.route('/plugins/uninstall', methods=['POST'])
 def uninstall_plugin():
     """Uninstall plugin"""
     try:
-        if not api_v3.plugin_store_manager:
-            return jsonify({'status': 'error', 'message': 'Plugin store manager not initialized'}), 500
+        # Validate request
+        data, error = validate_request_json(['plugin_id'])
+        if error:
+            return error
         
-        data = request.get_json() or {}
-        if not data or 'plugin_id' not in data:
-            return jsonify({'status': 'error', 'message': 'plugin_id required'}), 400
+        if not api_v3.plugin_store_manager:
+            return error_response(
+                ErrorCode.SYSTEM_ERROR,
+                'Plugin store manager not initialized',
+                status_code=500
+            )
 
         plugin_id = data['plugin_id']
         preserve_config = data.get('preserve_config', False)
         
-        # Unload the plugin first if it's loaded
-        if api_v3.plugin_manager and plugin_id in api_v3.plugin_manager.plugins:
-            api_v3.plugin_manager.unload_plugin(plugin_id)
-        
-        # Uninstall the plugin
-        success = api_v3.plugin_store_manager.uninstall_plugin(plugin_id)
-        
-        if success:
-            # Invalidate schema cache for this plugin
-            if api_v3.schema_manager:
-                api_v3.schema_manager.invalidate_cache(plugin_id)
+        # Use operation queue if available
+        if api_v3.operation_queue:
+            def uninstall_callback(operation):
+                """Callback to execute plugin uninstallation."""
+                # Unload the plugin first if it's loaded
+                if api_v3.plugin_manager and plugin_id in api_v3.plugin_manager.plugins:
+                    api_v3.plugin_manager.unload_plugin(plugin_id)
+                
+                # Uninstall the plugin
+                success = api_v3.plugin_store_manager.uninstall_plugin(plugin_id)
+                
+                if not success:
+                    error_msg = f'Failed to uninstall plugin {plugin_id}'
+                    if api_v3.operation_history:
+                        api_v3.operation_history.record_operation(
+                            "uninstall",
+                            plugin_id=plugin_id,
+                            status="failed",
+                            error=error_msg
+                        )
+                    raise Exception(error_msg)
+                
+                # Invalidate schema cache
+                if api_v3.schema_manager:
+                    api_v3.schema_manager.invalidate_cache(plugin_id)
+                
+                # Clean up plugin configuration if not preserving
+                if not preserve_config:
+                    try:
+                        api_v3.config_manager.cleanup_plugin_config(plugin_id, remove_secrets=True)
+                    except Exception as cleanup_err:
+                        print(f"Warning: Failed to cleanup config for {plugin_id}: {cleanup_err}")
+                
+                # Remove from state manager
+                if api_v3.plugin_state_manager:
+                    api_v3.plugin_state_manager.remove_plugin_state(plugin_id)
+                
+                # Record in history
+                if api_v3.operation_history:
+                    api_v3.operation_history.record_operation(
+                        "uninstall",
+                        plugin_id=plugin_id,
+                        status="success",
+                        details={"preserve_config": preserve_config}
+                    )
+                
+                return {'success': True, 'message': f'Plugin {plugin_id} uninstalled successfully'}
             
-            # Clean up plugin configuration if not preserving
-            if not preserve_config:
-                try:
-                    api_v3.config_manager.cleanup_plugin_config(plugin_id, remove_secrets=True)
-                except Exception as cleanup_err:
-                    print(f"Warning: Failed to cleanup config for {plugin_id}: {cleanup_err}")
+            # Enqueue operation
+            operation_id = api_v3.operation_queue.enqueue_operation(
+                OperationType.UNINSTALL,
+                plugin_id,
+                operation_callback=uninstall_callback
+            )
             
-            return jsonify({'status': 'success', 'message': f'Plugin {plugin_id} uninstalled successfully'})
+            return success_response(
+                data={'operation_id': operation_id},
+                message=f'Plugin {plugin_id} uninstallation queued'
+            )
         else:
-            return jsonify({'status': 'error', 'message': f'Failed to uninstall plugin {plugin_id}'}), 500
+            # Fallback to direct uninstall
+            # Unload the plugin first if it's loaded
+            if api_v3.plugin_manager and plugin_id in api_v3.plugin_manager.plugins:
+                api_v3.plugin_manager.unload_plugin(plugin_id)
+            
+            # Uninstall the plugin
+            success = api_v3.plugin_store_manager.uninstall_plugin(plugin_id)
+            
+            if success:
+                # Invalidate schema cache
+                if api_v3.schema_manager:
+                    api_v3.schema_manager.invalidate_cache(plugin_id)
+                
+                # Clean up plugin configuration if not preserving
+                if not preserve_config:
+                    try:
+                        api_v3.config_manager.cleanup_plugin_config(plugin_id, remove_secrets=True)
+                    except Exception as cleanup_err:
+                        print(f"Warning: Failed to cleanup config for {plugin_id}: {cleanup_err}")
+                
+                # Remove from state manager
+                if api_v3.plugin_state_manager:
+                    api_v3.plugin_state_manager.remove_plugin_state(plugin_id)
+                
+                # Record in history
+                if api_v3.operation_history:
+                    api_v3.operation_history.record_operation(
+                        "uninstall",
+                        plugin_id=plugin_id,
+                        status="success",
+                        details={"preserve_config": preserve_config}
+                    )
+                
+                return success_response(message=f'Plugin {plugin_id} uninstalled successfully')
+            else:
+                if api_v3.operation_history:
+                    api_v3.operation_history.record_operation(
+                        "uninstall",
+                        plugin_id=plugin_id,
+                        status="failed",
+                        error=f'Failed to uninstall plugin {plugin_id}'
+                    )
+                
+                return error_response(
+                    ErrorCode.PLUGIN_UNINSTALL_FAILED,
+                    f'Failed to uninstall plugin {plugin_id}',
+                    status_code=500
+                )
             
     except Exception as e:
-        import traceback
-        error_details = traceback.format_exc()
-        print(f"Error in uninstall_plugin: {str(e)}")
-        print(error_details)
-        return jsonify({'status': 'error', 'message': str(e)}), 500
+        from src.web_interface.errors import WebInterfaceError
+        error = WebInterfaceError.from_exception(e, ErrorCode.PLUGIN_UNINSTALL_FAILED)
+        if api_v3.operation_history:
+            api_v3.operation_history.record_operation(
+                "uninstall",
+                plugin_id=data.get('plugin_id') if 'data' in locals() else None,
+                status="failed",
+                error=str(e)
+            )
+        return error_response(
+            error.error_code,
+            error.message,
+            details=error.details,
+            context=error.context,
+            status_code=500
+        )
 
 @api_v3.route('/plugins/install', methods=['POST'])
 def install_plugin():
@@ -1467,29 +1983,90 @@ def install_plugin():
         plugins_dir = api_v3.plugin_store_manager.plugins_dir
         print(f"Installing plugin {plugin_id} to directory: {plugins_dir}", flush=True)
         
-        success = api_v3.plugin_store_manager.install_plugin(plugin_id)
-        
-        if success:
-            # Invalidate schema cache for this plugin (will reload on next access)
-            if api_v3.schema_manager:
-                api_v3.schema_manager.invalidate_cache(plugin_id)
+        # Use operation queue if available
+        if api_v3.operation_queue:
+            def install_callback(operation):
+                """Callback to execute plugin installation."""
+                success = api_v3.plugin_store_manager.install_plugin(plugin_id)
+                
+                if success:
+                    # Invalidate schema cache
+                    if api_v3.schema_manager:
+                        api_v3.schema_manager.invalidate_cache(plugin_id)
+                    
+                    # Discover and load the new plugin
+                    if api_v3.plugin_manager:
+                        api_v3.plugin_manager.discover_plugins()
+                        api_v3.plugin_manager.load_plugin(plugin_id)
+                    
+                    # Update state manager
+                    if api_v3.plugin_state_manager:
+                        api_v3.plugin_state_manager.set_plugin_installed(plugin_id)
+                    
+                    # Record in history
+                    if api_v3.operation_history:
+                        api_v3.operation_history.record_operation(
+                            "install",
+                            plugin_id=plugin_id,
+                            status="success"
+                        )
+                    
+                    return {'success': True, 'message': f'Plugin {plugin_id} installed successfully'}
+                else:
+                    error_msg = f'Failed to install plugin {plugin_id}'
+                    plugin_info = api_v3.plugin_store_manager.get_plugin_info(plugin_id)
+                    if not plugin_info:
+                        error_msg += ' (plugin not found in registry)'
+                    
+                    # Record failure in history
+                    if api_v3.operation_history:
+                        api_v3.operation_history.record_operation(
+                            "install",
+                            plugin_id=plugin_id,
+                            status="failed",
+                            error=error_msg
+                        )
+                    
+                    raise Exception(error_msg)
             
-            # Discover and load the new plugin
-            if api_v3.plugin_manager:
-                api_v3.plugin_manager.discover_plugins()
-                api_v3.plugin_manager.load_plugin(plugin_id)
+            # Enqueue operation
+            operation_id = api_v3.operation_queue.enqueue_operation(
+                OperationType.INSTALL,
+                plugin_id,
+                operation_callback=install_callback
+            )
             
-            return jsonify({'status': 'success', 'message': f'Plugin {plugin_id} installed successfully'})
+            return success_response(
+                data={'operation_id': operation_id},
+                message=f'Plugin {plugin_id} installation queued'
+            )
         else:
-            # Get more detailed error information
-            error_msg = f'Failed to install plugin {plugin_id}'
-            # Check if plugin exists in registry
-            plugin_info = api_v3.plugin_store_manager.get_plugin_info(plugin_id)
-            if not plugin_info:
-                error_msg += ' (plugin not found in registry)'
+            # Fallback to direct installation
+            success = api_v3.plugin_store_manager.install_plugin(plugin_id)
             
-            print(f"Installation failed for {plugin_id}. Plugins dir: {plugins_dir}", flush=True)
-            return jsonify({'status': 'error', 'message': error_msg}), 500
+            if success:
+                if api_v3.schema_manager:
+                    api_v3.schema_manager.invalidate_cache(plugin_id)
+                if api_v3.plugin_manager:
+                    api_v3.plugin_manager.discover_plugins()
+                    api_v3.plugin_manager.load_plugin(plugin_id)
+                if api_v3.plugin_state_manager:
+                    api_v3.plugin_state_manager.set_plugin_installed(plugin_id)
+                if api_v3.operation_history:
+                    api_v3.operation_history.record_operation("install", plugin_id=plugin_id, status="success")
+                
+                return success_response(message=f'Plugin {plugin_id} installed successfully')
+            else:
+                error_msg = f'Failed to install plugin {plugin_id}'
+                plugin_info = api_v3.plugin_store_manager.get_plugin_info(plugin_id)
+                if not plugin_info:
+                    error_msg += ' (plugin not found in registry)'
+                
+                return error_response(
+                    ErrorCode.PLUGIN_INSTALL_FAILED,
+                    error_msg,
+                    status_code=500
+                )
             
     except Exception as e:
         import traceback
@@ -1797,16 +2374,16 @@ def save_plugin_config():
     """Save plugin configuration, separating secrets from regular config"""
     try:
         if not api_v3.config_manager:
-            return jsonify({'status': 'error', 'message': 'Config manager not initialized'}), 500
+            return error_response(
+                ErrorCode.SYSTEM_ERROR,
+                'Config manager not initialized',
+                status_code=500
+            )
 
-        data = request.get_json()
-        if not data:
-            return jsonify({
-                'status': 'error', 
-                'message': 'Invalid JSON or missing request body. Ensure Content-Type is application/json.'
-            }), 400
-        if 'plugin_id' not in data:
-            return jsonify({'status': 'error', 'message': 'plugin_id required'}), 400
+        # Validate request
+        data, error = validate_request_json(['plugin_id'])
+        if error:
+            return error
 
         plugin_id = data['plugin_id']
         plugin_config = data.get('config', {})
@@ -1814,7 +2391,11 @@ def save_plugin_config():
         # Get schema manager instance
         schema_mgr = api_v3.schema_manager
         if not schema_mgr:
-            return jsonify({'status': 'error', 'message': 'Schema manager not initialized'}), 500
+            return error_response(
+                ErrorCode.SYSTEM_ERROR,
+                'Schema manager not initialized',
+                status_code=500
+            )
         
         # Load plugin schema using SchemaManager (force refresh to get latest schema)
         schema = schema_mgr.load_schema(plugin_id, use_cache=False)
@@ -1970,13 +2551,23 @@ def save_plugin_config():
                 print(f"[ERROR] Validation errors: {validation_errors}")
                 print(f"[ERROR] Config keys: {list(plugin_config.keys())}")
                 print(f"[ERROR] Schema property keys: {list(enhanced_schema.get('properties', {}).keys())}")
-                return jsonify({
-                    'status': 'error',
-                    'message': 'Configuration validation failed',
-                    'validation_errors': validation_errors,
-                    'config_keys': list(plugin_config.keys()),
-                    'schema_keys': list(enhanced_schema.get('properties', {}).keys())
-                }), 400
+                return error_response(
+                    ErrorCode.CONFIG_VALIDATION_FAILED,
+                    'Configuration validation failed',
+                    details='; '.join(validation_errors) if validation_errors else 'Unknown validation error',
+                    context={
+                        'plugin_id': plugin_id,
+                        'validation_errors': validation_errors,
+                        'config_keys': list(plugin_config.keys()),
+                        'schema_keys': list(enhanced_schema.get('properties', {}).keys())
+                    },
+                    suggested_fixes=[
+                        'Review validation errors above',
+                        'Check config against schema',
+                        'Verify all required fields are present'
+                    ],
+                    status_code=400
+                )
 
         # Separate secrets from regular config (handles nested configs)
         def separate_secrets(config, secrets_set, prefix=''):
@@ -2031,8 +2622,14 @@ def save_plugin_config():
             # Save secrets file
             api_v3.config_manager.save_raw_file_content('secrets', current_secrets)
 
-        # Save the updated main config
-        api_v3.config_manager.save_config(current_config)
+        # Save the updated main config using atomic save
+        success, error_msg = _save_config_atomic(api_v3.config_manager, current_config, create_backup=True)
+        if not success:
+            return error_response(
+                ErrorCode.CONFIG_SAVE_FAILED,
+                f"Failed to save configuration: {error_msg}",
+                status_code=500
+            )
 
         # If the plugin is loaded, notify it of the config change with merged config
         try:
@@ -2053,13 +2650,24 @@ def save_plugin_config():
         if secret_count > 0:
             message += f' ({secret_count} secret field(s) saved to config_secrets.json)'
 
-        return jsonify({'status': 'success', 'message': message})
+        return success_response(message=message)
     except Exception as e:
-        import traceback
-        error_details = traceback.format_exc()
-        print(f"Error in save_plugin_config: {str(e)}")
-        print(error_details)
-        return jsonify({'status': 'error', 'message': str(e)}), 500
+        from src.web_interface.errors import WebInterfaceError
+        error = WebInterfaceError.from_exception(e, ErrorCode.CONFIG_SAVE_FAILED)
+        if api_v3.operation_history:
+            api_v3.operation_history.record_operation(
+                "configure",
+                plugin_id=data.get('plugin_id') if 'data' in locals() else None,
+                status="failed",
+                error=str(e)
+            )
+        return error_response(
+            error.error_code,
+            error.message,
+            details=error.details,
+            context=error.context,
+            status_code=500
+        )
 
 @api_v3.route('/plugins/schema', methods=['GET'])
 def get_plugin_schema():

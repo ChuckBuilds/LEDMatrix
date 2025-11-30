@@ -178,13 +178,36 @@ class BasePlugin(ABC):
         if hasattr(self, 'display_duration'):
             try:
                 duration = getattr(self, 'display_duration')
-                if isinstance(duration, (int, float)) and duration > 0:
-                    return float(duration)
-            except (TypeError, ValueError):
+                # Handle None case
+                if duration is None:
+                    pass  # Fall through to config
+                # Try to convert to float if it's a number or numeric string
+                elif isinstance(duration, (int, float)):
+                    if duration > 0:
+                        return float(duration)
+                # Try converting string representations of numbers
+                elif isinstance(duration, str):
+                    try:
+                        duration_float = float(duration)
+                        if duration_float > 0:
+                            return duration_float
+                    except (ValueError, TypeError):
+                        pass  # Fall through to config
+            except (TypeError, ValueError, AttributeError):
                 pass  # Fall through to config
         
         # Fall back to config
-        return self.config.get("display_duration", 15.0)
+        config_duration = self.config.get("display_duration", 15.0)
+        try:
+            # Ensure config value is also a valid float
+            if isinstance(config_duration, (int, float)):
+                return float(config_duration) if config_duration > 0 else 15.0
+            elif isinstance(config_duration, str):
+                return float(config_duration) if float(config_duration) > 0 else 15.0
+        except (ValueError, TypeError):
+            pass
+        
+        return 15.0
 
     # ---------------------------------------------------------------------
     # Dynamic duration support hooks
