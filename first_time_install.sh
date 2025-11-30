@@ -405,7 +405,7 @@ if [ ! -f "$PROJECT_ROOT_DIR/config/config.json" ]; then
     if [ -f "$PROJECT_ROOT_DIR/config/config.template.json" ]; then
         echo "Creating config/config.json from template..."
         cp "$PROJECT_ROOT_DIR/config/config.template.json" "$PROJECT_ROOT_DIR/config/config.json"
-        chown "$ACTUAL_USER:$ACTUAL_USER" "$PROJECT_ROOT_DIR/config/config.json" || true
+        chown "$ACTUAL_USER:$LEDMATRIX_GROUP" "$PROJECT_ROOT_DIR/config/config.json" || true
         chmod 644 "$PROJECT_ROOT_DIR/config/config.json"
         echo "✓ Main config file created from template"
     else
@@ -430,7 +430,7 @@ if [ ! -f "$PROJECT_ROOT_DIR/config/config.json" ]; then
     }
 }
 EOF
-        chown "$ACTUAL_USER:$ACTUAL_USER" "$PROJECT_ROOT_DIR/config/config.json" || true
+        chown "$ACTUAL_USER:$LEDMATRIX_GROUP" "$PROJECT_ROOT_DIR/config/config.json" || true
         chmod 644 "$PROJECT_ROOT_DIR/config/config.json"
         echo "✓ Minimal config file created"
     fi
@@ -443,7 +443,7 @@ if [ ! -f "$PROJECT_ROOT_DIR/config/config_secrets.json" ]; then
     if [ -f "$PROJECT_ROOT_DIR/config/config_secrets.template.json" ]; then
         echo "Creating config/config_secrets.json from template..."
         cp "$PROJECT_ROOT_DIR/config/config_secrets.template.json" "$PROJECT_ROOT_DIR/config/config_secrets.json"
-        chown "$ACTUAL_USER:$ACTUAL_USER" "$PROJECT_ROOT_DIR/config/config_secrets.json" || true
+        chown "$ACTUAL_USER:$LEDMATRIX_GROUP" "$PROJECT_ROOT_DIR/config/config_secrets.json" || true
         chmod 640 "$PROJECT_ROOT_DIR/config/config_secrets.json"
         echo "✓ Secrets file created from template"
     else
@@ -455,7 +455,7 @@ if [ ! -f "$PROJECT_ROOT_DIR/config/config_secrets.json" ]; then
   }
 }
 EOF
-        chown "$ACTUAL_USER:$ACTUAL_USER" "$PROJECT_ROOT_DIR/config/config_secrets.json" || true
+        chown "$ACTUAL_USER:$LEDMATRIX_GROUP" "$PROJECT_ROOT_DIR/config/config_secrets.json" || true
         chmod 640 "$PROJECT_ROOT_DIR/config/config_secrets.json"
         echo "✓ Minimal secrets file created"
     fi
