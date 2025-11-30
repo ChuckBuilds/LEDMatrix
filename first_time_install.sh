@@ -843,14 +843,14 @@ fi
 
 # Set proper permissions for secrets file (restrictive: owner rw, group r)
 if [ -f "$PROJECT_ROOT_DIR/config/config_secrets.json" ]; then
-    chown "$ACTUAL_USER:$ACTUAL_USER" "$PROJECT_ROOT_DIR/config/config_secrets.json" || true
+    chown "$ACTUAL_USER:$LEDMATRIX_GROUP" "$PROJECT_ROOT_DIR/config/config_secrets.json" || true
     chmod 640 "$PROJECT_ROOT_DIR/config/config_secrets.json"
     echo "✓ Secrets file permissions set"
 fi
 
 # Set proper permissions for YTM auth file (readable by all users including root service)
 if [ -f "$PROJECT_ROOT_DIR/config/ytm_auth.json" ]; then
-    chown "$ACTUAL_USER:$ACTUAL_USER" "$PROJECT_ROOT_DIR/config/ytm_auth.json" || true
+    chown "$ACTUAL_USER:$LEDMATRIX_GROUP" "$PROJECT_ROOT_DIR/config/ytm_auth.json" || true
     chmod 644 "$PROJECT_ROOT_DIR/config/ytm_auth.json"
     echo "✓ YTM auth file permissions set"
 fi
