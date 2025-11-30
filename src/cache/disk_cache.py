@@ -132,20 +132,47 @@ class DiskCache:
             # Atomic write to avoid partial/corrupt files
             with self._lock:
                 tmp_dir = os.path.dirname(cache_path)
+                # Try to create temp file in cache directory first
+                # If that fails due to permissions, fall back to direct write
+                tmp_path = None
+                fd = None
                 try:
-                    fd, tmp_path = tempfile.mkstemp(prefix=f".{os.path.basename(cache_path)}.", dir=tmp_dir)
-                    try:
-                        with os.fdopen(fd, 'w', encoding='utf-8') as tmp_file:
-                            json.dump(data, tmp_file, indent=4, cls=DateTimeEncoder)
-                            tmp_file.flush()
-                            os.fsync(tmp_file.fileno())
-                        os.replace(tmp_path, cache_path)
-                    finally:
-                        if os.path.exists(tmp_path):
-                            try:
-                                os.remove(tmp_path)
-                            except OSError:
-                                pass
+                    # First try the cache directory
+                    if os.access(tmp_dir, os.W_OK):
+                        try:
+                            fd, tmp_path = tempfile.mkstemp(prefix=f".{os.path.basename(cache_path)}.", dir=tmp_dir)
+                        except (IOError, OSError, PermissionError):
+                            # If temp file creation fails, try direct write as fallback
+                            self.logger.warning("Could not create temp file in %s, using direct write for %s", tmp_dir, key)
+                            tmp_path = None
+                            fd = None
+                    else:
+                        # Directory not writable, use direct write
+                        self.logger.warning("Cache directory %s not writable, using direct write for %s", tmp_dir, key)
+                        tmp_path = None
+                        fd = None
+                    
+                    if tmp_path and fd is not None:
+                        # Use atomic write with temp file
+                        try:
+                            with os.fdopen(fd, 'w', encoding='utf-8') as tmp_file:
+                                json.dump(data, tmp_file, indent=4, cls=DateTimeEncoder)
+                                tmp_file.flush()
+                                os.fsync(tmp_file.fileno())
+                            os.replace(tmp_path, cache_path)
+                        finally:
+                            if os.path.exists(tmp_path):
+                                try:
+                                    os.remove(tmp_path)
+                                except OSError:
+                                    pass
+                    else:
+                        # Fallback: direct write (not atomic, but better than failing)
+                        with open(cache_path, 'w', encoding='utf-8') as cache_file:
+                            json.dump(data, cache_file, indent=4, cls=DateTimeEncoder)
+                            cache_file.flush()
+                            os.fsync(cache_file.fileno())
+                        self.logger.debug("Wrote cache for %s directly (non-atomic)", key)
                 except (IOError, OSError, PermissionError) as e:
                     self.logger.error("Atomic write failed for key '%s' to %s: %s", key, cache_path, e, exc_info=True)
                     # Attempt one-time fallback write directly into /var/cache/ledmatrix if available
