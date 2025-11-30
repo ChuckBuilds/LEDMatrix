@@ -206,17 +206,37 @@ CURRENT_STEP="Fix cache permissions"
 echo "Step 2: Fixing cache permissions..."
 echo "----------------------------------"
 
-# Run the cache permissions fix
-if [ -f "$PROJECT_ROOT_DIR/scripts/fix_perms/fix_cache_permissions.sh" ]; then
-    echo "Running cache permissions fix..."
+# Run the cache setup script (uses proper group permissions)
+if [ -f "$PROJECT_ROOT_DIR/setup_cache.sh" ]; then
+    echo "Running cache setup script (proper group permissions)..."
+    bash "$PROJECT_ROOT_DIR/setup_cache.sh"
+    echo "✓ Cache permissions fixed with proper group setup"
+elif [ -f "$PROJECT_ROOT_DIR/scripts/fix_perms/fix_cache_permissions.sh" ]; then
+    echo "Running cache permissions fix (legacy script)..."
     bash "$PROJECT_ROOT_DIR/scripts/fix_perms/fix_cache_permissions.sh"
     echo "✓ Cache permissions fixed"
 else
-    echo "⚠ Cache permissions script not found, creating cache directories manually..."
+    echo "⚠ Cache setup scripts not found, setting up cache directory manually..."
+    # Create ledmatrix group if it doesn't exist
+    if ! getent group ledmatrix > /dev/null 2>&1; then
+        groupadd ledmatrix
+        echo "Created ledmatrix group"
+    fi
+    
+    # Add users to ledmatrix group
+    usermod -a -G ledmatrix "$ACTUAL_USER"
+    if id daemon > /dev/null 2>&1; then
+        usermod -a -G ledmatrix daemon
+    fi
+    
+    # Create cache directory with proper permissions
     mkdir -p /var/cache/ledmatrix
-    chown "$ACTUAL_USER:$ACTUAL_USER" /var/cache/ledmatrix
-    chmod 777 /var/cache/ledmatrix
-    echo "✓ Cache directories created manually"
+    chown -R :ledmatrix /var/cache/ledmatrix
+    chmod -R 775 /var/cache/ledmatrix
+    chmod g+s /var/cache/ledmatrix
+    
+    echo "✓ Cache directory created with proper group permissions"
+    echo "  Note: You may need to log out and back in for group changes to take effect"
 fi
 echo ""
 
