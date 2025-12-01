@@ -300,11 +300,28 @@ class ConfigManager:
                 # Merge template defaults into current config
                 self._merge_template_defaults(self.config, template_config)
                 
-                # Save migrated config
-                with open(self.config_path, 'w') as f:
-                    json.dump(self.config, f, indent=4)
+                # Save migrated config using atomic save to preserve permissions
+                # Load secrets if they exist to pass to atomic save
+                secrets_content = {}
+                if os.path.exists(self.secrets_path):
+                    try:
+                        with open(self.secrets_path, 'r') as f_secrets:
+                            secrets_content = json.load(f_secrets)
+                    except Exception:
+                        pass  # Continue without secrets if can't load
                 
-                self.logger.info(f"Config migration completed and saved to {os.path.abspath(self.config_path)}")
+                # Use atomic save to preserve file permissions
+                result = self.save_config_atomic(
+                    new_config_data=self.config,
+                    new_secrets=secrets_content if secrets_content else None,
+                    create_backup=False,  # Already created backup above
+                    validate_after_write=False  # Skip validation for migration
+                )
+                
+                if result.status.value == "success":
+                    self.logger.info(f"Config migration completed and saved to {os.path.abspath(self.config_path)}")
+                else:
+                    self.logger.warning(f"Config migration completed but save had issues: {result.message}")
             else:
                 self.logger.debug("Config is up to date, no migration needed")
                 
