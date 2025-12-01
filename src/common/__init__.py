@@ -21,6 +21,7 @@ from src.common.error_handler import (
     log_and_continue,
     log_and_raise
 )
+from src.common.api_helper import APIHelper
 
 __all__ = [
     'handle_file_operation',
@@ -29,4 +30,5 @@ __all__ = [
     'retry_on_failure',
     'log_and_continue',
     'log_and_raise',
+    'APIHelper',
 ]

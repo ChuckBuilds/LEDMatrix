@@ -142,7 +142,7 @@ class PluginLoader:
         try:
             self.logger.info("Installing dependencies for plugin %s...", plugin_id)
             result = subprocess.run(
-                [sys.executable, "-m", "pip", "install", "-r", str(requirements_file)],
+                [sys.executable, "-m", "pip", "install", "--break-system-packages", "-r", str(requirements_file)],
                 capture_output=True,
                 text=True,
                 timeout=timeout,
