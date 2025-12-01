@@ -388,13 +388,28 @@ class AtomicConfigManager:
         
         On most filesystems, rename is atomic, which prevents corruption
         if the process is interrupted.
+        
+        Sets appropriate file permissions after move to ensure service can read config.
         """
         try:
             # Ensure destination directory exists
             destination.parent.mkdir(parents=True, exist_ok=True)
             
+            # Determine target permissions based on file type
+            # config.json should be 644 (readable by all, including root service)
+            # config_secrets.json should be 640 (readable by owner and group)
+            if 'secrets' in str(destination):
+                target_mode = 0o640  # rw-r-----
+            else:
+                target_mode = 0o644  # rw-r--r--
+            
             # Atomic move (rename)
             source.replace(destination)
+            
+            # Set permissions after move to ensure they're correct
+            # This is important because temp files may have different permissions
+            # and we need root service to be able to read config.json
+            os.chmod(destination, target_mode)
             
         except Exception as e:
             raise ConfigError(f"Error during atomic move: {e}") from e
