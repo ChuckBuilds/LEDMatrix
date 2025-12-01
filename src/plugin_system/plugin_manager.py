@@ -22,6 +22,7 @@ from src.logging_config import get_logger
 from src.plugin_system.plugin_loader import PluginLoader
 from src.plugin_system.plugin_executor import PluginExecutor
 from src.plugin_system.plugin_state import PluginStateManager, PluginState
+from src.plugin_system.schema_manager import SchemaManager
 
 
 class PluginManager:
@@ -67,6 +68,7 @@ class PluginManager:
         self.plugin_loader = PluginLoader(logger=self.logger)
         self.plugin_executor = PluginExecutor(default_timeout=30.0, logger=self.logger)
         self.state_manager = PluginStateManager(logger=self.logger)
+        self.schema_manager = SchemaManager(plugins_dir=self.plugins_dir, logger=self.logger)
         
         # Active plugins
         self.plugins: Dict[str, Any] = {}
@@ -263,6 +265,15 @@ class PluginManager:
                 config = full_config.get(plugin_id, {})
             else:
                 config = {}
+            
+            # Merge config with schema defaults to ensure all defaults are applied
+            try:
+                defaults = self.schema_manager.generate_default_config(plugin_id, use_cache=True)
+                config = self.schema_manager.merge_with_defaults(config, defaults)
+                self.logger.debug(f"Merged config with schema defaults for {plugin_id}")
+            except Exception as e:
+                self.logger.warning(f"Could not apply schema defaults for {plugin_id}: {e}")
+                # Continue with original config if defaults can't be applied
             
             # Use PluginLoader to load plugin
             plugin_instance, module = self.plugin_loader.load_plugin(
