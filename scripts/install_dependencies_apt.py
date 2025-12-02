@@ -6,7 +6,6 @@ then falls back to pip with --break-system-packages
 
 import subprocess
 import sys
-import os
 from pathlib import Path
 
 def install_via_apt(package_name):
@@ -125,7 +124,9 @@ def main():
     # Install rgbmatrix module from local source
     print("Installing rgbmatrix module...")
     try:
-        rgbmatrix_path = Path(__file__).parent / 'rpi-rgb-led-matrix-master' / 'bindings' / 'python'
+        # Get project root (parent of scripts directory)
+        PROJECT_ROOT = Path(__file__).parent.parent
+        rgbmatrix_path = PROJECT_ROOT / 'rpi-rgb-led-matrix-master' / 'bindings' / 'python'
         if rgbmatrix_path.exists():
             subprocess.check_call([
                 sys.executable, '-m', 'pip', 'install', '--break-system-packages', '-e', str(rgbmatrix_path)

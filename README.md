@@ -237,6 +237,8 @@ sudo apt install -y git python3-pip cython3 build-essential python3-dev python3-
 ```bash
 git clone https://github.com/ChuckBuilds/LEDMatrix.git
 cd LEDMatrix
+# Note: Git submodules (including rpi-rgb-led-matrix) are automatically initialized during first_time_install.sh
+# If you need to initialize manually: git submodule update --init --recursive
 ```
 REMOVE ME BEFORE PR:
 To use the Plugins branch type:

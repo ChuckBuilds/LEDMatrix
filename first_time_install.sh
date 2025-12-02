@@ -667,6 +667,25 @@ echo "-----------------------------------------------------"
 if python3 -c 'from rgbmatrix import RGBMatrix, RGBMatrixOptions' >/dev/null 2>&1 && [ "${RPI_RGB_FORCE_REBUILD:-0}" != "1" ]; then
     echo "rgbmatrix Python package already available; skipping build (set RPI_RGB_FORCE_REBUILD=1 to force rebuild)."
 else
+    # Ensure rpi-rgb-led-matrix submodule is initialized
+    if [ ! -d "$PROJECT_ROOT_DIR/rpi-rgb-led-matrix-master" ]; then
+        echo "rpi-rgb-led-matrix-master not found. Initializing git submodule..."
+        cd "$PROJECT_ROOT_DIR"
+        
+        # Try to initialize submodule if .gitmodules exists
+        if [ -f "$PROJECT_ROOT_DIR/.gitmodules" ] && grep -q "rpi-rgb-led-matrix" "$PROJECT_ROOT_DIR/.gitmodules"; then
+            echo "Initializing rpi-rgb-led-matrix submodule..."
+            git submodule update --init --recursive rpi-rgb-led-matrix-master 2>/dev/null || {
+                echo "⚠ Submodule init failed, cloning directly from GitHub..."
+                git clone --depth 1 https://github.com/hzeller/rpi-rgb-led-matrix.git rpi-rgb-led-matrix-master
+            }
+        else
+            # Fallback: clone directly if submodule not configured
+            echo "Submodule not configured, cloning directly from GitHub..."
+            git clone --depth 1 https://github.com/hzeller/rpi-rgb-led-matrix.git rpi-rgb-led-matrix-master
+        fi
+    fi
+    
     # Build and install rpi-rgb-led-matrix Python bindings
     if [ -d "$PROJECT_ROOT_DIR/rpi-rgb-led-matrix-master" ]; then
         pushd "$PROJECT_ROOT_DIR/rpi-rgb-led-matrix-master" >/dev/null
@@ -678,7 +697,7 @@ else
         popd >/dev/null
     else
         echo "✗ rpi-rgb-led-matrix-master directory not found at $PROJECT_ROOT_DIR"
-        echo "You can clone it with: git submodule update --init --recursive (if applicable)"
+        echo "Failed to initialize submodule or clone repository"
         exit 1
     fi
 
