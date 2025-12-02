@@ -13,6 +13,12 @@ from urllib.parse import urlparse
 
 import requests
 from PIL import Image
+from src.common.permission_utils import (
+    ensure_directory_permissions,
+    ensure_file_permissions,
+    get_assets_dir_mode,
+    get_assets_file_mode
+)
 
 
 class LogoHelper:
@@ -237,8 +243,8 @@ class LogoHelper:
     
     def _download_logo(self, url: str, file_path: Path) -> None:
         """Download logo from URL."""
-        # Ensure directory exists
-        file_path.parent.mkdir(parents=True, exist_ok=True)
+        # Ensure directory exists with proper permissions
+        ensure_directory_permissions(file_path.parent, get_assets_dir_mode())
         
         # Download with timeout
         response = self.session.get(url, timeout=30)
@@ -247,6 +253,9 @@ class LogoHelper:
         # Save to file
         with open(file_path, 'wb') as f:
             f.write(response.content)
+        
+        # Set proper file permissions after saving
+        ensure_file_permissions(file_path, get_assets_file_mode())
         
         self.logger.debug(f"Downloaded logo to {file_path}")
     

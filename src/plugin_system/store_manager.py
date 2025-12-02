@@ -963,7 +963,11 @@ class PluginStoreManager:
                         return False
                     
                     # Move plugin contents to target
-                    target_path.parent.mkdir(parents=True, exist_ok=True)
+                    from src.common.permission_utils import (
+                        ensure_directory_permissions,
+                        get_plugin_dir_mode
+                    )
+                    ensure_directory_permissions(target_path.parent, get_plugin_dir_mode())
                     shutil.move(str(source_plugin_dir), str(target_path))
                     
                     # Cleanup temp extract dir
@@ -1022,7 +1026,11 @@ class PluginStoreManager:
                     # Move contents from root_dir to target
                     source_dir = temp_extract / root_dir
                     if source_dir.exists():
-                        target_path.parent.mkdir(parents=True, exist_ok=True)
+                        from src.common.permission_utils import (
+                            ensure_directory_permissions,
+                            get_plugin_dir_mode
+                        )
+                        ensure_directory_permissions(target_path.parent, get_plugin_dir_mode())
                         shutil.move(str(source_dir), str(target_path))
                     else:
                         # No root dir, move everything

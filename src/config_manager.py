@@ -1,12 +1,19 @@
 import json
 import os
 import logging
+from pathlib import Path
 from typing import Dict, Any, Optional, List
 from src.exceptions import ConfigError
 from src.logging_config import get_logger
 from src.config_manager_atomic import (
     AtomicConfigManager, SaveResult, SaveResultStatus,
     BackupInfo, ValidationResult
+)
+from src.common.permission_utils import (
+    ensure_directory_permissions,
+    ensure_file_permissions,
+    get_config_file_mode,
+    get_config_dir_mode
 )
 
 class ConfigManager:
@@ -265,8 +272,9 @@ class ConfigManager:
         
         self.logger.info(f"Creating config.json from template at {os.path.abspath(self.template_path)}")
         
-        # Ensure config directory exists
-        os.makedirs(os.path.dirname(self.config_path), exist_ok=True)
+        # Ensure config directory exists with proper permissions
+        config_dir = Path(self.config_path).parent
+        ensure_directory_permissions(config_dir, get_config_dir_mode())
         
         # Copy template to config
         with open(self.template_path, 'r') as template_file:
@@ -274,6 +282,10 @@ class ConfigManager:
         
         with open(self.config_path, 'w') as config_file:
             json.dump(template_data, config_file, indent=4)
+        
+        # Set proper file permissions after creation
+        config_path_obj = Path(self.config_path)
+        ensure_file_permissions(config_path_obj, get_config_file_mode(config_path_obj))
         
         self.logger.info(f"Created config.json from template at {os.path.abspath(self.config_path)}")
 
@@ -423,9 +435,15 @@ class ConfigManager:
 
         try:
             # Create directory if it doesn't exist, especially for config/
-            os.makedirs(os.path.dirname(path_to_save), exist_ok=True)
+            path_obj = Path(path_to_save)
+            ensure_directory_permissions(path_obj.parent, get_config_dir_mode())
+            
             with open(path_to_save, 'w') as f:
                 json.dump(data, f, indent=4)
+            
+            # Set proper file permissions after writing
+            ensure_file_permissions(path_obj, get_config_file_mode(path_obj))
+            
             self.logger.info(f"{file_type.capitalize()} configuration successfully saved to {os.path.abspath(path_to_save)}")
             
             # If we just saved the main config or secrets, the merged self.config might be stale.

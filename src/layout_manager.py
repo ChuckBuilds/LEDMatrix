@@ -33,7 +33,13 @@ class LayoutManager:
     def save_layouts(self) -> bool:
         """Save layouts to file."""
         try:
-            os.makedirs(os.path.dirname(self.config_path), exist_ok=True)
+            from pathlib import Path
+            from src.common.permission_utils import (
+                ensure_directory_permissions,
+                get_config_dir_mode
+            )
+            config_path_obj = Path(self.config_path)
+            ensure_directory_permissions(config_path_obj.parent, get_config_dir_mode())
             with open(self.config_path, 'w') as f:
                 json.dump(self.layouts, f, indent=2)
             return True

@@ -615,7 +615,13 @@ class FontManager:
     def _save_overrides(self):
         """Save current font overrides to file."""
         try:
-            os.makedirs(os.path.dirname(self.font_overrides_file), exist_ok=True)
+            from pathlib import Path
+            from src.common.permission_utils import (
+                ensure_directory_permissions,
+                get_config_dir_mode
+            )
+            font_overrides_path = Path(self.font_overrides_file)
+            ensure_directory_permissions(font_overrides_path.parent, get_config_dir_mode())
             with open(self.font_overrides_file, 'w') as f:
                 json.dump(self.font_overrides, f, indent=2)
             logger.info(f"Saved {len(self.font_overrides)} font overrides")
@@ -683,8 +689,13 @@ class FontManager:
                 return False
 
             # Copy font to assets/fonts directory
-            fonts_dir = "assets/fonts"
-            os.makedirs(fonts_dir, exist_ok=True)
+            from pathlib import Path
+            from src.common.permission_utils import (
+                ensure_directory_permissions,
+                get_assets_dir_mode
+            )
+            fonts_dir = Path("assets/fonts")
+            ensure_directory_permissions(fonts_dir, get_assets_dir_mode())
 
             target_path = os.path.join(fonts_dir, f"{family_name}.{font_file_path.rsplit('.', 1)[-1]}")
 

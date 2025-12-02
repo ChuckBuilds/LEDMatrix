@@ -803,10 +803,17 @@ class DisplayManager:
             now = time.time()
             if (now - self._last_snapshot_ts) < self._snapshot_min_interval_sec:
                 return
-            # Ensure directory exists
-            snapshot_dir = os.path.dirname(self._snapshot_path)
-            if snapshot_dir and not os.path.exists(snapshot_dir):
-                os.makedirs(snapshot_dir, exist_ok=True)
+            # Ensure directory exists with proper permissions
+            from pathlib import Path
+            from src.common.permission_utils import (
+                ensure_directory_permissions,
+                ensure_file_permissions,
+                get_assets_dir_mode,
+                get_assets_file_mode
+            )
+            snapshot_path_obj = Path(self._snapshot_path)
+            if snapshot_path_obj.parent:
+                ensure_directory_permissions(snapshot_path_obj.parent, get_assets_dir_mode())
             # Write atomically: temp then replace
             tmp_path = f"{self._snapshot_path}.tmp"
             self.image.save(tmp_path, format='PNG')
@@ -815,9 +822,9 @@ class DisplayManager:
             except Exception:
                 # Fallback to direct save if replace not supported
                 self.image.save(self._snapshot_path, format='PNG')
-            # Try to make the snapshot world-readable so the web UI can read it regardless of user
+            # Set proper file permissions after saving
             try:
-                os.chmod(self._snapshot_path, 0o644)
+                ensure_file_permissions(snapshot_path_obj, get_assets_file_mode())
             except Exception:
                 pass
             self._last_snapshot_ts = now

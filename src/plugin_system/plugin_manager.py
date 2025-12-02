@@ -23,6 +23,10 @@ from src.plugin_system.plugin_loader import PluginLoader
 from src.plugin_system.plugin_executor import PluginExecutor
 from src.plugin_system.plugin_state import PluginStateManager, PluginState
 from src.plugin_system.schema_manager import SchemaManager
+from src.common.permission_utils import (
+    ensure_directory_permissions,
+    get_plugin_dir_mode
+)
 
 
 class PluginManager:
@@ -80,9 +84,9 @@ class PluginManager:
         self.health_tracker = None
         self.resource_monitor = None
         
-        # Ensure plugins directory exists
+        # Ensure plugins directory exists with proper permissions
         try:
-            self.plugins_dir.mkdir(parents=True, exist_ok=True)
+            ensure_directory_permissions(self.plugins_dir, get_plugin_dir_mode())
         except (OSError, PermissionError) as e:
             self.logger.error("Could not create plugins directory %s: %s", self.plugins_dir, e, exc_info=True)
             raise PluginError(f"Could not create plugins directory: {self.plugins_dir}", context={'error': str(e)}) from e
@@ -159,6 +163,12 @@ class PluginManager:
         marker_path = self._get_dependency_marker_path(plugin_id)
         try:
             marker_path.touch()
+            # Set proper file permissions after creating marker
+            from src.common.permission_utils import (
+                ensure_file_permissions,
+                get_plugin_file_mode
+            )
+            ensure_file_permissions(marker_path, get_plugin_file_mode())
         except (OSError, PermissionError) as e:
             self.logger.warning("Could not create dependency marker for %s: %s", plugin_id, e)
 

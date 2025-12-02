@@ -16,6 +16,10 @@ import logging
 
 from src.exceptions import PluginError
 from src.logging_config import get_logger
+from src.common.permission_utils import (
+    ensure_file_permissions,
+    get_plugin_file_mode
+)
 
 
 class PluginLoader:
@@ -152,6 +156,8 @@ class PluginLoader:
             if result.returncode == 0:
                 # Mark as installed
                 marker_path.touch()
+                # Set proper file permissions after creating marker
+                ensure_file_permissions(marker_path, get_plugin_file_mode())
                 self.logger.info("Dependencies installed successfully for %s", plugin_id)
                 return True
             else:

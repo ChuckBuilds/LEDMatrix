@@ -374,8 +374,12 @@ class PluginStateManager:
                     'last_updated': datetime.now().isoformat()
                 }
             
-            # Ensure directory exists
-            self.state_file.parent.mkdir(parents=True, exist_ok=True)
+            # Ensure directory exists with proper permissions
+            from src.common.permission_utils import (
+                ensure_directory_permissions,
+                get_config_dir_mode
+            )
+            ensure_directory_permissions(self.state_file.parent, get_config_dir_mode())
             
             # Write to file
             with open(self.state_file, 'w') as f:

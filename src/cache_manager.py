@@ -75,7 +75,12 @@ class CacheManager:
                 except (IOError, OSError):
                     self.logger.warning(f"Directory exists but is not writable: {system_cache_dir}")
             else:
-                os.makedirs(system_cache_dir, exist_ok=True)
+                from pathlib import Path
+                from src.common.permission_utils import (
+                    ensure_directory_permissions,
+                    get_cache_dir_mode
+                )
+                ensure_directory_permissions(Path(system_cache_dir), get_cache_dir_mode())
                 if os.access(system_cache_dir, os.W_OK):
                     return system_cache_dir
         except (OSError, IOError, PermissionError) as e:
@@ -90,7 +95,12 @@ class CacheManager:
                 # When running as root and /var/cache/ledmatrix failed, still allow fallback to /root
                 home_dir = os.path.expanduser('~')
             user_cache_dir = os.path.join(home_dir, '.ledmatrix_cache')
-            os.makedirs(user_cache_dir, exist_ok=True)
+            from pathlib import Path
+            from src.common.permission_utils import (
+                ensure_directory_permissions,
+                get_cache_dir_mode
+            )
+            ensure_directory_permissions(Path(user_cache_dir), get_cache_dir_mode())
             test_file = os.path.join(user_cache_dir, '.writetest')
             with open(test_file, 'w') as f:
                 f.write('test')
@@ -116,7 +126,12 @@ class CacheManager:
                     self.logger.warning(f"Directory exists but is not writable: {opt_cache_dir}")
             else:
                 # Try to create the directory
-                os.makedirs(opt_cache_dir, exist_ok=True)
+                from pathlib import Path
+                from src.common.permission_utils import (
+                    ensure_directory_permissions,
+                    get_cache_dir_mode
+                )
+                ensure_directory_permissions(Path(opt_cache_dir), get_cache_dir_mode())
                 if os.access(opt_cache_dir, os.W_OK):
                     return opt_cache_dir
         except (OSError, IOError, PermissionError) as e:
@@ -125,7 +140,12 @@ class CacheManager:
         # Attempt 4: System-wide temporary directory (fallback, not persistent)
         try:
             temp_cache_dir = os.path.join(tempfile.gettempdir(), 'ledmatrix_cache')
-            os.makedirs(temp_cache_dir, exist_ok=True)
+            from pathlib import Path
+            from src.common.permission_utils import (
+                ensure_directory_permissions,
+                get_cache_dir_mode
+            )
+            ensure_directory_permissions(Path(temp_cache_dir), get_cache_dir_mode())
             if os.access(temp_cache_dir, os.W_OK):
                 self.logger.warning("Using temporary cache directory - cache will NOT persist across restarts")
                 return temp_cache_dir
@@ -501,8 +521,14 @@ class CacheManager:
         """
         try:
             # Try to create /var/cache/ledmatrix with proper permissions
+            from pathlib import Path
+            from src.common.permission_utils import (
+                ensure_directory_permissions,
+                get_cache_dir_mode
+            )
             cache_dir = '/var/cache/ledmatrix'
-            os.makedirs(cache_dir, exist_ok=True)
+            cache_dir_path = Path(cache_dir)
+            ensure_directory_permissions(cache_dir_path, get_cache_dir_mode())
             
             # Set ownership to the real user (not root)
             real_user = os.environ.get('SUDO_USER')
@@ -515,9 +541,6 @@ class CacheManager:
                     self.logger.info(f"Set ownership of {cache_dir} to {real_user}")
                 except (OSError, KeyError) as e:
                     self.logger.warning(f"Could not set ownership for {cache_dir}: {e}", exc_info=True)
-            
-            # Set permissions to 755 (rwxr-xr-x)
-            os.chmod(cache_dir, 0o755)
             
             self.logger.info(f"Successfully set up persistent cache directory: {cache_dir}")
             return True

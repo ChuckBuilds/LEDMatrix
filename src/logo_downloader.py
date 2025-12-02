@@ -15,6 +15,12 @@ from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
+from src.common.permission_utils import (
+    ensure_directory_permissions,
+    ensure_file_permissions,
+    get_assets_dir_mode,
+    get_assets_file_mode
+)
 
 logger = logging.getLogger(__name__)
 
@@ -147,7 +153,8 @@ class LogoDownloader:
         """Ensure the logo directory exists, create if necessary."""
         path = Path(logo_dir)
         try:
-            path.mkdir(parents=True, exist_ok=True)
+            # Create directory with proper permissions
+            ensure_directory_permissions(path, get_assets_dir_mode())
             
             # Check if we can actually write to the directory
             test_file = path / '.write_test'
@@ -200,6 +207,9 @@ class LogoDownloader:
                     
                     # Save the converted image
                     img.save(filepath, 'PNG')
+                
+                # Set proper file permissions after saving
+                ensure_file_permissions(filepath, get_assets_file_mode())
                 
                 logger.info(f"Successfully downloaded and converted logo for {team_abbreviation} -> {filepath.name}")
                 return True
@@ -618,6 +628,10 @@ class LogoDownloader:
                 draw.text((16, 24), text, fill=(255, 255, 255, 255))
             
             logo.save(filepath)
+            
+            # Set proper file permissions after saving
+            ensure_file_permissions(filepath, get_assets_file_mode())
+            
             logger.info(f"Created placeholder logo for {team_abbreviation} at {filepath}")
             return True
             
