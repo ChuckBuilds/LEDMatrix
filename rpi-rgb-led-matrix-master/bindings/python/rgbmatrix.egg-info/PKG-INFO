@@ -1,9 +1,0 @@
-Metadata-Version: 2.4
-Name: rgbmatrix
-Version: 0.0.1
-Author: Christoph Friedrich
-Author-email: christoph.friedrich@vonaffenfels.de
-Classifier: Development Status :: 3 - Alpha
-Dynamic: author
-Dynamic: author-email
-Dynamic: classifier

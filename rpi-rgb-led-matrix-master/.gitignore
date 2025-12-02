@@ -1,6 +1,0 @@
-*.o
-*.a
-*~
-*.so
-.envrc
-.direnv

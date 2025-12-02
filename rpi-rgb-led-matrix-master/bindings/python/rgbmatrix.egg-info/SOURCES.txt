@@ -1,7 +1,0 @@
-README.md
-setup.py
-rgbmatrix/__init__.py
-rgbmatrix.egg-info/PKG-INFO
-rgbmatrix.egg-info/SOURCES.txt
-rgbmatrix.egg-info/dependency_links.txt
-rgbmatrix.egg-info/top_level.txt
