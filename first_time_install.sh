@@ -675,22 +675,42 @@ else
         # Try to initialize submodule if .gitmodules exists
         if [ -f "$PROJECT_ROOT_DIR/.gitmodules" ] && grep -q "rpi-rgb-led-matrix" "$PROJECT_ROOT_DIR/.gitmodules"; then
             echo "Initializing rpi-rgb-led-matrix submodule..."
-            git submodule update --init --recursive rpi-rgb-led-matrix-master 2>/dev/null || {
+            if ! git submodule update --init --recursive rpi-rgb-led-matrix-master 2>&1; then
                 echo "⚠ Submodule init failed, cloning directly from GitHub..."
-                git clone --depth 1 https://github.com/hzeller/rpi-rgb-led-matrix.git rpi-rgb-led-matrix-master
-            }
+                git clone https://github.com/hzeller/rpi-rgb-led-matrix.git rpi-rgb-led-matrix-master
+            fi
         else
             # Fallback: clone directly if submodule not configured
             echo "Submodule not configured, cloning directly from GitHub..."
-            git clone --depth 1 https://github.com/hzeller/rpi-rgb-led-matrix.git rpi-rgb-led-matrix-master
+            git clone https://github.com/hzeller/rpi-rgb-led-matrix.git rpi-rgb-led-matrix-master
         fi
     fi
     
     # Build and install rpi-rgb-led-matrix Python bindings
     if [ -d "$PROJECT_ROOT_DIR/rpi-rgb-led-matrix-master" ]; then
+        # Check if submodule is properly initialized (not empty)
+        if [ ! -f "$PROJECT_ROOT_DIR/rpi-rgb-led-matrix-master/Makefile" ]; then
+            echo "⚠ Submodule appears empty, re-initializing..."
+            cd "$PROJECT_ROOT_DIR"
+            rm -rf rpi-rgb-led-matrix-master
+            if [ -f "$PROJECT_ROOT_DIR/.gitmodules" ] && grep -q "rpi-rgb-led-matrix" "$PROJECT_ROOT_DIR/.gitmodules"; then
+                git submodule update --init --recursive rpi-rgb-led-matrix-master
+            else
+                git clone https://github.com/hzeller/rpi-rgb-led-matrix.git rpi-rgb-led-matrix-master
+            fi
+        fi
+        
         pushd "$PROJECT_ROOT_DIR/rpi-rgb-led-matrix-master" >/dev/null
         echo "Building rpi-rgb-led-matrix Python bindings..."
-        make build-python PYTHON=$(which python3)
+        # Build the library first, then Python bindings
+        # The build-python target depends on the library being built
+        if ! make build-python; then
+            echo "✗ Failed to build rpi-rgb-led-matrix Python bindings"
+            echo "  Make sure you have the required build tools installed:"
+            echo "  sudo apt install -y build-essential python3-dev cython3 scons"
+            popd >/dev/null
+            exit 1
+        fi
         cd bindings/python
         echo "Installing rpi-rgb-led-matrix Python package via pip..."
         python3 -m pip install --break-system-packages .
