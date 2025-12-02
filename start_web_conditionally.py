@@ -13,10 +13,39 @@ def install_dependencies():
     print("Installing dependencies...")
     try:
         requirements_file = os.path.join(PROJECT_DIR, 'web_interface', 'requirements.txt')
-        subprocess.check_call([
-            sys.executable, '-m', 'pip', 'install', '--break-system-packages', '-r', requirements_file
-        ])
-        print("Dependencies installed successfully")
+        # Use --ignore-installed to handle system packages (like psutil) that can't be uninstalled
+        # This allows pip to install even if a system package version conflicts
+        result = subprocess.run([
+            sys.executable, '-m', 'pip', 'install', '--break-system-packages', '--ignore-installed', '-r', requirements_file
+        ], capture_output=True, text=True)
+        
+        if result.returncode != 0:
+            # Check if the error is just about psutil version conflict
+            if 'psutil' in result.stderr.lower() and ('uninstall' in result.stderr.lower() or 'cannot uninstall' in result.stderr.lower()):
+                print("Warning: psutil version conflict detected (system package vs requirements).")
+                print("Attempting to install other dependencies without psutil...")
+                # Try installing without psutil
+                with open(requirements_file, 'r') as f:
+                    lines = f.readlines()
+                # Filter out psutil line
+                filtered_lines = [line for line in lines if 'psutil' not in line.lower()]
+                temp_reqs = os.path.join(PROJECT_DIR, 'web_interface', 'requirements_temp.txt')
+                with open(temp_reqs, 'w') as f:
+                    f.writelines(filtered_lines)
+                try:
+                    subprocess.check_call([
+                        sys.executable, '-m', 'pip', 'install', '--break-system-packages', '--ignore-installed', '-r', temp_reqs
+                    ])
+                    print("Dependencies installed successfully (psutil skipped - using system version)")
+                finally:
+                    if os.path.exists(temp_reqs):
+                        os.remove(temp_reqs)
+            else:
+                # Re-raise the error if it's not about psutil
+                print(f"Failed to install dependencies: {result.stderr}")
+                return False
+        else:
+            print("Dependencies installed successfully")
         
         # Install rgbmatrix module from local source (optional - not required for web interface)
         print("Installing rgbmatrix module (optional)...")
