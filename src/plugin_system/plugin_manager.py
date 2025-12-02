@@ -184,7 +184,7 @@ class PluginManager:
         try:
             self.logger.info("Installing dependencies from %s", requirements_file)
             result = subprocess.run(
-                [sys.executable, "-m", "pip", "install", "--break-system-packages", "-r", str(requirements_file)],
+                [sys.executable, "-m", "pip", "install", "--break-system-packages", "--no-cache-dir", "-r", str(requirements_file)],
                 capture_output=True,
                 text=True,
                 timeout=300,

@@ -459,7 +459,19 @@ if [ ! -f "$PROJECT_ROOT_DIR/config/config_secrets.json" ]; then
     if [ -f "$PROJECT_ROOT_DIR/config/config_secrets.template.json" ]; then
         echo "Creating config/config_secrets.json from template..."
         cp "$PROJECT_ROOT_DIR/config/config_secrets.template.json" "$PROJECT_ROOT_DIR/config/config_secrets.json"
-        chown "$ACTUAL_USER:$LEDMATRIX_GROUP" "$PROJECT_ROOT_DIR/config/config_secrets.json" || true
+        # Check if service runs as root and set ownership accordingly
+        SERVICE_USER="root"
+        if [ -f "/etc/systemd/system/ledmatrix.service" ]; then
+            SERVICE_USER=$(grep "^User=" /etc/systemd/system/ledmatrix.service | cut -d'=' -f2 || echo "root")
+        elif [ -f "$PROJECT_ROOT_DIR/ledmatrix.service" ]; then
+            SERVICE_USER=$(grep "^User=" "$PROJECT_ROOT_DIR/ledmatrix.service" | cut -d'=' -f2 || echo "root")
+        fi
+        
+        if [ "$SERVICE_USER" = "root" ]; then
+            chown "root:$LEDMATRIX_GROUP" "$PROJECT_ROOT_DIR/config/config_secrets.json" || true
+        else
+            chown "$ACTUAL_USER:$LEDMATRIX_GROUP" "$PROJECT_ROOT_DIR/config/config_secrets.json" || true
+        fi
         chmod 640 "$PROJECT_ROOT_DIR/config/config_secrets.json"
         echo "✓ Secrets file created from template"
     else
@@ -471,7 +483,19 @@ if [ ! -f "$PROJECT_ROOT_DIR/config/config_secrets.json" ]; then
   }
 }
 EOF
-        chown "$ACTUAL_USER:$LEDMATRIX_GROUP" "$PROJECT_ROOT_DIR/config/config_secrets.json" || true
+        # Check if service runs as root and set ownership accordingly
+        SERVICE_USER="root"
+        if [ -f "/etc/systemd/system/ledmatrix.service" ]; then
+            SERVICE_USER=$(grep "^User=" /etc/systemd/system/ledmatrix.service | cut -d'=' -f2 || echo "root")
+        elif [ -f "$PROJECT_ROOT_DIR/ledmatrix.service" ]; then
+            SERVICE_USER=$(grep "^User=" "$PROJECT_ROOT_DIR/ledmatrix.service" | cut -d'=' -f2 || echo "root")
+        fi
+        
+        if [ "$SERVICE_USER" = "root" ]; then
+            chown "root:$LEDMATRIX_GROUP" "$PROJECT_ROOT_DIR/config/config_secrets.json" || true
+        else
+            chown "$ACTUAL_USER:$LEDMATRIX_GROUP" "$PROJECT_ROOT_DIR/config/config_secrets.json" || true
+        fi
         chmod 640 "$PROJECT_ROOT_DIR/config/config_secrets.json"
         echo "✓ Minimal secrets file created"
     fi
@@ -858,10 +882,27 @@ if [ -f "$PROJECT_ROOT_DIR/config/config.json" ]; then
 fi
 
 # Set proper permissions for secrets file (restrictive: owner rw, group r)
+# If service runs as root, set ownership to root so it can read as owner
+# Otherwise, use ACTUAL_USER and rely on group membership
 if [ -f "$PROJECT_ROOT_DIR/config/config_secrets.json" ]; then
-    chown "$ACTUAL_USER:$LEDMATRIX_GROUP" "$PROJECT_ROOT_DIR/config/config_secrets.json" || true
+    # Check if service runs as root (from service file or template)
+    SERVICE_USER="root"
+    if [ -f "/etc/systemd/system/ledmatrix.service" ]; then
+        SERVICE_USER=$(grep "^User=" /etc/systemd/system/ledmatrix.service | cut -d'=' -f2 || echo "root")
+    elif [ -f "$PROJECT_ROOT_DIR/ledmatrix.service" ]; then
+        SERVICE_USER=$(grep "^User=" "$PROJECT_ROOT_DIR/ledmatrix.service" | cut -d'=' -f2 || echo "root")
+    fi
+    
+    if [ "$SERVICE_USER" = "root" ]; then
+        # Service runs as root - set ownership to root so it can read as owner
+        chown "root:$LEDMATRIX_GROUP" "$PROJECT_ROOT_DIR/config/config_secrets.json" || true
+        echo "✓ Secrets file permissions set (root:ledmatrix for root service)"
+    else
+        # Service runs as regular user - use ACTUAL_USER and rely on group membership
+        chown "$ACTUAL_USER:$LEDMATRIX_GROUP" "$PROJECT_ROOT_DIR/config/config_secrets.json" || true
+        echo "✓ Secrets file permissions set ($ACTUAL_USER:ledmatrix)"
+    fi
     chmod 640 "$PROJECT_ROOT_DIR/config/config_secrets.json"
-    echo "✓ Secrets file permissions set"
 fi
 
 # Set proper permissions for YTM auth file (readable by all users including root service)
