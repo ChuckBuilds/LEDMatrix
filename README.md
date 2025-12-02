@@ -239,11 +239,12 @@ cd LEDMatrix
 ```
 
 REMOVE ME BEFORE PR:
-To use the Plugins branch type:
+To use the BETA Plugins branch (things will be broken!) on Rasbian 13 Trixie type:
 ```bash
 git checkout plugins
 git pull
 ```
+otherwise continue to the next step for the stable older version (that only works on Rasbian 12!)
 
 4. First-time installation (recommended)
 
