@@ -7,3 +7,6 @@
 [submodule "plugins/text-display"]
 	path = plugins/text-display
 	url = https://github.com/ChuckBuilds/ledmatrix-text-display
+[submodule "rpi-rgb-led-matrix-master"]
+	path = rpi-rgb-led-matrix-master
+	url = https://github.com/hzeller/rpi-rgb-led-matrix.git
