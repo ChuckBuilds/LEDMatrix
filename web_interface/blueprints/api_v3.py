@@ -3607,6 +3607,9 @@ def get_wifi_status():
         wifi_manager = WiFiManager()
         status = wifi_manager.get_wifi_status()
         
+        # Get auto-enable setting from config
+        auto_enable_ap = wifi_manager.config.get("auto_enable_ap_mode", False)
+        
         return jsonify({
             'status': 'success',
             'data': {
@@ -3614,7 +3617,8 @@ def get_wifi_status():
                 'ssid': status.ssid,
                 'ip_address': status.ip_address,
                 'signal': status.signal,
-                'ap_mode_active': status.ap_mode_active
+                'ap_mode_active': status.ap_mode_active,
+                'auto_enable_ap_mode': auto_enable_ap
             }
         })
     except Exception as e:
@@ -3736,6 +3740,59 @@ def disable_ap_mode():
         return jsonify({
             'status': 'error',
             'message': f'Error disabling AP mode: {str(e)}'
+        }), 500
+
+@api_v3.route('/wifi/ap/auto-enable', methods=['GET'])
+def get_auto_enable_ap_mode():
+    """Get auto-enable AP mode setting"""
+    try:
+        from src.wifi_manager import WiFiManager
+        
+        wifi_manager = WiFiManager()
+        auto_enable = wifi_manager.config.get("auto_enable_ap_mode", False)
+        
+        return jsonify({
+            'status': 'success',
+            'data': {
+                'auto_enable_ap_mode': auto_enable
+            }
+        })
+    except Exception as e:
+        return jsonify({
+            'status': 'error',
+            'message': f'Error getting auto-enable setting: {str(e)}'
+        }), 500
+
+@api_v3.route('/wifi/ap/auto-enable', methods=['POST'])
+def set_auto_enable_ap_mode():
+    """Set auto-enable AP mode setting"""
+    try:
+        from src.wifi_manager import WiFiManager
+        
+        data = request.get_json()
+        if data is None or 'auto_enable_ap_mode' not in data:
+            return jsonify({
+                'status': 'error',
+                'message': 'auto_enable_ap_mode is required'
+            }), 400
+        
+        auto_enable = bool(data['auto_enable_ap_mode'])
+        
+        wifi_manager = WiFiManager()
+        wifi_manager.config["auto_enable_ap_mode"] = auto_enable
+        wifi_manager._save_config()
+        
+        return jsonify({
+            'status': 'success',
+            'message': f'Auto-enable AP mode set to {auto_enable}',
+            'data': {
+                'auto_enable_ap_mode': auto_enable
+            }
+        })
+    except Exception as e:
+        return jsonify({
+            'status': 'error',
+            'message': f'Error setting auto-enable: {str(e)}'
         }), 500
 
 @api_v3.route('/cache/list', methods=['GET'])

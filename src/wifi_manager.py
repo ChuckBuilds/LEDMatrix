@@ -118,8 +118,14 @@ class WiFiManager:
                 "ap_ssid": DEFAULT_AP_SSID,
                 "ap_password": DEFAULT_AP_PASSWORD,
                 "ap_channel": DEFAULT_AP_CHANNEL,
+                "auto_enable_ap_mode": False,  # Default: manual enable only
                 "saved_networks": []
             }
+            self._save_config()
+        
+        # Ensure auto_enable_ap_mode exists in config (for existing configs)
+        if "auto_enable_ap_mode" not in self.config:
+            self.config["auto_enable_ap_mode"] = False
             self._save_config()
     
     def _save_config(self):
@@ -273,6 +279,70 @@ class WiFiManager:
         except Exception as e:
             logger.error(f"Error getting status with iwconfig: {e}")
             return WiFiStatus(connected=False)
+    
+    def _is_ethernet_connected(self) -> bool:
+        """
+        Check if Ethernet connection is active
+        
+        Returns:
+            True if Ethernet is connected and has an IP address
+        """
+        try:
+            # Check for Ethernet interfaces (eth0, enp*, etc.)
+            # First try nmcli if available
+            if self.has_nmcli:
+                result = subprocess.run(
+                    ["nmcli", "-t", "-f", "DEVICE,TYPE,STATE", "device", "status"],
+                    capture_output=True,
+                    text=True,
+                    timeout=5
+                )
+                if result.returncode == 0:
+                    for line in result.stdout.strip().split('\n'):
+                        parts = line.split(':')
+                        if len(parts) >= 3:
+                            device = parts[0].strip()
+                            dev_type = parts[1].strip().lower()
+                            state = parts[2].strip().lower()
+                            
+                            # Check if it's an Ethernet interface and connected
+                            if dev_type == "ethernet" and state == "connected":
+                                # Verify it has an IP address
+                                ip_result = subprocess.run(
+                                    ["nmcli", "-t", "-f", "IP4.ADDRESS", "device", "show", device],
+                                    capture_output=True,
+                                    text=True,
+                                    timeout=5
+                                )
+                                if ip_result.returncode == 0 and ip_result.stdout.strip():
+                                    return True
+            
+            # Fallback: Check using ip command
+            result = subprocess.run(
+                ["ip", "addr", "show"],
+                capture_output=True,
+                text=True,
+                timeout=5
+            )
+            if result.returncode == 0:
+                # Look for Ethernet interfaces (eth0, enp*, etc.)
+                lines = result.stdout.split('\n')
+                in_ethernet = False
+                for line in lines:
+                    # Check if line starts interface name (e.g., "2: eth0:")
+                    if re.match(r'^\d+:\s+(eth\d+|enp\d+s\d+|enx[0-9a-f]+):', line):
+                        in_ethernet = True
+                    elif in_ethernet and 'inet ' in line and not '127.0.0.1' in line:
+                        # Found an IP address on Ethernet interface
+                        return True
+                    elif re.match(r'^\d+:', line) and in_ethernet:
+                        # Moved to next interface
+                        in_ethernet = False
+            
+            return False
+        except Exception as e:
+            logger.debug(f"Error checking Ethernet connection: {e}")
+            return False
     
     def _is_ap_mode_active(self) -> bool:
         """Check if access point mode is currently active"""
@@ -531,6 +601,10 @@ class WiFiManager:
         """
         Enable access point mode
         
+        Only enables AP mode if:
+        - WiFi is NOT connected AND
+        - Ethernet is NOT connected
+        
         Returns:
             Tuple of (success, message)
         """
@@ -543,6 +617,10 @@ class WiFiManager:
             status = self.get_wifi_status()
             if status.connected:
                 return False, "Cannot enable AP mode while WiFi is connected"
+            
+            # Check if Ethernet is connected
+            if self._is_ethernet_connected():
+                return False, "Cannot enable AP mode while Ethernet is connected"
             
             if not self.has_hostapd or not self.has_dnsmasq:
                 return False, "hostapd and dnsmasq are required for AP mode"
@@ -691,7 +769,14 @@ dhcp-range=192.168.4.2,192.168.4.20,255.255.255.0,24h
     
     def check_and_manage_ap_mode(self) -> bool:
         """
-        Check WiFi connection status and enable/disable AP mode accordingly.
+        Check WiFi and Ethernet connection status and enable/disable AP mode accordingly.
+        Only auto-enables AP mode if:
+        - auto_enable_ap_mode is enabled in config AND
+        - WiFi is NOT connected AND
+        - Ethernet is NOT connected
+        
+        Always auto-disables AP mode when WiFi or Ethernet connects.
+        
         This should be called periodically by a background service.
         
         Returns:
@@ -699,24 +784,42 @@ dhcp-range=192.168.4.2,192.168.4.20,255.255.255.0,24h
         """
         try:
             status = self.get_wifi_status()
+            ethernet_connected = self._is_ethernet_connected()
             ap_active = self._is_ap_mode_active()
+            auto_enable = self.config.get("auto_enable_ap_mode", False)
             
-            if not status.connected and not ap_active:
-                # No connection and AP not active - enable AP mode
+            # Determine if we should have AP mode active
+            # AP mode should only be auto-enabled if:
+            # - auto_enable_ap_mode is True AND
+            # - WiFi is NOT connected AND
+            # - Ethernet is NOT connected
+            should_have_ap = auto_enable and not status.connected and not ethernet_connected
+            
+            if should_have_ap and not ap_active:
+                # Should have AP but don't - enable AP mode (only if auto-enable is on)
                 success, message = self.enable_ap_mode()
                 if success:
-                    logger.info("Auto-enabled AP mode (no WiFi connection)")
+                    logger.info("Auto-enabled AP mode (no WiFi or Ethernet connection)")
                     return True
                 else:
-                    logger.warning(f"Failed to auto-enable AP mode: {message}")
-            elif status.connected and ap_active:
-                # Connected and AP active - disable AP mode
-                success, message = self.disable_ap_mode()
-                if success:
-                    logger.info("Auto-disabled AP mode (WiFi connected)")
-                    return True
-                else:
-                    logger.warning(f"Failed to auto-disable AP mode: {message}")
+                    logger.debug(f"Did not enable AP mode: {message}")
+            elif not should_have_ap and ap_active:
+                # Should not have AP but do - disable AP mode
+                # Always disable if WiFi or Ethernet connects, regardless of auto_enable setting
+                if status.connected or ethernet_connected:
+                    success, message = self.disable_ap_mode()
+                    if success:
+                        if status.connected:
+                            logger.info("Auto-disabled AP mode (WiFi connected)")
+                        elif ethernet_connected:
+                            logger.info("Auto-disabled AP mode (Ethernet connected)")
+                        return True
+                    else:
+                        logger.warning(f"Failed to auto-disable AP mode: {message}")
+                elif not auto_enable:
+                    # AP is active but auto_enable is disabled - this means it was manually enabled
+                    # Don't disable it automatically, let it stay active
+                    logger.debug("AP mode is active (manually enabled), keeping active")
             
             return False
         except Exception as e:

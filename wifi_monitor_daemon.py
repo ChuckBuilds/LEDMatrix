@@ -65,8 +65,10 @@ class WiFiMonitorDaemon:
                 
                 # Get current status for logging
                 status = self.wifi_manager.get_wifi_status()
+                ethernet_connected = self.wifi_manager._is_ethernet_connected()
                 current_state = {
                     'connected': status.connected,
+                    'ethernet_connected': ethernet_connected,
                     'ap_active': status.ap_mode_active,
                     'ssid': status.ssid
                 }
@@ -78,10 +80,15 @@ class WiFiMonitorDaemon:
                     else:
                         logger.info("WiFi disconnected")
                     
+                    if ethernet_connected:
+                        logger.info("Ethernet connected")
+                    else:
+                        logger.debug("Ethernet disconnected")
+                    
                     if status.ap_mode_active:
                         logger.info("AP mode active")
                     else:
-                        logger.info("AP mode inactive")
+                        logger.debug("AP mode inactive")
                     
                     self.last_state = current_state.copy()
                 
@@ -99,11 +106,15 @@ class WiFiMonitorDaemon:
         
         logger.info("WiFi Monitor Daemon stopped")
         
-        # Ensure AP mode is disabled on shutdown if WiFi is connected
+        # Ensure AP mode is disabled on shutdown if WiFi or Ethernet is connected
         try:
             status = self.wifi_manager.get_wifi_status()
-            if status.connected and status.ap_mode_active:
-                logger.info("Disabling AP mode on shutdown (WiFi is connected)")
+            ethernet_connected = self.wifi_manager._is_ethernet_connected()
+            if (status.connected or ethernet_connected) and status.ap_mode_active:
+                if status.connected:
+                    logger.info("Disabling AP mode on shutdown (WiFi is connected)")
+                elif ethernet_connected:
+                    logger.info("Disabling AP mode on shutdown (Ethernet is connected)")
                 self.wifi_manager.disable_ap_mode()
         except Exception as e:
             logger.error(f"Error disabling AP mode on shutdown: {e}")
