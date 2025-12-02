@@ -320,10 +320,45 @@ else
         mkdir -p "$PROJECT_ROOT_DIR/plugins"
     fi
     
-    # Set ownership to root:ACTUAL_USER for mixed access
-    # Root service can read/write, web service (ACTUAL_USER) can read/write
-    echo "Setting ownership to root:$ACTUAL_USER..."
-    chown -R root:"$ACTUAL_USER" "$PROJECT_ROOT_DIR/plugins"
+    # Determine ownership based on web service user
+    # Check if web service file exists and what user it runs as
+    WEB_SERVICE_USER="root"
+    if [ -f "/etc/systemd/system/ledmatrix-web.service" ]; then
+        # Check actual installed service file (most accurate)
+        WEB_SERVICE_USER=$(grep "^User=" /etc/systemd/system/ledmatrix-web.service | cut -d'=' -f2 || echo "root")
+    elif [ -f "$PROJECT_ROOT_DIR/install_web_service.sh" ]; then
+        # Check install_web_service.sh (used by first_time_install.sh)
+        if grep -q "User=root" "$PROJECT_ROOT_DIR/install_web_service.sh"; then
+            WEB_SERVICE_USER="root"
+        elif grep -q "User=\${ACTUAL_USER}" "$PROJECT_ROOT_DIR/install_web_service.sh"; then
+            WEB_SERVICE_USER="$ACTUAL_USER"
+        fi
+    elif [ -f "$PROJECT_ROOT_DIR/ledmatrix-web.service" ]; then
+        # Check template file (may have placeholder)
+        WEB_SERVICE_USER=$(grep "^User=" "$PROJECT_ROOT_DIR/ledmatrix-web.service" | cut -d'=' -f2 || echo "root")
+        # If template has placeholder, check install script
+        if [ "$WEB_SERVICE_USER" = "__USER__" ] || [ -z "$WEB_SERVICE_USER" ]; then
+            # Check install_service.sh to see what user it uses
+            if [ -f "$PROJECT_ROOT_DIR/install_service.sh" ] && grep -q "User=\${ACTUAL_USER}" "$PROJECT_ROOT_DIR/install_service.sh"; then
+                WEB_SERVICE_USER="$ACTUAL_USER"
+            fi
+        fi
+    elif [ -f "$PROJECT_ROOT_DIR/install_service.sh" ] && grep -q "User=\${ACTUAL_USER}" "$PROJECT_ROOT_DIR/install_service.sh"; then
+        # Web service will be installed by install_service.sh as ACTUAL_USER
+        WEB_SERVICE_USER="$ACTUAL_USER"
+    fi
+    
+    # If web service runs as ACTUAL_USER (not root), set ownership to ACTUAL_USER
+    # so the web service can change permissions. Root service can still access via group (775).
+    # If web service runs as root, use root:ACTUAL_USER for mixed access.
+    if [ "$WEB_SERVICE_USER" = "$ACTUAL_USER" ] || [ "$WEB_SERVICE_USER" != "root" ]; then
+        echo "Web service runs as $WEB_SERVICE_USER, setting ownership to $ACTUAL_USER:$ACTUAL_USER..."
+        echo "  (Root service can still access via group permissions)"
+        chown -R "$ACTUAL_USER:$ACTUAL_USER" "$PROJECT_ROOT_DIR/plugins"
+    else
+        echo "Web service runs as root, setting ownership to root:$ACTUAL_USER..."
+        chown -R root:"$ACTUAL_USER" "$PROJECT_ROOT_DIR/plugins"
+    fi
     
     # Set directory permissions (775: rwxrwxr-x)
     echo "Setting directory permissions to 775..."
@@ -344,9 +379,45 @@ if [ ! -d "$PLUGIN_REPOS_DIR" ]; then
     mkdir -p "$PLUGIN_REPOS_DIR"
 fi
 
-# Set ownership to root:ACTUAL_USER for mixed access
-echo "Setting ownership of plugin-repos to root:$ACTUAL_USER..."
-chown -R root:"$ACTUAL_USER" "$PLUGIN_REPOS_DIR"
+# Determine ownership based on web service user
+# Check if web service file exists and what user it runs as
+WEB_SERVICE_USER="root"
+if [ -f "/etc/systemd/system/ledmatrix-web.service" ]; then
+    # Check actual installed service file (most accurate)
+    WEB_SERVICE_USER=$(grep "^User=" /etc/systemd/system/ledmatrix-web.service | cut -d'=' -f2 || echo "root")
+elif [ -f "$PROJECT_ROOT_DIR/install_web_service.sh" ]; then
+    # Check install_web_service.sh (used by first_time_install.sh)
+    if grep -q "User=root" "$PROJECT_ROOT_DIR/install_web_service.sh"; then
+        WEB_SERVICE_USER="root"
+    elif grep -q "User=\${ACTUAL_USER}" "$PROJECT_ROOT_DIR/install_web_service.sh"; then
+        WEB_SERVICE_USER="$ACTUAL_USER"
+    fi
+elif [ -f "$PROJECT_ROOT_DIR/ledmatrix-web.service" ]; then
+    # Check template file (may have placeholder)
+    WEB_SERVICE_USER=$(grep "^User=" "$PROJECT_ROOT_DIR/ledmatrix-web.service" | cut -d'=' -f2 || echo "root")
+    # If template has placeholder, check install script
+    if [ "$WEB_SERVICE_USER" = "__USER__" ] || [ -z "$WEB_SERVICE_USER" ]; then
+        # Check install_service.sh to see what user it uses
+        if [ -f "$PROJECT_ROOT_DIR/install_service.sh" ] && grep -q "User=\${ACTUAL_USER}" "$PROJECT_ROOT_DIR/install_service.sh"; then
+            WEB_SERVICE_USER="$ACTUAL_USER"
+        fi
+    fi
+elif [ -f "$PROJECT_ROOT_DIR/install_service.sh" ] && grep -q "User=\${ACTUAL_USER}" "$PROJECT_ROOT_DIR/install_service.sh"; then
+    # Web service will be installed by install_service.sh as ACTUAL_USER
+    WEB_SERVICE_USER="$ACTUAL_USER"
+fi
+
+# If web service runs as ACTUAL_USER (not root), set ownership to ACTUAL_USER
+# so the web service can change permissions. Root service can still access via group (775).
+# If web service runs as root, use root:ACTUAL_USER for mixed access.
+if [ "$WEB_SERVICE_USER" = "$ACTUAL_USER" ] || [ "$WEB_SERVICE_USER" != "root" ]; then
+    echo "Web service runs as $WEB_SERVICE_USER, setting ownership to $ACTUAL_USER:$ACTUAL_USER..."
+    echo "  (Root service can still access via group permissions)"
+    chown -R "$ACTUAL_USER:$ACTUAL_USER" "$PLUGIN_REPOS_DIR"
+else
+    echo "Web service runs as root, setting ownership to root:$ACTUAL_USER..."
+    chown -R root:"$ACTUAL_USER" "$PLUGIN_REPOS_DIR"
+fi
 
 # Set directory permissions (775: rwxrwxr-x)
 echo "Setting plugin-repos directory permissions to 775..."
@@ -955,15 +1026,45 @@ if [ -f "$PROJECT_ROOT_DIR/config/ytm_auth.json" ]; then
     echo "✓ YTM auth file permissions set"
 fi
 
-# Re-apply plugin directory permissions (they need root:user ownership for service access)
+# Re-apply plugin directory permissions based on web service user
 echo "Re-applying plugin directory permissions..."
+# Determine web service user (check installed service, install scripts, or template)
+WEB_SERVICE_USER="root"
+if [ -f "/etc/systemd/system/ledmatrix-web.service" ]; then
+    # Check actual installed service file (most accurate)
+    WEB_SERVICE_USER=$(grep "^User=" /etc/systemd/system/ledmatrix-web.service | cut -d'=' -f2 || echo "root")
+elif [ -f "$PROJECT_ROOT_DIR/install_web_service.sh" ]; then
+    # Check install_web_service.sh (used by first_time_install.sh)
+    if grep -q "User=root" "$PROJECT_ROOT_DIR/install_web_service.sh"; then
+        WEB_SERVICE_USER="root"
+    elif grep -q "User=\${ACTUAL_USER}" "$PROJECT_ROOT_DIR/install_web_service.sh"; then
+        WEB_SERVICE_USER="$ACTUAL_USER"
+    fi
+elif [ -f "$PROJECT_ROOT_DIR/ledmatrix-web.service" ]; then
+    WEB_SERVICE_USER=$(grep "^User=" "$PROJECT_ROOT_DIR/ledmatrix-web.service" | cut -d'=' -f2 || echo "root")
+    if [ "$WEB_SERVICE_USER" = "__USER__" ] || [ -z "$WEB_SERVICE_USER" ]; then
+        if [ -f "$PROJECT_ROOT_DIR/install_service.sh" ] && grep -q "User=\${ACTUAL_USER}" "$PROJECT_ROOT_DIR/install_service.sh"; then
+            WEB_SERVICE_USER="$ACTUAL_USER"
+        fi
+    fi
+elif [ -f "$PROJECT_ROOT_DIR/install_service.sh" ] && grep -q "User=\${ACTUAL_USER}" "$PROJECT_ROOT_DIR/install_service.sh"; then
+    WEB_SERVICE_USER="$ACTUAL_USER"
+fi
+
+# Set ownership based on web service user
+if [ "$WEB_SERVICE_USER" = "$ACTUAL_USER" ] || [ "$WEB_SERVICE_USER" != "root" ]; then
+    PLUGIN_OWNER="$ACTUAL_USER:$ACTUAL_USER"
+else
+    PLUGIN_OWNER="root:$ACTUAL_USER"
+fi
+
 if [ -d "$PROJECT_ROOT_DIR/plugins" ]; then
-    chown -R root:"$ACTUAL_USER" "$PROJECT_ROOT_DIR/plugins"
+    chown -R "$PLUGIN_OWNER" "$PROJECT_ROOT_DIR/plugins"
     find "$PROJECT_ROOT_DIR/plugins" -type d -exec chmod 775 {} \;
     find "$PROJECT_ROOT_DIR/plugins" -type f -exec chmod 664 {} \;
 fi
 if [ -d "$PROJECT_ROOT_DIR/plugin-repos" ]; then
-    chown -R root:"$ACTUAL_USER" "$PROJECT_ROOT_DIR/plugin-repos"
+    chown -R "$PLUGIN_OWNER" "$PROJECT_ROOT_DIR/plugin-repos"
     find "$PROJECT_ROOT_DIR/plugin-repos" -type d -exec chmod 775 {} \;
     find "$PROJECT_ROOT_DIR/plugin-repos" -type f -exec chmod 664 {} \;
 fi
