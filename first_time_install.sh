@@ -713,7 +713,11 @@ else
         fi
         cd bindings/python
         echo "Installing rpi-rgb-led-matrix Python package via pip..."
-        python3 -m pip install --break-system-packages .
+        if ! python3 -m pip install --break-system-packages .; then
+            echo "✗ Failed to install rpi-rgb-led-matrix Python package"
+            popd >/dev/null
+            exit 1
+        fi
         popd >/dev/null
     else
         echo "✗ rpi-rgb-led-matrix-master directory not found at $PROJECT_ROOT_DIR"
