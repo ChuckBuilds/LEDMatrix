@@ -2397,6 +2397,17 @@ def save_plugin_config():
         # Load plugin schema using SchemaManager (force refresh to get latest schema)
         schema = schema_mgr.load_schema(plugin_id, use_cache=False)
         
+        # PRE-PROCESSING: Preserve 'enabled' state if not in request
+        # This prevents overwriting the enabled state when saving config from a form that doesn't include the toggle
+        if 'enabled' not in plugin_config:
+            try:
+                current_config = api_v3.config_manager.load_config()
+                if plugin_id in current_config and 'enabled' in current_config[plugin_id]:
+                    plugin_config['enabled'] = current_config[plugin_id]['enabled']
+                    # logger.debug(f"Preserving enabled state for {plugin_id}: {plugin_config['enabled']}")
+            except Exception as e:
+                print(f"Error preserving enabled state: {e}")
+
         # Find secret fields (supports nested schemas)
         secret_fields = set()
         
