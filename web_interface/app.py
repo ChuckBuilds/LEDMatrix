@@ -255,9 +255,10 @@ def logs_generator():
     while True:
         try:
             # Get recent logs from journalctl (simplified version)
+            # Note: User should be in systemd-journal group to read logs without sudo
             try:
                 result = subprocess.run(
-                    ['sudo', 'journalctl', '-u', 'ledmatrix.service', '-n', '50', '--no-pager'],
+                    ['journalctl', '-u', 'ledmatrix.service', '-n', '50', '--no-pager'],
                     capture_output=True, text=True, timeout=5
                 )
 
