@@ -87,6 +87,10 @@ class DisplayManager:
             options.limit_refresh_rate_hz = hardware_config.get('limit_refresh_rate_hz', 90)
             options.gpio_slowdown = runtime_config.get('gpio_slowdown', 2)
             
+            # Disable internal privilege dropping - we manage this via systemd or remain root
+            # This prevents the library from dropping to 'daemon' user which breaks file permissions
+            options.drop_privileges = False
+            
             # Additional settings from config
             if 'scan_mode' in hardware_config:
                 options.scan_mode = hardware_config.get('scan_mode')
