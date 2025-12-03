@@ -420,8 +420,8 @@ else
 fi
 
 # Set directory permissions (775: rwxrwxr-x)
-echo "Setting plugin-repos directory permissions to 775..."
-find "$PLUGIN_REPOS_DIR" -type d -exec chmod 775 {} \;
+echo "Setting plugin-repos directory permissions to 2775 (sticky bit)..."
+find "$PLUGIN_REPOS_DIR" -type d -exec chmod 2775 {} \;
 
 # Set file permissions (664: rw-rw-r--)
 echo "Setting plugin-repos file permissions to 664..."
@@ -469,7 +469,7 @@ echo "------------------------------------------------"
 
 # Ensure config directory exists
 mkdir -p "$PROJECT_ROOT_DIR/config"
-chmod 755 "$PROJECT_ROOT_DIR/config" || true
+chmod 2775 "$PROJECT_ROOT_DIR/config" || true
 
 # Create ledmatrix group if it doesn't exist (needed for shared access)
 LEDMATRIX_GROUP="ledmatrix"
@@ -1060,12 +1060,12 @@ fi
 
 if [ -d "$PROJECT_ROOT_DIR/plugins" ]; then
     chown -R "$PLUGIN_OWNER" "$PROJECT_ROOT_DIR/plugins"
-    find "$PROJECT_ROOT_DIR/plugins" -type d -exec chmod 775 {} \;
+    find "$PROJECT_ROOT_DIR/plugins" -type d -exec chmod 2775 {} \;
     find "$PROJECT_ROOT_DIR/plugins" -type f -exec chmod 664 {} \;
 fi
 if [ -d "$PROJECT_ROOT_DIR/plugin-repos" ]; then
     chown -R "$PLUGIN_OWNER" "$PROJECT_ROOT_DIR/plugin-repos"
-    find "$PROJECT_ROOT_DIR/plugin-repos" -type d -exec chmod 775 {} \;
+    find "$PROJECT_ROOT_DIR/plugin-repos" -type d -exec chmod 2775 {} \;
     find "$PROJECT_ROOT_DIR/plugin-repos" -type f -exec chmod 664 {} \;
 fi
 
@@ -1097,6 +1097,9 @@ find "$PROJECT_ROOT_DIR" -path "*/.git*" -prune -o -type f -name "*.sh" -exec ch
 chmod 755 "$PROJECT_ROOT_DIR/start_display.sh" "$PROJECT_ROOT_DIR/stop_display.sh" 2>/dev/null || true
 chmod 755 "$PROJECT_ROOT_DIR/scripts/fix_perms/fix_cache_permissions.sh" "$PROJECT_ROOT_DIR/scripts/fix_perms/fix_web_permissions.sh" "$PROJECT_ROOT_DIR/scripts/fix_perms/fix_assets_permissions.sh" "$PROJECT_ROOT_DIR/scripts/fix_perms/fix_plugin_permissions.sh" 2>/dev/null || true
 chmod 755 "$PROJECT_ROOT_DIR/install_service.sh" "$PROJECT_ROOT_DIR/install_web_service.sh" 2>/dev/null || true
+
+# Re-apply special permissions for config directory (lost during normalization)
+chmod 2775 "$PROJECT_ROOT_DIR/config" || true
 
 echo "✓ Project file permissions normalized"
 echo ""

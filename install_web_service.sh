@@ -38,7 +38,7 @@ After=network.target
 
 [Service]
 Type=simple
-User=root
+User=${ACTUAL_USER}
 WorkingDirectory=${PROJECT_ROOT_DIR}
 Environment=USE_THREADING=1
 ExecStart=/usr/bin/python3 ${PROJECT_ROOT_DIR}/start_web_conditionally.py

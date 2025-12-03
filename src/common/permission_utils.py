@@ -18,22 +18,50 @@ def ensure_directory_permissions(path: Path, mode: int = 0o775) -> None:
     """
     Create directory and set permissions.
     
+    If the directory already exists and we cannot change its permissions,
+    we check if it's usable (readable/writable). If so, we continue without
+    raising an exception. This allows the system to work even when running
+    as a non-root user who cannot change permissions on existing directories.
+    
     Args:
         path: Directory path to create/ensure
         mode: Permission mode (default: 0o775 for group-writable directories)
     
     Raises:
-        OSError: If directory creation or permission setting fails
+        OSError: If directory creation fails or directory exists but is not usable
     """
     try:
         # Create directory if it doesn't exist
         path.mkdir(parents=True, exist_ok=True)
         
-        # Set permissions
-        os.chmod(path, mode)
-        logger.debug(f"Set directory permissions {oct(mode)} on {path}")
+        # Try to set permissions
+        try:
+            os.chmod(path, mode)
+            logger.debug(f"Set directory permissions {oct(mode)} on {path}")
+        except (OSError, PermissionError) as perm_error:
+            # If we can't set permissions, check if directory is usable
+            if path.exists():
+                # Check if directory is readable and writable
+                if os.access(path, os.R_OK | os.W_OK):
+                    logger.warning(
+                        f"Could not set permissions on {path} (may be owned by different user), "
+                        f"but directory is usable (readable/writable). Continuing."
+                    )
+                    return
+                else:
+                    # Directory exists but is not usable
+                    logger.error(
+                        f"Directory {path} exists but is not readable/writable. "
+                        f"Permission change failed: {perm_error}"
+                    )
+                    raise OSError(
+                        f"Directory {path} exists but is not usable: {perm_error}"
+                    ) from perm_error
+            else:
+                # Directory doesn't exist and we couldn't create it
+                raise
     except OSError as e:
-        logger.error(f"Failed to set directory permissions on {path}: {e}")
+        logger.error(f"Failed to ensure directory {path}: {e}")
         raise
 
 
@@ -90,9 +118,9 @@ def get_assets_dir_mode() -> int:
     Return permission mode for asset directories.
     
     Returns:
-        Permission mode: 0o775 (rwxrwxr-x) for group-writable directories
+        Permission mode: 0o2775 (rwxrwxr-x + sticky bit) for group-writable directories
     """
-    return 0o775  # rwxrwxr-x
+    return 0o2775  # rwxrwsr-x (setgid + group writable)
 
 
 def get_config_dir_mode() -> int:
@@ -100,9 +128,9 @@ def get_config_dir_mode() -> int:
     Return permission mode for config directory.
     
     Returns:
-        Permission mode: 0o755 (rwxr-xr-x) for readable directories
+        Permission mode: 0o2775 (rwxrwxr-x + sticky bit) for group-writable directories
     """
-    return 0o755  # rwxr-xr-x
+    return 0o2775  # rwxrwsr-x (setgid + group writable)
 
 
 def get_plugin_file_mode() -> int:
@@ -120,9 +148,9 @@ def get_plugin_dir_mode() -> int:
     Return permission mode for plugin directories.
     
     Returns:
-        Permission mode: 0o775 (rwxrwxr-x) for group-writable directories
+        Permission mode: 0o2775 (rwxrwxr-x + sticky bit) for group-writable directories
     """
-    return 0o775  # rwxrwxr-x
+    return 0o2775  # rwxrwsr-x (setgid + group writable)
 
 
 def get_cache_dir_mode() -> int:
@@ -130,7 +158,7 @@ def get_cache_dir_mode() -> int:
     Return permission mode for cache directories.
     
     Returns:
-        Permission mode: 0o775 (rwxrwxr-x) for group-writable cache directories
+        Permission mode: 0o2775 (rwxrwxr-x + sticky bit) for group-writable cache directories
     """
-    return 0o775  # rwxrwxr-x
+    return 0o2775  # rwxrwsr-x (setgid + group writable)
 

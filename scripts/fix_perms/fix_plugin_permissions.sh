@@ -53,8 +53,8 @@ sudo chown -R root:"$ACTUAL_USER" "$PLUGINS_DIR"
 
 # Set directory permissions (775: rwxrwxr-x)
 # Root: read/write/execute, Group (ACTUAL_USER): read/write/execute, Others: read/execute
-echo "Setting directory permissions to 775..."
-find "$PLUGINS_DIR" -type d -exec sudo chmod 775 {} \;
+echo "Setting directory permissions to 2775 (rwxrwxr-x + sticky bit)..."
+find "$PLUGINS_DIR" -type d -exec sudo chmod 2775 {} \;
 
 # Set file permissions (664: rw-rw-r--)
 # Root: read/write, Group (ACTUAL_USER): read/write, Others: read
@@ -71,8 +71,8 @@ fi
 echo "Setting ownership of plugin-repos to root:$ACTUAL_USER..."
 sudo chown -R root:"$ACTUAL_USER" "$PLUGIN_REPOS_DIR"
 
-echo "Setting plugin-repos directory permissions to 775..."
-find "$PLUGIN_REPOS_DIR" -type d -exec sudo chmod 775 {} \;
+echo "Setting plugin-repos directory permissions to 2775 (rwxrwxr-x + sticky bit)..."
+find "$PLUGIN_REPOS_DIR" -type d -exec sudo chmod 2775 {} \;
 
 echo "Setting plugin-repos file permissions to 664..."
 find "$PLUGIN_REPOS_DIR" -type f -exec sudo chmod 664 {} \;

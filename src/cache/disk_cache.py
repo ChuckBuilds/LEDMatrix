@@ -120,6 +120,12 @@ class DiskCache:
         """
         Save data to disk cache with atomic write.
         
+        This method gracefully handles permission errors. If the cache directory
+        is not writable, it will log a warning and return silently rather than
+        raising an exception. This allows the application to continue functioning
+        even when running as a non-root user without write access to system cache
+        directories.
+        
         Args:
             key: Cache key
             data: Data to cache
@@ -168,33 +174,54 @@ class DiskCache:
                                     pass
                     else:
                         # Fallback: direct write (not atomic, but better than failing)
-                        with open(cache_path, 'w', encoding='utf-8') as cache_file:
-                            json.dump(data, cache_file, indent=4, cls=DateTimeEncoder)
-                            cache_file.flush()
-                            os.fsync(cache_file.fileno())
-                        self.logger.debug("Wrote cache for %s directly (non-atomic)", key)
+                        try:
+                            with open(cache_path, 'w', encoding='utf-8') as cache_file:
+                                json.dump(data, cache_file, indent=4, cls=DateTimeEncoder)
+                                cache_file.flush()
+                                os.fsync(cache_file.fileno())
+                            self.logger.debug("Wrote cache for %s directly (non-atomic)", key)
+                        except (IOError, OSError, PermissionError) as write_error:
+                            # If direct write also fails, try fallback location
+                            self.logger.warning("Direct write failed for key '%s' to %s: %s", key, cache_path, write_error)
+                            raise  # Re-raise to trigger fallback logic
                 except (IOError, OSError, PermissionError) as e:
-                    self.logger.error("Atomic write failed for key '%s' to %s: %s", key, cache_path, e, exc_info=True)
-                    # Attempt one-time fallback write directly into /var/cache/ledmatrix if available
+                    # Attempt one-time fallback write to user's home cache directory
                     try:
-                        fallback_dir = '/var/cache/ledmatrix'
+                        # Try user's home cache directory as fallback
+                        home_dir = os.path.expanduser('~')
+                        fallback_dir = os.path.join(home_dir, '.ledmatrix_cache')
+                        # Ensure fallback directory exists
+                        try:
+                            os.makedirs(fallback_dir, exist_ok=True)
+                        except (OSError, PermissionError):
+                            pass
+                        
                         if os.path.isdir(fallback_dir) and os.access(fallback_dir, os.W_OK):
                             fallback_path = os.path.join(fallback_dir, os.path.basename(cache_path))
                             with open(fallback_path, 'w', encoding='utf-8') as tmp_file:
                                 json.dump(data, tmp_file, indent=4, cls=DateTimeEncoder)
-                            self.logger.warning("Cache wrote to fallback location: %s", fallback_path)
+                            self.logger.debug("Cache wrote to fallback location: %s", fallback_path)
+                            return  # Successfully wrote to fallback, exit gracefully
                     except (IOError, OSError, PermissionError) as e2:
-                        self.logger.error("Fallback cache write also failed for key '%s' to %s: %s", 
-                                        key, fallback_path, e2, exc_info=True)
+                        self.logger.debug("Fallback cache write also failed for key '%s': %s", key, e2)
+                    
+                    # If all write attempts failed, log warning but don't raise exception
+                    # Cache is a performance optimization, not critical for operation
+                    self.logger.warning(
+                        "Could not write cache for key '%s' to %s (permission denied). "
+                        "Cache will be unavailable for this key, but application will continue.",
+                        key, cache_path
+                    )
+                    return  # Exit gracefully without raising exception
         
-        except (IOError, OSError, PermissionError) as e:
-            error_msg = f"Failed to save cache for key '{key}'"
-            self.logger.error("%s: %s", error_msg, e, exc_info=True)
-            raise CacheError(error_msg, cache_key=key, context={'cache_path': cache_path}) from e
         except Exception as e:
-            error_msg = f"Unexpected error occurred while saving cache for key '{key}'"
-            self.logger.error("%s: %s", error_msg, e, exc_info=True)
-            raise CacheError(error_msg, cache_key=key, context={'cache_path': cache_path}) from e
+            # For any other unexpected errors, log but don't crash
+            self.logger.warning(
+                "Unexpected error saving cache for key '%s' to %s: %s. "
+                "Application will continue without caching for this key.",
+                key, cache_path, e, exc_info=True
+            )
+            return  # Exit gracefully without raising exception
     
     def clear(self, key: Optional[str] = None) -> None:
         """
