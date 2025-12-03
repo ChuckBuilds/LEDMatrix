@@ -6,17 +6,15 @@
 flask>=3.0.0,<4.0.0
 werkzeug>=3.0.0,<4.0.0
 
-# WebSocket support for real-time updates
-flask-socketio>=5.4.0,<6.0.0
+# WebSocket support for plugins
+# Note: Web interface uses Server-Sent Events (SSE) for real-time updates, not WebSockets
+# However, plugins may need websocket support to connect to external services
+# (e.g., music plugin connecting to YTM Companion server via Socket.IO)
+# These packages are required for plugin compatibility
 python-socketio>=5.11.0,<6.0.0
+python-engineio>=4.9.0,<5.0.0
 websockets>=12.0,<14.0
 websocket-client>=1.8.0,<2.0.0
-
-# Async support
-# Note: Eventlet 0.35+ required for Python 3.12+ compatibility
-# Consider gevent as alternative if eventlet issues persist
-eventlet>=0.35.0,<1.0.0
-python-engineio>=4.9.0,<5.0.0
 
 # Image processing
 Pillow>=10.4.0,<12.0.0

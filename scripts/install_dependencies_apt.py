@@ -6,6 +6,7 @@ then falls back to pip with --break-system-packages
 
 import subprocess
 import sys
+import warnings
 from pathlib import Path
 
 def install_via_apt(package_name):
@@ -14,10 +15,7 @@ def install_via_apt(package_name):
         # Map pip package names to apt package names
         apt_package_map = {
             'flask': 'python3-flask',
-            'flask_socketio': 'python3-flask-socketio',
             'PIL': 'python3-pil',
-            'socketio': 'python3-socketio',
-            'eventlet': 'python3-eventlet',
             'freetype': 'python3-freetype',
             'psutil': 'python3-psutil',
             'werkzeug': 'python3-werkzeug',
@@ -64,11 +62,15 @@ def install_via_pip(package_name):
 
 def check_package_installed(package_name):
     """Check if a package is already installed."""
-    try:
-        __import__(package_name)
-        return True
-    except ImportError:
-        return False
+    # Suppress deprecation warnings when checking if packages are installed
+    # (we're just checking, not using them)
+    with warnings.catch_warnings():
+        warnings.filterwarnings('ignore', category=DeprecationWarning)
+        try:
+            __import__(package_name)
+            return True
+        except ImportError:
+            return False
 
 def main():
     """Main installation function."""
@@ -77,10 +79,7 @@ def main():
     # List of required packages
     required_packages = [
         'flask',
-        'flask_socketio', 
         'PIL',
-        'socketio',
-        'eventlet',
         'freetype',
         'psutil',
         'werkzeug',
@@ -114,7 +113,8 @@ def main():
         'google-api-python-client>=2.147.0,<3.0.0',
         'spotipy',
         'icalevents',
-        'python-engineio'
+        'python-socketio>=5.11.0,<6.0.0',
+        'python-engineio>=4.9.0,<5.0.0'
     ]
     
     for package in special_packages:
