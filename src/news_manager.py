@@ -170,11 +170,11 @@ class NewsManager:
         if not response.status_code == 200:
             return None
         
-        img = Image.open(BytesIO(response.content))
-        max_size = min(int(self.display_manager.matrix.width / 1.2), 
-                       int(self.display_manager.matrix.height / 1.2))
-        img = img.resize((max_size, max_size), Image.Resampling.LANCZOS)
-        self.favicons[feed_name] = img.copy()
+        with Image.open(BytesIO(response.content)) as img:
+            max_size = min(int(self.display_manager.matrix.width / 1.2), 
+                        int(self.display_manager.matrix.height / 1.2))
+            img = img.resize((max_size, max_size), Image.Resampling.LANCZOS)
+            self.favicons[feed_name] = img.copy()
 
     def fetch_news_data(self):
         """Fetch news from all enabled feeds"""
