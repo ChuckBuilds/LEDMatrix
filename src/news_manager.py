@@ -1,3 +1,4 @@
+from io import BytesIO
 import time
 import logging
 import requests
@@ -37,6 +38,7 @@ class NewsManager:
         self.news_config = config.get('news_manager', {})
         self.last_update = time.time()  # Initialize to current time
         self.news_data = {}
+        self.favicons = {}
         self.current_headline_index = 0
         self.scroll_position = 0
         self.scrolling_image = None  # Pre-rendered image for smooth scrolling
@@ -90,6 +92,7 @@ class NewsManager:
         # Colors
         self.text_color = tuple(self.news_config.get('text_color', [255, 255, 255]))
         self.separator_color = tuple(self.news_config.get('separator_color', [255, 0, 0]))
+        self.display_favicon = self.news_config.get('display_favicon', True)
         
         # Initialize session with retry strategy
         self.session = requests.Session()
@@ -101,6 +104,9 @@ class NewsManager:
         adapter = HTTPAdapter(max_retries=retry_strategy)
         self.session.mount("http://", adapter)
         self.session.mount("https://", adapter)
+        self.headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        }
         
         logger.debug(f"NewsManager initialized with feeds: {self.enabled_feeds}")
         logger.debug(f"Headlines per feed: {self.headlines_per_feed}")
@@ -109,11 +115,7 @@ class NewsManager:
     def parse_rss_feed(self, url: str, feed_name: str) -> List[Dict[str, Any]]:
         """Parse RSS feed and return list of headlines"""
         try:
-            headers = {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-            }
-            
-            response = self.session.get(url, headers=headers, timeout=10)
+            response = self.session.get(url, headers=self.headers, timeout=10)
             response.raise_for_status()
             
             # Increment API counter for news data call
@@ -156,6 +158,23 @@ class NewsManager:
         except Exception as e:
             logger.error(f"Error parsing RSS feed {feed_name} ({url}): {e}")
             return []
+    
+    def fetch_favicon(self, url, feed_name):
+        split_url = urllib.parse.urlsplit(url)
+        if not split_url.scheme or not split_url.netloc:
+            return None
+        
+        favicon_url = urllib.parse.urlunsplit([split_url.scheme, split_url.netloc, 'favicon.ico', None, None])
+
+        response = self.session.get(favicon_url, headers=self.headers)
+        if not response.status_code == 200:
+            return None
+        
+        img = Image.open(BytesIO(response.content))
+        max_size = min(int(self.display_manager.matrix.width / 1.2), 
+                       int(self.display_manager.matrix.height / 1.2))
+        img = img.resize((max_size, max_size), Image.Resampling.LANCZOS)
+        self.favicons[feed_name] = img.copy()
 
     def fetch_news_data(self):
         """Fetch news from all enabled feeds"""
@@ -170,6 +189,7 @@ class NewsManager:
                     url = all_feeds[feed_name]
                     headlines = self.parse_rss_feed(url, feed_name)
                     all_headlines.extend(headlines)
+                    self.fetch_favicon(url, feed_name)
                 else:
                     logger.warning(f"Feed '{feed_name}' not found in available feeds")
             
@@ -284,6 +304,12 @@ class NewsManager:
 
         self.scrolling_image = Image.new('RGB', (width, height), (0, 0, 0))
         draw = ImageDraw.Draw(self.scrolling_image)
+
+        if len(self.favicons.values()) > 0:
+            logo = list(self.favicons.values())[0]
+            logo_x = 10  # Small margin from left edge
+            logo_y = (height - logo.height) // 2
+            self.scrolling_image.paste(logo, (logo_x, logo_y), logo)
 
         text_height = self.font_size
         y_pos = (height - text_height) // 2
