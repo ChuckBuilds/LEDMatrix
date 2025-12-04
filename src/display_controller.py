@@ -858,14 +858,9 @@ class DisplayController:
                         continue
                     else:
                         logger.info("No content to display for %s, skipping to next mode", active_mode)
-                        # Clear display when skipping mode with no content to prevent black screens
-                        # This is a safety measure in case the plugin didn't clear it
-                        try:
-                            if hasattr(self.display_manager, 'clear'):
-                                self.display_manager.clear()
-                                self.display_manager.update_display()
-                        except Exception as clear_err:
-                            logger.debug(f"Error clearing display when skipping mode: {clear_err}")
+                        # Don't clear the display - skip immediately to next mode
+                        # Clearing here causes a visible blank screen before the next mode displays
+                        # The next mode will clear and display its own content
                         
                         # Skip all modes for this plugin if one fails (prevents cycling through broken plugin modes)
                         current_plugin_id = self.mode_to_plugin_id.get(active_mode)
