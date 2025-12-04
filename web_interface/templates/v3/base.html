@@ -3020,16 +3020,75 @@
                 });
                 const data = await response.json();
 
-                showNotification(data.message, data.status);
-
-                if (data.status === 'success') {
+                // Check if operation was queued
+                if (data.status === 'success' && data.data && data.data.operation_id) {
+                    // Operation was queued, poll for completion
+                    const operationId = data.data.operation_id;
+                    showNotification(`Uninstall queued for ${pluginName}...`, 'info');
+                    await pollUninstallOperation(operationId, pluginId, pluginName);
+                } else if (data.status === 'success') {
+                    // Direct uninstall completed immediately
+                    showNotification(data.message || `Plugin ${pluginName} uninstalled successfully`, 'success');
                     // Refresh the plugin list
                     await app.loadInstalledPlugins();
+                } else {
+                    // Error response
+                    showNotification(data.message || 'Failed to uninstall plugin', data.status || 'error');
                 }
             } catch (error) {
                 showNotification('Error uninstalling plugin: ' + error.message, 'error');
             }
         }
+
+        async function pollUninstallOperation(operationId, pluginId, pluginName, maxAttempts = 60, attempt = 0) {
+            if (attempt >= maxAttempts) {
+                showNotification(`Uninstall operation timed out for ${pluginName}`, 'error');
+                // Refresh plugin list to see actual state
+                await app.loadInstalledPlugins();
+                return;
+            }
+
+            try {
+                const response = await fetch(`/api/v3/plugins/operation/${operationId}`);
+                const data = await response.json();
+                
+                if (data.status === 'success' && data.data) {
+                    const operation = data.data;
+                    const status = operation.status;
+                    
+                    if (status === 'completed') {
+                        // Operation completed successfully
+                        showNotification(`Plugin ${pluginName} uninstalled successfully`, 'success');
+                        await app.loadInstalledPlugins();
+                    } else if (status === 'failed') {
+                        // Operation failed
+                        const errorMsg = operation.error || operation.message || `Failed to uninstall ${pluginName}`;
+                        showNotification(errorMsg, 'error');
+                        // Refresh plugin list to see actual state
+                        await app.loadInstalledPlugins();
+                    } else if (status === 'pending' || status === 'in_progress') {
+                        // Still in progress, poll again
+                        await new Promise(resolve => setTimeout(resolve, 1000)); // Wait 1 second
+                        await pollUninstallOperation(operationId, pluginId, pluginName, maxAttempts, attempt + 1);
+                    } else {
+                        // Unknown status, poll again
+                        await new Promise(resolve => setTimeout(resolve, 1000));
+                        await pollUninstallOperation(operationId, pluginId, pluginName, maxAttempts, attempt + 1);
+                    }
+                } else {
+                    // Error getting operation status, try again
+                    await new Promise(resolve => setTimeout(resolve, 1000));
+                    await pollUninstallOperation(operationId, pluginId, pluginName, maxAttempts, attempt + 1);
+                }
+            } catch (error) {
+                console.error('Error polling operation status:', error);
+                // On error, refresh plugin list to see actual state
+                await app.loadInstalledPlugins();
+            }
+        }
+
+        // Assign to window for global access
+        window.uninstallPlugin = uninstallPlugin;
 
         async function refreshPlugin(pluginId) {
             try {

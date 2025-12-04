@@ -2697,27 +2697,97 @@ window.uninstallPlugin = function(pluginId) {
     .then(response => response.json())
     .then(data => {
         console.log('Uninstall response:', data);
-        showNotification(data.message, data.status);
-        if (data.status === 'success') {
-            // Remove from local array immediately for better UX
-            const currentPlugins = window.installedPlugins || installedPlugins || [];
-            const updatedPlugins = currentPlugins.filter(p => p.id !== pluginId);
-            window.installedPlugins = updatedPlugins;
-            if (typeof installedPlugins !== 'undefined') {
-                installedPlugins = updatedPlugins;
-            }
-            renderInstalledPlugins(updatedPlugins);
-
-            // Also refresh from server to ensure consistency
-            setTimeout(() => {
-                loadInstalledPlugins();
-            }, 1000);
+        
+        // Check if operation was queued
+        if (data.status === 'success' && data.data && data.data.operation_id) {
+            // Operation was queued, poll for completion
+            const operationId = data.data.operation_id;
+            showNotification(`Uninstall queued for ${pluginName}...`, 'info');
+            pollOperationStatus(operationId, pluginId, pluginName);
+        } else if (data.status === 'success') {
+            // Direct uninstall completed immediately
+            handleUninstallSuccess(pluginId);
+        } else {
+            // Error response
+            showNotification(data.message || 'Failed to uninstall plugin', data.status || 'error');
         }
     })
     .catch(error => {
         console.error('Error uninstalling plugin:', error);
         showNotification('Error uninstalling plugin: ' + error.message, 'error');
     });
+}
+
+function pollOperationStatus(operationId, pluginId, pluginName, maxAttempts = 60, attempt = 0) {
+    if (attempt >= maxAttempts) {
+        showNotification(`Uninstall operation timed out for ${pluginName}`, 'error');
+        // Refresh plugin list to see actual state
+        setTimeout(() => {
+            loadInstalledPlugins();
+        }, 1000);
+        return;
+    }
+
+    fetch(`/api/v3/plugins/operation/${operationId}`)
+        .then(response => response.json())
+        .then(data => {
+            if (data.status === 'success' && data.data) {
+                const operation = data.data;
+                const status = operation.status;
+                
+                if (status === 'completed') {
+                    // Operation completed successfully
+                    handleUninstallSuccess(pluginId);
+                } else if (status === 'failed') {
+                    // Operation failed
+                    const errorMsg = operation.error || operation.message || `Failed to uninstall ${pluginName}`;
+                    showNotification(errorMsg, 'error');
+                    // Refresh plugin list to see actual state
+                    setTimeout(() => {
+                        loadInstalledPlugins();
+                    }, 1000);
+                } else if (status === 'pending' || status === 'in_progress') {
+                    // Still in progress, poll again
+                    setTimeout(() => {
+                        pollOperationStatus(operationId, pluginId, pluginName, maxAttempts, attempt + 1);
+                    }, 1000); // Poll every second
+                } else {
+                    // Unknown status, poll again
+                    setTimeout(() => {
+                        pollOperationStatus(operationId, pluginId, pluginName, maxAttempts, attempt + 1);
+                    }, 1000);
+                }
+            } else {
+                // Error getting operation status, try again
+                setTimeout(() => {
+                    pollOperationStatus(operationId, pluginId, pluginName, maxAttempts, attempt + 1);
+                }, 1000);
+            }
+        })
+        .catch(error => {
+            console.error('Error polling operation status:', error);
+            // On error, refresh plugin list to see actual state
+            setTimeout(() => {
+                loadInstalledPlugins();
+            }, 1000);
+        });
+}
+
+function handleUninstallSuccess(pluginId) {
+    // Remove from local array immediately for better UX
+    const currentPlugins = window.installedPlugins || installedPlugins || [];
+    const updatedPlugins = currentPlugins.filter(p => p.id !== pluginId);
+    window.installedPlugins = updatedPlugins;
+    if (typeof installedPlugins !== 'undefined') {
+        installedPlugins = updatedPlugins;
+    }
+    renderInstalledPlugins(updatedPlugins);
+    showNotification(`Plugin uninstalled successfully`, 'success');
+
+    // Also refresh from server to ensure consistency
+    setTimeout(() => {
+        loadInstalledPlugins();
+    }, 1000);
 }
 
 function refreshPlugins() {
