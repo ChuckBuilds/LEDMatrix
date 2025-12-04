@@ -1722,7 +1722,28 @@ function generateFieldHtml(key, prop, value, prefix = '') {
         `;
         
         // Recursively generate fields for nested properties
-        Object.entries(prop.properties).forEach(([nestedKey, nestedProp]) => {
+        // Get ordered properties if x-propertyOrder is defined
+        let nestedPropertyEntries = Object.entries(prop.properties);
+        if (prop['x-propertyOrder'] && Array.isArray(prop['x-propertyOrder'])) {
+            const order = prop['x-propertyOrder'];
+            const orderedEntries = [];
+            const unorderedEntries = [];
+            
+            // Separate ordered and unordered properties
+            nestedPropertyEntries.forEach(([nestedKey, nestedProp]) => {
+                const index = order.indexOf(nestedKey);
+                if (index !== -1) {
+                    orderedEntries[index] = [nestedKey, nestedProp];
+                } else {
+                    unorderedEntries.push([nestedKey, nestedProp]);
+                }
+            });
+            
+            // Combine ordered entries (filter out undefined from sparse array) with unordered entries
+            nestedPropertyEntries = orderedEntries.filter(entry => entry !== undefined).concat(unorderedEntries);
+        }
+        
+        nestedPropertyEntries.forEach(([nestedKey, nestedProp]) => {
             const nestedValue = nestedConfig[nestedKey] !== undefined ? nestedConfig[nestedKey] : nestedProp.default;
             console.log(`[DEBUG] Processing nested field ${fullKey}.${nestedKey}:`, {
                 type: nestedProp.type,
@@ -1942,7 +1963,28 @@ function generateFormFromSchema(schema, config, webUiActions = []) {
     let formHtml = '<form id="plugin-config-form" class="space-y-4" novalidate>';
 
     if (schema.properties) {
-        Object.entries(schema.properties).forEach(([key, prop]) => {
+        // Get ordered properties if x-propertyOrder is defined
+        let propertyEntries = Object.entries(schema.properties);
+        if (schema['x-propertyOrder'] && Array.isArray(schema['x-propertyOrder'])) {
+            const order = schema['x-propertyOrder'];
+            const orderedEntries = [];
+            const unorderedEntries = [];
+            
+            // Separate ordered and unordered properties
+            propertyEntries.forEach(([key, prop]) => {
+                const index = order.indexOf(key);
+                if (index !== -1) {
+                    orderedEntries[index] = [key, prop];
+                } else {
+                    unorderedEntries.push([key, prop]);
+                }
+            });
+            
+            // Combine ordered entries (filter out undefined from sparse array) with unordered entries
+            propertyEntries = orderedEntries.filter(entry => entry !== undefined).concat(unorderedEntries);
+        }
+        
+        propertyEntries.forEach(([key, prop]) => {
             // Skip the 'enabled' property - it's managed separately via the header toggle
             if (key === 'enabled') return;
 
