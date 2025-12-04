@@ -168,14 +168,15 @@ class PluginExecutor:
             sig = inspect.signature(plugin.display)
             has_display_mode = 'display_mode' in sig.parameters
             
+            # Capture the return value from the plugin's display() method
             if has_display_mode and display_mode:
-                self.execute_with_timeout(
+                result = self.execute_with_timeout(
                     lambda: plugin.display(display_mode=display_mode, force_clear=force_clear),
                     timeout=timeout,
                     plugin_id=plugin_id
                 )
             else:
-                self.execute_with_timeout(
+                result = self.execute_with_timeout(
                     lambda: plugin.display(force_clear=force_clear),
                     timeout=timeout,
                     plugin_id=plugin_id
@@ -190,6 +191,13 @@ class PluginExecutor:
                     duration
                 )
             
+            # Return the actual result from the plugin's display() method
+            # If it's a boolean, use it directly. Otherwise, treat None/other as True for backward compatibility
+            if isinstance(result, bool):
+                self.logger.debug(f"Plugin {plugin_id} display() returned boolean: {result}")
+                return result
+            # For backward compatibility: if plugin returns None or something else, treat as success
+            self.logger.debug(f"Plugin {plugin_id} display() returned non-boolean: {result}, treating as True")
             return True
         except TimeoutError:
             self.logger.error("Plugin %s display() timed out", plugin_id)

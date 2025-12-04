@@ -830,10 +830,12 @@ class DisplayController:
                                 else:
                                     result = manager_to_display.display(force_clear=self.force_change)
                             
-                            logger.debug(f"display() returned: {result}")
+                            logger.debug(f"display() returned: {result} (type: {type(result)})")
                             # Check if display() returned a boolean (new behavior)
                             if isinstance(result, bool):
                                 display_result = result
+                                if not display_result:
+                                    logger.info(f"Plugin {plugin_id} display() returned False for mode {active_mode}")
                         
                         # Record success if display completed without exception
                         if self.plugin_manager and hasattr(self.plugin_manager, 'health_tracker') and self.plugin_manager.health_tracker:
@@ -858,9 +860,14 @@ class DisplayController:
                         continue
                     else:
                         logger.info("No content to display for %s, skipping to next mode", active_mode)
-                        # Don't clear the display - skip immediately to next mode
-                        # Clearing here causes a visible blank screen before the next mode displays
-                        # The next mode will clear and display its own content
+                        # Clear display briefly before skipping to avoid showing stale content
+                        # We'll skip immediately after clearing
+                        try:
+                            if hasattr(self.display_manager, 'clear'):
+                                self.display_manager.clear()
+                                self.display_manager.update_display()
+                        except Exception as clear_err:
+                            logger.debug(f"Error clearing display when skipping mode: {clear_err}")
                         
                         # Skip all modes for this plugin if one fails (prevents cycling through broken plugin modes)
                         current_plugin_id = self.mode_to_plugin_id.get(active_mode)
