@@ -94,12 +94,26 @@ class WiFiManager:
     def _check_command(self, command: str) -> bool:
         """Check if a command is available"""
         try:
+            # First try 'which' command
             result = subprocess.run(
                 ["which", command],
                 capture_output=True,
                 timeout=2
             )
-            return result.returncode == 0
+            if result.returncode == 0:
+                return True
+            
+            # Check common sbin paths (not in standard user PATH)
+            sbin_paths = [
+                f"/usr/sbin/{command}",
+                f"/sbin/{command}",
+                f"/usr/local/sbin/{command}"
+            ]
+            for path in sbin_paths:
+                if os.path.isfile(path) and os.access(path, os.X_OK):
+                    return True
+            
+            return False
         except:
             return False
     
@@ -631,8 +645,50 @@ class WiFiManager:
             # Create dnsmasq config
             self._create_dnsmasq_config()
             
+            # Set up wlan0 for AP mode
+            try:
+                # Disconnect from any existing WiFi network
+                subprocess.run(
+                    ["sudo", "nmcli", "device", "disconnect", "wlan0"],
+                    capture_output=True,
+                    timeout=10
+                )
+                
+                # Set static IP for AP mode
+                subprocess.run(
+                    ["sudo", "ip", "addr", "flush", "dev", "wlan0"],
+                    capture_output=True,
+                    timeout=10
+                )
+                subprocess.run(
+                    ["sudo", "ip", "addr", "add", "192.168.4.1/24", "dev", "wlan0"],
+                    capture_output=True,
+                    timeout=10
+                )
+                subprocess.run(
+                    ["sudo", "ip", "link", "set", "wlan0", "up"],
+                    capture_output=True,
+                    timeout=10
+                )
+                logger.info("Configured wlan0 with IP 192.168.4.1 for AP mode")
+            except Exception as e:
+                logger.warning(f"Error setting up wlan0 IP: {e}")
+            
             # Start services
             try:
+                # Start hostapd first (it sets up the AP)
+                result = subprocess.run(
+                    ["sudo", "systemctl", "start", HOSTAPD_SERVICE],
+                    capture_output=True,
+                    text=True,
+                    timeout=15
+                )
+                if result.returncode != 0:
+                    return False, f"Failed to start hostapd: {result.stderr}"
+                
+                # Give hostapd time to initialize
+                time.sleep(1)
+                
                 # Start dnsmasq
                 result = subprocess.run(
                     ["sudo", "systemctl", "start", DNSMASQ_SERVICE],
@@ -641,20 +697,9 @@ class WiFiManager:
                     timeout=10
                 )
                 if result.returncode != 0:
+                    # Stop hostapd if dnsmasq failed
+                    subprocess.run(["sudo", "systemctl", "stop", HOSTAPD_SERVICE], timeout=5)
                     return False, f"Failed to start dnsmasq: {result.stderr}"
-                
-                # Start hostapd
-                result = subprocess.run(
-                    ["sudo", "systemctl", "start", HOSTAPD_SERVICE],
-                    capture_output=True,
-                    text=True,
-                    timeout=10
-                )
-                if result.returncode != 0:
-                    # Stop dnsmasq if hostapd failed
-                    subprocess.run(["sudo", "systemctl", "stop", DNSMASQ_SERVICE], timeout=5)
-                    return False, f"Failed to start hostapd: {result.stderr}"
-                
                 logger.info("AP mode enabled successfully")
                 return True, "AP mode enabled"
             except Exception as e:
@@ -686,6 +731,20 @@ class WiFiManager:
                     ["sudo", "systemctl", "stop", DNSMASQ_SERVICE],
                     capture_output=True,
                     timeout=10
+                )
+                
+                # Clean up wlan0 IP configuration
+                subprocess.run(
+                    ["sudo", "ip", "addr", "del", "192.168.4.1/24", "dev", "wlan0"],
+                    capture_output=True,
+                    timeout=10
+                )
+                
+                # Restart NetworkManager to restore normal WiFi operation
+                subprocess.run(
+                    ["sudo", "systemctl", "restart", "NetworkManager"],
+                    capture_output=True,
+                    timeout=15
                 )
                 
                 logger.info("AP mode disabled successfully")
