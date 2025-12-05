@@ -774,43 +774,54 @@ class WiFiManager:
                 # Set up iptables port forwarding: redirect port 80 to 5000
                 # This makes the captive portal work on standard HTTP port
                 try:
-                    # Enable IP forwarding
-                    subprocess.run(
-                        ["sudo", "sysctl", "-w", "net.ipv4.ip_forward=1"],
+                    # Check if iptables is available
+                    iptables_check = subprocess.run(
+                        ["which", "iptables"],
                         capture_output=True,
-                        timeout=5
+                        timeout=2
                     )
                     
-                    # Add NAT rule to redirect port 80 to 5000 on wlan0
-                    # First check if rule already exists
-                    check_result = subprocess.run(
-                        ["sudo", "iptables", "-t", "nat", "-C", "PREROUTING", "-i", "wlan0", "-p", "tcp", "--dport", "80", "-j", "REDIRECT", "--to-port", "5000"],
-                        capture_output=True,
-                        timeout=5
-                    )
-                    
-                    if check_result.returncode != 0:
-                        # Rule doesn't exist, add it
+                    if iptables_check.returncode == 0:
+                        # Enable IP forwarding (needed for NAT)
                         subprocess.run(
-                            ["sudo", "iptables", "-t", "nat", "-A", "PREROUTING", "-i", "wlan0", "-p", "tcp", "--dport", "80", "-j", "REDIRECT", "--to-port", "5000"],
+                            ["sudo", "sysctl", "-w", "net.ipv4.ip_forward=1"],
                             capture_output=True,
                             timeout=5
                         )
-                        logger.info("Added iptables rule to redirect port 80 to 5000")
-                    
-                    # Also allow incoming connections on port 80
-                    check_input = subprocess.run(
-                        ["sudo", "iptables", "-C", "INPUT", "-i", "wlan0", "-p", "tcp", "--dport", "80", "-j", "ACCEPT"],
-                        capture_output=True,
-                        timeout=5
-                    )
-                    
-                    if check_input.returncode != 0:
-                        subprocess.run(
-                            ["sudo", "iptables", "-A", "INPUT", "-i", "wlan0", "-p", "tcp", "--dport", "80", "-j", "ACCEPT"],
+                        
+                        # Add NAT rule to redirect port 80 to 5000 on wlan0
+                        # First check if rule already exists
+                        check_result = subprocess.run(
+                            ["sudo", "iptables", "-t", "nat", "-C", "PREROUTING", "-i", "wlan0", "-p", "tcp", "--dport", "80", "-j", "REDIRECT", "--to-port", "5000"],
                             capture_output=True,
                             timeout=5
                         )
+                        
+                        if check_result.returncode != 0:
+                            # Rule doesn't exist, add it
+                            subprocess.run(
+                                ["sudo", "iptables", "-t", "nat", "-A", "PREROUTING", "-i", "wlan0", "-p", "tcp", "--dport", "80", "-j", "REDIRECT", "--to-port", "5000"],
+                                capture_output=True,
+                                timeout=5
+                            )
+                            logger.info("Added iptables rule to redirect port 80 to 5000")
+                        
+                        # Also allow incoming connections on port 80
+                        check_input = subprocess.run(
+                            ["sudo", "iptables", "-C", "INPUT", "-i", "wlan0", "-p", "tcp", "--dport", "80", "-j", "ACCEPT"],
+                            capture_output=True,
+                            timeout=5
+                        )
+                        
+                        if check_input.returncode != 0:
+                            subprocess.run(
+                                ["sudo", "iptables", "-A", "INPUT", "-i", "wlan0", "-p", "tcp", "--dport", "80", "-j", "ACCEPT"],
+                                capture_output=True,
+                                timeout=5
+                            )
+                    else:
+                        logger.debug("iptables not available, port forwarding not set up")
+                        logger.info("Note: Port 80 forwarding requires iptables. Users will need to access port 5000 directly.")
                 except Exception as e:
                     logger.warning(f"Could not set up iptables port forwarding: {e}")
                     # Continue anyway - port 5000 will still work
@@ -848,25 +859,43 @@ class WiFiManager:
                     timeout=10
                 )
                 
-                # Remove iptables port forwarding rules
+                # Remove iptables port forwarding rules and disable IP forwarding
                 try:
-                    # Remove NAT redirect rule
+                    # Check if iptables is available
+                    iptables_check = subprocess.run(
+                        ["which", "iptables"],
+                        capture_output=True,
+                        timeout=2
+                    )
+                    
+                    if iptables_check.returncode == 0:
+                        # Remove NAT redirect rule
+                        subprocess.run(
+                            ["sudo", "iptables", "-t", "nat", "-D", "PREROUTING", "-i", "wlan0", "-p", "tcp", "--dport", "80", "-j", "REDIRECT", "--to-port", "5000"],
+                            capture_output=True,
+                            timeout=5
+                        )
+                        
+                        # Remove INPUT rule
+                        subprocess.run(
+                            ["sudo", "iptables", "-D", "INPUT", "-i", "wlan0", "-p", "tcp", "--dport", "80", "-j", "ACCEPT"],
+                            capture_output=True,
+                            timeout=5
+                        )
+                        
+                        logger.info("Removed iptables port forwarding rules")
+                    else:
+                        logger.debug("iptables not available, skipping rule removal")
+                    
+                    # Disable IP forwarding (restore to default client mode)
                     subprocess.run(
-                        ["sudo", "iptables", "-t", "nat", "-D", "PREROUTING", "-i", "wlan0", "-p", "tcp", "--dport", "80", "-j", "REDIRECT", "--to-port", "5000"],
+                        ["sudo", "sysctl", "-w", "net.ipv4.ip_forward=0"],
                         capture_output=True,
                         timeout=5
                     )
-                    
-                    # Remove INPUT rule
-                    subprocess.run(
-                        ["sudo", "iptables", "-D", "INPUT", "-i", "wlan0", "-p", "tcp", "--dport", "80", "-j", "ACCEPT"],
-                        capture_output=True,
-                        timeout=5
-                    )
-                    
-                    logger.info("Removed iptables port forwarding rules")
+                    logger.info("Disabled IP forwarding")
                 except Exception as e:
-                    logger.warning(f"Could not remove iptables rules: {e}")
+                    logger.warning(f"Could not remove iptables rules or disable forwarding: {e}")
                     # Continue anyway
                 
                 # Clean up wlan0 IP configuration
