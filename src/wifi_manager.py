@@ -859,6 +859,26 @@ class WiFiManager:
                     timeout=10
                 )
                 
+                # Restore original dnsmasq config if backup exists
+                backup_path = f"{DNSMASQ_CONFIG_PATH}.backup"
+                if os.path.exists(backup_path):
+                    subprocess.run(
+                        ["sudo", "cp", backup_path, str(DNSMASQ_CONFIG_PATH)],
+                        timeout=10
+                    )
+                    logger.info("Restored original dnsmasq config from backup")
+                else:
+                    # No backup - clear the captive portal config
+                    # Create a minimal config that won't interfere
+                    minimal_config = "# dnsmasq config - restored to minimal\n"
+                    with open("/tmp/dnsmasq.conf", 'w') as f:
+                        f.write(minimal_config)
+                    subprocess.run(
+                        ["sudo", "cp", "/tmp/dnsmasq.conf", str(DNSMASQ_CONFIG_PATH)],
+                        timeout=10
+                    )
+                    logger.info("Cleared dnsmasq captive portal config")
+                
                 # Remove iptables port forwarding rules and disable IP forwarding
                 try:
                     # Check if iptables is available
