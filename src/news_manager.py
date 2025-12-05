@@ -159,7 +159,7 @@ class NewsManager:
         try:
             img_path = os.path.join('assets', 'news_logos', f"{feed_name}.png")
             with Image.open(img_path) as img:
-                img = scale_to_max_dimensions(img, 32, int(self.display_manager.height * 0.8))
+                img = scale_to_max_dimensions(img, 32, int(self.display_manager.height * 0.8)).convert('RGBA')
                 self.favicons[feed_name] = img.copy()
         except Exception as e:
             logger.error(f"Error loading favicon for {feed_name}: {e}")
