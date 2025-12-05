@@ -611,6 +611,72 @@ class WiFiManager:
         
         self._save_config()
     
+    def _ensure_wifi_radio_enabled(self) -> bool:
+        """
+        Ensure WiFi radio is enabled (not soft-blocked)
+        
+        Returns:
+            True if WiFi is enabled or was successfully enabled, False otherwise
+        """
+        try:
+            # Check if WiFi radio is enabled
+            result = subprocess.run(
+                ["nmcli", "radio", "wifi"],
+                capture_output=True,
+                text=True,
+                timeout=5
+            )
+            
+            if result.returncode == 0:
+                status = result.stdout.strip().lower()
+                if status == "enabled":
+                    return True
+                elif status == "disabled":
+                    # Try to enable WiFi radio
+                    logger.info("WiFi radio is disabled, attempting to enable...")
+                    enable_result = subprocess.run(
+                        ["sudo", "nmcli", "radio", "wifi", "on"],
+                        capture_output=True,
+                        text=True,
+                        timeout=10
+                    )
+                    if enable_result.returncode == 0:
+                        # Also unblock via rfkill in case it's soft-blocked
+                        subprocess.run(
+                            ["sudo", "rfkill", "unblock", "wifi"],
+                            capture_output=True,
+                            timeout=5
+                        )
+                        time.sleep(1)  # Give it a moment to enable
+                        logger.info("WiFi radio enabled successfully")
+                        return True
+                    else:
+                        logger.error(f"Failed to enable WiFi radio: {enable_result.stderr}")
+                        return False
+            
+            # Fallback: try rfkill
+            rfkill_result = subprocess.run(
+                ["rfkill", "list", "wifi"],
+                capture_output=True,
+                text=True,
+                timeout=5
+            )
+            if "Soft blocked: yes" in rfkill_result.stdout:
+                logger.info("WiFi is soft-blocked, unblocking via rfkill...")
+                subprocess.run(
+                    ["sudo", "rfkill", "unblock", "wifi"],
+                    capture_output=True,
+                    timeout=5
+                )
+                time.sleep(1)
+                logger.info("WiFi unblocked via rfkill")
+                return True
+            
+            return True  # Assume enabled if we can't determine
+        except Exception as e:
+            logger.warning(f"Could not check/enable WiFi radio: {e}")
+            return True  # Continue anyway, hostapd might still work
+    
     def enable_ap_mode(self) -> Tuple[bool, str]:
         """
         Enable access point mode
@@ -626,6 +692,10 @@ class WiFiManager:
             # Check if already in AP mode
             if self._is_ap_mode_active():
                 return True, "AP mode already active"
+            
+            # Ensure WiFi radio is enabled
+            if not self._ensure_wifi_radio_enabled():
+                return False, "WiFi radio is disabled and could not be enabled"
             
             # Check if WiFi is connected
             status = self.get_wifi_status()
