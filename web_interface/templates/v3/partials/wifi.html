@@ -124,10 +124,30 @@
     <div class="border-t border-gray-200 pt-6">
         <h3 class="text-sm font-medium text-gray-900 mb-4">Access Point Mode</h3>
         <p class="text-sm text-gray-600 mb-4">
-            Access point mode allows you to connect to the Raspberry Pi even when it's not connected to WiFi. 
-            It automatically activates when no WiFi connection is detected.
+            Access point mode allows you to connect to the Raspberry Pi even when it's not connected to WiFi.
         </p>
         
+        <!-- Auto-Enable Toggle -->
+        <div class="mb-4 p-4 bg-gray-50 rounded-lg">
+            <div class="flex items-center justify-between">
+                <div class="flex-1">
+                    <label class="text-sm font-medium text-gray-900">Auto-Enable AP Mode</label>
+                    <p class="text-xs text-gray-600 mt-1">
+                        When enabled, AP mode will automatically activate when both WiFi and Ethernet are disconnected.
+                        When disabled, AP mode must be manually enabled.
+                    </p>
+                </div>
+                <label class="relative inline-flex items-center cursor-pointer ml-4">
+                    <input type="checkbox" 
+                           :checked="status.auto_enable_ap_mode"
+                           @change="toggleAutoEnable($event.target.checked)"
+                           class="sr-only peer">
+                    <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+                </label>
+            </div>
+        </div>
+        
+        <!-- Manual AP Mode Controls -->
         <div class="flex gap-2">
             <button @click="enableAPMode()" 
                     :disabled="apOperating || status.ap_mode_active"
@@ -161,7 +181,8 @@ function wifiSetup() {
             ssid: null,
             ip_address: null,
             signal: 0,
-            ap_mode_active: false
+            ap_mode_active: false,
+            auto_enable_ap_mode: false
         },
         networks: [],
         selectedSSID: '',
@@ -284,6 +305,38 @@ function wifiSetup() {
                 this.showMessage('Failed to disable AP mode: ' + error.message, 'error');
             } finally {
                 this.apOperating = false;
+            }
+        },
+
+        async toggleAutoEnable(enabled) {
+            try {
+                const response = await fetch('/api/v3/wifi/ap/auto-enable', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        auto_enable_ap_mode: enabled
+                    })
+                });
+                const data = await response.json();
+                if (data.status === 'success') {
+                    this.status.auto_enable_ap_mode = enabled;
+                    this.showMessage(
+                        enabled 
+                            ? 'Auto-enable AP mode is now enabled' 
+                            : 'Auto-enable AP mode is now disabled',
+                        'success'
+                    );
+                } else {
+                    this.showMessage(data.message, 'error');
+                    // Revert toggle on error
+                    this.status.auto_enable_ap_mode = !enabled;
+                }
+            } catch (error) {
+                this.showMessage('Failed to update auto-enable setting: ' + error.message, 'error');
+                // Revert toggle on error
+                this.status.auto_enable_ap_mode = !enabled;
             }
         },
 
