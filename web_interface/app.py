@@ -18,6 +18,7 @@ from src.plugin_system.operation_queue import PluginOperationQueue
 from src.plugin_system.state_manager import PluginStateManager
 from src.plugin_system.operation_history import OperationHistory
 from src.plugin_system.health_monitor import PluginHealthMonitor
+from src.wifi_manager import WiFiManager
 
 # Create Flask app
 app = Flask(__name__)
@@ -116,6 +117,86 @@ api_v3.cache_manager = CacheManager()
 
 app.register_blueprint(pages_v3, url_prefix='/v3')
 app.register_blueprint(api_v3, url_prefix='/api/v3')
+
+# Helper function to check if AP mode is active
+def is_ap_mode_active():
+    """
+    Check if access point mode is currently active.
+    
+    Returns:
+        bool: True if AP mode is active, False otherwise.
+              Returns False on error to avoid breaking normal operation.
+    """
+    try:
+        wifi_manager = WiFiManager()
+        return wifi_manager._is_ap_mode_active()
+    except Exception as e:
+        # Log error but don't break normal operation
+        # Default to False so normal web interface works even if check fails
+        print(f"Warning: Could not check AP mode status: {e}")
+        return False
+
+# Captive portal detection endpoints
+# These help devices detect that a captive portal is active
+@app.route('/hotspot-detect.html')
+def hotspot_detect():
+    """iOS/macOS captive portal detection endpoint"""
+    # Return simple HTML that redirects to setup page
+    return '<HTML><HEAD><TITLE>Success</TITLE></HEAD><BODY>Success</BODY></HTML>', 200
+
+@app.route('/generate_204')
+def generate_204():
+    """Android captive portal detection endpoint"""
+    # Return 204 No Content - Android checks for this
+    return '', 204
+
+@app.route('/connecttest.txt')
+def connecttest_txt():
+    """Windows captive portal detection endpoint"""
+    # Return simple text response
+    return 'Microsoft Connect Test', 200
+
+@app.route('/success.txt')
+def success_txt():
+    """Firefox captive portal detection endpoint"""
+    # Return simple text response
+    return 'success', 200
+
+# Captive portal redirect middleware
+@app.before_request
+def captive_portal_redirect():
+    """
+    Redirect all HTTP requests to WiFi setup page when AP mode is active.
+    This creates a captive portal experience where users are automatically
+    directed to the WiFi configuration page.
+    """
+    # Check if AP mode is active
+    if not is_ap_mode_active():
+        return None  # Continue normal request processing
+    
+    # Get the request path
+    path = request.path
+    
+    # List of paths that should NOT be redirected (allow normal operation)
+    allowed_paths = [
+        '/v3',  # Main interface
+        '/api/v3/wifi/',  # WiFi API endpoints
+        '/api/v3/stream/',  # SSE streams
+        '/hotspot-detect.html',  # iOS/macOS detection
+        '/generate_204',  # Android detection
+        '/connecttest.txt',  # Windows detection
+        '/success.txt',  # Firefox detection
+        '/favicon.ico',  # Favicon
+    ]
+    
+    # Check if this path should be allowed
+    for allowed_path in allowed_paths:
+        if path.startswith(allowed_path):
+            return None  # Allow this request to proceed normally
+    
+    # For all other paths, redirect to main interface
+    # This ensures users see the WiFi setup page when they try to access any website
+    return redirect(url_for('pages_v3.index'), code=302)
 
 # Add security headers to all responses
 @app.after_request

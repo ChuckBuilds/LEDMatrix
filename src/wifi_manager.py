@@ -739,7 +739,7 @@ rsn_pairwise=CCMP
             raise
     
     def _create_dnsmasq_config(self):
-        """Create dnsmasq configuration file"""
+        """Create dnsmasq configuration file with captive portal DNS redirection"""
         try:
             # Backup existing config
             if DNSMASQ_CONFIG_PATH.exists():
@@ -750,6 +750,15 @@ rsn_pairwise=CCMP
             
             config_content = """interface=wlan0
 dhcp-range=192.168.4.2,192.168.4.20,255.255.255.0,24h
+
+# Captive portal: Redirect all DNS queries to Pi
+address=/#/192.168.4.1
+
+# Captive portal detection endpoints
+address=/captive.apple.com/192.168.4.1
+address=/connectivitycheck.gstatic.com/192.168.4.1
+address=/www.msftconnecttest.com/192.168.4.1
+address=/detectportal.firefox.com/192.168.4.1
 """
             
             # Write config (requires sudo)
@@ -762,7 +771,7 @@ dhcp-range=192.168.4.2,192.168.4.20,255.255.255.0,24h
                 timeout=10
             )
             
-            logger.info(f"Created dnsmasq config at {DNSMASQ_CONFIG_PATH}")
+            logger.info(f"Created dnsmasq config at {DNSMASQ_CONFIG_PATH} with captive portal DNS redirection")
         except Exception as e:
             logger.error(f"Error creating dnsmasq config: {e}")
             raise

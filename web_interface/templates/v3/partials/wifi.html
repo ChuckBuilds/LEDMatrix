@@ -1,4 +1,21 @@
 <div class="bg-white rounded-lg shadow p-6" x-data="wifiSetup()" x-init="loadStatus()">
+    <!-- Captive Portal Banner (shown when AP mode is active) -->
+    <div x-show="status.ap_mode_active" 
+         class="mb-4 p-4 bg-blue-50 border border-blue-200 rounded-lg"
+         x-cloak>
+        <div class="flex items-start">
+            <div class="flex-shrink-0">
+                <i class="fas fa-info-circle text-blue-600 text-lg"></i>
+            </div>
+            <div class="ml-3 flex-1">
+                <h3 class="text-sm font-medium text-blue-800">Captive Portal Active</h3>
+                <p class="mt-1 text-sm text-blue-700">
+                    You're connected to the LEDMatrix-Setup network. Configure your WiFi connection below to connect to your home network.
+                </p>
+            </div>
+        </div>
+    </div>
+
     <div class="border-b border-gray-200 pb-4 mb-6">
         <h2 class="text-lg font-semibold text-gray-900">
             <i class="fas fa-wifi mr-2"></i>WiFi Setup
