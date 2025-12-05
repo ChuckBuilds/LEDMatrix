@@ -1,16 +1,13 @@
-from io import BytesIO
-import time
-import logging
-import requests
-import xml.etree.ElementTree as ET
-import json
-import random
-from typing import Dict, Any, List, Tuple, Optional
-from datetime import datetime, timedelta
-import os
-import urllib.parse
-import re
 import html
+import logging
+import os
+import re
+import requests
+import time
+import xml.etree.ElementTree as ET
+from typing import Dict, Any, List
+from datetime import datetime
+from src.image_utils import scale_to_max_dimensions
 from src.config_manager import ConfigManager
 from PIL import Image, ImageDraw, ImageFont
 from src.cache_manager import CacheManager
@@ -159,22 +156,15 @@ class NewsManager:
             logger.error(f"Error parsing RSS feed {feed_name} ({url}): {e}")
             return []
     
-    def fetch_favicon(self, url, feed_name):
-        split_url = urllib.parse.urlsplit(url)
-        if not split_url.scheme or not split_url.netloc:
-            return None
-        
-        favicon_url = urllib.parse.urlunsplit([split_url.scheme, split_url.netloc, 'favicon.ico', None, None])
-
-        response = self.session.get(favicon_url, headers=self.headers)
-        if not response.status_code == 200:
-            return None
-        
-        with Image.open(BytesIO(response.content)) as img:
-            max_size = min(int(self.display_manager.matrix.width / 1.2), 
-                        int(self.display_manager.matrix.height / 1.2))
-            img = img.resize((max_size, max_size), Image.Resampling.LANCZOS)
-            self.favicons[feed_name] = img.copy()
+    def load_favicon(self, feed_name):
+        try:
+            img_path = os.path.join('assets', 'news_logos', f"{feed_name}.png")
+            with Image.open(img_path) as img:
+                img = scale_to_max_dimensions(img, 32, int(self.display_manager.height * 0.8))
+                self.favicons[feed_name] = img.copy()
+        except Exception as e:
+            logger.error(f"Error loading favicon for {feed_name}: {e}")
+            return
 
     def fetch_news_data(self):
         """Fetch news from all enabled feeds"""
@@ -189,7 +179,7 @@ class NewsManager:
                     url = all_feeds[feed_name]
                     headlines = self.parse_rss_feed(url, feed_name)
                     all_headlines.extend(headlines)
-                    self.fetch_favicon(url, feed_name)
+                    self.load_favicon(feed_name)
                 else:
                     logger.warning(f"Feed '{feed_name}' not found in available feeds")
             
@@ -233,16 +223,40 @@ class NewsManager:
                 else:
                     display_headlines.extend(feed_headlines[:self.headlines_per_feed])
         
+        try:
+            font = ImageFont.truetype(self.font_path, self.font_size)
+        except Exception as e:
+            logger.warning(f"Failed to load custom font for pre-rendering: {e}. Using default.")
+            font = ImageFont.load_default()
+        
         # Create scrolling text with separators
         if display_headlines:
-            text_parts = []
+            self.cached_images = []
             for i, headline in enumerate(display_headlines):
-                feed_prefix = f"[{headline['feed']}] "
-                text_parts.append(feed_prefix + headline['title'])
+                favicon = self.favicons.get(headline['feed'])
+
+                separator = " • " if not favicon and i > 0 else ''
+                feed_prefix = f"[{headline['feed']}] " if not favicon else ''
+                text = separator + feed_prefix + headline['title']
+                text_width = self._get_text_width(text, font)
+                headline_width = text_width
+                text_x_pos = 0
+                if favicon:
+                    text_x_pos = favicon.width + 16
+                    headline_width += text_x_pos
+
+                img = Image.new('RGB', (headline_width, self.display_manager.height), (0, 0, 0))
+                draw = ImageDraw.Draw(img)
+                if favicon:
+                    logo_x = 10
+                    logo_y = (self.display_manager.height - favicon.height) // 2
+                    img.paste(favicon, (logo_x, logo_y), favicon)
                 
-            # Join with separators and add spacing
-            separator = " • "
-            self.cached_text = separator.join(text_parts) + " • "  # Add separator at end for smooth loop
+                text_height = self.font_size
+                y_pos = (self.display_manager.height - text_height) // 2
+                draw.text((text_x_pos, y_pos), text, font=font, fill=self.text_color)
+
+                self.cached_images.append(img)
             
             # Calculate text dimensions for perfect scrolling
             self.calculate_scroll_dimensions()
@@ -253,28 +267,14 @@ class NewsManager:
 
     def calculate_scroll_dimensions(self):
         """Calculate exact dimensions needed for smooth scrolling"""
-        if not self.cached_text:
+        if not self.cached_images:
             return
             
         try:
-            # Load font
-            try:
-                font = ImageFont.truetype(self.font_path, self.font_size)
-                logger.debug(f"Successfully loaded custom font: {self.font_path}")
-            except Exception as e:
-                logger.warning(f"Failed to load custom font '{self.font_path}': {e}. Using default font.")
-                font = ImageFont.load_default()
-                
-            # Calculate text width
-            temp_img = Image.new('RGB', (1, 1))
-            temp_draw = ImageDraw.Draw(temp_img)
-            
-            # Get text dimensions
-            bbox = temp_draw.textbbox((0, 0), self.cached_text, font=font)
-            text_width = bbox[2] - bbox[0]
-            # Add display width gap at the beginning (simulates blank screen)
             display_width = self.display_manager.width
-            self.total_scroll_width = display_width + text_width
+            self.total_scroll_width = display_width
+            for img in self.cached_images:
+                self.total_scroll_width += img.width
             
             # Calculate dynamic display duration
             self.calculate_dynamic_duration()
@@ -287,35 +287,33 @@ class NewsManager:
             self.total_scroll_width = len(self.cached_text) * 8  # Fallback estimate
             self.calculate_dynamic_duration()
 
+    def _get_text_width(self, text, font):
+        temp_img = Image.new('RGB', (1, 1))
+        temp_draw = ImageDraw.Draw(temp_img)
+        
+        # Get text dimensions
+        bbox = temp_draw.textbbox((0, 0), text, font=font)
+        return bbox[2] - bbox[0]
+
+
     def create_scrolling_image(self):
         """Create a pre-rendered image for smooth scrolling."""
-        if not self.cached_text:
+        if not self.cached_images:
             self.scrolling_image = None
             return
-
-        try:
-            font = ImageFont.truetype(self.font_path, self.font_size)
-        except Exception as e:
-            logger.warning(f"Failed to load custom font for pre-rendering: {e}. Using default.")
-            font = ImageFont.load_default()
 
         height = self.display_manager.height
         width = self.total_scroll_width
 
         self.scrolling_image = Image.new('RGB', (width, height), (0, 0, 0))
-        draw = ImageDraw.Draw(self.scrolling_image)
 
-        if len(self.favicons.values()) > 0:
-            logo = list(self.favicons.values())[0]
-            logo_x = 10  # Small margin from left edge
-            logo_y = (height - logo.height) // 2
-            self.scrolling_image.paste(logo, (logo_x, logo_y), logo)
-
-        text_height = self.font_size
-        y_pos = (height - text_height) // 2
         # Draw text starting after display width gap (simulates blank screen)
-        display_width = self.display_manager.width
-        draw.text((display_width, y_pos), self.cached_text, font=font, fill=self.text_color)
+        x_pos = self.display_manager.width
+        for img in self.cached_images:
+            self.scrolling_image.paste(img, (x_pos, 0))
+            x_pos += img.width
+
+        # draw.text((display_width, y_pos), self.cached_text, font=font, fill=self.text_color)
         logger.debug("Pre-rendered scrolling news image created.")
 
     def calculate_dynamic_duration(self):
