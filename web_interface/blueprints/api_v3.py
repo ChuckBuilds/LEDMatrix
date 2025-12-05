@@ -3619,7 +3619,7 @@ def get_wifi_status():
         status = wifi_manager.get_wifi_status()
         
         # Get auto-enable setting from config
-        auto_enable_ap = wifi_manager.config.get("auto_enable_ap_mode", False)
+        auto_enable_ap = wifi_manager.config.get("auto_enable_ap_mode", True)  # Default: True
         
         return jsonify({
             'status': 'success',
@@ -3760,7 +3760,7 @@ def get_auto_enable_ap_mode():
         from src.wifi_manager import WiFiManager
         
         wifi_manager = WiFiManager()
-        auto_enable = wifi_manager.config.get("auto_enable_ap_mode", False)
+        auto_enable = wifi_manager.config.get("auto_enable_ap_mode", True)  # Default: True
         
         return jsonify({
             'status': 'success',

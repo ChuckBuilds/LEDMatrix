@@ -92,7 +92,7 @@ The WiFi monitor daemon (`wifi_monitor_daemon.py`) runs as a background service 
 3. Automatically disables AP mode when WiFi or Ethernet connection is established
 4. Logs all state changes for troubleshooting
 
-**Note**: By default, `auto_enable_ap_mode` is `false`, meaning AP mode must be manually enabled through the web interface. This prevents AP mode from activating automatically after installation.
+**Note**: By default, `auto_enable_ap_mode` is `true`, meaning AP mode will automatically activate when both WiFi and Ethernet are disconnected. This ensures you can always configure the device even when it has no network connection.
 
 ### WiFi Manager Module
 
@@ -112,7 +112,7 @@ WiFi settings are stored in `config/wifi_config.json`:
   "ap_ssid": "LEDMatrix-Setup",
   "ap_password": "ledmatrix123",
   "ap_channel": 7,
-  "auto_enable_ap_mode": false,
+  "auto_enable_ap_mode": true,
   "saved_networks": [
     {
       "ssid": "MyNetwork",
@@ -127,9 +127,9 @@ WiFi settings are stored in `config/wifi_config.json`:
 - `ap_ssid`: SSID for the access point (default: "LEDMatrix-Setup")
 - `ap_password`: Password for the access point (default: "ledmatrix123")
 - `ap_channel`: WiFi channel for AP mode (default: 7)
-- `auto_enable_ap_mode`: Automatically enable AP mode when WiFi/Ethernet disconnect (default: `false`)
-  - When `false`: AP mode must be manually enabled through the web interface
+- `auto_enable_ap_mode`: Automatically enable AP mode when WiFi/Ethernet disconnect (default: `true`)
   - When `true`: AP mode automatically enables when both WiFi and Ethernet are disconnected
+  - When `false`: AP mode must be manually enabled through the web interface
 - `saved_networks`: List of saved WiFi network credentials
 
 ### Access Point Configuration

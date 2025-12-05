@@ -118,14 +118,14 @@ class WiFiManager:
                 "ap_ssid": DEFAULT_AP_SSID,
                 "ap_password": DEFAULT_AP_PASSWORD,
                 "ap_channel": DEFAULT_AP_CHANNEL,
-                "auto_enable_ap_mode": False,  # Default: manual enable only
+                "auto_enable_ap_mode": True,  # Default: auto-enable when no network connection
                 "saved_networks": []
             }
             self._save_config()
         
         # Ensure auto_enable_ap_mode exists in config (for existing configs)
         if "auto_enable_ap_mode" not in self.config:
-            self.config["auto_enable_ap_mode"] = False
+            self.config["auto_enable_ap_mode"] = True  # Default: auto-enable when no network connection
             self._save_config()
     
     def _save_config(self):
@@ -795,7 +795,7 @@ address=/detectportal.firefox.com/192.168.4.1
             status = self.get_wifi_status()
             ethernet_connected = self._is_ethernet_connected()
             ap_active = self._is_ap_mode_active()
-            auto_enable = self.config.get("auto_enable_ap_mode", False)
+            auto_enable = self.config.get("auto_enable_ap_mode", True)  # Default: True
             
             # Determine if we should have AP mode active
             # AP mode should only be auto-enabled if:
