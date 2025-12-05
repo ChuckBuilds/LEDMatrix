@@ -178,10 +178,11 @@ def captive_portal_redirect():
     path = request.path
     
     # List of paths that should NOT be redirected (allow normal operation)
+    # This ensures the full web interface works normally when in AP mode
     allowed_paths = [
-        '/v3',  # Main interface
-        '/api/v3/wifi/',  # WiFi API endpoints
-        '/api/v3/stream/',  # SSE streams
+        '/v3',  # Main interface and all sub-paths
+        '/api/v3/',  # All API endpoints (plugins, config, wifi, stream, etc.)
+        '/static/',  # Static files (CSS, JS, images)
         '/hotspot-detect.html',  # iOS/macOS detection
         '/generate_204',  # Android detection
         '/connecttest.txt',  # Windows detection
@@ -196,6 +197,8 @@ def captive_portal_redirect():
     
     # For all other paths, redirect to main interface
     # This ensures users see the WiFi setup page when they try to access any website
+    # The main interface (/v3) is already in allowed_paths, so it won't redirect
+    # Static files (/static/) and API calls (/api/v3/) are also allowed
     return redirect(url_for('pages_v3.index'), code=302)
 
 # Add security headers to all responses
