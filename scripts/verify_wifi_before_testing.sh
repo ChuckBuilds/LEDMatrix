@@ -2,7 +2,9 @@
 # Pre-Testing WiFi Verification Script
 # Run this BEFORE disconnecting Ethernet to ensure WiFi is ready
 
-set -e
+# Don't use set -e as it can cause premature exits with arithmetic operations
+# Instead, we'll check return codes explicitly where needed
+set -u  # Fail on undefined variables
 
 echo "=========================================="
 echo "WiFi Pre-Testing Verification"
@@ -24,18 +26,21 @@ FAILED=0
 WARNINGS=0
 
 check_result() {
-    if [ $1 -eq 0 ]; then
-        echo -e "${GREEN}✓${NC} $2"
-        ((PASSED++))
+    local result=$1
+    local message=$2
+    if [ $result -eq 0 ]; then
+        echo -e "${GREEN}✓${NC} $message"
+        PASSED=$((PASSED + 1))
     else
-        echo -e "${RED}✗${NC} $2"
-        ((FAILED++))
+        echo -e "${RED}✗${NC} $message"
+        FAILED=$((FAILED + 1))
     fi
 }
 
 warn_result() {
-    echo -e "${YELLOW}⚠${NC} $2"
-    ((WARNINGS++))
+    local message=$2
+    echo -e "${YELLOW}⚠${NC} $message"
+    WARNINGS=$((WARNINGS + 1))
 }
 
 # Check 1: WiFi interface exists
