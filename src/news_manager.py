@@ -89,7 +89,6 @@ class NewsManager:
         # Colors
         self.text_color = tuple(self.news_config.get('text_color', [255, 255, 255]))
         self.separator_color = tuple(self.news_config.get('separator_color', [255, 0, 0]))
-        self.display_favicon = self.news_config.get('display_favicon', True)
         
         # Initialize session with retry strategy
         self.session = requests.Session()
