@@ -90,17 +90,21 @@ class Clock:
             display_width = self.display_manager.matrix.width
             display_height = self.display_manager.matrix.height
             
+            # Center time based on full width of time + ampm
+            time_width = self.display_manager.font.getlength(f"{time_str} ")
+            ampm_width = self.display_manager.font.getlength(f"{ampm}")
+            time_x = (display_width - (time_width + ampm_width)) // 2
             # Draw time (large, centered, near top)
             self.display_manager.draw_text(
                 time_str,
+                x=time_x,
                 y=4,  # Move up slightly to make room for two lines of date
                 color=self.COLORS['time'],
                 small_font=True
             )
             
             # Draw AM/PM (small, next to time)
-            time_width = self.display_manager.font.getlength(time_str)
-            ampm_x = (display_width + time_width) // 2 + 4
+            ampm_x = time_x + time_width
             self.display_manager.draw_text(
                 ampm,
                 x=ampm_x,
