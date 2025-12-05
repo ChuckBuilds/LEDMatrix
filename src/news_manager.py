@@ -264,11 +264,12 @@ class NewsManager:
                 # Append to cached images for rendering in `create_scrolling_image()`
                 self.cached_images.append(img)
             
+            self.current_headlines = display_headlines
+
             # Calculate text dimensions for perfect scrolling
             self.calculate_scroll_dimensions()
             self.create_scrolling_image()
             
-            self.current_headlines = display_headlines
             logger.debug(f"Prepared {len(display_headlines)} headlines for display")
 
     def calculate_scroll_dimensions(self):
@@ -285,12 +286,12 @@ class NewsManager:
             # Calculate dynamic display duration
             self.calculate_dynamic_duration()
             
-            logger.debug(f"Text width calculated: {self.total_scroll_width} pixels")
+            logger.debug(f"Image width calculated: {self.total_scroll_width} pixels")
             logger.debug(f"Dynamic duration calculated: {self.dynamic_duration} seconds")
             
         except Exception as e:
             logger.error(f"Error calculating scroll dimensions: {e}")
-            self.total_scroll_width = len(self.cached_text) * 8  # Fallback estimate
+            self.total_scroll_width = sum(len(x['title']) for x in self.current_headlines) * 8  # Fallback estimate
             self.calculate_dynamic_duration()
 
     def _get_text_width(self, text, font):
