@@ -28,6 +28,7 @@ class Clock:
         self.timezone = self._get_timezone()
         self.last_time = None
         self.last_date = None
+        self.ampm_padding = 4
         # Colors for different elements - using super bright colors
         self.COLORS = {
             'time': (255, 255, 255),    # Pure white for time
@@ -91,9 +92,9 @@ class Clock:
             display_height = self.display_manager.matrix.height
             
             # Center time based on full width of time + ampm
-            time_width = self.display_manager.font.getlength(f"{time_str} ")
+            time_width = self.display_manager.font.getlength(f"{time_str}")
             ampm_width = self.display_manager.font.getlength(f"{ampm}")
-            time_x = (display_width - (time_width + ampm_width)) // 2
+            time_x = (display_width - (time_width + self.ampm_padding + ampm_width)) // 2
             # Draw time (large, centered, near top)
             self.display_manager.draw_text(
                 time_str,
@@ -104,7 +105,7 @@ class Clock:
             )
             
             # Draw AM/PM (small, next to time)
-            ampm_x = time_x + time_width
+            ampm_x = time_x + self.ampm_padding + time_width
             self.display_manager.draw_text(
                 ampm,
                 x=ampm_x,
