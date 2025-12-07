@@ -806,6 +806,7 @@ class DisplayController:
                 
                 # Display the current mode
                 display_result = True  # Default to True for backward compatibility
+                display_failed_due_to_exception = False  # Track if False was due to exception vs no content
                 if manager_to_display:
                     plugin_id = getattr(manager_to_display, 'plugin_id', active_mode)
                     try:
@@ -854,6 +855,7 @@ class DisplayController:
                             self.plugin_manager.health_tracker.record_failure(plugin_id, exc)
                         self.force_change = True
                         display_result = False
+                        display_failed_due_to_exception = True  # Mark that this was an exception, not just no content
                 
                 # If display() returned False, skip to next mode immediately (unless on-demand)
                 if not display_result:
@@ -874,43 +876,42 @@ class DisplayController:
                         except Exception as clear_err:
                             logger.debug(f"Error clearing display when skipping mode: {clear_err}")
                         
-                        # Skip all modes for this plugin if one fails (prevents cycling through broken plugin modes)
-                        current_plugin_id = self.mode_to_plugin_id.get(active_mode)
-                        if current_plugin_id and current_plugin_id in self.plugin_display_modes:
-                            plugin_modes = self.plugin_display_modes[current_plugin_id]
-                            logger.info("Skipping all %d mode(s) for plugin %s: %s", 
-                                      len(plugin_modes), current_plugin_id, plugin_modes)
-                            # Find the next mode that's not from this plugin
-                            next_index = self.current_mode_index
-                            attempts = 0
-                            max_attempts = len(self.available_modes)
-                            found_next = False
-                            while attempts < max_attempts:
-                                next_index = (next_index + 1) % len(self.available_modes)
-                                next_mode = self.available_modes[next_index]
-                                next_plugin_id = self.mode_to_plugin_id.get(next_mode)
-                                if next_plugin_id != current_plugin_id:
-                                    self.current_mode_index = next_index
-                                    self.current_display_mode = next_mode
-                                    self.last_mode_change = time.time()
-                                    self.force_change = True
-                                    logger.info("Switching to mode: %s (skipped plugin %s)", 
-                                              self.current_display_mode, current_plugin_id)
-                                    found_next = True
-                                    break
-                                attempts += 1
-                            # If we couldn't find a different plugin, just advance normally
-                            if not found_next:
-                                logger.warning("All remaining modes are from plugin %s, advancing normally", current_plugin_id)
-                                # Will fall through to normal rotation logic below
-                            else:
-                                # Already set next mode, skip to next iteration
-                                continue
-                        else:
-                            # No plugin_id found, just advance normally (will be caught by normal rotation logic below)
-                            pass
-                        # If we get here, we didn't find a next mode from a different plugin
-                        # Fall through to normal rotation logic at the bottom
+                        # Only skip all modes for this plugin if there was an exception (broken plugin)
+                        # If it's just "no content", we should still try other modes (recent, upcoming)
+                        if display_failed_due_to_exception:
+                            current_plugin_id = self.mode_to_plugin_id.get(active_mode)
+                            if current_plugin_id and current_plugin_id in self.plugin_display_modes:
+                                plugin_modes = self.plugin_display_modes[current_plugin_id]
+                                logger.warning("Skipping all %d mode(s) for plugin %s due to exception: %s", 
+                                              len(plugin_modes), current_plugin_id, plugin_modes)
+                                # Find the next mode that's not from this plugin
+                                next_index = self.current_mode_index
+                                attempts = 0
+                                max_attempts = len(self.available_modes)
+                                found_next = False
+                                while attempts < max_attempts:
+                                    next_index = (next_index + 1) % len(self.available_modes)
+                                    next_mode = self.available_modes[next_index]
+                                    next_plugin_id = self.mode_to_plugin_id.get(next_mode)
+                                    if next_plugin_id != current_plugin_id:
+                                        self.current_mode_index = next_index
+                                        self.current_display_mode = next_mode
+                                        self.last_mode_change = time.time()
+                                        self.force_change = True
+                                        logger.info("Switching to mode: %s (skipped plugin %s due to exception)", 
+                                                  self.current_display_mode, current_plugin_id)
+                                        found_next = True
+                                        break
+                                    attempts += 1
+                                # If we couldn't find a different plugin, just advance normally
+                                if not found_next:
+                                    logger.warning("All remaining modes are from plugin %s, advancing normally", current_plugin_id)
+                                    # Will fall through to normal rotation logic below
+                                else:
+                                    # Already set next mode, skip to next iteration
+                                    continue
+                        # If no exception (just no content), fall through to normal rotation logic
+                        # This allows trying other modes (recent, upcoming) from the same plugin
                 else:
                     # Get base duration for current mode
                     base_duration = self._get_display_duration(active_mode)
