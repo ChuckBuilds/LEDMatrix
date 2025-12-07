@@ -1709,9 +1709,9 @@
                                             <h4 class="font-semibold text-gray-900">${sectionLabel}</h4>
                                             ${description ? `<p class="text-sm text-gray-600 mt-1">${description}</p>` : ''}
                                         </div>
-                                        <i id="${sectionId}-icon" class="fas fa-chevron-down text-gray-500 transition-transform"></i>
+                                        <i id="${sectionId}-icon" class="fas fa-chevron-right text-gray-500 transition-transform"></i>
                                     </button>
-                                    <div id="${sectionId}" class="nested-content bg-gray-50 px-4 py-3 space-y-3" style="display: block;">
+                                    <div id="${sectionId}" class="nested-content collapsed bg-gray-50 px-4 py-3 space-y-3" style="max-height: 0; display: none;">
                             `;
                             
                             // Recursively generate fields for nested properties
@@ -2379,17 +2379,35 @@
             
             if (!content || !icon) return;
             
-            // Check if content is hidden (handle both explicit 'none' and empty string for initial state)
-            const isHidden = content.style.display === 'none';
+            // Check if content is currently collapsed (has 'collapsed' class or display:none)
+            const isCollapsed = content.classList.contains('collapsed') || 
+                                content.style.display === 'none' ||
+                                (content.style.display === '' && !content.classList.contains('expanded'));
             
-            if (isHidden) {
-                // Show the section
+            if (isCollapsed) {
+                // Expand the section
+                content.classList.remove('collapsed');
+                content.classList.add('expanded');
                 content.style.display = 'block';
+                // Force reflow to ensure transition works
+                content.offsetHeight;
+                content.style.maxHeight = content.scrollHeight + 'px';
                 icon.classList.remove('fa-chevron-right');
                 icon.classList.add('fa-chevron-down');
             } else {
-                // Hide the section
-                content.style.display = 'none';
+                // Collapse the section
+                content.classList.add('collapsed');
+                content.classList.remove('expanded');
+                content.style.maxHeight = content.scrollHeight + 'px';
+                // Force reflow
+                content.offsetHeight;
+                content.style.maxHeight = '0';
+                // Use setTimeout to set display:none after transition completes
+                setTimeout(() => {
+                    if (content.classList.contains('collapsed')) {
+                        content.style.display = 'none';
+                    }
+                }, 300); // Match the CSS transition duration
                 icon.classList.remove('fa-chevron-down');
                 icon.classList.add('fa-chevron-right');
             }

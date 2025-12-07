@@ -445,7 +445,8 @@
 }
 
 .nested-section .nested-content {
-    transition: all 0.3s ease;
+    transition: max-height 0.3s ease, opacity 0.3s ease;
+    overflow: hidden;
 }
 
 .nested-section i {
@@ -453,15 +454,15 @@
 }
 
 /* Smooth toggle animation */
-.nested-content[style*="display: none"] {
+.nested-content.collapsed {
     opacity: 0;
     max-height: 0;
     overflow: hidden;
 }
 
-.nested-content[style*="display: block"] {
+.nested-content.expanded {
     opacity: 1;
-    max-height: none;
+    max-height: 5000px; /* Large enough for most content */
 }
 
 /* Nested sections within nested sections - add indentation */
