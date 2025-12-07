@@ -21,11 +21,6 @@
       "default": false,
       "description": "Enable live priority takeover when plugin has live content"
     },
-    "high_performance_transitions": {
-      "type": "boolean",
-      "default": false,
-      "description": "Use high-performance transitions (120 FPS) instead of standard (30 FPS)"
-    },
     "refresh_interval": {
       "type": "integer",
       "default": 60,
@@ -36,35 +31,6 @@
       "type": "string",
       "description": "API key for external service (store in config_secrets.json)",
       "default": ""
-    },
-    "transition": {
-      "type": "object",
-      "description": "Transition configuration for this plugin",
-      "properties": {
-        "type": {
-          "type": "string",
-          "enum": ["redraw", "fade", "slide", "wipe", "dissolve", "pixelate"],
-          "default": "redraw",
-          "description": "Type of transition to use"
-        },
-        "speed": {
-          "type": "integer",
-          "default": 2,
-          "minimum": 1,
-          "maximum": 10,
-          "description": "Transition speed (1=slow, 10=fast)"
-        },
-        "enabled": {
-          "type": "boolean",
-          "default": true,
-          "description": "Enable or disable transitions"
-        }
-      },
-      "default": {
-        "type": "redraw",
-        "speed": 2,
-        "enabled": true
-      }
     },
     "custom_setting": {
       "type": "string",

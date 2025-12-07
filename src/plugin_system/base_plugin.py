@@ -11,20 +11,7 @@ Stability: Stable - maintains backward compatibility
 from abc import ABC, abstractmethod
 from typing import Dict, Any, Optional, List
 import logging
-from PIL import Image
 from src.logging_config import get_logger
-
-# Import transition systems
-try:
-    from ..display_transitions import DisplayTransitions
-except ImportError:
-    DisplayTransitions = None
-
-try:
-    from ..high_performance_transitions import HighPerformanceDisplayTransitions, create_high_performance_transition_manager
-except ImportError:
-    HighPerformanceDisplayTransitions = None
-    create_high_performance_transition_manager = None
 
 
 class BasePlugin(ABC):
@@ -65,48 +52,7 @@ class BasePlugin(ABC):
         self.logger: logging.Logger = get_logger(f"plugin.{plugin_id}", plugin_id=plugin_id)
         self.enabled: bool = config.get("enabled", True)
 
-        # Initialize transition system
-        self.transition_manager: Optional[Any] = None
-        self.high_performance_mode: bool = config.get("high_performance_transitions", False)
-        self.transition_manager = self._initialize_transitions(display_manager)
-
-        # Load transition configuration
-        self.transition_config: Dict[str, Any] = self._load_transition_config()
-
         self.logger.info("Initialized plugin: %s", plugin_id)
-
-    def _initialize_transitions(self, display_manager: Any) -> Optional[Any]:
-        """
-        Initialize the transition system based on configuration.
-        
-        Tries high-performance transitions first if enabled, falls back to
-        standard transitions if available.
-        
-        Args:
-            display_manager: Display manager instance
-            
-        Returns:
-            Transition manager instance or None if unavailable
-        """
-        if self.high_performance_mode and HighPerformanceDisplayTransitions:
-            try:
-                transition_manager = create_high_performance_transition_manager(display_manager)
-                self.logger.info("High-performance transition system enabled (120 FPS)")
-                return transition_manager
-            except Exception as e:  # pylint: disable=broad-except
-                self.logger.warning(
-                    "Failed to initialize high-performance transitions: %s", e
-                )
-        
-        if DisplayTransitions and display_manager:
-            try:
-                transition_manager = DisplayTransitions(display_manager)
-                self.logger.info("Standard transition system enabled (30 FPS)")
-                return transition_manager
-            except Exception as e:  # pylint: disable=broad-except
-                self.logger.warning("Failed to initialize transition system: %s", e)
-        
-        return None
 
     @abstractmethod
     def update(self) -> None:
@@ -371,48 +317,6 @@ class BasePlugin(ABC):
                 self.logger.error("'display_duration' must be a positive number")
                 return False
 
-        # Validate transition configuration if present
-        if "transition" in self.config:
-            if not self._validate_transition_config():
-                return False
-
-        return True
-
-    def _validate_transition_config(self) -> bool:
-        """
-        Validate transition configuration.
-
-        Returns:
-            True if transition config is valid, False otherwise
-        """
-        if not self.transition_manager:
-            # Skip validation if transition system not available
-            return True
-
-        transition_config = self.config.get("transition", {})
-        is_valid, error_msg = self.transition_manager.validate_transition_config(
-            transition_config
-        )
-
-        if not is_valid:
-            self.logger.error("Invalid transition configuration: %s", error_msg)
-            return False
-
-        # Log warnings for potentially problematic configurations
-        transition_type = transition_config.get("type", "redraw")
-        if self.transition_manager:
-            recommendations = self.transition_manager.get_recommended_transitions()
-            avoid_list = recommendations.get("avoid", [])
-
-            if transition_type in avoid_list:
-                self.logger.warning(
-                    "Transition type '%s' may not work well with %s display (%sx%s)",
-                    transition_type,
-                    recommendations["aspect_ratio"],
-                    self.transition_manager.width,
-                    self.transition_manager.height,
-                )
-
         return True
 
     def cleanup(self) -> None:
@@ -439,8 +343,7 @@ class BasePlugin(ABC):
         Called after the plugin configuration has been updated via the web API.
 
         Plugins may override this to apply changes immediately without a restart.
-        The default implementation updates the in-memory config and refreshes
-        transition settings if relevant keys are present.
+        The default implementation updates the in-memory config.
 
         Args:
             new_config: The full, merged configuration for this plugin (including
@@ -451,15 +354,6 @@ class BasePlugin(ABC):
 
         # Update simple flags
         self.enabled = self.config.get("enabled", self.enabled)
-        self.high_performance_mode = self.config.get("high_performance_transitions", self.high_performance_mode)
-
-        # Rebuild transition configuration if provided
-        try:
-            self.transition_config = self._load_transition_config()
-        except Exception as e:  # pylint: disable=broad-except
-            self.logger.warning(
-                "Failed to refresh transition configuration after config change: %s", e
-            )
 
     def get_info(self) -> Dict[str, Any]:
         """
@@ -504,64 +398,3 @@ class BasePlugin(ABC):
         """
         self.enabled = False
         self.logger.info("Plugin disabled: %s", self.plugin_id)
-
-    def _load_transition_config(self) -> Dict[str, Any]:
-        """
-        Load transition configuration from plugin config.
-
-        Returns:
-            Transition configuration dictionary
-        """
-        transition_config = self.config.get("transition", {})
-
-        # Set defaults
-        default_config = {"type": "redraw", "speed": 2, "enabled": True}
-
-        # Merge with defaults
-        config = default_config.copy()
-        config.update(transition_config)
-
-        return config
-
-    def apply_transition(
-        self, new_image: Image.Image, transition_config: Optional[Dict[str, Any]] = None
-    ) -> None:
-        """
-        Apply transition to display new image.
-
-        Args:
-            new_image: PIL Image to transition to
-            transition_config: Optional transition config override
-        """
-        if not self.transition_manager:
-            # Fallback to simple redraw if transition system not available
-            self.display_manager.image = new_image.copy()
-            self.display_manager.update_display()
-            return
-
-        # Use provided config or default
-        config = transition_config or self.transition_config
-
-        # Get current display image for transition
-        current_image = None
-        if hasattr(self.display_manager, "image") and self.display_manager.image:
-            current_image = self.display_manager.image
-
-        # Apply transition
-        self.transition_manager.transition(current_image, new_image, config)
-
-    def get_transition_recommendations(self) -> Dict[str, Any]:
-        """
-        Get transition recommendations based on display dimensions.
-
-        Returns:
-            Dict with aspect ratio info and recommendations
-        """
-        if not self.transition_manager:
-            return {"available": False, "reason": "Transition system not initialized"}
-
-        return {
-            "available": True,
-            "recommendations": self.transition_manager.get_recommended_transitions(),
-            "current_config": self.transition_config,
-        }

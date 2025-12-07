@@ -278,14 +278,6 @@ class SchemaManager:
                 "live_priority": {
                     "type": "boolean",
                     "description": "Enable live priority takeover when plugin has live content"
-                },
-                "high_performance_transitions": {
-                    "type": "boolean",
-                    "description": "Use high-performance transitions (120 FPS) instead of standard (30 FPS)"
-                },
-                "transition": {
-                    "type": "object",
-                    "description": "Transition configuration for this plugin"
                 }
             }
             

@@ -56,8 +56,6 @@ This documentation has been consolidated and organized to reduce redundancy whil
 
 ### 🛠️ Development & Tools
 - [BACKGROUND_SERVICE_README.md](BACKGROUND_SERVICE_README.md) - Background service architecture
-- [DISPLAY_TRANSITIONS.md](DISPLAY_TRANSITIONS.md) - Display transition system
-- [HIGH_PERFORMANCE_TRANSITIONS.md](HIGH_PERFORMANCE_TRANSITIONS.md) - Performance optimizations
 - [FONT_MANAGER_USAGE.md](FONT_MANAGER_USAGE.md) - Font management system
 
 ### 🔍 Analysis & Compatibility

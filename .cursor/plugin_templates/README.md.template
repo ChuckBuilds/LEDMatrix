@@ -63,29 +63,6 @@ pip install -r plugins/PLUGIN_ID/requirements.txt
 - `display_duration` (number): How long to display this plugin (default: 15 seconds)
 - `refresh_interval` (integer): How often to refresh data in seconds (default: 60)
 - `live_priority` (boolean): Enable live priority takeover (default: false)
-- `high_performance_transitions` (boolean): Use 120 FPS transitions (default: false)
-
-### Transition Settings
-
-Configure transitions in the `transition` object:
-
-```json
-{
-  "transition": {
-    "type": "fade",
-    "speed": 2,
-    "enabled": true
-  }
-}
-```
-
-Available transition types:
-- `redraw`: Simple redraw (no transition)
-- `fade`: Fade between displays
-- `slide`: Slide transition
-- `wipe`: Wipe transition
-- `dissolve`: Dissolve transition
-- `pixelate`: Pixelate transition
 
 ## Display Modes
 

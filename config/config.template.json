@@ -88,11 +88,6 @@
     },
     "web-ui-info": {
         "enabled": true,
-        "display_duration": 10,
-        "transition": {
-            "type": "redraw",
-            "speed": 2,
-            "enabled": true
-        }
+        "display_duration": 10
     }
 }

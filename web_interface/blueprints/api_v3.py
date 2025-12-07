@@ -2538,8 +2538,7 @@ def save_plugin_config():
                 enhanced_schema["properties"] = {}
             
             # Core properties that are always injected during validation
-            core_properties = ["enabled", "display_duration", "live_priority", 
-                             "high_performance_transitions", "transition"]
+            core_properties = ["enabled", "display_duration", "live_priority"]
             for prop_name in core_properties:
                 if prop_name not in enhanced_schema["properties"]:
                     # Add placeholder to get the full list of allowed keys
