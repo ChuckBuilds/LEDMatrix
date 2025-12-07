@@ -913,9 +913,10 @@ class DisplayController:
                         manager_to_display and self._plugin_supports_dynamic(manager_to_display)
                     )
 
-                    if dynamic_enabled and (
-                        self._active_dynamic_mode != active_mode or self.force_change
-                    ):
+                    # Only reset cycle when actually switching to a different dynamic mode.
+                    # This prevents resetting the cycle when staying on the same live priority mode
+                    # with force_change=True (which is used for display clearing, not cycle resets).
+                    if dynamic_enabled and self._active_dynamic_mode != active_mode:
                         self._plugin_reset_cycle(manager_to_display)
                         self._active_dynamic_mode = active_mode
                     elif not dynamic_enabled and self._active_dynamic_mode == active_mode:
