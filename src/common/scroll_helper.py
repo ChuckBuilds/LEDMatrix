@@ -111,7 +111,14 @@ class ScrollHelper:
         """
         if not content_items:
             # Create empty image if no content
-            return Image.new('RGB', (self.display_width, self.display_height), (0, 0, 0))
+            # Still set total_scroll_width to 0 to indicate no scrollable content
+            self.total_scroll_width = 0
+            self.cached_image = Image.new('RGB', (self.display_width, self.display_height), (0, 0, 0))
+            self.cached_array = np.array(self.cached_image)
+            self.scroll_position = 0.0
+            self.total_distance_scrolled = 0.0
+            self.scroll_complete = False
+            return self.cached_image
         
         # Calculate total width needed
         total_width = sum(img.width for img in content_items)
@@ -288,7 +295,25 @@ class ScrollHelper:
         Returns:
             Duration in seconds
         """
-        if not self.dynamic_duration_enabled or not self.total_scroll_width:
+        if not self.dynamic_duration_enabled:
+            return self.min_duration
+        
+        # Validate total_scroll_width is set and valid
+        if not self.total_scroll_width or self.total_scroll_width <= 0:
+            if self.total_scroll_width == 0:
+                self.logger.warning(
+                    "Dynamic duration calculation skipped: total_scroll_width is 0. "
+                    "Ensure create_scrolling_image() or set_scrolling_image() has been called. "
+                    "Using minimum duration: %ds",
+                    self.min_duration
+                )
+            else:
+                self.logger.warning(
+                    "Dynamic duration calculation skipped: total_scroll_width is invalid (%s). "
+                    "Using minimum duration: %ds",
+                    self.total_scroll_width,
+                    self.min_duration
+                )
             return self.min_duration
         
         try:

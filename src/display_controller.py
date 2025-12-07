@@ -464,9 +464,14 @@ class DisplayController:
         except Exception as exc:  # pylint: disable=broad-except
             plugin_id = getattr(plugin_instance, "plugin_id", "unknown")
             logger.warning(
-                "Failed to read cycle completion for %s: %s", plugin_id, exc
+                "Failed to read cycle completion for %s: %s (keeping display active)",
+                plugin_id,
+                exc,
+                exc_info=True,
             )
-            return True
+            # Return False on error to keep displaying rather than cutting short
+            # This is safer - better to show content longer than to exit prematurely
+            return False
 
     def _get_on_demand_remaining(self) -> Optional[float]:
         """Calculate remaining time for an active on-demand session."""
@@ -912,14 +917,37 @@ class DisplayController:
                     dynamic_enabled = (
                         manager_to_display and self._plugin_supports_dynamic(manager_to_display)
                     )
+                    
+                    # Log dynamic duration status
+                    if dynamic_enabled:
+                        logger.debug(
+                            "Dynamic duration enabled for mode %s (plugin: %s)",
+                            active_mode,
+                            getattr(manager_to_display, "plugin_id", "unknown"),
+                        )
 
                     # Only reset cycle when actually switching to a different dynamic mode.
                     # This prevents resetting the cycle when staying on the same live priority mode
                     # with force_change=True (which is used for display clearing, not cycle resets).
                     if dynamic_enabled and self._active_dynamic_mode != active_mode:
+                        if self._active_dynamic_mode is not None:
+                            logger.debug(
+                                "Switching dynamic duration mode from %s to %s - resetting cycle",
+                                self._active_dynamic_mode,
+                                active_mode,
+                            )
+                        else:
+                            logger.debug(
+                                "Starting dynamic duration mode %s - resetting cycle",
+                                active_mode,
+                            )
                         self._plugin_reset_cycle(manager_to_display)
                         self._active_dynamic_mode = active_mode
                     elif not dynamic_enabled and self._active_dynamic_mode == active_mode:
+                        logger.debug(
+                            "Dynamic duration disabled for mode %s - clearing active dynamic mode",
+                            active_mode,
+                        )
                         self._active_dynamic_mode = None
 
                     min_duration = base_duration
@@ -929,15 +957,53 @@ class DisplayController:
                         cap_candidates = [
                             cap
                             for cap in (plugin_cap, global_cap)
-                            if cap is not None
+                            if cap is not None and cap > 0
                         ]
                         if cap_candidates:
                             chosen_cap = min(cap_candidates)
                         else:
                             chosen_cap = DEFAULT_DYNAMIC_DURATION_CAP
+                        
+                        # Validate and sanitize durations
+                        if min_duration <= 0:
+                            logger.warning(
+                                "Invalid min_duration %s for mode %s, using default 15s",
+                                min_duration,
+                                active_mode,
+                            )
+                            min_duration = 15.0
+                        
+                        if chosen_cap <= 0:
+                            logger.warning(
+                                "Invalid dynamic duration cap %s for mode %s, using default %ds",
+                                chosen_cap,
+                                active_mode,
+                                DEFAULT_DYNAMIC_DURATION_CAP,
+                            )
+                            chosen_cap = DEFAULT_DYNAMIC_DURATION_CAP
+                        
+                        # Ensure max_duration >= min_duration
                         max_duration = max(min_duration, chosen_cap)
+                        
+                        if max_duration < min_duration:
+                            logger.warning(
+                                "max_duration (%s) < min_duration (%s) for mode %s, adjusting max to min",
+                                max_duration,
+                                min_duration,
+                                active_mode,
+                            )
+                            max_duration = min_duration
                     else:
                         max_duration = base_duration
+                        
+                        # Validate base duration even when not dynamic
+                        if max_duration <= 0:
+                            logger.warning(
+                                "Invalid base_duration %s for mode %s, using default 15s",
+                                max_duration,
+                                active_mode,
+                            )
+                            max_duration = 15.0
 
                     if self.on_demand_active:
                         remaining = self._get_on_demand_remaining()
@@ -973,9 +1039,21 @@ class DisplayController:
                         def _should_exit_dynamic(elapsed_time: float) -> bool:
                             if not dynamic_enabled:
                                 return False
-                            if elapsed_time < min_duration:
+                            # Add small grace period (0.5s) after min_duration to prevent
+                            # premature exits due to timing issues
+                            grace_period = 0.5
+                            if elapsed_time < min_duration + grace_period:
                                 return False
-                            return self._plugin_cycle_complete(manager_to_display)
+                            cycle_complete = self._plugin_cycle_complete(manager_to_display)
+                            if cycle_complete:
+                                logger.debug(
+                                    "Cycle complete detected for %s after %.2fs (min: %.2fs, grace: %.2fs)",
+                                    active_mode,
+                                    elapsed_time,
+                                    min_duration,
+                                    grace_period,
+                                )
+                            return cycle_complete
 
                         loop_completed = False
 
@@ -1073,11 +1151,33 @@ class DisplayController:
                         if dynamic_enabled:
                             elapsed_total = time.time() - start_time
                             cycle_done = self._plugin_cycle_complete(manager_to_display)
-                            if not cycle_done and elapsed_total >= max_duration:
+                            
+                            # Log cycle completion status and metrics
+                            if cycle_done:
                                 logger.info(
-                                    "Dynamic duration cap reached before cycle completion for %s (%.2fs)",
+                                    "Dynamic duration cycle completed for %s after %.2fs (target: %.2fs, min: %.2fs, max: %.2fs)",
                                     active_mode,
                                     elapsed_total,
+                                    target_duration,
+                                    min_duration,
+                                    max_duration,
+                                )
+                            elif elapsed_total >= max_duration:
+                                logger.info(
+                                    "Dynamic duration cap reached before cycle completion for %s (%.2fs/%ds, min: %.2fs)",
+                                    active_mode,
+                                    elapsed_total,
+                                    int(max_duration),
+                                    min_duration,
+                                )
+                            else:
+                                logger.debug(
+                                    "Dynamic duration cycle in progress for %s: %.2fs elapsed (target: %.2fs, min: %.2fs, max: %.2fs)",
+                                    active_mode,
+                                    elapsed_total,
+                                    target_duration,
+                                    min_duration,
+                                    max_duration,
                                 )
                     else:
                         # For non-plugin modes, use the original behavior
