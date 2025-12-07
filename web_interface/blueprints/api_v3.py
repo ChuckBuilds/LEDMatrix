@@ -2405,8 +2405,18 @@ def save_plugin_config():
                 if plugin_id in current_config and 'enabled' in current_config[plugin_id]:
                     plugin_config['enabled'] = current_config[plugin_id]['enabled']
                     # logger.debug(f"Preserving enabled state for {plugin_id}: {plugin_config['enabled']}")
+                elif api_v3.plugin_manager:
+                    # Fallback to plugin instance if config doesn't have it
+                    plugin_instance = api_v3.plugin_manager.get_plugin(plugin_id)
+                    if plugin_instance:
+                        plugin_config['enabled'] = plugin_instance.enabled
+                # Final fallback: default to True if plugin is loaded (matches BasePlugin default)
+                if 'enabled' not in plugin_config:
+                    plugin_config['enabled'] = True
             except Exception as e:
                 print(f"Error preserving enabled state: {e}")
+                # Default to True on error to avoid disabling plugins
+                plugin_config['enabled'] = True
 
         # Find secret fields (supports nested schemas)
         secret_fields = set()
@@ -2430,9 +2440,21 @@ def save_plugin_config():
         
         # Apply defaults from schema to config BEFORE validation
         # This ensures required fields with defaults are present before validation
+        # Store preserved enabled value before merge to protect it from defaults
+        preserved_enabled = None
+        if 'enabled' in plugin_config:
+            preserved_enabled = plugin_config['enabled']
+        
         if schema:
             defaults = schema_mgr.generate_default_config(plugin_id, use_cache=True)
             plugin_config = schema_mgr.merge_with_defaults(plugin_config, defaults)
+        
+        # Ensure enabled state is preserved after defaults merge
+        # Defaults should not overwrite an explicitly preserved enabled value
+        if preserved_enabled is not None:
+            # Restore preserved value if it was changed by defaults merge
+            if plugin_config.get('enabled') != preserved_enabled:
+                plugin_config['enabled'] = preserved_enabled
         
         # Normalize config data: convert string numbers to integers/floats where schema expects numbers
         # This handles form data which sends everything as strings
@@ -2648,6 +2670,27 @@ def save_plugin_config():
                     plugin_full_config = merged_config.get(plugin_id, {})
                     if hasattr(plugin_instance, 'on_config_change'):
                         plugin_instance.on_config_change(plugin_full_config)
+                    
+                    # Update plugin state manager and call lifecycle methods based on enabled state
+                    # This ensures the plugin state is synchronized with the config
+                    enabled = plugin_full_config.get('enabled', plugin_instance.enabled)
+                    
+                    # Update state manager if available
+                    if api_v3.plugin_state_manager:
+                        api_v3.plugin_state_manager.set_plugin_enabled(plugin_id, enabled)
+                    
+                    # Call lifecycle methods to ensure plugin state matches config
+                    try:
+                        if enabled:
+                            if hasattr(plugin_instance, 'on_enable'):
+                                plugin_instance.on_enable()
+                        else:
+                            if hasattr(plugin_instance, 'on_disable'):
+                                plugin_instance.on_disable()
+                    except Exception as lifecycle_error:
+                        # Log the error but don't fail the save - config is already saved
+                        import logging
+                        logging.warning(f"Lifecycle method error for {plugin_id}: {lifecycle_error}", exc_info=True)
         except Exception as hook_err:
             # Do not fail the save if hook fails; just log
             print(f"Warning: on_config_change failed for {plugin_id}: {hook_err}")
