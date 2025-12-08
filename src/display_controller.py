@@ -867,14 +867,8 @@ class DisplayController:
                         continue
                     else:
                         logger.info("No content to display for %s, skipping to next mode", active_mode)
-                        # Clear display briefly before skipping to avoid showing stale content
-                        # We'll skip immediately after clearing
-                        try:
-                            if hasattr(self.display_manager, 'clear'):
-                                self.display_manager.clear()
-                                self.display_manager.update_display()
-                        except Exception as clear_err:
-                            logger.debug(f"Error clearing display when skipping mode: {clear_err}")
+                        # Don't clear display when immediately moving to next mode - this causes black flashes
+                        # The next mode will render immediately with force_clear=True, which is sufficient
                         
                         # Only skip all modes for this plugin if there was an exception (broken plugin)
                         # If it's just "no content", we should still try other modes (recent, upcoming)
