@@ -3983,6 +3983,73 @@ window.handleFileSelect = function(event, fieldId) {
     }
 }
 
+window.handleCredentialsUpload = async function(event, fieldId, uploadEndpoint, targetFilename) {
+    const file = event.target.files[0];
+    if (!file) {
+        return;
+    }
+    
+    // Validate file extension
+    const fileExt = '.' + file.name.split('.').pop().toLowerCase();
+    if (!fileExt || fileExt === '.') {
+        showNotification('Please select a valid file', 'error');
+        return;
+    }
+    
+    // Validate file size (1MB max)
+    if (file.size > 1024 * 1024) {
+        showNotification('File exceeds 1MB limit', 'error');
+        return;
+    }
+    
+    // Show upload status
+    const statusEl = document.getElementById(fieldId + '_status');
+    if (statusEl) {
+        statusEl.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>Uploading...';
+    }
+    
+    // Create form data
+    const formData = new FormData();
+    formData.append('file', file);
+    
+    try {
+        const response = await fetch(uploadEndpoint, {
+            method: 'POST',
+            body: formData
+        });
+        
+        const data = await response.json();
+        
+        if (data.status === 'success') {
+            // Update hidden input with filename
+            const hiddenInput = document.getElementById(fieldId + '_hidden');
+            if (hiddenInput) {
+                hiddenInput.value = targetFilename || file.name;
+            }
+            
+            // Update status
+            if (statusEl) {
+                statusEl.innerHTML = `✓ Uploaded: ${targetFilename || file.name}`;
+                statusEl.className = 'text-sm text-green-600';
+            }
+            
+            showNotification('Credentials file uploaded successfully', 'success');
+        } else {
+            if (statusEl) {
+                statusEl.innerHTML = 'Upload failed - click to try again';
+                statusEl.className = 'text-sm text-gray-600';
+            }
+            showNotification(data.message || 'Upload failed', 'error');
+        }
+    } catch (error) {
+        if (statusEl) {
+            statusEl.innerHTML = 'Upload failed - click to try again';
+            statusEl.className = 'text-sm text-gray-600';
+        }
+        showNotification('Error uploading file: ' + error.message, 'error');
+    }
+}
+
 window.handleFiles = async function(fieldId, files) {
     const uploadConfig = window.getUploadConfig(fieldId);
     const pluginId = uploadConfig.plugin_id || window.currentPluginConfig?.pluginId || 'static-image';

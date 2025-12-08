@@ -3533,6 +3533,90 @@ def upload_plugin_asset():
         import traceback
         return jsonify({'status': 'error', 'message': str(e), 'traceback': traceback.format_exc()}), 500
 
+@api_v3.route('/plugins/calendar/upload-credentials', methods=['POST'])
+def upload_calendar_credentials():
+    """Upload credentials.json file for calendar plugin"""
+    try:
+        if 'file' not in request.files:
+            return jsonify({'status': 'error', 'message': 'No file provided'}), 400
+        
+        file = request.files['file']
+        if not file or not file.filename:
+            return jsonify({'status': 'error', 'message': 'No file provided'}), 400
+        
+        # Validate file extension
+        if not file.filename.lower().endswith('.json'):
+            return jsonify({'status': 'error', 'message': 'File must be a JSON file (.json)'}), 400
+        
+        # Validate file size (max 1MB for credentials)
+        file.seek(0, os.SEEK_END)
+        file_size = file.tell()
+        file.seek(0)
+        
+        if file_size > 1024 * 1024:  # 1MB
+            return jsonify({'status': 'error', 'message': 'File exceeds 1MB limit'}), 400
+        
+        # Validate it's valid JSON
+        try:
+            file_content = file.read()
+            file.seek(0)
+            json.loads(file_content)
+        except json.JSONDecodeError:
+            return jsonify({'status': 'error', 'message': 'File is not valid JSON'}), 400
+        
+        # Validate it looks like Google OAuth credentials
+        try:
+            file.seek(0)
+            creds_data = json.loads(file.read())
+            file.seek(0)
+            
+            # Check for required Google OAuth fields
+            if 'installed' not in creds_data and 'web' not in creds_data:
+                return jsonify({
+                    'status': 'error', 
+                    'message': 'File does not appear to be a valid Google OAuth credentials file'
+                }), 400
+        except Exception:
+            pass  # Continue even if validation fails
+        
+        # Get plugin directory
+        plugin_id = 'calendar'
+        if api_v3.plugin_manager:
+            plugin_dir = api_v3.plugin_manager.get_plugin_directory(plugin_id)
+        else:
+            plugin_dir = PROJECT_ROOT / 'plugins' / plugin_id
+        
+        if not plugin_dir or not Path(plugin_dir).exists():
+            return jsonify({'status': 'error', 'message': f'Plugin {plugin_id} not found'}), 404
+        
+        # Save file to plugin directory
+        credentials_path = Path(plugin_dir) / 'credentials.json'
+        
+        # Backup existing file if it exists
+        if credentials_path.exists():
+            backup_path = Path(plugin_dir) / f'credentials.json.backup.{int(time.time())}'
+            import shutil
+            shutil.copy2(credentials_path, backup_path)
+        
+        # Save new file
+        file.save(str(credentials_path))
+        
+        # Set proper permissions
+        os.chmod(credentials_path, 0o600)  # Read/write for owner only
+        
+        return jsonify({
+            'status': 'success',
+            'message': 'Credentials file uploaded successfully',
+            'path': str(credentials_path)
+        })
+        
+    except Exception as e:
+        import traceback
+        error_details = traceback.format_exc()
+        print(f"Error in upload_calendar_credentials: {str(e)}")
+        print(error_details)
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
 @api_v3.route('/plugins/assets/delete', methods=['POST'])
 def delete_plugin_asset():
     """Delete an asset file for a plugin"""

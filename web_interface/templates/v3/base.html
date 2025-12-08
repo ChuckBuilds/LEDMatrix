@@ -1910,6 +1910,38 @@
                                 html += `<option value="${option}" ${selected}>${option}</option>`;
                             });
                             html += `</select>`;
+                        } else if (prop.type === 'string' && prop['x-widget'] === 'file-upload') {
+                            // File upload widget for string fields (e.g., credentials.json)
+                            const uploadConfig = prop['x-upload-config'] || {};
+                            const uploadEndpoint = uploadConfig.upload_endpoint || '/api/v3/plugins/assets/upload';
+                            const maxSizeMB = uploadConfig.max_size_mb || 1;
+                            const allowedExtensions = uploadConfig.allowed_extensions || ['.json'];
+                            const targetFilename = uploadConfig.target_filename || 'file.json';
+                            const fieldId = fullKey.replace(/\./g, '_');
+                            const hasFile = value && value !== '';
+                            
+                            html += `
+                                <div id="${fieldId}_upload_widget" class="mt-1">
+                                    <div id="${fieldId}_file_upload" 
+                                         class="border-2 border-dashed border-gray-300 rounded-lg p-4 text-center hover:border-blue-400 transition-colors cursor-pointer"
+                                         onclick="document.getElementById('${fieldId}_file_input').click()">
+                                        <input type="file" 
+                                               id="${fieldId}_file_input" 
+                                               accept="${allowedExtensions.join(',')}"
+                                               style="display: none;"
+                                               data-field-id="${fieldId}"
+                                               data-upload-endpoint="${uploadEndpoint}"
+                                               data-target-filename="${targetFilename}"
+                                               onchange="window.handleCredentialsUpload(event, this.dataset.fieldId, this.dataset.uploadEndpoint, this.dataset.targetFilename)">
+                                        <i class="fas fa-file-upload text-2xl text-gray-400 mb-2"></i>
+                                        <p class="text-sm text-gray-600" id="${fieldId}_status">
+                                            ${hasFile ? `Current file: ${value}` : 'Click to upload ' + targetFilename}
+                                        </p>
+                                        <p class="text-xs text-gray-500 mt-1">Max ${maxSizeMB}MB (${allowedExtensions.join(', ')})</p>
+                                    </div>
+                                    <input type="hidden" name="${fullKey}" value="${value || ''}" id="${fieldId}_hidden">
+                                </div>
+                            `;
                         } else {
                             // Default to text input
                             const maxLength = prop.maxLength || '';
