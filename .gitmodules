@@ -13,3 +13,6 @@
 [submodule "plugins/basketball-scoreboard"]
 	path = plugins/basketball-scoreboard
 	url = https://github.com/ChuckBuilds/ledmatrix-basketball-scoreboard.git
+[submodule "plugins/soccer-scoreboard"]
+	path = plugins/soccer-scoreboard
+	url = https://github.com/ChuckBuilds/ledmatrix-soccer-scoreboard.git

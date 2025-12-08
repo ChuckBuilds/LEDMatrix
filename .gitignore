@@ -47,4 +47,6 @@ plugins/*
 !plugins/text-display/
 !plugins/basketball-scoreboard
 !plugins/basketball-scoreboard/
+!plugins/soccer-scoreboard
+!plugins/soccer-scoreboard/
 !plugins/*/.git
