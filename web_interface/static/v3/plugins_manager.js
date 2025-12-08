@@ -1706,9 +1706,12 @@ function generateFieldHtml(key, prop, value, prefix = '') {
         const sectionId = `section-${fullKey.replace(/\./g, '-')}`;
         const nestedConfig = value || {};
         const sectionLabel = prop.title || key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+        // Calculate nesting depth for better spacing
+        const nestingDepth = (fullKey.match(/\./g) || []).length;
+        const marginClass = nestingDepth > 1 ? 'mb-6' : 'mb-4';
         
         html += `
-            <div class="nested-section border border-gray-300 rounded-lg overflow-hidden mb-4">
+            <div class="nested-section border border-gray-300 rounded-lg overflow-hidden ${marginClass}">
                 <button type="button" 
                         class="w-full bg-gray-100 hover:bg-gray-200 px-4 py-3 flex items-center justify-between text-left transition-colors"
                         onclick="toggleNestedSection('${sectionId}')">
@@ -1718,7 +1721,7 @@ function generateFieldHtml(key, prop, value, prefix = '') {
                     </div>
                     <i id="${sectionId}-icon" class="fas fa-chevron-right text-gray-500 transition-transform"></i>
                 </button>
-                <div id="${sectionId}" class="nested-content collapsed bg-gray-50 px-4 py-3 space-y-3" style="max-height: 0; display: none;">
+                <div id="${sectionId}" class="nested-content collapsed bg-gray-50 px-4 py-4 space-y-3" style="max-height: 0; display: none;">
         `;
         
         // Recursively generate fields for nested properties
@@ -1758,6 +1761,11 @@ function generateFieldHtml(key, prop, value, prefix = '') {
                 </div>
             </div>
         `;
+        
+        // Add extra spacing after nested sections to prevent overlap with next section
+        if (nestingDepth > 0) {
+            html += `<div class="mb-2"></div>`;
+        }
         
         return html;
     }

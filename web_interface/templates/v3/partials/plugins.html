@@ -463,11 +463,18 @@
 .nested-content.expanded {
     opacity: 1;
     max-height: 5000px; /* Large enough for most content */
+    padding-bottom: 1rem !important; /* Ensure proper padding at bottom to prevent cutoff */
 }
 
-/* Nested sections within nested sections - add indentation */
+/* Nested sections within nested sections - add indentation and spacing */
 .nested-content .nested-section {
     margin-left: 1rem;
+    margin-bottom: 1.5rem; /* Increased spacing to prevent overlap */
+}
+
+/* Deeply nested sections need even more spacing */
+.nested-content .nested-content .nested-section {
+    margin-bottom: 2rem;
 }
 
 /* Form group spacing within nested sections */
