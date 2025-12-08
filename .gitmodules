@@ -16,3 +16,6 @@
 [submodule "plugins/soccer-scoreboard"]
 	path = plugins/soccer-scoreboard
 	url = https://github.com/ChuckBuilds/ledmatrix-soccer-scoreboard.git
+[submodule "plugins/calendar"]
+	path = plugins/calendar
+	url = https://github.com/ChuckBuilds/ledmatrix-calendar.git

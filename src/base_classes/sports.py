@@ -59,11 +59,9 @@ class SportsCore(ABC):
         self.mode_config = config.get(f"{sport_key}_scoreboard", {})  # Changed config key
         self.is_enabled: bool = self.mode_config.get("enabled", False)
         self.show_odds: bool = self.mode_config.get("show_odds", False)
-        self.test_mode: bool = self.mode_config.get("test_mode", False)
         # Use LogoDownloader to get the correct default logo directory for this sport
         default_logo_dir = Path(LogoDownloader().get_logo_directory(sport_key))
-        configured_logo_dir = Path(self.mode_config.get("logo_dir", default_logo_dir))
-        self.logo_dir = self._initialize_logo_dir(configured_logo_dir)
+        self.logo_dir = self._initialize_logo_dir(default_logo_dir)
         self.update_interval: int = self.mode_config.get(
             "update_interval_seconds", 60)
         self.show_records: bool = self.mode_config.get('show_records', False)

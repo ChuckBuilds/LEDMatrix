@@ -49,4 +49,6 @@ plugins/*
 !plugins/basketball-scoreboard/
 !plugins/soccer-scoreboard
 !plugins/soccer-scoreboard/
+!plugins/calendar
+!plugins/calendar/
 !plugins/*/.git
