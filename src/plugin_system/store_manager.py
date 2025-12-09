@@ -1330,6 +1330,32 @@ class PluginStoreManager:
                         check=True
                     )
 
+                    # Check for local changes and stash them if needed
+                    status_result = subprocess.run(
+                        ['git', '-C', str(plugin_path), 'status', '--porcelain'],
+                        capture_output=True,
+                        text=True,
+                        timeout=10,
+                        check=False
+                    )
+                    
+                    has_changes = bool(status_result.stdout.strip())
+                    stash_info = ""
+                    if has_changes:
+                        self.logger.info(f"Stashing local changes in {plugin_id} before update")
+                        stash_result = subprocess.run(
+                            ['git', '-C', str(plugin_path), 'stash', 'push', '-m', f'LEDMatrix auto-stash before update {plugin_id}'],
+                            capture_output=True,
+                            text=True,
+                            timeout=10,
+                            check=False
+                        )
+                        if stash_result.returncode == 0:
+                            stash_info = " (local changes were stashed)"
+                            self.logger.info(f"Stashed local changes for {plugin_id}")
+                        else:
+                            self.logger.warning(f"Failed to stash local changes for {plugin_id}: {stash_result.stderr}")
+
                     # Pull from the determined remote branch
                     pull_result = subprocess.run(
                         ['git', '-C', str(plugin_path), 'pull', 'origin', remote_pull_branch],
@@ -1339,20 +1365,27 @@ class PluginStoreManager:
                         check=True
                     )
 
-                    self.logger.info(pull_result.stdout.strip() or f"Pulled latest changes for {plugin_id}")
+                    pull_message = pull_result.stdout.strip() or f"Pulled latest changes for {plugin_id}"
+                    if stash_info:
+                        pull_message += stash_info
+                    self.logger.info(pull_message)
 
                     updated_git_info = self._get_local_git_info(plugin_path) or {}
                     updated_sha = updated_git_info.get('sha', '')
                     if remote_sha and updated_sha and remote_sha.startswith(updated_sha):
-                        self.logger.info(f"Plugin {plugin_id} now at remote commit {remote_sha[:7]}")
+                        self.logger.info(f"Plugin {plugin_id} now at remote commit {remote_sha[:7]}{stash_info}")
                     elif updated_sha:
-                        self.logger.info(f"Plugin {plugin_id} updated to commit {updated_sha[:7]}")
+                        self.logger.info(f"Plugin {plugin_id} updated to commit {updated_sha[:7]}{stash_info}")
 
                     self._install_dependencies(plugin_path)
                     return True
 
                 except subprocess.CalledProcessError as git_error:
-                    self.logger.warning(f"Git update failed for {plugin_id}: {git_error.stderr}")
+                    error_output = git_error.stderr or git_error.stdout or "Unknown error"
+                    self.logger.warning(f"Git update failed for {plugin_id}: {error_output}")
+                    # Check if it's a merge conflict or local changes issue
+                    if "would be overwritten" in error_output or "local changes" in error_output.lower():
+                        self.logger.warning(f"Plugin {plugin_id} has local changes that prevent update. Consider committing or stashing changes manually.")
                     return False
                 except subprocess.TimeoutExpired:
                     self.logger.warning(f"Git update timed out for {plugin_id}")
