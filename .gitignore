@@ -15,6 +15,7 @@ token.pickle
 .venv
 env/
 venv/
+venv*/
 ENV/
 
 # IDE

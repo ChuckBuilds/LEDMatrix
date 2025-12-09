@@ -1,15 +1,13 @@
-import time
-import logging
-import requests
-import xml.etree.ElementTree as ET
-import json
-import random
-from typing import Dict, Any, List, Tuple, Optional
-from datetime import datetime, timedelta
-import os
-import urllib.parse
-import re
 import html
+import logging
+import os
+import re
+import requests
+import time
+import xml.etree.ElementTree as ET
+from typing import Dict, Any, List
+from datetime import datetime
+from src.image_utils import scale_to_max_dimensions
 from src.config_manager import ConfigManager
 from PIL import Image, ImageDraw, ImageFont
 from src.cache_manager import CacheManager
@@ -37,10 +35,11 @@ class NewsManager:
         self.news_config = config.get('news_manager', {})
         self.last_update = time.time()  # Initialize to current time
         self.news_data = {}
+        self.favicons = {}
         self.current_headline_index = 0
         self.scroll_position = 0
         self.scrolling_image = None  # Pre-rendered image for smooth scrolling
-        self.cached_text = None
+        self.cached_images = []
         self.cache_manager = CacheManager()
         self.current_headlines = []
         self.headline_start_times = []
@@ -101,6 +100,13 @@ class NewsManager:
         adapter = HTTPAdapter(max_retries=retry_strategy)
         self.session.mount("http://", adapter)
         self.session.mount("https://", adapter)
+
+        try:
+            self.font = ImageFont.truetype(self.font_path, self.font_size)
+            logger.debug(f"Successfully loaded custom font: {self.font_path}")
+        except Exception as e:
+            logger.warning(f"Failed to load custom font '{self.font_path}': {e}. Using default font.")
+            self.font = ImageFont.load_default()
         
         logger.debug(f"NewsManager initialized with feeds: {self.enabled_feeds}")
         logger.debug(f"Headlines per feed: {self.headlines_per_feed}")
@@ -112,7 +118,6 @@ class NewsManager:
             headers = {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
             }
-            
             response = self.session.get(url, headers=headers, timeout=10)
             response.raise_for_status()
             
@@ -156,6 +161,16 @@ class NewsManager:
         except Exception as e:
             logger.error(f"Error parsing RSS feed {feed_name} ({url}): {e}")
             return []
+    
+    def load_favicon(self, feed_name):
+        try:
+            img_path = os.path.join('assets', 'news_logos', f"{feed_name.lower()}.png")
+            with Image.open(img_path) as img:
+                img = scale_to_max_dimensions(img, 32, int(self.display_manager.height * 0.8)).convert('RGBA')
+                self.favicons[feed_name] = img.copy()
+        except Exception as e:
+            logger.error(f"Error loading favicon for {feed_name}: {e}")
+            return
 
     def fetch_news_data(self):
         """Fetch news from all enabled feeds"""
@@ -170,6 +185,7 @@ class NewsManager:
                     url = all_feeds[feed_name]
                     headlines = self.parse_rss_feed(url, feed_name)
                     all_headlines.extend(headlines)
+                    self.load_favicon(feed_name)
                 else:
                     logger.warning(f"Feed '{feed_name}' not found in available feeds")
             
@@ -215,81 +231,96 @@ class NewsManager:
         
         # Create scrolling text with separators
         if display_headlines:
-            text_parts = []
+            self.cached_images = []
             for i, headline in enumerate(display_headlines):
-                feed_prefix = f"[{headline['feed']}] "
-                text_parts.append(feed_prefix + headline['title'])
+                favicon = self.favicons.get(headline['feed'])
+
+                # Use backup separator and prefix if no logo for feed
+                separator = " • " if not favicon and i > 0 else ''
+                feed_prefix = f"[{headline['feed']}] " if not favicon else ''
+                text = separator + feed_prefix + headline['title']
+
+                # Calculate text width and X value
+                text_width = self._get_text_width(text, self.font)
+                headline_width = text_width
+                text_x_pos = 0
+                if favicon:
+                    text_x_pos = favicon.width + 16
+                    headline_width += text_x_pos
+
+                # Draw Image
+                img = Image.new('RGB', (headline_width, self.display_manager.height), (0, 0, 0))
+                draw = ImageDraw.Draw(img)
+                if favicon:
+                    logo_x = 10
+                    logo_y = (self.display_manager.height - favicon.height) // 2
+                    img.paste(favicon, (logo_x, logo_y), favicon)
                 
-            # Join with separators and add spacing
-            separator = " • "
-            self.cached_text = separator.join(text_parts) + " • "  # Add separator at end for smooth loop
+                # Draw text
+                text_height = self.font_size
+                y_pos = (self.display_manager.height - text_height) // 2
+                draw.text((text_x_pos, y_pos), text, font=self.font, fill=self.text_color)
+
+                # Append to cached images for rendering in `create_scrolling_image()`
+                self.cached_images.append(img)
             
+            self.current_headlines = display_headlines
+
             # Calculate text dimensions for perfect scrolling
             self.calculate_scroll_dimensions()
             self.create_scrolling_image()
             
-            self.current_headlines = display_headlines
             logger.debug(f"Prepared {len(display_headlines)} headlines for display")
 
     def calculate_scroll_dimensions(self):
         """Calculate exact dimensions needed for smooth scrolling"""
-        if not self.cached_text:
+        if not self.cached_images:
             return
             
         try:
-            # Load font
-            try:
-                font = ImageFont.truetype(self.font_path, self.font_size)
-                logger.debug(f"Successfully loaded custom font: {self.font_path}")
-            except Exception as e:
-                logger.warning(f"Failed to load custom font '{self.font_path}': {e}. Using default font.")
-                font = ImageFont.load_default()
-                
-            # Calculate text width
-            temp_img = Image.new('RGB', (1, 1))
-            temp_draw = ImageDraw.Draw(temp_img)
-            
-            # Get text dimensions
-            bbox = temp_draw.textbbox((0, 0), self.cached_text, font=font)
-            text_width = bbox[2] - bbox[0]
-            # Add display width gap at the beginning (simulates blank screen)
             display_width = self.display_manager.width
-            self.total_scroll_width = display_width + text_width
+            self.total_scroll_width = display_width
+            for img in self.cached_images:
+                self.total_scroll_width += img.width
             
             # Calculate dynamic display duration
             self.calculate_dynamic_duration()
             
-            logger.debug(f"Text width calculated: {self.total_scroll_width} pixels")
+            logger.debug(f"Image width calculated: {self.total_scroll_width} pixels")
             logger.debug(f"Dynamic duration calculated: {self.dynamic_duration} seconds")
             
         except Exception as e:
             logger.error(f"Error calculating scroll dimensions: {e}")
-            self.total_scroll_width = len(self.cached_text) * 8  # Fallback estimate
+            self.total_scroll_width = sum(len(x['title']) for x in self.current_headlines) * 8  # Fallback estimate
             self.calculate_dynamic_duration()
+
+    def _get_text_width(self, text, font):
+        temp_img = Image.new('RGB', (1, 1))
+        temp_draw = ImageDraw.Draw(temp_img)
+        
+        # Get text dimensions
+        bbox = temp_draw.textbbox((0, 0), text, font=font)
+        return bbox[2] - bbox[0]
+
 
     def create_scrolling_image(self):
         """Create a pre-rendered image for smooth scrolling."""
-        if not self.cached_text:
+        if not self.cached_images:
             self.scrolling_image = None
             return
-
-        try:
-            font = ImageFont.truetype(self.font_path, self.font_size)
-        except Exception as e:
-            logger.warning(f"Failed to load custom font for pre-rendering: {e}. Using default.")
-            font = ImageFont.load_default()
 
         height = self.display_manager.height
         width = self.total_scroll_width
 
         self.scrolling_image = Image.new('RGB', (width, height), (0, 0, 0))
-        draw = ImageDraw.Draw(self.scrolling_image)
 
-        text_height = self.font_size
-        y_pos = (height - text_height) // 2
         # Draw text starting after display width gap (simulates blank screen)
-        display_width = self.display_manager.width
-        draw.text((display_width, y_pos), self.cached_text, font=font, fill=self.text_color)
+        x_pos = self.display_manager.width
+        for img in self.cached_images:
+            # Render each cached image and advance the cursor by the width of the image
+            self.scrolling_image.paste(img, (x_pos, 0))
+            x_pos += img.width
+
         logger.debug("Pre-rendered scrolling news image created.")
 
     def calculate_dynamic_duration(self):
@@ -405,22 +436,15 @@ class NewsManager:
         img = Image.new('RGB', (width, height), (0, 0, 0))
         draw = ImageDraw.Draw(img)
         
-        try:
-            font = ImageFont.truetype(self.font_path, self.font_size)
-            logger.debug(f"Successfully loaded custom font: {self.font_path}")
-        except Exception as e:
-            logger.warning(f"Failed to load custom font '{self.font_path}': {e}. Using default font.")
-            font = ImageFont.load_default()
-        
         text = "Loading news..."
-        bbox = draw.textbbox((0, 0), text, font=font)
+        bbox = draw.textbbox((0, 0), text, font=self.font)
         text_width = bbox[2] - bbox[0]
         text_height = bbox[3] - bbox[1]
         
         x = (width - text_width) // 2
         y = (height - text_height) // 2
         
-        draw.text((x, y), text, font=font, fill=self.text_color)
+        draw.text((x, y), text, font=self.font, fill=self.text_color)
         return img
 
     def create_error_image(self, error_msg: str) -> Image.Image:
@@ -431,22 +455,15 @@ class NewsManager:
         img = Image.new('RGB', (width, height), (0, 0, 0))
         draw = ImageDraw.Draw(img)
         
-        try:
-            font = ImageFont.truetype(self.font_path, max(8, self.font_size - 2))
-            logger.debug(f"Successfully loaded custom font: {self.font_path}")
-        except Exception as e:
-            logger.warning(f"Failed to load custom font '{self.font_path}': {e}. Using default font.")
-            font = ImageFont.load_default()
-        
         text = f"News Error: {error_msg[:50]}..."
-        bbox = draw.textbbox((0, 0), text, font=font)
+        bbox = draw.textbbox((0, 0), text, font=self.font)
         text_width = bbox[2] - bbox[0]
         text_height = bbox[3] - bbox[1]
         
         x = max(0, (width - text_width) // 2)
         y = (height - text_height) // 2
         
-        draw.text((x, y), text, font=font, fill=(255, 0, 0))
+        draw.text((x, y), text, font=self.font, fill=(255, 0, 0))
         return img
 
     def display_news(self, force_clear: bool = False):
