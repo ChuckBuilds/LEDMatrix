@@ -166,6 +166,11 @@ class DiskCache:
                                 tmp_file.flush()
                                 os.fsync(tmp_file.fileno())
                             os.replace(tmp_path, cache_path)
+                            # Set proper permissions: 660 (rw-rw----) for group-readable cache files
+                            try:
+                                os.chmod(cache_path, 0o660)
+                            except OSError:
+                                pass  # Non-critical if chmod fails
                         finally:
                             if os.path.exists(tmp_path):
                                 try:
@@ -179,6 +184,11 @@ class DiskCache:
                                 json.dump(data, cache_file, indent=4, cls=DateTimeEncoder)
                                 cache_file.flush()
                                 os.fsync(cache_file.fileno())
+                            # Set proper permissions: 660 (rw-rw----) for group-readable cache files
+                            try:
+                                os.chmod(cache_path, 0o660)
+                            except OSError:
+                                pass  # Non-critical if chmod fails
                             self.logger.debug("Wrote cache for %s directly (non-atomic)", key)
                         except (IOError, OSError, PermissionError) as write_error:
                             # If direct write also fails, try fallback location
@@ -200,6 +210,11 @@ class DiskCache:
                             fallback_path = os.path.join(fallback_dir, os.path.basename(cache_path))
                             with open(fallback_path, 'w', encoding='utf-8') as tmp_file:
                                 json.dump(data, tmp_file, indent=4, cls=DateTimeEncoder)
+                            # Set proper permissions: 660 (rw-rw----) for group-readable cache files
+                            try:
+                                os.chmod(fallback_path, 0o660)
+                            except OSError:
+                                pass  # Non-critical if chmod fails
                             self.logger.debug("Cache wrote to fallback location: %s", fallback_path)
                             return  # Successfully wrote to fallback, exit gracefully
                     except (IOError, OSError, PermissionError) as e2:

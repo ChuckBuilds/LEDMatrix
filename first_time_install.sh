@@ -232,8 +232,11 @@ else
     # Create cache directory with proper permissions
     mkdir -p /var/cache/ledmatrix
     chown -R :ledmatrix /var/cache/ledmatrix
-    chmod -R 775 /var/cache/ledmatrix
+    # Set directory permissions: 775 with setgid for group inheritance
+    find /var/cache/ledmatrix -type d -exec chmod 775 {} \;
     chmod g+s /var/cache/ledmatrix
+    # Set file permissions: 660 for group-readable cache files
+    find /var/cache/ledmatrix -type f -exec chmod 660 {} \;
     
     echo "✓ Cache directory created with proper group permissions"
     echo "  Note: You may need to log out and back in for group changes to take effect"

@@ -33,9 +33,12 @@ fi
 # Set group ownership to ledmatrix
 sudo chown -R :ledmatrix /var/cache/ledmatrix
 
-# Set permissions: 775 (rwxrwxr-x) with setgid bit so new files inherit group
-sudo chmod -R 775 /var/cache/ledmatrix
+# Set directory permissions: 775 (rwxrwxr-x) with setgid bit so new files inherit group
+sudo find /var/cache/ledmatrix -type d -exec chmod 775 {} \;
 sudo chmod g+s /var/cache/ledmatrix
+
+# Set file permissions: 660 (rw-rw----) for group-readable cache files
+sudo find /var/cache/ledmatrix -type f -exec chmod 660 {} \;
 
 echo ""
 echo "Cache directory created: /var/cache/ledmatrix"
