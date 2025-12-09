@@ -202,31 +202,40 @@ class ScrollHelper:
         # to scroll total_scroll_width pixels to show all content once without looping
         required_total_distance = self.total_scroll_width
         
-        # Handle wrap-around - keep scrolling continuously
-        if self.scroll_position >= self.total_scroll_width:
-            elapsed = current_time - self.scroll_start_time
-            self.scroll_position = self.scroll_position - self.total_scroll_width
-            self.logger.info(
-                "Scroll wrap-around detected: position reset, total_distance=%.0f/%d px (elapsed %.2fs, target %.2fs)",
-                self.total_distance_scrolled,
-                required_total_distance,
-                elapsed,
-                self.calculated_duration,
-            )
+        # Check completion FIRST (before wrap-around) to prevent visual loop
+        # When dynamic duration is enabled and cycle is complete, stop at end instead of wrapping
+        is_complete = self.total_distance_scrolled >= required_total_distance
         
-        # Mark complete only when we've scrolled the full required distance
-        if self.total_distance_scrolled >= required_total_distance:
-            elapsed = current_time - self.scroll_start_time
+        if is_complete:
+            # Only log completion once to avoid spam
+            if not self.scroll_complete:
+                elapsed = current_time - self.scroll_start_time
+                self.logger.info(
+                    "Scroll cycle COMPLETE: scrolled %.0f/%d px (elapsed %.2fs, target %.2fs)",
+                    self.total_distance_scrolled,
+                    required_total_distance,
+                    elapsed,
+                    self.calculated_duration,
+                )
             self.scroll_complete = True
-            self.logger.info(
-                "Scroll cycle COMPLETE: scrolled %.0f/%d px (elapsed %.2fs, target %.2fs)",
-                self.total_distance_scrolled,
-                required_total_distance,
-                elapsed,
-                self.calculated_duration,
-            )
+            
+            # Clamp position to prevent wrap when complete
+            if self.scroll_position >= self.total_scroll_width:
+                self.scroll_position = self.total_scroll_width - 1
         else:
             self.scroll_complete = False
+            
+            # Only wrap-around if cycle is not complete yet
+            if self.scroll_position >= self.total_scroll_width:
+                elapsed = current_time - self.scroll_start_time
+                self.scroll_position = self.scroll_position - self.total_scroll_width
+                self.logger.info(
+                    "Scroll wrap-around detected: position reset, total_distance=%.0f/%d px (elapsed %.2fs, target %.2fs)",
+                    self.total_distance_scrolled,
+                    required_total_distance,
+                    elapsed,
+                    self.calculated_duration,
+                )
 
         if (
             self.dynamic_duration_enabled
