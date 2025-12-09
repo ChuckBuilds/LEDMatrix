@@ -323,9 +323,9 @@ class ConfigManager:
                         pass  # Continue without secrets if can't load
                 
                 # Use atomic save to preserve file permissions
+                # Note: save_config_atomic handles secrets internally, no need to pass new_secrets
                 result = self.save_config_atomic(
                     new_config_data=self.config,
-                    new_secrets=secrets_content if secrets_content else None,
                     create_backup=False,  # Already created backup above
                     validate_after_write=False  # Skip validation for migration
                 )
