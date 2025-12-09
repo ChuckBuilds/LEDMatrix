@@ -268,10 +268,10 @@ class DisplayManager:
             except Exception:
                 pass
             
-            # Update the display to show the clear. Swap twice to flush any latent frame.
-            self.update_display()
-            time.sleep(0.01)
-            self.update_display()
+            # Note: We do NOT call update_display() here to avoid black flashes.
+            # The caller should call update_display() after drawing new content.
+            # If an immediate clear is needed, the caller can explicitly call
+            # clear() followed by update_display().
         except Exception as e:
             logger.error(f"Error clearing display: {e}")
 
