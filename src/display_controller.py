@@ -520,7 +520,9 @@ class DisplayController:
     def _poll_on_demand_requests(self) -> None:
         """Poll cache for new on-demand requests from external controllers."""
         try:
-            request = self.cache_manager.get('display_on_demand_request')
+            # Use a long max_age (1 hour) to ensure requests aren't expired before processing
+            # The request_id check prevents duplicate processing
+            request = self.cache_manager.get('display_on_demand_request', max_age=3600)
         except (OSError, RuntimeError, ValueError, TypeError) as err:
             logger.error("Failed to read on-demand request: %s", err, exc_info=True)
             return

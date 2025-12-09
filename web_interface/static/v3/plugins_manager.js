@@ -1,6 +1,49 @@
 // Define critical functions immediately so they're available before any HTML is rendered
 console.log('[PLUGINS SCRIPT] Defining configurePlugin and togglePlugin at top level...');
 
+// Expose on-demand functions early as stubs (will be replaced when IIFE runs)
+window.openOnDemandModal = function(pluginId) {
+    console.warn('openOnDemandModal called before initialization, waiting...');
+    // Wait for the real function to be available
+    let attempts = 0;
+    const maxAttempts = 50; // 2.5 seconds
+    const checkInterval = setInterval(() => {
+        attempts++;
+        if (window.__openOnDemandModalImpl) {
+            clearInterval(checkInterval);
+            window.__openOnDemandModalImpl(pluginId);
+        } else if (attempts >= maxAttempts) {
+            clearInterval(checkInterval);
+            console.error('openOnDemandModal not available after waiting');
+            if (typeof showNotification === 'function') {
+                showNotification('On-demand modal unavailable. Please refresh the page.', 'error');
+            }
+        }
+    }, 50);
+};
+
+window.requestOnDemandStop = function({ stopService = false } = {}) {
+    console.warn('requestOnDemandStop called before initialization, waiting...');
+    // Wait for the real function to be available
+    let attempts = 0;
+    const maxAttempts = 50; // 2.5 seconds
+    const checkInterval = setInterval(() => {
+        attempts++;
+        if (window.__requestOnDemandStopImpl) {
+            clearInterval(checkInterval);
+            return window.__requestOnDemandStopImpl({ stopService });
+        } else if (attempts >= maxAttempts) {
+            clearInterval(checkInterval);
+            console.error('requestOnDemandStop not available after waiting');
+            if (typeof showNotification === 'function') {
+                showNotification('On-demand stop unavailable. Please refresh the page.', 'error');
+            }
+            return Promise.reject(new Error('Function not available'));
+        }
+    }, 50);
+    return Promise.resolve();
+};
+
 // Cleanup orphaned modals from previous executions to prevent duplicates when moving to body
 try {
     const existingModals = document.querySelectorAll('#plugin-config-modal');
@@ -1040,7 +1083,8 @@ function runUpdateAllPlugins() {
         });
 }
 
-window.openOnDemandModal = function(pluginId) {
+// Store the real implementation and replace the stub
+window.__openOnDemandModalImpl = function(pluginId) {
     const plugin = findInstalledPlugin(pluginId);
     if (!plugin) {
         if (typeof showNotification === 'function') {
@@ -1118,6 +1162,9 @@ window.openOnDemandModal = function(pluginId) {
 
     modal.style.display = 'flex';
 };
+
+// Replace the stub with the real implementation
+window.openOnDemandModal = window.__openOnDemandModalImpl;
 
 function closeOnDemandModal() {
     const modal = document.getElementById('on-demand-modal');
@@ -1233,6 +1280,8 @@ function stopOnDemand(event) {
     requestOnDemandStop({ stopService });
 }
 
+// Store the real implementation and replace the stub
+window.__requestOnDemandStopImpl = requestOnDemandStop;
 window.requestOnDemandStop = requestOnDemandStop;
 
 function closeOnDemandModalOnBackdrop(event) {
