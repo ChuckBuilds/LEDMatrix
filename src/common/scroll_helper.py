@@ -489,6 +489,9 @@ class ScrollHelper:
         now = time.time()
         self.scroll_start_time = now
         self.last_progress_log_time = now
+        # Reset last_update_time to prevent large delta_time on next update
+        # This ensures smooth scrolling after reset without jumping ahead
+        self.last_update_time = now
         self.logger.debug("Scroll position reset")
     
     def set_scrolling_image(self, image: Image.Image) -> None:
