@@ -354,12 +354,17 @@ class ScrollHelper:
             width1 = self.cached_image.width - start_x
             if width1 > 0:
                 # First part from end of image
-                source1 = self.cached_array[:, start_x:]
+                # Need width1 + 1 pixels for interpolation
+                source1_width = min(width1 + 1, self.cached_image.width - start_x)
+                source1 = self.cached_array[:, start_x:start_x + source1_width]
                 if HAS_SCIPY:
                     shifted1 = shift(source1, (0, -fractional, 0), mode='nearest', order=1, prefilter=False)
-                    self._frame_buffer[:, :width1] = shifted1[:, :width1].astype(np.uint8)
+                    # Ensure we don't exceed the shifted array size
+                    copy_width = min(width1, shifted1.shape[1])
+                    self._frame_buffer[:, :copy_width] = shifted1[:, :copy_width].astype(np.uint8)
                 else:
-                    self._frame_buffer[:, :width1] = self._interpolate_subpixel(source1, fractional)[:, :width1]
+                    interpolated1 = self._interpolate_subpixel(source1, fractional, output_width=width1)
+                    self._frame_buffer[:, :width1] = interpolated1
                 
                 # Second part from beginning
                 remaining_width = self.display_width - width1
@@ -367,34 +372,55 @@ class ScrollHelper:
                     source2 = self.cached_array[:, :remaining_width + 1]
                     if HAS_SCIPY:
                         shifted2 = shift(source2, (0, -fractional, 0), mode='nearest', order=1, prefilter=False)
-                        self._frame_buffer[:, width1:] = shifted2[:, :remaining_width].astype(np.uint8)
+                        copy_width = min(remaining_width, shifted2.shape[1])
+                        self._frame_buffer[:, width1:width1 + copy_width] = shifted2[:, :copy_width].astype(np.uint8)
                     else:
-                        self._frame_buffer[:, width1:] = self._interpolate_subpixel(source2, fractional)[:, :remaining_width]
+                        interpolated2 = self._interpolate_subpixel(source2, fractional, output_width=remaining_width)
+                        self._frame_buffer[:, width1:] = interpolated2
             else:
                 # Edge case: wrap to beginning
                 source = self.cached_array[:, :self.display_width + 1]
                 if HAS_SCIPY:
                     shifted = shift(source, (0, -fractional, 0), mode='nearest', order=1, prefilter=False)
-                    self._frame_buffer = shifted[:, :self.display_width].astype(np.uint8)
+                    copy_width = min(self.display_width, shifted.shape[1])
+                    self._frame_buffer = shifted[:, :copy_width].astype(np.uint8)
                 else:
-                    self._frame_buffer = self._interpolate_subpixel(source, fractional)[:, :self.display_width]
+                    self._frame_buffer = self._interpolate_subpixel(source, fractional, output_width=self.display_width)
             
             return Image.fromarray(self._frame_buffer)
     
-    def _interpolate_subpixel(self, source: np.ndarray, fractional: float) -> np.ndarray:
+    def _interpolate_subpixel(self, source: np.ndarray, fractional: float, output_width: Optional[int] = None) -> np.ndarray:
         """
         Simple linear interpolation for sub-pixel positioning.
         Blends between adjacent pixels based on fractional offset.
-        """
-        # Simple linear interpolation: blend between pixel at x and x+1
-        # result = pixel[x] * (1 - frac) + pixel[x+1] * frac
-        if source.shape[1] < 2:
-            # Not enough pixels for interpolation
-            return source[:, :self.display_width].astype(np.uint8)
         
-        # Extract pixels at x and x+1
-        pixels_x = source[:, :-1].astype(np.float32)
-        pixels_x1 = source[:, 1:].astype(np.float32)
+        Args:
+            source: Source array to interpolate (width should be at least output_width + 1)
+            fractional: Fractional part of scroll position (0.0-1.0)
+            output_width: Desired output width (defaults to display_width)
+        
+        Returns:
+            Interpolated array of shape (height, output_width, 3)
+        """
+        if output_width is None:
+            output_width = self.display_width
+        
+        # Ensure we have enough source pixels
+        if source.shape[1] < output_width + 1:
+            # Not enough pixels - pad or truncate as needed
+            if source.shape[1] < 2:
+                # Very small source - just return what we have, padded if needed
+                result = np.zeros((source.shape[0], output_width, 3), dtype=np.uint8)
+                copy_width = min(source.shape[1], output_width)
+                result[:, :copy_width] = source[:, :copy_width].astype(np.uint8)
+                return result
+            # Use what we have
+            available_width = source.shape[1] - 1
+            output_width = min(output_width, available_width)
+        
+        # Extract pixels at x and x+1 (need output_width + 1 source pixels)
+        pixels_x = source[:, :output_width].astype(np.float32)
+        pixels_x1 = source[:, 1:output_width + 1].astype(np.float32)
         
         # Linear interpolation
         interpolated = pixels_x * (1.0 - fractional) + pixels_x1 * fractional
@@ -402,8 +428,7 @@ class ScrollHelper:
         # Clip and convert back to uint8
         interpolated = np.clip(interpolated, 0, 255).astype(np.uint8)
         
-        # Return the display_width portion
-        return interpolated[:, :self.display_width]
+        return interpolated
     
     def calculate_dynamic_duration(self) -> int:
         """
