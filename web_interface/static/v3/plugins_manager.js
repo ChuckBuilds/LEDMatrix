@@ -666,7 +666,13 @@ function loadInstalledPlugins() {
 
             if (data.status === 'success') {
                 installedPlugins = data.data.plugins || [];
-                window.installedPlugins = installedPlugins; // Also set on window for global access
+                // Only update if plugin list actually changed (setter will check)
+                const currentPlugins = window.installedPlugins || [];
+                const currentIds = currentPlugins.map(p => p.id).sort().join(',');
+                const newIds = installedPlugins.map(p => p.id).sort().join(',');
+                if (currentIds !== newIds) {
+                    window.installedPlugins = installedPlugins; // Also set on window for global access
+                }
                 console.log('Installed plugins count:', installedPlugins.length);
                 
                 // Debug: Log enabled status for each plugin
@@ -707,17 +713,27 @@ function renderInstalledPlugins(plugins) {
     }
     
     // Update global installedPlugins for navigation tabs
-    window.installedPlugins = plugins;
-    console.log('Set window.installedPlugins to:', plugins.length, 'plugins');
+    // Only update if plugin list actually changed
+    const currentPlugins = window.installedPlugins || [];
+    const currentIds = currentPlugins.map(p => p.id).sort().join(',');
+    const newIds = plugins.map(p => p.id).sort().join(',');
     
-    // Trigger the main app to update plugin tabs
-    if (window.Alpine && document.querySelector('[x-data="app()"]')) {
-        const appElement = document.querySelector('[x-data="app()"]');
-        if (appElement && appElement._x_dataStack && appElement._x_dataStack[0]) {
-            appElement._x_dataStack[0].installedPlugins = plugins;
-            appElement._x_dataStack[0].updatePluginTabs();
-            console.log('Triggered Alpine.js to update plugin tabs');
+    if (currentIds !== newIds) {
+        window.installedPlugins = plugins;
+        console.log('Set window.installedPlugins to:', plugins.length, 'plugins');
+        
+        // Trigger the main app to update plugin tabs
+        if (window.Alpine && document.querySelector('[x-data="app()"]')) {
+            const appElement = document.querySelector('[x-data="app()"]');
+            if (appElement && appElement._x_dataStack && appElement._x_dataStack[0]) {
+                appElement._x_dataStack[0].installedPlugins = plugins;
+                appElement._x_dataStack[0].updatePluginTabs();
+                console.log('Triggered Alpine.js to update plugin tabs');
+            }
         }
+    } else {
+        // Plugin list hasn't changed, skip update
+        console.log('Plugin list unchanged, skipping tab update');
     }
 
     if (plugins.length === 0) {
@@ -2856,6 +2872,7 @@ function handleUninstallSuccess(pluginId) {
     // Remove from local array immediately for better UX
     const currentPlugins = window.installedPlugins || installedPlugins || [];
     const updatedPlugins = currentPlugins.filter(p => p.id !== pluginId);
+    // Only update if list actually changed (setter will check, but we know it changed here)
     window.installedPlugins = updatedPlugins;
     if (typeof installedPlugins !== 'undefined') {
         installedPlugins = updatedPlugins;

@@ -1472,13 +1472,23 @@
                     });
 
                     // Also listen for direct window.installedPlugins changes
+                    // Store the actual value in a private property to avoid infinite loops
+                    let _installedPluginsValue = this.installedPlugins || [];
                     Object.defineProperty(window, 'installedPlugins', {
                         set: (value) => {
-                            console.log('window.installedPlugins changed:', value?.length, 'plugins');
-                            this.installedPlugins = value || [];
-                            this.updatePluginTabs();
+                            const newPlugins = value || [];
+                            const oldIds = (_installedPluginsValue || []).map(p => p.id).sort().join(',');
+                            const newIds = newPlugins.map(p => p.id).sort().join(',');
+                            
+                            // Only update if plugin list actually changed
+                            if (oldIds !== newIds) {
+                                console.log('window.installedPlugins changed:', newPlugins.length, 'plugins');
+                                _installedPluginsValue = newPlugins;
+                                this.installedPlugins = newPlugins;
+                                this.updatePluginTabs();
+                            }
                         },
-                        get: () => this.installedPlugins
+                        get: () => _installedPluginsValue
                     });
 
                 },
@@ -1523,10 +1533,10 @@
                         clearTimeout(this._updatePluginTabsTimeout);
                     }
                     
-                    // Debounce: Schedule update after a short delay
+                    // Debounce: Schedule update after a short delay to batch rapid changes
                     this._updatePluginTabsTimeout = setTimeout(() => {
                         this._doUpdatePluginTabs(retryCount);
-                    }, 50);
+                    }, 150);
                 },
                 
                 _doUpdatePluginTabs(retryCount = 0) {
@@ -1534,6 +1544,19 @@
 
                     // Use global installedPlugins if available, otherwise use component's
                     const pluginsToShow = window.installedPlugins || this.installedPlugins || [];
+                    
+                    // Check if plugin list actually changed by comparing IDs
+                    const currentPluginIds = pluginsToShow.map(p => p.id).sort().join(',');
+                    const lastRenderedIds = (this._lastRenderedPluginIds || '');
+                    
+                    if (currentPluginIds === lastRenderedIds && retryCount === 0) {
+                        // Plugin list hasn't changed, skip update
+                        return;
+                    }
+                    
+                    // Store the current plugin IDs for next comparison
+                    this._lastRenderedPluginIds = currentPluginIds;
+                    
                     console.log('updatePluginTabs called with:', pluginsToShow.length, 'plugins (attempt', retryCount + 1, ')');
 
                     const pluginTabsRow = document.getElementById('plugin-tabs-row');
@@ -1655,6 +1678,7 @@
                         // Extract web_ui_actions from installed plugins and update plugin data
                         if (pluginsData.status === 'success' && pluginsData.data && pluginsData.data.plugins) {
                             // Update window.installedPlugins with fresh data (includes commit info)
+                            // The setter will check if data actually changed before updating tabs
                             window.installedPlugins = pluginsData.data.plugins;
                             // Update Alpine.js app data
                             this.installedPlugins = pluginsData.data.plugins;
