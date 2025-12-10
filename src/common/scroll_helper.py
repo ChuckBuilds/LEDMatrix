@@ -79,6 +79,10 @@ class ScrollHelper:
         self.sub_pixel_scrolling = True  # Enable sub-pixel smooth scrolling
         self._last_integer_position = 0  # Cache for integer position to avoid repeated calculations
         
+        # Frame-based scrolling settings
+        self.frame_based_scrolling = False  # If True, use scroll_delay to throttle and move scroll_speed pixels
+        self.last_step_time = 0.0  # Track last step time for frame-based throttling
+        
         # Time tracking for scroll updates
         self.last_update_time: Optional[float] = None
         
@@ -514,6 +518,7 @@ class ScrollHelper:
         now = time.time()
         self.scroll_start_time = now
         self.last_progress_log_time = now
+        self.last_step_time = now  # Reset step timer
         # Reset last_update_time to prevent large delta_time on next update
         # This ensures smooth scrolling after reset without jumping ahead
         self.last_update_time = now
@@ -608,6 +613,21 @@ class ScrollHelper:
         """
         self.sub_pixel_scrolling = enabled
         self.logger.debug(f"Sub-pixel scrolling {'enabled' if enabled else 'disabled'}")
+
+    def set_frame_based_scrolling(self, enabled: bool) -> None:
+        """
+        Enable or disable frame-based scrolling.
+        
+        When enabled, update_scroll_position() respects scroll_delay and moves
+        scroll_speed pixels per step. This provides a "stepped" look similar to
+        traditional tickers and can be visually smoother on LED matrices.
+        
+        Args:
+            enabled: True to enable frame-based scrolling (default: False)
+        """
+        self.frame_based_scrolling = enabled
+        self.last_step_time = time.time()  # Reset step timer
+        self.logger.debug(f"Frame-based scrolling {'enabled' if enabled else 'disabled'}")
     
     def set_dynamic_duration_settings(self, enabled: bool = True,
                                     min_duration: int = 30,
