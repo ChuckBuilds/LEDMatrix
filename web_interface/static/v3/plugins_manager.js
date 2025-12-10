@@ -1830,9 +1830,7 @@ function generateFieldHtml(key, prop, value, prefix = '') {
         `;
         
         // Add extra spacing after nested sections to prevent overlap with next section
-        if (nestingDepth > 0) {
-            html += `<div class="mb-2"></div>`;
-        }
+        html += `<div class="mb-4" style="clear: both;"></div>`;
         
         return html;
     }

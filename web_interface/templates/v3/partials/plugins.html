@@ -438,9 +438,10 @@
 /* Nested config section styles */
 .nested-section {
     position: relative;
-    margin-bottom: 1rem;
+    margin-bottom: 1.5rem;
     transition: all 0.2s ease;
     z-index: 1;
+    clear: both;
 }
 
 .nested-section button {
@@ -455,7 +456,7 @@
 .nested-section .nested-content {
     position: relative;
     transition: max-height 0.3s ease, opacity 0.3s ease;
-    overflow: hidden;
+    overflow: visible;
     z-index: 1;
 }
 
@@ -492,6 +493,20 @@
 /* Form group spacing within nested sections */
 .nested-content .form-group {
     margin-bottom: 0.75rem;
+}
+
+/* Ensure form-groups that come after nested sections have proper spacing */
+.nested-section + .form-group {
+    margin-top: 1rem;
+    position: relative;
+    z-index: 1;
+}
+
+/* Ensure any content after nested sections is properly spaced */
+.nested-section ~ .form-group {
+    clear: both;
+    position: relative;
+    z-index: 1;
 }
 
 /* Make nested section headers slightly smaller for hierarchy */
