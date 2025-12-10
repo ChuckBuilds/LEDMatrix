@@ -442,6 +442,8 @@
     transition: all 0.2s ease;
     z-index: 1;
     clear: both;
+    /* Ensure nested sections don't clip their content */
+    overflow: visible;
 }
 
 .nested-section button {
@@ -456,8 +458,17 @@
 .nested-section .nested-content {
     position: relative;
     transition: max-height 0.3s ease, opacity 0.3s ease;
-    overflow: visible;
+    overflow: hidden;
     z-index: 1;
+    /* Ensure content doesn't get clipped by parent */
+    min-height: 0;
+}
+
+/* When expanded, allow content to flow naturally */
+.nested-content.expanded {
+    overflow: visible;
+    /* Ensure expanded content is fully visible */
+    min-height: auto;
 }
 
 .nested-section i {
@@ -475,6 +486,8 @@
     opacity: 1;
     max-height: 5000px; /* Large enough for most content */
     padding-bottom: 1rem !important; /* Ensure proper padding at bottom to prevent cutoff */
+    overflow: visible; /* Allow content to flow naturally when expanded */
+    margin-bottom: 0.5rem; /* Add spacing at bottom when expanded */
 }
 
 /* Nested sections within nested sections - add indentation and spacing */

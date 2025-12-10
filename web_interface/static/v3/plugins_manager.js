@@ -2160,6 +2160,25 @@ window.toggleNestedSection = function(sectionId) {
         content.style.maxHeight = content.scrollHeight + 'px';
         icon.classList.remove('fa-chevron-right');
         icon.classList.add('fa-chevron-down');
+        
+        // Scroll the expanded content into view after a short delay to allow animation
+        setTimeout(() => {
+            const sectionElement = content.closest('.nested-section');
+            if (sectionElement) {
+                // Find the modal container
+                const modalContent = sectionElement.closest('.modal-content');
+                if (modalContent) {
+                    // Scroll the section header into view within the modal
+                    const headerButton = sectionElement.querySelector('button');
+                    if (headerButton) {
+                        headerButton.scrollIntoView({ behavior: 'smooth', block: 'start', inline: 'nearest' });
+                    }
+                } else {
+                    // If not in a modal, just scroll the section
+                    sectionElement.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+                }
+            }
+        }, 350); // Wait for animation to complete
     } else {
         // Collapse the section
         content.classList.add('collapsed');
