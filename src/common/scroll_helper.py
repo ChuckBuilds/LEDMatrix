@@ -21,6 +21,13 @@ from typing import Optional, Dict, Any
 from PIL import Image
 import numpy as np
 
+# Try to import scipy for sub-pixel interpolation, fallback to simpler method if not available
+try:
+    from scipy.ndimage import shift
+    HAS_SCIPY = True
+except ImportError:
+    HAS_SCIPY = False
+
 
 class ScrollHelper:
     """
@@ -67,6 +74,10 @@ class ScrollHelper:
         
         # Pre-allocated buffer for output frame (reused to avoid allocations)
         self._frame_buffer: Optional[np.ndarray] = None
+        
+        # Sub-pixel scrolling settings
+        self.sub_pixel_scrolling = True  # Enable sub-pixel smooth scrolling
+        self._last_integer_position = 0  # Cache for integer position to avoid repeated calculations
         
         # Time tracking for scroll updates
         self.last_update_time: Optional[float] = None
@@ -258,6 +269,7 @@ class ScrollHelper:
     def get_visible_portion(self) -> Optional[Image.Image]:
         """
         Get the currently visible portion of the scrolling image using fast numpy operations.
+        Supports sub-pixel positioning for smooth scrolling.
         
         Returns:
             PIL Image showing the visible portion, or None if no cached image
@@ -265,10 +277,20 @@ class ScrollHelper:
         if not self.cached_image or self.cached_array is None:
             return None
         
-        # Calculate visible region
-        start_x = int(self.scroll_position)
-        end_x = start_x + self.display_width
+        # Calculate visible region with sub-pixel support
+        fractional_part = self.scroll_position - int(self.scroll_position)
+        start_x_int = int(self.scroll_position)
+        end_x_int = start_x_int + self.display_width
         
+        # If sub-pixel scrolling is enabled and we have a fractional part, use interpolation
+        if self.sub_pixel_scrolling and fractional_part > 0.001:
+            return self._get_visible_portion_subpixel(start_x_int, fractional_part)
+        else:
+            # Fast integer pixel path (no interpolation needed)
+            return self._get_visible_portion_integer(start_x_int, end_x_int)
+    
+    def _get_visible_portion_integer(self, start_x: int, end_x: int) -> Image.Image:
+        """Fast integer pixel extraction (no interpolation)."""
         # Fast numpy array slicing for normal case (no wrap-around)
         if end_x <= self.cached_image.width:
             # Normal case: single slice - fastest path
@@ -296,6 +318,92 @@ class ScrollHelper:
                 # Edge case: start_x >= image width, wrap to beginning
                 frame_array = self.cached_array[:, :self.display_width]
                 return Image.fromarray(frame_array)
+    
+    def _get_visible_portion_subpixel(self, start_x_int: int, fractional: float) -> Image.Image:
+        """
+        Get visible portion with sub-pixel interpolation for smooth scrolling.
+        Uses bilinear interpolation to blend between pixels.
+        """
+        # We need to extract a region that's 1 pixel wider to allow for interpolation
+        start_x = start_x_int
+        end_x = start_x_int + self.display_width + 1
+        
+        # Check if we need wrap-around
+        if end_x <= self.cached_image.width:
+            # Normal case: extract region with 1 extra pixel for interpolation
+            source_region = self.cached_array[:, start_x:end_x]
+            
+            # Use bilinear interpolation for sub-pixel shifting
+            if HAS_SCIPY:
+                # Use scipy for high-quality sub-pixel shifting
+                shifted = shift(source_region, (0, -fractional, 0), mode='nearest', order=1, prefilter=False)
+                # Extract the display_width portion
+                frame_array = shifted[:, :self.display_width].astype(np.uint8)
+            else:
+                # Fallback: simple linear interpolation using numpy
+                # Blend between current and next pixel based on fractional part
+                frame_array = self._interpolate_subpixel(source_region, fractional)
+            
+            return Image.fromarray(frame_array)
+        else:
+            # Wrap-around case with sub-pixel
+            # Use pre-allocated buffer
+            if self._frame_buffer is None or self._frame_buffer.shape != (self.display_height, self.display_width, 3):
+                self._frame_buffer = np.zeros((self.display_height, self.display_width, 3), dtype=np.uint8)
+            
+            width1 = self.cached_image.width - start_x
+            if width1 > 0:
+                # First part from end of image
+                source1 = self.cached_array[:, start_x:]
+                if HAS_SCIPY:
+                    shifted1 = shift(source1, (0, -fractional, 0), mode='nearest', order=1, prefilter=False)
+                    self._frame_buffer[:, :width1] = shifted1[:, :width1].astype(np.uint8)
+                else:
+                    self._frame_buffer[:, :width1] = self._interpolate_subpixel(source1, fractional)[:, :width1]
+                
+                # Second part from beginning
+                remaining_width = self.display_width - width1
+                if remaining_width > 0:
+                    source2 = self.cached_array[:, :remaining_width + 1]
+                    if HAS_SCIPY:
+                        shifted2 = shift(source2, (0, -fractional, 0), mode='nearest', order=1, prefilter=False)
+                        self._frame_buffer[:, width1:] = shifted2[:, :remaining_width].astype(np.uint8)
+                    else:
+                        self._frame_buffer[:, width1:] = self._interpolate_subpixel(source2, fractional)[:, :remaining_width]
+            else:
+                # Edge case: wrap to beginning
+                source = self.cached_array[:, :self.display_width + 1]
+                if HAS_SCIPY:
+                    shifted = shift(source, (0, -fractional, 0), mode='nearest', order=1, prefilter=False)
+                    self._frame_buffer = shifted[:, :self.display_width].astype(np.uint8)
+                else:
+                    self._frame_buffer = self._interpolate_subpixel(source, fractional)[:, :self.display_width]
+            
+            return Image.fromarray(self._frame_buffer)
+    
+    def _interpolate_subpixel(self, source: np.ndarray, fractional: float) -> np.ndarray:
+        """
+        Simple linear interpolation for sub-pixel positioning.
+        Blends between adjacent pixels based on fractional offset.
+        """
+        # Simple linear interpolation: blend between pixel at x and x+1
+        # result = pixel[x] * (1 - frac) + pixel[x+1] * frac
+        if source.shape[1] < 2:
+            # Not enough pixels for interpolation
+            return source[:, :self.display_width].astype(np.uint8)
+        
+        # Extract pixels at x and x+1
+        pixels_x = source[:, :-1].astype(np.float32)
+        pixels_x1 = source[:, 1:].astype(np.float32)
+        
+        # Linear interpolation
+        interpolated = pixels_x * (1.0 - fractional) + pixels_x1 * fractional
+        
+        # Clip and convert back to uint8
+        interpolated = np.clip(interpolated, 0, 255).astype(np.uint8)
+        
+        # Return the display_width portion
+        return interpolated[:, :self.display_width]
     
     def calculate_dynamic_duration(self) -> int:
         """
@@ -458,6 +566,20 @@ class ScrollHelper:
         self.target_fps = max(30.0, min(200.0, fps))
         self.frame_time_target = 1.0 / self.target_fps
         self.logger.debug(f"Target FPS set to: {self.target_fps} FPS (frame_time_target: {self.frame_time_target:.4f}s)")
+    
+    def set_sub_pixel_scrolling(self, enabled: bool) -> None:
+        """
+        Enable or disable sub-pixel scrolling for smoother movement.
+        
+        When enabled, uses interpolation to blend between pixels for fractional
+        scroll positions, resulting in smooth scrolling even at slow speeds.
+        When disabled, uses integer pixel positioning (faster but may skip pixels).
+        
+        Args:
+            enabled: True to enable sub-pixel scrolling (default: True)
+        """
+        self.sub_pixel_scrolling = enabled
+        self.logger.debug(f"Sub-pixel scrolling {'enabled' if enabled else 'disabled'}")
     
     def set_dynamic_duration_settings(self, enabled: bool = True,
                                     min_duration: int = 30,
