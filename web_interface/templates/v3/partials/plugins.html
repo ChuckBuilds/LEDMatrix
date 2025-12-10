@@ -442,8 +442,10 @@
     transition: all 0.2s ease;
     z-index: 1;
     clear: both;
-    /* Ensure nested sections don't clip their content */
+    /* Contain content but allow expansion */
     overflow: visible;
+    /* Ensure proper stacking context */
+    isolation: isolate;
 }
 
 .nested-section button {
@@ -462,6 +464,8 @@
     z-index: 1;
     /* Ensure content doesn't get clipped by parent */
     min-height: 0;
+    /* Contain content properly */
+    contain: layout style;
 }
 
 /* When expanded, allow content to flow naturally */
@@ -469,6 +473,12 @@
     overflow: visible;
     /* Ensure expanded content is fully visible */
     min-height: auto;
+    /* Allow parent to show overflow when expanded */
+}
+
+/* When nested section is expanded, allow overflow */
+.nested-section:has(.nested-content.expanded) {
+    overflow: visible;
 }
 
 .nested-section i {
@@ -510,16 +520,27 @@
 
 /* Ensure form-groups that come after nested sections have proper spacing */
 .nested-section + .form-group {
-    margin-top: 1rem;
+    margin-top: 1.5rem !important;
     position: relative;
-    z-index: 1;
+    z-index: 0;
+    clear: both;
+    /* Ensure form-group doesn't overlap */
+    display: block;
+    width: 100%;
+    /* Ensure it's in normal document flow */
+    float: none;
 }
 
 /* Ensure any content after nested sections is properly spaced */
 .nested-section ~ .form-group {
-    clear: both;
+    clear: both !important;
     position: relative;
-    z-index: 1;
+    z-index: 0;
+    display: block;
+    /* Prevent overlap */
+    margin-top: 1.5rem !important;
+    width: 100%;
+    float: none;
 }
 
 /* Make nested section headers slightly smaller for hierarchy */
