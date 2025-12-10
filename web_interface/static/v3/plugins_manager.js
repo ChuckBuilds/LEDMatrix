@@ -2138,6 +2138,21 @@ function generateFormFromSchema(schema, config, webUiActions = []) {
     return Promise.resolve(formHtml);
 }
 
+// Helper function to update parent nested-content heights
+function updateParentNestedContentHeight(nestedContent) {
+    // Find all parent nested-content containers
+    let parent = nestedContent.parentElement;
+    while (parent) {
+        // Check if this parent is a nested-content that's expanded
+        if (parent.classList.contains('nested-content') && parent.classList.contains('expanded')) {
+            // Recalculate the parent's max-height based on its current scrollHeight
+            const currentHeight = parent.scrollHeight;
+            parent.style.maxHeight = currentHeight + 'px';
+        }
+        parent = parent.parentElement;
+    }
+}
+
 // Function to toggle nested sections
 window.toggleNestedSection = function(sectionId) {
     const content = document.getElementById(sectionId);
@@ -2166,6 +2181,14 @@ window.toggleNestedSection = function(sectionId) {
         if (sectionElement) {
             sectionElement.style.overflow = 'visible';
         }
+        
+        // Update parent nested-content heights after a short delay to allow content to render
+        setTimeout(() => {
+            // Recalculate this section's height first
+            content.style.maxHeight = content.scrollHeight + 'px';
+            // Then update all parent nested-content containers
+            updateParentNestedContentHeight(content);
+        }, 50);
         
         // Scroll the expanded content into view after a short delay to allow animation
         setTimeout(() => {
@@ -2197,6 +2220,11 @@ window.toggleNestedSection = function(sectionId) {
         if (sectionElement) {
             sectionElement.style.overflow = 'hidden';
         }
+        
+        // Update parent nested-content heights after collapse
+        setTimeout(() => {
+            updateParentNestedContentHeight(content);
+        }, 50);
         
         // Use setTimeout to set display:none after transition completes
         setTimeout(() => {
