@@ -1707,7 +1707,11 @@
                 },
 
                 generateConfigForm(pluginId, config, schema, webUiActions = []) {
-                    console.log('[DEBUG] generateConfigForm called with webUiActions:', webUiActions, 'length:', webUiActions ? webUiActions.length : 0);
+                    // Only log once per plugin to avoid spam (Alpine.js may call this multiple times during rendering)
+                    if (!this._configFormLogged || this._configFormLogged !== pluginId) {
+                        console.log('[DEBUG] generateConfigForm called for', pluginId, 'with', webUiActions?.length || 0, 'actions');
+                        this._configFormLogged = pluginId;
+                    }
                     if (!schema || !schema.properties) {
                         return this.generateSimpleConfigForm(config, webUiActions, pluginId);
                     }
