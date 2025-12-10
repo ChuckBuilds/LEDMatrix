@@ -11,31 +11,7 @@ Stability: Stable - maintains backward compatibility
 from abc import ABC, abstractmethod
 from typing import Dict, Any, Optional, List
 import logging
-import time
-import os
-from pathlib import Path
 from src.logging_config import get_logger
-
-def _get_debug_log_path():
-    """Get path to debug log file, creating directory if needed."""
-    try:
-        # Try to find project root
-        project_root = os.environ.get('LEDMATRIX_ROOT')
-        if not project_root:
-            # Try to find project root by looking for config directory
-            current = Path(__file__).resolve().parent.parent.parent
-            if (current / 'config').exists():
-                project_root = str(current)
-            else:
-                # Fallback to current working directory
-                project_root = os.getcwd()
-        
-        log_dir = Path(project_root) / '.cursor'
-        log_dir.mkdir(exist_ok=True, mode=0o755)
-        return log_dir / 'debug.log'
-    except Exception:
-        # Ultimate fallback
-        return Path('/tmp/ledmatrix_debug.log')
 
 
 class BasePlugin(ABC):
@@ -375,25 +351,6 @@ class BasePlugin(ABC):
         """
         # Update config reference
         self.config = new_config or {}
-
-        # #region agent log
-        import json
-        try:
-            enabled_before = self.enabled
-            log_path = _get_debug_log_path()
-            with open(log_path, 'a') as f:
-                f.write(json.dumps({
-                    'sessionId': 'debug-session',
-                    'runId': 'run1',
-                    'hypothesisId': 'E',
-                    'location': 'base_plugin.py:356',
-                    'message': 'on_config_change: updating enabled',
-                    'data': {'plugin_id': self.plugin_id, 'enabled_before': enabled_before, 'config_enabled': self.config.get('enabled'), 'enabled_after': self.config.get("enabled", self.enabled)},
-                    'timestamp': int(time.time() * 1000)
-                }) + '\n')
-        except Exception as e:
-            self.logger.debug(f"Debug log write failed: {e}")
-        # #endregion
 
         # Update simple flags
         self.enabled = self.config.get("enabled", self.enabled)

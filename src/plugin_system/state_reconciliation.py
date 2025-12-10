@@ -12,32 +12,9 @@ from typing import Dict, Any, List, Optional
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-import time
-import os
 
 from src.plugin_system.state_manager import PluginStateManager, PluginState, PluginStateStatus
 from src.logging_config import get_logger
-
-def _get_debug_log_path():
-    """Get path to debug log file, creating directory if needed."""
-    try:
-        # Try to find project root
-        project_root = os.environ.get('LEDMATRIX_ROOT')
-        if not project_root:
-            # Try to find project root by looking for config directory
-            current = Path(__file__).resolve().parent.parent.parent
-            if (current / 'config').exists():
-                project_root = str(current)
-            else:
-                # Fallback to current working directory
-                project_root = os.getcwd()
-        
-        log_dir = Path(project_root) / '.cursor'
-        log_dir.mkdir(exist_ok=True, mode=0o755)
-        return log_dir / 'debug.log'
-    except Exception:
-        # Ultimate fallback
-        return Path('/tmp/ledmatrix_debug.log')
 
 
 class InconsistencyType(Enum):
@@ -329,23 +306,6 @@ class StateReconciliation:
             elif inconsistency.inconsistency_type == InconsistencyType.PLUGIN_ENABLED_MISMATCH:
                 # Sync enabled state from state manager to config
                 expected_enabled = inconsistency.expected_state.get('enabled')
-                # #region agent log
-                import json
-                try:
-                    log_path = _get_debug_log_path()
-                    with open(log_path, 'a') as f:
-                        f.write(json.dumps({
-                            'sessionId': 'debug-session',
-                            'runId': 'run1',
-                            'hypothesisId': 'B',
-                            'location': 'state_reconciliation.py:306',
-                            'message': 'reconcile: fixing enabled mismatch',
-                            'data': {'plugin_id': inconsistency.plugin_id, 'current_enabled': inconsistency.current_state.get('enabled'), 'expected_enabled': expected_enabled},
-                            'timestamp': int(time.time() * 1000)
-                        }) + '\n')
-                except Exception as e:
-                    self.logger.debug(f"Debug log write failed: {e}")
-                # #endregion
                 config = self.config_manager.load_config()
                 if inconsistency.plugin_id not in config:
                     config[inconsistency.plugin_id] = {}

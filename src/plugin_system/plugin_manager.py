@@ -28,27 +28,6 @@ from src.common.permission_utils import (
     get_plugin_dir_mode
 )
 
-def _get_debug_log_path():
-    """Get path to debug log file, creating directory if needed."""
-    try:
-        # Try to find project root
-        project_root = os.environ.get('LEDMATRIX_ROOT')
-        if not project_root:
-            # Try to find project root by looking for config directory
-            current = Path(__file__).resolve().parent.parent.parent
-            if (current / 'config').exists():
-                project_root = str(current)
-            else:
-                # Fallback to current working directory
-                project_root = os.getcwd()
-        
-        log_dir = Path(project_root) / '.cursor'
-        log_dir.mkdir(exist_ok=True, mode=0o755)
-        return log_dir / 'debug.log'
-    except Exception:
-        # Ultimate fallback
-        return Path('/tmp/ledmatrix_debug.log')
-
 
 class PluginManager:
     """
@@ -297,59 +276,10 @@ class PluginManager:
             else:
                 config = {}
             
-            # #region agent log
-            try:
-                log_path = _get_debug_log_path()
-                with open(log_path, 'a') as f:
-                    f.write(json.dumps({
-                        'sessionId': 'debug-session',
-                        'runId': 'run1',
-                        'hypothesisId': 'D',
-                        'location': 'plugin_manager.py:275',
-                        'message': 'load_plugin: config before schema merge',
-                        'data': {'plugin_id': plugin_id, 'config_enabled': config.get('enabled'), 'config_keys': list(config.keys())},
-                        'timestamp': int(time.time() * 1000)
-                    }) + '\n')
-            except Exception as e:
-                self.logger.debug(f"Debug log write failed: {e}")
-            # #endregion
-            
             # Merge config with schema defaults to ensure all defaults are applied
             try:
                 defaults = self.schema_manager.generate_default_config(plugin_id, use_cache=True)
-                # #region agent log
-                try:
-                    log_path = _get_debug_log_path()
-                    with open(log_path, 'a') as f:
-                        f.write(json.dumps({
-                            'sessionId': 'debug-session',
-                            'runId': 'run1',
-                            'hypothesisId': 'C',
-                            'location': 'plugin_manager.py:282',
-                            'message': 'load_plugin: schema defaults',
-                            'data': {'plugin_id': plugin_id, 'defaults_enabled': defaults.get('enabled'), 'defaults_keys': list(defaults.keys())},
-                            'timestamp': int(time.time() * 1000)
-                        }) + '\n')
-                except Exception as e:
-                    self.logger.debug(f"Debug log write failed: {e}")
-                # #endregion
                 config = self.schema_manager.merge_with_defaults(config, defaults)
-                # #region agent log
-                try:
-                    log_path = _get_debug_log_path()
-                    with open(log_path, 'a') as f:
-                        f.write(json.dumps({
-                            'sessionId': 'debug-session',
-                            'runId': 'run1',
-                            'hypothesisId': 'C',
-                            'location': 'plugin_manager.py:285',
-                            'message': 'load_plugin: config after schema merge',
-                            'data': {'plugin_id': plugin_id, 'config_enabled': config.get('enabled'), 'config_keys': list(config.keys())},
-                            'timestamp': int(time.time() * 1000)
-                        }) + '\n')
-                except Exception as e:
-                    self.logger.debug(f"Debug log write failed: {e}")
-                # #endregion
                 self.logger.debug(f"Merged config with schema defaults for {plugin_id}")
             except Exception as e:
                 self.logger.warning(f"Could not apply schema defaults for {plugin_id}: {e}")
@@ -387,22 +317,6 @@ class PluginManager:
             self.plugin_last_update[plugin_id] = 0.0
             
             # Update state based on enabled status
-            # #region agent log
-            try:
-                log_path = _get_debug_log_path()
-                with open(log_path, 'a') as f:
-                    f.write(json.dumps({
-                        'sessionId': 'debug-session',
-                        'runId': 'run1',
-                        'hypothesisId': 'D',
-                        'location': 'plugin_manager.py:320',
-                        'message': 'load_plugin: setting enabled state',
-                        'data': {'plugin_id': plugin_id, 'config_enabled': config.get('enabled'), 'plugin_instance_enabled': getattr(plugin_instance, 'enabled', None), 'default_used': 'enabled' not in config},
-                        'timestamp': int(time.time() * 1000)
-                    }) + '\n')
-            except Exception as e:
-                self.logger.debug(f"Debug log write failed: {e}")
-            # #endregion
             if config.get('enabled', True):
                 self.state_manager.set_state(plugin_id, PluginState.ENABLED)
                 # Call on_enable if plugin is enabled
@@ -495,30 +409,6 @@ class PluginManager:
             True if reloaded successfully, False otherwise
         """
         self.logger.info("Reloading plugin: %s", plugin_id)
-        
-        # #region agent log
-        try:
-            enabled_before = None
-            if plugin_id in self.plugins:
-                enabled_before = getattr(self.plugins[plugin_id], 'enabled', None)
-            config_before = None
-            if self.config_manager:
-                full_config = self.config_manager.load_config()
-                config_before = full_config.get(plugin_id, {}).get('enabled')
-            log_path = _get_debug_log_path()
-            with open(log_path, 'a') as f:
-                f.write(json.dumps({
-                    'sessionId': 'debug-session',
-                    'runId': 'run1',
-                    'hypothesisId': 'A',
-                    'location': 'plugin_manager.py:411',
-                    'message': 'reload_plugin: before reload',
-                    'data': {'plugin_id': plugin_id, 'plugin_enabled': enabled_before, 'config_enabled': config_before},
-                    'timestamp': int(time.time() * 1000)
-                }) + '\n')
-        except Exception as e:
-            self.logger.debug(f"Debug log write failed: {e}")
-        # #endregion
         
         # Unload first
         if plugin_id in self.plugins:
