@@ -722,18 +722,79 @@ class SportsUpcoming(SportsCore):
                 self.logger.info(f"Found {favorite_games_found} favorite team upcoming games")
 
             # Filter for favorite teams only if the config is set
-            if self.show_favorite_teams_only:                
-                # Select one game per favorite team (earliest upcoming game for each team)
+            if self.show_favorite_teams_only:
+                # #region agent log
+                with open('/home/chuck/Github/LEDMatrix/.cursor/debug.log', 'a') as f:
+                    import json
+                    f.write(json.dumps({
+                        "sessionId": "debug-session",
+                        "runId": "pre-fix",
+                        "hypothesisId": "A",
+                        "location": "sports.py:725",
+                        "message": "Upcoming games: show_favorite_teams_only=True",
+                        "data": {
+                            "upcoming_games_to_show": self.upcoming_games_to_show,
+                            "favorite_teams_count": len(self.favorite_teams),
+                            "processed_games_count": len(processed_games)
+                        },
+                        "timestamp": int(time.time() * 1000)
+                    }) + "\n")
+                # #endregion
+                # Select N games per favorite team (where N = upcoming_games_to_show)
+                # Example: upcoming_games_to_show=2 with 3 favorite teams = up to 6 games total
                 team_games = []
                 for team in self.favorite_teams:
                     # Find games where this team is playing                  
                     if team_specific_games := [game for game in processed_games if game['home_abbr'] == team or game['away_abbr'] == team]:
-                        # Sort by game time and take the earliest
+                        # Sort by game time and take the earliest N games
                         team_specific_games.sort(key=lambda g: g.get('start_time_utc') or datetime.max.replace(tzinfo=timezone.utc))
-                        team_games.append(team_specific_games[0])
+                        # #region agent log
+                        with open('/home/chuck/Github/LEDMatrix/.cursor/debug.log', 'a') as f:
+                            import json
+                            f.write(json.dumps({
+                                "sessionId": "debug-session",
+                                "runId": "pre-fix",
+                                "hypothesisId": "A",
+                                "location": "sports.py:737",
+                                "message": "Team-specific games found",
+                                "data": {
+                                    "team": team,
+                                    "team_specific_games_count": len(team_specific_games),
+                                    "upcoming_games_to_show": self.upcoming_games_to_show,
+                                    "taking_count": min(len(team_specific_games), self.upcoming_games_to_show)
+                                },
+                                "timestamp": int(time.time() * 1000)
+                            }) + "\n")
+                        # #endregion
+                        # Take up to upcoming_games_to_show games for this team
+                        team_games.extend(team_specific_games[:self.upcoming_games_to_show])
                 
-                # Sort the final list by game time
+                # Sort the final list by game time (earliest first)
                 team_games.sort(key=lambda g: g.get('start_time_utc') or datetime.max.replace(tzinfo=timezone.utc))
+                # Remove duplicates (in case a game involves multiple favorite teams)
+                seen_ids = set()
+                unique_team_games = []
+                for game in team_games:
+                    if game['id'] not in seen_ids:
+                        seen_ids.add(game['id'])
+                        unique_team_games.append(game)
+                team_games = unique_team_games
+                # #region agent log
+                with open('/home/chuck/Github/LEDMatrix/.cursor/debug.log', 'a') as f:
+                    import json
+                    f.write(json.dumps({
+                        "sessionId": "debug-session",
+                        "runId": "pre-fix",
+                        "hypothesisId": "A",
+                        "location": "sports.py:755",
+                        "message": "Final upcoming games after filtering",
+                        "data": {
+                            "final_games_count": len(team_games),
+                            "upcoming_games_to_show": self.upcoming_games_to_show
+                        },
+                        "timestamp": int(time.time() * 1000)
+                    }) + "\n")
+                # #endregion
             else:
                 team_games = processed_games # Show all upcoming if no favorites
                 # Sort by game time, earliest first
@@ -1030,13 +1091,31 @@ class SportsRecent(SportsCore):
                         processed_games.append(game)
             # Filter for favorite teams only if the config is set
             if self.show_favorite_teams_only:
+                # #region agent log
+                with open('/home/chuck/Github/LEDMatrix/.cursor/debug.log', 'a') as f:
+                    import json
+                    f.write(json.dumps({
+                        "sessionId": "debug-session",
+                        "runId": "pre-fix",
+                        "hypothesisId": "B",
+                        "location": "sports.py:1032",
+                        "message": "Recent games: show_favorite_teams_only=True",
+                        "data": {
+                            "recent_games_to_show": self.recent_games_to_show,
+                            "favorite_teams_count": len(self.favorite_teams),
+                            "processed_games_count": len(processed_games)
+                        },
+                        "timestamp": int(time.time() * 1000)
+                    }) + "\n")
+                # #endregion
                 # Get all games involving favorite teams
                 favorite_team_games = [game for game in processed_games
                                       if game['home_abbr'] in self.favorite_teams or
                                          game['away_abbr'] in self.favorite_teams]
                 self.logger.info(f"Found {len(favorite_team_games)} favorite team games out of {len(processed_games)} total final games within last 21 days")
                 
-                # Select one game per favorite team (most recent game for each team)
+                # Select N games per favorite team (where N = recent_games_to_show)
+                # Example: recent_games_to_show=1 with 2 favorite teams = 2 games total
                 team_games = []
                 for team in self.favorite_teams:
                     # Find games where this team is playing
@@ -1044,16 +1123,59 @@ class SportsRecent(SportsCore):
                                           if game['home_abbr'] == team or game['away_abbr'] == team]
                     
                     if team_specific_games:
-                        # Sort by game time and take the most recent
+                        # Sort by game time and take the most recent N games
                         team_specific_games.sort(key=lambda g: g.get('start_time_utc') or datetime.min.replace(tzinfo=timezone.utc), reverse=True)
-                        team_games.append(team_specific_games[0])
+                        # #region agent log
+                        with open('/home/chuck/Github/LEDMatrix/.cursor/debug.log', 'a') as f:
+                            import json
+                            f.write(json.dumps({
+                                "sessionId": "debug-session",
+                                "runId": "pre-fix",
+                                "hypothesisId": "B",
+                                "location": "sports.py:1055",
+                                "message": "Team-specific recent games found",
+                                "data": {
+                                    "team": team,
+                                    "team_specific_games_count": len(team_specific_games),
+                                    "recent_games_to_show": self.recent_games_to_show,
+                                    "taking_count": min(len(team_specific_games), self.recent_games_to_show)
+                                },
+                                "timestamp": int(time.time() * 1000)
+                            }) + "\n")
+                        # #endregion
+                        # Take up to recent_games_to_show games for this team
+                        team_games.extend(team_specific_games[:self.recent_games_to_show])
                 
                 # Sort the final list by game time (most recent first)
                 team_games.sort(key=lambda g: g.get('start_time_utc') or datetime.min.replace(tzinfo=timezone.utc), reverse=True)
+                # Remove duplicates (in case a game involves multiple favorite teams)
+                seen_ids = set()
+                unique_team_games = []
+                for game in team_games:
+                    if game['id'] not in seen_ids:
+                        seen_ids.add(game['id'])
+                        unique_team_games.append(game)
+                team_games = unique_team_games
                 
                 # Debug: Show which games are selected for display
                 for i, game in enumerate(team_games):
                     self.logger.info(f"Game {i+1} for display: {game['away_abbr']} @ {game['home_abbr']} - {game.get('start_time_utc')} - Score: {game['away_score']}-{game['home_score']}")
+                # #region agent log
+                with open('/home/chuck/Github/LEDMatrix/.cursor/debug.log', 'a') as f:
+                    import json
+                    f.write(json.dumps({
+                        "sessionId": "debug-session",
+                        "runId": "pre-fix",
+                        "hypothesisId": "B",
+                        "location": "sports.py:1075",
+                        "message": "Final recent games after filtering",
+                        "data": {
+                            "final_games_count": len(team_games),
+                            "recent_games_to_show": self.recent_games_to_show
+                        },
+                        "timestamp": int(time.time() * 1000)
+                    }) + "\n")
+                # #endregion
             else:
                 team_games = processed_games # Show all recent games if no favorites defined
                 self.logger.info(f"Found {len(processed_games)} total final games within last 21 days (no favorite teams filtering)")
