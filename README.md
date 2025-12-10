@@ -8,10 +8,9 @@
 ### Connect with ChuckBuilds
 
 - Show support on Youtube: https://www.youtube.com/@ChuckBuilds
-- Check out the write-up on my website: https://www.chuck-builds.com/led-matrix/
 - Stay in touch on Instagram: https://www.instagram.com/ChuckBuilds/
-- Want to chat? Reach out on the ChuckBuilds Discord: https://discord.com/invite/uW36dVAtcT
-- Feeling Generous? Buy Me a Coffee : https://buymeacoffee.com/chuckbuilds              
+- Want to chat or need support? Reach out on the ChuckBuilds Discord: https://discord.com/invite/uW36dVAtcT
+- Feeling Generous? Buy Me a Coffee : https://buymeacoffee.com/chuckbuilds  or  https://ko-fi.com/chuckbuilds/
 
 -----------------------------------------------------------------------------------
 
@@ -22,87 +21,31 @@
 - ESPN for their sports API
 - Yahoo Finance for their Stock API
 - OpenWeatherMap for their Free Weather API
-- Randomwire @ https://www.thingiverse.com/thing:5169867 for their 4mm Pixel Pitch LED Matrix Stand 
-
-
 
 
 -----------------------------------------------------------------------------------
 
-## Core Features
+## Plugins Version is HERE!
 
-<details>
-<summary>Core Features</summary>
-## Core Features
-Modular, rotating Displays that can be individually enabled or disabled per the user's needs with some configuration around display durations, teams, stocks, weather, timezones, and more. Displays include:
+After months of testing, bug fixes, and generally breaking everything, I present to you: Plugins!
+This is a major refactor over the previous versions where the "managers" or displays were built into the root LEDMatrix project. Going Forward all of the "managers" will be referred to as "plugins" and will be hosted on their own repositories. This allows for more updates, more displays, 3rd party plugins, and hopefully more fun. This is absolutely a work in progress but it is in a place where I think it is 95% of functionality that we used to have in the older version.
 
-### Time and Weather
-- Real-time clock display (2x 64x32 Displays 4mm Pixel Pitch)
-![DSC01361](https://github.com/user-attachments/assets/c4487d40-5872-45f5-a553-debf8cea17e9)
-
-
-- Current Weather, Daily Weather, and Hourly Weather Forecasts (2x 64x32 Displays 4mm Pixel Pitch)
-![DSC01362](https://github.com/user-attachments/assets/d31df736-522f-4f61-9451-29151d69f164)
-![DSC01364](https://github.com/user-attachments/assets/eb2d16ad-6b12-49d9-ba41-e39a6a106682)
-![DSC01365](https://github.com/user-attachments/assets/f8a23426-e6fa-4774-8c87-19bb94cfbe73)
+Big changes: 
+- Plugin Store
+- 100% Web interface control for Configuration files
+- API's for controlling the website and display
+- Support for Rasbian 13 (Trixie)
+- Reworked Web Interface to support plugins
 
 
-- Google Calendar event display (2x 64x32 Displays 4mm Pixel Pitch)
-![DSC01374-1](https://github.com/user-attachments/assets/5bc89917-876e-489d-b944-4d60274266e3)
+## Plugins & The Plugin Store
 
+There is an official "Repository" of ChuckBuilds provided plugins available by default in the LEDMatrix Web Interface via the "Plugin Manager" tab. These can be viewed on Github at : https://github.com/ChuckBuilds/ledmatrix-plugins/ . If you wish to develop your own plugins or install someone else's plugins (at your own risk) you can use the "Install From Github" Section to add a specific plugin or a whole repository. I hope to get a full guide and example created soon to help folks feel empowered to make their own plugins. If you create a plugin that you think is ready to be shared with the world, reach out to me with a github issue or a discord message to talk about adding you to the default plugin store. 
 
+There is some rate-limiting from Github when using the Plugin Manager so you may need to generate a github api key to enter into your web interface for more frequent updates of the plugin store. (Optional - guide tbd)
 
-### Sports Information
-The system supports live, recent, and upcoming game information for multiple sports leagues:
-- NHL (Hockey) (2x 64x32 Displays 4mm Pixel Pitch)
-![DSC01356](https://github.com/user-attachments/assets/64c359b6-4b99-4dee-aca0-b74debda30e0)
-![DSC01339](https://github.com/user-attachments/assets/2ccc52af-b4ed-4c06-a341-581506c02153)
-![DSC01337](https://github.com/user-attachments/assets/f4faf678-9f43-4d37-be56-89ecbd09acf6)
+More to come on plugins but hopefully it's a more sustainable future for this LEDMatrix project.
 
-- NBA (Basketball)
-- MLB (Baseball) (2x 64x32 Displays 4mm Pixel Pitch)
-![DSC01359](https://github.com/user-attachments/assets/71e985f1-d2c9-4f0e-8ea1-13eaefeec01c)
-
-- NFL (Football) (2x 96x48 Displays 2.5mm Pixel Pitch)
-  <img width="2109" height="541" alt="image" src="https://github.com/user-attachments/assets/d10212c9-0d45-4f87-b61d-0a33afb9f160" />
-- NCAA Football (2x 96x48 Displays 2.5mm Pixel Pitch)
-  <img width="2417" height="610" alt="image" src="https://github.com/user-attachments/assets/9be92869-ee29-4809-9337-69977f228e23" />
-
-- NCAA Men's Basketball
-- NCAA Men's Baseball
-- Soccer (Premier League, La Liga, Bundesliga, Serie A, Ligue 1, Liga Portugal, Champions League, Europa League, MLS)
-- (Note, some of these sports seasons were not active during development and might need fine tuning when games are active)
-
-
-### Financial Information
-- Near real-time stock & crypto price updates
-- Stock news headlines
-- Customizable stock & crypto watchlists (2x 64x32 Displays 4mm Pixel Pitch)
-![DSC01366](https://github.com/user-attachments/assets/95b67f50-0f69-4479-89d0-1d87c3daefd3)
-![DSC01368](https://github.com/user-attachments/assets/c4b75546-388b-4d4a-8b8c-8c5a62f139f9)
-
-
-
-### Entertainment
-- Music playback information from multiple sources:
-  - Spotify integration
-  - YouTube Music integration
-- Album art display
-- Now playing information with scrolling text (2x 64x32 Displays 4mm Pixel Pitch)
-![DSC01354](https://github.com/user-attachments/assets/7524b149-f55d-4eb7-b6c6-6e336e0d1ac1)
-![DSC01389](https://github.com/user-attachments/assets/3f768651-5446-4ff5-9357-129cd8b3900d)
-
-
-
-### Custom Display Features
-- Custom Text display (2x 64x32 Displays 4mm Pixel Pitch)
-![DSC01379](https://github.com/user-attachments/assets/338b7578-9d4b-4465-851c-7e6a1d999e07)
-
-- Youtube Subscriber Count Display (2x 64x32 Displays 4mm Pixel Pitch)
-![DSC01376](https://github.com/user-attachments/assets/7ea5f42d-afce-422f-aa97-6b2a179aa7d2)
-
-- Font testing Display (not in rotation)
-</details>
 
 -----------------------------------------------------------------------------------
 
@@ -237,21 +180,6 @@ sudo apt install -y git python3-pip cython3 build-essential python3-dev python3-
 ```bash
 git clone https://github.com/ChuckBuilds/LEDMatrix.git
 cd LEDMatrix
-# Note: Git submodules (including rpi-rgb-led-matrix) are automatically initialized during first_time_install.sh
-# If you need to initialize manually: git submodule update --init --recursive
-```
-REMOVE ME BEFORE PR:
-To use the Plugins branch type:
-```bash
-git checkout plugins
-git pull
-```
-
-4. First-time installation (recommended)
-
-```bash
-chmod +x first_time_install.sh
-sudo bash ./first_time_install.sh
 ```
 
 4. First-time installation (recommended)
@@ -262,133 +190,6 @@ sudo ./first_time_install.sh
 ```
 
 This single script installs services, dependencies, configures permissions and sudoers, and validates the setup.
-
-**Troubleshooting Installation Issues:**
-
-If the installation script gets stuck on "Preparing metadata (pyproject.toml)" during Step 5 (installing Python dependencies):
-
-1. **Run the diagnostic script** to identify the issue:
-   ```bash
-   bash scripts/diagnose_dependencies.sh
-   ```
-
-2. **Common fixes:**
-   - Ensure build tools are installed: `sudo apt install -y build-essential python3-dev python3-setuptools python3-wheel cython3`
-   - Upgrade pip: `python3 -m pip install --break-system-packages --upgrade pip setuptools wheel`
-   - Clear pip cache: `python3 -m pip cache purge`
-   - Check disk space: `df -h` (building packages requires temporary space)
-   - Check memory: `free -h` (consider increasing swap if low)
-
-3. **The improved installation script now:**
-   - Installs packages one at a time for better diagnostics
-   - Shows which package is being installed with progress indicators
-   - Uses timeouts to identify problematic packages
-   - Provides verbose output for troubleshooting
-   - Continues with remaining packages if one fails
-
-4. **If a specific package fails**, try installing it manually:
-   ```bash
-   python3 -m pip install --break-system-packages --no-cache-dir --verbose <package-name>
-   ```
-
-5. **For packages that build from source** (like numpy), consider:
-   - Installing pre-built wheels: `python3 -m pip install --break-system-packages --only-binary :all: <package>`
-   - Or installing via apt if available: `sudo apt install python3-<package>`
-
-</details>
-
-<details>
-
-<summary>Outdated Installation Steps left for reference</summary>
-
-
------------------------------------------------------------------------------------
------ OLD STEPS (left for manual review, you don't need to run these if you run the First Time Install Script) -----
-4. Install dependencies:
-```bash
-sudo pip3 install --break-system-packages -r requirements.txt
-```
---break-system-packages allows us to install without a virtual environment
-
-
-5. Install rpi-rgb-led-matrix dependencies:
-```bash
-cd rpi-rgb-led-matrix-master
-```
-```bash
-sudo make build-python PYTHON=$(which python3)
-```
-```bash
-cd bindings/python
-sudo python3 setup.py install
-```
-Test it with:
-```bash
-python3 -c 'from rgbmatrix import RGBMatrix, RGBMatrixOptions; print("Success!")'
-```
-
-## Important: Sound Module Configuration
-
-1. Remove unnecessary services that might interfere with the LED matrix:
-```bash
-sudo apt-get remove bluez bluez-firmware pi-bluetooth triggerhappy pigpio
-```
-
-2. Blacklist the sound module:
-```bash
-cat <<EOF | sudo tee /etc/modprobe.d/blacklist-rgb-matrix.conf
-blacklist snd_bcm2835
-EOF
-```
-
-then execute
-
-```bash
-sudo update-initramfs -u
-```
-
-3. Reboot:
-```bash
-sudo reboot
-```
-
-## Performance Optimization
-
-To reduce flickering and improve display quality:
-
-1. Edit `/boot/firmware/cmdline.txt`:
-```bash
-sudo nano /boot/firmware/cmdline.txt
-```
-
-2. Add `isolcpus=3` at the end of the line
-
-3. Ctrl + X to exit, Y to save, Enter to Confirm
-
-4. Edit /boot/firmware/config.txt  with
-```bash
-sudo nano /boot/firmware/config.txt
-```  
-
-6. Edit the `dtparam=audio=on` section to `dtparam=audio=off`
-
-7. Ctrl + X to exit, Y to save, Enter to Confirm
-
-8. Save and reboot:
-```bash
-sudo reboot
-```
-## Configuration
-
-### Initial Setup
-
-1. **First-time setup**: (First Time Script should do this for you) Copy the template to create your config:
-   ```bash
-   cp config/config.template.json config/config.json
-   ```
-
-</details>
-
 
 
 ## Configuration

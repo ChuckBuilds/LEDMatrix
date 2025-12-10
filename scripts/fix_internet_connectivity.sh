@@ -97,3 +97,8 @@ echo "3. Restart network: sudo systemctl restart NetworkManager"
 echo "4. Check Ethernet connection: ip link show eth0"
 echo ""
 
+
+
+
+
+

@@ -51,4 +51,6 @@ plugins/*
 !plugins/soccer-scoreboard/
 !plugins/calendar
 !plugins/calendar/
+!plugins/mqtt-notifications
+!plugins/mqtt-notifications/
 !plugins/*/.git
