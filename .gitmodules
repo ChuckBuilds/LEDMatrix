@@ -19,3 +19,6 @@
 [submodule "plugins/calendar"]
 	path = plugins/calendar
 	url = https://github.com/ChuckBuilds/ledmatrix-calendar.git
+[submodule "plugins/mqtt-notifications"]
+	path = plugins/mqtt-notifications
+	url = https://github.com/ChuckBuilds/ledmatrix-mqtt-notifications.git
