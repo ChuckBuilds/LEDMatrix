@@ -2161,9 +2161,14 @@ window.toggleNestedSection = function(sectionId) {
         icon.classList.remove('fa-chevron-right');
         icon.classList.add('fa-chevron-down');
         
+        // Allow parent section to show overflow when expanded
+        const sectionElement = content.closest('.nested-section');
+        if (sectionElement) {
+            sectionElement.style.overflow = 'visible';
+        }
+        
         // Scroll the expanded content into view after a short delay to allow animation
         setTimeout(() => {
-            const sectionElement = content.closest('.nested-section');
             if (sectionElement) {
                 // Find the modal container
                 const modalContent = sectionElement.closest('.modal-content');
@@ -2187,6 +2192,12 @@ window.toggleNestedSection = function(sectionId) {
         // Force reflow
         content.offsetHeight;
         content.style.maxHeight = '0';
+        // Restore parent section overflow when collapsed
+        const sectionElement = content.closest('.nested-section');
+        if (sectionElement) {
+            sectionElement.style.overflow = 'hidden';
+        }
+        
         // Use setTimeout to set display:none after transition completes
         setTimeout(() => {
             if (content.classList.contains('collapsed')) {
