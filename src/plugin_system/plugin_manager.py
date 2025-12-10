@@ -28,6 +28,27 @@ from src.common.permission_utils import (
     get_plugin_dir_mode
 )
 
+def _get_debug_log_path():
+    """Get path to debug log file, creating directory if needed."""
+    try:
+        # Try to find project root
+        project_root = os.environ.get('LEDMATRIX_ROOT')
+        if not project_root:
+            # Try to find project root by looking for config directory
+            current = Path(__file__).resolve().parent.parent.parent
+            if (current / 'config').exists():
+                project_root = str(current)
+            else:
+                # Fallback to current working directory
+                project_root = os.getcwd()
+        
+        log_dir = Path(project_root) / '.cursor'
+        log_dir.mkdir(exist_ok=True, mode=0o755)
+        return log_dir / 'debug.log'
+    except Exception:
+        # Ultimate fallback
+        return Path('/tmp/ledmatrix_debug.log')
+
 
 class PluginManager:
     """
@@ -277,9 +298,9 @@ class PluginManager:
                 config = {}
             
             # #region agent log
-            import json
             try:
-                with open('/home/chuck/Github/LEDMatrix/.cursor/debug.log', 'a') as f:
+                log_path = _get_debug_log_path()
+                with open(log_path, 'a') as f:
                     f.write(json.dumps({
                         'sessionId': 'debug-session',
                         'runId': 'run1',
@@ -289,7 +310,8 @@ class PluginManager:
                         'data': {'plugin_id': plugin_id, 'config_enabled': config.get('enabled'), 'config_keys': list(config.keys())},
                         'timestamp': int(time.time() * 1000)
                     }) + '\n')
-            except: pass
+            except Exception as e:
+                self.logger.debug(f"Debug log write failed: {e}")
             # #endregion
             
             # Merge config with schema defaults to ensure all defaults are applied
@@ -297,7 +319,8 @@ class PluginManager:
                 defaults = self.schema_manager.generate_default_config(plugin_id, use_cache=True)
                 # #region agent log
                 try:
-                    with open('/home/chuck/Github/LEDMatrix/.cursor/debug.log', 'a') as f:
+                    log_path = _get_debug_log_path()
+                    with open(log_path, 'a') as f:
                         f.write(json.dumps({
                             'sessionId': 'debug-session',
                             'runId': 'run1',
@@ -307,12 +330,14 @@ class PluginManager:
                             'data': {'plugin_id': plugin_id, 'defaults_enabled': defaults.get('enabled'), 'defaults_keys': list(defaults.keys())},
                             'timestamp': int(time.time() * 1000)
                         }) + '\n')
-                except: pass
+                except Exception as e:
+                    self.logger.debug(f"Debug log write failed: {e}")
                 # #endregion
                 config = self.schema_manager.merge_with_defaults(config, defaults)
                 # #region agent log
                 try:
-                    with open('/home/chuck/Github/LEDMatrix/.cursor/debug.log', 'a') as f:
+                    log_path = _get_debug_log_path()
+                    with open(log_path, 'a') as f:
                         f.write(json.dumps({
                             'sessionId': 'debug-session',
                             'runId': 'run1',
@@ -322,7 +347,8 @@ class PluginManager:
                             'data': {'plugin_id': plugin_id, 'config_enabled': config.get('enabled'), 'config_keys': list(config.keys())},
                             'timestamp': int(time.time() * 1000)
                         }) + '\n')
-                except: pass
+                except Exception as e:
+                    self.logger.debug(f"Debug log write failed: {e}")
                 # #endregion
                 self.logger.debug(f"Merged config with schema defaults for {plugin_id}")
             except Exception as e:
@@ -363,7 +389,8 @@ class PluginManager:
             # Update state based on enabled status
             # #region agent log
             try:
-                with open('/home/chuck/Github/LEDMatrix/.cursor/debug.log', 'a') as f:
+                log_path = _get_debug_log_path()
+                with open(log_path, 'a') as f:
                     f.write(json.dumps({
                         'sessionId': 'debug-session',
                         'runId': 'run1',
@@ -373,7 +400,8 @@ class PluginManager:
                         'data': {'plugin_id': plugin_id, 'config_enabled': config.get('enabled'), 'plugin_instance_enabled': getattr(plugin_instance, 'enabled', None), 'default_used': 'enabled' not in config},
                         'timestamp': int(time.time() * 1000)
                     }) + '\n')
-            except: pass
+            except Exception as e:
+                self.logger.debug(f"Debug log write failed: {e}")
             # #endregion
             if config.get('enabled', True):
                 self.state_manager.set_state(plugin_id, PluginState.ENABLED)
@@ -469,8 +497,6 @@ class PluginManager:
         self.logger.info("Reloading plugin: %s", plugin_id)
         
         # #region agent log
-        import json
-        import time
         try:
             enabled_before = None
             if plugin_id in self.plugins:
@@ -479,7 +505,8 @@ class PluginManager:
             if self.config_manager:
                 full_config = self.config_manager.load_config()
                 config_before = full_config.get(plugin_id, {}).get('enabled')
-            with open('/home/chuck/Github/LEDMatrix/.cursor/debug.log', 'a') as f:
+            log_path = _get_debug_log_path()
+            with open(log_path, 'a') as f:
                 f.write(json.dumps({
                     'sessionId': 'debug-session',
                     'runId': 'run1',
@@ -489,7 +516,8 @@ class PluginManager:
                     'data': {'plugin_id': plugin_id, 'plugin_enabled': enabled_before, 'config_enabled': config_before},
                     'timestamp': int(time.time() * 1000)
                 }) + '\n')
-        except: pass
+        except Exception as e:
+            self.logger.debug(f"Debug log write failed: {e}")
         # #endregion
         
         # Unload first

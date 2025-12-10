@@ -2452,10 +2452,11 @@ def save_plugin_config():
         # Ensure enabled state is preserved after defaults merge
         # Defaults should not overwrite an explicitly preserved enabled value
         # #region agent log
-        import json
-        import time
         try:
-            with open('/home/chuck/Github/LEDMatrix/.cursor/debug.log', 'a') as f:
+            log_dir = PROJECT_ROOT / '.cursor'
+            log_dir.mkdir(exist_ok=True, mode=0o755)
+            log_path = log_dir / 'debug.log'
+            with open(log_path, 'a') as f:
                 f.write(json.dumps({
                     'sessionId': 'debug-session',
                     'runId': 'run1',
@@ -2465,7 +2466,9 @@ def save_plugin_config():
                     'data': {'plugin_id': plugin_id, 'preserved_enabled': preserved_enabled, 'config_enabled_after_merge': plugin_config.get('enabled')},
                     'timestamp': int(time.time() * 1000)
                 }) + '\n')
-        except: pass
+        except Exception as e:
+            import logging
+            logging.debug(f"Debug log write failed: {e}")
         # #endregion
         if preserved_enabled is not None:
             # Restore preserved value if it was changed by defaults merge
@@ -2473,7 +2476,8 @@ def save_plugin_config():
                 plugin_config['enabled'] = preserved_enabled
                 # #region agent log
                 try:
-                    with open('/home/chuck/Github/LEDMatrix/.cursor/debug.log', 'a') as f:
+                    log_path = PROJECT_ROOT / '.cursor' / 'debug.log'
+                    with open(log_path, 'a') as f:
                         f.write(json.dumps({
                             'sessionId': 'debug-session',
                             'runId': 'run1',
@@ -2483,7 +2487,9 @@ def save_plugin_config():
                             'data': {'plugin_id': plugin_id, 'restored_enabled': preserved_enabled},
                             'timestamp': int(time.time() * 1000)
                         }) + '\n')
-                except: pass
+                except Exception as e:
+                    import logging
+                    logging.debug(f"Debug log write failed: {e}")
                 # #endregion
         
         # Normalize config data: convert string numbers to integers/floats where schema expects numbers
@@ -2706,10 +2712,11 @@ def save_plugin_config():
                     enabled = plugin_full_config.get('enabled', plugin_instance.enabled)
                     
                     # #region agent log
-                    import json
-                    import time
                     try:
-                        with open('/home/chuck/Github/LEDMatrix/.cursor/debug.log', 'a') as f:
+                        log_dir = PROJECT_ROOT / '.cursor'
+                        log_dir.mkdir(exist_ok=True, mode=0o755)
+                        log_path = log_dir / 'debug.log'
+                        with open(log_path, 'a') as f:
                             f.write(json.dumps({
                                 'sessionId': 'debug-session',
                                 'runId': 'run1',
@@ -2719,7 +2726,9 @@ def save_plugin_config():
                                 'data': {'plugin_id': plugin_id, 'config_enabled': plugin_full_config.get('enabled'), 'plugin_instance_enabled': plugin_instance.enabled, 'final_enabled': enabled},
                                 'timestamp': int(time.time() * 1000)
                             }) + '\n')
-                    except: pass
+                    except Exception as e:
+                        import logging
+                        logging.debug(f"Debug log write failed: {e}")
                     # #endregion
                     
                     # Update state manager if available
