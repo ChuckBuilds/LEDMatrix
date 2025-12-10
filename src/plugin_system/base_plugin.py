@@ -11,6 +11,7 @@ Stability: Stable - maintains backward compatibility
 from abc import ABC, abstractmethod
 from typing import Dict, Any, Optional, List
 import logging
+import time
 from src.logging_config import get_logger
 
 
@@ -351,6 +352,24 @@ class BasePlugin(ABC):
         """
         # Update config reference
         self.config = new_config or {}
+
+        # #region agent log
+        import json
+        import time
+        try:
+            enabled_before = self.enabled
+            with open('/home/chuck/Github/LEDMatrix/.cursor/debug.log', 'a') as f:
+                f.write(json.dumps({
+                    'sessionId': 'debug-session',
+                    'runId': 'run1',
+                    'hypothesisId': 'E',
+                    'location': 'base_plugin.py:356',
+                    'message': 'on_config_change: updating enabled',
+                    'data': {'plugin_id': self.plugin_id, 'enabled_before': enabled_before, 'config_enabled': self.config.get('enabled'), 'enabled_after': self.config.get("enabled", self.enabled)},
+                    'timestamp': int(time.time() * 1000)
+                }) + '\n')
+        except: pass
+        # #endregion
 
         # Update simple flags
         self.enabled = self.config.get("enabled", self.enabled)

@@ -2451,10 +2451,40 @@ def save_plugin_config():
         
         # Ensure enabled state is preserved after defaults merge
         # Defaults should not overwrite an explicitly preserved enabled value
+        # #region agent log
+        import json
+        import time
+        try:
+            with open('/home/chuck/Github/LEDMatrix/.cursor/debug.log', 'a') as f:
+                f.write(json.dumps({
+                    'sessionId': 'debug-session',
+                    'runId': 'run1',
+                    'hypothesisId': 'C',
+                    'location': 'api_v3.py:2454',
+                    'message': 'save_config: before preserving enabled',
+                    'data': {'plugin_id': plugin_id, 'preserved_enabled': preserved_enabled, 'config_enabled_after_merge': plugin_config.get('enabled')},
+                    'timestamp': int(time.time() * 1000)
+                }) + '\n')
+        except: pass
+        # #endregion
         if preserved_enabled is not None:
             # Restore preserved value if it was changed by defaults merge
             if plugin_config.get('enabled') != preserved_enabled:
                 plugin_config['enabled'] = preserved_enabled
+                # #region agent log
+                try:
+                    with open('/home/chuck/Github/LEDMatrix/.cursor/debug.log', 'a') as f:
+                        f.write(json.dumps({
+                            'sessionId': 'debug-session',
+                            'runId': 'run1',
+                            'hypothesisId': 'C',
+                            'location': 'api_v3.py:2457',
+                            'message': 'save_config: restored preserved enabled',
+                            'data': {'plugin_id': plugin_id, 'restored_enabled': preserved_enabled},
+                            'timestamp': int(time.time() * 1000)
+                        }) + '\n')
+                except: pass
+                # #endregion
         
         # Normalize config data: convert string numbers to integers/floats where schema expects numbers
         # This handles form data which sends everything as strings
@@ -2674,6 +2704,23 @@ def save_plugin_config():
                     # Update plugin state manager and call lifecycle methods based on enabled state
                     # This ensures the plugin state is synchronized with the config
                     enabled = plugin_full_config.get('enabled', plugin_instance.enabled)
+                    
+                    # #region agent log
+                    import json
+                    import time
+                    try:
+                        with open('/home/chuck/Github/LEDMatrix/.cursor/debug.log', 'a') as f:
+                            f.write(json.dumps({
+                                'sessionId': 'debug-session',
+                                'runId': 'run1',
+                                'hypothesisId': 'E',
+                                'location': 'api_v3.py:2676',
+                                'message': 'save_config: updating enabled state',
+                                'data': {'plugin_id': plugin_id, 'config_enabled': plugin_full_config.get('enabled'), 'plugin_instance_enabled': plugin_instance.enabled, 'final_enabled': enabled},
+                                'timestamp': int(time.time() * 1000)
+                            }) + '\n')
+                    except: pass
+                    # #endregion
                     
                     # Update state manager if available
                     if api_v3.plugin_state_manager:

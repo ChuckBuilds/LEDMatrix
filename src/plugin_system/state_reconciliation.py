@@ -12,6 +12,7 @@ from typing import Dict, Any, List, Optional
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
+import time
 
 from src.plugin_system.state_manager import PluginStateManager, PluginState, PluginStateStatus
 from src.logging_config import get_logger
@@ -306,6 +307,22 @@ class StateReconciliation:
             elif inconsistency.inconsistency_type == InconsistencyType.PLUGIN_ENABLED_MISMATCH:
                 # Sync enabled state from state manager to config
                 expected_enabled = inconsistency.expected_state.get('enabled')
+                # #region agent log
+                import json
+                import time
+                try:
+                    with open('/home/chuck/Github/LEDMatrix/.cursor/debug.log', 'a') as f:
+                        f.write(json.dumps({
+                            'sessionId': 'debug-session',
+                            'runId': 'run1',
+                            'hypothesisId': 'B',
+                            'location': 'state_reconciliation.py:306',
+                            'message': 'reconcile: fixing enabled mismatch',
+                            'data': {'plugin_id': inconsistency.plugin_id, 'current_enabled': inconsistency.current_state.get('enabled'), 'expected_enabled': expected_enabled},
+                            'timestamp': int(time.time() * 1000)
+                        }) + '\n')
+                except: pass
+                # #endregion
                 config = self.config_manager.load_config()
                 if inconsistency.plugin_id not in config:
                     config[inconsistency.plugin_id] = {}
