@@ -2140,11 +2140,6 @@ function generateFormFromSchema(schema, config, webUiActions = []) {
 
 // Function to toggle nested sections
 window.toggleNestedSection = function(sectionId, event) {
-    // #region agent log
-    const logData = {sessionId: 'debug-session', runId: 'run1', hypothesisId: 'A', location: 'plugins_manager.js:2142', message: 'toggleNestedSection called', data: {sectionId, hasEvent: !!event, timestamp: Date.now()}, timestamp: Date.now()};
-    fetch('http://127.0.0.1:7242/ingest/2e5e5a90-9491-465c-a911-dc18cfd1a393',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(logData)}).catch(()=>{});
-    // #endregion
-    
     // Prevent event bubbling if event is provided
     if (event) {
         event.stopPropagation();
@@ -2158,10 +2153,6 @@ window.toggleNestedSection = function(sectionId, event) {
     
     // Prevent multiple simultaneous toggles
     if (content.dataset.toggling === 'true') {
-        // #region agent log
-        const skipLog = {sessionId: 'debug-session', runId: 'run1', hypothesisId: 'F', location: 'plugins_manager.js:2155', message: 'Skipping toggle - already in progress', data: {sectionId}, timestamp: Date.now()};
-        fetch('http://127.0.0.1:7242/ingest/2e5e5a90-9491-465c-a911-dc18cfd1a393',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(skipLog)}).catch(()=>{});
-        // #endregion
         return;
     }
     
@@ -2174,26 +2165,8 @@ window.toggleNestedSection = function(sectionId, event) {
     const displayStyle = content.style.display;
     const computedDisplay = window.getComputedStyle(content).display;
     
-    // #region agent log
-    const stateLog = {sessionId: 'debug-session', runId: 'run1', hypothesisId: 'B', location: 'plugins_manager.js:2168', message: 'Section state before toggle', data: {
-        sectionId,
-        hasCollapsed,
-        hasExpanded,
-        displayStyle,
-        computedDisplay,
-        maxHeight: content.style.maxHeight,
-        computedMaxHeight: window.getComputedStyle(content).maxHeight
-    }, timestamp: Date.now()};
-    fetch('http://127.0.0.1:7242/ingest/2e5e5a90-9491-465c-a911-dc18cfd1a393',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(stateLog)}).catch(()=>{});
-    // #endregion
-    
     // Check if content is currently collapsed - prioritize class over display style
     const isCollapsed = hasCollapsed || (!hasExpanded && (displayStyle === 'none' || computedDisplay === 'none'));
-    
-    // #region agent log
-    const decisionLog = {sessionId: 'debug-session', runId: 'run1', hypothesisId: 'C', location: 'plugins_manager.js:2180', message: 'Toggle decision', data: {sectionId, isCollapsed, willExpand: isCollapsed}, timestamp: Date.now()};
-    fetch('http://127.0.0.1:7242/ingest/2e5e5a90-9491-465c-a911-dc18cfd1a393',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(decisionLog)}).catch(()=>{});
-    // #endregion
     
     if (isCollapsed) {
         // Expand the section
@@ -2215,36 +2188,12 @@ window.toggleNestedSection = function(sectionId, event) {
         // After animation completes, remove max-height constraint to allow natural expansion
         // This allows parent sections to automatically expand
         setTimeout(() => {
-            // #region agent log
-            const beforeLog = {sessionId: 'debug-session', runId: 'run1', hypothesisId: 'D', location: 'plugins_manager.js:2195', message: 'Before setting max-height to none', data: {
-                sectionId,
-                hasExpanded: content.classList.contains('expanded'),
-                hasCollapsed: content.classList.contains('collapsed'),
-                display: content.style.display,
-                maxHeight: content.style.maxHeight
-            }, timestamp: Date.now()};
-            fetch('http://127.0.0.1:7242/ingest/2e5e5a90-9491-465c-a911-dc18cfd1a393',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(beforeLog)}).catch(()=>{});
-            // #endregion
-            
             // Only set to none if still expanded (prevent race condition)
             if (content.classList.contains('expanded') && !content.classList.contains('collapsed')) {
                 content.style.maxHeight = 'none';
-                // Clear toggling flag
-                content.dataset.toggling = 'false';
-                
-                // #region agent log
-                const afterLog = {sessionId: 'debug-session', runId: 'run1', hypothesisId: 'E', location: 'plugins_manager.js:2203', message: 'After setting max-height to none', data: {
-                    sectionId,
-                    maxHeight: content.style.maxHeight,
-                    hasExpanded: content.classList.contains('expanded'),
-                    hasCollapsed: content.classList.contains('collapsed')
-                }, timestamp: Date.now()};
-                fetch('http://127.0.0.1:7242/ingest/2e5e5a90-9491-465c-a911-dc18cfd1a393',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(afterLog)}).catch(()=>{});
-                // #endregion
-            } else {
-                // Clear toggling flag even if we didn't set max-height
-                content.dataset.toggling = 'false';
             }
+            // Clear toggling flag
+            content.dataset.toggling = 'false';
         }, 300); // Match CSS transition duration
         
         // Scroll the expanded content into view after a short delay to allow animation
