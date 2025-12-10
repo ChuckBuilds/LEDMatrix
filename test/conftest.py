@@ -151,3 +151,163 @@ def reset_logging():
     logging.root.handlers = []
     logging.root.setLevel(logging.WARNING)
 
+
+@pytest.fixture
+def mock_plugin_instance(mock_display_manager, mock_cache_manager, mock_config_manager):
+    """Create a mock plugin instance with all required methods."""
+    from unittest.mock import MagicMock
+    
+    mock_plugin = MagicMock()
+    mock_plugin.plugin_id = "test_plugin"
+    mock_plugin.config = {"enabled": True, "display_duration": 30}
+    mock_plugin.display_manager = mock_display_manager
+    mock_plugin.cache_manager = mock_cache_manager
+    mock_plugin.plugin_manager = MagicMock()
+    mock_plugin.enabled = True
+    
+    # Required methods
+    mock_plugin.update = MagicMock(return_value=None)
+    mock_plugin.display = MagicMock(return_value=True)
+    mock_plugin.get_display_duration = MagicMock(return_value=30.0)
+    
+    # Optional methods
+    mock_plugin.supports_dynamic_duration = MagicMock(return_value=False)
+    mock_plugin.get_dynamic_duration_cap = MagicMock(return_value=None)
+    mock_plugin.is_cycle_complete = MagicMock(return_value=True)
+    mock_plugin.reset_cycle_state = MagicMock(return_value=None)
+    mock_plugin.has_live_priority = MagicMock(return_value=False)
+    mock_plugin.has_live_content = MagicMock(return_value=False)
+    mock_plugin.get_live_modes = MagicMock(return_value=[])
+    mock_plugin.on_config_change = MagicMock(return_value=None)
+    
+    return mock_plugin
+
+
+@pytest.fixture
+def mock_plugin_with_live(mock_plugin_instance):
+    """Create a mock plugin with live priority enabled."""
+    mock_plugin_instance.has_live_priority = MagicMock(return_value=True)
+    mock_plugin_instance.has_live_content = MagicMock(return_value=True)
+    mock_plugin_instance.get_live_modes = MagicMock(return_value=["test_plugin_live"])
+    mock_plugin_instance.config["live_priority"] = True
+    return mock_plugin_instance
+
+
+@pytest.fixture
+def mock_plugin_with_dynamic(mock_plugin_instance):
+    """Create a mock plugin with dynamic duration enabled."""
+    mock_plugin_instance.supports_dynamic_duration = MagicMock(return_value=True)
+    mock_plugin_instance.get_dynamic_duration_cap = MagicMock(return_value=180.0)
+    mock_plugin_instance.is_cycle_complete = MagicMock(return_value=False)
+    mock_plugin_instance.reset_cycle_state = MagicMock(return_value=None)
+    mock_plugin_instance.config["dynamic_duration"] = {
+        "enabled": True,
+        "max_duration_seconds": 180
+    }
+    return mock_plugin_instance
+
+
+@pytest.fixture
+def test_config_with_plugins(test_config):
+    """Provide a test configuration with multiple plugins enabled."""
+    config = test_config.copy()
+    config.update({
+        "plugin1": {
+            "enabled": True,
+            "display_duration": 30,
+            "update_interval": 300
+        },
+        "plugin2": {
+            "enabled": True,
+            "display_duration": 45,
+            "update_interval": 600,
+            "live_priority": True
+        },
+        "plugin3": {
+            "enabled": False,
+            "display_duration": 20
+        },
+        "display": {
+            **config.get("display", {}),
+            "display_durations": {
+                "plugin1": 30,
+                "plugin2": 45,
+                "plugin3": 20
+            },
+            "dynamic_duration": {
+                "max_duration_seconds": 180
+            }
+        }
+    })
+    return config
+
+
+@pytest.fixture
+def test_plugin_manager(mock_config_manager, mock_display_manager, mock_cache_manager):
+    """Create a test PluginManager instance."""
+    from unittest.mock import patch, MagicMock
+    import tempfile
+    from pathlib import Path
+    
+    # Create temporary plugin directory
+    with tempfile.TemporaryDirectory() as tmpdir:
+        plugin_dir = Path(tmpdir) / "plugins"
+        plugin_dir.mkdir()
+        
+        with patch('src.plugin_system.plugin_manager.PluginManager') as MockPM:
+            pm = MagicMock()
+            pm.plugins = {}
+            pm.plugin_manifests = {}
+            pm.loaded_plugins = {}
+            pm.plugin_last_update = {}
+            pm.discover_plugins = MagicMock(return_value=[])
+            pm.load_plugin = MagicMock(return_value=True)
+            pm.unload_plugin = MagicMock(return_value=True)
+            pm.get_plugin = MagicMock(return_value=None)
+            pm.plugin_executor = MagicMock()
+            pm.health_tracker = None
+            pm.resource_monitor = None
+            MockPM.return_value = pm
+            yield pm
+
+
+@pytest.fixture
+def test_display_controller(mock_config_manager, mock_display_manager, mock_cache_manager, 
+                            test_config_with_plugins, emulator_mode):
+    """Create a test DisplayController instance with mocked dependencies."""
+    from unittest.mock import patch, MagicMock
+    from src.display_controller import DisplayController
+    
+    # Set up config manager to return test config
+    mock_config_manager.get_config.return_value = test_config_with_plugins
+    mock_config_manager.load_config.return_value = test_config_with_plugins
+    
+    with patch('src.display_controller.ConfigManager', return_value=mock_config_manager), \
+         patch('src.display_controller.DisplayManager', return_value=mock_display_manager), \
+         patch('src.display_controller.CacheManager', return_value=mock_cache_manager), \
+         patch('src.display_controller.FontManager'), \
+         patch('src.plugin_system.PluginManager') as mock_pm_class:
+        
+        # Set up plugin manager mock
+        mock_pm = MagicMock()
+        mock_pm.discover_plugins = MagicMock(return_value=[])
+        mock_pm.load_plugin = MagicMock(return_value=True)
+        mock_pm.get_plugin = MagicMock(return_value=None)
+        mock_pm.plugins = {}
+        mock_pm.loaded_plugins = {}
+        mock_pm.plugin_manifests = {}
+        mock_pm.plugin_last_update = {}
+        mock_pm.plugin_executor = MagicMock()
+        mock_pm.health_tracker = None
+        mock_pm_class.return_value = mock_pm
+        
+        # Create controller
+        controller = DisplayController()
+        yield controller
+        
+        # Cleanup
+        try:
+            controller.cleanup()
+        except Exception:
+            pass
+
