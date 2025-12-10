@@ -437,7 +437,15 @@
 
 /* Nested config section styles */
 .nested-section {
+    position: relative;
+    margin-bottom: 1rem;
     transition: all 0.2s ease;
+    z-index: 1;
+}
+
+.nested-section button {
+    position: relative;
+    z-index: 2;
 }
 
 .nested-section button:hover {
@@ -445,8 +453,10 @@
 }
 
 .nested-section .nested-content {
+    position: relative;
     transition: max-height 0.3s ease, opacity 0.3s ease;
     overflow: hidden;
+    z-index: 1;
 }
 
 .nested-section i {
@@ -470,11 +480,13 @@
 .nested-content .nested-section {
     margin-left: 1rem;
     margin-bottom: 1.5rem; /* Increased spacing to prevent overlap */
+    margin-top: 0.5rem;
 }
 
 /* Deeply nested sections need even more spacing */
 .nested-content .nested-content .nested-section {
     margin-bottom: 2rem;
+    margin-top: 0.5rem;
 }
 
 /* Form group spacing within nested sections */

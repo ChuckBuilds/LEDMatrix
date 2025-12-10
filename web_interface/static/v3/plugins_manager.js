@@ -1416,50 +1416,6 @@ window.showPluginConfigModal = function(pluginId, config) {
                 console.log('Form submit handler attached');
             }
             
-            // #region agent log
-            // Check all section headers after form is rendered
-            setTimeout(() => {
-                const allSections = document.querySelectorAll('.nested-section');
-                const sectionData = [];
-                allSections.forEach((section, index) => {
-                    const button = section.querySelector('button');
-                    if (button) {
-                        const rect = button.getBoundingClientRect();
-                        const computedStyle = window.getComputedStyle(button);
-                        const parentStyle = window.getComputedStyle(section);
-                        const nextSibling = section.nextElementSibling;
-                        let nextSiblingInfo = null;
-                        if (nextSibling) {
-                            const nextRect = nextSibling.getBoundingClientRect();
-                            const nextStyle = window.getComputedStyle(nextSibling);
-                            nextSiblingInfo = {
-                                className: nextSibling.className,
-                                rect: {top: nextRect.top, left: nextRect.left, bottom: nextRect.bottom, right: nextRect.right},
-                                zIndex: nextStyle.zIndex,
-                                position: nextStyle.position
-                            };
-                        }
-                        sectionData.push({
-                            index,
-                            sectionId: button.getAttribute('data-section-id'),
-                            headerRect: {top: rect.top, left: rect.left, bottom: rect.bottom, right: rect.right, width: rect.width, height: rect.height},
-                            headerZIndex: computedStyle.zIndex,
-                            headerPosition: computedStyle.position,
-                            parentOverflow: parentStyle.overflow,
-                            parentZIndex: parentStyle.zIndex,
-                            parentPosition: parentStyle.position,
-                            nextSiblingInfo,
-                            isVisible: rect.width > 0 && rect.height > 0 && rect.top >= 0
-                        });
-                    }
-                });
-                const logData = {sessionId: 'debug-session', runId: 'run1', hypothesisId: 'D', location: 'plugins_manager.js:1418', message: 'All section headers after form render', data: {
-                    totalSections: allSections.length,
-                    sections: sectionData
-                }, timestamp: Date.now()};
-                fetch('http://127.0.0.1:7242/ingest/2e5e5a90-9491-465c-a911-dc18cfd1a393',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(logData)}).catch(()=>{});
-            }, 200);
-            // #endregion
         })
         .catch(error => {
             console.error('Error generating config form:', error);
@@ -1805,9 +1761,9 @@ function generateFieldHtml(key, prop, value, prefix = '') {
         const marginClass = nestingDepth > 1 ? 'mb-6' : 'mb-4';
         
         html += `
-            <div class="nested-section border border-gray-300 rounded-lg overflow-hidden ${marginClass}">
+            <div class="nested-section border border-gray-300 rounded-lg ${marginClass}">
                 <button type="button" 
-                        class="w-full bg-gray-100 hover:bg-gray-200 px-4 py-3 flex items-center justify-between text-left transition-colors"
+                        class="w-full bg-gray-100 hover:bg-gray-200 px-4 py-3 flex items-center justify-between text-left transition-colors rounded-t-lg"
                         onclick="toggleNestedSection('${sectionId}')"
                         data-section-id="${sectionId}">
                     <div class="flex-1">
@@ -1816,44 +1772,8 @@ function generateFieldHtml(key, prop, value, prefix = '') {
                     </div>
                     <i id="${sectionId}-icon" class="fas fa-chevron-right text-gray-500 transition-transform"></i>
                 </button>
-                <div id="${sectionId}" class="nested-content collapsed bg-gray-50 px-4 py-4 space-y-3" style="max-height: 0; display: none;">
+                <div id="${sectionId}" class="nested-content collapsed bg-gray-50 px-4 py-4 space-y-3 rounded-b-lg" style="max-height: 0; display: none;">
         `;
-        
-        // #region agent log
-        // Log when nested section is created
-        setTimeout(() => {
-            const sectionEl = document.querySelector(`[data-section-id="${sectionId}"]`)?.closest('.nested-section');
-            if (sectionEl) {
-                const button = sectionEl.querySelector('button');
-                const rect = button.getBoundingClientRect();
-                const computedStyle = window.getComputedStyle(button);
-                const parentStyle = window.getComputedStyle(sectionEl);
-                const nextSibling = sectionEl.nextElementSibling;
-                let nextSiblingInfo = null;
-                if (nextSibling) {
-                    const nextRect = nextSibling.getBoundingClientRect();
-                    const nextStyle = window.getComputedStyle(nextSibling);
-                    nextSiblingInfo = {
-                        className: nextSibling.className,
-                        rect: {top: nextRect.top, left: nextRect.left, bottom: nextRect.bottom, right: nextRect.right},
-                        zIndex: nextStyle.zIndex,
-                        position: nextStyle.position
-                    };
-                }
-                const logData = {sessionId: 'debug-session', runId: 'run1', hypothesisId: 'C', location: 'plugins_manager.js:1775', message: 'Nested section created', data: {
-                    sectionId,
-                    headerRect: {top: rect.top, left: rect.left, bottom: rect.bottom, right: rect.right, width: rect.width, height: rect.height},
-                    headerZIndex: computedStyle.zIndex,
-                    headerPosition: computedStyle.position,
-                    parentOverflow: parentStyle.overflow,
-                    parentZIndex: parentStyle.zIndex,
-                    parentPosition: parentStyle.position,
-                    nextSiblingInfo
-                }, timestamp: Date.now()};
-                fetch('http://127.0.0.1:7242/ingest/2e5e5a90-9491-465c-a911-dc18cfd1a393',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(logData)}).catch(()=>{});
-            }
-        }, 100);
-        // #endregion
         
         // Recursively generate fields for nested properties
         // Get ordered properties if x-propertyOrder is defined
@@ -2206,37 +2126,10 @@ function generateFormFromSchema(schema, config, webUiActions = []) {
 
 // Function to toggle nested sections
 window.toggleNestedSection = function(sectionId) {
-    // #region agent log
-    const logData = {sessionId: 'debug-session', runId: 'run1', hypothesisId: 'A', location: 'plugins_manager.js:2126', message: 'toggleNestedSection called', data: {sectionId}, timestamp: Date.now()};
-    fetch('http://127.0.0.1:7242/ingest/2e5e5a90-9491-465c-a911-dc18cfd1a393',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(logData)}).catch(()=>{});
-    // #endregion
-    
     const content = document.getElementById(sectionId);
     const icon = document.getElementById(sectionId + '-icon');
     
     if (!content || !icon) return;
-    
-    const sectionElement = content.closest('.nested-section');
-    const headerButton = sectionElement ? sectionElement.querySelector('button') : null;
-    
-    // #region agent log
-    if (sectionElement && headerButton) {
-        const rect = headerButton.getBoundingClientRect();
-        const computedStyle = window.getComputedStyle(headerButton);
-        const parentStyle = window.getComputedStyle(sectionElement);
-        const logData2 = {sessionId: 'debug-session', runId: 'run1', hypothesisId: 'A', location: 'plugins_manager.js:2135', message: 'Header button position before toggle', data: {
-            sectionId,
-            headerRect: {top: rect.top, left: rect.left, bottom: rect.bottom, right: rect.right, width: rect.width, height: rect.height},
-            headerZIndex: computedStyle.zIndex,
-            headerPosition: computedStyle.position,
-            parentOverflow: parentStyle.overflow,
-            parentZIndex: parentStyle.zIndex,
-            parentPosition: parentStyle.position,
-            nextSibling: sectionElement.nextElementSibling ? sectionElement.nextElementSibling.className : null
-        }, timestamp: Date.now()};
-        fetch('http://127.0.0.1:7242/ingest/2e5e5a90-9491-465c-a911-dc18cfd1a393',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(logData2)}).catch(()=>{});
-    }
-    // #endregion
     
     // Check if content is currently collapsed (has 'collapsed' class or display:none)
     const isCollapsed = content.classList.contains('collapsed') || 
@@ -2253,34 +2146,6 @@ window.toggleNestedSection = function(sectionId) {
         content.style.maxHeight = content.scrollHeight + 'px';
         icon.classList.remove('fa-chevron-right');
         icon.classList.add('fa-chevron-down');
-        
-        // #region agent log
-        setTimeout(() => {
-            if (sectionElement && headerButton) {
-                const rect = headerButton.getBoundingClientRect();
-                const computedStyle = window.getComputedStyle(headerButton);
-                const parentStyle = window.getComputedStyle(sectionElement);
-                const nextSibling = sectionElement.nextElementSibling;
-                let nextSiblingRect = null;
-                if (nextSibling) {
-                    const nextRect = nextSibling.getBoundingClientRect();
-                    nextSiblingRect = {top: nextRect.top, left: nextRect.left, bottom: nextRect.bottom, right: nextRect.right};
-                }
-                const logData3 = {sessionId: 'debug-session', runId: 'run1', hypothesisId: 'B', location: 'plugins_manager.js:2160', message: 'Header button position after expand', data: {
-                    sectionId,
-                    headerRect: {top: rect.top, left: rect.left, bottom: rect.bottom, right: rect.right, width: rect.width, height: rect.height},
-                    headerZIndex: computedStyle.zIndex,
-                    headerPosition: computedStyle.position,
-                    parentOverflow: parentStyle.overflow,
-                    parentZIndex: parentStyle.zIndex,
-                    contentHeight: content.scrollHeight,
-                    nextSiblingRect,
-                    isOverlapping: nextSiblingRect && rect.bottom > nextSiblingRect.top
-                }, timestamp: Date.now()};
-                fetch('http://127.0.0.1:7242/ingest/2e5e5a90-9491-465c-a911-dc18cfd1a393',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(logData3)}).catch(()=>{});
-            }
-        }, 350);
-        // #endregion
     } else {
         // Collapse the section
         content.classList.add('collapsed');
