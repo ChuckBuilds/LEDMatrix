@@ -696,7 +696,11 @@ function loadInstalledPlugins() {
         })
         .catch(error => {
             console.error('Error loading installed plugins:', error);
-            showError('Error loading plugins: ' + error.message);
+            let errorMsg = 'Error loading plugins: ' + error.message;
+            if (error.message && error.message.includes('Failed to Fetch')) {
+                errorMsg += ' - Please try refreshing your browser.';
+            }
+            showError(errorMsg);
             throw error;
         });
 }
@@ -3087,7 +3091,11 @@ function searchPluginStore(fetchLatestVersions = true) {
         .catch(error => {
             console.error('Error searching plugin store:', error);
             showStoreLoading(false);
-            showError('Error searching plugin store: ' + error.message);
+            let errorMsg = 'Error searching plugin store: ' + error.message;
+            if (error.message && error.message.includes('Failed to Fetch')) {
+                errorMsg += ' - Please try refreshing your browser.';
+            }
+            showError(errorMsg);
             try {
                 const countEl = document.getElementById('store-count');
                 if (countEl) {
@@ -3643,7 +3651,11 @@ window.installFromCustomRegistry = function(pluginId, registryUrl, pluginPath) {
         }
     })
     .catch(error => {
-        showError('Error installing plugin: ' + error.message);
+        let errorMsg = 'Error installing plugin: ' + error.message;
+        if (error.message && error.message.includes('Failed to Fetch')) {
+            errorMsg += ' - Please try refreshing your browser.';
+        }
+        showError(errorMsg);
     });
 }
 
