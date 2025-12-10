@@ -1735,7 +1735,7 @@
                                 <div class="nested-section border border-gray-300 rounded-lg ${marginClass}">
                                     <button type="button" 
                                             class="w-full bg-gray-100 hover:bg-gray-200 px-4 py-3 flex items-center justify-between text-left transition-colors"
-                                            onclick="toggleNestedSection('${sectionId}')">
+                                            onclick="toggleNestedSection('${sectionId}', event); return false;">
                                         <div class="flex-1">
                                             <h4 class="font-semibold text-gray-900">${sectionLabel}</h4>
                                             ${description ? `<p class="text-sm text-gray-600 mt-1">${description}</p>` : ''}

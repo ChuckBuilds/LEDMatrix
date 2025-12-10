@@ -1780,7 +1780,7 @@ function generateFieldHtml(key, prop, value, prefix = '') {
             <div class="nested-section border border-gray-300 rounded-lg ${marginClass}">
                 <button type="button" 
                         class="w-full bg-gray-100 hover:bg-gray-200 px-4 py-3 flex items-center justify-between text-left transition-colors rounded-t-lg"
-                        onclick="toggleNestedSection('${sectionId}')"
+                        onclick="toggleNestedSection('${sectionId}', event); return false;"
                         data-section-id="${sectionId}">
                     <div class="flex-1">
                         <h4 class="font-semibold text-gray-900">${sectionLabel}</h4>
@@ -2139,16 +2139,61 @@ function generateFormFromSchema(schema, config, webUiActions = []) {
 }
 
 // Function to toggle nested sections
-window.toggleNestedSection = function(sectionId) {
+window.toggleNestedSection = function(sectionId, event) {
+    // #region agent log
+    const logData = {sessionId: 'debug-session', runId: 'run1', hypothesisId: 'A', location: 'plugins_manager.js:2142', message: 'toggleNestedSection called', data: {sectionId, hasEvent: !!event, timestamp: Date.now()}, timestamp: Date.now()};
+    fetch('http://127.0.0.1:7242/ingest/2e5e5a90-9491-465c-a911-dc18cfd1a393',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(logData)}).catch(()=>{});
+    // #endregion
+    
+    // Prevent event bubbling if event is provided
+    if (event) {
+        event.stopPropagation();
+        event.preventDefault();
+    }
+    
     const content = document.getElementById(sectionId);
     const icon = document.getElementById(sectionId + '-icon');
     
     if (!content || !icon) return;
     
-    // Check if content is currently collapsed (has 'collapsed' class or display:none)
-    const isCollapsed = content.classList.contains('collapsed') || 
-                        content.style.display === 'none' ||
-                        (content.style.display === '' && !content.classList.contains('expanded'));
+    // Prevent multiple simultaneous toggles
+    if (content.dataset.toggling === 'true') {
+        // #region agent log
+        const skipLog = {sessionId: 'debug-session', runId: 'run1', hypothesisId: 'F', location: 'plugins_manager.js:2155', message: 'Skipping toggle - already in progress', data: {sectionId}, timestamp: Date.now()};
+        fetch('http://127.0.0.1:7242/ingest/2e5e5a90-9491-465c-a911-dc18cfd1a393',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(skipLog)}).catch(()=>{});
+        // #endregion
+        return;
+    }
+    
+    // Mark as toggling
+    content.dataset.toggling = 'true';
+    
+    // Check current state before making changes
+    const hasCollapsed = content.classList.contains('collapsed');
+    const hasExpanded = content.classList.contains('expanded');
+    const displayStyle = content.style.display;
+    const computedDisplay = window.getComputedStyle(content).display;
+    
+    // #region agent log
+    const stateLog = {sessionId: 'debug-session', runId: 'run1', hypothesisId: 'B', location: 'plugins_manager.js:2168', message: 'Section state before toggle', data: {
+        sectionId,
+        hasCollapsed,
+        hasExpanded,
+        displayStyle,
+        computedDisplay,
+        maxHeight: content.style.maxHeight,
+        computedMaxHeight: window.getComputedStyle(content).maxHeight
+    }, timestamp: Date.now()};
+    fetch('http://127.0.0.1:7242/ingest/2e5e5a90-9491-465c-a911-dc18cfd1a393',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(stateLog)}).catch(()=>{});
+    // #endregion
+    
+    // Check if content is currently collapsed - prioritize class over display style
+    const isCollapsed = hasCollapsed || (!hasExpanded && (displayStyle === 'none' || computedDisplay === 'none'));
+    
+    // #region agent log
+    const decisionLog = {sessionId: 'debug-session', runId: 'run1', hypothesisId: 'C', location: 'plugins_manager.js:2180', message: 'Toggle decision', data: {sectionId, isCollapsed, willExpand: isCollapsed}, timestamp: Date.now()};
+    fetch('http://127.0.0.1:7242/ingest/2e5e5a90-9491-465c-a911-dc18cfd1a393',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(decisionLog)}).catch(()=>{});
+    // #endregion
     
     if (isCollapsed) {
         // Expand the section
@@ -2170,7 +2215,36 @@ window.toggleNestedSection = function(sectionId) {
         // After animation completes, remove max-height constraint to allow natural expansion
         // This allows parent sections to automatically expand
         setTimeout(() => {
-            content.style.maxHeight = 'none';
+            // #region agent log
+            const beforeLog = {sessionId: 'debug-session', runId: 'run1', hypothesisId: 'D', location: 'plugins_manager.js:2195', message: 'Before setting max-height to none', data: {
+                sectionId,
+                hasExpanded: content.classList.contains('expanded'),
+                hasCollapsed: content.classList.contains('collapsed'),
+                display: content.style.display,
+                maxHeight: content.style.maxHeight
+            }, timestamp: Date.now()};
+            fetch('http://127.0.0.1:7242/ingest/2e5e5a90-9491-465c-a911-dc18cfd1a393',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(beforeLog)}).catch(()=>{});
+            // #endregion
+            
+            // Only set to none if still expanded (prevent race condition)
+            if (content.classList.contains('expanded') && !content.classList.contains('collapsed')) {
+                content.style.maxHeight = 'none';
+                // Clear toggling flag
+                content.dataset.toggling = 'false';
+                
+                // #region agent log
+                const afterLog = {sessionId: 'debug-session', runId: 'run1', hypothesisId: 'E', location: 'plugins_manager.js:2203', message: 'After setting max-height to none', data: {
+                    sectionId,
+                    maxHeight: content.style.maxHeight,
+                    hasExpanded: content.classList.contains('expanded'),
+                    hasCollapsed: content.classList.contains('collapsed')
+                }, timestamp: Date.now()};
+                fetch('http://127.0.0.1:7242/ingest/2e5e5a90-9491-465c-a911-dc18cfd1a393',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(afterLog)}).catch(()=>{});
+                // #endregion
+            } else {
+                // Clear toggling flag even if we didn't set max-height
+                content.dataset.toggling = 'false';
+            }
         }, 300); // Match CSS transition duration
         
         // Scroll the expanded content into view after a short delay to allow animation
@@ -2209,6 +2283,8 @@ window.toggleNestedSection = function(sectionId) {
             if (content.classList.contains('collapsed')) {
                 content.style.display = 'none';
             }
+            // Clear toggling flag
+            content.dataset.toggling = 'false';
         }, 300); // Match the CSS transition duration
         icon.classList.remove('fa-chevron-down');
         icon.classList.add('fa-chevron-right');
