@@ -210,6 +210,11 @@ class ScrollHelper:
         if self.frame_based_scrolling:
             # Frame-based: move fixed amount only when scroll_delay has passed
             # This replicates the "step" look of old tickers (high FPS integer scrolling)
+            # Initialize last_step_time on first call to prevent huge initial jump
+            if self.last_step_time == 0.0:
+                self.last_step_time = current_time
+            
+            # Only move if enough time has passed (don't try to catch up on lag)
             if current_time - self.last_step_time >= self.scroll_delay:
                 pixels_to_move = self.scroll_speed
                 self.last_step_time = current_time
@@ -622,19 +627,30 @@ class ScrollHelper:
         now = time.time()
         self.scroll_start_time = now
         self.last_progress_log_time = now
+        self.last_step_time = now  # Initialize step timer for frame-based scrolling
         
         self.logger.debug("Set scrolling image: %dx%d, total_scroll_width=%d", 
                          image.width, image.height, self.total_scroll_width)
     
     def set_scroll_speed(self, speed: float) -> None:
         """
-        Set the scroll speed in pixels per second.
+        Set the scroll speed.
+        
+        In time-based mode: pixels per second (typically 10-200)
+        In frame-based mode: pixels per frame (typically 0.5-5 for smooth scrolling)
         
         Args:
-            speed: Pixels to advance per second (typically 10-200)
+            speed: Scroll speed (interpretation depends on frame_based_scrolling mode)
         """
-        self.scroll_speed = max(1.0, min(500.0, speed))
-        self.logger.debug(f"Scroll speed set to: {self.scroll_speed} pixels/second")
+        if self.frame_based_scrolling:
+            # In frame-based mode, clamp to reasonable pixels per frame (0.1-5)
+            # Higher values cause visible jumps - 1-2 pixels/frame is ideal for smoothness
+            self.scroll_speed = max(0.1, min(5.0, speed))
+            self.logger.debug(f"Scroll speed set to: {self.scroll_speed} pixels/frame (frame-based mode)")
+        else:
+            # In time-based mode, clamp to pixels per second (1-500)
+            self.scroll_speed = max(1.0, min(500.0, speed))
+            self.logger.debug(f"Scroll speed set to: {self.scroll_speed} pixels/second (time-based mode)")
     
     def set_scroll_delay(self, delay: float) -> None:
         """
