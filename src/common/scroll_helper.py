@@ -208,11 +208,25 @@ class ScrollHelper:
         
         # Update scroll position
         if self.frame_based_scrolling:
-            # Frame-based: move fixed amount every call (like stock ticker)
-            # The DisplayController's high-FPS loop timing (8ms) controls the actual frame rate
-            # This matches stock/leaderboard ticker behavior: simple, predictable movement
-            # scroll_speed is pixels per frame - user can adjust for desired speed
-            pixels_to_move = self.scroll_speed
+            # Frame-based: move fixed amount when scroll_delay has passed
+            # This matches stock ticker behavior: move pixels, then wait scroll_delay
+            # Initialize last_step_time on first call to prevent huge initial jump
+            if self.last_step_time == 0.0:
+                self.last_step_time = current_time
+            
+            # Check if scroll_delay has passed
+            time_since_last_step = current_time - self.last_step_time
+            if time_since_last_step >= self.scroll_delay:
+                # Move pixels (can move multiple steps if lag occurred, but cap to prevent huge jumps)
+                steps = int(time_since_last_step / self.scroll_delay)
+                # Cap at reasonable number to prevent huge jumps from lag
+                max_steps = max(1, int(0.1 / self.scroll_delay))  # Allow up to 0.1s of catch-up
+                steps = min(steps, max_steps)
+                pixels_to_move = self.scroll_speed * steps
+                # Update last_step_time, preserving fractional delay for smooth timing
+                self.last_step_time = current_time - (time_since_last_step % self.scroll_delay)
+            else:
+                pixels_to_move = 0.0
         else:
             # Time-based: move based on time delta (correct speed over time)
             # scroll_speed is pixels per second
