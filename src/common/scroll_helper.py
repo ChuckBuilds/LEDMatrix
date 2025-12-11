@@ -363,12 +363,27 @@ class ScrollHelper:
                 source1 = self.cached_array[:, start_x:start_x + source1_width]
                 if HAS_SCIPY:
                     shifted1 = shift(source1, (0, -fractional, 0), mode='nearest', order=1, prefilter=False)
-                    # Ensure we don't exceed the shifted array size
-                    copy_width = min(width1, shifted1.shape[1])
-                    self._frame_buffer[:, :copy_width] = shifted1[:, :copy_width].astype(np.uint8)
+                    # Ensure we get exactly width1 pixels, padding if necessary
+                    if shifted1.shape[1] >= width1:
+                        self._frame_buffer[:, :width1] = shifted1[:, :width1].astype(np.uint8)
+                    else:
+                        # Shifted array is smaller - pad with zeros or repeat last pixel
+                        actual_width = shifted1.shape[1]
+                        self._frame_buffer[:, :actual_width] = shifted1.astype(np.uint8)
+                        if actual_width < width1:
+                            # Pad with last pixel
+                            self._frame_buffer[:, actual_width:width1] = shifted1[:, -1:].astype(np.uint8)
                 else:
                     interpolated1 = self._interpolate_subpixel(source1, fractional, output_width=width1)
-                    self._frame_buffer[:, :width1] = interpolated1
+                    # Ensure exact width match
+                    if interpolated1.shape[1] == width1:
+                        self._frame_buffer[:, :width1] = interpolated1
+                    else:
+                        # Handle size mismatch
+                        copy_width = min(width1, interpolated1.shape[1])
+                        self._frame_buffer[:, :copy_width] = interpolated1[:, :copy_width]
+                        if copy_width < width1:
+                            self._frame_buffer[:, copy_width:width1] = interpolated1[:, -1:]
                 
                 # Second part from beginning
                 remaining_width = self.display_width - width1
@@ -376,20 +391,43 @@ class ScrollHelper:
                     source2 = self.cached_array[:, :remaining_width + 1]
                     if HAS_SCIPY:
                         shifted2 = shift(source2, (0, -fractional, 0), mode='nearest', order=1, prefilter=False)
-                        copy_width = min(remaining_width, shifted2.shape[1])
-                        self._frame_buffer[:, width1:width1 + copy_width] = shifted2[:, :copy_width].astype(np.uint8)
+                        # Ensure we get exactly remaining_width pixels
+                        if shifted2.shape[1] >= remaining_width:
+                            self._frame_buffer[:, width1:width1 + remaining_width] = shifted2[:, :remaining_width].astype(np.uint8)
+                        else:
+                            # Shifted array is smaller - pad if necessary
+                            actual_width = shifted2.shape[1]
+                            self._frame_buffer[:, width1:width1 + actual_width] = shifted2.astype(np.uint8)
+                            if actual_width < remaining_width:
+                                self._frame_buffer[:, width1 + actual_width:width1 + remaining_width] = shifted2[:, -1:].astype(np.uint8)
                     else:
                         interpolated2 = self._interpolate_subpixel(source2, fractional, output_width=remaining_width)
-                        self._frame_buffer[:, width1:] = interpolated2
+                        # Ensure exact width match
+                        if interpolated2.shape[1] == remaining_width:
+                            self._frame_buffer[:, width1:] = interpolated2
+                        else:
+                            copy_width = min(remaining_width, interpolated2.shape[1])
+                            self._frame_buffer[:, width1:width1 + copy_width] = interpolated2[:, :copy_width]
+                            if copy_width < remaining_width:
+                                self._frame_buffer[:, width1 + copy_width:width1 + remaining_width] = interpolated2[:, -1:]
             else:
                 # Edge case: wrap to beginning
                 source = self.cached_array[:, :self.display_width + 1]
                 if HAS_SCIPY:
                     shifted = shift(source, (0, -fractional, 0), mode='nearest', order=1, prefilter=False)
-                    copy_width = min(self.display_width, shifted.shape[1])
-                    self._frame_buffer = shifted[:, :copy_width].astype(np.uint8)
+                    # Ensure we get exactly display_width pixels
+                    if shifted.shape[1] >= self.display_width:
+                        self._frame_buffer = shifted[:, :self.display_width].astype(np.uint8)
+                    else:
+                        # Shifted array is smaller - pad if necessary
+                        actual_width = shifted.shape[1]
+                        self._frame_buffer[:, :actual_width] = shifted.astype(np.uint8)
+                        if actual_width < self.display_width:
+                            self._frame_buffer[:, actual_width:] = shifted[:, -1:].astype(np.uint8)
                 else:
-                    self._frame_buffer = self._interpolate_subpixel(source, fractional, output_width=self.display_width)
+                    interpolated = self._interpolate_subpixel(source, fractional, output_width=self.display_width)
+                    # _interpolate_subpixel now always returns exact width, so this should work
+                    self._frame_buffer = interpolated
             
             return Image.fromarray(self._frame_buffer)
     
@@ -404,35 +442,48 @@ class ScrollHelper:
             output_width: Desired output width (defaults to display_width)
         
         Returns:
-            Interpolated array of shape (height, output_width, 3)
+            Interpolated array of shape (height, output_width, 3) - ALWAYS exactly output_width
         """
         if output_width is None:
             output_width = self.display_width
         
-        # Ensure we have enough source pixels
-        if source.shape[1] < output_width + 1:
-            # Not enough pixels - pad or truncate as needed
-            if source.shape[1] < 2:
-                # Very small source - just return what we have, padded if needed
-                result = np.zeros((source.shape[0], output_width, 3), dtype=np.uint8)
-                copy_width = min(source.shape[1], output_width)
-                result[:, :copy_width] = source[:, :copy_width].astype(np.uint8)
-                return result
-            # Use what we have
-            available_width = source.shape[1] - 1
-            output_width = min(output_width, available_width)
+        # Always return exactly output_width pixels, padding if necessary
+        result = np.zeros((source.shape[0], output_width, 3), dtype=np.uint8)
         
-        # Extract pixels at x and x+1 (need output_width + 1 source pixels)
-        pixels_x = source[:, :output_width].astype(np.float32)
-        pixels_x1 = source[:, 1:output_width + 1].astype(np.float32)
+        # Ensure we have enough source pixels for interpolation
+        if source.shape[1] < 2:
+            # Very small source - just copy what we have and pad
+            copy_width = min(source.shape[1], output_width)
+            result[:, :copy_width] = source[:, :copy_width].astype(np.uint8)
+            if copy_width < output_width:
+                # Pad with last pixel
+                result[:, copy_width:] = source[:, -1:].astype(np.uint8)
+            return result
         
-        # Linear interpolation
-        interpolated = pixels_x * (1.0 - fractional) + pixels_x1 * fractional
+        # Calculate how many pixels we can actually interpolate
+        # Need at least 2 pixels to interpolate, so max output is source.shape[1] - 1
+        max_interpolated_width = source.shape[1] - 1
+        interpolated_width = min(output_width, max_interpolated_width)
         
-        # Clip and convert back to uint8
-        interpolated = np.clip(interpolated, 0, 255).astype(np.uint8)
+        if interpolated_width > 0:
+            # Extract pixels at x and x+1 for interpolation
+            pixels_x = source[:, :interpolated_width].astype(np.float32)
+            pixels_x1 = source[:, 1:interpolated_width + 1].astype(np.float32)
+            
+            # Linear interpolation
+            interpolated = pixels_x * (1.0 - fractional) + pixels_x1 * fractional
+            
+            # Clip and convert back to uint8
+            interpolated = np.clip(interpolated, 0, 255).astype(np.uint8)
+            
+            # Copy interpolated portion to result
+            result[:, :interpolated_width] = interpolated
         
-        return interpolated
+        # If we need more pixels than we can interpolate, pad with last pixel
+        if interpolated_width < output_width:
+            result[:, interpolated_width:] = source[:, -1:].astype(np.uint8)
+        
+        return result
     
     def calculate_dynamic_duration(self) -> int:
         """
