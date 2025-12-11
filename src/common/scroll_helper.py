@@ -75,8 +75,8 @@ class ScrollHelper:
         # Pre-allocated buffer for output frame (reused to avoid allocations)
         self._frame_buffer: Optional[np.ndarray] = None
         
-        # Sub-pixel scrolling settings
-        self.sub_pixel_scrolling = True  # Enable sub-pixel smooth scrolling
+        # Sub-pixel scrolling settings (disabled - using high FPS integer scrolling instead)
+        self.sub_pixel_scrolling = False  # Disabled - use high frame rate for smoothness
         self._last_integer_position = 0  # Cache for integer position to avoid repeated calculations
         
         # Frame-based scrolling settings
@@ -206,9 +206,20 @@ class ScrollHelper:
             self.scroll_start_time = current_time
             self.last_progress_log_time = current_time
         
-        # Update scroll position based on time delta for consistent speed
-        # scroll_speed is now pixels per second, not per frame
-        pixels_to_move = self.scroll_speed * delta_time
+        # Update scroll position
+        if self.frame_based_scrolling:
+            # Frame-based: move fixed amount only when scroll_delay has passed
+            # This replicates the "step" look of old tickers (high FPS integer scrolling)
+            if current_time - self.last_step_time >= self.scroll_delay:
+                pixels_to_move = self.scroll_speed
+                self.last_step_time = current_time
+            else:
+                pixels_to_move = 0.0
+        else:
+            # Time-based: move based on time delta (correct speed over time)
+            # scroll_speed is pixels per second
+            pixels_to_move = self.scroll_speed * delta_time
+            
         self.scroll_position += pixels_to_move
         self.total_distance_scrolled += pixels_to_move
         
@@ -273,7 +284,7 @@ class ScrollHelper:
     def get_visible_portion(self) -> Optional[Image.Image]:
         """
         Get the currently visible portion of the scrolling image using fast numpy operations.
-        Supports sub-pixel positioning for smooth scrolling.
+        Uses integer pixel positioning for high-performance scrolling.
         
         Returns:
             PIL Image showing the visible portion, or None if no cached image
@@ -281,17 +292,12 @@ class ScrollHelper:
         if not self.cached_image or self.cached_array is None:
             return None
         
-        # Calculate visible region with sub-pixel support
-        fractional_part = self.scroll_position - int(self.scroll_position)
+        # Use integer pixel positioning for high FPS scrolling (like stock ticker)
         start_x_int = int(self.scroll_position)
         end_x_int = start_x_int + self.display_width
         
-        # If sub-pixel scrolling is enabled and we have a fractional part, use interpolation
-        if self.sub_pixel_scrolling and fractional_part > 0.001:
-            return self._get_visible_portion_subpixel(start_x_int, fractional_part)
-        else:
-            # Fast integer pixel path (no interpolation needed)
-            return self._get_visible_portion_integer(start_x_int, end_x_int)
+        # Fast integer pixel path (no interpolation - high frame rate provides smoothness)
+        return self._get_visible_portion_integer(start_x_int, end_x_int)
     
     def _get_visible_portion_integer(self, start_x: int, end_x: int) -> Image.Image:
         """Fast integer pixel extraction (no interpolation)."""
