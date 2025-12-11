@@ -207,6 +207,25 @@ class SportsCore(ABC):
 
     def display(self, force_clear: bool = False) -> bool:
         """Common display method for all NCAA FB managers""" # Updated docstring
+        # #region agent log
+        import json
+        try:
+            with open('/home/chuck/Github/LEDMatrix/.cursor/debug.log', 'a') as f:
+                f.write(json.dumps({
+                    "sessionId": "debug-session",
+                    "runId": "run1",
+                    "hypothesisId": "D",
+                    "location": "sports.py:208",
+                    "message": "Display called",
+                    "data": {
+                        "force_clear": force_clear,
+                        "has_current_game": self.current_game is not None,
+                        "current_game": self.current_game['away_abbr'] + "@" + self.current_game['home_abbr'] if self.current_game else None
+                    },
+                    "timestamp": int(time.time() * 1000)
+                }) + "\n")
+        except: pass
+        # #endregion
         if not self.is_enabled: # Check if module is enabled
              return False
 
@@ -229,7 +248,40 @@ class SportsCore(ABC):
             return False
 
         try:
+            # #region agent log
+            try:
+                with open('/home/chuck/Github/LEDMatrix/.cursor/debug.log', 'a') as f:
+                    f.write(json.dumps({
+                        "sessionId": "debug-session",
+                        "runId": "run1",
+                        "hypothesisId": "D",
+                        "location": "sports.py:232",
+                        "message": "About to draw scorebug",
+                        "data": {
+                            "force_clear": force_clear,
+                            "game": self.current_game['away_abbr'] + "@" + self.current_game['home_abbr'] if self.current_game else None
+                        },
+                        "timestamp": int(time.time() * 1000)
+                    }) + "\n")
+            except: pass
+            # #endregion
             self._draw_scorebug_layout(self.current_game, force_clear)
+            # #region agent log
+            try:
+                with open('/home/chuck/Github/LEDMatrix/.cursor/debug.log', 'a') as f:
+                    f.write(json.dumps({
+                        "sessionId": "debug-session",
+                        "runId": "run1",
+                        "hypothesisId": "D",
+                        "location": "sports.py:235",
+                        "message": "After draw scorebug",
+                        "data": {
+                            "force_clear": force_clear
+                        },
+                        "timestamp": int(time.time() * 1000)
+                    }) + "\n")
+            except: pass
+            # #endregion
             # display_manager.update_display() should be called within subclass draw methods
             # or after calling display() in the main loop. Let's keep it out of the base display.
             return True
@@ -1302,7 +1354,7 @@ class SportsLive(SportsCore):
         self.last_update = 0
         self.live_games = []
         self.current_game_index = 0
-        self.last_game_switch = 0
+        self.last_game_switch = 0  # Will be set to current_time when games are first loaded
         self.game_display_duration = self.mode_config.get("live_game_duration", 20)
         self.last_display_update = 0
         self.last_log_time = 0
@@ -1391,14 +1443,56 @@ class SportsLive(SportsCore):
                             self.live_games = sorted(new_live_games, key=lambda g: g.get('start_time_utc') or datetime.now(timezone.utc)) # Sort by start time
                             # Reset index if current game is gone or list is new
                             if not self.current_game or self.current_game['id'] not in new_game_ids:
+                                # #region agent log
+                                import json
+                                try:
+                                    with open('/home/chuck/Github/LEDMatrix/.cursor/debug.log', 'a') as f:
+                                        f.write(json.dumps({
+                                            "sessionId": "debug-session",
+                                            "runId": "run1",
+                                            "hypothesisId": "B",
+                                            "location": "sports.py:1393",
+                                            "message": "Games loaded - resetting index and last_game_switch",
+                                            "data": {
+                                                "current_game_before": self.current_game['id'] if self.current_game else None,
+                                                "live_games_count": len(self.live_games),
+                                                "last_game_switch_before": self.last_game_switch,
+                                                "current_time": current_time,
+                                                "time_since_init": current_time - self.last_game_switch if self.last_game_switch > 0 else None
+                                            },
+                                            "timestamp": int(time.time() * 1000)
+                                        }) + "\n")
+                                except: pass
+                                # #endregion
                                 self.current_game_index = 0
                                 self.current_game = self.live_games[0] if self.live_games else None
                                 self.last_game_switch = current_time
+                                # #region agent log
+                                try:
+                                    with open('/home/chuck/Github/LEDMatrix/.cursor/debug.log', 'a') as f:
+                                        f.write(json.dumps({
+                                            "sessionId": "debug-session",
+                                            "runId": "run1",
+                                            "hypothesisId": "B",
+                                            "location": "sports.py:1396",
+                                            "message": "Games loaded - after setting last_game_switch",
+                                            "data": {
+                                                "current_game_after": self.current_game['id'] if self.current_game else None,
+                                                "last_game_switch_after": self.last_game_switch,
+                                                "first_game": self.current_game['away_abbr'] + "@" + self.current_game['home_abbr'] if self.current_game else None
+                                            },
+                                            "timestamp": int(time.time() * 1000)
+                                        }) + "\n")
+                                except: pass
+                                # #endregion
                             else:
                                 # Find current game's new index if it still exists
                                 try:
                                      self.current_game_index = next(i for i, g in enumerate(self.live_games) if g['id'] == self.current_game['id'])
                                      self.current_game = self.live_games[self.current_game_index] # Update current_game with fresh data
+                                     # Fix: Set last_game_switch if it's still 0 (initialized) to prevent immediate switching
+                                     if self.last_game_switch == 0:
+                                         self.last_game_switch = current_time
                                 except StopIteration: # Should not happen if check above passed, but safety first
                                      self.current_game_index = 0
                                      self.current_game = self.live_games[0]
@@ -1410,6 +1504,10 @@ class SportsLive(SportsCore):
                              self.live_games = [temp_game_dict.get(g['id'], g) for g in self.live_games] # Update in place
                              if self.current_game:
                                   self.current_game = temp_game_dict.get(self.current_game['id'], self.current_game)
+                             # Fix: Set last_game_switch if it's still 0 (initialized) to prevent immediate switching
+                             # This handles the case where games were loaded previously but last_game_switch was never set
+                             if self.last_game_switch == 0:
+                                 self.last_game_switch = current_time
 
                         # Display update handled by main loop based on interval
 
@@ -1430,9 +1528,72 @@ class SportsLive(SportsCore):
                          self.current_game = None # Clear current game if fetch fails and no games were active
 
             # Handle game switching (outside test mode check)
-            if not self.test_mode and len(self.live_games) > 1 and (current_time - self.last_game_switch) >= self.game_display_duration:
+            # Fix: Don't check for switching if last_game_switch is still 0 (games haven't been loaded yet)
+            # This prevents immediate switching when the system has been running for a while before games load
+            # #region agent log
+            import json
+            try:
+                with open('/home/chuck/Github/LEDMatrix/.cursor/debug.log', 'a') as f:
+                    f.write(json.dumps({
+                        "sessionId": "debug-session",
+                        "runId": "run1",
+                        "hypothesisId": "A",
+                        "location": "sports.py:1432",
+                        "message": "Game switch check - before condition",
+                        "data": {
+                            "test_mode": self.test_mode,
+                            "live_games_count": len(self.live_games),
+                            "current_time": current_time,
+                            "last_game_switch": self.last_game_switch,
+                            "time_since_switch": current_time - self.last_game_switch,
+                            "game_display_duration": self.game_display_duration,
+                            "current_game_index": self.current_game_index,
+                            "will_switch": not self.test_mode and len(self.live_games) > 1 and self.last_game_switch > 0 and (current_time - self.last_game_switch) >= self.game_display_duration
+                        },
+                        "timestamp": int(time.time() * 1000)
+                    }) + "\n")
+            except: pass
+            # #endregion
+            if not self.test_mode and len(self.live_games) > 1 and self.last_game_switch > 0 and (current_time - self.last_game_switch) >= self.game_display_duration:
+                # #region agent log
+                try:
+                    with open('/home/chuck/Github/LEDMatrix/.cursor/debug.log', 'a') as f:
+                        f.write(json.dumps({
+                            "sessionId": "debug-session",
+                            "runId": "run1",
+                            "hypothesisId": "A",
+                            "location": "sports.py:1433",
+                            "message": "Game switch triggered",
+                            "data": {
+                                "old_index": self.current_game_index,
+                                "old_game": self.current_game['away_abbr'] + "@" + self.current_game['home_abbr'] if self.current_game else None,
+                                "time_since_switch": current_time - self.last_game_switch,
+                                "last_game_switch_before": self.last_game_switch
+                            },
+                            "timestamp": int(time.time() * 1000)
+                        }) + "\n")
+                except: pass
+                # #endregion
                 self.current_game_index = (self.current_game_index + 1) % len(self.live_games)
                 self.current_game = self.live_games[self.current_game_index]
                 self.last_game_switch = current_time
+                # #region agent log
+                try:
+                    with open('/home/chuck/Github/LEDMatrix/.cursor/debug.log', 'a') as f:
+                        f.write(json.dumps({
+                            "sessionId": "debug-session",
+                            "runId": "run1",
+                            "hypothesisId": "A",
+                            "location": "sports.py:1436",
+                            "message": "Game switch completed",
+                            "data": {
+                                "new_index": self.current_game_index,
+                                "new_game": self.current_game['away_abbr'] + "@" + self.current_game['home_abbr'] if self.current_game else None,
+                                "last_game_switch_after": self.last_game_switch
+                            },
+                            "timestamp": int(time.time() * 1000)
+                        }) + "\n")
+                except: pass
+                # #endregion
                 self.logger.info(f"Switched live view to: {self.current_game['away_abbr']}@{self.current_game['home_abbr']}") # Changed log prefix
                 # Force display update via flag or direct call if needed, but usually let main loop handle
