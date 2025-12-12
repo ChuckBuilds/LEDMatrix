@@ -283,8 +283,17 @@ class DisplayController:
     def _check_schedule(self):
         """Check if display should be active based on schedule."""
         schedule_config = self.config.get('schedule', {})
-        if not schedule_config.get('enabled', True):
+        
+        # If schedule config doesn't exist or is empty, default to always active
+        if not schedule_config:
             self.is_display_active = True
+            return
+        
+        # Check if schedule is explicitly disabled
+        # Default to True (schedule enabled) if 'enabled' key is missing for backward compatibility
+        if 'enabled' in schedule_config and not schedule_config.get('enabled', True):
+            self.is_display_active = True
+            logger.debug("Schedule is disabled - display always active")
             return
             
         current_time = datetime.now()
@@ -294,7 +303,17 @@ class DisplayController:
         # Check if per-day schedule is configured
         days_config = schedule_config.get('days')
         
-        if days_config and current_day in days_config:
+        # Determine which schedule to use
+        use_per_day = False
+        if days_config:
+            # Check if days dict is not empty and contains current day
+            if days_config and current_day in days_config:
+                use_per_day = True
+            elif days_config:
+                # Days dict exists but doesn't have current day - fall back to global
+                logger.debug("Per-day schedule exists but %s not configured, using global schedule", current_day)
+        
+        if use_per_day:
             # Use per-day schedule
             day_config = days_config[current_day]
             
@@ -306,10 +325,12 @@ class DisplayController:
             
             start_time_str = day_config.get('start_time', '07:00')
             end_time_str = day_config.get('end_time', '23:00')
+            schedule_type = f"per-day ({current_day})"
         else:
             # Use global schedule
             start_time_str = schedule_config.get('start_time', '07:00')
             end_time_str = schedule_config.get('end_time', '23:00')
+            schedule_type = "global"
         
         try:
             start_time = datetime.strptime(start_time_str, '%H:%M').time()
@@ -321,9 +342,18 @@ class DisplayController:
             else:
                 # Overnight case: start and end on different days
                 self.is_display_active = current_time_only >= start_time or current_time_only <= end_time
+            
+            # Log schedule state changes for debugging
+            if not self.is_display_active:
+                logger.debug("Display inactive - outside %s schedule window (%s - %s)", 
+                           schedule_type, start_time_str, end_time_str)
+            else:
+                logger.debug("Display active - within %s schedule window (%s - %s)", 
+                           schedule_type, start_time_str, end_time_str)
                 
         except ValueError as e:
-            logger.warning("Invalid schedule format: %s", e)
+            logger.warning("Invalid schedule format for %s schedule: %s (start: %s, end: %s). Defaulting to active.", 
+                         schedule_type, e, start_time_str, end_time_str)
             self.is_display_active = True
 
     def _update_modules(self):

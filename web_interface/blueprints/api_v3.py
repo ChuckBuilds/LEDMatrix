@@ -147,6 +147,50 @@ def get_main_config():
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
+@api_v3.route('/config/schedule', methods=['GET'])
+def get_schedule_config():
+    """Get current schedule configuration"""
+    try:
+        if not api_v3.config_manager:
+            return error_response(
+                ErrorCode.CONFIG_LOAD_FAILED,
+                'Config manager not initialized',
+                status_code=500
+            )
+        
+        config = api_v3.config_manager.load_config()
+        schedule_config = config.get('schedule', {})
+        
+        return success_response(data=schedule_config)
+    except Exception as e:
+        return error_response(
+            ErrorCode.CONFIG_LOAD_FAILED,
+            f"Error loading schedule configuration: {str(e)}",
+            status_code=500
+        )
+
+def _validate_time_format(time_str):
+    """Validate time format is HH:MM"""
+    try:
+        datetime.strptime(time_str, '%H:%M')
+        return True, None
+    except (ValueError, TypeError):
+        return False, f"Invalid time format: {time_str}. Expected HH:MM format."
+
+def _validate_time_range(start_time_str, end_time_str, allow_overnight=True):
+    """Validate time range. Returns (is_valid, error_message)"""
+    try:
+        start_time = datetime.strptime(start_time_str, '%H:%M').time()
+        end_time = datetime.strptime(end_time_str, '%H:%M').time()
+        
+        # Allow overnight schedules (start > end) or same-day schedules
+        if not allow_overnight and start_time >= end_time:
+            return False, f"Start time ({start_time_str}) must be before end time ({end_time_str}) for same-day schedules"
+        
+        return True, None
+    except (ValueError, TypeError) as e:
+        return False, f"Invalid time format: {str(e)}"
+
 @api_v3.route('/config/schedule', methods=['POST'])
 def save_schedule_config():
     """Save schedule configuration"""
@@ -174,12 +218,38 @@ def save_schedule_config():
         
         if mode == 'global':
             # Simple global schedule
-            schedule_config['start_time'] = data.get('start_time', '07:00')
-            schedule_config['end_time'] = data.get('end_time', '23:00')
+            start_time = data.get('start_time', '07:00')
+            end_time = data.get('end_time', '23:00')
+            
+            # Validate time formats
+            is_valid, error_msg = _validate_time_format(start_time)
+            if not is_valid:
+                return error_response(
+                    ErrorCode.VALIDATION_ERROR,
+                    error_msg,
+                    status_code=400
+                )
+            
+            is_valid, error_msg = _validate_time_format(end_time)
+            if not is_valid:
+                return error_response(
+                    ErrorCode.VALIDATION_ERROR,
+                    error_msg,
+                    status_code=400
+                )
+            
+            schedule_config['start_time'] = start_time
+            schedule_config['end_time'] = end_time
+            # Remove days config when switching to global mode
+            schedule_config.pop('days', None)
         else:
             # Per-day schedule
             schedule_config['days'] = {}
+            # Remove global times when switching to per-day mode
+            schedule_config.pop('start_time', None)
+            schedule_config.pop('end_time', None)
             days = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday']
+            enabled_days_count = 0
             
             for day in days:
                 day_config = {}
@@ -201,17 +271,49 @@ def save_schedule_config():
                 
                 # Only add times if day is enabled
                 if day_config.get('enabled', True):
+                    enabled_days_count += 1
+                    start_time = None
+                    end_time = None
+                    
                     if start_key in data and data[start_key]:
-                        day_config['start_time'] = data[start_key]
+                        start_time = data[start_key]
                     else:
-                        day_config['start_time'] = '07:00'
+                        start_time = '07:00'
                     
                     if end_key in data and data[end_key]:
-                        day_config['end_time'] = data[end_key]
+                        end_time = data[end_key]
                     else:
-                        day_config['end_time'] = '23:00'
+                        end_time = '23:00'
+                    
+                    # Validate time formats
+                    is_valid, error_msg = _validate_time_format(start_time)
+                    if not is_valid:
+                        return error_response(
+                            ErrorCode.VALIDATION_ERROR,
+                            f"Invalid start time for {day}: {error_msg}",
+                            status_code=400
+                        )
+                    
+                    is_valid, error_msg = _validate_time_format(end_time)
+                    if not is_valid:
+                        return error_response(
+                            ErrorCode.VALIDATION_ERROR,
+                            f"Invalid end time for {day}: {error_msg}",
+                            status_code=400
+                        )
+                    
+                    day_config['start_time'] = start_time
+                    day_config['end_time'] = end_time
                 
                 schedule_config['days'][day] = day_config
+            
+            # Validate that at least one day is enabled in per-day mode
+            if enabled_days_count == 0:
+                return error_response(
+                    ErrorCode.VALIDATION_ERROR,
+                    "At least one day must be enabled in per-day schedule mode",
+                    status_code=400
+                )
         
         # Update and save config using atomic save
         current_config['schedule'] = schedule_config
@@ -229,7 +331,12 @@ def save_schedule_config():
         import traceback
         error_msg = f"Error saving schedule config: {str(e)}\n{traceback.format_exc()}"
         logging.error(error_msg)
-        return jsonify({'status': 'error', 'message': str(e)}), 500
+        return error_response(
+            ErrorCode.CONFIG_SAVE_FAILED,
+            f"Error saving schedule configuration: {str(e)}",
+            details=traceback.format_exc(),
+            status_code=500
+        )
 
 @api_v3.route('/config/main', methods=['POST'])
 def save_main_config():
