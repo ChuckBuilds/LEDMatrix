@@ -1040,8 +1040,21 @@ class DisplayController:
                             # premature exits due to timing issues
                             grace_period = 0.5
                             if elapsed_time < min_duration + grace_period:
+                                logger.debug(
+                                    "_should_exit_dynamic: elapsed %.2fs < min_duration %.2fs + grace %.2fs, returning False",
+                                    elapsed_time,
+                                    min_duration,
+                                    grace_period,
+                                )
                                 return False
                             cycle_complete = self._plugin_cycle_complete(manager_to_display)
+                            logger.info(
+                                "_should_exit_dynamic: elapsed %.2fs >= min %.2fs, cycle_complete=%s, returning %s",
+                                elapsed_time,
+                                min_duration + grace_period,
+                                cycle_complete,
+                                cycle_complete,
+                            )
                             if cycle_complete:
                                 logger.debug(
                                     "Cycle complete detected for %s after %.2fs (min: %.2fs, grace: %.2fs)",
