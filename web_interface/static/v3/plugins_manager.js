@@ -3175,13 +3175,23 @@ function renderPluginStore(plugins) {
             ` : ''}
 
             <!-- Store Actions -->
-            <div class="flex gap-2 mt-4 pt-4 border-t border-gray-200">
-                <button onclick='if(window.installPlugin){window.installPlugin(${escapeJs(plugin.id)})}else{console.error("installPlugin not available")}' class="btn bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-md text-sm flex-1 font-semibold">
-                    <i class="fas fa-download mr-2"></i>Install
-                </button>
-                <button onclick='window.open(${escapeJs(plugin.repo || '#')}, "_blank")' class="btn bg-gray-600 hover:bg-gray-700 text-white px-4 py-2 rounded-md text-sm flex-1 font-semibold">
-                    <i class="fas fa-external-link-alt mr-2"></i>View
-                </button>
+            <div class="mt-4 pt-4 border-t border-gray-200 space-y-2">
+                <div class="flex items-center gap-2">
+                    <label for="branch-input-${plugin.id.replace(/[^a-zA-Z0-9]/g, '-')}" class="text-xs text-gray-600 whitespace-nowrap">
+                        <i class="fas fa-code-branch mr-1"></i>Branch:
+                    </label>
+                    <input type="text" id="branch-input-${plugin.id.replace(/[^a-zA-Z0-9]/g, '-')}" 
+                           placeholder="main (default)" 
+                           class="flex-1 px-2 py-1 text-xs border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500">
+                </div>
+                <div class="flex gap-2">
+                    <button onclick='if(window.installPlugin){const branchInput = document.getElementById("branch-input-${plugin.id.replace(/[^a-zA-Z0-9]/g, '-')}"); window.installPlugin(${escapeJs(plugin.id)}, branchInput?.value?.trim() || null)}else{console.error("installPlugin not available")}' class="btn bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-md text-sm flex-1 font-semibold">
+                        <i class="fas fa-download mr-2"></i>Install
+                    </button>
+                    <button onclick='window.open(${escapeJs(plugin.repo || '#')}, "_blank")' class="btn bg-gray-600 hover:bg-gray-700 text-white px-4 py-2 rounded-md text-sm flex-1 font-semibold">
+                        <i class="fas fa-external-link-alt mr-2"></i>View
+                    </button>
+                </div>
             </div>
         </div>
     `).join('');
@@ -3189,14 +3199,6 @@ function renderPluginStore(plugins) {
 
 // Expose functions to window for onclick handlers
 window.installPlugin = function(pluginId, branch = null) {
-    // If branch not provided, check for store branch input
-    if (!branch) {
-        const storeBranchInput = document.getElementById('store-branch-input');
-        if (storeBranchInput && storeBranchInput.value.trim()) {
-            branch = storeBranchInput.value.trim();
-        }
-    }
-    
     showNotification(`Installing ${pluginId}${branch ? ` (branch: ${branch})` : ''}...`, 'info');
 
     const requestBody = { plugin_id: pluginId };
@@ -3618,10 +3620,11 @@ function renderCustomRegistryPlugins(plugins, registryUrl) {
         const pluginIdJs = escapeJs(plugin.id);
         const escapedUrlJs = escapeJs(registryUrl);
         const pluginPathJs = escapeJs(plugin.plugin_path || '');
+        const branchInputId = `branch-input-custom-${plugin.id.replace(/[^a-zA-Z0-9]/g, '-')}`;
         
         const installBtn = isInstalled 
             ? '<button class="px-3 py-1 text-xs bg-gray-400 text-white rounded cursor-not-allowed" disabled><i class="fas fa-check mr-1"></i>Installed</button>'
-            : `<button onclick='if(window.installFromCustomRegistry){window.installFromCustomRegistry(${pluginIdJs}, ${escapedUrlJs}, ${pluginPathJs})}else{console.error("installFromCustomRegistry not available")}' class="px-3 py-1 text-xs bg-blue-600 hover:bg-blue-700 text-white rounded"><i class="fas fa-download mr-1"></i>Install</button>`;
+            : `<button onclick='if(window.installFromCustomRegistry){const branchInput = document.getElementById("${branchInputId}"); window.installFromCustomRegistry(${pluginIdJs}, ${escapedUrlJs}, ${pluginPathJs}, branchInput?.value?.trim() || null)}else{console.error("installFromCustomRegistry not available")}' class="px-3 py-1 text-xs bg-blue-600 hover:bg-blue-700 text-white rounded"><i class="fas fa-download mr-1"></i>Install</button>`;
         
         return `
             <div class="bg-white border border-gray-200 rounded-lg p-3">
@@ -3631,9 +3634,19 @@ function renderCustomRegistryPlugins(plugins, registryUrl) {
                         <p class="text-xs text-gray-600 mt-1 line-clamp-2">${escapeHtml(plugin.description || 'No description')}</p>
                     </div>
                 </div>
-                <div class="flex items-center justify-between mt-2 pt-2 border-t border-gray-100">
-                    <span class="text-xs text-gray-500">Last updated ${formatDate(plugin.last_updated)}</span>
-                    ${installBtn}
+                <div class="space-y-2 mt-2 pt-2 border-t border-gray-100">
+                    <div class="flex items-center gap-2">
+                        <label for="${branchInputId}" class="text-xs text-gray-600 whitespace-nowrap">
+                            <i class="fas fa-code-branch mr-1"></i>Branch:
+                        </label>
+                        <input type="text" id="${branchInputId}" 
+                               placeholder="main (default)" 
+                               class="flex-1 px-2 py-1 text-xs border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500">
+                    </div>
+                    <div class="flex items-center justify-between">
+                        <span class="text-xs text-gray-500">Last updated ${formatDate(plugin.last_updated)}</span>
+                        ${installBtn}
+                    </div>
                 </div>
             </div>
         `;
@@ -3642,13 +3655,6 @@ function renderCustomRegistryPlugins(plugins, registryUrl) {
 
 window.installFromCustomRegistry = function(pluginId, registryUrl, pluginPath, branch = null) {
     const repoUrl = registryUrl;
-    // If branch not provided, check for store branch input
-    if (!branch) {
-        const storeBranchInput = document.getElementById('store-branch-input');
-        if (storeBranchInput && storeBranchInput.value.trim()) {
-            branch = storeBranchInput.value.trim();
-        }
-    }
     const requestBody = { 
         repo_url: repoUrl,
         plugin_id: pluginId,
