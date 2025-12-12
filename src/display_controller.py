@@ -1176,8 +1176,13 @@ class DisplayController:
                                 try:
                                     result = manager_to_display.display(force_clear=False)
                                     if isinstance(result, bool) and not result:
-                                        logger.info("Display returned False for %s, breaking early", active_mode)
-                                        break
+                                        # For dynamic duration plugins, don't exit on False - keep looping
+                                        # until cycle is complete or max duration is reached
+                                        if not dynamic_enabled:
+                                            logger.info("Display returned False for %s (no dynamic duration), breaking early", active_mode)
+                                            break
+                                        else:
+                                            logger.debug("Display returned False for %s (dynamic duration enabled), continuing loop", active_mode)
                                 except Exception:  # pylint: disable=broad-except
                                     logger.exception("Error during display update")
 
