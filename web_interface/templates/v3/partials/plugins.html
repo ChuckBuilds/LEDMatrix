@@ -155,7 +155,7 @@
                 </div>
                 </div>
             </div>
-            <div class="mb-6">
+            <div class="mb-6 space-y-3">
                 <div class="flex gap-3">
                     <input type="text" id="plugin-search" placeholder="Search plugins by name, description, or tags..." class="form-control text-sm flex-[3] min-w-0 px-4 py-2.5 border border-gray-300 rounded-lg shadow-sm focus:shadow-md transition-shadow">
                     <select id="plugin-category" class="form-control text-sm flex-1 px-3 py-2.5 border border-gray-300 rounded-lg shadow-sm focus:shadow-md transition-shadow">
@@ -171,6 +171,15 @@
                     <button id="search-plugins-btn" class="btn bg-blue-600 hover:bg-blue-700 text-white px-5 py-2.5 rounded-lg whitespace-nowrap font-semibold shadow-sm">
                         <i class="fas fa-search mr-2"></i>Search
                     </button>
+                </div>
+                <div class="flex items-center gap-2 text-sm">
+                    <label for="store-branch-input" class="text-gray-600 whitespace-nowrap">
+                        <i class="fas fa-code-branch mr-1"></i>Install Branch (optional):
+                    </label>
+                    <input type="text" id="store-branch-input" 
+                           placeholder="Leave empty for default branch (e.g., test, dev)" 
+                           class="flex-1 max-w-xs px-3 py-2 text-sm border border-gray-300 rounded-lg shadow-sm focus:shadow-md transition-shadow">
+                    <span class="text-xs text-gray-500">Applies to all store installations</span>
                 </div>
             </div>
             <div id="plugin-store-grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-6">
@@ -224,13 +233,23 @@
                         <i class="fas fa-code-branch mr-2 text-blue-600"></i>Install Single Plugin
                     </h4>
                     <p class="text-xs text-gray-600 mb-3">Install a plugin directly from its GitHub repository URL</p>
-                    <div class="flex gap-2">
-                        <input type="text" id="github-plugin-url" 
-                               placeholder="https://github.com/user/ledmatrix-plugin-name" 
-                               class="flex-1 px-3 py-2 text-sm border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500">
-                        <button id="install-plugin-from-url" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm rounded-md whitespace-nowrap">
-                            <i class="fas fa-download mr-2"></i>Install
-                        </button>
+                    <div class="space-y-2">
+                        <div class="flex gap-2">
+                            <input type="text" id="github-plugin-url" 
+                                   placeholder="https://github.com/user/ledmatrix-plugin-name" 
+                                   class="flex-1 px-3 py-2 text-sm border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500">
+                            <button id="install-plugin-from-url" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm rounded-md whitespace-nowrap">
+                                <i class="fas fa-download mr-2"></i>Install
+                            </button>
+                        </div>
+                        <div class="flex items-center gap-2">
+                            <label for="plugin-branch-input" class="text-xs text-gray-600 whitespace-nowrap">
+                                <i class="fas fa-code-branch mr-1"></i>Branch (optional):
+                            </label>
+                            <input type="text" id="plugin-branch-input" 
+                                   placeholder="main, test, etc. (default: main)" 
+                                   class="flex-1 px-3 py-2 text-sm border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500">
+                        </div>
                     </div>
                     <div id="github-plugin-status" class="mt-2 text-sm"></div>
                 </div>

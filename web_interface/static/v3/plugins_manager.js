@@ -3189,6 +3189,14 @@ function renderPluginStore(plugins) {
 
 // Expose functions to window for onclick handlers
 window.installPlugin = function(pluginId, branch = null) {
+    // If branch not provided, check for store branch input
+    if (!branch) {
+        const storeBranchInput = document.getElementById('store-branch-input');
+        if (storeBranchInput && storeBranchInput.value.trim()) {
+            branch = storeBranchInput.value.trim();
+        }
+    }
+    
     showNotification(`Installing ${pluginId}${branch ? ` (branch: ${branch})` : ''}...`, 'info');
 
     const requestBody = { plugin_id: pluginId };
@@ -3634,6 +3642,13 @@ function renderCustomRegistryPlugins(plugins, registryUrl) {
 
 window.installFromCustomRegistry = function(pluginId, registryUrl, pluginPath, branch = null) {
     const repoUrl = registryUrl;
+    // If branch not provided, check for store branch input
+    if (!branch) {
+        const storeBranchInput = document.getElementById('store-branch-input');
+        if (storeBranchInput && storeBranchInput.value.trim()) {
+            branch = storeBranchInput.value.trim();
+        }
+    }
     const requestBody = { 
         repo_url: repoUrl,
         plugin_id: pluginId,
