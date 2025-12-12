@@ -132,12 +132,17 @@ const PluginAPI = {
      * Install plugin from store.
      * 
      * @param {string} pluginId - Plugin identifier
+     * @param {string} branch - Optional branch name to install from
      * @returns {Promise<Object>} Response data
      */
-    async installPlugin(pluginId) {
-        return await this.request('/plugins/install', 'POST', {
+    async installPlugin(pluginId, branch = null) {
+        const data = {
             plugin_id: pluginId
-        });
+        };
+        if (branch) {
+            data.branch = branch;
+        }
+        return await this.request('/plugins/install', 'POST', data);
     },
     
     /**

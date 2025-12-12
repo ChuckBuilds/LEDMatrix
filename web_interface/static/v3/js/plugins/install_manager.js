@@ -9,11 +9,12 @@ const PluginInstallManager = {
      * Install a plugin.
      * 
      * @param {string} pluginId - Plugin identifier
+     * @param {string} branch - Optional branch name to install from
      * @returns {Promise<Object>} Installation result
      */
-    async install(pluginId) {
+    async install(pluginId, branch = null) {
         try {
-            const result = await window.PluginAPI.installPlugin(pluginId);
+            const result = await window.PluginAPI.installPlugin(pluginId, branch);
             
             // Refresh installed plugins list
             if (window.PluginStateManager) {

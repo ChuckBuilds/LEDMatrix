@@ -71,11 +71,12 @@ const PluginStoreManager = {
      * Install plugin from store.
      * 
      * @param {string} pluginId - Plugin identifier
+     * @param {string} branch - Optional branch name to install from
      * @returns {Promise<Object>} Installation result
      */
-    async installPlugin(pluginId) {
+    async installPlugin(pluginId, branch = null) {
         try {
-            const result = await window.PluginAPI.installPlugin(pluginId);
+            const result = await window.PluginAPI.installPlugin(pluginId, branch);
             
             // Clear cache
             this.cache = null;

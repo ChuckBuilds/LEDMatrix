@@ -1974,17 +1974,19 @@ def install_plugin():
             return jsonify({'status': 'error', 'message': 'plugin_id required'}), 400
 
         plugin_id = data['plugin_id']
+        branch = data.get('branch')  # Optional branch parameter
         
         # Install the plugin
         # Log the plugins directory being used for debugging
         plugins_dir = api_v3.plugin_store_manager.plugins_dir
-        print(f"Installing plugin {plugin_id} to directory: {plugins_dir}", flush=True)
+        branch_info = f" (branch: {branch})" if branch else ""
+        print(f"Installing plugin {plugin_id}{branch_info} to directory: {plugins_dir}", flush=True)
         
         # Use operation queue if available
         if api_v3.operation_queue:
             def install_callback(operation):
                 """Callback to execute plugin installation."""
-                success = api_v3.plugin_store_manager.install_plugin(plugin_id)
+                success = api_v3.plugin_store_manager.install_plugin(plugin_id, branch=branch)
                 
                 if success:
                     # Invalidate schema cache
@@ -2008,9 +2010,12 @@ def install_plugin():
                             status="success"
                         )
                     
-                    return {'success': True, 'message': f'Plugin {plugin_id} installed successfully'}
+                    branch_msg = f" (branch: {branch})" if branch else ""
+                    return {'success': True, 'message': f'Plugin {plugin_id} installed successfully{branch_msg}'}
                 else:
                     error_msg = f'Failed to install plugin {plugin_id}'
+                    if branch:
+                        error_msg += f' (branch: {branch})'
                     plugin_info = api_v3.plugin_store_manager.get_plugin_info(plugin_id)
                     if not plugin_info:
                         error_msg += ' (plugin not found in registry)'
@@ -2033,13 +2038,14 @@ def install_plugin():
                 operation_callback=install_callback
             )
             
+            branch_msg = f" (branch: {branch})" if branch else ""
             return success_response(
                 data={'operation_id': operation_id},
-                message=f'Plugin {plugin_id} installation queued'
+                message=f'Plugin {plugin_id} installation queued{branch_msg}'
             )
         else:
             # Fallback to direct installation
-            success = api_v3.plugin_store_manager.install_plugin(plugin_id)
+            success = api_v3.plugin_store_manager.install_plugin(plugin_id, branch=branch)
             
             if success:
                 if api_v3.schema_manager:
@@ -2052,9 +2058,12 @@ def install_plugin():
                 if api_v3.operation_history:
                     api_v3.operation_history.record_operation("install", plugin_id=plugin_id, status="success")
                 
-                return success_response(message=f'Plugin {plugin_id} installed successfully')
+                branch_msg = f" (branch: {branch})" if branch else ""
+                return success_response(message=f'Plugin {plugin_id} installed successfully{branch_msg}')
             else:
                 error_msg = f'Failed to install plugin {plugin_id}'
+                if branch:
+                    error_msg += f' (branch: {branch})'
                 plugin_info = api_v3.plugin_store_manager.get_plugin_info(plugin_id)
                 if not plugin_info:
                     error_msg += ' (plugin not found in registry)'
@@ -2086,12 +2095,14 @@ def install_plugin_from_url():
         repo_url = data['repo_url'].strip()
         plugin_id = data.get('plugin_id')  # Optional, for monorepo installations
         plugin_path = data.get('plugin_path')  # Optional, for monorepo subdirectory
+        branch = data.get('branch')  # Optional branch parameter
         
         # Install the plugin
         result = api_v3.plugin_store_manager.install_from_url(
             repo_url=repo_url,
             plugin_id=plugin_id,
-            plugin_path=plugin_path
+            plugin_path=plugin_path,
+            branch=branch
         )
         
         if result.get('success'):
@@ -2105,12 +2116,16 @@ def install_plugin_from_url():
                 api_v3.plugin_manager.discover_plugins()
                 api_v3.plugin_manager.load_plugin(installed_plugin_id)
             
-            return jsonify({
+            branch_msg = f" (branch: {result.get('branch', branch)})" if (result.get('branch') or branch) else ""
+            response_data = {
                 'status': 'success',
-                'message': f"Plugin {installed_plugin_id} installed successfully",
+                'message': f"Plugin {installed_plugin_id} installed successfully{branch_msg}",
                 'plugin_id': installed_plugin_id,
                 'name': result.get('name')
-            })
+            }
+            if result.get('branch'):
+                response_data['branch'] = result.get('branch')
+            return jsonify(response_data)
         else:
             return jsonify({
                 'status': 'error',

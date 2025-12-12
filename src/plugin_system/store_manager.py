@@ -556,13 +556,21 @@ class PluginStoreManager:
         
         return plugin_info
     
-    def install_plugin(self, plugin_id: str, version: str = "latest") -> bool:
+    def install_plugin(self, plugin_id: str, version: str = "latest", branch: Optional[str] = None) -> bool:
         """
         Install a plugin from the official registry. ``version`` is ignored and kept for
         backwards compatibility; the latest commit from the repository's default branch
         is always installed.
+        
+        Args:
+            plugin_id: Plugin identifier
+            version: Ignored, kept for backwards compatibility
+            branch: Optional branch name to install from. If provided, this branch will be
+                   prioritized. If not provided or branch doesn't exist, falls back to
+                   default branch logic.
         """
-        self.logger.info(f"Installing plugin: {plugin_id} (latest branch head)")
+        branch_info = f" (branch: {branch})" if branch else " (latest branch head)"
+        self.logger.info(f"Installing plugin: {plugin_id}{branch_info}")
 
         plugin_info = self.get_plugin_info(plugin_id, fetch_latest_from_github=True)
         if not plugin_info:
@@ -575,7 +583,9 @@ class PluginStoreManager:
             return False
 
         plugin_subpath = plugin_info.get('plugin_path')
+        # If branch is provided, prioritize it; otherwise use default logic
         branch_candidates = self._distinct_sequence([
+            branch,  # User-specified branch takes highest priority
             plugin_info.get('branch'),
             plugin_info.get('default_branch'),
             plugin_info.get('last_commit_branch'),
@@ -704,7 +714,7 @@ class PluginStoreManager:
                 shutil.rmtree(plugin_path, ignore_errors=True)
             return False
     
-    def install_from_url(self, repo_url: str, plugin_id: str = None, plugin_path: str = None) -> Dict[str, Any]:
+    def install_from_url(self, repo_url: str, plugin_id: str = None, plugin_path: str = None, branch: Optional[str] = None) -> Dict[str, Any]:
         """
         Install a plugin directly from a GitHub URL.
         This allows users to install custom/unverified plugins.
@@ -717,11 +727,15 @@ class PluginStoreManager:
             repo_url: GitHub repository URL (e.g., https://github.com/user/repo)
             plugin_id: Optional plugin ID (extracted from manifest if not provided)
             plugin_path: Optional subdirectory path for monorepo installations (e.g., "plugins/hello-world")
+            branch: Optional branch name to install from. If provided, this branch will be
+                   prioritized. If not provided or branch doesn't exist, falls back to
+                   default branch logic (main, then master).
             
         Returns:
             Dict with status and plugin_id or error message
         """
-        self.logger.info(f"Installing plugin from custom URL: {repo_url}" + (f" (subpath: {plugin_path})" if plugin_path else ""))
+        branch_info = f" (branch: {branch})" if branch else ""
+        self.logger.info(f"Installing plugin from custom URL: {repo_url}{branch_info}" + (f" (subpath: {plugin_path})" if plugin_path else ""))
         
         # Clean up URL (remove .git suffix if present)
         repo_url = repo_url.rstrip('/').replace('.git', '')
@@ -731,35 +745,42 @@ class PluginStoreManager:
             # Create temporary directory
             temp_dir = Path(tempfile.mkdtemp(prefix='ledmatrix_plugin_'))
             
+            # Build branch candidates list - prioritize user-specified branch
+            branch_candidates = self._distinct_sequence([branch, 'main', 'master']) if branch else ['main', 'master']
+            
             # For monorepo installations, download and extract subdirectory
             if plugin_path:
-                # Try downloading as zip (main branch)
-                download_url = f"{repo_url}/archive/refs/heads/main.zip"
-                if not self._install_from_monorepo(download_url, plugin_path, temp_dir):
-                    # Try master branch
-                    download_url = f"{repo_url}/archive/refs/heads/master.zip"
-                    if not self._install_from_monorepo(download_url, plugin_path, temp_dir):
-                        return {
-                            'success': False,
-                            'error': f'Failed to download or extract plugin from monorepo subdirectory: {plugin_path}'
-                        }
+                branch_used = None
+                for candidate in branch_candidates:
+                    download_url = f"{repo_url}/archive/refs/heads/{candidate}.zip"
+                    if self._install_from_monorepo(download_url, plugin_path, temp_dir):
+                        branch_used = candidate
+                        break
+                
+                if branch_used is None:
+                    return {
+                        'success': False,
+                        'error': f'Failed to download or extract plugin from monorepo subdirectory: {plugin_path}'
+                    }
             else:
                 # Try git clone for direct plugin repos
-                if self._install_via_git(repo_url, temp_dir, ['main']):
-                    self.logger.info("Cloned via git")
-                elif self._install_via_git(repo_url, temp_dir, ['master']):
-                    self.logger.info("Cloned via git (master branch)")
+                branch_used = self._install_via_git(repo_url, temp_dir, branch_candidates)
+                if branch_used:
+                    self.logger.info(f"Cloned via git (branch: {branch_used})")
                 else:
-                    # Try downloading as zip (main branch)
-                    download_url = f"{repo_url}/archive/refs/heads/main.zip"
-                    if not self._install_via_download(download_url, temp_dir):
-                        # Try master branch
-                        download_url = f"{repo_url}/archive/refs/heads/master.zip"
-                        if not self._install_via_download(download_url, temp_dir):
-                            return {
-                                'success': False,
-                                'error': 'Failed to clone or download repository'
-                            }
+                    # Git failed; try downloading as zip
+                    branch_used = None
+                    for candidate in branch_candidates:
+                        download_url = f"{repo_url}/archive/refs/heads/{candidate}.zip"
+                        if self._install_via_download(download_url, temp_dir):
+                            branch_used = candidate
+                            break
+                    
+                    if branch_used is None:
+                        return {
+                            'success': False,
+                            'error': 'Failed to clone or download repository'
+                        }
             
             # Read manifest to get plugin ID
             manifest_path = temp_dir / "manifest.json"
@@ -811,12 +832,16 @@ class PluginStoreManager:
             # Install dependencies
             self._install_dependencies(final_path)
             
-            self.logger.info(f"Successfully installed plugin from URL: {plugin_id}")
-            return {
+            branch_info = f" (branch: {branch_used})" if branch_used else ""
+            self.logger.info(f"Successfully installed plugin from URL: {plugin_id}{branch_info}")
+            result = {
                 'success': True,
                 'plugin_id': plugin_id,
                 'name': manifest.get('name')
             }
+            if branch_used:
+                result['branch'] = branch_used
+            return result
             
         except json.JSONDecodeError as e:
             self.logger.error(f"Error parsing manifest JSON: {e}")

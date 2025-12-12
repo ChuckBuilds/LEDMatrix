@@ -3188,13 +3188,18 @@ function renderPluginStore(plugins) {
 }
 
 // Expose functions to window for onclick handlers
-window.installPlugin = function(pluginId) {
-    showNotification(`Installing ${pluginId}...`, 'info');
+window.installPlugin = function(pluginId, branch = null) {
+    showNotification(`Installing ${pluginId}${branch ? ` (branch: ${branch})` : ''}...`, 'info');
+
+    const requestBody = { plugin_id: pluginId };
+    if (branch) {
+        requestBody.branch = branch;
+    }
 
     fetch('/api/v3/plugins/install', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ plugin_id: pluginId })
+        body: JSON.stringify(requestBody)
     })
     .then(response => response.json())
     .then(data => {
@@ -3416,12 +3421,18 @@ function setupGitHubInstallHandlers() {
             installBtn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>Installing...';
             pluginStatusDiv.innerHTML = '<span class="text-blue-600"><i class="fas fa-spinner fa-spin mr-1"></i>Installing plugin...</span>';
             
+            const branch = document.getElementById('plugin-branch-input')?.value?.trim() || null;
+            const requestBody = { repo_url: repoUrl };
+            if (branch) {
+                requestBody.branch = branch;
+            }
+            
             fetch('/api/v3/plugins/install-from-url', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json'
                 },
-                body: JSON.stringify({ repo_url: repoUrl })
+                body: JSON.stringify(requestBody)
             })
             .then(response => response.json())
             .then(data => {
@@ -3621,19 +3632,23 @@ function renderCustomRegistryPlugins(plugins, registryUrl) {
     }).join('');
 }
 
-window.installFromCustomRegistry = function(pluginId, registryUrl, pluginPath) {
+window.installFromCustomRegistry = function(pluginId, registryUrl, pluginPath, branch = null) {
     const repoUrl = registryUrl;
+    const requestBody = { 
+        repo_url: repoUrl,
+        plugin_id: pluginId,
+        plugin_path: pluginPath
+    };
+    if (branch) {
+        requestBody.branch = branch;
+    }
     
     fetch('/api/v3/plugins/install-from-url', {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json'
         },
-        body: JSON.stringify({ 
-            repo_url: repoUrl,
-            plugin_id: pluginId,
-            plugin_path: pluginPath
-        })
+        body: JSON.stringify(requestBody)
     })
     .then(response => response.json())
     .then(data => {
