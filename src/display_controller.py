@@ -443,6 +443,34 @@ class DisplayController:
             )
             return None
 
+    def _plugin_cycle_duration(self, plugin_instance, display_mode: str = None) -> Optional[float]:
+        """Fetch plugin-calculated cycle duration for a specific mode.
+        
+        This allows plugins to calculate the total time needed to show all content
+        for a mode (e.g., number_of_games × per_game_duration).
+        
+        Args:
+            plugin_instance: The plugin to query
+            display_mode: The mode to get duration for (e.g., 'football_recent')
+        
+        Returns:
+            Calculated duration in seconds, or None if not available
+        """
+        duration_fn = getattr(plugin_instance, "get_cycle_duration", None)
+        if not callable(duration_fn):
+            return None
+        try:
+            return duration_fn(display_mode=display_mode)
+        except Exception as exc:  # pylint: disable=broad-except
+            plugin_id = getattr(plugin_instance, "plugin_id", "unknown")
+            logger.debug(
+                "Failed to read cycle duration for %s mode %s: %s", 
+                plugin_id, 
+                display_mode,
+                exc
+            )
+            return None
+
     def _plugin_reset_cycle(self, plugin_instance) -> None:
         """Reset plugin cycle tracking if supported."""
         reset_fn = getattr(plugin_instance, "reset_cycle_state", None)
@@ -949,6 +977,10 @@ class DisplayController:
 
                     min_duration = base_duration
                     if dynamic_enabled:
+                        # Try to get plugin-calculated cycle duration first
+                        plugin_cycle_duration = self._plugin_cycle_duration(manager_to_display, active_mode)
+                        
+                        # Get caps for validation
                         plugin_cap = self._plugin_dynamic_cap(manager_to_display)
                         global_cap = self._get_global_dynamic_cap()
                         cap_candidates = [
@@ -979,8 +1011,23 @@ class DisplayController:
                             )
                             chosen_cap = DEFAULT_DYNAMIC_DURATION_CAP
                         
+                        # Use plugin-calculated duration if available, capped by max
+                        if plugin_cycle_duration is not None and plugin_cycle_duration > 0:
+                            # Plugin provided a calculated duration - use it but respect cap
+                            target_duration = min(plugin_cycle_duration, chosen_cap)
+                            max_duration = target_duration
+                            logger.info(
+                                "Using plugin-calculated cycle duration for %s: %.1fs (capped at %.1fs)",
+                                active_mode,
+                                plugin_cycle_duration,
+                                chosen_cap,
+                            )
+                        else:
+                            # No calculated duration - use cap as max
+                            max_duration = chosen_cap
+                        
                         # Ensure max_duration >= min_duration
-                        max_duration = max(min_duration, chosen_cap)
+                        max_duration = max(min_duration, max_duration)
                         
                         if max_duration < min_duration:
                             logger.warning(
