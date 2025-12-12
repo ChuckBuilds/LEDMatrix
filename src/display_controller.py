@@ -978,9 +978,9 @@ class DisplayController:
                     min_duration = base_duration
                     if dynamic_enabled:
                         # Try to get plugin-calculated cycle duration first
-                        logger.debug("Attempting to get cycle duration for mode %s", active_mode)
+                        logger.info("Attempting to get cycle duration for mode %s", active_mode)
                         plugin_cycle_duration = self._plugin_cycle_duration(manager_to_display, active_mode)
-                        logger.debug("Got cycle duration: %s", plugin_cycle_duration)
+                        logger.info("Got cycle duration: %s", plugin_cycle_duration)
                         
                         # Get caps for validation
                         plugin_cap = self._plugin_dynamic_cap(manager_to_display)
