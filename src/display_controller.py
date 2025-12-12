@@ -1176,7 +1176,7 @@ class DisplayController:
                                 try:
                                     result = manager_to_display.display(force_clear=False)
                                     if isinstance(result, bool) and not result:
-                                        logger.debug("Display returned False, breaking early")
+                                        logger.info("Display returned False for %s, breaking early", active_mode)
                                         break
                                 except Exception:  # pylint: disable=broad-except
                                     logger.exception("Error during display update")
@@ -1184,11 +1184,11 @@ class DisplayController:
                                 self._poll_on_demand_requests()
                                 self._check_on_demand_expiration()
                                 if self.current_display_mode != active_mode:
-                                    logger.debug("Mode changed during display loop, breaking early")
+                                    logger.info("Mode changed during display loop from %s to %s, breaking early", active_mode, self.current_display_mode)
                                     break
 
                                 if _should_exit_dynamic(elapsed):
-                                    logger.debug(
+                                    logger.info(
                                         "Dynamic duration cycle complete for %s after %.2fs",
                                         active_mode,
                                         elapsed,
