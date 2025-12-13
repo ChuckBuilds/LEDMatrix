@@ -193,7 +193,7 @@ apt_update
 
 # Install required system packages
 echo "Installing Python packages and dependencies..."
-apt_install python3-pip python3-venv python3-dev python3-pil python3-pil.imagetk python3-pillow build-essential python3-setuptools python3-wheel cython3 scons
+apt_install python3-pip python3-venv python3-dev python3-pil python3-pil.imagetk python3-pillow build-essential python3-setuptools python3-wheel cython3 scons cmake ninja-build
 
 # Install additional system dependencies that might be needed
 echo "Installing additional system dependencies..."
