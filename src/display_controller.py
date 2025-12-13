@@ -1152,7 +1152,11 @@ class DisplayController:
 
                             while True:
                                 try:
-                                    result = manager_to_display.display(force_clear=False)
+                                    # Pass display_mode to maintain sticky manager state
+                                    if 'display_mode' in sig.parameters:
+                                        result = manager_to_display.display(display_mode=active_mode, force_clear=False)
+                                    else:
+                                        result = manager_to_display.display(force_clear=False)
                                     if isinstance(result, bool) and not result:
                                         logger.debug("Display returned False, breaking early")
                                         break
@@ -1204,7 +1208,11 @@ class DisplayController:
                                     break
 
                                 try:
-                                    result = manager_to_display.display(force_clear=False)
+                                    # Pass display_mode to maintain sticky manager state
+                                    if 'display_mode' in sig.parameters:
+                                        result = manager_to_display.display(display_mode=active_mode, force_clear=False)
+                                    else:
+                                        result = manager_to_display.display(force_clear=False)
                                     if isinstance(result, bool) and not result:
                                         # For dynamic duration plugins, don't exit on False - keep looping
                                         # until cycle is complete or max duration is reached
