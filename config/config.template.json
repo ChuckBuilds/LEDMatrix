@@ -573,6 +573,29 @@
             "soccer_upcoming": true
         }
     },
+    "ufc_scoreboard": {
+        "enabled": false,
+        "live_priority": true,
+        "live_game_duration": 30,
+        "show_odds": true,
+        "test_mode": false,
+        "update_interval_seconds": 3600,
+        "live_update_interval": 30,
+        "recent_update_interval": 3600,
+        "upcoming_update_interval": 3600,
+        "recent_games_to_show": 1,
+        "upcoming_games_to_show": 1,
+        "show_favorite_teams_only": true,
+        "favorite_fighters": [],
+        "weigth_class": [],
+        "logo_dir": "assets/sports/ufc_logos",
+        "show_records": true,
+        "display_modes": {
+            "ufc_live": true,
+            "ufc_recent": true,
+            "ufc_upcoming": true
+        }
+    },
     "music": {
         "enabled": false,
         "preferred_source": "ytm",

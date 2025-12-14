@@ -1,11 +1,10 @@
-import time
-import logging
-import requests
 import json
-from datetime import datetime, timedelta, timezone
+import logging
+from typing import Any, Dict, Optional
+
+import requests
+
 from src.cache_manager import CacheManager
-import pytz
-from typing import Dict, Any, Optional, List
 
 # Import the API counter function from web interface
 try:
@@ -22,10 +21,12 @@ class OddsManager:
         self.logger = logging.getLogger(__name__)
         self.base_url = "https://sports.core.api.espn.com/v2/sports"
 
-    def get_odds(self, sport: str | None, league: str | None, event_id: str, update_interval_seconds=3600):
-        if sport is None or league is None:
+    def get_odds(self, sport: str, league: str, event_id: str, comp_id: str | None = None, update_interval_seconds=3600):
+        if sport is None or league is None or event_id is None:
             raise ValueError("Sport and League cannot be None")
-        cache_key = f"odds_espn_{sport}_{league}_{event_id}"
+        if comp_id is None:
+            comp_id = event_id
+        cache_key = f"odds_espn_{sport}_{league}_{event_id}_{comp_id}"
 
         # Check cache first
         cached_data = self.cache_manager.get_with_auto_strategy(cache_key)
@@ -47,7 +48,7 @@ class OddsManager:
             }
             
             espn_league = league_mapping.get(league, league)
-            url = f"{self.base_url}/{sport}/leagues/{espn_league}/events/{event_id}/competitions/{event_id}/odds"
+            url = f"{self.base_url}/{sport}/leagues/{espn_league}/events/{event_id}/competitions/{comp_id}/odds"
             self.logger.info(f"Requesting odds from URL: {url}")
             response = requests.get(url, timeout=10)
             response.raise_for_status()
@@ -95,12 +96,12 @@ class OddsManager:
                 "over_under": item.get("overUnder"),
                 "spread": item.get("spread"),
                 "home_team_odds": {
-                    "money_line": item.get("homeTeamOdds", {}).get("moneyLine"),
-                    "spread_odds": item.get("homeTeamOdds", {}).get("current", {}).get("pointSpread", {}).get("value")
+                    "money_line": item.get("homeTeamOdds", item.get("homeAthleteOdds",{})).get("moneyLine"),
+                    "spread_odds": item.get("homeTeamOdds", item.get("homeAthleteOdds",{})).get("current", {}).get("pointSpread", {}).get("value")
                 },
                 "away_team_odds": {
-                    "money_line": item.get("awayTeamOdds", {}).get("moneyLine"),
-                    "spread_odds": item.get("awayTeamOdds", {}).get("current", {}).get("pointSpread", {}).get("value")
+                    "money_line": item.get("awayTeamOdds", item.get("awayAthleteOdds",{})).get("moneyLine"),
+                    "spread_odds": item.get("awayTeamOdds", item.get("awayAthleteOdds",{})).get("current", {}).get("pointSpread", {}).get("value")
                 }
             }
             self.logger.debug(f"Returning extracted odds data: {json.dumps(extracted_data, indent=2)}")
