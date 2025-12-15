@@ -39,6 +39,74 @@ else
     echo "⚠ Could not detect Raspberry Pi model (continuing anyway)"
 fi
 
+# Check OS version - must be Raspberry Pi OS Lite (Trixie)
+echo ""
+echo "Checking operating system requirements..."
+echo "----------------------------------------"
+OS_CHECK_FAILED=0
+
+if [ -f /etc/os-release ]; then
+    . /etc/os-release
+    echo "Detected OS: $PRETTY_NAME"
+    echo "Version ID: ${VERSION_ID:-unknown}"
+    
+    # Check if it's Raspberry Pi OS or Debian
+    if [[ "$ID" != "raspbian" ]] && [[ "$ID" != "debian" ]]; then
+        echo "✗ ERROR: This script requires Raspberry Pi OS (raspbian/debian)"
+        echo "  Detected OS ID: $ID"
+        OS_CHECK_FAILED=1
+    fi
+    
+    # Check if it's Debian 13 (Trixie)
+    if [ "${VERSION_ID:-0}" != "13" ]; then
+        echo "✗ ERROR: This script requires Raspberry Pi OS Lite (Trixie) - Debian 13"
+        echo "  Detected version: ${VERSION_ID:-unknown}"
+        echo "  Please upgrade to Raspberry Pi OS Lite (Trixie) before continuing"
+        OS_CHECK_FAILED=1
+    else
+        echo "✓ Debian 13 (Trixie) detected"
+    fi
+    
+    # Check if it's the Lite version (no desktop environment)
+    # Check for desktop packages or desktop services
+    DESKTOP_DETECTED=0
+    if dpkg -l | grep -qE "^ii.*raspberrypi-ui-mods|^ii.*lxde|^ii.*xfce|^ii.*gnome|^ii.*kde"; then
+        DESKTOP_DETECTED=1
+    fi
+    if systemctl list-units --type=service --state=running 2>/dev/null | grep -qE "lightdm|gdm3|sddm|lxdm"; then
+        DESKTOP_DETECTED=1
+    fi
+    if [ -d /usr/share/raspberrypi-ui-mods ] || [ -d /usr/share/xsessions ]; then
+        DESKTOP_DETECTED=1
+    fi
+    
+    if [ "$DESKTOP_DETECTED" -eq 1 ]; then
+        echo "✗ ERROR: Desktop environment detected - this script requires Raspberry Pi OS Lite"
+        echo "  Please use Raspberry Pi OS Lite (not the full desktop version)"
+        OS_CHECK_FAILED=1
+    else
+        echo "✓ Lite version confirmed (no desktop environment)"
+    fi
+else
+    echo "✗ ERROR: Could not detect OS version (/etc/os-release not found)"
+    OS_CHECK_FAILED=1
+fi
+
+if [ "$OS_CHECK_FAILED" -eq 1 ]; then
+    echo ""
+    echo "Installation cannot continue. Please install Raspberry Pi OS Lite (Trixie) and try again."
+    echo ""
+    echo "To install Raspberry Pi OS Lite (Trixie):"
+    echo "  1. Download from: https://www.raspberrypi.com/software/operating-systems/"
+    echo "  2. Select 'Raspberry Pi OS Lite (64-bit)' with Debian 13 (Trixie)"
+    echo "  3. Flash to SD card using Raspberry Pi Imager"
+    echo "  4. Boot and run this script again"
+    exit 1
+fi
+
+echo "✓ OS requirements met"
+echo ""
+
 # Get the actual user who invoked sudo (set after we ensure sudo below)
 if [ -n "${SUDO_USER:-}" ]; then
     ACTUAL_USER="$SUDO_USER"
