@@ -84,10 +84,11 @@
     <!-- Quick Actions -->
     <div class="border-b border-gray-200 pb-4 mb-6">
         <h3 class="text-md font-medium text-gray-900 mb-4">Quick Actions</h3>
-        <div class="flex flex-wrap gap-3">
+        <div class="flex flex-wrap gap-3" hx-ext="json-enc">
             <button hx-post="/api/v3/system/action"
                     hx-vals='{"action": "start_display"}'
                     hx-swap="none"
+                    hx-on:htmx:after-request="if (typeof showNotification !== 'undefined' && event.detail.xhr && event.detail.xhr.responseJSON) { showNotification(event.detail.xhr.responseJSON.message || 'Display started', event.detail.xhr.responseJSON.status || 'success'); }"
                     class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-green-600 hover:bg-green-700">
                 <i class="fas fa-play mr-2"></i>
                 Start Display
@@ -96,6 +97,7 @@
             <button hx-post="/api/v3/system/action"
                     hx-vals='{"action": "stop_display"}'
                     hx-swap="none"
+                    hx-on:htmx:after-request="if (typeof showNotification !== 'undefined' && event.detail.xhr && event.detail.xhr.responseJSON) { showNotification(event.detail.xhr.responseJSON.message || 'Display stopped', event.detail.xhr.responseJSON.status || 'success'); }"
                     class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-red-600 hover:bg-red-700">
                 <i class="fas fa-stop mr-2"></i>
                 Stop Display
@@ -105,6 +107,7 @@
                     hx-vals='{"action": "git_pull"}'
                     hx-confirm="This will stash any local changes and update the code. Continue?"
                     hx-swap="none"
+                    hx-on:htmx:after-request="if (typeof showNotification !== 'undefined' && event.detail.xhr && event.detail.xhr.responseJSON) { showNotification(event.detail.xhr.responseJSON.message || 'Code update completed', event.detail.xhr.responseJSON.status || 'info'); }"
                     class="inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50">
                 <i class="fas fa-download mr-2"></i>
                 Update Code
@@ -114,6 +117,7 @@
                     hx-vals='{"action": "reboot_system"}'
                     hx-confirm="Are you sure you want to reboot the system?"
                     hx-swap="none"
+                    hx-on:htmx:after-request="if (typeof showNotification !== 'undefined' && event.detail.xhr && event.detail.xhr.responseJSON) { showNotification(event.detail.xhr.responseJSON.message || 'System rebooting...', event.detail.xhr.responseJSON.status || 'info'); }"
                     class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-yellow-600 hover:bg-yellow-700">
                 <i class="fas fa-power-off mr-2"></i>
                 Reboot System
@@ -122,6 +126,7 @@
             <button hx-post="/api/v3/system/action"
                     hx-vals='{"action": "restart_display_service"}'
                     hx-swap="none"
+                    hx-on:htmx:after-request="if (typeof showNotification !== 'undefined' && event.detail.xhr && event.detail.xhr.responseJSON) { showNotification(event.detail.xhr.responseJSON.message || 'Display service restarted', event.detail.xhr.responseJSON.status || 'success'); }"
                     class="inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50">
                 <i class="fas fa-redo mr-2"></i>
                 Restart Display Service
@@ -130,6 +135,7 @@
             <button hx-post="/api/v3/system/action"
                     hx-vals='{"action": "restart_web_service"}'
                     hx-swap="none"
+                    hx-on:htmx:after-request="if (typeof showNotification !== 'undefined' && event.detail.xhr && event.detail.xhr.responseJSON) { showNotification(event.detail.xhr.responseJSON.message || 'Web service restarted', event.detail.xhr.responseJSON.status || 'success'); }"
                     class="inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50">
                 <i class="fas fa-redo mr-2"></i>
                 Restart Web Service

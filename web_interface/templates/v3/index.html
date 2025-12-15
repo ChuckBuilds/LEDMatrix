@@ -69,7 +69,7 @@
     <!-- Quick Actions -->
     <div class="border-b border-gray-200 pb-4 mb-6">
         <h3 class="text-md font-medium text-gray-900 mb-4">Quick Actions</h3>
-        <div class="flex flex-wrap gap-3">
+        <div class="flex flex-wrap gap-3" hx-ext="json-enc">
             <button hx-post="/api/v3/system/action"
                     hx-vals='{"action": "start_display"}'
                     hx-swap="none"
@@ -101,6 +101,7 @@
                     hx-vals='{"action": "reboot_system"}'
                     hx-confirm="Are you sure you want to reboot the system?"
                     hx-swap="none"
+                    hx-on:htmx:after-request="if (typeof showNotification !== 'undefined' && event.detail.xhr && event.detail.xhr.responseJSON) { showNotification(event.detail.xhr.responseJSON.message || 'System rebooting...', event.detail.xhr.responseJSON.status || 'info'); }"
                     class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-yellow-600 hover:bg-yellow-700">
                 <i class="fas fa-power-off mr-2"></i>
                 Reboot System
