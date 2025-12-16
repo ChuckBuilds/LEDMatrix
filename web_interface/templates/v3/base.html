@@ -2185,7 +2185,19 @@
                             
                             // Handle checkboxes explicitly (both checked and unchecked)
                             if (element.type === 'checkbox') {
-                                flatConfig[name] = element.checked;
+                                // Check if this is a checkbox group (name ends with [])
+                                if (name.endsWith('[]')) {
+                                    const baseName = name.slice(0, -2); // Remove '[]' suffix
+                                    if (!flatConfig[baseName]) {
+                                        flatConfig[baseName] = [];
+                                    }
+                                    if (element.checked) {
+                                        flatConfig[baseName].push(element.value);
+                                    }
+                                } else {
+                                    // Regular checkbox (boolean)
+                                    flatConfig[name] = element.checked;
+                                }
                             }
                             // Handle radio buttons
                             else if (element.type === 'radio') {
@@ -2220,6 +2232,10 @@
                             // Skip checkboxes - we already handled them above
                             const element = form.elements[key];
                             if (element && element.type === 'checkbox') {
+                                // Also skip checkbox groups (name ends with [])
+                                if (key.endsWith('[]')) {
+                                    continue; // Already processed
+                                }
                                 continue; // Already processed
                             }
                             // Skip multi-select - we already handled them above

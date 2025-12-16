@@ -1988,6 +1988,32 @@ function generateFieldHtml(key, prop, value, prefix = '') {
                     <input type="hidden" id="${fieldId}_images_data" name="${fullKey}" value="${JSON.stringify(currentImages).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/'/g, '&#39;')}">
                 </div>
             `;
+        } else if (xWidgetValue === 'checkbox-group' || xWidgetValue2 === 'checkbox-group') {
+            // Checkbox group widget for multi-select arrays with enum items
+            console.log(`[DEBUG] ✅ Detected checkbox-group widget for ${fullKey} - rendering checkboxes`);
+            const arrayValue = Array.isArray(value) ? value : (prop.default || []);
+            const enumItems = prop.items && prop.items.enum ? prop.items.enum : [];
+            const xOptions = prop['x-options'] || {};
+            const labels = xOptions.labels || {};
+            
+            html += `<div class="mt-1 space-y-2">`;
+            enumItems.forEach(option => {
+                const isChecked = arrayValue.includes(option);
+                const label = labels[option] || option.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+                const checkboxId = `${fullKey.replace(/\./g, '_')}_${option}`;
+                html += `
+                    <label class="flex items-center">
+                        <input type="checkbox" 
+                               id="${checkboxId}" 
+                               name="${fullKey}[]" 
+                               value="${option}" 
+                               ${isChecked ? 'checked' : ''} 
+                               class="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded">
+                        <span class="ml-2 text-sm text-gray-700">${label}</span>
+                    </label>
+                `;
+            });
+            html += `</div>`;
         } else {
             // Regular array input
             console.log(`[DEBUG] ❌ NOT a file upload widget for ${fullKey}, using regular array input`);
