@@ -22,3 +22,6 @@
 [submodule "plugins/mqtt-notifications"]
 	path = plugins/mqtt-notifications
 	url = https://github.com/ChuckBuilds/ledmatrix-mqtt-notifications.git
+[submodule "plugins/olympics-countdown"]
+	path = plugins/olympics-countdown
+	url = https://github.com/ChuckBuilds/ledmatrix-olympics-countdown.git

@@ -53,4 +53,6 @@ plugins/*
 !plugins/calendar/
 !plugins/mqtt-notifications
 !plugins/mqtt-notifications/
+!plugins/olympics-countdown
+!plugins/olympics-countdown/
 !plugins/*/.git
