@@ -3,10 +3,10 @@
 	url = https://github.com/ChuckBuilds/ledmatrix-odds-ticker.git
 [submodule "plugins/clock-simple"]
 	path = plugins/clock-simple
-	url = https://github.com/ChuckBuilds/ledmatrix-clock-simple
+	url = https://github.com/ChuckBuilds/ledmatrix-clock-simple.git
 [submodule "plugins/text-display"]
 	path = plugins/text-display
-	url = https://github.com/ChuckBuilds/ledmatrix-text-display
+	url = https://github.com/ChuckBuilds/ledmatrix-text-display.git
 [submodule "rpi-rgb-led-matrix-master"]
 	path = rpi-rgb-led-matrix-master
 	url = https://github.com/hzeller/rpi-rgb-led-matrix.git
