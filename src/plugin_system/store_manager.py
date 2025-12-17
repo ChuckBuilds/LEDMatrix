@@ -1356,30 +1356,40 @@ class PluginStoreManager:
                     )
 
                     # Check for local changes and stash them if needed
-                    status_result = subprocess.run(
-                        ['git', '-C', str(plugin_path), 'status', '--porcelain'],
-                        capture_output=True,
-                        text=True,
-                        timeout=10,
-                        check=False
-                    )
+                    # Use --untracked-files=no to skip untracked files check (much faster)
+                    try:
+                        status_result = subprocess.run(
+                            ['git', '-C', str(plugin_path), 'status', '--porcelain', '--untracked-files=no'],
+                            capture_output=True,
+                            text=True,
+                            timeout=30,
+                            check=False
+                        )
+                        has_changes = bool(status_result.stdout.strip())
+                    except subprocess.TimeoutExpired:
+                        # If status check times out, assume there might be changes and proceed
+                        self.logger.warning(f"Git status check timed out for {plugin_id}, proceeding with update")
+                        has_changes = True
+                        status_result = type('obj', (object,), {'stdout': '', 'stderr': 'Status check timed out'})()
                     
-                    has_changes = bool(status_result.stdout.strip())
                     stash_info = ""
                     if has_changes:
                         self.logger.info(f"Stashing local changes in {plugin_id} before update")
-                        stash_result = subprocess.run(
-                            ['git', '-C', str(plugin_path), 'stash', 'push', '-m', f'LEDMatrix auto-stash before update {plugin_id}'],
-                            capture_output=True,
-                            text=True,
-                            timeout=10,
-                            check=False
-                        )
-                        if stash_result.returncode == 0:
-                            stash_info = " (local changes were stashed)"
-                            self.logger.info(f"Stashed local changes for {plugin_id}")
-                        else:
-                            self.logger.warning(f"Failed to stash local changes for {plugin_id}: {stash_result.stderr}")
+                        try:
+                            stash_result = subprocess.run(
+                                ['git', '-C', str(plugin_path), 'stash', 'push', '-m', f'LEDMatrix auto-stash before update {plugin_id}'],
+                                capture_output=True,
+                                text=True,
+                                timeout=30,
+                                check=False
+                            )
+                            if stash_result.returncode == 0:
+                                stash_info = " (local changes were stashed)"
+                                self.logger.info(f"Stashed local changes for {plugin_id}")
+                            else:
+                                self.logger.warning(f"Failed to stash local changes for {plugin_id}: {stash_result.stderr}")
+                        except subprocess.TimeoutExpired:
+                            self.logger.warning(f"Stash operation timed out for {plugin_id}, proceeding with pull")
 
                     # Pull from the determined remote branch
                     pull_result = subprocess.run(

@@ -786,28 +786,49 @@ def execute_system_action():
             project_dir = str(PROJECT_ROOT)
             
             # Check if there are local changes that need to be stashed
-            status_result = subprocess.run(
-                ['git', 'status', '--porcelain'],
-                capture_output=True,
-                text=True,
-                timeout=5,
-                cwd=project_dir
-            )
-            
-            has_changes = bool(status_result.stdout.strip())
-            stash_info = ""
-            
-            # Stash local changes if they exist
-            if has_changes:
-                stash_result = subprocess.run(
-                    ['git', 'stash', 'push', '-m', 'LEDMatrix auto-stash before update'],
+            # Exclude plugins directory - plugins are separate repos and shouldn't be stashed with base project
+            # Use --untracked-files=no to skip untracked files check (much faster with symlinked plugins)
+            try:
+                status_result = subprocess.run(
+                    ['git', 'status', '--porcelain', '--untracked-files=no'],
                     capture_output=True,
                     text=True,
-                    timeout=10,
+                    timeout=30,
                     cwd=project_dir
                 )
-                print(f"Stashed local changes: {stash_result.stdout}")
-                stash_info = " Local changes were stashed."
+                # Filter out any changes in plugins directory - plugins are separate repositories
+                # Git status format: XY filename (where X is status of index, Y is status of work tree)
+                status_lines = [line for line in status_result.stdout.strip().split('\n') 
+                               if line.strip() and 'plugins/' not in line]
+                has_changes = bool('\n'.join(status_lines).strip())
+            except subprocess.TimeoutExpired:
+                # If status check times out, assume there might be changes and proceed
+                # This is safer than failing the update
+                has_changes = True
+                status_result = type('obj', (object,), {'stdout': '', 'stderr': 'Status check timed out'})()
+            
+            stash_info = ""
+            
+            # Stash local changes if they exist (excluding plugins)
+            # Plugins are separate repositories and shouldn't be stashed with base project updates
+            if has_changes:
+                try:
+                    # Use pathspec to exclude plugins directory from stash
+                    stash_result = subprocess.run(
+                        ['git', 'stash', 'push', '-m', 'LEDMatrix auto-stash before update', '--', ':!plugins'],
+                        capture_output=True,
+                        text=True,
+                        timeout=30,
+                        cwd=project_dir
+                    )
+                    if stash_result.returncode == 0:
+                        print(f"Stashed local changes: {stash_result.stdout}")
+                        stash_info = " Local changes were stashed."
+                    else:
+                        # If stash fails, log but continue with pull
+                        print(f"Stash failed: {stash_result.stderr}")
+                except subprocess.TimeoutExpired:
+                    print("Stash operation timed out, proceeding with pull")
             
             # Perform the git pull
             result = subprocess.run(
