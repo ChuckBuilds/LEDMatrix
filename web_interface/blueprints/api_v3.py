@@ -525,6 +525,25 @@ def save_main_config():
                 
                 regular_config, secrets_config = separate_secrets(plugin_config, secret_fields)
                 
+                # PRE-PROCESSING: Preserve 'enabled' state if not in regular_config
+                # This prevents overwriting the enabled state when saving config from a form that doesn't include the toggle
+                if 'enabled' not in regular_config:
+                    try:
+                        if plugin_id in current_config and 'enabled' in current_config[plugin_id]:
+                            regular_config['enabled'] = current_config[plugin_id]['enabled']
+                        elif api_v3.plugin_manager:
+                            # Fallback to plugin instance if config doesn't have it
+                            plugin_instance = api_v3.plugin_manager.get_plugin(plugin_id)
+                            if plugin_instance:
+                                regular_config['enabled'] = plugin_instance.enabled
+                        # Final fallback: default to True if plugin is loaded (matches BasePlugin default)
+                        if 'enabled' not in regular_config:
+                            regular_config['enabled'] = True
+                    except Exception as e:
+                        print(f"Error preserving enabled state for {plugin_id}: {e}")
+                        # Default to True on error to avoid disabling plugins
+                        regular_config['enabled'] = True
+                
                 # Get current secrets config
                 current_secrets = api_v3.config_manager.get_raw_file_content('secrets')
                 
