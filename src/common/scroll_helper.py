@@ -537,9 +537,24 @@ class ScrollHelper:
             # to scroll total_scroll_width pixels to show all content once without looping
             total_scroll_distance = self.total_scroll_width
             
-            # Calculate time based on scroll speed (pixels per second)
-            # scroll_speed is pixels per second
-            total_time = total_scroll_distance / self.scroll_speed
+            # Calculate effective pixels per second based on scrolling mode
+            if self.frame_based_scrolling:
+                # Frame-based mode: scroll_speed is pixels per frame, scroll_delay is seconds per frame
+                # Effective pixels per second = pixels per frame / seconds per frame
+                if self.scroll_delay > 0:
+                    pixels_per_second = self.scroll_speed / self.scroll_delay
+                else:
+                    # Fallback if scroll_delay is invalid
+                    pixels_per_second = self.scroll_speed * 50  # Assume 50 FPS default
+                    self.logger.warning("Invalid scroll_delay (%s), using fallback calculation", self.scroll_delay)
+                scroll_mode_str = "frame-based"
+            else:
+                # Time-based mode: scroll_speed is already pixels per second
+                pixels_per_second = self.scroll_speed
+                scroll_mode_str = "time-based"
+            
+            # Calculate time based on effective pixels per second
+            total_time = total_scroll_distance / pixels_per_second
             
             # Add buffer time for smooth cycling
             buffer_time = total_time * self.duration_buffer
@@ -553,11 +568,15 @@ class ScrollHelper:
             else:
                 self.calculated_duration = calculated_duration
             
-            self.logger.debug("Dynamic duration calculation:")
+            self.logger.debug("Dynamic duration calculation (%s mode):", scroll_mode_str)
             self.logger.debug("  Display width: %dpx", self.display_width)
             self.logger.debug("  Content width: %dpx", self.total_scroll_width)
             self.logger.debug("  Total scroll distance: %dpx", total_scroll_distance)
-            self.logger.debug("  Scroll speed: %.1f px/second", self.scroll_speed)
+            if self.frame_based_scrolling:
+                self.logger.debug("  Scroll speed: %.2f px/frame, delay: %.3fs", self.scroll_speed, self.scroll_delay)
+                self.logger.debug("  Effective speed: %.1f px/second", pixels_per_second)
+            else:
+                self.logger.debug("  Scroll speed: %.1f px/second", pixels_per_second)
             self.logger.debug("  Base time: %.2fs", total_time)
             self.logger.debug("  Buffer time: %.2fs", buffer_time)
             self.logger.debug("  Final duration: %ds", self.calculated_duration)
