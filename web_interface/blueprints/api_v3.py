@@ -2641,16 +2641,29 @@ def save_plugin_config():
                 if isinstance(prop_type, list):
                     # Check if null is allowed and value is empty/null
                     if 'null' in prop_type:
-                        if value is None or value == '' or (isinstance(value, str) and value.lower() in ('null', 'none')):
+                        # Handle various representations of null/empty
+                        if value is None:
                             normalized[key] = None
                             continue
+                        elif isinstance(value, str):
+                            # Strip whitespace and check for null representations
+                            value_stripped = value.strip()
+                            if value_stripped == '' or value_stripped.lower() in ('null', 'none', 'undefined'):
+                                normalized[key] = None
+                                continue
                     
                     # Try to normalize based on non-null types in the union
                     # Check integer first (more specific than number)
                     if 'integer' in prop_type:
                         if isinstance(value, str):
+                            value_stripped = value.strip()
+                            if value_stripped == '':
+                                # Empty string with null allowed - already handled above, but double-check
+                                if 'null' in prop_type:
+                                    normalized[key] = None
+                                    continue
                             try:
-                                normalized[key] = int(value)
+                                normalized[key] = int(value_stripped)
                                 continue
                             except (ValueError, TypeError):
                                 pass
@@ -2661,8 +2674,14 @@ def save_plugin_config():
                     # Check number (less specific, but handles floats)
                     if 'number' in prop_type:
                         if isinstance(value, str):
+                            value_stripped = value.strip()
+                            if value_stripped == '':
+                                # Empty string with null allowed - already handled above, but double-check
+                                if 'null' in prop_type:
+                                    normalized[key] = None
+                                    continue
                             try:
-                                normalized[key] = float(value)
+                                normalized[key] = float(value_stripped)
                                 continue
                             except (ValueError, TypeError):
                                 pass
@@ -2673,10 +2692,25 @@ def save_plugin_config():
                     # Check boolean
                     if 'boolean' in prop_type:
                         if isinstance(value, str):
-                            normalized[key] = value.lower() in ('true', '1', 'on', 'yes')
+                            normalized[key] = value.strip().lower() in ('true', '1', 'on', 'yes')
                             continue
                     
-                    # If no conversion worked, keep original value
+                    # If no conversion worked and null is allowed, try to set to None
+                    # This handles cases where the value is an empty string or can't be converted
+                    if 'null' in prop_type:
+                        if isinstance(value, str):
+                            value_stripped = value.strip()
+                            if value_stripped == '' or value_stripped.lower() in ('null', 'none', 'undefined'):
+                                normalized[key] = None
+                                continue
+                        # If it's already None, keep it
+                        if value is None:
+                            normalized[key] = None
+                            continue
+                    
+                    # If no conversion worked, keep original value (will fail validation, but that's expected)
+                    # Log a warning for debugging
+                    logger.warning(f"Could not normalize field {field_path}: value={repr(value)}, type={type(value)}, schema_type={prop_type}")
                     normalized[key] = value
                     continue
                 
@@ -2794,6 +2828,11 @@ def save_plugin_config():
         # Normalize config before validation
         if schema and 'properties' in schema:
             plugin_config = normalize_config_values(plugin_config, schema['properties'])
+        
+        # Debug logging for union type fields (temporary)
+        if 'rotation_settings' in plugin_config and 'random_seed' in plugin_config.get('rotation_settings', {}):
+            seed_value = plugin_config['rotation_settings']['random_seed']
+            logger.debug(f"After normalization, random_seed value: {repr(seed_value)}, type: {type(seed_value)}")
         
         # Validate configuration against schema before saving
         if schema:
