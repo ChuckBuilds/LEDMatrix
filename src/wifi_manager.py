@@ -463,7 +463,11 @@ class WiFiManager:
                     try:
                         signal = int(parts[1].strip())
                         security = parts[2].strip() if len(parts) > 2 else "open"
-                        frequency = float(parts[3].strip()) if len(parts) > 3 else 0.0
+                        
+                        # Parse frequency - strip " MHz" if present
+                        frequency_str = parts[3].strip() if len(parts) > 3 else "0"
+                        frequency_str = frequency_str.replace(" MHz", "").replace("MHz", "").strip()
+                        frequency = float(frequency_str) if frequency_str else 0.0
                         
                         # Normalize security type
                         if "WPA3" in security:
@@ -481,7 +485,8 @@ class WiFiManager:
                             security=sec_type,
                             frequency=frequency
                         ))
-                    except ValueError:
+                    except (ValueError, IndexError) as e:
+                        logger.debug(f"Skipping network line due to parsing error: {line[:50]}... Error: {e}")
                         continue
             
             # Sort by signal strength
