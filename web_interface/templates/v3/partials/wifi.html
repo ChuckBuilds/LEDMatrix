@@ -71,12 +71,9 @@
                 <select id="wifi-ssid" 
                         x-model="selectedSSID"
                         x-ref="networkSelect"
-                        class="form-control flex-1"
-                        x-effect="updateNetworkOptions()">
+                        class="form-control flex-1">
                     <option value="">-- Select a network --</option>
-                    <template x-for="network in networks" :key="'network-' + network.ssid">
-                        <option :value="network.ssid" x-text="network.ssid + ' (' + network.signal + '% - ' + network.security + ')'"></option>
-                    </template>
+                    <!-- Options will be populated by updateSelectOptions() -->
                 </select>
                 <!-- Debug: Show network count -->
                 <div x-show="networks.length > 0" class="text-xs text-gray-500 self-center px-2" x-cloak>
@@ -207,10 +204,28 @@ function wifiSetup() {
         message: '',
         messageType: 'success',
 
-        updateNetworkOptions() {
-            // This method is called by x-effect when networks change
-            // It ensures the select dropdown is properly updated
-            console.log('updateNetworkOptions called, networks.length:', this.networks.length);
+        updateSelectOptions() {
+            // Manually update the select dropdown options
+            const select = this.$refs.networkSelect;
+            if (!select) {
+                console.warn('Select element not found');
+                return;
+            }
+            
+            // Clear existing options except the first one
+            while (select.options.length > 1) {
+                select.remove(1);
+            }
+            
+            // Add network options
+            this.networks.forEach(network => {
+                const option = document.createElement('option');
+                option.value = network.ssid;
+                option.textContent = `${network.ssid} (${network.signal}% - ${network.security})`;
+                select.appendChild(option);
+            });
+            
+            console.log(`Updated select with ${this.networks.length} networks`);
         },
 
         async loadStatus() {
@@ -244,11 +259,10 @@ function wifiSetup() {
                     this.networks = networksArray;
                     console.log('this.networks after assignment:', this.networks.length); // Debug log
                     
-                    // Force Alpine.js to update by triggering a re-evaluation
-                    if (this.$refs && this.$refs.networkSelect) {
-                        // The select element exists, networks should be populated
-                        console.log('Select element found, networks should be visible'); // Debug log
-                    }
+                    // Manually update the select dropdown
+                    this.$nextTick(() => {
+                        this.updateSelectOptions();
+                    });
                     
                     if (networksArray.length > 0) {
                         this.showMessage(`Found ${networksArray.length} networks`, 'success');
