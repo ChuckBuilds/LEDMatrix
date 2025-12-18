@@ -572,7 +572,7 @@
                                     // Load both installed plugins and plugin store
                                     Promise.all([
                                         fetch('/api/v3/plugins/installed').then(r => r.json()),
-                                        fetch('/api/v3/plugins/store/list?fetch_latest_versions=true').then(r => r.json())
+                                        fetch('/api/v3/plugins/store/list?fetch_commit_info=true').then(r => r.json())
                                     ]).then(([installedData, storeData]) => {
                                         console.log('Fetched plugins:', installedData);
                                         console.log('Fetched store:', storeData);

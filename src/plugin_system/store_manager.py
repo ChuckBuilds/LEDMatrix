@@ -292,7 +292,7 @@ class PluginStoreManager:
             self.logger.error(f"Error parsing registry JSON: {e}")
             return {"plugins": []}
     
-    def search_plugins(self, query: str = "", category: str = "", tags: List[str] = None, fetch_latest_versions: bool = True, include_saved_repos: bool = True, saved_repositories_manager = None) -> List[Dict]:
+    def search_plugins(self, query: str = "", category: str = "", tags: List[str] = None, fetch_commit_info: bool = True, include_saved_repos: bool = True, saved_repositories_manager = None) -> List[Dict]:
         """
         Search for plugins in the registry with enhanced metadata.
 
@@ -304,7 +304,7 @@ class PluginStoreManager:
             query: Search query string (searches name, description, id)
             category: Filter by category (e.g., 'sports', 'weather', 'time')
             tags: Filter by tags (matches any tag in list)
-            fetch_latest_versions: If True (default), fetch commit metadata from GitHub.
+            fetch_commit_info: If True (default), fetch commit metadata from GitHub.
 
         Returns:
             List of matching plugin metadata enriched with GitHub information
@@ -370,7 +370,7 @@ class PluginStoreManager:
                 enhanced_plugin['last_updated_iso'] = github_info.get('last_commit_iso')
                 enhanced_plugin['last_updated'] = github_info.get('last_commit_date')
 
-                if fetch_latest_versions:
+                if fetch_commit_info:
                     branch = plugin.get('branch') or github_info.get('default_branch', 'main')
 
                     commit_info = self._get_latest_commit_info(repo_url, branch)
@@ -556,15 +556,13 @@ class PluginStoreManager:
         
         return plugin_info
     
-    def install_plugin(self, plugin_id: str, version: str = "latest", branch: Optional[str] = None) -> bool:
+    def install_plugin(self, plugin_id: str, branch: Optional[str] = None) -> bool:
         """
-        Install a plugin from the official registry. ``version`` is ignored and kept for
-        backwards compatibility; the latest commit from the repository's default branch
-        is always installed.
+        Install a plugin from the official registry. Always installs the latest commit
+        from the repository's default branch (or specified branch).
         
         Args:
             plugin_id: Plugin identifier
-            version: Ignored, kept for backwards compatibility
             branch: Optional branch name to install from. If provided, this branch will be
                    prioritized. If not provided or branch doesn't exist, falls back to
                    default branch logic.

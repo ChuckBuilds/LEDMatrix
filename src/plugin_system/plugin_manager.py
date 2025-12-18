@@ -325,11 +325,7 @@ class PluginManager:
             else:
                 self.state_manager.set_state(plugin_id, PluginState.DISABLED)
             
-            version_info = manifest.get('version')
-            if version_info:
-                self.logger.info("Loaded plugin: %s (version %s)", plugin_id, version_info)
-            else:
-                self.logger.info("Loaded plugin: %s", plugin_id)
+            self.logger.info("Loaded plugin: %s", plugin_id)
             
             return True
             

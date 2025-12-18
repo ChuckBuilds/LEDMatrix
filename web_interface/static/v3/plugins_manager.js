@@ -3003,8 +3003,8 @@ function restartDisplay() {
     });
 }
 
-function searchPluginStore(fetchLatestVersions = true) {
-    console.log('Searching plugin store...', { fetchLatestVersions });
+function searchPluginStore(fetchCommitInfo = true) {
+    console.log('Searching plugin store...', { fetchCommitInfo });
     const query = document.getElementById('plugin-search').value;
     const category = document.getElementById('plugin-category').value;
 
@@ -3015,7 +3015,7 @@ function searchPluginStore(fetchLatestVersions = true) {
     const isCacheValid = pluginStoreCache && cacheTimestamp && (now - cacheTimestamp < CACHE_DURATION);
     
     // Only use cache for filtered searches that don't explicitly request fresh metadata
-    if (isFilteredSearch && isCacheValid && !fetchLatestVersions) {
+    if (isFilteredSearch && isCacheValid && !fetchCommitInfo) {
         console.log('Using cached plugin store data for filtered search');
         // Ensure plugin store grid exists before rendering
         const storeGrid = document.getElementById('plugin-store-grid');
@@ -3051,11 +3051,11 @@ function searchPluginStore(fetchLatestVersions = true) {
     const params = new URLSearchParams();
     if (query) params.append('query', query);
     if (category) params.append('category', category);
-    // Always fetch fresh metadata unless explicitly disabled (for performance on repeated filtered searches)
-    if (!fetchLatestVersions) {
-        params.append('fetch_latest_versions', 'false');
+    // Always fetch fresh commit metadata unless explicitly disabled (for performance on repeated filtered searches)
+    if (!fetchCommitInfo) {
+        params.append('fetch_commit_info', 'false');
     }
-    // Note: fetch_latest_versions defaults to true on the server side to keep metadata fresh
+    // Note: fetch_commit_info defaults to true on the server side to keep metadata fresh
 
     if (params.toString()) {
         url += '?' + params.toString();

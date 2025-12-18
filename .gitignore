@@ -35,24 +35,7 @@ htmlcov/
 /cache/
 
 # Development plugins directory (contains symlinks to plugin repos)
-# Plugins are installed via plugin store to plugin-repos/ in production
-# Allow git submodules
+# Plugins are installed via plugin store, not bundled with main repo
 plugins/*
 !plugins/.gitkeep
-!plugins/odds-ticker
-!plugins/odds-ticker/
-!plugins/clock-simple
-!plugins/clock-simple/
-!plugins/text-display
-!plugins/text-display/
-!plugins/basketball-scoreboard
-!plugins/basketball-scoreboard/
-!plugins/soccer-scoreboard
-!plugins/soccer-scoreboard/
-!plugins/calendar
-!plugins/calendar/
-!plugins/mqtt-notifications
-!plugins/mqtt-notifications/
-!plugins/olympics-countdown
-!plugins/olympics-countdown/
-!plugins/*/.git
+plugins/*/.git

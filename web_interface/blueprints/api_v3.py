@@ -1101,11 +1101,11 @@ def get_installed_plugins():
             store_info = api_v3.plugin_store_manager.get_plugin_info(plugin_id)
             verified = store_info.get('verified', False) if store_info else False
 
-            # Get local git info for installed plugin (actual installed version)
+            # Get local git info for installed plugin (actual installed commit)
             plugin_path = Path(api_v3.plugin_manager.plugins_dir) / plugin_id
             local_git_info = api_v3.plugin_store_manager._get_local_git_info(plugin_path) if plugin_path.exists() else None
 
-            # Use local git info if available (actual installed version), otherwise fall back to manifest/store info
+            # Use local git info if available (actual installed commit), otherwise fall back to manifest/store info
             if local_git_info:
                 last_commit = local_git_info.get('short_sha') or local_git_info.get('sha', '')[:7] if local_git_info.get('sha') else None
                 branch = local_git_info.get('branch')
@@ -2414,16 +2414,16 @@ def list_plugin_store():
         query = request.args.get('query', '')
         category = request.args.get('category', '')
         tags = request.args.getlist('tags')
-        # Default to fetching latest metadata to ensure accurate commit timestamps
-        fetch_latest_param = request.args.get('fetch_latest_versions', '').lower()
-        fetch_latest = fetch_latest_param != 'false'
+        # Default to fetching commit metadata to ensure accurate commit timestamps
+        fetch_commit_param = request.args.get('fetch_commit_info', request.args.get('fetch_latest_versions', '')).lower()
+        fetch_commit = fetch_commit_param != 'false'
 
         # Search plugins from the registry (including saved repositories)
         plugins = api_v3.plugin_store_manager.search_plugins(
             query=query, 
             category=category,
             tags=tags,
-            fetch_latest_versions=fetch_latest,
+            fetch_commit_info=fetch_commit,
             include_saved_repos=True,
             saved_repositories_manager=api_v3.saved_repositories_manager
         )
@@ -2491,15 +2491,15 @@ def refresh_plugin_store():
             return jsonify({'status': 'error', 'message': 'Plugin store manager not initialized'}), 500
         
         data = request.get_json() or {}
-        fetch_latest_versions = data.get('fetch_latest_versions', False)
+        fetch_commit_info = data.get('fetch_commit_info', data.get('fetch_latest_versions', False))
         
         # Force refresh the registry
         registry = api_v3.plugin_store_manager.fetch_registry(force_refresh=True)
         plugin_count = len(registry.get('plugins', []))
         
         message = 'Plugin store refreshed'
-        if fetch_latest_versions:
-            message += ' (with refreshed metadata from GitHub)'
+        if fetch_commit_info:
+            message += ' (with refreshed commit metadata from GitHub)'
         
         return jsonify({
             'status': 'success', 
