@@ -752,7 +752,7 @@ chmod +x install_service.sh
 
 2. Run the install script with sudo:
 ```bash
-sudo ./install_service.sh
+sudo ./scripts/install/install_service.sh
 ```
 
 The script will:
@@ -824,7 +824,7 @@ chmod +x install_web_service.sh
 
 2. Run the install script with sudo:
 ```bash
-sudo ./install_web_service.sh
+sudo ./scripts/install/install_web_service.sh
 ```
 
 The script will:
@@ -948,8 +948,8 @@ The LEDMatrix system uses persistent caching to improve performance and reduce A
 **First-Time Setup:**
 Run the setup script to create a persistent cache directory:
 ```bash
-chmod +x setup_cache.sh
-./setup_cache.sh
+chmod +x scripts/install/setup_cache.sh
+./scripts/install/setup_cache.sh
 ```
 
 This will:
@@ -1059,9 +1059,9 @@ You can customize the date format for upcoming games across all sports displays.
 The web interface needs to run certain commands with `sudo` (e.g., `reboot`, `systemctl start/stop/enable/disable ledmatrix.service`, `python display_controller.py`). To avoid needing to enter a password for these actions through the web UI, you can configure the `sudoers` file to allow the user running the Flask application to execute these specific commands without a password.
 
 1. Shortcut to automate the below steps:
-```chmod +x configure_web_sudo.sh```
+```chmod +x scripts/install/configure_web_sudo.sh```
 then
-```./configure_web_sudo.sh```
+```./scripts/install/configure_web_sudo.sh```
 
 
 Manual Method:
@@ -1136,7 +1136,7 @@ Ensure your systemd service calls `start_web_conditionally.py` (installed by `in
 ### 4) Permissions (optional but recommended)
 - Add the service user to `systemd-journal` for viewing logs without sudo.
 - Configure passwordless sudo for actions (start/stop service, reboot, shutdown) if desired.
-    - Required for web Ui actions, look in the section above for the commands to run (chmod +x configure_web_sudo.sh & ./configure_web_sudo.sh)
+    - Required for web Ui actions, look in the section above for the commands to run (chmod +x scripts/install/configure_web_sudo.sh & ./scripts/install/configure_web_sudo.sh)
 
 
 

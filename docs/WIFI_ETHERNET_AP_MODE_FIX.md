@@ -182,8 +182,8 @@ If Ethernet is connected but not detected:
 ## Related Files
 
 - `src/wifi_manager.py` - Main WiFi management logic
-- `wifi_monitor_daemon.py` - Background daemon that monitors WiFi/Ethernet
-- `install_wifi_monitor.sh` - Installation script for WiFi monitor service
+- `scripts/utils/wifi_monitor_daemon.py` - Background daemon that monitors WiFi/Ethernet
+- `scripts/install/install_wifi_monitor.sh` - Installation script for WiFi monitor service
 
 ## Notes
 

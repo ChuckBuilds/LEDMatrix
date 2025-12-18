@@ -14,7 +14,7 @@ Type=simple
 User=root
 WorkingDirectory=__PROJECT_ROOT_DIR__
 Environment=USE_THREADING=1
-ExecStart=/usr/bin/python3 __PROJECT_ROOT_DIR__/start_web_conditionally.py
+ExecStart=/usr/bin/python3 __PROJECT_ROOT_DIR__/scripts/utils/start_web_conditionally.py
 Restart=on-failure
 RestartSec=10
 StandardOutput=syslog

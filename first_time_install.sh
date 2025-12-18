@@ -275,9 +275,9 @@ echo "Step 2: Fixing cache permissions..."
 echo "----------------------------------"
 
 # Run the cache setup script (uses proper group permissions)
-if [ -f "$PROJECT_ROOT_DIR/setup_cache.sh" ]; then
+if [ -f "$PROJECT_ROOT_DIR/scripts/install/setup_cache.sh" ]; then
     echo "Running cache setup script (proper group permissions)..."
-    bash "$PROJECT_ROOT_DIR/setup_cache.sh"
+    bash "$PROJECT_ROOT_DIR/scripts/install/setup_cache.sh"
     echo "✓ Cache permissions fixed with proper group setup"
 elif [ -f "$PROJECT_ROOT_DIR/scripts/fix_perms/fix_cache_permissions.sh" ]; then
     echo "Running cache permissions fix (legacy script)..."
@@ -397,24 +397,24 @@ else
     if [ -f "/etc/systemd/system/ledmatrix-web.service" ]; then
         # Check actual installed service file (most accurate)
         WEB_SERVICE_USER=$(grep "^User=" /etc/systemd/system/ledmatrix-web.service | cut -d'=' -f2 || echo "root")
-    elif [ -f "$PROJECT_ROOT_DIR/install_web_service.sh" ]; then
+    elif [ -f "$PROJECT_ROOT_DIR/scripts/install/install_web_service.sh" ]; then
         # Check install_web_service.sh (used by first_time_install.sh)
-        if grep -q "User=root" "$PROJECT_ROOT_DIR/install_web_service.sh"; then
+        if grep -q "User=root" "$PROJECT_ROOT_DIR/scripts/install/install_web_service.sh"; then
             WEB_SERVICE_USER="root"
-        elif grep -q "User=\${ACTUAL_USER}" "$PROJECT_ROOT_DIR/install_web_service.sh"; then
+        elif grep -q "User=\${ACTUAL_USER}" "$PROJECT_ROOT_DIR/scripts/install/install_web_service.sh"; then
             WEB_SERVICE_USER="$ACTUAL_USER"
         fi
-    elif [ -f "$PROJECT_ROOT_DIR/ledmatrix-web.service" ]; then
+    elif [ -f "$PROJECT_ROOT_DIR/systemd/ledmatrix-web.service" ]; then
         # Check template file (may have placeholder)
-        WEB_SERVICE_USER=$(grep "^User=" "$PROJECT_ROOT_DIR/ledmatrix-web.service" | cut -d'=' -f2 || echo "root")
+        WEB_SERVICE_USER=$(grep "^User=" "$PROJECT_ROOT_DIR/systemd/ledmatrix-web.service" | cut -d'=' -f2 || echo "root")
         # If template has placeholder, check install script
         if [ "$WEB_SERVICE_USER" = "__USER__" ] || [ -z "$WEB_SERVICE_USER" ]; then
             # Check install_service.sh to see what user it uses
-            if [ -f "$PROJECT_ROOT_DIR/install_service.sh" ] && grep -q "User=\${ACTUAL_USER}" "$PROJECT_ROOT_DIR/install_service.sh"; then
+            if [ -f "$PROJECT_ROOT_DIR/scripts/install/install_service.sh" ] && grep -q "User=\${ACTUAL_USER}" "$PROJECT_ROOT_DIR/scripts/install/install_service.sh"; then
                 WEB_SERVICE_USER="$ACTUAL_USER"
             fi
         fi
-    elif [ -f "$PROJECT_ROOT_DIR/install_service.sh" ] && grep -q "User=\${ACTUAL_USER}" "$PROJECT_ROOT_DIR/install_service.sh"; then
+    elif [ -f "$PROJECT_ROOT_DIR/scripts/install/install_service.sh" ] && grep -q "User=\${ACTUAL_USER}" "$PROJECT_ROOT_DIR/scripts/install/install_service.sh"; then
         # Web service will be installed by install_service.sh as ACTUAL_USER
         WEB_SERVICE_USER="$ACTUAL_USER"
     fi
@@ -456,24 +456,24 @@ WEB_SERVICE_USER="root"
 if [ -f "/etc/systemd/system/ledmatrix-web.service" ]; then
     # Check actual installed service file (most accurate)
     WEB_SERVICE_USER=$(grep "^User=" /etc/systemd/system/ledmatrix-web.service | cut -d'=' -f2 || echo "root")
-elif [ -f "$PROJECT_ROOT_DIR/install_web_service.sh" ]; then
+elif [ -f "$PROJECT_ROOT_DIR/scripts/install/install_web_service.sh" ]; then
     # Check install_web_service.sh (used by first_time_install.sh)
-    if grep -q "User=root" "$PROJECT_ROOT_DIR/install_web_service.sh"; then
+    if grep -q "User=root" "$PROJECT_ROOT_DIR/scripts/install/install_web_service.sh"; then
         WEB_SERVICE_USER="root"
-    elif grep -q "User=\${ACTUAL_USER}" "$PROJECT_ROOT_DIR/install_web_service.sh"; then
+    elif grep -q "User=\${ACTUAL_USER}" "$PROJECT_ROOT_DIR/scripts/install/install_web_service.sh"; then
         WEB_SERVICE_USER="$ACTUAL_USER"
     fi
-elif [ -f "$PROJECT_ROOT_DIR/ledmatrix-web.service" ]; then
+elif [ -f "$PROJECT_ROOT_DIR/systemd/ledmatrix-web.service" ]; then
     # Check template file (may have placeholder)
-    WEB_SERVICE_USER=$(grep "^User=" "$PROJECT_ROOT_DIR/ledmatrix-web.service" | cut -d'=' -f2 || echo "root")
+    WEB_SERVICE_USER=$(grep "^User=" "$PROJECT_ROOT_DIR/systemd/ledmatrix-web.service" | cut -d'=' -f2 || echo "root")
     # If template has placeholder, check install script
     if [ "$WEB_SERVICE_USER" = "__USER__" ] || [ -z "$WEB_SERVICE_USER" ]; then
         # Check install_service.sh to see what user it uses
-        if [ -f "$PROJECT_ROOT_DIR/install_service.sh" ] && grep -q "User=\${ACTUAL_USER}" "$PROJECT_ROOT_DIR/install_service.sh"; then
+        if [ -f "$PROJECT_ROOT_DIR/scripts/install/install_service.sh" ] && grep -q "User=\${ACTUAL_USER}" "$PROJECT_ROOT_DIR/scripts/install/install_service.sh"; then
             WEB_SERVICE_USER="$ACTUAL_USER"
         fi
     fi
-elif [ -f "$PROJECT_ROOT_DIR/install_service.sh" ] && grep -q "User=\${ACTUAL_USER}" "$PROJECT_ROOT_DIR/install_service.sh"; then
+elif [ -f "$PROJECT_ROOT_DIR/scripts/install/install_service.sh" ] && grep -q "User=\${ACTUAL_USER}" "$PROJECT_ROOT_DIR/scripts/install/install_service.sh"; then
     # Web service will be installed by install_service.sh as ACTUAL_USER
     WEB_SERVICE_USER="$ACTUAL_USER"
 fi
@@ -506,12 +506,12 @@ echo "Step 4: Installing main LED Matrix service..."
 echo "---------------------------------------------"
 
 # Run the main service installation (idempotent)
-if [ -f "$PROJECT_ROOT_DIR/install_service.sh" ]; then
+if [ -f "$PROJECT_ROOT_DIR/scripts/install/install_service.sh" ]; then
     echo "Running main service installation..."
-    bash "$PROJECT_ROOT_DIR/install_service.sh"
+    bash "$PROJECT_ROOT_DIR/scripts/install/install_service.sh"
     echo "✓ Main LED Matrix service installed"
 else
-    echo "✗ Main service installation script not found at $PROJECT_ROOT_DIR/install_service.sh"
+    echo "✗ Main service installation script not found at $PROJECT_ROOT_DIR/scripts/install/install_service.sh"
     echo "Please ensure you are running this script from the project root: $PROJECT_ROOT_DIR"
     exit 1
 fi
@@ -605,8 +605,8 @@ if [ ! -f "$PROJECT_ROOT_DIR/config/config_secrets.json" ]; then
         SERVICE_USER="root"
         if [ -f "/etc/systemd/system/ledmatrix.service" ]; then
             SERVICE_USER=$(grep "^User=" /etc/systemd/system/ledmatrix.service | cut -d'=' -f2 || echo "root")
-        elif [ -f "$PROJECT_ROOT_DIR/ledmatrix.service" ]; then
-            SERVICE_USER=$(grep "^User=" "$PROJECT_ROOT_DIR/ledmatrix.service" | cut -d'=' -f2 || echo "root")
+        elif [ -f "$PROJECT_ROOT_DIR/systemd/ledmatrix.service" ]; then
+            SERVICE_USER=$(grep "^User=" "$PROJECT_ROOT_DIR/systemd/ledmatrix.service" | cut -d'=' -f2 || echo "root")
         fi
         
         if [ "$SERVICE_USER" = "root" ]; then
@@ -629,8 +629,8 @@ EOF
         SERVICE_USER="root"
         if [ -f "/etc/systemd/system/ledmatrix.service" ]; then
             SERVICE_USER=$(grep "^User=" /etc/systemd/system/ledmatrix.service | cut -d'=' -f2 || echo "root")
-        elif [ -f "$PROJECT_ROOT_DIR/ledmatrix.service" ]; then
-            SERVICE_USER=$(grep "^User=" "$PROJECT_ROOT_DIR/ledmatrix.service" | cut -d'=' -f2 || echo "root")
+        elif [ -f "$PROJECT_ROOT_DIR/systemd/ledmatrix.service" ]; then
+            SERVICE_USER=$(grep "^User=" "$PROJECT_ROOT_DIR/systemd/ledmatrix.service" | cut -d'=' -f2 || echo "root")
         fi
         
         if [ "$SERVICE_USER" = "root" ]; then
@@ -916,9 +916,9 @@ CURRENT_STEP="Install web interface service"
 echo "Step 8: Installing web interface service..."
 echo "-------------------------------------------"
 
-if [ -f "$PROJECT_ROOT_DIR/install_web_service.sh" ]; then
+if [ -f "$PROJECT_ROOT_DIR/scripts/install/install_web_service.sh" ]; then
     if [ ! -f "/etc/systemd/system/ledmatrix-web.service" ]; then
-        bash "$PROJECT_ROOT_DIR/install_web_service.sh"
+        bash "$PROJECT_ROOT_DIR/scripts/install/install_web_service.sh"
         # Ensure systemd sees any new/changed unit files
         systemctl daemon-reload || true
         echo "✓ Web interface service installed"
@@ -948,9 +948,9 @@ echo "Step 8.5: Installing WiFi monitor service..."
 echo "---------------------------------------------"
 
 # Install WiFi monitor service if script exists
-if [ -f "$PROJECT_ROOT_DIR/install_wifi_monitor.sh" ]; then
+if [ -f "$PROJECT_ROOT_DIR/scripts/install/install_wifi_monitor.sh" ]; then
     echo "Installing WiFi monitor service..."
-    bash "$PROJECT_ROOT_DIR/install_wifi_monitor.sh"
+    bash "$PROJECT_ROOT_DIR/scripts/install/install_wifi_monitor.sh"
     
     # Harden service file permissions (if service was created)
     if [ -f "/etc/systemd/system/ledmatrix-wifi-monitor.service" ]; then
@@ -974,7 +974,7 @@ if [ -f "$PROJECT_ROOT_DIR/install_wifi_monitor.sh" ]; then
     fi
 else
     echo "⚠ install_wifi_monitor.sh not found; skipping WiFi monitor installation"
-    echo "  You can install it later by running: sudo ./install_wifi_monitor.sh"
+    echo "  You can install it later by running: sudo ./scripts/install/install_wifi_monitor.sh"
 fi
 echo ""
 
@@ -1074,8 +1074,8 @@ if [ -f "$PROJECT_ROOT_DIR/config/config_secrets.json" ]; then
     SERVICE_USER="root"
     if [ -f "/etc/systemd/system/ledmatrix.service" ]; then
         SERVICE_USER=$(grep "^User=" /etc/systemd/system/ledmatrix.service | cut -d'=' -f2 || echo "root")
-    elif [ -f "$PROJECT_ROOT_DIR/ledmatrix.service" ]; then
-        SERVICE_USER=$(grep "^User=" "$PROJECT_ROOT_DIR/ledmatrix.service" | cut -d'=' -f2 || echo "root")
+    elif [ -f "$PROJECT_ROOT_DIR/systemd/ledmatrix.service" ]; then
+        SERVICE_USER=$(grep "^User=" "$PROJECT_ROOT_DIR/systemd/ledmatrix.service" | cut -d'=' -f2 || echo "root")
     fi
     
     if [ "$SERVICE_USER" = "root" ]; then
@@ -1104,21 +1104,21 @@ WEB_SERVICE_USER="root"
 if [ -f "/etc/systemd/system/ledmatrix-web.service" ]; then
     # Check actual installed service file (most accurate)
     WEB_SERVICE_USER=$(grep "^User=" /etc/systemd/system/ledmatrix-web.service | cut -d'=' -f2 || echo "root")
-elif [ -f "$PROJECT_ROOT_DIR/install_web_service.sh" ]; then
+elif [ -f "$PROJECT_ROOT_DIR/scripts/install/install_web_service.sh" ]; then
     # Check install_web_service.sh (used by first_time_install.sh)
-    if grep -q "User=root" "$PROJECT_ROOT_DIR/install_web_service.sh"; then
+    if grep -q "User=root" "$PROJECT_ROOT_DIR/scripts/install/install_web_service.sh"; then
         WEB_SERVICE_USER="root"
-    elif grep -q "User=\${ACTUAL_USER}" "$PROJECT_ROOT_DIR/install_web_service.sh"; then
+    elif grep -q "User=\${ACTUAL_USER}" "$PROJECT_ROOT_DIR/scripts/install/install_web_service.sh"; then
         WEB_SERVICE_USER="$ACTUAL_USER"
     fi
-elif [ -f "$PROJECT_ROOT_DIR/ledmatrix-web.service" ]; then
-    WEB_SERVICE_USER=$(grep "^User=" "$PROJECT_ROOT_DIR/ledmatrix-web.service" | cut -d'=' -f2 || echo "root")
+elif [ -f "$PROJECT_ROOT_DIR/systemd/ledmatrix-web.service" ]; then
+    WEB_SERVICE_USER=$(grep "^User=" "$PROJECT_ROOT_DIR/systemd/ledmatrix-web.service" | cut -d'=' -f2 || echo "root")
     if [ "$WEB_SERVICE_USER" = "__USER__" ] || [ -z "$WEB_SERVICE_USER" ]; then
-        if [ -f "$PROJECT_ROOT_DIR/install_service.sh" ] && grep -q "User=\${ACTUAL_USER}" "$PROJECT_ROOT_DIR/install_service.sh"; then
+        if [ -f "$PROJECT_ROOT_DIR/scripts/install/install_service.sh" ] && grep -q "User=\${ACTUAL_USER}" "$PROJECT_ROOT_DIR/scripts/install/install_service.sh"; then
             WEB_SERVICE_USER="$ACTUAL_USER"
         fi
     fi
-elif [ -f "$PROJECT_ROOT_DIR/install_service.sh" ] && grep -q "User=\${ACTUAL_USER}" "$PROJECT_ROOT_DIR/install_service.sh"; then
+elif [ -f "$PROJECT_ROOT_DIR/scripts/install/install_service.sh" ] && grep -q "User=\${ACTUAL_USER}" "$PROJECT_ROOT_DIR/scripts/install/install_service.sh"; then
     WEB_SERVICE_USER="$ACTUAL_USER"
 fi
 
@@ -1167,7 +1167,7 @@ find "$PROJECT_ROOT_DIR" -path "*/.git*" -prune -o -type f -name "*.sh" -exec ch
 # Explicitly ensure common helper scripts are executable (in case paths change)
 chmod 755 "$PROJECT_ROOT_DIR/start_display.sh" "$PROJECT_ROOT_DIR/stop_display.sh" 2>/dev/null || true
 chmod 755 "$PROJECT_ROOT_DIR/scripts/fix_perms/fix_cache_permissions.sh" "$PROJECT_ROOT_DIR/scripts/fix_perms/fix_web_permissions.sh" "$PROJECT_ROOT_DIR/scripts/fix_perms/fix_assets_permissions.sh" "$PROJECT_ROOT_DIR/scripts/fix_perms/fix_plugin_permissions.sh" 2>/dev/null || true
-chmod 755 "$PROJECT_ROOT_DIR/install_service.sh" "$PROJECT_ROOT_DIR/install_web_service.sh" 2>/dev/null || true
+chmod 755 "$PROJECT_ROOT_DIR/scripts/install/install_service.sh" "$PROJECT_ROOT_DIR/scripts/install/install_web_service.sh" 2>/dev/null || true
 
 # Re-apply special permissions for config directory (lost during normalization)
 chmod 2775 "$PROJECT_ROOT_DIR/config" || true

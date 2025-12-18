@@ -133,7 +133,7 @@ This document summarizes the startup performance optimizations implemented to re
 ### On Development Machine
 ```bash
 # Test with emulator
-./run_emulator.sh
+./scripts/dev/run_emulator.sh
 
 # Check logs for timing information
 # Look for:

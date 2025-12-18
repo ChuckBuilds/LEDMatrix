@@ -28,7 +28,7 @@ Run the installation script to set up the WiFi monitor daemon:
 
 ```bash
 cd /home/ledpi/LEDMatrix
-sudo ./install_wifi_monitor.sh
+sudo ./scripts/install/install_wifi_monitor.sh
 ```
 
 This script will:

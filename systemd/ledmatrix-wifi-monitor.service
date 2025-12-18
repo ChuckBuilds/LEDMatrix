@@ -6,8 +6,8 @@ Wants=network.target
 [Service]
 Type=simple
 User=root
-WorkingDirectory=/home/ledpi/LEDMatrix
-ExecStart=/usr/bin/python3 /home/ledpi/LEDMatrix/wifi_monitor_daemon.py --interval 30
+WorkingDirectory=__PROJECT_ROOT_DIR__
+ExecStart=/usr/bin/python3 /home/ledpi/LEDMatrix/scripts/utils/wifi_monitor_daemon.py --interval 30
 Restart=on-failure
 RestartSec=10
 StandardOutput=syslog

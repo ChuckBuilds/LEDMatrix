@@ -19,7 +19,7 @@ The solution uses **symbolic links** to connect plugin repositories to the `plug
 The easiest way to link a plugin that's already on GitHub:
 
 ```bash
-./dev_plugin_setup.sh link-github music
+./scripts/dev/dev_plugin_setup.sh link-github music
 ```
 
 This will:
@@ -32,7 +32,7 @@ This will:
 If you already have a plugin repository cloned locally:
 
 ```bash
-./dev_plugin_setup.sh link music ../ledmatrix-music
+./scripts/dev/dev_plugin_setup.sh link music ../ledmatrix-music
 ```
 
 This creates a symlink from `plugins/music` to your local repository path.
@@ -42,7 +42,7 @@ This creates a symlink from `plugins/music` to your local repository path.
 See which plugins are linked and their git status:
 
 ```bash
-./dev_plugin_setup.sh status
+./scripts/dev/dev_plugin_setup.sh status
 ```
 
 ### 4. Work on Your Plugin
@@ -61,10 +61,10 @@ Pull latest changes from remote:
 
 ```bash
 # Update all linked plugins
-./dev_plugin_setup.sh update
+./scripts/dev/dev_plugin_setup.sh update
 
 # Or update a specific plugin
-./dev_plugin_setup.sh update music
+./scripts/dev/dev_plugin_setup.sh update music
 ```
 
 ### 6. Unlink When Done
@@ -72,7 +72,7 @@ Pull latest changes from remote:
 Remove the symlink (repository is preserved):
 
 ```bash
-./dev_plugin_setup.sh unlink music
+./scripts/dev/dev_plugin_setup.sh unlink music
 ```
 
 ## Detailed Commands
@@ -87,7 +87,7 @@ Links a local plugin repository to the plugins directory.
 
 **Example:**
 ```bash
-./dev_plugin_setup.sh link football-scoreboard ../ledmatrix-football-scoreboard
+./scripts/dev/dev_plugin_setup.sh link football-scoreboard ../ledmatrix-football-scoreboard
 ```
 
 **Notes:**
@@ -106,13 +106,13 @@ Clones a plugin from GitHub and links it.
 **Examples:**
 ```bash
 # Auto-construct URL from plugin name
-./dev_plugin_setup.sh link-github music
+./scripts/dev/dev_plugin_setup.sh link-github music
 
 # Use explicit URL
-./dev_plugin_setup.sh link-github stocks https://github.com/ChuckBuilds/ledmatrix-stocks.git
+./scripts/dev/dev_plugin_setup.sh link-github stocks https://github.com/ChuckBuilds/ledmatrix-stocks.git
 
 # Link from a different GitHub user
-./dev_plugin_setup.sh link-github custom-plugin https://github.com/OtherUser/custom-plugin.git
+./scripts/dev/dev_plugin_setup.sh link-github custom-plugin https://github.com/OtherUser/custom-plugin.git
 ```
 
 **Notes:**
@@ -129,7 +129,7 @@ Removes the symlink for a plugin.
 
 **Example:**
 ```bash
-./dev_plugin_setup.sh unlink music
+./scripts/dev/dev_plugin_setup.sh unlink music
 ```
 
 **Notes:**
@@ -142,7 +142,7 @@ Lists all plugins in the `plugins/` directory and shows their status.
 
 **Example:**
 ```bash
-./dev_plugin_setup.sh list
+./scripts/dev/dev_plugin_setup.sh list
 ```
 
 **Output:**
@@ -157,7 +157,7 @@ Shows detailed status of all linked plugins.
 
 **Example:**
 ```bash
-./dev_plugin_setup.sh status
+./scripts/dev/dev_plugin_setup.sh status
 ```
 
 **Shows:**
@@ -178,10 +178,10 @@ Updates plugin(s) by running `git pull` in their repositories.
 **Examples:**
 ```bash
 # Update all linked plugins
-./dev_plugin_setup.sh update
+./scripts/dev/dev_plugin_setup.sh update
 
 # Update specific plugin
-./dev_plugin_setup.sh update music
+./scripts/dev/dev_plugin_setup.sh update music
 ```
 
 ## Configuration
@@ -219,7 +219,7 @@ By default, GitHub repositories are cloned to `~/.ledmatrix-dev-plugins/`. You c
 
 1. **Link your plugin for development:**
    ```bash
-   ./dev_plugin_setup.sh link-github music
+   ./scripts/dev/dev_plugin_setup.sh link-github music
    ```
 
 2. **Test in LEDMatrix:**
@@ -245,12 +245,12 @@ By default, GitHub repositories are cloned to `~/.ledmatrix-dev-plugins/`. You c
 
 5. **Update from remote (if needed):**
    ```bash
-   ./dev_plugin_setup.sh update music
+   ./scripts/dev/dev_plugin_setup.sh update music
    ```
 
 6. **When done developing:**
    ```bash
-   ./dev_plugin_setup.sh unlink music
+   ./scripts/dev/dev_plugin_setup.sh unlink music
    ```
 
 ### Working with Multiple Plugins
@@ -258,15 +258,15 @@ By default, GitHub repositories are cloned to `~/.ledmatrix-dev-plugins/`. You c
 You can have multiple plugins linked simultaneously:
 
 ```bash
-./dev_plugin_setup.sh link-github music
-./dev_plugin_setup.sh link-github stocks
-./dev_plugin_setup.sh link-github football-scoreboard
+./scripts/dev/dev_plugin_setup.sh link-github music
+./scripts/dev/dev_plugin_setup.sh link-github stocks
+./scripts/dev/dev_plugin_setup.sh link-github football-scoreboard
 
 # Check status of all
-./dev_plugin_setup.sh status
+./scripts/dev/dev_plugin_setup.sh status
 
 # Update all at once
-./dev_plugin_setup.sh update
+./scripts/dev/dev_plugin_setup.sh update
 ```
 
 ### Switching Between Development and Production
@@ -323,7 +323,7 @@ git commit -m "feat: new feature"
 Regularly update your linked plugins to get the latest changes:
 
 ```bash
-./dev_plugin_setup.sh update
+./scripts/dev/dev_plugin_setup.sh update
 ```
 
 ### 5. Check Status Regularly
@@ -331,7 +331,7 @@ Regularly update your linked plugins to get the latest changes:
 Before starting work, check the status of your linked plugins:
 
 ```bash
-./dev_plugin_setup.sh status
+./scripts/dev/dev_plugin_setup.sh status
 ```
 
 This helps you:
@@ -365,13 +365,13 @@ If a symlink is broken (target repository was moved or deleted):
 
 1. **Check status:**
    ```bash
-   ./dev_plugin_setup.sh status
+   ./scripts/dev/dev_plugin_setup.sh status
    ```
 
 2. **Unlink and re-link:**
    ```bash
-   ./dev_plugin_setup.sh unlink plugin-name
-   ./dev_plugin_setup.sh link-github plugin-name
+   ./scripts/dev/dev_plugin_setup.sh unlink plugin-name
+   ./scripts/dev/dev_plugin_setup.sh link-github plugin-name
    ```
 
 ### Git Conflicts
@@ -389,7 +389,7 @@ If you have conflicts when updating:
 
 2. **Or use the update command:**
    ```bash
-   ./dev_plugin_setup.sh update music
+   ./scripts/dev/dev_plugin_setup.sh update music
    ```
 
 ### Plugin Directory Already Exists
@@ -398,7 +398,7 @@ If you try to link a plugin but the directory already exists:
 
 1. **Check if it's already linked:**
    ```bash
-   ./dev_plugin_setup.sh list
+   ./scripts/dev/dev_plugin_setup.sh list
    ```
 
 2. **If it's a symlink to the same location, you're done**
@@ -412,7 +412,7 @@ If you try to link a plugin but the directory already exists:
 ### Linking Plugins from Different GitHub Users
 
 ```bash
-./dev_plugin_setup.sh link-github custom-plugin https://github.com/OtherUser/custom-plugin.git
+./scripts/dev/dev_plugin_setup.sh link-github custom-plugin https://github.com/OtherUser/custom-plugin.git
 ```
 
 ### Using a Custom Development Directory
@@ -431,10 +431,10 @@ You can mix local and GitHub plugins:
 
 ```bash
 # Link from GitHub
-./dev_plugin_setup.sh link-github music
+./scripts/dev/dev_plugin_setup.sh link-github music
 
 # Link local repository
-./dev_plugin_setup.sh link custom-plugin ../my-custom-plugin
+./scripts/dev/dev_plugin_setup.sh link custom-plugin ../my-custom-plugin
 ```
 
 ## Integration with Plugin Store
@@ -449,7 +449,7 @@ If you install a plugin via the store, you can still link it for development:
 ```bash
 # Store installs to plugins/music (regular directory)
 # Link for development (will prompt to replace)
-./dev_plugin_setup.sh link-github music
+./scripts/dev/dev_plugin_setup.sh link-github music
 ```
 
 When you unlink, the directory is removed. If you want to switch back to the store version, re-install it via the plugin store.

@@ -17,8 +17,8 @@ fi
 # Get the home directory of the actual user
 USER_HOME=$(eval echo ~$ACTUAL_USER)
 
-# Determine the Project Root Directory (where this script is located)
-PROJECT_ROOT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+# Determine the Project Root Directory (parent of scripts/install/)
+PROJECT_ROOT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 
 echo "Installing for user: $ACTUAL_USER"
 echo "Project root directory: $PROJECT_ROOT_DIR"
@@ -41,7 +41,7 @@ Type=simple
 User=${ACTUAL_USER}
 WorkingDirectory=${PROJECT_ROOT_DIR}
 Environment=USE_THREADING=1
-ExecStart=/usr/bin/python3 ${PROJECT_ROOT_DIR}/start_web_conditionally.py
+ExecStart=/usr/bin/python3 ${PROJECT_ROOT_DIR}/scripts/utils/start_web_conditionally.py
 Restart=on-failure
 RestartSec=10
 StandardOutput=syslog

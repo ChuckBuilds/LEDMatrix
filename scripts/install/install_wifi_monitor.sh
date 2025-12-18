@@ -15,8 +15,8 @@ fi
 # Get the home directory of the actual user
 USER_HOME=$(eval echo ~$ACTUAL_USER)
 
-# Determine the Project Root Directory (where this script is located)
-PROJECT_ROOT_DIR=$(cd "$(dirname "$0")" && pwd)
+# Determine the Project Root Directory (parent of scripts/install/)
+PROJECT_ROOT_DIR=$(cd "$(dirname "$0")/../.." && pwd)
 
 echo "Installing LED Matrix WiFi Monitor Service for user: $ACTUAL_USER"
 echo "Using home directory: $USER_HOME"
@@ -69,7 +69,7 @@ Wants=network.target
 Type=simple
 User=root
 WorkingDirectory=$PROJECT_ROOT_DIR
-ExecStart=/usr/bin/python3 $PROJECT_ROOT_DIR/wifi_monitor_daemon.py --interval 30
+ExecStart=/usr/bin/python3 $PROJECT_ROOT_DIR/scripts/utils/wifi_monitor_daemon.py --interval 30
 Restart=on-failure
 RestartSec=10
 StandardOutput=syslog
