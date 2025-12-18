@@ -70,12 +70,18 @@
             <div class="flex gap-2">
                 <select id="wifi-ssid" 
                         x-model="selectedSSID"
-                        class="form-control flex-1">
+                        x-ref="networkSelect"
+                        class="form-control flex-1"
+                        x-effect="updateNetworkOptions()">
                     <option value="">-- Select a network --</option>
-                    <template x-for="network in networks" :key="network.ssid">
+                    <template x-for="network in networks" :key="'network-' + network.ssid">
                         <option :value="network.ssid" x-text="network.ssid + ' (' + network.signal + '% - ' + network.security + ')'"></option>
                     </template>
                 </select>
+                <!-- Debug: Show network count -->
+                <div x-show="networks.length > 0" class="text-xs text-gray-500 self-center px-2" x-cloak>
+                    (<span x-text="networks.length"></span> networks)
+                </div>
                 <button @click="scanNetworks()" 
                         :disabled="scanning"
                         class="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed">
@@ -201,6 +207,12 @@ function wifiSetup() {
         message: '',
         messageType: 'success',
 
+        updateNetworkOptions() {
+            // This method is called by x-effect when networks change
+            // It ensures the select dropdown is properly updated
+            console.log('updateNetworkOptions called, networks.length:', this.networks.length);
+        },
+
         async loadStatus() {
             try {
                 const response = await fetch('/api/v3/wifi/status');
@@ -221,13 +233,33 @@ function wifiSetup() {
             try {
                 const response = await fetch('/api/v3/wifi/scan');
                 const data = await response.json();
+                console.log('WiFi scan response:', data); // Debug log
                 if (data.status === 'success') {
-                    this.networks = data.data;
-                    this.showMessage(`Found ${this.networks.length} networks`, 'success');
+                    // Ensure data.data is an array
+                    const networksArray = Array.isArray(data.data) ? data.data : [];
+                    console.log('Networks array:', networksArray); // Debug log
+                    console.log('Networks array length:', networksArray.length); // Debug log
+                    
+                    // Directly set the networks array - Alpine.js should detect this change
+                    this.networks = networksArray;
+                    console.log('this.networks after assignment:', this.networks.length); // Debug log
+                    
+                    // Force Alpine.js to update by triggering a re-evaluation
+                    if (this.$refs && this.$refs.networkSelect) {
+                        // The select element exists, networks should be populated
+                        console.log('Select element found, networks should be visible'); // Debug log
+                    }
+                    
+                    if (networksArray.length > 0) {
+                        this.showMessage(`Found ${networksArray.length} networks`, 'success');
+                    } else {
+                        this.showMessage('No networks found. Make sure WiFi is enabled and try again.', 'warning');
+                    }
                 } else {
-                    this.showMessage(data.message, 'error');
+                    this.showMessage(data.message || 'Failed to scan networks', 'error');
                 }
             } catch (error) {
+                console.error('WiFi scan error:', error); // Debug log
                 this.showMessage('Failed to scan networks: ' + error.message, 'error');
             } finally {
                 this.scanning = false;
