@@ -1553,6 +1553,26 @@ function handlePluginConfigSubmit(e) {
     
     // Process form data with type conversion (using dot notation for nested fields)
     for (const [key, value] of formData.entries()) {
+        // Check if this is a patternProperties hidden input (contains JSON data)
+        if (key.endsWith('_data') || key.includes('_data')) {
+            try {
+                const baseKey = key.replace(/_data$/, '');
+                const jsonValue = JSON.parse(value);
+                if (typeof jsonValue === 'object' && !Array.isArray(jsonValue)) {
+                    flatConfig[baseKey] = jsonValue;
+                    console.log(`PatternProperties field ${baseKey}: parsed JSON object`, jsonValue);
+                    continue; // Skip normal processing for patternProperties
+                }
+            } catch (e) {
+                // Not valid JSON, continue with normal processing
+            }
+        }
+        
+        // Skip key_value pair inputs (they're handled by the hidden _data input)
+        if (key.includes('[key_') || key.includes('[value_')) {
+            continue;
+        }
+        
         // Try to get schema property - handle both dot notation and underscore notation
         let propSchema = getSchemaPropertyType(schema, key);
         let actualKey = key;
@@ -1771,7 +1791,65 @@ function generateFieldHtml(key, prop, value, prefix = '') {
     const description = prop.description || '';
     let html = '';
 
-    // Handle nested objects
+    // Handle patternProperties objects (dynamic key-value pairs like custom_feeds, feed_logo_map)
+    if (prop.type === 'object' && prop.patternProperties && !prop.properties) {
+        const fieldId = fullKey.replace(/\./g, '_');
+        const currentValue = value || {};
+        const patternProp = Object.values(prop.patternProperties)[0]; // Get the pattern property schema
+        const valueType = patternProp.type || 'string';
+        const maxProperties = prop.maxProperties || 50;
+        const entries = Object.entries(currentValue);
+        
+        html += `
+            <div class="key-value-pairs-container">
+                <div class="mb-2">
+                    <p class="text-sm text-gray-600 mb-2">${description || 'Add key-value pairs'}</p>
+                    <div id="${fieldId}_pairs" class="space-y-2">
+        `;
+        
+        // Render existing pairs
+        entries.forEach(([pairKey, pairValue], index) => {
+            html += `
+                <div class="flex items-center gap-2 key-value-pair" data-index="${index}">
+                    <input type="text" 
+                           name="${fullKey}[key_${index}]" 
+                           value="${pairKey}" 
+                           placeholder="Key"
+                           class="flex-1 px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
+                           data-key-index="${index}">
+                    <input type="${valueType === 'string' ? 'text' : valueType === 'number' || valueType === 'integer' ? 'number' : 'text'}" 
+                           name="${fullKey}[value_${index}]" 
+                           value="${pairValue}" 
+                           placeholder="Value"
+                           class="flex-1 px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
+                           data-value-index="${index}">
+                    <button type="button" 
+                            onclick="removeKeyValuePair('${fieldId}', ${index})"
+                            class="px-3 py-2 text-red-600 hover:text-red-800 hover:bg-red-50 rounded-md transition-colors"
+                            title="Remove">
+                        <i class="fas fa-trash"></i>
+                    </button>
+                </div>
+            `;
+        });
+        
+        html += `
+                    </div>
+                    <button type="button" 
+                            onclick="addKeyValuePair('${fieldId}', '${fullKey}', ${maxProperties})"
+                            class="mt-2 px-4 py-2 text-sm bg-blue-600 hover:bg-blue-700 text-white rounded-md transition-colors"
+                            ${entries.length >= maxProperties ? 'disabled style="opacity: 0.5; cursor: not-allowed;"' : ''}>
+                        <i class="fas fa-plus mr-1"></i> Add Entry
+                    </button>
+                    <input type="hidden" id="${fieldId}_data" name="${fullKey}_data" value='${JSON.stringify(currentValue).replace(/'/g, "&#39;")}'>
+                </div>
+            </div>
+        `;
+        
+        return html;
+    }
+    
+    // Handle nested objects with known properties
     if (prop.type === 'object' && prop.properties) {
         const sectionId = `section-${fullKey.replace(/\./g, '-')}`;
         const nestedConfig = value || {};
@@ -2167,6 +2245,127 @@ function generateFormFromSchema(schema, config, webUiActions = []) {
 
     return Promise.resolve(formHtml);
 }
+
+// Functions to handle patternProperties key-value pairs
+window.addKeyValuePair = function(fieldId, fullKey, maxProperties) {
+    const pairsContainer = document.getElementById(fieldId + '_pairs');
+    if (!pairsContainer) return;
+    
+    const currentPairs = pairsContainer.querySelectorAll('.key-value-pair');
+    if (currentPairs.length >= maxProperties) {
+        alert(`Maximum ${maxProperties} entries allowed`);
+        return;
+    }
+    
+    const newIndex = currentPairs.length;
+    const valueType = 'string'; // Default to string, could be determined from schema
+    
+    const pairHtml = `
+        <div class="flex items-center gap-2 key-value-pair" data-index="${newIndex}">
+            <input type="text" 
+                   name="${fullKey}[key_${newIndex}]" 
+                   value="" 
+                   placeholder="Key"
+                   class="flex-1 px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
+                   data-key-index="${newIndex}"
+                   onchange="updateKeyValuePairData('${fieldId}', '${fullKey}')">
+            <input type="text" 
+                   name="${fullKey}[value_${newIndex}]" 
+                   value="" 
+                   placeholder="Value"
+                   class="flex-1 px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
+                   data-value-index="${newIndex}"
+                   onchange="updateKeyValuePairData('${fieldId}', '${fullKey}')">
+            <button type="button" 
+                    onclick="removeKeyValuePair('${fieldId}', ${newIndex})"
+                    class="px-3 py-2 text-red-600 hover:text-red-800 hover:bg-red-50 rounded-md transition-colors"
+                    title="Remove">
+                <i class="fas fa-trash"></i>
+            </button>
+        </div>
+    `;
+    
+    pairsContainer.insertAdjacentHTML('beforeend', pairHtml);
+    updateKeyValuePairData(fieldId, fullKey);
+    
+    // Update add button state
+    const addButton = pairsContainer.nextElementSibling;
+    if (addButton && currentPairs.length + 1 >= maxProperties) {
+        addButton.disabled = true;
+        addButton.style.opacity = '0.5';
+        addButton.style.cursor = 'not-allowed';
+    }
+};
+
+window.removeKeyValuePair = function(fieldId, index) {
+    const pairsContainer = document.getElementById(fieldId + '_pairs');
+    if (!pairsContainer) return;
+    
+    const pair = pairsContainer.querySelector(`.key-value-pair[data-index="${index}"]`);
+    if (pair) {
+        pair.remove();
+        // Re-index remaining pairs
+        const remainingPairs = pairsContainer.querySelectorAll('.key-value-pair');
+        remainingPairs.forEach((p, newIndex) => {
+            p.setAttribute('data-index', newIndex);
+            const keyInput = p.querySelector('[data-key-index]');
+            const valueInput = p.querySelector('[data-value-index]');
+            if (keyInput) {
+                keyInput.setAttribute('name', keyInput.getAttribute('name').replace(/\[key_\d+\]/, `[key_${newIndex}]`));
+                keyInput.setAttribute('data-key-index', newIndex);
+                keyInput.setAttribute('onchange', `updateKeyValuePairData('${fieldId}', '${keyInput.getAttribute('name').split('[')[0]}')`);
+            }
+            if (valueInput) {
+                valueInput.setAttribute('name', valueInput.getAttribute('name').replace(/\[value_\d+\]/, `[value_${newIndex}]`));
+                valueInput.setAttribute('data-value-index', newIndex);
+                valueInput.setAttribute('onchange', `updateKeyValuePairData('${fieldId}', '${valueInput.getAttribute('name').split('[')[0]}')`);
+            }
+            const removeButton = p.querySelector('button[onclick*="removeKeyValuePair"]');
+            if (removeButton) {
+                removeButton.setAttribute('onclick', `removeKeyValuePair('${fieldId}', ${newIndex})`);
+            }
+        });
+        const hiddenInput = pairsContainer.closest('.key-value-pairs-container').querySelector('input[type="hidden"]');
+        if (hiddenInput) {
+            const hiddenName = hiddenInput.getAttribute('name').replace(/_data$/, '');
+            updateKeyValuePairData(fieldId, hiddenName);
+        }
+        
+        // Update add button state
+        const addButton = pairsContainer.nextElementSibling;
+        if (addButton) {
+            const maxProperties = parseInt(addButton.getAttribute('onclick').match(/\d+/)[0]);
+            if (remainingPairs.length < maxProperties) {
+                addButton.disabled = false;
+                addButton.style.opacity = '1';
+                addButton.style.cursor = 'pointer';
+            }
+        }
+    }
+};
+
+window.updateKeyValuePairData = function(fieldId, fullKey) {
+    const pairsContainer = document.getElementById(fieldId + '_pairs');
+    const hiddenInput = document.getElementById(fieldId + '_data');
+    if (!pairsContainer || !hiddenInput) return;
+    
+    const pairs = {};
+    const keyInputs = pairsContainer.querySelectorAll('[data-key-index]');
+    const valueInputs = pairsContainer.querySelectorAll('[data-value-index]');
+    
+    keyInputs.forEach((keyInput, idx) => {
+        const key = keyInput.value.trim();
+        const valueInput = Array.from(valueInputs).find(v => v.getAttribute('data-value-index') === keyInput.getAttribute('data-key-index'));
+        if (key && valueInput) {
+            const value = valueInput.value.trim();
+            if (value) {
+                pairs[key] = value;
+            }
+        }
+    });
+    
+    hiddenInput.value = JSON.stringify(pairs);
+};
 
 // Function to toggle nested sections
 window.toggleNestedSection = function(sectionId, event) {

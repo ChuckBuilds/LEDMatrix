@@ -55,3 +55,6 @@
 [submodule "plugins/ledmatrix-weather"]
 	path = plugins/ledmatrix-weather
 	url = https://github.com/ChuckBuilds/ledmatrix-weather.git
+[submodule "plugins/ledmatrix-news"]
+	path = plugins/ledmatrix-news
+	url = https://github.com/ChuckBuilds/ledmatrix-news.git
