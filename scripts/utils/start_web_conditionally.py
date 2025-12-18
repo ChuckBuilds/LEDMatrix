@@ -4,7 +4,8 @@ import sys
 import subprocess
 from pathlib import Path
 
-PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
+# Get project root directory (parent of scripts/utils/)
+PROJECT_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 CONFIG_FILE = os.path.join(PROJECT_DIR, 'config', 'config.json')
 WEB_INTERFACE_SCRIPT = os.path.join(PROJECT_DIR, 'web_interface', 'start.py')
 
