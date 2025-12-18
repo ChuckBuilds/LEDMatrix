@@ -2635,16 +2635,95 @@ def save_plugin_config():
                     continue
                 
                 prop_schema = schema_props[key]
+                prop_type = prop_schema.get('type')
                 
-                if isinstance(value, dict) and prop_schema.get('type') == 'object' and 'properties' in prop_schema:
+                # Handle union types (e.g., ["integer", "null"])
+                if isinstance(prop_type, list):
+                    # Check if null is allowed and value is empty/null
+                    if 'null' in prop_type:
+                        if value is None or value == '' or (isinstance(value, str) and value.lower() in ('null', 'none')):
+                            normalized[key] = None
+                            continue
+                    
+                    # Try to normalize based on non-null types in the union
+                    # Check integer first (more specific than number)
+                    if 'integer' in prop_type:
+                        if isinstance(value, str):
+                            try:
+                                normalized[key] = int(value)
+                                continue
+                            except (ValueError, TypeError):
+                                pass
+                        elif isinstance(value, (int, float)):
+                            normalized[key] = int(value)
+                            continue
+                    
+                    # Check number (less specific, but handles floats)
+                    if 'number' in prop_type:
+                        if isinstance(value, str):
+                            try:
+                                normalized[key] = float(value)
+                                continue
+                            except (ValueError, TypeError):
+                                pass
+                        elif isinstance(value, (int, float)):
+                            normalized[key] = float(value)
+                            continue
+                    
+                    # Check boolean
+                    if 'boolean' in prop_type:
+                        if isinstance(value, str):
+                            normalized[key] = value.lower() in ('true', '1', 'on', 'yes')
+                            continue
+                    
+                    # If no conversion worked, keep original value
+                    normalized[key] = value
+                    continue
+                
+                if isinstance(value, dict) and prop_type == 'object' and 'properties' in prop_schema:
                     # Recursively normalize nested objects
                     normalized[key] = normalize_config_values(value, prop_schema['properties'], field_path)
-                elif isinstance(value, list) and prop_schema.get('type') == 'array' and 'items' in prop_schema:
+                elif isinstance(value, list) and prop_type == 'array' and 'items' in prop_schema:
                     # Normalize array items
                     items_schema = prop_schema['items']
                     item_type = items_schema.get('type')
                     
-                    if item_type == 'integer':
+                    # Handle union types in array items
+                    if isinstance(item_type, list):
+                        normalized_array = []
+                        for v in value:
+                            # Check if null is allowed
+                            if 'null' in item_type:
+                                if v is None or v == '' or (isinstance(v, str) and v.lower() in ('null', 'none')):
+                                    normalized_array.append(None)
+                                    continue
+                            
+                            # Try to normalize based on non-null types
+                            if 'integer' in item_type:
+                                if isinstance(v, str):
+                                    try:
+                                        normalized_array.append(int(v))
+                                        continue
+                                    except (ValueError, TypeError):
+                                        pass
+                                elif isinstance(v, (int, float)):
+                                    normalized_array.append(int(v))
+                                    continue
+                            elif 'number' in item_type:
+                                if isinstance(v, str):
+                                    try:
+                                        normalized_array.append(float(v))
+                                        continue
+                                    except (ValueError, TypeError):
+                                        pass
+                                elif isinstance(v, (int, float)):
+                                    normalized_array.append(float(v))
+                                    continue
+                            
+                            # If no conversion worked, keep original value
+                            normalized_array.append(v)
+                        normalized[key] = normalized_array
+                    elif item_type == 'integer':
                         # Convert string numbers to integers
                         normalized_array = []
                         for v in value:
@@ -2683,7 +2762,7 @@ def save_plugin_config():
                         normalized[key] = normalized_array
                     else:
                         normalized[key] = value
-                elif prop_schema.get('type') == 'integer':
+                elif prop_type == 'integer':
                     # Convert string to integer
                     if isinstance(value, str):
                         try:
@@ -2692,7 +2771,7 @@ def save_plugin_config():
                             normalized[key] = value
                     else:
                         normalized[key] = value
-                elif prop_schema.get('type') == 'number':
+                elif prop_type == 'number':
                     # Convert string to float
                     if isinstance(value, str):
                         try:
@@ -2701,7 +2780,7 @@ def save_plugin_config():
                             normalized[key] = value
                     else:
                         normalized[key] = value
-                elif prop_schema.get('type') == 'boolean':
+                elif prop_type == 'boolean':
                     # Convert string booleans
                     if isinstance(value, str):
                         normalized[key] = value.lower() in ('true', '1', 'on', 'yes')

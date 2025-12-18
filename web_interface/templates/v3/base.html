@@ -1802,13 +1802,28 @@
                             html += `<input type="checkbox" name="${fullKey}" ${value ? 'checked' : ''} class="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded">`;
                             html += `<span class="ml-2 text-sm">Enabled</span>`;
                             html += `</label>`;
-                        } else if (prop.type === 'number' || prop.type === 'integer') {
+                        } else if (prop.type === 'number' || prop.type === 'integer' || 
+                                   (Array.isArray(prop.type) && (prop.type.includes('number') || prop.type.includes('integer')))) {
+                            // Handle union types like ["integer", "null"]
+                            const isUnionType = Array.isArray(prop.type);
+                            const allowsNull = isUnionType && prop.type.includes('null');
+                            const isInteger = prop.type === 'integer' || (isUnionType && prop.type.includes('integer'));
+                            const isNumber = prop.type === 'number' || (isUnionType && prop.type.includes('number'));
                             const min = prop.minimum !== undefined ? `min="${prop.minimum}"` : '';
                             const max = prop.maximum !== undefined ? `max="${prop.maximum}"` : '';
-                            const step = prop.type === 'integer' ? 'step="1"' : 'step="any"';
+                            const step = isInteger ? 'step="1"' : 'step="any"';
+                            
+                            // For union types with null, don't show default if value is null (leave empty)
+                            // This allows users to explicitly set null by leaving it empty
+                            let fieldValue = '';
+                            if (value !== undefined && value !== null) {
+                                fieldValue = value;
+                            } else if (!allowsNull && prop.default !== undefined) {
+                                // Only use default if null is not allowed
+                                fieldValue = prop.default;
+                            }
                             
                             // Ensure value respects min/max constraints
-                            let fieldValue = value !== undefined ? value : (prop.default !== undefined ? prop.default : '');
                             if (fieldValue !== '' && fieldValue !== undefined && fieldValue !== null) {
                                 const numValue = typeof fieldValue === 'string' ? parseFloat(fieldValue) : fieldValue;
                                 if (!isNaN(numValue)) {
@@ -1823,12 +1838,15 @@
                                 }
                             }
                             
-                            // If still empty and we have a default, use it
-                            if (fieldValue === '' && prop.default !== undefined) {
-                                fieldValue = prop.default;
-                            }
+                            // Add placeholder/help text for null-able fields
+                            const placeholder = allowsNull ? 'Leave empty to use current time (random)' : '';
+                            const helpText = allowsNull && description && description.includes('null') ? 
+                                `<p class="text-xs text-gray-500 mt-1">${description}</p>` : '';
                             
-                            html += `<input type="number" name="${fullKey}" value="${fieldValue}" ${min} ${max} ${step} class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm">`;
+                            html += `<input type="number" name="${fullKey}" value="${fieldValue}" ${min} ${max} ${step} placeholder="${placeholder}" class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm">`;
+                            if (helpText) {
+                                html += helpText;
+                            }
                         } else if (prop.type === 'array') {
                             // Check if this is a file upload widget
                             if (prop['x-widget'] === 'file-upload') {
@@ -2274,12 +2292,22 @@
                                     const arrayValue = value ? value.split(',').map(v => v.trim()).filter(v => v) : [];
                                     flatConfig[key] = arrayValue;
                                 }
-                            } else if (propType === 'integer') {
-                                const numValue = parseInt(value, 10);
-                                flatConfig[key] = isNaN(numValue) ? (propSchema && propSchema.default !== undefined ? propSchema.default : 0) : numValue;
-                            } else if (propType === 'number') {
-                                const numValue = parseFloat(value);
-                                flatConfig[key] = isNaN(numValue) ? (propSchema && propSchema.default !== undefined ? propSchema.default : 0) : numValue;
+                            } else if (propType === 'integer' || (Array.isArray(propType) && propType.includes('integer'))) {
+                                // Handle union types - if null is allowed and value is empty, keep as empty string (backend will convert to null)
+                                if (Array.isArray(propType) && propType.includes('null') && (!value || value.trim() === '')) {
+                                    flatConfig[key] = ''; // Send empty string, backend will normalize to null
+                                } else {
+                                    const numValue = parseInt(value, 10);
+                                    flatConfig[key] = isNaN(numValue) ? (propSchema && propSchema.default !== undefined ? propSchema.default : 0) : numValue;
+                                }
+                            } else if (propType === 'number' || (Array.isArray(propType) && propType.includes('number'))) {
+                                // Handle union types - if null is allowed and value is empty, keep as empty string (backend will convert to null)
+                                if (Array.isArray(propType) && propType.includes('null') && (!value || value.trim() === '')) {
+                                    flatConfig[key] = ''; // Send empty string, backend will normalize to null
+                                } else {
+                                    const numValue = parseFloat(value);
+                                    flatConfig[key] = isNaN(numValue) ? (propSchema && propSchema.default !== undefined ? propSchema.default : 0) : numValue;
+                                }
                             } else if (propType === 'boolean') {
                                 // Boolean from FormData (shouldn't happen for checkboxes, but handle it)
                                 flatConfig[key] = value === 'on' || value === 'true' || value === true;
