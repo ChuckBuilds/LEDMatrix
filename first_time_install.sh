@@ -506,10 +506,11 @@ echo "Step 4: Installing main LED Matrix service..."
 echo "---------------------------------------------"
 
 # Run the main service installation (idempotent)
+# Note: install_service.sh always overwrites the service file, so it will update paths automatically
 if [ -f "$PROJECT_ROOT_DIR/scripts/install/install_service.sh" ]; then
-    echo "Running main service installation..."
+    echo "Running main service installation/update..."
     bash "$PROJECT_ROOT_DIR/scripts/install/install_service.sh"
-    echo "✓ Main LED Matrix service installed"
+    echo "✓ Main LED Matrix service installed/updated"
 else
     echo "✗ Main service installation script not found at $PROJECT_ROOT_DIR/scripts/install/install_service.sh"
     echo "Please ensure you are running this script from the project root: $PROJECT_ROOT_DIR"
