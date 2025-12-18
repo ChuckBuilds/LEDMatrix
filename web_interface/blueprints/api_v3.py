@@ -2670,6 +2670,17 @@ def save_plugin_config():
                             else:
                                 normalized_array.append(v)
                         normalized[key] = normalized_array
+                    elif item_type == 'object' and 'properties' in items_schema:
+                        # Recursively normalize array of objects
+                        normalized_array = []
+                        for v in value:
+                            if isinstance(v, dict):
+                                normalized_array.append(
+                                    normalize_config_values(v, items_schema['properties'], f"{field_path}[]")
+                                )
+                            else:
+                                normalized_array.append(v)
+                        normalized[key] = normalized_array
                     else:
                         normalized[key] = value
                 elif prop_schema.get('type') == 'integer':
