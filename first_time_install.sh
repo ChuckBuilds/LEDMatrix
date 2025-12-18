@@ -917,13 +917,23 @@ echo "Step 8: Installing web interface service..."
 echo "-------------------------------------------"
 
 if [ -f "$PROJECT_ROOT_DIR/scripts/install/install_web_service.sh" ]; then
-    if [ ! -f "/etc/systemd/system/ledmatrix-web.service" ]; then
+    # Check if service file exists and has old paths (needs update after reorganization)
+    NEEDS_UPDATE=false
+    if [ -f "/etc/systemd/system/ledmatrix-web.service" ]; then
+        # Check if service file references old path (start_web_conditionally.py without scripts/utils/)
+        if grep -q "start_web_conditionally.py" /etc/systemd/system/ledmatrix-web.service && ! grep -q "scripts/utils/start_web_conditionally.py" /etc/systemd/system/ledmatrix-web.service; then
+            NEEDS_UPDATE=true
+            echo "⚠ Service file has old paths, updating..."
+        fi
+    fi
+    
+    if [ ! -f "/etc/systemd/system/ledmatrix-web.service" ] || [ "$NEEDS_UPDATE" = true ]; then
         bash "$PROJECT_ROOT_DIR/scripts/install/install_web_service.sh"
         # Ensure systemd sees any new/changed unit files
         systemctl daemon-reload || true
-        echo "✓ Web interface service installed"
+        echo "✓ Web interface service installed/updated"
     else
-        echo "ledmatrix-web.service already present; preserving existing configuration and skipping static installer"
+        echo "✓ Web interface service already present with correct paths"
     fi
 else
     echo "⚠ install_web_service.sh not found; skipping web service installation"
@@ -949,8 +959,19 @@ echo "---------------------------------------------"
 
 # Install WiFi monitor service if script exists
 if [ -f "$PROJECT_ROOT_DIR/scripts/install/install_wifi_monitor.sh" ]; then
-    echo "Installing WiFi monitor service..."
-    bash "$PROJECT_ROOT_DIR/scripts/install/install_wifi_monitor.sh"
+    # Check if service file exists and has old paths (needs update after reorganization)
+    NEEDS_UPDATE=false
+    if [ -f "/etc/systemd/system/ledmatrix-wifi-monitor.service" ]; then
+        # Check if service file references old path (wifi_monitor_daemon.py without scripts/utils/)
+        if grep -q "wifi_monitor_daemon.py" /etc/systemd/system/ledmatrix-wifi-monitor.service && ! grep -q "scripts/utils/wifi_monitor_daemon.py" /etc/systemd/system/ledmatrix-wifi-monitor.service; then
+            NEEDS_UPDATE=true
+            echo "⚠ WiFi monitor service file has old paths, updating..."
+        fi
+    fi
+    
+    if [ ! -f "/etc/systemd/system/ledmatrix-wifi-monitor.service" ] || [ "$NEEDS_UPDATE" = true ]; then
+        echo "Installing/updating WiFi monitor service..."
+        bash "$PROJECT_ROOT_DIR/scripts/install/install_wifi_monitor.sh"
     
     # Harden service file permissions (if service was created)
     if [ -f "/etc/systemd/system/ledmatrix-wifi-monitor.service" ]; then
