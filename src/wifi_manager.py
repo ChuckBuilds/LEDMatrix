@@ -376,20 +376,53 @@ class WiFiManager:
         """
         Scan for available WiFi networks
         
+        If AP mode is active, it will be temporarily disabled during scanning
+        and re-enabled afterward. This is necessary because WiFi interfaces
+        in AP mode cannot scan for other networks.
+        
         Returns:
             List of WiFiNetwork objects
         """
+        ap_was_active = False
         try:
+            # Check if AP mode is active - if so, we need to disable it temporarily
+            ap_was_active = self._is_ap_mode_active()
+            
+            if ap_was_active:
+                logger.info("AP mode is active, temporarily disabling for WiFi scan...")
+                success, message = self.disable_ap_mode()
+                if not success:
+                    logger.warning(f"Failed to disable AP mode for scanning: {message}")
+                    # Continue anyway - scan might still work
+                else:
+                    # Wait for interface to switch modes
+                    time.sleep(3)
+            
+            # Perform the scan
             if self.has_nmcli:
-                return self._scan_nmcli()
+                networks = self._scan_nmcli()
             elif self.has_iwlist:
-                return self._scan_iwlist()
+                networks = self._scan_iwlist()
             else:
                 logger.error("No WiFi scanning tools available")
-                return []
+                networks = []
+            
+            return networks
+            
         except Exception as e:
             logger.error(f"Error scanning networks: {e}")
             return []
+        finally:
+            # Always try to restore AP mode if it was active before
+            if ap_was_active:
+                logger.info("Re-enabling AP mode after WiFi scan...")
+                time.sleep(1)  # Brief delay before re-enabling
+                success, message = self.enable_ap_mode()
+                if success:
+                    logger.info("AP mode re-enabled successfully after scan")
+                else:
+                    logger.warning(f"Failed to re-enable AP mode after scan: {message}")
+                    # Log but don't fail - user can manually re-enable if needed
     
     def _scan_nmcli(self) -> List[WiFiNetwork]:
         """Scan networks using nmcli"""

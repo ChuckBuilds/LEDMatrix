@@ -3928,11 +3928,21 @@ def get_wifi_status():
 
 @api_v3.route('/wifi/scan', methods=['GET'])
 def scan_wifi_networks():
-    """Scan for available WiFi networks"""
+    """Scan for available WiFi networks
+    
+    If AP mode is active, it will be temporarily disabled during scanning
+    and automatically re-enabled afterward. Users connected to the AP will
+    be briefly disconnected during this process.
+    """
     try:
         from src.wifi_manager import WiFiManager
         
         wifi_manager = WiFiManager()
+        
+        # Check if AP mode is active before scanning (for user notification)
+        ap_was_active = wifi_manager._is_ap_mode_active()
+        
+        # Perform the scan (this will handle AP mode disabling/enabling internally)
         networks = wifi_manager.scan_networks()
         
         # Convert to dict format
@@ -3946,14 +3956,46 @@ def scan_wifi_networks():
             for net in networks
         ]
         
-        return jsonify({
+        response_data = {
             'status': 'success',
             'data': networks_data
-        })
+        }
+        
+        # Inform user if AP mode was temporarily disabled
+        if ap_was_active:
+            response_data['message'] = (
+                f'Found {len(networks_data)} networks. '
+                'Note: AP mode was temporarily disabled during scanning and has been re-enabled. '
+                'If you were connected to the setup network, you may need to reconnect.'
+            )
+        
+        return jsonify(response_data)
     except Exception as e:
+        error_message = f'Error scanning WiFi networks: {str(e)}'
+        
+        # Provide more specific error messages for common issues
+        error_str = str(e).lower()
+        if 'permission' in error_str or 'sudo' in error_str:
+            error_message = (
+                'Permission error while scanning. '
+                'The WiFi scan requires appropriate permissions. '
+                'Please ensure the application has necessary privileges.'
+            )
+        elif 'timeout' in error_str:
+            error_message = (
+                'WiFi scan timed out. '
+                'The scan took too long to complete. '
+                'This may happen if the WiFi interface is busy or in use.'
+            )
+        elif 'no wifi' in error_str or 'not available' in error_str:
+            error_message = (
+                'WiFi scanning tools are not available. '
+                'Please ensure NetworkManager (nmcli) or iwlist is installed.'
+            )
+        
         return jsonify({
             'status': 'error',
-            'message': f'Error scanning WiFi networks: {str(e)}'
+            'message': error_message
         }), 500
 
 @api_v3.route('/wifi/connect', methods=['POST'])
