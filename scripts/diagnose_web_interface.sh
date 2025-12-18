@@ -14,9 +14,9 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
-# Get script directory
+# Get script directory and project root (parent of scripts/)
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
-PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
+PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 cd "$PROJECT_DIR"
 
@@ -65,7 +65,7 @@ declare -a REQUIRED_FILES=(
     "web_interface/requirements.txt"
     "web_interface/blueprints/api_v3.py"
     "web_interface/blueprints/pages_v3.py"
-    "start_web_conditionally.py"
+    "scripts/utils/start_web_conditionally.py"
 )
 
 ALL_FILES_OK=true

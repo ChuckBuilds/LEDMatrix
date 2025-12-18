@@ -23,9 +23,9 @@ else
     ACTUAL_USER=$(whoami)
 fi
 
-# Get project root (assume script is in scripts/ directory)
+# Get project root (parent of scripts/ directory)
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
-PROJECT_ROOT_DIR="$(dirname "$SCRIPT_DIR")"
+PROJECT_ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 PLUGINS_DIR="$PROJECT_ROOT_DIR/plugins"
 PLUGIN_REPOS_DIR="$PROJECT_ROOT_DIR/plugin-repos"
 

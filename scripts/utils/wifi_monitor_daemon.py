@@ -12,8 +12,8 @@ import logging
 import signal
 from pathlib import Path
 
-# Add project root to path
-sys.path.insert(0, str(Path(__file__).parent))
+# Add project root to path (parent of scripts/utils/)
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from src.wifi_manager import WiFiManager
 

@@ -9,7 +9,7 @@ echo "Fixing LED Matrix Web Interface permissions..."
 
 # Get the current user (should be the user running the web interface)
 WEB_USER=$(whoami)
-PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
 echo "Detected web interface user: $WEB_USER"
 echo "Project directory: $PROJECT_DIR"

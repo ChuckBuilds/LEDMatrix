@@ -16,9 +16,9 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
-# Get project root
+# Get project root (parent of scripts/ directory)
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
-PROJECT_ROOT_DIR="$(dirname "$SCRIPT_DIR")"
+PROJECT_ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 echo "Project directory: $PROJECT_ROOT_DIR"
 echo ""

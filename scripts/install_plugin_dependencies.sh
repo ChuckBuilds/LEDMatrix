@@ -27,7 +27,7 @@ echo ""
 
 # Get the directory where this script is located
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
-LEDMATRIX_DIR="$(dirname "$SCRIPT_DIR")"
+LEDMATRIX_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 PLUGINS_DIR="$LEDMATRIX_DIR/plugins"
 
 echo "LEDMatrix directory: $LEDMATRIX_DIR"
