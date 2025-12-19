@@ -173,6 +173,18 @@ class PluginLoader:
         except FileNotFoundError:
             self.logger.warning("pip not found. Skipping dependency installation for %s", plugin_id)
             return True
+        except (BrokenPipeError, OSError) as e:
+            # Handle broken pipe errors (errno 32) which can occur during pip downloads
+            # Often caused by network interruptions or output buffer issues
+            if isinstance(e, OSError) and e.errno == 32:
+                self.logger.error(
+                    "Broken pipe error during dependency installation for %s. "
+                    "This usually indicates a network interruption or pip output buffer issue. "
+                    "Try installing again or check your network connection.", plugin_id
+                )
+            else:
+                self.logger.error("OS error during dependency installation for %s: %s", plugin_id, e)
+            return False
         except Exception as e:
             self.logger.error("Unexpected error installing dependencies for %s: %s", plugin_id, e, exc_info=True)
             return False

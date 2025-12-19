@@ -213,6 +213,18 @@ class PluginManager:
         except FileNotFoundError as e:
             self.logger.warning("Command not found: %s. Skipping dependency installation", e)
             return True
+        except (BrokenPipeError, OSError) as e:
+            # Handle broken pipe errors (errno 32) which can occur during pip downloads
+            # Often caused by network interruptions or output buffer issues
+            if isinstance(e, OSError) and e.errno == 32:
+                self.logger.error(
+                    "Broken pipe error during dependency installation. "
+                    "This usually indicates a network interruption or pip output buffer issue. "
+                    "Try installing again or check your network connection."
+                )
+            else:
+                self.logger.error("OS error during dependency installation: %s", e)
+            return False
         except Exception as e:
             self.logger.error("Unexpected error installing dependencies: %s", e, exc_info=True)
             return True
