@@ -81,7 +81,7 @@ echo ""
 echo "5. Checking web interface files..."
 echo "------------------------------"
 FILES_TO_CHECK=(
-    "start_web_conditionally.py"
+    "scripts/utils/start_web_conditionally.py"
     "web_interface/start.py"
     "web_interface/app.py"
     "web_interface/requirements.txt"
