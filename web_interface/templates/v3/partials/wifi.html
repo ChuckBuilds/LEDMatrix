@@ -65,11 +65,12 @@
         <!-- Network Selection -->
         <div class="form-group mb-4">
             <label for="wifi-ssid" class="block text-sm font-medium text-gray-700 mb-2">
-                Select Network
+                Step 1: Select Network
             </label>
             <div class="flex gap-2">
                 <select id="wifi-ssid" 
                         x-model="selectedSSID"
+                        @change="manualSSID = ''"
                         class="form-control flex-1">
                     <option value="">-- Select a network --</option>
                     <template x-for="(network, index) in networks" :key="index">
@@ -88,6 +89,11 @@
                 </button>
             </div>
             <p class="mt-1 text-sm text-gray-600">Scan for available networks or manually enter SSID below.</p>
+            <!-- Show selected network -->
+            <div x-show="selectedSSID" class="mt-2 p-2 bg-blue-50 border border-blue-200 rounded text-sm" x-cloak>
+                <i class="fas fa-check-circle text-blue-600 mr-2"></i>
+                <span class="font-medium">Selected:</span> <span x-text="selectedSSID"></span>
+            </div>
         </div>
 
         <!-- Manual SSID Entry -->
@@ -98,7 +104,7 @@
             <input type="text" 
                    id="manual-ssid"
                    x-model="manualSSID"
-                   @input="selectedSSID = $event.target.value"
+                   @input="selectedSSID = ''; selectedSSID = $event.target.value"
                    placeholder="Enter network name"
                    class="form-control">
         </div>
@@ -106,22 +112,28 @@
         <!-- Password -->
         <div class="form-group mb-4">
             <label for="wifi-password" class="block text-sm font-medium text-gray-700 mb-2">
-                Password (leave empty for open networks)
+                Step 2: Enter Password
             </label>
             <input type="password" 
                    id="wifi-password"
                    x-model="password"
-                   placeholder="Enter password"
+                   placeholder="Enter password (leave empty for open networks)"
                    class="form-control">
+            <p class="mt-1 text-sm text-gray-600">
+                <i class="fas fa-info-circle mr-1"></i>
+                Enter the WiFi password. Leave empty if the network is open (no password required).
+            </p>
         </div>
 
         <!-- Connect Button -->
-        <button @click="connectToNetwork()" 
-                :disabled="connecting || !selectedSSID"
-                class="w-full md:w-auto px-6 py-2 bg-green-600 text-white rounded hover:bg-green-700 disabled:bg-gray-400 disabled:cursor-not-allowed">
-            <i class="fas fa-plug" :class="connecting ? 'fa-spin' : ''"></i>
-            <span class="ml-2" x-text="connecting ? 'Connecting...' : 'Connect'"></span>
-        </button>
+        <div class="form-group">
+            <button @click="connectToNetwork()" 
+                    :disabled="connecting || (!selectedSSID && !manualSSID)"
+                    class="w-full md:w-auto px-6 py-2 bg-green-600 text-white rounded hover:bg-green-700 disabled:bg-gray-400 disabled:cursor-not-allowed">
+                <i class="fas fa-plug" :class="connecting ? 'fa-spin' : ''"></i>
+                <span class="ml-2" x-text="connecting ? 'Connecting...' : 'Step 3: Connect'"></span>
+            </button>
+        </div>
     </div>
 
     <!-- AP Mode Controls -->
@@ -280,7 +292,7 @@ function wifiSetup() {
 
         async connectToNetwork() {
             const ssid = this.selectedSSID || this.manualSSID;
-            if (!ssid) {
+            if (!ssid || ssid.trim() === '') {
                 this.showMessage('Please select or enter a network SSID', 'error');
                 return;
             }
@@ -294,10 +306,27 @@ function wifiSetup() {
                         'Content-Type': 'application/json'
                     },
                     body: JSON.stringify({
-                        ssid: ssid,
-                        password: this.password
+                        ssid: ssid.trim(),
+                        password: this.password || ''
                     })
                 });
+                
+                // Check if response is ok before parsing JSON
+                if (!response.ok) {
+                    // Try to parse error message from response
+                    let errorMessage = `Server error: ${response.status} ${response.statusText}`;
+                    try {
+                        const errorData = await response.json();
+                        if (errorData.message) {
+                            errorMessage = errorData.message;
+                        }
+                    } catch (e) {
+                        // If we can't parse JSON, use the status text
+                    }
+                    this.showMessage(errorMessage, 'error');
+                    return;
+                }
+                
                 const data = await response.json();
                 if (data.status === 'success') {
                     this.showMessage(data.message, 'success');
@@ -308,9 +337,10 @@ function wifiSetup() {
                     // Reload status after a delay
                     setTimeout(() => this.loadStatus(), 2000);
                 } else {
-                    this.showMessage(data.message, 'error');
+                    this.showMessage(data.message || 'Failed to connect to network', 'error');
                 }
             } catch (error) {
+                console.error('WiFi connect error:', error);
                 this.showMessage('Failed to connect: ' + error.message, 'error');
             } finally {
                 this.connecting = false;

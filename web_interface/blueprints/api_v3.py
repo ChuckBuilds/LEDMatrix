@@ -4134,14 +4134,27 @@ def connect_wifi():
         from src.wifi_manager import WiFiManager
         
         data = request.get_json()
-        if not data or 'ssid' not in data:
+        if not data:
+            return jsonify({
+                'status': 'error',
+                'message': 'Request body is required'
+            }), 400
+        
+        if 'ssid' not in data:
             return jsonify({
                 'status': 'error',
                 'message': 'SSID is required'
             }), 400
         
         ssid = data['ssid']
-        password = data.get('password', '')
+        if not ssid or not ssid.strip():
+            return jsonify({
+                'status': 'error',
+                'message': 'SSID cannot be empty'
+            }), 400
+        
+        ssid = ssid.strip()
+        password = data.get('password', '') or ''
         
         wifi_manager = WiFiManager()
         success, message = wifi_manager.connect_to_network(ssid, password)
@@ -4154,9 +4167,13 @@ def connect_wifi():
         else:
             return jsonify({
                 'status': 'error',
-                'message': message
+                'message': message or 'Failed to connect to network'
             }), 400
     except Exception as e:
+        import logging
+        import traceback
+        logger = logging.getLogger(__name__)
+        logger.error(f"Error connecting to WiFi: {e}\n{traceback.format_exc()}")
         return jsonify({
             'status': 'error',
             'message': f'Error connecting to WiFi: {str(e)}'
