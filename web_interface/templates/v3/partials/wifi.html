@@ -1,4 +1,4 @@
-<div class="bg-white rounded-lg shadow p-6" x-data="wifiSetup()" x-init="loadStatus()">
+<div class="bg-white rounded-lg shadow p-6" x-data="wifiSetup()" x-init="init(); loadStatus()">
     <!-- Captive Portal Banner (shown when AP mode is active) -->
     <div x-show="status.ap_mode_active" 
          class="mb-4 p-4 bg-blue-50 border border-blue-200 rounded-lg"
@@ -70,10 +70,11 @@
             <div class="flex gap-2">
                 <select id="wifi-ssid" 
                         x-model="selectedSSID"
-                        x-ref="networkSelect"
                         class="form-control flex-1">
                     <option value="">-- Select a network --</option>
-                    <!-- Options will be populated by updateSelectOptions() -->
+                    <template x-for="(network, index) in networks" :key="index">
+                        <option :value="network.ssid" x-text="network.ssid + ' (' + network.signal + '% - ' + network.security + ')'"></option>
+                    </template>
                 </select>
                 <!-- Debug: Show network count -->
                 <div x-show="networks.length > 0" class="text-xs text-gray-500 self-center px-2" x-cloak>
@@ -204,13 +205,19 @@ function wifiSetup() {
         message: '',
         messageType: 'success',
 
+        init() {
+            // Watch networks array and update select when it changes
+            this.$watch('networks', () => {
+                this.$nextTick(() => {
+                    this.updateSelectOptions();
+                });
+            });
+        },
+
         updateSelectOptions() {
-            // Manually update the select dropdown options
-            const select = this.$refs.networkSelect;
-            if (!select) {
-                console.warn('Select element not found');
-                return;
-            }
+            // Fallback method to manually update select if x-for doesn't work
+            const select = document.getElementById('wifi-ssid');
+            if (!select) return;
             
             // Clear existing options except the first one
             while (select.options.length > 1) {
@@ -224,8 +231,6 @@ function wifiSetup() {
                 option.textContent = `${network.ssid} (${network.signal}% - ${network.security})`;
                 select.appendChild(option);
             });
-            
-            console.log(`Updated select with ${this.networks.length} networks`);
         },
 
         async loadStatus() {
@@ -252,17 +257,10 @@ function wifiSetup() {
                 if (data.status === 'success') {
                     // Ensure data.data is an array
                     const networksArray = Array.isArray(data.data) ? data.data : [];
-                    console.log('Networks array:', networksArray); // Debug log
-                    console.log('Networks array length:', networksArray.length); // Debug log
+                    console.log('WiFi scan found networks:', networksArray.length); // Debug log
                     
-                    // Directly set the networks array - Alpine.js should detect this change
+                    // Set the networks array - Alpine.js will automatically update the select dropdown via x-for
                     this.networks = networksArray;
-                    console.log('this.networks after assignment:', this.networks.length); // Debug log
-                    
-                    // Manually update the select dropdown
-                    this.$nextTick(() => {
-                        this.updateSelectOptions();
-                    });
                     
                     if (networksArray.length > 0) {
                         this.showMessage(`Found ${networksArray.length} networks`, 'success');

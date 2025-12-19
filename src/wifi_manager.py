@@ -191,12 +191,65 @@ class WiFiManager:
                     parts = line.split(':')
                     if len(parts) >= 2:
                         state = parts[0].strip()
-                        connection = parts[1].strip() if len(parts) > 1 else ""
                         
                         if state == "connected":
                             wifi_connected = True
-                            ssid = connection
                             break
+            
+            # Get actual SSID and signal strength from WiFi device if connected
+            # Use device show to get the real SSID and signal, not the connection name
+            if wifi_connected:
+                # Get both SSID and signal in one query for efficiency
+                result = subprocess.run(
+                    ["nmcli", "-t", "-f", "802-11-wireless.ssid,WIFI.SIGNAL", "device", "show", "wlan0"],
+                    capture_output=True,
+                    text=True,
+                    timeout=5
+                )
+                if result.returncode == 0:
+                    for line in result.stdout.strip().split('\n'):
+                        if '802-11-wireless.ssid:' in line:
+                            ssid = line.split(':', 1)[1].strip()
+                            if ssid:
+                                continue
+                        elif 'WIFI.SIGNAL:' in line:
+                            try:
+                                signal = int(line.split(':', 1)[1].strip())
+                            except (ValueError, IndexError):
+                                pass
+                
+                # Fallback: Get SSID from active WiFi connection list if not found
+                if not ssid:
+                    result = subprocess.run(
+                        ["nmcli", "-t", "-f", "active,ssid", "device", "wifi"],
+                        capture_output=True,
+                        text=True,
+                        timeout=5
+                    )
+                    if result.returncode == 0:
+                        for line in result.stdout.strip().split('\n'):
+                            parts = line.split(':')
+                            if len(parts) >= 2 and parts[0].strip() == "yes":
+                                ssid = parts[1].strip()
+                                if ssid:
+                                    break
+                
+                # Fallback: Get signal strength if not already retrieved
+                if signal == 0:
+                    result = subprocess.run(
+                        ["nmcli", "-t", "-f", "WIFI.SIGNAL", "device", "show", "wlan0"],
+                        capture_output=True,
+                        text=True,
+                        timeout=5
+                    )
+                    if result.returncode == 0:
+                        for line in result.stdout.strip().split('\n'):
+                            if 'WIFI.SIGNAL:' in line:
+                                try:
+                                    signal = int(line.split(':', 1)[1].strip())
+                                    break
+                                except (ValueError, IndexError):
+                                    pass
             
             # Get IP address if connected
             if wifi_connected:
@@ -212,23 +265,26 @@ class WiFiManager:
                             ip_address = line.split('/')[0].strip()
                             break
                 
-                # Get signal strength
-                result = subprocess.run(
-                    ["nmcli", "-t", "-f", "SIGNAL", "device", "wifi"],
-                    capture_output=True,
-                    text=True,
-                    timeout=5
-                )
-                if result.returncode == 0:
-                    for line in result.stdout.strip().split('\n'):
-                        if ssid and ssid in line:
+                # Final fallback: Get signal strength by matching SSID in WiFi list
+                # (Only if we still don't have signal from device properties)
+                if signal == 0 and ssid:
+                    result = subprocess.run(
+                        ["nmcli", "-t", "-f", "SSID,SIGNAL", "device", "wifi"],
+                        capture_output=True,
+                        text=True,
+                        timeout=5
+                    )
+                    if result.returncode == 0:
+                        for line in result.stdout.strip().split('\n'):
                             parts = line.split(':')
                             if len(parts) >= 2:
-                                try:
-                                    signal = int(parts[-1].strip())
-                                    break
-                                except:
-                                    pass
+                                line_ssid = parts[0].strip()
+                                if line_ssid == ssid:
+                                    try:
+                                        signal = int(parts[1].strip())
+                                        break
+                                    except (ValueError, IndexError):
+                                        pass
             
             # Check if AP mode is active
             ap_active = self._is_ap_mode_active()
