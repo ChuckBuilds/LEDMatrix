@@ -228,6 +228,7 @@ echo "8. Install web interface service"
 echo "8.5. Install WiFi monitor service"
 echo "9. Configure web interface permissions"
 echo "10. Configure passwordless sudo access"
+echo "10.1. Configure WiFi management permissions"
 echo "11. Set up proper file ownership"
 echo "12. Configure sound module to avoid conflicts"
 echo "13. Apply performance optimizations"
@@ -1068,6 +1069,26 @@ else
 fi
 
 echo "✓ Passwordless sudo access configured"
+echo ""
+
+CURRENT_STEP="Configure WiFi management permissions"
+echo "Step 10.1: Configuring WiFi management permissions..."
+echo "-----------------------------------------------------"
+
+# Configure WiFi permissions (sudo and PolicyKit) for WiFi management
+if [ -f "$PROJECT_ROOT_DIR/scripts/install/configure_wifi_permissions.sh" ]; then
+    echo "Configuring WiFi management permissions..."
+    # Run as the actual user (not root) since the script checks for that
+    sudo -u "$ACTUAL_USER" bash "$PROJECT_ROOT_DIR/scripts/install/configure_wifi_permissions.sh" || {
+        echo "⚠ WiFi permissions configuration failed, but continuing installation"
+        echo "  You can run it manually later: ./scripts/install/configure_wifi_permissions.sh"
+    }
+    echo "✓ WiFi management permissions configured"
+else
+    echo "⚠ configure_wifi_permissions.sh not found; skipping WiFi permissions configuration"
+    echo "  You can configure WiFi permissions later by running:"
+    echo "    ./scripts/install/configure_wifi_permissions.sh"
+fi
 echo ""
 
 CURRENT_STEP="Set proper file ownership"
