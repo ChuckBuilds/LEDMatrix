@@ -886,22 +886,26 @@ class DisplayController:
                         if self.plugin_manager and hasattr(self.plugin_manager, 'health_tracker') and self.plugin_manager.health_tracker:
                             should_skip = self.plugin_manager.health_tracker.should_skip_plugin(plugin_id)
                             if should_skip:
-                                logger.debug(f"Skipping plugin {plugin_id} due to circuit breaker (mode: {active_mode})")
+                                logger.info(f"Skipping plugin {plugin_id} due to circuit breaker (mode: {active_mode})")
                                 display_result = False
                                 # Skip to next mode - let existing logic handle it
                                 manager_to_display = None
                         
-                        manager_to_display = plugin_instance
-                        logger.debug(f"Found plugin manager for mode {active_mode}: {type(plugin_instance).__name__}")
+                        if not should_skip:
+                            manager_to_display = plugin_instance
+                            logger.debug(f"Found plugin manager for mode {active_mode}: {type(plugin_instance).__name__}")
                     else:
                         logger.warning(f"Plugin {active_mode} found but has no display() method")
                 else:
-                    logger.debug(f"Mode {active_mode} not found in plugin_modes (available: {list(self.plugin_modes.keys())})")
+                    logger.warning(f"Mode {active_mode} not found in plugin_modes (available: {list(self.plugin_modes.keys())})")
                 
                 # Display the current mode
                 display_result = True  # Default to True for backward compatibility
                 display_failed_due_to_exception = False  # Track if False was due to exception vs no content
-                if manager_to_display:
+                if not manager_to_display:
+                    logger.warning(f"No plugin manager found for mode {active_mode} - skipping display and rotating to next mode")
+                    display_result = False
+                elif manager_to_display:
                     plugin_id = getattr(manager_to_display, 'plugin_id', active_mode)
                     try:
                         logger.debug(f"Calling display() for {active_mode} with force_clear={self.force_change}")
@@ -1161,7 +1165,7 @@ class DisplayController:
                                 )
                                 return False
                             cycle_complete = self._plugin_cycle_complete(manager_to_display)
-                            logger.info(
+                            logger.debug(
                                 "_should_exit_dynamic: elapsed %.2fs >= min %.2fs, cycle_complete=%s, returning %s",
                                 elapsed_time,
                                 min_duration + grace_period,
