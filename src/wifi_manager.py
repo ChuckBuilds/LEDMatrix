@@ -688,6 +688,52 @@ class WiFiManager:
             logger.error(f"Error connecting with wpa_supplicant: {e}")
             return False, str(e)
     
+    def disconnect_from_network(self) -> Tuple[bool, str]:
+        """
+        Disconnect from the current WiFi network
+        
+        Returns:
+            Tuple of (success, message)
+        """
+        try:
+            # Check if WiFi is connected
+            status = self.get_wifi_status()
+            if not status.connected:
+                return True, "Not connected to any WiFi network"
+            
+            # Disconnect using nmcli
+            if self.has_nmcli:
+                result = subprocess.run(
+                    ["sudo", "nmcli", "device", "disconnect", "wlan0"],
+                    capture_output=True,
+                    text=True,
+                    timeout=10
+                )
+                
+                if result.returncode == 0:
+                    logger.info("Successfully disconnected from WiFi network")
+                    # Wait a moment for the disconnect to complete
+                    time.sleep(1)
+                    
+                    # Check if AP mode should be auto-enabled
+                    # This will be handled by the monitor daemon, but we can trigger it here too
+                    auto_enable = self.config.get("auto_enable_ap_mode", True)
+                    if auto_enable:
+                        # Give it a moment, then check if we should enable AP mode
+                        time.sleep(1)
+                        self.check_and_manage_ap_mode()
+                    
+                    return True, "Disconnected from WiFi network"
+                else:
+                    error_msg = result.stderr.strip() or result.stdout.strip()
+                    logger.error(f"Failed to disconnect from WiFi: {error_msg}")
+                    return False, f"Failed to disconnect: {error_msg}"
+            else:
+                return False, "nmcli is required to disconnect from WiFi"
+        except Exception as e:
+            logger.error(f"Error disconnecting from WiFi: {e}")
+            return False, str(e)
+    
     def _save_network(self, ssid: str, password: str):
         """Save network credentials to config"""
         # Remove existing entry for this SSID

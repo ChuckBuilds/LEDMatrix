@@ -52,10 +52,20 @@
                       class="ml-2"></span>
             </div>
         </div>
-        <button @click="loadStatus()" 
-                class="mt-3 text-sm text-blue-600 hover:text-blue-800">
-            <i class="fas fa-sync-alt mr-1"></i>Refresh Status
-        </button>
+        <div class="mt-3 flex gap-2">
+            <button @click="loadStatus()" 
+                    class="text-sm text-blue-600 hover:text-blue-800">
+                <i class="fas fa-sync-alt mr-1"></i>Refresh Status
+            </button>
+            <button x-show="status.connected" 
+                    @click="disconnectFromNetwork()"
+                    :disabled="disconnecting"
+                    class="text-sm text-red-600 hover:text-red-800 disabled:text-gray-400 disabled:cursor-not-allowed"
+                    x-cloak>
+                <i class="fas fa-unlink" :class="disconnecting ? 'fa-spin' : ''"></i>
+                <span class="ml-1" x-text="disconnecting ? 'Disconnecting...' : 'Disconnect'"></span>
+            </button>
+        </div>
     </div>
 
     <!-- WiFi Connection Form -->
@@ -213,6 +223,7 @@ function wifiSetup() {
         password: '',
         scanning: false,
         connecting: false,
+        disconnecting: false,
         apOperating: false,
         message: '',
         messageType: 'success',
@@ -344,6 +355,50 @@ function wifiSetup() {
                 this.showMessage('Failed to connect: ' + error.message, 'error');
             } finally {
                 this.connecting = false;
+            }
+        },
+
+        async disconnectFromNetwork() {
+            if (!this.status.connected) {
+                this.showMessage('Not connected to any network', 'warning');
+                return;
+            }
+
+            this.disconnecting = true;
+            this.message = '';
+            try {
+                const response = await fetch('/api/v3/wifi/disconnect', {
+                    method: 'POST'
+                });
+                
+                // Check if response is ok before parsing JSON
+                if (!response.ok) {
+                    let errorMessage = `Server error: ${response.status} ${response.statusText}`;
+                    try {
+                        const errorData = await response.json();
+                        if (errorData.message) {
+                            errorMessage = errorData.message;
+                        }
+                    } catch (e) {
+                        // If we can't parse JSON, use the status text
+                    }
+                    this.showMessage(errorMessage, 'error');
+                    return;
+                }
+                
+                const data = await response.json();
+                if (data.status === 'success') {
+                    this.showMessage(data.message, 'success');
+                    // Reload status after a delay to show updated state
+                    setTimeout(() => this.loadStatus(), 2000);
+                } else {
+                    this.showMessage(data.message || 'Failed to disconnect from network', 'error');
+                }
+            } catch (error) {
+                console.error('WiFi disconnect error:', error);
+                this.showMessage('Failed to disconnect: ' + error.message, 'error');
+            } finally {
+                this.disconnecting = false;
             }
         },
 

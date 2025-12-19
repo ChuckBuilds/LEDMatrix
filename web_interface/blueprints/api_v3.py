@@ -4179,6 +4179,35 @@ def connect_wifi():
             'message': f'Error connecting to WiFi: {str(e)}'
         }), 500
 
+@api_v3.route('/wifi/disconnect', methods=['POST'])
+def disconnect_wifi():
+    """Disconnect from the current WiFi network"""
+    try:
+        from src.wifi_manager import WiFiManager
+        
+        wifi_manager = WiFiManager()
+        success, message = wifi_manager.disconnect_from_network()
+        
+        if success:
+            return jsonify({
+                'status': 'success',
+                'message': message
+            })
+        else:
+            return jsonify({
+                'status': 'error',
+                'message': message or 'Failed to disconnect from network'
+            }), 400
+    except Exception as e:
+        import logging
+        import traceback
+        logger = logging.getLogger(__name__)
+        logger.error(f"Error disconnecting from WiFi: {e}\n{traceback.format_exc()}")
+        return jsonify({
+            'status': 'error',
+            'message': f'Error disconnecting from WiFi: {str(e)}'
+        }), 500
+
 @api_v3.route('/wifi/ap/enable', methods=['POST'])
 def enable_ap_mode():
     """Enable access point mode"""
