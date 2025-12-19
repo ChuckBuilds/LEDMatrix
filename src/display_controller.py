@@ -303,14 +303,14 @@ class DisplayController:
         # If schedule config doesn't exist or is empty, default to always active
         if not schedule_config:
             self.is_display_active = True
-        self._was_display_active = True  # Track previous state for schedule change detection
+            self._was_display_active = True  # Track previous state for schedule change detection
             return
         
         # Check if schedule is explicitly disabled
         # Default to True (schedule enabled) if 'enabled' key is missing for backward compatibility
         if 'enabled' in schedule_config and not schedule_config.get('enabled', True):
             self.is_display_active = True
-        self._was_display_active = True  # Track previous state for schedule change detection
+            self._was_display_active = True  # Track previous state for schedule change detection
             logger.debug("Schedule is disabled - display always active")
             return
             
@@ -394,7 +394,7 @@ class DisplayController:
             logger.warning("Invalid schedule format for %s schedule: %s (start: %s, end: %s). Defaulting to active.", 
                          schedule_type, e, start_time_str, end_time_str)
             self.is_display_active = True
-        self._was_display_active = True  # Track previous state for schedule change detection
+            self._was_display_active = True  # Track previous state for schedule change detection
 
     def _update_modules(self):
         """Update all plugin modules."""
@@ -846,7 +846,6 @@ class DisplayController:
                         logger.info("On-demand override keeping display active during scheduled downtime")
                     self.on_demand_schedule_override = True
                     self.is_display_active = True
-        self._was_display_active = True  # Track previous state for schedule change detection
                 elif not self.on_demand_active and self.on_demand_schedule_override:
                     self.on_demand_schedule_override = False
 
