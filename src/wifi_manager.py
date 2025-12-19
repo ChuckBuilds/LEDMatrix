@@ -674,7 +674,7 @@ class WiFiManager:
     
     def connect_to_network(self, ssid: str, password: str) -> Tuple[bool, str]:
         """
-        Connect to a WiFi network
+        Connect to a WiFi network with failsafe to restore original connection on failure.
         
         Args:
             ssid: Network SSID
@@ -683,18 +683,158 @@ class WiFiManager:
         Returns:
             Tuple of (success, message)
         """
+        # Save current connection info for failsafe restoration
+        original_connection = None
+        original_ssid = None
+        try:
+            status = self.get_wifi_status()
+            if status.connected and status.ssid:
+                original_ssid = status.ssid
+                # Get the active connection name/UUID for wlan0
+                result = subprocess.run(
+                    ["nmcli", "-t", "-f", "GENERAL.CONNECTION", "device", "show", "wlan0"],
+                    capture_output=True,
+                    text=True,
+                    timeout=5
+                )
+                if result.returncode == 0:
+                    for line in result.stdout.strip().split('\n'):
+                        if 'GENERAL.CONNECTION:' in line:
+                            connection_name = line.split(':', 1)[1].strip()
+                            if connection_name and connection_name != '--':
+                                original_connection = connection_name
+                                break
+                
+                # Fallback: try to find connection by SSID
+                if not original_connection:
+                    result = subprocess.run(
+                        ["nmcli", "-t", "-f", "NAME", "connection", "show"],
+                        capture_output=True,
+                        text=True,
+                        timeout=5
+                    )
+                    if result.returncode == 0:
+                        for line in result.stdout.strip().split('\n'):
+                            if original_ssid.lower() in line.lower():
+                                original_connection = line.strip()
+                                break
+                
+                logger.info(f"Saving original connection for failsafe: {original_ssid} ({original_connection})")
+        except Exception as e:
+            logger.debug(f"Could not save original connection info: {e}")
+        
         try:
             # First, disable AP mode if active
             self.disable_ap_mode()
             time.sleep(2)
             
             if self.has_nmcli:
-                return self._connect_nmcli(ssid, password)
+                success, message = self._connect_nmcli(ssid, password)
+                
+                # If connection failed, try to restore original connection
+                if not success and original_connection and original_ssid:
+                    logger.warning(f"Connection to {ssid} failed, attempting to restore original connection: {original_ssid}")
+                    self._show_led_message(f"Restoring {original_ssid}...", duration=5)
+                    
+                    restore_success = self._restore_original_connection(original_connection, original_ssid)
+                    if restore_success:
+                        logger.info(f"Successfully restored original connection: {original_ssid}")
+                        self._show_led_message("Restored!", duration=3)
+                        return False, f"Failed to connect to {ssid}, restored {original_ssid}"
+                    else:
+                        logger.error(f"Failed to restore original connection: {original_ssid}")
+                        # Trigger AP mode as last resort
+                        self._show_led_message("Enabling AP mode...", duration=5)
+                        ap_success, ap_msg = self.enable_ap_mode()
+                        if ap_success:
+                            logger.info("AP mode enabled as failsafe")
+                            return False, f"Connection failed and restoration failed. AP mode enabled."
+                        else:
+                            logger.error(f"Failed to enable AP mode: {ap_msg}")
+                            return False, f"Connection failed, restoration failed, and AP mode failed: {ap_msg}"
+                
+                # If connection failed and no original connection to restore, enable AP mode
+                elif not success:
+                    logger.warning(f"Connection to {ssid} failed and no original connection to restore")
+                    self._show_led_message("Enabling AP mode...", duration=5)
+                    ap_success, ap_msg = self.enable_ap_mode()
+                    if ap_success:
+                        logger.info("AP mode enabled as failsafe")
+                        return False, f"Connection failed. AP mode enabled."
+                    else:
+                        return False, f"Connection failed and AP mode failed: {ap_msg}"
+                
+                return success, message
             else:
                 return self._connect_wpa_supplicant(ssid, password)
         except Exception as e:
             logger.error(f"Error connecting to network: {e}")
+            # Try to restore original connection on exception
+            if original_connection and original_ssid:
+                try:
+                    logger.warning(f"Exception during connection, attempting to restore: {original_ssid}")
+                    self._restore_original_connection(original_connection, original_ssid)
+                except Exception as restore_error:
+                    logger.error(f"Failed to restore after exception: {restore_error}")
+                    # Last resort: enable AP mode
+                    try:
+                        self.enable_ap_mode()
+                    except Exception:
+                        pass
             return False, str(e)
+    
+    def _restore_original_connection(self, connection_name: str, ssid: str) -> bool:
+        """
+        Restore a previously active WiFi connection.
+        
+        Args:
+            connection_name: NetworkManager connection name or UUID
+            ssid: SSID for verification
+            
+        Returns:
+            True if restoration successful, False otherwise
+        """
+        try:
+            logger.info(f"Attempting to restore connection: {connection_name} ({ssid})")
+            
+            # Try to activate the connection
+            result = subprocess.run(
+                ["nmcli", "connection", "up", connection_name],
+                capture_output=True,
+                text=True,
+                timeout=30
+            )
+            
+            if result.returncode == 0:
+                # Wait for connection to stabilize
+                time.sleep(3)
+                
+                # Verify connection
+                status = self.get_wifi_status()
+                if status.connected:
+                    # Double-check SSID matches (if we can get it)
+                    if status.ssid:
+                        if status.ssid == ssid:
+                            logger.info(f"Successfully restored connection to {ssid}")
+                            return True
+                        else:
+                            logger.warning(f"Restored connection but SSID mismatch: expected {ssid}, got {status.ssid}")
+                            # Still consider it success if we're connected
+                            return True
+                    else:
+                        # Connected but can't verify SSID - assume success
+                        logger.info("Restored connection (SSID verification unavailable)")
+                        return True
+                else:
+                    logger.warning("Connection activation succeeded but not connected")
+                    return False
+            else:
+                error_msg = result.stderr.strip() or result.stdout.strip()
+                logger.error(f"Failed to restore connection {connection_name}: {error_msg}")
+                return False
+        except Exception as e:
+            logger.error(f"Error restoring connection: {e}")
+            return False
     
     def _connect_nmcli(self, ssid: str, password: str) -> Tuple[bool, str]:
         """Connect using nmcli"""
@@ -721,12 +861,19 @@ class WiFiManager:
                 )
                 
                 if result.returncode == 0:
-                    # Wait a moment for connection to stabilize
-                    time.sleep(2)
+                    # Wait longer for connection to stabilize and verify multiple times
+                    max_verification_attempts = 5
+                    verification_delay = 2
+                    connected = False
                     
-                    # Verify connection
-                    status = self.get_wifi_status()
-                    if status.connected and status.ssid == ssid:
+                    for attempt in range(max_verification_attempts):
+                        time.sleep(verification_delay)
+                        status = self.get_wifi_status()
+                        if status.connected and status.ssid == ssid:
+                            connected = True
+                            break
+                    
+                    if connected:
                         # Save network to config
                         self._save_network(ssid, password)
                         
@@ -734,6 +881,10 @@ class WiFiManager:
                         self._show_led_message(f"Connected! {ip}", duration=5)
                         logger.info(f"Successfully connected to {ssid} with IP {ip}")
                         return True, f"Connected to {ssid}"
+                    else:
+                        logger.warning(f"Connection activation succeeded but verification failed for {ssid}")
+                        self._show_led_message("Verification failed", duration=5)
+                        return False, "Connection activated but verification failed"
             
             # No existing connection or activation failed, create new connection
             logger.info(f"Creating new connection for {ssid}...")
@@ -753,19 +904,32 @@ class WiFiManager:
             )
             
             if result.returncode == 0:
-                # Wait a moment for connection to stabilize
-                time.sleep(2)
+                # Wait longer for connection to stabilize and verify multiple times
+                max_verification_attempts = 5
+                verification_delay = 2
+                connected = False
                 
-                # Verify connection and get IP
-                status = self.get_wifi_status()
-                if status.connected:
+                for attempt in range(max_verification_attempts):
+                    time.sleep(verification_delay)
+                    status = self.get_wifi_status()
+                    if status.connected:
+                        # Verify we're connected to the correct SSID
+                        if status.ssid == ssid:
+                            connected = True
+                            break
+                        elif status.ssid:
+                            # Connected to different network - this is a failure
+                            logger.warning(f"Connected to wrong network: {status.ssid} instead of {ssid}")
+                            break
+                
+                if connected:
                     ip = status.ip_address or "Unknown"
                     self._show_led_message(f"Connected! {ip}", duration=5)
                     logger.info(f"Successfully connected to {ssid} with IP {ip}")
                     return True, f"Connected to {ssid}"
                 else:
                     self._show_led_message("Connection failed", duration=5)
-                    return False, "Connection command succeeded but not connected"
+                    return False, "Connection command succeeded but verification failed"
             else:
                 error_msg = result.stderr.strip() or result.stdout.strip()
                 logger.error(f"Failed to connect to {ssid}: {error_msg}")
