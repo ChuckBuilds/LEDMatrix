@@ -10,6 +10,7 @@ API Version: 1.0.0
 import logging
 import os
 import socket
+import time
 from pathlib import Path
 from typing import Dict, Any
 from PIL import Image, ImageDraw, ImageFont
@@ -40,9 +41,42 @@ class WebUIInfoPlugin(BasePlugin):
             self.logger.warning(f"Could not get hostname: {e}, using 'localhost'")
             self.device_id = "localhost"
         
+        # Get device IP address
+        self.device_ip = self._get_local_ip()
+        
+        # Rotation state
+        self.current_display_mode = "hostname"  # "hostname" or "ip"
+        self.last_rotation_time = time.time()
+        self.rotation_interval = 10.0  # Rotate every 10 seconds
+        
         self.web_ui_url = f"http://{self.device_id}:5000"
         
-        self.logger.info(f"Web UI Info plugin initialized - URL: {self.web_ui_url}")
+        self.logger.info(f"Web UI Info plugin initialized - Hostname: {self.device_id}, IP: {self.device_ip}")
+    
+    def _get_local_ip(self) -> str:
+        """
+        Get the local IP address of the device.
+        
+        Returns:
+            str: Local IP address, or "localhost" if unable to determine
+        """
+        try:
+            # Connect to a remote address to determine local IP
+            # This doesn't actually send data, just determines the route
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            try:
+                # Connect to a public DNS server (doesn't actually connect)
+                s.connect(('8.8.8.8', 80))
+                ip = s.getsockname()[0]
+            except Exception:
+                # Fallback: try to get IP from hostname
+                ip = socket.gethostbyname(socket.gethostname())
+            finally:
+                s.close()
+            return ip
+        except Exception as e:
+            self.logger.warning(f"Could not get IP address: {e}, using 'localhost'")
+            return "localhost"
     
     def update(self) -> None:
         """
@@ -55,11 +89,23 @@ class WebUIInfoPlugin(BasePlugin):
     def display(self, force_clear: bool = False) -> None:
         """
         Display the web UI URL message.
+        Rotates between hostname and IP address every 10 seconds.
         
         Args:
             force_clear: If True, clear display before rendering
         """
         try:
+            # Check if we need to rotate between hostname and IP
+            current_time = time.time()
+            if current_time - self.last_rotation_time >= self.rotation_interval:
+                # Switch display mode
+                if self.current_display_mode == "hostname":
+                    self.current_display_mode = "ip"
+                else:
+                    self.current_display_mode = "hostname"
+                self.last_rotation_time = current_time
+                self.logger.debug(f"Rotated to display mode: {self.current_display_mode}")
+            
             if force_clear:
                 self.display_manager.clear()
             
@@ -93,10 +139,16 @@ class WebUIInfoPlugin(BasePlugin):
                 self.logger.debug(f"Could not load custom font: {e}, using default")
                 font_small = ImageFont.load_default()
             
+            # Determine which address to display
+            if self.current_display_mode == "ip":
+                address = self.device_ip
+            else:
+                address = self.device_id
+            
             # Prepare text to display
             lines = [
                 "visit web ui",
-                f"at {self.device_id}:5000"
+                f"at {address}:5000"
             ]
             
             # Calculate text positions (centered)
@@ -124,7 +176,7 @@ class WebUIInfoPlugin(BasePlugin):
             # Update the display
             self.display_manager.update_display()
             
-            self.logger.debug(f"Displayed web UI info: {self.web_ui_url}")
+            self.logger.debug(f"Displayed web UI info: {address}:5000 (mode: {self.current_display_mode})")
             
         except Exception as e:
             self.logger.error(f"Error displaying web UI info: {e}")
@@ -153,7 +205,9 @@ class WebUIInfoPlugin(BasePlugin):
         info = super().get_info()
         info.update({
             'device_id': self.device_id,
-            'web_ui_url': self.web_ui_url
+            'device_ip': self.device_ip,
+            'web_ui_url': self.web_ui_url,
+            'current_display_mode': self.current_display_mode
         })
         return info
 
