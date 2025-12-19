@@ -994,6 +994,7 @@ if [ -f "$PROJECT_ROOT_DIR/scripts/install/install_wifi_monitor.sh" ]; then
     else
         echo "⚠ WiFi monitor service installation may have failed"
     fi
+    fi
 else
     echo "⚠ install_wifi_monitor.sh not found; skipping WiFi monitor installation"
     echo "  You can install it later by running: sudo ./scripts/install/install_wifi_monitor.sh"
