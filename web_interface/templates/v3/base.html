@@ -2485,11 +2485,20 @@
         }
 
         // ===== Nested Section Toggle =====
-        window.toggleNestedSection = function(sectionId) {
+        window.toggleNestedSection = function(sectionId, event) {
+            // Prevent event bubbling if event is provided
+            if (event) {
+                event.stopPropagation();
+                event.preventDefault();
+            }
+            
             const content = document.getElementById(sectionId);
             const icon = document.getElementById(sectionId + '-icon');
             
-            if (!content || !icon) return;
+            if (!content || !icon) {
+                console.warn('[toggleNestedSection] Content or icon not found for:', sectionId);
+                return;
+            }
             
             // Check if content is currently collapsed (has 'collapsed' class or display:none)
             const isCollapsed = content.classList.contains('collapsed') || 
@@ -2501,25 +2510,64 @@
                 content.classList.remove('collapsed');
                 content.classList.add('expanded');
                 content.style.display = 'block';
-                // Force reflow to ensure transition works
-                content.offsetHeight;
-                content.style.maxHeight = content.scrollHeight + 'px';
+                content.style.overflow = 'hidden'; // Prevent content jumping during animation
+                
+                // CRITICAL FIX: Use setTimeout to ensure browser has time to layout the element
+                // When element goes from display:none to display:block, scrollHeight might be 0
+                // We need to wait for the browser to calculate the layout
+                setTimeout(() => {
+                    // Force reflow to ensure transition works
+                    void content.offsetHeight;
+                    
+                    // Now measure the actual content height after layout
+                    const scrollHeight = content.scrollHeight;
+                    if (scrollHeight > 0) {
+                        content.style.maxHeight = scrollHeight + 'px';
+                    } else {
+                        // Fallback: if scrollHeight is still 0, try measuring again after a brief delay
+                        setTimeout(() => {
+                            const retryHeight = content.scrollHeight;
+                            content.style.maxHeight = retryHeight > 0 ? retryHeight + 'px' : '500px';
+                        }, 10);
+                    }
+                }, 10);
+                
                 icon.classList.remove('fa-chevron-right');
                 icon.classList.add('fa-chevron-down');
+                
+                // After animation completes, remove max-height constraint to allow natural expansion
+                setTimeout(() => {
+                    if (content.classList.contains('expanded') && !content.classList.contains('collapsed')) {
+                        content.style.maxHeight = 'none';
+                        content.style.overflow = '';
+                    }
+                }, 320); // Slightly longer than transition duration
             } else {
                 // Collapse the section
                 content.classList.add('collapsed');
                 content.classList.remove('expanded');
-                content.style.maxHeight = content.scrollHeight + 'px';
-                // Force reflow
-                content.offsetHeight;
-                content.style.maxHeight = '0';
-                // Use setTimeout to set display:none after transition completes
+                content.style.overflow = 'hidden'; // Prevent content jumping during animation
+                
+                // Set max-height to current scroll height first (required for smooth animation)
+                const currentHeight = content.scrollHeight;
+                content.style.maxHeight = currentHeight + 'px';
+                
+                // Force reflow to apply the height
+                void content.offsetHeight;
+                
+                // Then animate to 0
+                setTimeout(() => {
+                    content.style.maxHeight = '0';
+                }, 10);
+                
+                // Hide after transition completes
                 setTimeout(() => {
                     if (content.classList.contains('collapsed')) {
                         content.style.display = 'none';
+                        content.style.overflow = '';
                     }
-                }, 300); // Match the CSS transition duration
+                }, 320); // Match the CSS transition duration + small buffer
+                
                 icon.classList.remove('fa-chevron-down');
                 icon.classList.add('fa-chevron-right');
             }

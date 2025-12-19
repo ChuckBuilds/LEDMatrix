@@ -2402,9 +2402,28 @@ window.toggleNestedSection = function(sectionId, event) {
         content.classList.remove('collapsed');
         content.classList.add('expanded');
         content.style.display = 'block';
-        // Force reflow to ensure transition works
-        content.offsetHeight;
-        content.style.maxHeight = content.scrollHeight + 'px';
+        content.style.overflow = 'hidden'; // Prevent content jumping during animation
+        
+        // CRITICAL FIX: Use setTimeout to ensure browser has time to layout the element
+        // When element goes from display:none to display:block, scrollHeight might be 0
+        // We need to wait for the browser to calculate the layout
+        setTimeout(() => {
+            // Force reflow to ensure transition works
+            void content.offsetHeight;
+            
+            // Now measure the actual content height after layout
+            const scrollHeight = content.scrollHeight;
+            if (scrollHeight > 0) {
+                content.style.maxHeight = scrollHeight + 'px';
+            } else {
+                // Fallback: if scrollHeight is still 0, try measuring again after a brief delay
+                setTimeout(() => {
+                    const retryHeight = content.scrollHeight;
+                    content.style.maxHeight = retryHeight > 0 ? retryHeight + 'px' : '500px';
+                }, 10);
+            }
+        }, 10);
+        
         icon.classList.remove('fa-chevron-right');
         icon.classList.add('fa-chevron-down');
         
@@ -2420,10 +2439,11 @@ window.toggleNestedSection = function(sectionId, event) {
             // Only set to none if still expanded (prevent race condition)
             if (content.classList.contains('expanded') && !content.classList.contains('collapsed')) {
                 content.style.maxHeight = 'none';
+                content.style.overflow = '';
             }
             // Clear toggling flag
             content.dataset.toggling = 'false';
-        }, 300); // Match CSS transition duration
+        }, 320); // Slightly longer than transition duration
         
         // Scroll the expanded content into view after a short delay to allow animation
         setTimeout(() => {
@@ -2446,10 +2466,20 @@ window.toggleNestedSection = function(sectionId, event) {
         // Collapse the section
         content.classList.add('collapsed');
         content.classList.remove('expanded');
-        content.style.maxHeight = content.scrollHeight + 'px';
-        // Force reflow
-        content.offsetHeight;
-        content.style.maxHeight = '0';
+        content.style.overflow = 'hidden'; // Prevent content jumping during animation
+        
+        // Set max-height to current scroll height first (required for smooth animation)
+        const currentHeight = content.scrollHeight;
+        content.style.maxHeight = currentHeight + 'px';
+        
+        // Force reflow to apply the height
+        void content.offsetHeight;
+        
+        // Then animate to 0
+        setTimeout(() => {
+            content.style.maxHeight = '0';
+        }, 10);
+        
         // Restore parent section overflow when collapsed
         const sectionElement = content.closest('.nested-section');
         if (sectionElement) {
@@ -2460,10 +2490,11 @@ window.toggleNestedSection = function(sectionId, event) {
         setTimeout(() => {
             if (content.classList.contains('collapsed')) {
                 content.style.display = 'none';
+                content.style.overflow = '';
             }
             // Clear toggling flag
             content.dataset.toggling = 'false';
-        }, 300); // Match the CSS transition duration
+        }, 320); // Match the CSS transition duration + small buffer
         icon.classList.remove('fa-chevron-down');
         icon.classList.add('fa-chevron-right');
     }
