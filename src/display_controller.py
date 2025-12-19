@@ -799,6 +799,7 @@ class DisplayController:
             # Initialize with cached data for fast startup - let background updates refresh naturally
             logger.info("Starting display with cached data (fast startup mode)")
             self.current_display_mode = self.available_modes[self.current_mode_index] if self.available_modes else 'none'
+            logger.info(f"Initial mode set to: {self.current_display_mode} (index: {self.current_mode_index}, total modes: {len(self.available_modes)})")
             
             while True:
                 # Handle on-demand commands before rendering
@@ -824,8 +825,11 @@ class DisplayController:
                     self.on_demand_schedule_override = False
 
                 if not self.is_display_active:
+                    logger.debug(f"Display not active (is_display_active={self.is_display_active}), sleeping...")
                     self._sleep_with_plugin_updates(60)
                     continue
+                
+                logger.debug(f"Display active, processing mode: {self.current_display_mode}")
                 
                 # Plugins update on their own schedules - no forced sync updates needed
                 # Each plugin has its own update_interval and background services
@@ -875,6 +879,8 @@ class DisplayController:
                     self._active_dynamic_mode = None
 
                 manager_to_display = None
+                
+                logger.debug(f"Processing mode: {active_mode}, available_modes: {len(self.available_modes)}, plugin_modes: {list(self.plugin_modes.keys())}")
                 
                 # Handle plugin-based display modes
                 if active_mode in self.plugin_modes:
