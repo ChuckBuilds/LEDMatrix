@@ -825,11 +825,11 @@ class DisplayController:
                     self.on_demand_schedule_override = False
 
                 if not self.is_display_active:
-                    logger.debug(f"Display not active (is_display_active={self.is_display_active}), sleeping...")
+                    logger.info(f"Display not active (is_display_active={self.is_display_active}), sleeping...")
                     self._sleep_with_plugin_updates(60)
                     continue
                 
-                logger.debug(f"Display active, processing mode: {self.current_display_mode}")
+                logger.info(f"Display active, processing mode: {self.current_display_mode}")
                 
                 # Plugins update on their own schedules - no forced sync updates needed
                 # Each plugin has its own update_interval and background services
@@ -880,7 +880,7 @@ class DisplayController:
 
                 manager_to_display = None
                 
-                logger.debug(f"Processing mode: {active_mode}, available_modes: {len(self.available_modes)}, plugin_modes: {list(self.plugin_modes.keys())}")
+                logger.info(f"Processing mode: {active_mode}, available_modes: {len(self.available_modes)}, plugin_modes: {list(self.plugin_modes.keys())}")
                 
                 # Handle plugin-based display modes
                 if active_mode in self.plugin_modes:
