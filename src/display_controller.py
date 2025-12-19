@@ -280,6 +280,7 @@ class DisplayController:
         
         # Schedule management
         self.is_display_active = True
+        self._was_display_active = True  # Track previous state for schedule change detection
         
         # Publish initial on-demand state
         try:
@@ -302,12 +303,14 @@ class DisplayController:
         # If schedule config doesn't exist or is empty, default to always active
         if not schedule_config:
             self.is_display_active = True
+        self._was_display_active = True  # Track previous state for schedule change detection
             return
         
         # Check if schedule is explicitly disabled
         # Default to True (schedule enabled) if 'enabled' key is missing for backward compatibility
         if 'enabled' in schedule_config and not schedule_config.get('enabled', True):
             self.is_display_active = True
+        self._was_display_active = True  # Track previous state for schedule change detection
             logger.debug("Schedule is disabled - display always active")
             return
             
@@ -334,8 +337,13 @@ class DisplayController:
             
             # Check if this day is enabled
             if not day_config.get('enabled', True):
+                was_active = getattr(self, '_was_display_active', True)
                 self.is_display_active = False
-                logger.debug("Display inactive - %s is disabled in schedule", current_day)
+                if was_active:
+                    logger.info("Schedule activated: Display is now INACTIVE (%s is disabled in schedule). Display will be blanked.", current_day)
+                else:
+                    logger.debug("Display inactive - %s is disabled in schedule", current_day)
+                self._was_display_active = self.is_display_active
                 return
             
             start_time_str = day_config.get('start_time', '07:00')
@@ -358,18 +366,35 @@ class DisplayController:
                 # Overnight case: start and end on different days
                 self.is_display_active = current_time_only >= start_time or current_time_only <= end_time
             
-            # Log schedule state changes for debugging
+            # Track previous state to detect changes
+            was_active = getattr(self, '_was_display_active', True)
+            
+            # Log schedule state changes
             if not self.is_display_active:
-                logger.debug("Display inactive - outside %s schedule window (%s - %s)", 
-                           schedule_type, start_time_str, end_time_str)
+                if was_active:
+                    # State changed from active to inactive - schedule kicked in
+                    logger.info("Schedule activated: Display is now INACTIVE (outside %s schedule window %s - %s). Display will be blanked.", 
+                               schedule_type, start_time_str, end_time_str)
+                else:
+                    logger.debug("Display inactive - outside %s schedule window (%s - %s)", 
+                               schedule_type, start_time_str, end_time_str)
             else:
-                logger.debug("Display active - within %s schedule window (%s - %s)", 
-                           schedule_type, start_time_str, end_time_str)
+                if not was_active:
+                    # State changed from inactive to active
+                    logger.info("Schedule activated: Display is now ACTIVE (within %s schedule window %s - %s)", 
+                               schedule_type, start_time_str, end_time_str)
+                else:
+                    logger.debug("Display active - within %s schedule window (%s - %s)", 
+                               schedule_type, start_time_str, end_time_str)
+            
+            # Store current state for next check
+            self._was_display_active = self.is_display_active
                 
         except ValueError as e:
             logger.warning("Invalid schedule format for %s schedule: %s (start: %s, end: %s). Defaulting to active.", 
                          schedule_type, e, start_time_str, end_time_str)
             self.is_display_active = True
+        self._was_display_active = True  # Track previous state for schedule change detection
 
     def _update_modules(self):
         """Update all plugin modules."""
@@ -821,10 +846,19 @@ class DisplayController:
                         logger.info("On-demand override keeping display active during scheduled downtime")
                     self.on_demand_schedule_override = True
                     self.is_display_active = True
+        self._was_display_active = True  # Track previous state for schedule change detection
                 elif not self.on_demand_active and self.on_demand_schedule_override:
                     self.on_demand_schedule_override = False
 
                 if not self.is_display_active:
+                    # Clear display when schedule makes it inactive to ensure blank screen
+                    # (not showing initialization screen)
+                    try:
+                        self.display_manager.clear()
+                        self.display_manager.update_display()
+                    except Exception as e:
+                        logger.debug(f"Error clearing display when inactive: {e}")
+                    
                     logger.info(f"Display not active (is_display_active={self.is_display_active}), sleeping...")
                     self._sleep_with_plugin_updates(60)
                     continue
