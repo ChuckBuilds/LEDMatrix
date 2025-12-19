@@ -2,6 +2,8 @@ import time
 import logging
 import sys
 import os
+import json
+from pathlib import Path
 from typing import Dict, Any, List, Optional
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed  # pylint: disable=no-name-in-module
@@ -17,6 +19,9 @@ from src.logging_config import get_logger
 # Get logger with consistent configuration
 logger = get_logger(__name__)
 DEFAULT_DYNAMIC_DURATION_CAP = 180.0
+
+# WiFi status message file path (same as used in wifi_manager.py)
+WIFI_STATUS_FILE = None  # Will be initialized in __init__
 
 class DisplayController:
     def __init__(self):
@@ -95,6 +100,16 @@ class DisplayController:
         self.on_demand_last_event: Optional[str] = None
         self.on_demand_schedule_override = False
         self.rotation_resume_index: Optional[int] = None
+        
+        # WiFi status message tracking
+        global WIFI_STATUS_FILE
+        if WIFI_STATUS_FILE is None:
+            # Resolve project root (same logic as wifi_manager.py)
+            project_root = Path(__file__).parent.parent.parent.resolve()
+            WIFI_STATUS_FILE = project_root / "config" / "wifi_status.json"
+        self.wifi_status_file = WIFI_STATUS_FILE
+        self.wifi_status_active = False
+        self.wifi_status_expires_at: Optional[float] = None
         
         try:
             logger.info("Attempting to import plugin system...")
@@ -791,6 +806,9 @@ class DisplayController:
                 self._check_on_demand_expiration()
                 self._tick_plugin_updates()
                 
+                # Clean up expired WiFi status messages
+                self._cleanup_expired_wifi_status()
+                
                 # Periodic memory monitoring (if enabled)
                 if self._enable_memory_logging:
                     self._log_memory_stats_if_due()
@@ -816,8 +834,24 @@ class DisplayController:
                 # This also cleans up expired updates to prevent memory leaks
                 self.display_manager.process_deferred_updates()
 
-                # Check for live priority content and switch to it immediately
+                # Check for WiFi status message (interrupts normal rotation, but respects on-demand)
+                # Priority: on-demand > wifi-status > live-priority > normal rotation
+                wifi_status_data = None
                 if not self.on_demand_active:
+                    wifi_status_data = self._check_wifi_status_message()
+                    if wifi_status_data:
+                        # Display WiFi status message and skip normal rotation
+                        if self._display_wifi_status_message(wifi_status_data):
+                            # Sleep for a short time to show the message
+                            # Use a short sleep to allow for quick updates
+                            self._sleep_with_plugin_updates(0.5)
+                            continue  # Skip to next iteration, don't rotate
+                        else:
+                            # Display failed, clear the status and continue normally
+                            wifi_status_data = None
+
+                # Check for live priority content and switch to it immediately
+                if not self.on_demand_active and not wifi_status_data:
                     live_priority_mode = self._check_live_priority()
                     if live_priority_mode and self.current_display_mode != live_priority_mode:
                         logger.info("Live content detected - switching immediately to %s", live_priority_mode)
@@ -1317,6 +1351,179 @@ class DisplayController:
             logger.exception("Unexpected error in display controller")
         finally:
             self.cleanup()
+
+    def _check_wifi_status_message(self) -> Optional[Dict[str, Any]]:
+        """
+        Safely check for WiFi status message file.
+        
+        Returns:
+            Dict with 'message', 'timestamp', 'duration' if valid message exists, None otherwise.
+            Returns None on any error or if message is expired/invalid.
+        """
+        try:
+            # Check if file exists
+            if not self.wifi_status_file or not self.wifi_status_file.exists():
+                return None
+            
+            # Read and parse JSON file
+            try:
+                with open(self.wifi_status_file, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+            except (json.JSONDecodeError, IOError, OSError) as e:
+                logger.debug(f"Error reading WiFi status file (will be cleaned up): {e}")
+                # Clean up corrupted file
+                try:
+                    self.wifi_status_file.unlink()
+                except Exception:
+                    pass
+                return None
+            
+            # Validate required fields
+            if not isinstance(data, dict):
+                logger.debug("WiFi status file contains invalid data (not a dict)")
+                return None
+            
+            message = data.get('message')
+            timestamp = data.get('timestamp')
+            duration = data.get('duration', 5)
+            
+            if not message or not isinstance(message, str):
+                logger.debug("WiFi status file missing or invalid message field")
+                return None
+            
+            if not isinstance(timestamp, (int, float)) or timestamp <= 0:
+                logger.debug("WiFi status file missing or invalid timestamp field")
+                return None
+            
+            if not isinstance(duration, (int, float)) or duration < 0:
+                duration = 5  # Default to 5 seconds if invalid
+            
+            # Check if message has expired
+            current_time = time.time()
+            expires_at = timestamp + duration
+            
+            if current_time >= expires_at:
+                logger.debug(f"WiFi status message expired (age: {current_time - timestamp:.1f}s, duration: {duration}s)")
+                # Clean up expired file
+                try:
+                    self.wifi_status_file.unlink()
+                except Exception:
+                    pass
+                return None
+            
+            # Message is valid and not expired
+            return {
+                'message': message,
+                'timestamp': timestamp,
+                'duration': duration,
+                'expires_at': expires_at
+            }
+            
+        except Exception as e:
+            # Catch-all for any unexpected errors - log but don't break the display
+            logger.debug(f"Unexpected error checking WiFi status message: {e}")
+            return None
+    
+    def _display_wifi_status_message(self, status_data: Dict[str, Any]) -> bool:
+        """
+        Safely display a WiFi status message on the LED matrix.
+        
+        Args:
+            status_data: Dict with 'message', 'expires_at' from _check_wifi_status_message()
+        
+        Returns:
+            True if message was displayed successfully, False otherwise.
+        """
+        try:
+            message = status_data.get('message', '')
+            if not message:
+                return False
+            
+            # Clear display
+            self.display_manager.clear()
+            
+            # Get display dimensions for centering
+            width = self.display_manager.width
+            height = self.display_manager.height
+            
+            # Split long messages into multiple lines if needed
+            # Simple word wrapping for messages longer than ~20 characters
+            max_chars_per_line = min(20, width // 6)  # Rough estimate based on font width
+            words = message.split()
+            lines = []
+            current_line = []
+            current_length = 0
+            
+            for word in words:
+                word_length = len(word) + 1  # +1 for space
+                if current_length + word_length > max_chars_per_line and current_line:
+                    lines.append(' '.join(current_line))
+                    current_line = [word]
+                    current_length = len(word)
+                else:
+                    current_line.append(word)
+                    current_length += word_length
+            
+            if current_line:
+                lines.append(' '.join(current_line))
+            
+            # Limit to 2 lines max (for small displays)
+            lines = lines[:2]
+            
+            # Calculate vertical spacing
+            font_height = self.display_manager.get_font_height(self.display_manager.small_font)
+            total_height = len(lines) * font_height
+            start_y = max(0, (height - total_height) // 2)
+            
+            # Draw each line
+            for i, line in enumerate(lines):
+                y_pos = start_y + (i * font_height)
+                # Use small font and center horizontally
+                self.display_manager.draw_text(
+                    line,
+                    y=y_pos,
+                    color=(255, 255, 255),  # White text
+                    small_font=True
+                )
+            
+            # Update display
+            self.display_manager.update_display()
+            
+            # Track that WiFi status is active
+            self.wifi_status_active = True
+            self.wifi_status_expires_at = status_data.get('expires_at')
+            
+            logger.debug(f"Displayed WiFi status message: {message[:50]}")
+            return True
+            
+        except Exception as e:
+            # Catch-all for any display errors - log but don't break
+            logger.warning(f"Error displaying WiFi status message: {e}")
+            self.wifi_status_active = False
+            self.wifi_status_expires_at = None
+            return False
+    
+    def _cleanup_expired_wifi_status(self):
+        """Safely clean up expired WiFi status message file."""
+        try:
+            if self.wifi_status_active and self.wifi_status_expires_at:
+                current_time = time.time()
+                if current_time >= self.wifi_status_expires_at:
+                    # Message has expired, clean up
+                    if self.wifi_status_file and self.wifi_status_file.exists():
+                        try:
+                            self.wifi_status_file.unlink()
+                            logger.debug("Cleaned up expired WiFi status message file")
+                        except Exception as e:
+                            logger.debug(f"Could not delete WiFi status file: {e}")
+                    
+                    self.wifi_status_active = False
+                    self.wifi_status_expires_at = None
+        except Exception as e:
+            logger.debug(f"Error cleaning up WiFi status: {e}")
+            # Reset state on any error
+            self.wifi_status_active = False
+            self.wifi_status_expires_at = None
 
     def cleanup(self):
         """Clean up resources."""

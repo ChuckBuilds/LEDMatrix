@@ -44,6 +44,9 @@ DEFAULT_AP_SSID = "LEDMatrix-Setup"
 DEFAULT_AP_PASSWORD = "ledmatrix123"
 DEFAULT_AP_CHANNEL = 7
 
+# LED status message file (for display_controller integration)
+LED_STATUS_FILE = None  # Will be set dynamically
+
 
 @dataclass
 class WiFiNetwork:
@@ -82,6 +85,12 @@ class WiFiManager:
         self.config_path.parent.mkdir(parents=True, exist_ok=True)
         self._load_config()
         
+        # Set LED status file path (for display_controller integration)
+        global LED_STATUS_FILE
+        if LED_STATUS_FILE is None:
+            project_root = self.config_path.parent.parent
+            LED_STATUS_FILE = project_root / "config" / "wifi_status.json"
+        
         # Check which tools are available
         self.has_nmcli = self._check_command("nmcli")
         self.has_iwlist = self._check_command("iwlist")
@@ -90,6 +99,39 @@ class WiFiManager:
         
         logger.info(f"WiFi Manager initialized - nmcli: {self.has_nmcli}, iwlist: {self.has_iwlist}, "
                    f"hostapd: {self.has_hostapd}, dnsmasq: {self.has_dnsmasq}")
+    
+    def _show_led_message(self, message: str, duration: int = 5):
+        """
+        Show a WiFi status message on the LED display.
+        Writes to a JSON file that display_controller can read.
+        
+        Args:
+            message: Text to display
+            duration: How long to show message (seconds)
+        """
+        try:
+            if LED_STATUS_FILE is None:
+                return
+            
+            status = {
+                'message': message,
+                'timestamp': time.time(),
+                'duration': duration
+            }
+            LED_STATUS_FILE.parent.mkdir(parents=True, exist_ok=True)
+            with open(LED_STATUS_FILE, 'w') as f:
+                json.dump(status, f)
+            logger.info(f"LED message: {message}")
+        except Exception as e:
+            logger.debug(f"Could not write LED status message: {e}")
+    
+    def _clear_led_message(self):
+        """Clear any WiFi status message from LED display."""
+        try:
+            if LED_STATUS_FILE and LED_STATUS_FILE.exists():
+                LED_STATUS_FILE.unlink()
+        except Exception as e:
+            logger.debug(f"Could not clear LED status message: {e}")
     
     def _check_command(self, command: str) -> bool:
         """Check if a command is available"""
@@ -417,14 +459,22 @@ class WiFiManager:
     def _is_ap_mode_active(self) -> bool:
         """Check if access point mode is currently active"""
         try:
-            # Check if hostapd is running
+            # Check if hostapd is running (captive portal mode)
             result = subprocess.run(
                 ["systemctl", "is-active", HOSTAPD_SERVICE],
                 capture_output=True,
                 text=True,
                 timeout=2
             )
-            return result.stdout.strip() == "active"
+            if result.stdout.strip() == "active":
+                return True
+            
+            # Check if nmcli hotspot is active (fallback mode)
+            hotspot_status = self._get_ap_status_nmcli()
+            if hotspot_status.get('active'):
+                return True
+            
+            return False
         except:
             return False
     
@@ -649,7 +699,44 @@ class WiFiManager:
     def _connect_nmcli(self, ssid: str, password: str) -> Tuple[bool, str]:
         """Connect using nmcli"""
         try:
-            # Save network to config
+            # Show LED message
+            self._show_led_message(f"Connecting to {ssid}...", duration=10)
+            
+            # First, check if connection already exists and try to activate it
+            check_result = subprocess.run(
+                ["nmcli", "connection", "show", ssid],
+                capture_output=True,
+                text=True,
+                timeout=5
+            )
+            
+            if check_result.returncode == 0:
+                # Connection exists, try to activate it first (faster and more reliable)
+                logger.info(f"Found existing connection for {ssid}, activating...")
+                result = subprocess.run(
+                    ["nmcli", "connection", "up", ssid],
+                    capture_output=True,
+                    text=True,
+                    timeout=30
+                )
+                
+                if result.returncode == 0:
+                    # Wait a moment for connection to stabilize
+                    time.sleep(2)
+                    
+                    # Verify connection
+                    status = self.get_wifi_status()
+                    if status.connected and status.ssid == ssid:
+                        # Save network to config
+                        self._save_network(ssid, password)
+                        
+                        ip = status.ip_address or "Unknown"
+                        self._show_led_message(f"Connected! {ip}", duration=5)
+                        logger.info(f"Successfully connected to {ssid} with IP {ip}")
+                        return True, f"Connected to {ssid}"
+            
+            # No existing connection or activation failed, create new connection
+            logger.info(f"Creating new connection for {ssid}...")
             self._save_network(ssid, password)
             
             # Connect using nmcli
@@ -666,14 +753,27 @@ class WiFiManager:
             )
             
             if result.returncode == 0:
-                logger.info(f"Successfully connected to {ssid}")
-                return True, f"Connected to {ssid}"
+                # Wait a moment for connection to stabilize
+                time.sleep(2)
+                
+                # Verify connection and get IP
+                status = self.get_wifi_status()
+                if status.connected:
+                    ip = status.ip_address or "Unknown"
+                    self._show_led_message(f"Connected! {ip}", duration=5)
+                    logger.info(f"Successfully connected to {ssid} with IP {ip}")
+                    return True, f"Connected to {ssid}"
+                else:
+                    self._show_led_message("Connection failed", duration=5)
+                    return False, "Connection command succeeded but not connected"
             else:
                 error_msg = result.stderr.strip() or result.stdout.strip()
                 logger.error(f"Failed to connect to {ssid}: {error_msg}")
+                self._show_led_message("Connection failed", duration=5)
                 return False, error_msg
         except Exception as e:
             logger.error(f"Error connecting with nmcli: {e}")
+            self._show_led_message("Connection error", duration=5)
             return False, str(e)
     
     def _connect_wpa_supplicant(self, ssid: str, password: str) -> Tuple[bool, str]:
@@ -825,6 +925,8 @@ class WiFiManager:
         - WiFi is NOT connected AND
         - Ethernet is NOT connected
         
+        Tries hostapd/dnsmasq first (captive portal), falls back to nmcli hotspot if that fails.
+        
         Returns:
             Tuple of (success, message)
         """
@@ -846,8 +948,23 @@ class WiFiManager:
             if self._is_ethernet_connected():
                 return False, "Cannot enable AP mode while Ethernet is connected"
             
-            if not self.has_hostapd or not self.has_dnsmasq:
-                return False, "hostapd and dnsmasq are required for AP mode"
+            # Try hostapd/dnsmasq first (captive portal mode)
+            if self.has_hostapd and self.has_dnsmasq:
+                result = self._enable_ap_mode_hostapd()
+                if result[0]:
+                    return result
+            
+            # Fallback to nmcli hotspot (simpler, no captive portal)
+            if self.has_nmcli:
+                logger.info("hostapd/dnsmasq failed or unavailable, trying nmcli hotspot fallback...")
+                self._show_led_message("Setup Mode", duration=5)
+                return self._enable_ap_mode_nmcli_hotspot()
+            
+            return False, "No WiFi tools available (nmcli, hostapd, or dnsmasq required)"
+    
+    def _enable_ap_mode_hostapd(self) -> Tuple[bool, str]:
+        """Enable AP mode using hostapd and dnsmasq (captive portal)"""
+        try:
             
             # Create hostapd config
             self._create_hostapd_config()
@@ -967,6 +1084,7 @@ class WiFiManager:
                     # Continue anyway - port 5000 will still work
                 
                 logger.info("AP mode enabled successfully")
+                self._show_led_message("Setup Mode Active", duration=5)
                 return True, "AP mode enabled"
             except Exception as e:
                 logger.error(f"Error starting AP services: {e}")
@@ -974,6 +1092,105 @@ class WiFiManager:
         except Exception as e:
             logger.error(f"Error enabling AP mode: {e}")
             return False, str(e)
+    
+    def _enable_ap_mode_nmcli_hotspot(self) -> Tuple[bool, str]:
+        """
+        Enable AP mode using nmcli hotspot (simpler fallback, no captive portal).
+        This is a fallback when hostapd/dnsmasq is not available or fails.
+        """
+        try:
+            # Stop any existing connection
+            self.disconnect_from_network()
+            time.sleep(1)
+            
+            # Delete any existing hotspot connections
+            for conn_name in ["Hotspot", "LEDMatrix-Setup-AP", "TickerSetup-AP"]:
+                subprocess.run(
+                    ["nmcli", "connection", "delete", conn_name],
+                    capture_output=True,
+                    timeout=10
+                )
+            
+            # Get AP settings from config
+            ap_ssid = self.config.get("ap_ssid", DEFAULT_AP_SSID)
+            ap_password = self.config.get("ap_password", DEFAULT_AP_PASSWORD)
+            
+            # Use nmcli hotspot command (simpler, works with Broadcom chips)
+            logger.info(f"Creating hotspot with nmcli: {ap_ssid}")
+            cmd = [
+                "nmcli", "device", "wifi", "hotspot",
+                "ifname", "wlan0",
+                "con-name", "LEDMatrix-Setup-AP",
+                "ssid", ap_ssid,
+                "band", "bg"  # 2.4GHz for maximum compatibility
+            ]
+            
+            if ap_password:
+                cmd.extend(["password", ap_password])
+            
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=30
+            )
+            
+            if result.returncode == 0:
+                logger.info(f"AP mode started via nmcli hotspot: {ap_ssid}")
+                time.sleep(2)
+                
+                # Verify hotspot is running
+                status = self._get_ap_status_nmcli()
+                if status.get('active'):
+                    ip = status.get('ip', '192.168.4.1')
+                    logger.info(f"AP mode confirmed active at {ip}")
+                    self._show_led_message(f"Setup: {ip}", duration=5)
+                    return True, f"AP mode enabled (hotspot mode) - Access at {ip}:5000"
+                else:
+                    logger.error("AP mode started but not verified")
+                    return False, "AP mode started but verification failed"
+            else:
+                error_msg = result.stderr.strip() or result.stdout.strip()
+                logger.error(f"Failed to start AP mode via nmcli: {error_msg}")
+                self._show_led_message("AP mode failed", duration=5)
+                return False, f"Failed to start AP mode: {error_msg}"
+                
+        except Exception as e:
+            logger.error(f"Error starting AP mode with nmcli hotspot: {e}")
+            self._show_led_message("Setup mode error", duration=5)
+            return False, str(e)
+    
+    def _get_ap_status_nmcli(self) -> Dict:
+        """
+        Get AP status using nmcli (for hotspot mode).
+        
+        Returns:
+            Dict with AP status info
+        """
+        try:
+            # Check if hotspot connection is active
+            result = subprocess.run(
+                ["nmcli", "-t", "-f", "NAME,TYPE,DEVICE", "connection", "show", "--active"],
+                capture_output=True,
+                text=True,
+                timeout=5
+            )
+            
+            for line in result.stdout.strip().split('\n'):
+                parts = line.split(':')
+                if len(parts) >= 2 and 'hotspot' in parts[1].lower():
+                    return {
+                        'active': True,
+                        'ssid': self.config.get("ap_ssid", DEFAULT_AP_SSID),
+                        'ip': '192.168.4.1',  # nmcli hotspot uses this IP
+                        'interface': parts[2] if len(parts) > 2 else "wlan0"
+                    }
+            
+            return {'active': False}
+            
+        except Exception as e:
+            logger.error(f"Error getting AP status with nmcli: {e}")
+            return {'active': False}
     
     def disable_ap_mode(self) -> Tuple[bool, str]:
         """
@@ -986,21 +1203,51 @@ class WiFiManager:
             if not self._is_ap_mode_active():
                 return True, "AP mode not active"
             
+            # Check which AP mode is active and disable accordingly
+            # First check if hostapd is running (captive portal mode)
+            hostapd_active = False
+            try:
+                result = subprocess.run(
+                    ["systemctl", "is-active", HOSTAPD_SERVICE],
+                    capture_output=True,
+                    text=True,
+                    timeout=2
+                )
+                hostapd_active = result.stdout.strip() == "active"
+            except:
+                pass
+            
             # Stop services
             try:
-                subprocess.run(
-                    ["sudo", "systemctl", "stop", HOSTAPD_SERVICE],
-                    capture_output=True,
-                    timeout=10
-                )
-                subprocess.run(
-                    ["sudo", "systemctl", "stop", DNSMASQ_SERVICE],
-                    capture_output=True,
-                    timeout=10
-                )
+                if hostapd_active:
+                    # Disable hostapd/dnsmasq mode (captive portal)
+                    subprocess.run(
+                        ["sudo", "systemctl", "stop", HOSTAPD_SERVICE],
+                        capture_output=True,
+                        timeout=10
+                    )
+                    subprocess.run(
+                        ["sudo", "systemctl", "stop", DNSMASQ_SERVICE],
+                        capture_output=True,
+                        timeout=10
+                    )
+                else:
+                    # Disable nmcli hotspot mode (fallback)
+                    for conn_name in ["LEDMatrix-Setup-AP", "Hotspot", "TickerSetup-AP"]:
+                        subprocess.run(
+                            ["nmcli", "connection", "down", conn_name],
+                            capture_output=True,
+                            timeout=10
+                        )
+                        subprocess.run(
+                            ["nmcli", "connection", "delete", conn_name],
+                            capture_output=True,
+                            timeout=10
+                        )
                 
-                # Restore original dnsmasq config if backup exists
-                backup_path = f"{DNSMASQ_CONFIG_PATH}.backup"
+                # Restore original dnsmasq config if backup exists (only for hostapd mode)
+                if hostapd_active:
+                    backup_path = f"{DNSMASQ_CONFIG_PATH}.backup"
                 if os.path.exists(backup_path):
                     subprocess.run(
                         ["sudo", "cp", backup_path, str(DNSMASQ_CONFIG_PATH)],
@@ -1019,9 +1266,10 @@ class WiFiManager:
                     )
                     logger.info("Cleared dnsmasq captive portal config")
                 
-                # Remove iptables port forwarding rules and disable IP forwarding
-                try:
-                    # Check if iptables is available
+                # Remove iptables port forwarding rules and disable IP forwarding (only for hostapd mode)
+                if hostapd_active:
+                    try:
+                        # Check if iptables is available
                     iptables_check = subprocess.run(
                         ["which", "iptables"],
                         capture_output=True,
@@ -1053,17 +1301,17 @@ class WiFiManager:
                         capture_output=True,
                         timeout=5
                     )
-                    logger.info("Disabled IP forwarding")
-                except Exception as e:
-                    logger.warning(f"Could not remove iptables rules or disable forwarding: {e}")
-                    # Continue anyway
-                
-                # Clean up wlan0 IP configuration
-                subprocess.run(
-                    ["sudo", "ip", "addr", "del", "192.168.4.1/24", "dev", "wlan0"],
-                    capture_output=True,
-                    timeout=10
-                )
+                        logger.info("Disabled IP forwarding")
+                    except Exception as e:
+                        logger.warning(f"Could not remove iptables rules or disable forwarding: {e}")
+                        # Continue anyway
+                    
+                    # Clean up wlan0 IP configuration
+                    subprocess.run(
+                        ["sudo", "ip", "addr", "del", "192.168.4.1/24", "dev", "wlan0"],
+                        capture_output=True,
+                        timeout=10
+                    )
                 
                 # Restart NetworkManager to restore normal WiFi operation
                 subprocess.run(
