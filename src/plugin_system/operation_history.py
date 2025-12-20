@@ -50,7 +50,8 @@ class OperationHistory:
     def __init__(
         self,
         history_file: Optional[str] = None,
-        max_records: int = 1000
+        max_records: int = 1000,
+        lazy_load: bool = False
     ):
         """
         Initialize operation history.
@@ -58,18 +59,28 @@ class OperationHistory:
         Args:
             history_file: Path to file for persisting history
             max_records: Maximum number of records to keep
+            lazy_load: If True, defer loading history file until first access
         """
         self.logger = get_logger(__name__)
         self.history_file = Path(history_file) if history_file else None
         self.max_records = max_records
+        self._lazy_load = lazy_load
+        self._history_loaded = False
         
         # In-memory history
         self._history: List[OperationRecord] = []
         self._lock = threading.RLock()
         
-        # Load history from file if it exists
-        if self.history_file and self.history_file.exists():
+        # Load history from file if it exists (unless lazy loading)
+        if not self._lazy_load and self.history_file and self.history_file.exists():
             self._load_history()
+            self._history_loaded = True
+    
+    def _ensure_loaded(self) -> None:
+        """Ensure history is loaded (for lazy loading)."""
+        if not self._history_loaded and self.history_file and self.history_file.exists():
+            self._load_history()
+            self._history_loaded = True
     
     def record_operation(
         self,
@@ -96,6 +107,7 @@ class OperationHistory:
         Returns:
             Operation record ID
         """
+        self._ensure_loaded()
         import uuid
         record_id = operation_id or str(uuid.uuid4())
         
@@ -139,6 +151,7 @@ class OperationHistory:
         Returns:
             List of operation records, sorted by timestamp (newest first)
         """
+        self._ensure_loaded()
         with self._lock:
             history = self._history.copy()
         

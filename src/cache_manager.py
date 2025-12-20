@@ -71,20 +71,27 @@ class CacheManager:
                     with open(test_file, 'w') as f:
                         f.write('test')
                     os.remove(test_file)
+                    self.logger.info(f"Using system cache directory: {system_cache_dir}")
                     return system_cache_dir
                 except (IOError, OSError):
-                    self.logger.warning(f"Directory exists but is not writable: {system_cache_dir}")
+                    self.logger.debug(f"System cache directory exists but is not writable: {system_cache_dir}")
             else:
                 from pathlib import Path
                 from src.common.permission_utils import (
                     ensure_directory_permissions,
                     get_cache_dir_mode
                 )
-                ensure_directory_permissions(Path(system_cache_dir), get_cache_dir_mode())
-                if os.access(system_cache_dir, os.W_OK):
-                    return system_cache_dir
+                try:
+                    ensure_directory_permissions(Path(system_cache_dir), get_cache_dir_mode())
+                    if os.access(system_cache_dir, os.W_OK):
+                        self.logger.info(f"Using system cache directory: {system_cache_dir}")
+                        return system_cache_dir
+                except (OSError, IOError, PermissionError) as perm_error:
+                    # Permission errors are expected when running as non-root
+                    self.logger.debug(f"Could not create system cache directory (permission denied): {system_cache_dir}")
         except (OSError, IOError, PermissionError) as e:
-            self.logger.warning(f"Could not use /var/cache/ledmatrix: {e}", exc_info=True)
+            # Permission errors are expected when running as non-root, log at DEBUG level
+            self.logger.debug(f"System cache directory not available: {e}")
 
         # Attempt 2: User's home directory (handling sudo), but avoid /root preference
         try:
@@ -105,9 +112,10 @@ class CacheManager:
             with open(test_file, 'w') as f:
                 f.write('test')
             os.remove(test_file)
+            self.logger.info(f"Using user cache directory: {user_cache_dir}")
             return user_cache_dir
         except (OSError, IOError, PermissionError) as e:
-            self.logger.warning(f"Could not use user-specific cache directory: {e}", exc_info=True)
+            self.logger.warning(f"Could not use user-specific cache directory: {e}")
 
         # Attempt 3: /opt/ledmatrix/cache (alternative persistent location)
         try:

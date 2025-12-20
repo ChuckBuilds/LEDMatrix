@@ -35,7 +35,8 @@ class PluginOperationQueue:
     def __init__(
         self,
         history_file: Optional[str] = None,
-        max_history: int = 100
+        max_history: int = 100,
+        lazy_load: bool = False
     ):
         """
         Initialize operation queue.
@@ -43,10 +44,13 @@ class PluginOperationQueue:
         Args:
             history_file: Optional path to file for persisting operation history
             max_history: Maximum number of operations to keep in history
+            lazy_load: If True, defer loading history file until first access
         """
         self.logger = get_logger(__name__)
         self.history_file = Path(history_file) if history_file else None
         self.max_history = max_history
+        self._lazy_load = lazy_load
+        self._history_loaded = False
         
         # Operation tracking
         self._operations: Dict[str, PluginOperation] = {}
@@ -59,12 +63,19 @@ class PluginOperationQueue:
         self._worker_thread: Optional[threading.Thread] = None
         self._stop_event = threading.Event()
         
-        # Load history from file if it exists
-        if self.history_file and self.history_file.exists():
+        # Load history from file if it exists (unless lazy loading)
+        if not self._lazy_load and self.history_file and self.history_file.exists():
             self._load_history()
+            self._history_loaded = True
         
         # Start worker thread
         self._start_worker()
+    
+    def _ensure_loaded(self) -> None:
+        """Ensure history is loaded (for lazy loading)."""
+        if not self._history_loaded and self.history_file and self.history_file.exists():
+            self._load_history()
+            self._history_loaded = True
     
     def enqueue_operation(
         self,
@@ -129,6 +140,7 @@ class PluginOperationQueue:
         Returns:
             PluginOperation if found, None otherwise
         """
+        self._ensure_loaded()
         with self._lock:
             return self._operations.get(operation_id)
     
@@ -173,6 +185,7 @@ class PluginOperationQueue:
         Returns:
             List of operations, sorted by creation time (newest first)
         """
+        self._ensure_loaded()
         with self._lock:
             # Sort by creation time (newest first)
             history = sorted(

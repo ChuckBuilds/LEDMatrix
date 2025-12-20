@@ -55,42 +55,36 @@ schema_manager = SchemaManager(
 )
 
 # Initialize operation queue for plugin operations
+# Use lazy_load=True to defer file loading until first use (improves startup time)
 operation_queue = PluginOperationQueue(
     history_file=str(project_root / "data" / "plugin_operations.json"),
-    max_history=500
+    max_history=500,
+    lazy_load=True
 )
 
 # Initialize plugin state manager
+# Use lazy_load=True to defer file loading until first use (improves startup time)
 plugin_state_manager = PluginStateManager(
     state_file=str(project_root / "data" / "plugin_state.json"),
-    auto_save=True
+    auto_save=True,
+    lazy_load=True
 )
 
 # Initialize operation history
+# Use lazy_load=True to defer file loading until first use (improves startup time)
 operation_history = OperationHistory(
     history_file=str(project_root / "data" / "operation_history.json"),
-    max_records=1000
+    max_records=1000,
+    lazy_load=True
 )
 
 # Initialize health monitoring (if health tracker is available)
+# Deferred until first request to improve startup time
 health_monitor = None
-if hasattr(plugin_manager, 'health_tracker') and plugin_manager.health_tracker:
-    try:
-        health_monitor = PluginHealthMonitor(
-            health_tracker=plugin_manager.health_tracker,
-            check_interval=60.0,  # Check every minute
-            degraded_threshold=0.5,
-            unhealthy_threshold=0.8,
-            max_response_time=5.0
-        )
-        health_monitor.start_monitoring()
-        print("✓ Plugin health monitoring started")
-    except Exception as e:
-        print(f"⚠ Could not start health monitoring: {e}")
+_health_monitor_initialized = False
 
-# Discover and load plugins
-plugin_manager.discover_plugins()
-# Note: We don't auto-load plugins here since we only need metadata for the web interface
+# Plugin discovery is deferred until first API request that needs it
+# This improves startup time - endpoints will call discover_plugins() when needed
 
 # Register blueprints
 from web_interface.blueprints.pages_v3 import pages_v3
@@ -411,6 +405,35 @@ def index():
 def favicon():
     """Return 204 No Content for favicon to avoid 404 errors"""
     return '', 204
+
+def _initialize_health_monitor():
+    """Initialize health monitoring after server is ready to accept requests."""
+    global health_monitor, _health_monitor_initialized
+    if _health_monitor_initialized:
+        return
+    
+    if health_monitor is None and hasattr(plugin_manager, 'health_tracker') and plugin_manager.health_tracker:
+        try:
+            health_monitor = PluginHealthMonitor(
+                health_tracker=plugin_manager.health_tracker,
+                check_interval=60.0,  # Check every minute
+                degraded_threshold=0.5,
+                unhealthy_threshold=0.8,
+                max_response_time=5.0
+            )
+            health_monitor.start_monitoring()
+            print("✓ Plugin health monitoring started")
+        except Exception as e:
+            print(f"⚠ Could not start health monitoring: {e}")
+    
+    _health_monitor_initialized = True
+
+# Initialize health monitor on first request (using before_request for compatibility)
+@app.before_request
+def check_health_monitor():
+    """Ensure health monitor is initialized on first request."""
+    if not _health_monitor_initialized:
+        _initialize_health_monitor()
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000, debug=True)

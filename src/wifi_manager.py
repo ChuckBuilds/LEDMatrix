@@ -1125,6 +1125,9 @@ class WiFiManager:
                 return self._enable_ap_mode_nmcli_hotspot()
             
             return False, "No WiFi tools available (nmcli, hostapd, or dnsmasq required)"
+        except Exception as e:
+            logger.error(f"Error in enable_ap_mode: {e}")
+            return False, str(e)
     
     def _enable_ap_mode_hostapd(self) -> Tuple[bool, str]:
         """Enable AP mode using hostapd and dnsmasq (captive portal)"""
@@ -1434,37 +1437,37 @@ class WiFiManager:
                 if hostapd_active:
                     try:
                         # Check if iptables is available
-                    iptables_check = subprocess.run(
-                        ["which", "iptables"],
-                        capture_output=True,
-                        timeout=2
-                    )
-                    
-                    if iptables_check.returncode == 0:
-                        # Remove NAT redirect rule
+                        iptables_check = subprocess.run(
+                            ["which", "iptables"],
+                            capture_output=True,
+                            timeout=2
+                        )
+                        
+                        if iptables_check.returncode == 0:
+                            # Remove NAT redirect rule
+                            subprocess.run(
+                                ["sudo", "iptables", "-t", "nat", "-D", "PREROUTING", "-i", "wlan0", "-p", "tcp", "--dport", "80", "-j", "REDIRECT", "--to-port", "5000"],
+                                capture_output=True,
+                                timeout=5
+                            )
+                            
+                            # Remove INPUT rule
+                            subprocess.run(
+                                ["sudo", "iptables", "-D", "INPUT", "-i", "wlan0", "-p", "tcp", "--dport", "80", "-j", "ACCEPT"],
+                                capture_output=True,
+                                timeout=5
+                            )
+                            
+                            logger.info("Removed iptables port forwarding rules")
+                        else:
+                            logger.debug("iptables not available, skipping rule removal")
+                        
+                        # Disable IP forwarding (restore to default client mode)
                         subprocess.run(
-                            ["sudo", "iptables", "-t", "nat", "-D", "PREROUTING", "-i", "wlan0", "-p", "tcp", "--dport", "80", "-j", "REDIRECT", "--to-port", "5000"],
+                            ["sudo", "sysctl", "-w", "net.ipv4.ip_forward=0"],
                             capture_output=True,
                             timeout=5
                         )
-                        
-                        # Remove INPUT rule
-                        subprocess.run(
-                            ["sudo", "iptables", "-D", "INPUT", "-i", "wlan0", "-p", "tcp", "--dport", "80", "-j", "ACCEPT"],
-                            capture_output=True,
-                            timeout=5
-                        )
-                        
-                        logger.info("Removed iptables port forwarding rules")
-                    else:
-                        logger.debug("iptables not available, skipping rule removal")
-                    
-                    # Disable IP forwarding (restore to default client mode)
-                    subprocess.run(
-                        ["sudo", "sysctl", "-w", "net.ipv4.ip_forward=0"],
-                        capture_output=True,
-                        timeout=5
-                    )
                         logger.info("Disabled IP forwarding")
                     except Exception as e:
                         logger.warning(f"Could not remove iptables rules or disable forwarding: {e}")

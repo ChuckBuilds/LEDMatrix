@@ -83,7 +83,8 @@ class PluginStateManager:
     def __init__(
         self,
         state_file: Optional[str] = None,
-        auto_save: bool = True
+        auto_save: bool = True,
+        lazy_load: bool = False
     ):
         """
         Initialize state manager.
@@ -91,10 +92,13 @@ class PluginStateManager:
         Args:
             state_file: Path to file for persisting state
             auto_save: Whether to automatically save state on changes
+            lazy_load: If True, defer loading state file until first access
         """
         self.logger = get_logger(__name__)
         self.state_file = Path(state_file) if state_file else None
         self.auto_save = auto_save
+        self._lazy_load = lazy_load
+        self._state_loaded = False
         
         # State storage
         self._states: Dict[str, PluginState] = {}
@@ -106,9 +110,16 @@ class PluginStateManager:
         # Threading
         self._lock = threading.RLock()
         
-        # Load state from file if it exists
-        if self.state_file and self.state_file.exists():
+        # Load state from file if it exists (unless lazy loading)
+        if not self._lazy_load and self.state_file and self.state_file.exists():
             self._load_state()
+            self._state_loaded = True
+    
+    def _ensure_loaded(self) -> None:
+        """Ensure state is loaded (for lazy loading)."""
+        if not self._state_loaded and self.state_file and self.state_file.exists():
+            self._load_state()
+            self._state_loaded = True
     
     def get_plugin_state(self, plugin_id: str) -> Optional[PluginState]:
         """
@@ -120,6 +131,7 @@ class PluginStateManager:
         Returns:
             PluginState if found, None otherwise
         """
+        self._ensure_loaded()
         with self._lock:
             return self._states.get(plugin_id)
     
@@ -130,6 +142,7 @@ class PluginStateManager:
         Returns:
             Dictionary mapping plugin_id to PluginState
         """
+        self._ensure_loaded()
         with self._lock:
             return self._states.copy()
     
@@ -150,6 +163,7 @@ class PluginStateManager:
         Returns:
             True if update successful
         """
+        self._ensure_loaded()
         with self._lock:
             # Get current state or create new
             current_state = self._states.get(plugin_id)
@@ -287,6 +301,7 @@ class PluginStateManager:
         Returns:
             True if removal successful
         """
+        self._ensure_loaded()
         with self._lock:
             if plugin_id in self._states:
                 old_state = self._states[plugin_id]

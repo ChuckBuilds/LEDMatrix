@@ -47,6 +47,9 @@ RestartSec=10
 StandardOutput=syslog
 StandardError=syslog
 SyslogIdentifier=ledmatrix-web
+# Automatically create and manage cache directory
+CacheDirectory=ledmatrix
+CacheDirectoryMode=0775
 
 [Install]
 WantedBy=multi-user.target
@@ -56,6 +59,32 @@ EOF
 # Write the service file to systemd directory
 echo "Writing service file to /etc/systemd/system/ledmatrix-web.service"
 echo "$WEB_SERVICE_FILE_CONTENT" > /etc/systemd/system/ledmatrix-web.service
+
+# Ensure cache directory exists with proper permissions
+# This is a fallback for older systemd versions that don't support CacheDirectory
+# Systemd 239+ will automatically create it via CacheDirectory directive
+echo "Setting up cache directory..."
+CACHE_DIR="/var/cache/ledmatrix"
+if [ ! -d "$CACHE_DIR" ]; then
+    mkdir -p "$CACHE_DIR"
+    # Set group ownership to allow both root and web user access
+    # Try to use ACTUAL_USER's group, fallback to root if that fails
+    if getent group "$ACTUAL_USER" > /dev/null 2>&1; then
+        chown root:"$ACTUAL_USER" "$CACHE_DIR" 2>/dev/null || chown root:root "$CACHE_DIR"
+    else
+        chown root:root "$CACHE_DIR"
+    fi
+    chmod 775 "$CACHE_DIR"
+    echo "✓ Cache directory created: $CACHE_DIR"
+else
+    # Ensure permissions are correct
+    chmod 775 "$CACHE_DIR" 2>/dev/null || true
+    # Try to set group ownership if possible
+    if getent group "$ACTUAL_USER" > /dev/null 2>&1; then
+        chown root:"$ACTUAL_USER" "$CACHE_DIR" 2>/dev/null || true
+    fi
+    echo "✓ Cache directory exists: $CACHE_DIR"
+fi
 
 # Reload systemd to recognize the new service
 echo "Reloading systemd..."

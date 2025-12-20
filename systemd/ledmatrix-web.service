@@ -20,6 +20,9 @@ RestartSec=10
 StandardOutput=syslog
 StandardError=syslog
 SyslogIdentifier=ledmatrix-web
+# Automatically create and manage cache directory
+CacheDirectory=ledmatrix
+CacheDirectoryMode=0775
 
 [Install]
 WantedBy=multi-user.target
