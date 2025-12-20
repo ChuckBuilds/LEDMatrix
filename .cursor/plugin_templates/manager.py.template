@@ -72,8 +72,10 @@ class PluginClassName(BasePlugin):
         except Exception as e:
             self.logger.error(f"Failed to update data: {e}")
             # Use cached data if available, even if expired
-            if cached:
-                self.data = cached
+            # Use a very large max_age (1 year) to effectively bypass expiration for fallback
+            expired_cached = self.cache_manager.get(cache_key, max_age=31536000)
+            if expired_cached:
+                self.data = expired_cached
                 self.logger.warning("Using expired cache due to update failure")
     
     def display(self, force_clear: bool = False) -> None:
