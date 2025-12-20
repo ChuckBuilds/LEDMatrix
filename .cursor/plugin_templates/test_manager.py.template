@@ -26,6 +26,9 @@ class Test{{PLUGIN_CLASS_NAME}}(PluginTestCase):
         """Set up test fixtures."""
         super().setUp()
         
+        # Update plugin_id to match the plugin being tested
+        self.plugin_id = '{{PLUGIN_ID}}'
+        
         # Create plugin instance
         self.plugin = self.create_plugin_instance(
             {{PLUGIN_CLASS_NAME}},
