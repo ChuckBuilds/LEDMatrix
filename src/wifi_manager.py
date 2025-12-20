@@ -456,6 +456,43 @@ class WiFiManager:
             logger.debug(f"Error checking Ethernet connection: {e}")
             return False
     
+    def _has_connectivity_safety(self) -> bool:
+        """
+        Check if there's a safe fallback connectivity option available.
+        
+        Returns True if either:
+        - Ethernet is connected, OR
+        - WiFi radio is enabled (even if not connected to a network)
+        
+        This helps prevent lockout scenarios where we might disable WiFi
+        without having Ethernet as backup.
+        
+        Returns:
+            True if there's a safe connectivity option available
+        """
+        try:
+            # Check if Ethernet is connected (safest fallback)
+            if self._is_ethernet_connected():
+                return True
+            
+            # Check if WiFi radio is enabled (at least WiFi is available)
+            result = subprocess.run(
+                ["nmcli", "radio", "wifi"],
+                capture_output=True,
+                text=True,
+                timeout=5
+            )
+            if result.returncode == 0:
+                status = result.stdout.strip().lower()
+                if status == "enabled":
+                    return True
+            
+            return False
+        except Exception as e:
+            logger.debug(f"Error checking connectivity safety: {e}")
+            # If we can't determine, assume unsafe to be conservative
+            return False
+    
     def _is_ap_mode_active(self) -> bool:
         """Check if access point mode is currently active"""
         try:
@@ -727,6 +764,10 @@ class WiFiManager:
             # First, disable AP mode if active
             self.disable_ap_mode()
             time.sleep(2)
+            
+            # Ensure WiFi radio is enabled before attempting connection (safety measure)
+            if not self._ensure_wifi_radio_enabled():
+                logger.warning("WiFi radio enable check failed, but continuing with connection attempt")
             
             if self.has_nmcli:
                 success, message = self._connect_nmcli(ssid, password)
@@ -1015,71 +1056,132 @@ class WiFiManager:
         
         self._save_config()
     
-    def _ensure_wifi_radio_enabled(self) -> bool:
+    def _ensure_wifi_radio_enabled(self, max_retries: int = 3) -> bool:
         """
-        Ensure WiFi radio is enabled (not soft-blocked)
+        Ensure WiFi radio is enabled (not soft-blocked) with retry logic and verification.
         
+        Args:
+            max_retries: Maximum number of retry attempts to enable WiFi radio
+            
         Returns:
             True if WiFi is enabled or was successfully enabled, False otherwise
         """
-        try:
-            # Check if WiFi radio is enabled
-            result = subprocess.run(
-                ["nmcli", "radio", "wifi"],
-                capture_output=True,
-                text=True,
-                timeout=5
-            )
-            
-            if result.returncode == 0:
-                status = result.stdout.strip().lower()
-                if status == "enabled":
-                    return True
-                elif status == "disabled":
-                    # Try to enable WiFi radio
-                    logger.info("WiFi radio is disabled, attempting to enable...")
-                    enable_result = subprocess.run(
-                        ["sudo", "nmcli", "radio", "wifi", "on"],
-                        capture_output=True,
-                        text=True,
-                        timeout=10
-                    )
-                    if enable_result.returncode == 0:
-                        # Also unblock via rfkill in case it's soft-blocked
-                        subprocess.run(
-                            ["sudo", "rfkill", "unblock", "wifi"],
-                            capture_output=True,
-                            timeout=5
-                        )
-                        time.sleep(1)  # Give it a moment to enable
-                        logger.info("WiFi radio enabled successfully")
-                        return True
-                    else:
-                        logger.error(f"Failed to enable WiFi radio: {enable_result.stderr}")
-                        return False
-            
-            # Fallback: try rfkill
-            rfkill_result = subprocess.run(
-                ["rfkill", "list", "wifi"],
-                capture_output=True,
-                text=True,
-                timeout=5
-            )
-            if "Soft blocked: yes" in rfkill_result.stdout:
-                logger.info("WiFi is soft-blocked, unblocking via rfkill...")
-                subprocess.run(
-                    ["sudo", "rfkill", "unblock", "wifi"],
+        for attempt in range(max_retries):
+            try:
+                # Check if WiFi radio is enabled
+                result = subprocess.run(
+                    ["nmcli", "radio", "wifi"],
                     capture_output=True,
+                    text=True,
                     timeout=5
                 )
-                time.sleep(1)
-                logger.info("WiFi unblocked via rfkill")
+                
+                if result.returncode == 0:
+                    status = result.stdout.strip().lower()
+                    if status == "enabled":
+                        # Verify with rfkill as well
+                        rfkill_result = subprocess.run(
+                            ["rfkill", "list", "wifi"],
+                            capture_output=True,
+                            text=True,
+                            timeout=5
+                        )
+                        if "Soft blocked: yes" not in rfkill_result.stdout:
+                            logger.debug(f"WiFi radio confirmed enabled (attempt {attempt + 1})")
+                            return True
+                        # If soft-blocked, continue to unblock logic below
+                    
+                    if status == "disabled" or attempt > 0:
+                        # Try to enable WiFi radio
+                        if attempt == 0:
+                            logger.info("WiFi radio is disabled, attempting to enable...")
+                        else:
+                            logger.info(f"WiFi radio still disabled, retry {attempt + 1}/{max_retries}...")
+                        
+                        enable_result = subprocess.run(
+                            ["sudo", "nmcli", "radio", "wifi", "on"],
+                            capture_output=True,
+                            text=True,
+                            timeout=10
+                        )
+                        if enable_result.returncode == 0:
+                            # Also unblock via rfkill in case it's soft-blocked
+                            subprocess.run(
+                                ["sudo", "rfkill", "unblock", "wifi"],
+                                capture_output=True,
+                                timeout=5
+                            )
+                            # Wait longer for it to actually enable
+                            time.sleep(2)
+                            
+                            # Verify it's actually enabled now
+                            verify_result = subprocess.run(
+                                ["nmcli", "radio", "wifi"],
+                                capture_output=True,
+                                text=True,
+                                timeout=5
+                            )
+                            if verify_result.returncode == 0 and verify_result.stdout.strip().lower() == "enabled":
+                                logger.info("WiFi radio enabled and verified successfully")
+                                return True
+                            elif attempt < max_retries - 1:
+                                logger.warning(f"WiFi radio enable command succeeded but not verified, will retry...")
+                                time.sleep(1)
+                                continue
+                        else:
+                            logger.warning(f"Failed to enable WiFi radio: {enable_result.stderr}")
+                            if attempt < max_retries - 1:
+                                time.sleep(1)
+                                continue
+                            return False
+                
+                # Fallback: try rfkill
+                rfkill_result = subprocess.run(
+                    ["rfkill", "list", "wifi"],
+                    capture_output=True,
+                    text=True,
+                    timeout=5
+                )
+                if "Soft blocked: yes" in rfkill_result.stdout:
+                    logger.info("WiFi is soft-blocked, unblocking via rfkill...")
+                    subprocess.run(
+                        ["sudo", "rfkill", "unblock", "wifi"],
+                        capture_output=True,
+                        timeout=5
+                    )
+                    time.sleep(2)
+                    # Verify unblock worked
+                    verify_rfkill = subprocess.run(
+                        ["rfkill", "list", "wifi"],
+                        capture_output=True,
+                        text=True,
+                        timeout=5
+                    )
+                    if "Soft blocked: yes" not in verify_rfkill.stdout:
+                        logger.info("WiFi unblocked via rfkill and verified")
+                        return True
+                    elif attempt < max_retries - 1:
+                        time.sleep(1)
+                        continue
+                
+                # If we get here and haven't returned, assume enabled if we can't determine
+                if attempt == 0:
+                    logger.debug("Could not determine WiFi radio status, assuming enabled")
+                    return True
+                else:
+                    time.sleep(1)
+                    continue
+                    
+            except Exception as e:
+                logger.warning(f"Could not check/enable WiFi radio (attempt {attempt + 1}): {e}")
+                if attempt < max_retries - 1:
+                    time.sleep(1)
+                    continue
+                # On last attempt, assume enabled to avoid blocking operations
                 return True
-            
-            return True  # Assume enabled if we can't determine
-        except Exception as e:
-            logger.warning(f"Could not check/enable WiFi radio: {e}")
-            return True  # Continue anyway, hostapd might still work
+        
+        logger.warning(f"Failed to enable WiFi radio after {max_retries} attempts")
+        return False
     
     def enable_ap_mode(self) -> Tuple[bool, str]:
         """
@@ -1415,23 +1517,23 @@ class WiFiManager:
                 # Restore original dnsmasq config if backup exists (only for hostapd mode)
                 if hostapd_active:
                     backup_path = f"{DNSMASQ_CONFIG_PATH}.backup"
-                if os.path.exists(backup_path):
-                    subprocess.run(
-                        ["sudo", "cp", backup_path, str(DNSMASQ_CONFIG_PATH)],
-                        timeout=10
-                    )
-                    logger.info("Restored original dnsmasq config from backup")
-                else:
-                    # No backup - clear the captive portal config
-                    # Create a minimal config that won't interfere
-                    minimal_config = "# dnsmasq config - restored to minimal\n"
-                    with open("/tmp/dnsmasq.conf", 'w') as f:
-                        f.write(minimal_config)
-                    subprocess.run(
-                        ["sudo", "cp", "/tmp/dnsmasq.conf", str(DNSMASQ_CONFIG_PATH)],
-                        timeout=10
-                    )
-                    logger.info("Cleared dnsmasq captive portal config")
+                    if os.path.exists(backup_path):
+                        subprocess.run(
+                            ["sudo", "cp", backup_path, str(DNSMASQ_CONFIG_PATH)],
+                            timeout=10
+                        )
+                        logger.info("Restored original dnsmasq config from backup")
+                    else:
+                        # No backup - clear the captive portal config
+                        # Create a minimal config that won't interfere
+                        minimal_config = "# dnsmasq config - restored to minimal\n"
+                        with open("/tmp/dnsmasq.conf", 'w') as f:
+                            f.write(minimal_config)
+                        subprocess.run(
+                            ["sudo", "cp", "/tmp/dnsmasq.conf", str(DNSMASQ_CONFIG_PATH)],
+                            timeout=10
+                        )
+                        logger.info("Cleared dnsmasq captive portal config")
                 
                 # Remove iptables port forwarding rules and disable IP forwarding (only for hostapd mode)
                 if hostapd_active:
@@ -1479,13 +1581,48 @@ class WiFiManager:
                         capture_output=True,
                         timeout=10
                     )
-                
-                # Restart NetworkManager to restore normal WiFi operation
-                subprocess.run(
-                    ["sudo", "systemctl", "restart", "NetworkManager"],
-                    capture_output=True,
-                    timeout=15
-                )
+                    
+                    # Only restart NetworkManager if hostapd was active (needed for hostapd/dnsmasq cleanup)
+                    # Before restarting, ensure we have connectivity safety (Ethernet or WiFi enabled)
+                    connectivity_safe = self._has_connectivity_safety()
+                    
+                    if not connectivity_safe:
+                        # Ensure WiFi radio is enabled before restart to maintain connectivity option
+                        logger.warning("No connectivity safety detected (no Ethernet, WiFi may be disabled), ensuring WiFi radio enabled before restart")
+                        self._ensure_wifi_radio_enabled()
+                    
+                    logger.info("Restarting NetworkManager to restore normal WiFi operation after hostapd cleanup")
+                    subprocess.run(
+                        ["sudo", "systemctl", "restart", "NetworkManager"],
+                        capture_output=True,
+                        timeout=15
+                    )
+                    # Give NetworkManager time to restart
+                    time.sleep(2)
+                    
+                    # Explicitly ensure WiFi radio is enabled after restart (with retries for safety)
+                    wifi_enabled = self._ensure_wifi_radio_enabled(max_retries=5)
+                    if not wifi_enabled:
+                        logger.warning("WiFi radio may be disabled after NetworkManager restart - this could cause lockout if Ethernet not connected")
+                        # Try one more time with rfkill as last resort
+                        try:
+                            subprocess.run(
+                                ["sudo", "rfkill", "unblock", "wifi"],
+                                capture_output=True,
+                                timeout=5
+                            )
+                            time.sleep(1)
+                            logger.info("Attempted final WiFi radio unblock via rfkill")
+                        except Exception as e:
+                            logger.error(f"Final WiFi radio unblock attempt failed: {e}")
+                else:
+                    # nmcli hotspot mode - restart not needed, just ensure WiFi radio is enabled
+                    logger.info("Skipping NetworkManager restart (nmcli hotspot mode, restart not needed)")
+                    # Still ensure WiFi radio is enabled (may have been disabled by nmcli operations)
+                    # Use retries for safety
+                    wifi_enabled = self._ensure_wifi_radio_enabled(max_retries=3)
+                    if not wifi_enabled:
+                        logger.warning("WiFi radio may be disabled after nmcli hotspot cleanup")
                 
                 logger.info("AP mode disabled successfully")
                 return True, "AP mode disabled"
