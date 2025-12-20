@@ -4179,9 +4179,26 @@ function togglePasswordVisibility(fieldId) {
 // GitHub Token Configuration Functions
 window.toggleGithubTokenSettings = function() {
     const settings = document.getElementById('github-token-settings');
+    const warning = document.getElementById('github-auth-warning');
     if (settings) {
+        // Remove inline style if present to avoid conflicts
+        if (settings.style.display !== undefined) {
+            settings.style.display = '';
+        }
+        // Toggle Tailwind hidden class
         settings.classList.toggle('hidden');
-        if (!settings.classList.contains('hidden')) {
+        
+        const isOpening = !settings.classList.contains('hidden');
+        
+        // When opening settings, hide the warning banner (they're now combined)
+        if (isOpening && warning) {
+            warning.classList.add('hidden');
+            // Clear any dismissal state since user is actively configuring
+            sessionStorage.removeItem('github-auth-warning-dismissed');
+        }
+        
+        // Load token when opening the panel
+        if (isOpening) {
             loadGithubToken();
         }
     }
@@ -4205,30 +4222,72 @@ window.toggleGithubTokenVisibility = function() {
 }
 
 window.loadGithubToken = function() {
+    const input = document.getElementById('github-token-input');
+    const loadButton = document.querySelector('button[onclick="loadGithubToken()"]');
+    
+    if (!input) return;
+    
+    // Set loading state on load button
+    const originalButtonContent = loadButton ? loadButton.innerHTML : '';
+    if (loadButton) {
+        loadButton.disabled = true;
+        loadButton.classList.add('opacity-50', 'cursor-not-allowed');
+        loadButton.innerHTML = '<i class="fas fa-spinner fa-spin mr-1"></i>Loading...';
+    }
+    
     fetch('/api/v3/config/secrets')
-        .then(response => response.json())
+        .then(response => {
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+            return response.json();
+        })
         .then(data => {
             if (data.status === 'success') {
-                const token = data.data?.github?.api_token || '';
-                const input = document.getElementById('github-token-input');
+                // Handle empty data (secrets file doesn't exist) - API returns {} in this case
+                const secrets = data.data || {};
+                const token = secrets.github?.api_token || '';
+                
                 if (input) {
-                    input.value = token;
                     if (token && token !== 'YOUR_GITHUB_PERSONAL_ACCESS_TOKEN') {
+                        // Token exists and is valid
+                        input.value = token;
                         showNotification('GitHub token loaded successfully', 'success');
                     } else {
-                        showNotification('No GitHub token configured', 'info');
+                        // No token configured or placeholder value
+                        input.value = '';
+                        showNotification('No GitHub token configured. Enter a new token to save.', 'info');
                     }
                 }
+            } else {
+                throw new Error(data.message || 'Failed to load secrets configuration');
             }
         })
         .catch(error => {
             console.error('Error loading GitHub token:', error);
-            showNotification('Error loading GitHub token', 'error');
+            if (input) {
+                input.value = '';
+            }
+            // If it's a 404 or file doesn't exist, that's okay - just inform the user
+            if (error.message.includes('404') || error.message.includes('not found')) {
+                showNotification('No secrets file found. You can create one by saving a token.', 'info');
+            } else {
+                showNotification('Error loading GitHub token: ' + error.message, 'error');
+            }
+        })
+        .finally(() => {
+            // Restore button state
+            if (loadButton) {
+                loadButton.disabled = false;
+                loadButton.classList.remove('opacity-50', 'cursor-not-allowed');
+                loadButton.innerHTML = originalButtonContent;
+            }
         });
 }
 
 window.saveGithubToken = function() {
     const input = document.getElementById('github-token-input');
+    const saveButton = document.querySelector('button[onclick="saveGithubToken()"]');
     if (!input) return;
     
     const token = input.value.trim();
@@ -4238,9 +4297,29 @@ window.saveGithubToken = function() {
         return;
     }
     
+    // Client-side token validation
+    if (!token.startsWith('ghp_') && !token.startsWith('github_pat_')) {
+        if (!confirm('Token format looks invalid. GitHub tokens should start with "ghp_" or "github_pat_". Continue anyway?')) {
+            return;
+        }
+    }
+    
+    // Set loading state on save button
+    const originalButtonContent = saveButton ? saveButton.innerHTML : '';
+    if (saveButton) {
+        saveButton.disabled = true;
+        saveButton.classList.add('opacity-50', 'cursor-not-allowed');
+        saveButton.innerHTML = '<i class="fas fa-spinner fa-spin mr-1"></i>Saving...';
+    }
+    
     // Load current secrets config
     fetch('/api/v3/config/secrets')
-        .then(response => response.json())
+        .then(response => {
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+            return response.json();
+        })
         .then(data => {
             if (data.status === 'success') {
                 const secrets = data.data || {};
@@ -4258,29 +4337,44 @@ window.saveGithubToken = function() {
                     body: JSON.stringify(secrets)
                 });
             } else {
-                throw new Error('Failed to load current secrets');
+                throw new Error(data.message || 'Failed to load current secrets');
             }
         })
-        .then(response => response.json())
+        .then(response => {
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+            return response.json();
+        })
         .then(data => {
             if (data.status === 'success') {
                 showNotification('GitHub token saved successfully! Rate limit increased to 5,000/hour', 'success');
-                // Hide the warning banner
-                const warning = document.getElementById('github-auth-warning');
-                if (warning) {
-                    warning.classList.add('hidden');
-                }
+                
+                // Clear input field for security (user can reload if needed)
+                input.value = '';
+                
+                // Refresh GitHub auth status to update UI (this will hide warning and settings)
+                checkGitHubAuthStatus();
+                
                 // Hide the settings panel after successful save
                 setTimeout(() => {
                     toggleGithubTokenSettings();
-                }, 2000);
+                }, 1500);
             } else {
-                showNotification('Error saving GitHub token: ' + data.message, 'error');
+                throw new Error(data.message || 'Failed to save token');
             }
         })
         .catch(error => {
             console.error('Error saving GitHub token:', error);
             showNotification('Error saving GitHub token: ' + error.message, 'error');
+        })
+        .finally(() => {
+            // Restore button state
+            if (saveButton) {
+                saveButton.disabled = false;
+                saveButton.classList.remove('opacity-50', 'cursor-not-allowed');
+                saveButton.innerHTML = originalButtonContent;
+            }
         });
 }
 
@@ -4309,16 +4403,16 @@ function checkGitHubAuthStatus() {
                         }
                     }
                 } else {
-                    // Token is configured - ensure the banner is hidden
+                    // Token is configured - hide both warning and settings
                     const warning = document.getElementById('github-auth-warning');
+                    const settings = document.getElementById('github-token-settings');
+                    
                     if (warning) {
                         warning.classList.add('hidden');
                         console.log('GitHub token is configured - API limit warning hidden');
                     }
                     
-                    // Also hide the GitHub token settings panel if it's visible
-                    const settings = document.getElementById('github-token-settings');
-                    if (settings && !settings.classList.contains('hidden')) {
+                    if (settings) {
                         settings.classList.add('hidden');
                         console.log('GitHub token is configured - hiding settings panel');
                     }
@@ -4332,8 +4426,13 @@ function checkGitHubAuthStatus() {
 
 window.dismissGithubWarning = function() {
     const warning = document.getElementById('github-auth-warning');
+    const settings = document.getElementById('github-token-settings');
     if (warning) {
         warning.classList.add('hidden');
+        // Also hide settings if it's open (since they're combined now)
+        if (settings && !settings.classList.contains('hidden')) {
+            settings.classList.add('hidden');
+        }
         // Remember dismissal for this session
         sessionStorage.setItem('github-auth-warning-dismissed', 'true');
     }
@@ -5042,3 +5141,4 @@ setTimeout(function() {
         console.log('installed-plugins-grid not found yet, will retry via event listeners');
     }
 }, 200);
+

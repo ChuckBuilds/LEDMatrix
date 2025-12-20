@@ -57,37 +57,39 @@
             
             <div id="plugin-store-content" class="block">
             
-            <!-- GitHub Auth Warning Banner (only shown when no token is configured) -->
-            <div id="github-auth-warning" class="hidden mb-5 bg-yellow-50 border-l-4 border-yellow-400 p-4 rounded-r-lg" style="display: none;">
-                <div class="flex">
-                    <div class="flex-shrink-0">
-                        <i class="fas fa-exclamation-triangle text-yellow-400"></i>
-                    </div>
-                    <div class="ml-3 flex-1">
-                        <p class="text-sm text-yellow-700">
-                            <strong>Limited API Access:</strong> GitHub API requests are limited to <span id="rate-limit-count">60</span> per hour without authentication.
-                            Add a GitHub token to increase this to 5,000 requests/hour and get real-time plugin stats.
-                        </p>
-                        <p class="mt-2 text-sm text-yellow-700">
-                            <a href="https://github.com/settings/tokens/new?description=LEDMatrix%20Plugin%20Manager&scopes=" target="_blank" class="font-medium underline hover:text-yellow-800">
-                                Create a GitHub Token →
-                            </a>
-                            <span class="mx-2">|</span>
-                            <a href="#" onclick="event.preventDefault(); toggleGithubTokenSettings()" class="font-medium underline hover:text-yellow-800">
-                                Configure Token
-                            </a>
-                        </p>
-                    </div>
-                    <div class="flex-shrink-0">
-                        <button onclick="dismissGithubWarning()" class="text-yellow-700 hover:text-yellow-900">
-                            <i class="fas fa-times"></i>
-                        </button>
+            <!-- GitHub Token Configuration (Combined Warning + Settings) -->
+            <div id="github-token-container" class="mb-5">
+                <!-- Warning Banner (shown when no token configured) -->
+                <div id="github-auth-warning" class="hidden bg-yellow-50 border-l-4 border-yellow-400 p-4 rounded-r-lg">
+                    <div class="flex">
+                        <div class="flex-shrink-0">
+                            <i class="fas fa-exclamation-triangle text-yellow-400"></i>
+                        </div>
+                        <div class="ml-3 flex-1">
+                            <p class="text-sm text-yellow-700">
+                                <strong>Limited API Access:</strong> GitHub API requests are limited to <span id="rate-limit-count">60</span> per hour without authentication.
+                                Add a GitHub token to increase this to 5,000 requests/hour and get real-time plugin stats.
+                            </p>
+                            <p class="mt-2 text-sm text-yellow-700">
+                                <a href="https://github.com/settings/tokens/new?description=LEDMatrix%20Plugin%20Manager&scopes=" target="_blank" class="font-medium underline hover:text-yellow-800">
+                                    Create a GitHub Token →
+                                </a>
+                                <span class="mx-2">|</span>
+                                <a href="#" onclick="event.preventDefault(); toggleGithubTokenSettings()" class="font-medium underline hover:text-yellow-800">
+                                    Configure Token
+                                </a>
+                            </p>
+                        </div>
+                        <div class="flex-shrink-0">
+                            <button onclick="dismissGithubWarning()" class="text-yellow-700 hover:text-yellow-900">
+                                <i class="fas fa-times"></i>
+                            </button>
+                        </div>
                     </div>
                 </div>
-            </div>
 
-            <!-- GitHub Token Configuration Section -->
-            <div id="github-token-settings" class="hidden mb-5 bg-blue-50 border border-blue-200 rounded-lg p-5 shadow-sm" style="display: none;">
+                <!-- Settings Panel (expandable configuration form) -->
+                <div id="github-token-settings" class="hidden bg-blue-50 border border-blue-200 rounded-lg p-5 shadow-sm mt-3">
                 <div class="flex items-start justify-between mb-4">
                     <div class="flex items-center space-x-2">
                         <i class="fab fa-github text-blue-600 text-xl"></i>
@@ -152,6 +154,7 @@
                             With token: 5,000 requests/hour
                         </p>
                     </div>
+                </div>
                 </div>
                 </div>
             </div>
