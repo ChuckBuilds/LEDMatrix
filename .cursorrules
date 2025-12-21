@@ -276,8 +276,7 @@ plugins/
 - Test plugins before merging to main
 
 **Automatic Version Bumping:**
-- **Always bump version before pushing code changes to plugin repositories**
-- **Automatic Version Management**: Versions are automatically managed - no manual version bumping needed
+- **Automatic Version Management**: Version bumping is handled automatically via the pre-push git hook - no manual version bumping is required for normal development workflows
 - **GitHub as Source of Truth**: Plugin store always fetches latest versions from GitHub (releases/tags/manifest/commit)
 - **Pre-Push Hook**: Automatically bumps patch version and creates git tags when pushing code changes
   - The hook is self-contained (no external dependencies) and works on any dev machine
@@ -292,8 +291,13 @@ plugins/
     1. Bumps the patch version (x.y.Z) in manifest.json when code changes are detected
     2. Creates a git tag (v{version}) for the new version
     3. Stages manifest.json for commit
-  - Manual bump (if needed): Use the standalone script `scripts/bump_plugin_version.py`
   - Skip auto-tagging: Set `SKIP_TAG=1` environment variable before pushing
+- **Manual Version Bumping (Edge Cases Only)**: Manual version bumps are only needed in rare circumstances:
+  - CI/CD pipelines that bypass git hooks
+  - Forked repositories without the pre-push hook installed
+  - Major/minor version bumps (hook only handles patch versions)
+  - When skipping auto-tagging but still needing a version bump
+  - For manual bumps, use the standalone script: `scripts/bump_plugin_version.py`
 - **Registry**: The plugin registry (plugins.json) stores only metadata (name, description, repo URL) - no versions
 - **Version Priority**: Plugin store checks versions in this order: GitHub Releases → GitHub Tags → Manifest from branch → Git commit hash
 
