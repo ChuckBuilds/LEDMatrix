@@ -35,11 +35,12 @@ pip install -r plugins/PLUGIN_ID/requirements.txt
 {
   "PLUGIN_ID": {
     "enabled": true,
-    "display_duration": 15,
-    "api_key": "your-api-key-here"
+    "display_duration": 15
   }
 }
 ```
+
+**Note:** API keys and other sensitive credentials must be stored in `config/config_secrets.json`, not in `config/config.json`.
 
 4. Store API keys in `config/config_secrets.json`:
 
