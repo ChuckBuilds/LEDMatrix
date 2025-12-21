@@ -4,7 +4,7 @@ Welcome to the LEDMatrix documentation! This directory contains comprehensive gu
 
 ## 📚 Documentation Overview
 
-This documentation has been consolidated and organized to reduce redundancy while maintaining comprehensive coverage. We reduced the documentation from 53 to 39 files (26% reduction) by consolidating implementation summaries and removing outdated content.
+This documentation has been consolidated and organized to reduce redundancy while maintaining comprehensive coverage. Recent improvements include complete API references, enhanced plugin development guides, and better organization for both end users and developers.
 
 ## 📖 Quick Start
 
@@ -15,8 +15,14 @@ This documentation has been consolidated and organized to reduce redundancy whil
 
 ### For Developers
 1. **Plugin System**: Read [PLUGIN_QUICK_REFERENCE.md](PLUGIN_QUICK_REFERENCE.md) for an overview
-2. **Plugin Development**: See [PLUGIN_ARCHITECTURE_SPEC.md](PLUGIN_ARCHITECTURE_SPEC.md) for complete specification
-3. **Configuration**: Check [PLUGIN_CONFIGURATION_GUIDE.md](PLUGIN_CONFIGURATION_GUIDE.md)
+2. **Plugin Development**: See [PLUGIN_DEVELOPMENT_GUIDE.md](PLUGIN_DEVELOPMENT_GUIDE.md) for development workflow
+3. **API Reference**: Check [PLUGIN_API_REFERENCE.md](PLUGIN_API_REFERENCE.md) for available methods
+4. **Configuration**: Check [PLUGIN_CONFIGURATION_GUIDE.md](PLUGIN_CONFIGURATION_GUIDE.md)
+
+### For API Integration
+1. **REST API**: See [API_REFERENCE.md](API_REFERENCE.md) for all web interface endpoints
+2. **Plugin API**: See [PLUGIN_API_REFERENCE.md](PLUGIN_API_REFERENCE.md) for plugin developer APIs
+3. **Quick Reference**: See [DEVELOPER_QUICK_REFERENCE.md](DEVELOPER_QUICK_REFERENCE.md) for common tasks
 
 ## 📋 Documentation Categories
 
@@ -34,17 +40,18 @@ This documentation has been consolidated and organized to reduce redundancy whil
 - [NESTED_SCHEMA_VISUAL_COMPARISON.md](NESTED_SCHEMA_VISUAL_COMPARISON.md) - Schema comparison visuals
 
 ### ⚙️ Configuration & Management
-- [PLUGIN_CONFIGURATION_GUIDE.md](PLUGIN_CONFIGURATION_GUIDE.md) - Plugin configuration overview
+- [PLUGIN_CONFIGURATION_GUIDE.md](PLUGIN_CONFIGURATION_GUIDE.md) - Complete plugin configuration guide
+- [PLUGIN_CONFIGURATION_TABS.md](PLUGIN_CONFIGURATION_TABS.md) - Configuration tabs feature
 - [PLUGIN_CONFIG_QUICK_START.md](PLUGIN_CONFIG_QUICK_START.md) - Quick configuration guide
-- [PLUGIN_CONFIG_ARCHITECTURE.md](PLUGIN_CONFIG_ARCHITECTURE.md) - Configuration architecture details
 
 ### 🔌 Plugin Development
+- [PLUGIN_DEVELOPMENT_GUIDE.md](PLUGIN_DEVELOPMENT_GUIDE.md) - Complete plugin development guide
 - [PLUGIN_QUICK_REFERENCE.md](PLUGIN_QUICK_REFERENCE.md) - Plugin development quick reference
+- [PLUGIN_API_REFERENCE.md](PLUGIN_API_REFERENCE.md) - Complete API reference for plugin developers
+- [ADVANCED_PLUGIN_DEVELOPMENT.md](ADVANCED_PLUGIN_DEVELOPMENT.md) - Advanced patterns and examples
 - [PLUGIN_REGISTRY_SETUP_GUIDE.md](PLUGIN_REGISTRY_SETUP_GUIDE.md) - Setting up plugin registry
-- [PLUGIN_NAMING_BEST_PRACTICES.md](PLUGIN_NAMING_BEST_PRACTICES.md) - Plugin naming guidelines
 - [PLUGIN_DEPENDENCY_GUIDE.md](PLUGIN_DEPENDENCY_GUIDE.md) - Managing plugin dependencies
 - [PLUGIN_DEPENDENCY_TROUBLESHOOTING.md](PLUGIN_DEPENDENCY_TROUBLESHOOTING.md) - Dependency troubleshooting
-- [SETUP_LEDMATRIX_PLUGINS_REPO.md](SETUP_LEDMATRIX_PLUGINS_REPO.md) - Plugin repository setup
 
 ### 🎮 Plugin Features
 - [ON_DEMAND_DISPLAY_QUICK_START.md](ON_DEMAND_DISPLAY_QUICK_START.md) - Manual display triggering
@@ -53,6 +60,12 @@ This documentation has been consolidated and organized to reduce redundancy whil
 - [PLUGIN_CUSTOM_ICONS_FEATURE.md](PLUGIN_CUSTOM_ICONS_FEATURE.md) - Custom plugin icons
 - [PLUGIN_DISPATCH_IMPLEMENTATION.md](PLUGIN_DISPATCH_IMPLEMENTATION.md) - Plugin dispatch system
 - [PLUGIN_TABS_FEATURE_COMPLETE.md](PLUGIN_TABS_FEATURE_COMPLETE.md) - Plugin tabs feature
+
+### 📡 API Reference
+- [API_REFERENCE.md](API_REFERENCE.md) - Complete REST API documentation for web interface
+- [PLUGIN_API_REFERENCE.md](PLUGIN_API_REFERENCE.md) - Plugin developer API reference (Display Manager, Cache Manager, Plugin Manager)
+- [DEVELOPER_QUICK_REFERENCE.md](DEVELOPER_QUICK_REFERENCE.md) - Quick reference for common developer tasks
+- [ON_DEMAND_DISPLAY_API.md](ON_DEMAND_DISPLAY_API.md) - On-demand display API reference
 
 ### 🛠️ Development & Tools
 - [BACKGROUND_SERVICE_README.md](BACKGROUND_SERVICE_README.md) - Background service architecture
@@ -92,10 +105,11 @@ This documentation has been consolidated and organized to reduce redundancy whil
 3. [PLUGIN_QUICK_REFERENCE.md](PLUGIN_QUICK_REFERENCE.md) - Understanding the system
 
 ### I want to create a plugin
-1. [PLUGIN_QUICK_REFERENCE.md](PLUGIN_QUICK_REFERENCE.md) - Quick development guide
-2. [PLUGIN_ARCHITECTURE_SPEC.md](PLUGIN_ARCHITECTURE_SPEC.md) - Complete specification
-3. [PLUGIN_CONFIGURATION_GUIDE.md](PLUGIN_CONFIGURATION_GUIDE.md) - Configuration setup
-4. [PLUGIN_DEPENDENCY_GUIDE.md](PLUGIN_DEPENDENCY_GUIDE.md) - Dependency management
+1. [PLUGIN_DEVELOPMENT_GUIDE.md](PLUGIN_DEVELOPMENT_GUIDE.md) - Complete development guide
+2. [PLUGIN_API_REFERENCE.md](PLUGIN_API_REFERENCE.md) - Available methods and APIs
+3. [ADVANCED_PLUGIN_DEVELOPMENT.md](ADVANCED_PLUGIN_DEVELOPMENT.md) - Advanced patterns and examples
+4. [PLUGIN_CONFIGURATION_GUIDE.md](PLUGIN_CONFIGURATION_GUIDE.md) - Configuration setup
+5. [PLUGIN_ARCHITECTURE_SPEC.md](PLUGIN_ARCHITECTURE_SPEC.md) - Complete specification
 
 ### I want to upgrade to Trixie
 1. [TRIXIE_UPGRADE_GUIDE.md](TRIXIE_UPGRADE_GUIDE.md) - Complete upgrade guide
@@ -141,15 +155,23 @@ This documentation has been consolidated and organized to reduce redundancy whil
 
 ## 📊 Documentation Statistics
 
-- **Total Documents**: 39
-- **Categories**: 6 major sections
+- **Total Documents**: ~35 (after consolidation)
+- **Categories**: 8 major sections (including new API Reference section)
 - **Primary Languages**: English
 - **Format**: Markdown (.md)
-- **Last Consolidation**: October 2025
-- **Coverage**: Installation, development, troubleshooting, architecture
+- **Last Update**: December 2025
+- **Coverage**: Installation, development, troubleshooting, architecture, API references
+
+### Recent Improvements (December 2025)
+- ✅ Complete REST API documentation (50+ endpoints)
+- ✅ Complete Plugin API reference (Display Manager, Cache Manager, Plugin Manager)
+- ✅ Advanced plugin development guide with examples
+- ✅ Consolidated plugin configuration documentation
+- ✅ Developer quick reference guide
+- ✅ Better organization for end users and developers
 
 ---
 
-*This documentation index was last updated: October 30, 2025*
+*This documentation index was last updated: December 2025*
 
 *For questions or suggestions about the documentation, please open an issue or start a discussion on GitHub.*

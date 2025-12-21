@@ -454,9 +454,187 @@ If you install a plugin via the store, you can still link it for development:
 
 When you unlink, the directory is removed. If you want to switch back to the store version, re-install it via the plugin store.
 
+## API Reference
+
+When developing plugins, you'll need to use the APIs provided by the LEDMatrix system:
+
+- **[Plugin API Reference](PLUGIN_API_REFERENCE.md)** - Complete reference for Display Manager, Cache Manager, and Plugin Manager methods
+- **[Advanced Plugin Development](ADVANCED_PLUGIN_DEVELOPMENT.md)** - Advanced patterns, examples, and best practices
+- **[Developer Quick Reference](DEVELOPER_QUICK_REFERENCE.md)** - Quick reference for common developer tasks
+
+### Key APIs for Plugin Developers
+
+**Display Manager** (`self.display_manager`):
+- `clear()`, `update_display()` - Core display operations
+- `draw_text()`, `draw_image()` - Rendering methods
+- `draw_weather_icon()`, `draw_sun()`, `draw_cloud()` - Weather icons
+- `get_text_width()`, `get_font_height()` - Text utilities
+- `set_scrolling_state()`, `defer_update()` - Scrolling state management
+
+**Cache Manager** (`self.cache_manager`):
+- `get()`, `set()`, `delete()` - Basic caching
+- `get_cached_data_with_strategy()` - Advanced caching with strategies
+- `get_background_cached_data()` - Background service caching
+
+**Plugin Manager** (`self.plugin_manager`):
+- `get_plugin()`, `get_all_plugins()` - Access other plugins
+- `get_plugin_info()` - Get plugin information
+
+See [PLUGIN_API_REFERENCE.md](PLUGIN_API_REFERENCE.md) for complete documentation.
+
+## 3rd Party Plugin Development
+
+Want to create and share your own plugin? Here's everything you need to know.
+
+### Getting Started
+
+1. **Review the documentation**:
+   - [Plugin Architecture Spec](PLUGIN_ARCHITECTURE_SPEC.md) - System architecture
+   - [Plugin API Reference](PLUGIN_API_REFERENCE.md) - Available methods
+   - [Advanced Plugin Development](ADVANCED_PLUGIN_DEVELOPMENT.md) - Patterns and examples
+
+2. **Start with a template**:
+   - Use the [Hello World plugin](https://github.com/ChuckBuilds/ledmatrix-hello-world) as a starting point
+   - Or fork an existing plugin and modify it
+
+3. **Follow the plugin structure**:
+   ```
+   your-plugin/
+   ├── manifest.json          # Required: Plugin metadata
+   ├── manager.py             # Required: Plugin class
+   ├── config_schema.json     # Recommended: Configuration schema
+   ├── requirements.txt       # Optional: Python dependencies
+   └── README.md              # Recommended: User documentation
+   ```
+
+### Plugin Requirements
+
+Your plugin must:
+
+1. **Inherit from BasePlugin**:
+   ```python
+   from src.plugin_system.base_plugin import BasePlugin
+   
+   class MyPlugin(BasePlugin):
+       def update(self):
+           # Fetch data
+           pass
+       
+       def display(self, force_clear=False):
+           # Render display
+           pass
+   ```
+
+2. **Include manifest.json** with required fields:
+   ```json
+   {
+     "id": "my-plugin",
+     "name": "My Plugin",
+     "version": "1.0.0",
+     "class_name": "MyPlugin",
+     "entry_point": "manager.py",
+     "display_modes": ["my_plugin"],
+     "compatible_versions": [">=2.0.0"]
+   }
+   ```
+
+3. **Match class name**: The class name in `manager.py` must match `class_name` in manifest
+
+### Testing Your Plugin
+
+1. **Test locally**:
+   ```bash
+   # Link your plugin for development
+   ./scripts/dev/dev_plugin_setup.sh link your-plugin /path/to/your-plugin
+   
+   # Run LEDMatrix with emulator
+   python run.py --emulator
+   ```
+
+2. **Test on hardware**: Deploy to Raspberry Pi and test on actual LED matrix
+
+3. **Use mocks for unit testing**: See [Advanced Plugin Development](ADVANCED_PLUGIN_DEVELOPMENT.md#testing-plugins-with-mocks)
+
+### Versioning Best Practices
+
+- **Use semantic versioning**: `MAJOR.MINOR.PATCH` (e.g., `1.2.3`)
+- **Automatic version bumping**: Use the pre-push git hook for automatic patch version bumps
+- **Manual versioning**: Only needed for major/minor bumps or special cases
+- **GitHub as source of truth**: Plugin store fetches versions from GitHub releases/tags/manifest
+
+See the [Git Workflow rules](../.cursorrules) for version management details.
+
+### Submitting to Official Registry
+
+To have your plugin added to the official plugin store:
+
+1. **Ensure quality**:
+   - Plugin works reliably
+   - Well-documented (README.md)
+   - Follows best practices
+   - Tested on Raspberry Pi hardware
+
+2. **Create GitHub repository**:
+   - Repository name: `ledmatrix-<plugin-name>`
+   - Public repository
+   - Proper README.md with installation instructions
+
+3. **Contact maintainers**:
+   - Open a GitHub issue in the [ledmatrix-plugins](https://github.com/ChuckBuilds/ledmatrix-plugins) repository
+   - Or reach out on Discord: https://discord.gg/uW36dVAtcT
+   - Include: Repository URL, plugin description, why it's useful
+
+4. **Review process**:
+   - Code review for quality and security
+   - Testing on Raspberry Pi hardware
+   - Documentation review
+   - If approved, added to official registry
+
+### Plugin Store Integration Requirements
+
+For your plugin to work well in the plugin store:
+
+- **GitHub repository**: Must be publicly accessible on GitHub
+- **Releases or tags**: Recommended for version tracking
+- **README.md**: Clear installation and configuration instructions
+- **config_schema.json**: Recommended for web UI configuration
+- **manifest.json**: Required with all required fields
+- **requirements.txt**: If your plugin has Python dependencies
+
+### Distribution Options
+
+1. **Official Registry** (Recommended):
+   - Listed in default plugin store
+   - Automatic updates
+   - Verified badge
+   - Requires approval
+
+2. **Custom Repository**:
+   - Host your own plugin repository
+   - Users can install via "Install from GitHub" in web UI
+   - Full control over distribution
+
+3. **Direct Installation**:
+   - Users can clone and install manually
+   - Good for development/testing
+
+### Best Practices for 3rd Party Plugins
+
+1. **Documentation**: Include comprehensive README.md
+2. **Configuration**: Provide config_schema.json for web UI
+3. **Error handling**: Graceful failures with clear error messages
+4. **Logging**: Use plugin logger for debugging
+5. **Testing**: Test on actual Raspberry Pi hardware
+6. **Versioning**: Follow semantic versioning
+7. **Dependencies**: Minimize external dependencies
+8. **Performance**: Optimize for Pi's limited resources
+
 ## See Also
 
-- [Plugin Architecture Specification](../docs/PLUGIN_ARCHITECTURE_SPEC.md)
-- [Plugin Quick Reference](../docs/PLUGIN_QUICK_REFERENCE.md)
-- [Plugin Store User Guide](../docs/PLUGIN_STORE_USER_GUIDE.md)
+- [Plugin Architecture Specification](PLUGIN_ARCHITECTURE_SPEC.md) - Complete system specification
+- [Plugin API Reference](PLUGIN_API_REFERENCE.md) - Complete API documentation
+- [Advanced Plugin Development](ADVANCED_PLUGIN_DEVELOPMENT.md) - Advanced patterns and examples
+- [Plugin Quick Reference](PLUGIN_QUICK_REFERENCE.md) - Quick development reference
+- [Plugin Configuration Guide](PLUGIN_CONFIGURATION_GUIDE.md) - Configuration setup
+- [Plugin Store User Guide](PLUGIN_STORE_USER_GUIDE.md) - Using the plugin store
 

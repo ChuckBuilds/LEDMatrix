@@ -24,6 +24,7 @@
 - ESPN for their sports API
 - Yahoo Finance for their Stock API
 - OpenWeatherMap for their Free Weather API
+- All of my testers *ahem* users in Discord that let me know when something isn't working as intended
 
 
 -----------------------------------------------------------------------------------
@@ -43,7 +44,15 @@ Big changes:
 
 ## Plugins & The Plugin Store
 
-There is an official "Repository" of ChuckBuilds provided plugins available by default in the LEDMatrix Web Interface via the "Plugin Manager" tab. These can be viewed on Github at : https://github.com/ChuckBuilds/ledmatrix-plugins/ . If you wish to develop your own plugins or install someone else's plugins (at your own risk) you can use the "Install From Github" Section to add a specific plugin or a whole repository. I hope to get a full guide and example created soon to help folks feel empowered to make their own plugins. If you create a plugin that you think is ready to be shared with the world, reach out to me with a github issue or a discord message to talk about adding you to the default plugin store. 
+There is an official "Repository" of ChuckBuilds provided plugins available by default in the LEDMatrix Web Interface via the "Plugin Manager" tab. These can be viewed on Github at : https://github.com/ChuckBuilds/ledmatrix-plugins/ . If you wish to develop your own plugins or install someone else's plugins (at your own risk) you can use the "Install From Github" Section to add a specific plugin or a whole repository.
+
+**Plugin Development Resources:**
+- **[Plugin Development Guide](docs/PLUGIN_DEVELOPMENT_GUIDE.md)** - Complete guide for developing plugins
+- **[Plugin API Reference](docs/PLUGIN_API_REFERENCE.md)** - Available methods and APIs
+- **[Advanced Plugin Development](docs/ADVANCED_PLUGIN_DEVELOPMENT.md)** - Advanced patterns and examples
+- **[Hello World Plugin](https://github.com/ChuckBuilds/ledmatrix-hello-world)** - Starter template
+
+If you create a plugin that you think is ready to be shared with the world, reach out to me with a github issue or a discord message to talk about adding you to the default plugin store. 
 
 There is some rate-limiting from Github when using the Plugin Manager so you may need to generate a github api key to enter into your web interface for more frequent updates of the plugin store. (Optional - guide tbd)
 
@@ -910,6 +919,16 @@ sudo systemctl enable ledmatrix-web.service
 - **API Metrics**: Monitor API usage and system performance
 - **Logs**: View system logs in real-time
 
+### API Documentation
+
+The web interface provides a comprehensive REST API for programmatic control:
+
+- **[REST API Reference](docs/API_REFERENCE.md)** - Complete documentation for all `/api/v3/*` endpoints
+- **[Plugin API Reference](docs/PLUGIN_API_REFERENCE.md)** - API reference for plugin developers
+- **[Developer Quick Reference](docs/DEVELOPER_QUICK_REFERENCE.md)** - Quick reference for common tasks
+
+All API endpoints support JSON requests and return standardized responses. See the [API Reference](docs/API_REFERENCE.md) for complete documentation with request/response examples.
+
 ### Troubleshooting Web Interface
 
 **Web Interface Not Accessible After Restart:**
@@ -1163,6 +1182,16 @@ Ensure your systemd service calls `start_web_conditionally.py` (installed by `in
 
 
 
+
+## Documentation
+
+Comprehensive documentation is available in the `docs/` directory:
+
+- **[Documentation Index](docs/README.md)** - Complete documentation overview
+- **[API Reference](docs/API_REFERENCE.md)** - REST API documentation for web interface
+- **[Plugin API Reference](docs/PLUGIN_API_REFERENCE.md)** - API reference for plugin developers
+- **[Plugin Development Guide](docs/PLUGIN_DEVELOPMENT_GUIDE.md)** - Complete plugin development guide
+- **[Plugin Configuration Guide](docs/PLUGIN_CONFIGURATION_GUIDE.md)** - Plugin configuration documentation
 
 ## Final Notes
 - Most configuration is done via config/config.json

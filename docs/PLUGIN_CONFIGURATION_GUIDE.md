@@ -2,7 +2,16 @@
 
 ## Overview
 
-The LEDMatrix system has been converted to a plugin-based architecture. This guide explains the new configuration structure and how to configure plugins.
+The LEDMatrix system uses a plugin-based architecture where each plugin manages its own configuration. This guide explains the configuration structure, how to configure plugins via the web interface, and advanced configuration options.
+
+## Quick Start
+
+1. **Install a plugin** from the Plugin Store in the web interface
+2. **Navigate to the plugin's configuration tab** (automatically created when installed)
+3. **Configure settings** using the auto-generated form
+4. **Save configuration** and restart the display service
+
+For detailed information, see the sections below.
 
 ## Configuration Structure
 
@@ -238,6 +247,68 @@ Plugins that render multi-step content (scrolling leaderboards, tickers, etc.) c
 - Optional `dynamic_duration.max_duration_seconds` on the plugin overrides the global cap (defined under `display.dynamic_duration.max_duration_seconds`, default 180s).
 - Plugins should override `supports_dynamic_duration()`, `is_cycle_complete()`, and `reset_cycle_state()` (see `BasePlugin`) to control when a cycle completes.
 
+## Configuration Tabs
+
+Each installed plugin automatically gets its own dedicated configuration tab in the web interface. This provides a clean, organized way to configure plugins.
+
+### Accessing Plugin Configuration
+
+1. Navigate to the **Plugins** tab to see all installed plugins
+2. Click the **Configure** button on any plugin card, or
+3. Click directly on the plugin's tab button in the navigation bar
+
+### Auto-Generated Forms
+
+Configuration forms are automatically generated from each plugin's `config_schema.json`:
+
+- **Boolean** → Toggle switch
+- **Number/Integer** → Number input with min/max validation
+- **String** → Text input with length constraints
+- **Array** → Comma-separated input
+- **Enum** → Dropdown menu
+
+### Configuration Features
+
+- **Type-safe inputs**: Form inputs match JSON Schema types
+- **Default values**: Fields show current values or schema defaults
+- **Real-time validation**: Input constraints enforced (min, max, maxLength, etc.)
+- **Reset to defaults**: One-click reset to restore original settings
+- **Help text**: Each field shows description from schema
+
+For more details, see [Plugin Configuration Tabs](PLUGIN_CONFIGURATION_TABS.md).
+
+## Schema Validation
+
+The configuration system uses JSON Schema Draft-07 for validation:
+
+- **Pre-save validation**: Invalid configurations are rejected before saving
+- **Automatic defaults**: Default values extracted from schemas
+- **Error messages**: Clear error messages show exactly what's wrong
+- **Reliable loading**: Schema loading with caching and fallback paths
+
+### Schema Structure
+
+```json
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "enabled": {
+      "type": "boolean",
+      "default": true,
+      "description": "Enable or disable this plugin"
+    },
+    "update_interval": {
+      "type": "integer",
+      "default": 3600,
+      "minimum": 60,
+      "maximum": 86400,
+      "description": "Update interval in seconds"
+    }
+  }
+}
+```
+
 ## Best Practices
 
 1. **Keep main config minimal**: Only include core system settings
@@ -245,6 +316,9 @@ Plugins that render multi-step content (scrolling leaderboards, tickers, etc.) c
 3. **Document plugin requirements**: Include clear documentation for each plugin
 4. **Version control**: Keep plugin configurations in version control
 5. **Testing**: Test plugins in emulator mode before hardware deployment
+6. **Use schemas**: Always provide `config_schema.json` for your plugins
+7. **Sensible defaults**: Ensure defaults work without additional configuration
+8. **Add descriptions**: Help users understand each setting
 
 ## Troubleshooting
 
@@ -254,6 +328,8 @@ Plugins that render multi-step content (scrolling leaderboards, tickers, etc.) c
 2. **Configuration errors**: Validate plugin configuration against schema
 3. **Display issues**: Check display durations and plugin display methods
 4. **Performance**: Monitor plugin update intervals and resource usage
+5. **Tab not showing**: Verify `config_schema.json` exists and is referenced in manifest
+6. **Settings not saving**: Check validation errors and ensure all required fields are filled
 
 ### Debug Mode
 
@@ -268,12 +344,9 @@ Enable debug logging to troubleshoot plugin issues:
 }
 ```
 
-## Conclusion
+## See Also
 
-The new plugin-based architecture provides:
-- **Modularity**: Each feature is a separate plugin
-- **Flexibility**: Easy to add/remove features
-- **Maintainability**: Cleaner codebase and configuration
-- **Extensibility**: Simple plugin development process
-
-For more information, see the main [README.md](../README.md) and plugin development guides.
+- [Plugin Development Guide](PLUGIN_DEVELOPMENT_GUIDE.md) - Complete development guide
+- [Plugin Configuration Tabs](PLUGIN_CONFIGURATION_TABS.md) - Configuration tabs feature
+- [Plugin API Reference](PLUGIN_API_REFERENCE.md) - API documentation
+- [Main README](../README.md) - Project overview
