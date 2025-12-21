@@ -215,7 +215,7 @@ sudo systemctl restart ledmatrix
       "versions": [
         {
           "version": "1.0.0",
-          "ledmatrix_min": "2.0.0",
+          "ledmatrix_min_version": "2.0.0",
           "download_url": "https://github.com/.../v1.0.0.zip"
         }
       ],

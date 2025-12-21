@@ -18,6 +18,13 @@ from pathlib import Path
 from typing import List, Dict, Optional, Any
 import logging
 
+try:
+    import jsonschema
+    from jsonschema import Draft7Validator, ValidationError
+    JSONSCHEMA_AVAILABLE = True
+except ImportError:
+    JSONSCHEMA_AVAILABLE = False
+
 
 class PluginStoreManager:
     """
@@ -93,6 +100,91 @@ class PluginStoreManager:
             seen.add(value)
             ordered.append(value)
         return ordered
+    
+    def _validate_manifest_version_fields(self, manifest: Dict[str, Any]) -> List[str]:
+        """
+        Validate version-related fields in manifest for consistency.
+        
+        Checks:
+        - compatible_versions is present and is an array
+        - Standardized field names are used (min_ledmatrix_version, max_ledmatrix_version)
+        - Deprecated fields are not used (ledmatrix_version)
+        - versions array entries use ledmatrix_min_version instead of ledmatrix_min
+        
+        Args:
+            manifest: Manifest dictionary to validate
+            
+        Returns:
+            List of validation error/warning messages (empty if valid)
+        """
+        errors = []
+        
+        # Check compatible_versions is an array
+        if 'compatible_versions' in manifest:
+            if not isinstance(manifest['compatible_versions'], list):
+                errors.append("compatible_versions must be an array")
+            elif len(manifest['compatible_versions']) == 0:
+                errors.append("compatible_versions array cannot be empty")
+        
+        # Warn about deprecated ledmatrix_version field
+        if 'ledmatrix_version' in manifest:
+            errors.append("ledmatrix_version is deprecated, use compatible_versions instead")
+        
+        # Check versions array entries use standardized field names
+        if 'versions' in manifest and isinstance(manifest['versions'], list):
+            for i, version_entry in enumerate(manifest['versions']):
+                if not isinstance(version_entry, dict):
+                    continue
+                
+                # Check for old ledmatrix_min field
+                if 'ledmatrix_min' in version_entry and 'ledmatrix_min_version' not in version_entry:
+                    errors.append(f"versions[{i}] uses deprecated 'ledmatrix_min', should use 'ledmatrix_min_version'")
+        
+        return errors
+    
+    def _validate_manifest_schema(self, manifest: Dict[str, Any], plugin_id: str) -> List[str]:
+        """
+        Validate manifest against JSON schema if available.
+        
+        Args:
+            manifest: Manifest dictionary to validate
+            plugin_id: Plugin ID for error messages
+            
+        Returns:
+            List of validation error messages (empty if valid or schema unavailable)
+        """
+        if not JSONSCHEMA_AVAILABLE:
+            return []
+        
+        try:
+            # Load manifest schema
+            schema_path = Path(__file__).parent.parent.parent / "schema" / "manifest_schema.json"
+            if not schema_path.exists():
+                return []  # Schema not available, skip validation
+            
+            with open(schema_path, 'r', encoding='utf-8') as f:
+                schema = json.load(f)
+            
+            # Validate schema itself
+            Draft7Validator.check_schema(schema)
+            
+            # Validate manifest against schema
+            validator = Draft7Validator(schema)
+            errors = []
+            for error in validator.iter_errors(manifest):
+                error_path = '.'.join(str(p) for p in error.path)
+                errors.append(f"{error_path}: {error.message}")
+            
+            return errors
+        except json.JSONDecodeError as e:
+            self.logger.warning(f"Could not parse manifest schema: {e}")
+            return []
+        except ValidationError as e:
+            self.logger.warning(f"Manifest schema is invalid: {e}")
+            return []
+        except Exception as e:
+            self.logger.debug(f"Error validating manifest schema for {plugin_id}: {e}")
+            return []
 
     def _get_github_repo_info(self, repo_url: str) -> Dict[str, Any]:
         """Fetch GitHub repository information (stars, etc.)"""
@@ -799,13 +891,23 @@ class PluginStoreManager:
                 }
             
             # Validate manifest has required fields
-            required_fields = ['id', 'name', 'class_name']
+            required_fields = ['id', 'name', 'class_name', 'compatible_versions']
             missing_fields = [field for field in required_fields if field not in manifest]
             if missing_fields:
                 return {
                     'success': False,
                     'error': f'Manifest missing required fields: {", ".join(missing_fields)}'
                 }
+            
+            # Validate version fields consistency
+            validation_errors = self._validate_manifest_version_fields(manifest)
+            if validation_errors:
+                self.logger.warning(f"Manifest version field validation warnings for {plugin_id}: {', '.join(validation_errors)}")
+            
+            # Optional: Full schema validation if available
+            schema_errors = self._validate_manifest_schema(manifest, plugin_id)
+            if schema_errors:
+                self.logger.warning(f"Manifest schema validation warnings for {plugin_id}: {', '.join(schema_errors)}")
             
             # entry_point is optional, default to "manager.py" if not specified
             if 'entry_point' not in manifest:

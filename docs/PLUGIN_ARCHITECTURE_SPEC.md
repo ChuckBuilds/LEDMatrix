@@ -107,7 +107,8 @@ plugins/
   "category": "time",
   "tags": ["clock", "time", "date"],
   "compatible_versions": [">=2.0.0"],
-  "ledmatrix_version": "2.0.0",
+  "min_ledmatrix_version": "2.0.0",
+  "max_ledmatrix_version": "3.0.0",
   "requires": {
     "python": ">=3.9",
     "display_size": {
@@ -1026,7 +1027,7 @@ The plugin store will be a simple GitHub-based discovery system where:
       "versions": [
         {
           "version": "1.0.0",
-          "ledmatrix_min": "2.0.0",
+          "ledmatrix_min_version": "2.0.0",
           "released": "2025-01-15",
           "download_url": "https://github.com/ChuckBuilds/ledmatrix-clock-simple/archive/refs/tags/v1.0.0.zip"
         }
@@ -1048,7 +1049,7 @@ The plugin store will be a simple GitHub-based discovery system where:
       "versions": [
         {
           "version": "2.1.0",
-          "ledmatrix_min": "2.0.0",
+          "ledmatrix_min_version": "2.0.0",
           "released": "2025-01-10",
           "download_url": "https://github.com/SomeUser/ledmatrix-weather-animated/archive/refs/tags/v2.1.0.zip"
         }
@@ -2033,7 +2034,8 @@ touch README.md
   "category": "custom",
   "tags": ["custom", "example"],
   "compatible_versions": [">=2.0.0"],
-  "ledmatrix_version": "2.0.0",
+  "min_ledmatrix_version": "2.0.0",
+  "max_ledmatrix_version": "3.0.0",
   "requires": {
     "python": ">=3.9",
     "display_size": {
@@ -2237,7 +2239,7 @@ Create pull request to `ChuckBuilds/ledmatrix-plugin-registry` adding your plugi
   "versions": [
     {
       "version": "1.0.0",
-      "ledmatrix_min": "2.0.0",
+      "ledmatrix_min_version": "2.0.0",
       "released": "2025-01-15",
       "download_url": "https://github.com/YourName/ledmatrix-my-plugin/archive/refs/tags/v1.0.0.zip"
     }

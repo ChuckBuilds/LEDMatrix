@@ -11,7 +11,8 @@
   "tags": ["custom", "example"],
   "icon": "fas fa-icon-name",
   "compatible_versions": [">=2.0.0"],
-  "ledmatrix_version": "2.0.0",
+  "min_ledmatrix_version": "2.0.0",
+  "max_ledmatrix_version": "3.0.0",
   "requires": {
     "python": ">=3.9",
     "display_size": {
@@ -42,7 +43,7 @@
     {
       "released": "2025-01-01",
       "version": "1.0.0",
-      "ledmatrix_min": "2.0.0"
+      "ledmatrix_min_version": "2.0.0"
     }
   ],
   "last_updated": "2025-01-01",

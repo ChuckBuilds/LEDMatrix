@@ -22,7 +22,6 @@
   "website": "https://github.com/ChuckBuilds/ledmatrix-music",
   "license": "MIT",
   "compatible_versions": [">=2.0.0"],
-  "ledmatrix_version": "2.0.0",
   "min_ledmatrix_version": "2.0.0",
   "max_ledmatrix_version": "3.0.0",
   "download_url_template": "https://github.com/ChuckBuilds/ledmatrix-music/archive/refs/tags/v{version}.zip",
@@ -60,12 +59,12 @@
   "versions": [
     {
       "version": "1.0.3",
-      "ledmatrix_min": "2.0.0",
+      "ledmatrix_min_version": "2.0.0",
       "released": "2025-11-05"
     },
     {
       "version": "1.0.0",
-      "ledmatrix_min": "2.0.0",
+      "ledmatrix_min_version": "2.0.0",
       "released": "2025-01-16"
     }
   ],
