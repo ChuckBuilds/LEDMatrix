@@ -14,13 +14,13 @@ Brief description of what this plugin does.
 
 ```bash
 cd /path/to/LEDMatrix
-./dev_plugin_setup.sh link-github PLUGIN_ID
+./scripts/dev/dev_plugin_setup.sh link-github PLUGIN_ID
 ```
 
 Or for local development:
 
 ```bash
-./dev_plugin_setup.sh link PLUGIN_ID /path/to/plugin/repo
+./scripts/dev/dev_plugin_setup.sh link PLUGIN_ID /path/to/plugin/repo
 ```
 
 2. Install dependencies:
