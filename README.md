@@ -10,7 +10,10 @@
 - Show support on Youtube: https://www.youtube.com/@ChuckBuilds
 - Stay in touch on Instagram: https://www.instagram.com/ChuckBuilds/
 - Want to chat or need support? Reach out on the ChuckBuilds Discord: https://discord.com/invite/uW36dVAtcT
-- Feeling Generous? Buy Me a Coffee : https://buymeacoffee.com/chuckbuilds  or  https://ko-fi.com/chuckbuilds/
+- Feeling Generous? Support the project:
+  - Github Sponsorship: https://github.com/sponsors/ChuckBuilds
+  - Buy Me a Coffee: https://buymeacoffee.com/chuckbuilds
+  - Ko-fi: https://ko-fi.com/chuckbuilds/ 
 
 -----------------------------------------------------------------------------------
 
@@ -45,43 +48,7 @@ There is an official "Repository" of ChuckBuilds provided plugins available by d
 There is some rate-limiting from Github when using the Plugin Manager so you may need to generate a github api key to enter into your web interface for more frequent updates of the plugin store. (Optional - guide tbd)
 
 More to come on plugins but hopefully it's a more sustainable future for this LEDMatrix project.
-
-### Essential Plugins for New Users
-
-If you're setting up LEDMatrix for the first time, here are the recommended plugins to get started:
-
-**Core Functionality:**
-- **`clock-simple`** - Displays current time and date (replaces old `clock` manager)
-- **`weather`** - Weather display with current conditions and forecasts (replaces old `weather` manager)
-
-**Sports (choose based on your interests):**
-- **`football-scoreboard`** - NFL and NCAA Football scores with live game data
-- **`hockey-scoreboard`** - NHL and NCAA Hockey scores and standings
-- **`basketball-scoreboard`** - NBA, WNBA, and NCAA Basketball scores
-- **`baseball-scoreboard`** - MLB scores and standings
-- **`soccer-scoreboard`** - Soccer scores from multiple leagues worldwide
-- **`ledmatrix-leaderboard`** - Standings/leaderboards for various sports
-
-**Content & Information:**
-- **`ledmatrix-news`** - Scrolling news headlines from RSS feeds (replaces old `news_manager`)
-- **`ledmatrix-stocks`** - Stock and crypto price ticker
-- **`ledmatrix-weather`** - Alternative weather display with detailed forecasts
-- **`calendar`** - Google Calendar event display
-
-**Entertainment & Utilities:**
-- **`ledmatrix-music`** - Now playing information from Spotify or YouTube Music
-- **`odds-ticker`** - Sports betting odds ticker
-- **`text-display`** - Custom text display
-- **`static-image`** - Display custom images
-
-**Special Events:**
-- **`christmas-countdown`** - Countdown to Christmas with festive display
-- **`olympics-countdown`** - Countdown to Olympic Games
-
-**Advanced:**
-- **`ledmatrix-flights`** - Flight tracking and airport information
-- **`mqtt-notifications`** - MQTT integration for Home Assistant and other systems
-
+                                                                                                                                                                                                    
 ### Installing Plugins
 
 **Via Web Interface (Recommended):**
@@ -92,7 +59,7 @@ If you're setting up LEDMatrix for the first time, here are the recommended plug
 5. Configure the plugin in its dedicated configuration tab
 6. Enable the plugin and restart the display service
 
-**Via GitHub URL:**
+**Via GitHub URL: (For 3rd Party Plugins)**
 1. In the Plugin Store tab, scroll to "Install From GitHub"
 2. Enter the GitHub repository URL (e.g., `https://github.com/user/ledmatrix-plugin`)
 3. Click **Install**
@@ -101,23 +68,6 @@ If you're setting up LEDMatrix for the first time, here are the recommended plug
 ### Plugin Migration from Old Managers
 
 If you're upgrading from a version before the plugins branch, you'll need to install plugins to replace the old built-in managers:
-
-| Old Manager | New Plugin |
-|------------|------------|
-| `clock` | `clock-simple` |
-| `news_manager` | `ledmatrix-news` |
-| `weather` | `weather` or `ledmatrix-weather` |
-| `stocks` | `ledmatrix-stocks` |
-| `nhl_scoreboard` | `hockey-scoreboard` |
-| `nba_scoreboard` | `basketball-scoreboard` |
-| `nfl_scoreboard` | `football-scoreboard` |
-| `mlb_scoreboard` | `baseball-scoreboard` |
-
-**Migration Steps:**
-1. Install the corresponding plugin from the Plugin Store
-2. Your existing configuration will automatically be migrated (plugin configs use the same structure)
-3. Restart the display service
-4. The old manager functionality is now handled by the plugin
 
 
 -----------------------------------------------------------------------------------
@@ -134,20 +84,20 @@ If you're upgrading from a version before the plugins branch, you'll need to ins
 
 ### RGB Matrix Bonnet / HAT
 - [Adafruit RGB Matrix Bonnet/HAT](https://www.adafruit.com/product/3211) – supports one “chain” of horizontally connected displays  
-- [Adafruit Triple LED Matrix Bonnet](https://www.adafruit.com/product/6358) – supports up to 3 vertical “chains” of horizontally connected displays *(use `regular-pi1` as hardware mapping)*  
+- [Adafruit Triple LED Matrix Bonnet](https://www.adafruit.com/product/6358) – supports up to 3 vertical “chains” of horizontally connected displays. Does not require Soldering for E-Addressable Displays and no PWM Mod. *(use `regular-pi1` as hardware mapping)*  
 - [Electrodragon RGB HAT](https://www.electrodragon.com/product/rgb-matrix-panel-drive-board-raspberry-pi/) – supports up to 3 vertical “chains”  
-- [Seengreat Matrix Adapter Board](https://amzn.to/3KsnT3j) – single-chain LED Matrix *(use `regular` as hardware mapping)*  
+- [Amazon Affiliate Link - Seengreat Matrix Adapter Board](https://amzn.to/3KsnT3j) – single-chain LED Matrix *(use `regular` as hardware mapping)*  
 
 ### LED Matrix Panels  
 (2x in a chain recommended)
 - [Adafruit 64×32](https://www.adafruit.com/product/2278) – designed for 128×32 but works with dynamic scaling on many displays (pixel pitch is user preference)
-- [Waveshare 64×32](https://amzn.to/3Kw55jK) - Does not require E addressable pad
-- [Waveshare 92×46](https://amzn.to/4pQdezE) – higher resolution, requires soldering the **E addressable pad** on the [Adafruit RGB Bonnet](https://www.adafruit.com/product/3211) to “8” **OR** toggling the DIP switch on the Adafruit Triple LED Matrix Bonnet *(no soldering required!)*  
+- [Amazon Affiliate Link - Waveshare 64×32](https://amzn.to/3Kw55jK) - Does not require E addressable pad
+- [Amazon Affiliate Link - Waveshare 92×46](https://amzn.to/4pQdezE) – higher resolution, requires soldering the **E addressable pad** on the [Adafruit RGB Bonnet](https://www.adafruit.com/product/3211) to “8” **OR** toggling the DIP switch on the Adafruit Triple LED Matrix Bonnet *(no soldering required!)*  
   > Amazon Affiliate Link – ChuckBuilds receives a small commission on purchases  
 
 ### Power Supply
 - [5V 4A DC Power Supply](https://www.adafruit.com/product/658) (good for 2 -3 displays, depending on brightness and pixel density, you'll need higher amperage for more)
-- [5V 10AM DC Power Supply](https://amzn.to/3IKlYqe) (good for 6-8 displays, depending on brightness and pixel density)
+- [Amazon Affiliate Link - 5V 10AM DC Power Supply](https://amzn.to/3IKlYqe) (good for 6-8 displays, depending on brightness and pixel density)
 
 ## Optional but recommended mod for Adafruit RGB Matrix Bonnet
 - By soldering a jumper between pins 4 and 18, you can run a specialized command for polling the matrix display. This provides better brightness, less flicker, and better color.
