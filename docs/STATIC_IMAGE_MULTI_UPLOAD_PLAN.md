@@ -54,7 +54,7 @@ Enhance the static-image plugin to support:
 
 ### 2. Asset Storage Structure
 
-```
+```text
 assets/
 ├── plugins/
 │   └── static-image/
@@ -330,7 +330,7 @@ def _migrate_legacy_config(self, config):
 
 ## File Structure Changes
 
-```
+```text
 plugins/static-image/
 ├── manager.py              # Enhanced with rotation logic
 ├── config_schema.json      # Updated with upload/rotation fields
