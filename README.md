@@ -46,6 +46,79 @@ There is some rate-limiting from Github when using the Plugin Manager so you may
 
 More to come on plugins but hopefully it's a more sustainable future for this LEDMatrix project.
 
+### Essential Plugins for New Users
+
+If you're setting up LEDMatrix for the first time, here are the recommended plugins to get started:
+
+**Core Functionality:**
+- **`clock-simple`** - Displays current time and date (replaces old `clock` manager)
+- **`weather`** - Weather display with current conditions and forecasts (replaces old `weather` manager)
+
+**Sports (choose based on your interests):**
+- **`football-scoreboard`** - NFL and NCAA Football scores with live game data
+- **`hockey-scoreboard`** - NHL and NCAA Hockey scores and standings
+- **`basketball-scoreboard`** - NBA, WNBA, and NCAA Basketball scores
+- **`baseball-scoreboard`** - MLB scores and standings
+- **`soccer-scoreboard`** - Soccer scores from multiple leagues worldwide
+- **`ledmatrix-leaderboard`** - Standings/leaderboards for various sports
+
+**Content & Information:**
+- **`ledmatrix-news`** - Scrolling news headlines from RSS feeds (replaces old `news_manager`)
+- **`ledmatrix-stocks`** - Stock and crypto price ticker
+- **`ledmatrix-weather`** - Alternative weather display with detailed forecasts
+- **`calendar`** - Google Calendar event display
+
+**Entertainment & Utilities:**
+- **`ledmatrix-music`** - Now playing information from Spotify or YouTube Music
+- **`odds-ticker`** - Sports betting odds ticker
+- **`text-display`** - Custom text display
+- **`static-image`** - Display custom images
+
+**Special Events:**
+- **`christmas-countdown`** - Countdown to Christmas with festive display
+- **`olympics-countdown`** - Countdown to Olympic Games
+
+**Advanced:**
+- **`ledmatrix-flights`** - Flight tracking and airport information
+- **`mqtt-notifications`** - MQTT integration for Home Assistant and other systems
+
+### Installing Plugins
+
+**Via Web Interface (Recommended):**
+1. Open the web interface at `http://your-pi-ip:5001`
+2. Navigate to the **Plugin Store** tab
+3. Browse or search for plugins
+4. Click **Install** on any plugin
+5. Configure the plugin in its dedicated configuration tab
+6. Enable the plugin and restart the display service
+
+**Via GitHub URL:**
+1. In the Plugin Store tab, scroll to "Install From GitHub"
+2. Enter the GitHub repository URL (e.g., `https://github.com/user/ledmatrix-plugin`)
+3. Click **Install**
+4. Configure and enable as above
+
+### Plugin Migration from Old Managers
+
+If you're upgrading from a version before the plugins branch, you'll need to install plugins to replace the old built-in managers:
+
+| Old Manager | New Plugin |
+|------------|------------|
+| `clock` | `clock-simple` |
+| `news_manager` | `ledmatrix-news` |
+| `weather` | `weather` or `ledmatrix-weather` |
+| `stocks` | `ledmatrix-stocks` |
+| `nhl_scoreboard` | `hockey-scoreboard` |
+| `nba_scoreboard` | `basketball-scoreboard` |
+| `nfl_scoreboard` | `football-scoreboard` |
+| `mlb_scoreboard` | `baseball-scoreboard` |
+
+**Migration Steps:**
+1. Install the corresponding plugin from the Plugin Store
+2. Your existing configuration will automatically be migrated (plugin configs use the same structure)
+3. Restart the display service
+4. The old manager functionality is now handled by the plugin
+
 
 -----------------------------------------------------------------------------------
 
