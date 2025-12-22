@@ -179,14 +179,14 @@ class WiFiManager:
                 "ap_ssid": DEFAULT_AP_SSID,
                 "ap_password": DEFAULT_AP_PASSWORD,
                 "ap_channel": DEFAULT_AP_CHANNEL,
-                "auto_enable_ap_mode": False,  # Default: manual enable only (safer)
+                "auto_enable_ap_mode": True,  # Default: auto-enable when no network (safe due to grace period)
                 "saved_networks": []
             }
             self._save_config()
         
         # Ensure auto_enable_ap_mode exists in config (for existing configs)
         if "auto_enable_ap_mode" not in self.config:
-            self.config["auto_enable_ap_mode"] = False  # Default: manual enable only (safer)
+            self.config["auto_enable_ap_mode"] = True  # Default: auto-enable when no network (safe due to grace period)
             self._save_config()
     
     def _save_config(self):
@@ -1751,7 +1751,7 @@ address=/detectportal.firefox.com/192.168.4.1
             status = self._get_wifi_status_with_retry()
             ethernet_connected = self._is_ethernet_connected()
             ap_active = self._is_ap_mode_active()
-            auto_enable = self.config.get("auto_enable_ap_mode", False)  # Default: False (manual enable)
+            auto_enable = self.config.get("auto_enable_ap_mode", True)  # Default: True (safe due to grace period)
             
             # Log current state for debugging
             logger.debug(f"WiFi status: connected={status.connected}, SSID={status.ssid}, "
