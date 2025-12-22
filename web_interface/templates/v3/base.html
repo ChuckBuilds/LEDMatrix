@@ -39,9 +39,38 @@
             
             // Load HTMX core
             loadScript(htmxSrc, isAPMode ? 'https://unpkg.com/htmx.org@1.9.10' : '/static/v3/js/htmx.min.js', function() {
-                // Load extensions after core loads
-                loadScript(sseSrc, isAPMode ? 'https://unpkg.com/htmx.org/dist/ext/sse.js' : '/static/v3/js/htmx-sse.js');
-                loadScript(jsonEncSrc, isAPMode ? 'https://unpkg.com/htmx.org/dist/ext/json-enc.js' : '/static/v3/js/htmx-json-enc.js');
+                // Wait a moment for HTMX to initialize, then verify
+                setTimeout(function() {
+                    // Verify HTMX loaded
+                    if (typeof htmx === 'undefined') {
+                        console.error('HTMX failed to load, trying fallback...');
+                        const fallbackSrc = isAPMode ? 'https://unpkg.com/htmx.org@1.9.10' : '/static/v3/js/htmx.min.js';
+                        if (fallbackSrc !== htmxSrc) {
+                            loadScript(fallbackSrc, null, function() {
+                                setTimeout(function() {
+                                    if (typeof htmx !== 'undefined') {
+                                        console.log('HTMX loaded from fallback');
+                                        // Load extensions after core loads
+                                        loadScript(sseSrc, isAPMode ? 'https://unpkg.com/htmx.org/dist/ext/sse.js' : '/static/v3/js/htmx-sse.js');
+                                        loadScript(jsonEncSrc, isAPMode ? 'https://unpkg.com/htmx.org/dist/ext/json-enc.js' : '/static/v3/js/htmx-json-enc.js');
+                                    } else {
+                                        console.error('HTMX failed to load from both primary and fallback sources');
+                                        // Trigger fallback content loading
+                                        window.dispatchEvent(new Event('htmx-load-failed'));
+                                    }
+                                }, 100);
+                            });
+                        } else {
+                            console.error('HTMX failed to load and no fallback available');
+                            window.dispatchEvent(new Event('htmx-load-failed'));
+                        }
+                    } else {
+                        console.log('HTMX loaded successfully');
+                        // Load extensions after core loads
+                        loadScript(sseSrc, isAPMode ? 'https://unpkg.com/htmx.org/dist/ext/sse.js' : '/static/v3/js/htmx-sse.js');
+                        loadScript(jsonEncSrc, isAPMode ? 'https://unpkg.com/htmx.org/dist/ext/json-enc.js' : '/static/v3/js/htmx-json-enc.js');
+                    }
+                }, 100);
             });
         })();
     </script>
@@ -926,7 +955,7 @@
         <div id="tab-content" class="space-y-6">
             <!-- Overview tab -->
             <div x-show="activeTab === 'overview'" x-transition>
-                <div id="overview-content" hx-get="/v3/partials/overview" hx-trigger="revealed" hx-swap="innerHTML">
+                <div id="overview-content" hx-get="/v3/partials/overview" hx-trigger="revealed" hx-swap="innerHTML" hx-on::htmx:response-error="loadOverviewDirect()">
                     <div class="animate-pulse">
                         <div class="bg-white rounded-lg shadow p-6">
                             <div class="h-4 bg-gray-200 rounded w-1/4 mb-4"></div>
@@ -935,6 +964,58 @@
                     </div>
                 </div>
             </div>
+            
+            <script>
+                // Fallback: Load overview content directly if HTMX fails
+                function loadOverviewDirect() {
+                    const overviewContent = document.getElementById('overview-content');
+                    if (overviewContent && !overviewContent.hasAttribute('data-loaded')) {
+                        fetch('/v3/partials/overview')
+                            .then(response => response.text())
+                            .then(html => {
+                                overviewContent.innerHTML = html;
+                                overviewContent.setAttribute('data-loaded', 'true');
+                                // Re-initialize Alpine.js for the new content
+                                if (window.Alpine) {
+                                    window.Alpine.initTree(overviewContent);
+                                }
+                            })
+                            .catch(err => {
+                                console.error('Failed to load overview content:', err);
+                                overviewContent.innerHTML = '<div class="bg-red-50 border border-red-200 rounded-lg p-4"><p class="text-red-800">Failed to load overview page. Please refresh the page.</p></div>';
+                            });
+                    }
+                }
+                
+                // Listen for HTMX load failure
+                window.addEventListener('htmx-load-failed', function() {
+                    console.warn('HTMX failed to load, setting up direct content loading fallbacks');
+                    // Try to load content directly after a delay
+                    setTimeout(() => {
+                        const appElement = document.querySelector('[x-data="app()"]');
+                        if (appElement && appElement.__x) {
+                            const activeTab = appElement.__x.$data.activeTab || 'overview';
+                            if (activeTab === 'overview') {
+                                loadOverviewDirect();
+                            }
+                        }
+                    }, 2000);
+                });
+                
+                // Also try direct load if HTMX doesn't load within 5 seconds
+                setTimeout(() => {
+                    if (typeof htmx === 'undefined') {
+                        console.warn('HTMX not loaded after 5 seconds, using direct fetch for content');
+                        const appElement = document.querySelector('[x-data="app()"]');
+                        if (appElement && appElement.__x) {
+                            const activeTab = appElement.__x.$data.activeTab || 'overview';
+                            if (activeTab === 'overview') {
+                                loadOverviewDirect();
+                            }
+                        }
+                    }
+                }, 5000);
+            </script>
 
             <!-- General tab -->
             <div x-show="activeTab === 'general'" x-transition>
@@ -1583,6 +1664,19 @@
                         console.log('Initialized installedPlugins from global:', this.installedPlugins.length);
                         this.updatePluginTabs();
                     }
+                    
+                    // Ensure content loads for the active tab
+                    this.$watch('activeTab', (newTab, oldTab) => {
+                        // Trigger content load when tab changes
+                        this.$nextTick(() => {
+                            this.loadTabContent(newTab);
+                        });
+                    });
+                    
+                    // Load initial tab content
+                    this.$nextTick(() => {
+                        this.loadTabContent(this.activeTab);
+                    });
 
                     // Listen for plugin updates from pluginManager
                     document.addEventListener('pluginsUpdated', (event) => {
@@ -1611,6 +1705,26 @@
                         get: () => _installedPluginsValue
                     });
 
+                },
+
+                loadTabContent(tab) {
+                    // Try to load content for the active tab
+                    if (typeof htmx !== 'undefined') {
+                        const contentId = tab + '-content';
+                        const contentEl = document.getElementById(contentId);
+                        if (contentEl && !contentEl.hasAttribute('data-loaded')) {
+                            // Trigger HTMX load
+                            htmx.trigger(contentEl, 'revealed');
+                        }
+                    } else {
+                        // HTMX not available, use direct fetch
+                        console.warn('HTMX not available, using direct fetch for tab:', tab);
+                        if (tab === 'overview' && typeof loadOverviewDirect === 'function') {
+                            loadOverviewDirect();
+                        } else if (tab === 'wifi' && typeof loadWifiDirect === 'function') {
+                            loadWifiDirect();
+                        }
+                    }
                 },
 
                 async loadInstalledPlugins() {
