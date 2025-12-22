@@ -801,9 +801,15 @@
                                 // Check if this is the full implementation (has updatePluginTabs with proper implementation)
                                 if (fullApp && typeof fullApp.updatePluginTabs === 'function' && fullApp.updatePluginTabs.toString().includes('_doUpdatePluginTabs')) {
                                     // Full implementation is available, copy all methods
+                                    // But preserve _initialized flag to prevent double init
+                                    const wasInitialized = this._initialized;
                                     Object.assign(this, fullApp);
-                                    // Call the full init method
-                                    if (typeof this.init === 'function') {
+                                    // Restore _initialized flag if it was set
+                                    if (wasInitialized) {
+                                        this._initialized = wasInitialized;
+                                    }
+                                    // Only call init if not already initialized
+                                    if (typeof this.init === 'function' && !this._initialized) {
                                         this.init();
                                     }
                                     return true;
@@ -1728,6 +1734,12 @@
                 installedPlugins: [],
 
                 init() {
+                    // Prevent multiple initializations
+                    if (this._initialized) {
+                        return;
+                    }
+                    this._initialized = true;
+                    
                     // Load plugins on page load so tabs are available on any page
                     this.loadInstalledPlugins();
 
@@ -1761,22 +1773,38 @@
                     // Also listen for direct window.installedPlugins changes
                     // Store the actual value in a private property to avoid infinite loops
                     let _installedPluginsValue = this.installedPlugins || [];
-                    Object.defineProperty(window, 'installedPlugins', {
-                        set: (value) => {
-                            const newPlugins = value || [];
-                            const oldIds = (_installedPluginsValue || []).map(p => p.id).sort().join(',');
-                            const newIds = newPlugins.map(p => p.id).sort().join(',');
-                            
-                            // Only update if plugin list actually changed
-                            if (oldIds !== newIds) {
-                                console.log('window.installedPlugins changed:', newPlugins.length, 'plugins');
-                                _installedPluginsValue = newPlugins;
-                                this.installedPlugins = newPlugins;
-                                this.updatePluginTabs();
-                            }
-                        },
-                        get: () => _installedPluginsValue
-                    });
+                    
+                    // Only define the property if it doesn't already exist or if it's configurable
+                    const existingDescriptor = Object.getOwnPropertyDescriptor(window, 'installedPlugins');
+                    if (!existingDescriptor || existingDescriptor.configurable) {
+                        // Delete existing property if it exists and is configurable
+                        if (existingDescriptor) {
+                            delete window.installedPlugins;
+                        }
+                        
+                        Object.defineProperty(window, 'installedPlugins', {
+                            set: (value) => {
+                                const newPlugins = value || [];
+                                const oldIds = (_installedPluginsValue || []).map(p => p.id).sort().join(',');
+                                const newIds = newPlugins.map(p => p.id).sort().join(',');
+                                
+                                // Only update if plugin list actually changed
+                                if (oldIds !== newIds) {
+                                    console.log('window.installedPlugins changed:', newPlugins.length, 'plugins');
+                                    _installedPluginsValue = newPlugins;
+                                    this.installedPlugins = newPlugins;
+                                    this.updatePluginTabs();
+                                }
+                            },
+                            get: () => _installedPluginsValue,
+                            configurable: true  // Allow redefinition if needed
+                        });
+                    } else {
+                        // Property already exists and is not configurable, just update the value
+                        if (typeof window.installedPlugins !== 'undefined') {
+                            _installedPluginsValue = window.installedPlugins;
+                        }
+                    }
 
                 },
 
