@@ -797,6 +797,23 @@
 
     <!-- Alpine.js app function - defined early so it's available when Alpine initializes -->
     <script>
+        // Helper function to get installed plugins with fallback
+        // Must be defined before app() function that uses it
+        async function getInstalledPluginsSafe() {
+            if (window.PluginAPI && window.PluginAPI.getInstalledPlugins) {
+                try {
+                    const plugins = await window.PluginAPI.getInstalledPlugins();
+                    return { status: 'success', data: { plugins: plugins } };
+                } catch (error) {
+                    console.error('Error using PluginAPI.getInstalledPlugins, falling back to direct fetch:', error);
+                    // Fall through to direct fetch
+                }
+            }
+            // Fallback to direct fetch if PluginAPI not loaded
+            const response = await fetch('/api/v3/plugins/installed');
+            return await response.json();
+        }
+
         // Define app() function early so Alpine can find it when it initializes
         // This is a complete implementation that will work immediately
         (function() {
@@ -3750,22 +3767,6 @@
             } catch (error) {
                 app.showNotification('Error refreshing plugin: ' + error.message, 'error');
             }
-        }
-
-        // Helper function to get installed plugins with fallback
-        async function getInstalledPluginsSafe() {
-            if (window.PluginAPI && window.PluginAPI.getInstalledPlugins) {
-                try {
-                    const plugins = await window.PluginAPI.getInstalledPlugins();
-                    return { status: 'success', data: { plugins: plugins } };
-                } catch (error) {
-                    console.error('Error using PluginAPI.getInstalledPlugins, falling back to direct fetch:', error);
-                    // Fall through to direct fetch
-                }
-            }
-            // Fallback to direct fetch if PluginAPI not loaded
-            const response = await fetch('/api/v3/plugins/installed');
-            return await response.json();
         }
 
         // Format commit information for display
