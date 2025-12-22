@@ -1849,6 +1849,81 @@ function generateFieldHtml(key, prop, value, prefix = '') {
         return html;
     }
     
+    // Handle objects with additionalProperties (dynamic keys with object values, like categories)
+    if (prop.type === 'object' && prop.additionalProperties && typeof prop.additionalProperties === 'object' && prop.additionalProperties.type === 'object') {
+        const fieldId = fullKey.replace(/\./g, '_');
+        const currentValue = value || {};
+        const categorySchema = prop.additionalProperties;
+        const entries = Object.entries(currentValue);
+        
+        html += `
+            <div class="categories-container mb-4">
+                <div class="mb-2">
+                    <p class="text-sm text-gray-600 mb-3">${description || 'Category configurations'}</p>
+                    <div id="${fieldId}_categories" class="space-y-3">
+        `;
+        
+        // Render each category
+        entries.forEach(([categoryKey, categoryValue]) => {
+            const categoryId = `${fieldId}_${categoryKey}`;
+            const enabled = categoryValue?.enabled !== undefined ? categoryValue.enabled : (categorySchema.properties?.enabled?.default !== undefined ? categorySchema.properties.enabled.default : true);
+            const dataFile = categoryValue?.data_file || '';
+            const displayName = categoryValue?.display_name || categoryKey.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+            
+            html += `
+                <div class="category-item border border-gray-300 rounded-lg p-4 bg-white">
+                    <div class="flex items-center justify-between mb-3">
+                        <div class="flex items-center gap-3">
+                            <label class="flex items-center cursor-pointer">
+                                <input type="checkbox" 
+                                       name="${fullKey}.${categoryKey}.enabled" 
+                                       ${enabled ? 'checked' : ''}
+                                       class="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded category-enabled-toggle"
+                                       data-category-key="${categoryKey}">
+                                <span class="ml-2 font-medium text-gray-900">${escapeHtml(displayName)}</span>
+                            </label>
+                        </div>
+                        <span class="text-xs text-gray-500 font-mono">${escapeHtml(categoryKey)}</span>
+                    </div>
+                    <div class="space-y-2 text-sm">
+                        <div>
+                            <label class="block text-xs font-medium text-gray-700 mb-1">Data File</label>
+                            <input type="text" 
+                                   name="${fullKey}.${categoryKey}.data_file" 
+                                   value="${escapeHtml(dataFile)}"
+                                   readonly
+                                   class="w-full px-2 py-1 border border-gray-200 rounded bg-gray-50 text-gray-600 text-xs font-mono">
+                        </div>
+                        <div>
+                            <label class="block text-xs font-medium text-gray-700 mb-1">Display Name</label>
+                            <input type="text" 
+                                   name="${fullKey}.${categoryKey}.display_name" 
+                                   value="${escapeHtml(displayName)}"
+                                   class="w-full px-2 py-1 border border-gray-300 rounded text-xs">
+                        </div>
+                    </div>
+                </div>
+            `;
+        });
+        
+        if (entries.length === 0) {
+            html += `
+                <div class="text-center py-4 text-sm text-gray-500">
+                    <i class="fas fa-info-circle mr-2"></i>
+                    No categories configured. Use the File Manager below to add JSON files.
+                </div>
+            `;
+        }
+        
+        html += `
+                    </div>
+                </div>
+            </div>
+        `;
+        
+        return html;
+    }
+    
     // Handle nested objects with known properties
     if (prop.type === 'object' && prop.properties) {
         const sectionId = `section-${fullKey.replace(/\./g, '-')}`;
