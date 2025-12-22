@@ -783,6 +783,38 @@
     <!-- Use local file when in AP mode (192.168.4.x) to avoid CDN dependency -->
     <script>
         (function() {
+            // Prevent Alpine from auto-initializing by setting deferLoadingAlpine before it loads
+            window.deferLoadingAlpine = function(callback) {
+                // Wait for DOM and app() function to be ready
+                function waitForReady() {
+                    if (document.readyState === 'loading') {
+                        document.addEventListener('DOMContentLoaded', waitForReady);
+                        return;
+                    }
+                    
+                    // Wait for app() function to be defined
+                    if (typeof window.app !== 'function' && typeof app !== 'function') {
+                        setTimeout(waitForReady, 50);
+                        return;
+                    }
+                    
+                    // Now initialize Alpine
+                    if (callback && typeof callback === 'function') {
+                        callback();
+                    } else if (window.Alpine && typeof window.Alpine.start === 'function') {
+                        // If callback not provided but Alpine is available, start it
+                        try {
+                            window.Alpine.start();
+                        } catch (e) {
+                            // Alpine may already be initialized, ignore
+                            console.warn('Alpine start error (may already be initialized):', e);
+                        }
+                    }
+                }
+                
+                waitForReady();
+            };
+            
             // Detect AP mode by IP address
             const isAPMode = window.location.hostname === '192.168.4.1' || 
                            window.location.hostname.startsWith('192.168.4.');
@@ -793,30 +825,11 @@
             const script = document.createElement('script');
             script.defer = true;
             script.src = alpineSrc;
-            script.onload = function() {
-                setTimeout(() => {
-                    if (window.Alpine) {
-                        window.Alpine.start();
-                    } else if (alpineSrc !== alpineFallback) {
-                        // Try fallback
-                        const fallback = document.createElement('script');
-                        fallback.defer = true;
-                        fallback.src = alpineFallback;
-                        fallback.onload = function() {
-                            if (window.Alpine) window.Alpine.start();
-                        };
-                        document.head.appendChild(fallback);
-                    }
-                }, 100);
-            };
             script.onerror = function() {
                 if (alpineSrc !== alpineFallback) {
                     const fallback = document.createElement('script');
                     fallback.defer = true;
                     fallback.src = alpineFallback;
-                    fallback.onload = function() {
-                        if (window.Alpine) window.Alpine.start();
-                    };
                     document.head.appendChild(fallback);
                 }
             };
@@ -1631,8 +1644,8 @@
         };
 
         document.addEventListener('alpine:init', () => {
-            if (!Alpine.store('onDemand')) {
-                Alpine.store('onDemand', {
+            if (window.Alpine && !window.Alpine.store('onDemand')) {
+                window.Alpine.store('onDemand', {
                     loading: window.__onDemandStore.loading,
                     state: window.__onDemandStore.state,
                     service: window.__onDemandStore.service,
@@ -1640,7 +1653,9 @@
                     lastUpdated: window.__onDemandStore.lastUpdated
                 });
             }
-            window.__onDemandStore = Alpine.store('onDemand');
+            if (window.Alpine) {
+                window.__onDemandStore = window.Alpine.store('onDemand');
+            }
         });
 
         // Alpine.js app function
@@ -2717,6 +2732,9 @@
                 }
             }
         }
+        
+        // Make app() available globally
+        window.app = app;
 
         // ===== Nested Section Toggle =====
         window.toggleNestedSection = function(sectionId, event) {
