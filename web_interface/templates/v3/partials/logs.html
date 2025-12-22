@@ -91,45 +91,108 @@
 </div>
 
 <script>
-// Global variables
-let logsEventSource = null;
-let allLogs = [];
-let filteredLogs = [];
-let logContainer = null;
-let logsContent = null;
-let isRealtime = true;
-const MAX_LOGS = 500; // Maximum number of logs to keep in memory
+// Global variables - use window properties to avoid redeclaration errors with HTMX reloads
+// Initialize only if not already defined
+if (typeof window._logsEventSource === 'undefined') {
+    window._logsEventSource = null;
+}
+if (typeof window._allLogs === 'undefined') {
+    window._allLogs = [];
+}
+if (typeof window._filteredLogs === 'undefined') {
+    window._filteredLogs = [];
+}
+if (typeof window._logContainer === 'undefined') {
+    window._logContainer = null;
+}
+if (typeof window._logsContent === 'undefined') {
+    window._logsContent = null;
+}
+if (typeof window._isRealtime === 'undefined') {
+    window._isRealtime = true;
+}
+if (typeof window._MAX_LOGS === 'undefined') {
+    window._MAX_LOGS = 500; // Maximum number of logs to keep in memory
+}
+
+// Use window properties directly to avoid redeclaration issues
+// Clean up any existing event source before reinitializing
+if (window._logsEventSource) {
+    window._logsEventSource.close();
+    window._logsEventSource = null;
+}
+
+// Reset arrays on reload
+window._allLogs = [];
+window._filteredLogs = [];
 
 // Initialize immediately (this script runs when the partial is loaded)
 (function() {
-    logContainer = document.getElementById('logs-container');
-    logsContent = document.querySelector('#logs-display .logs-content');
+    window._logContainer = document.getElementById('logs-container');
+    window._logsContent = document.querySelector('#logs-display .logs-content');
 
     // Logs container initialized successfully
 
     initializeLogs();
 
-    // Event listeners
-    document.getElementById('log-realtime-toggle').addEventListener('change', toggleRealtime);
-    document.getElementById('refresh-logs-btn').addEventListener('click', refreshLogs);
-    document.getElementById('log-level-filter').addEventListener('change', filterLogs);
-    document.getElementById('log-search').addEventListener('input', filterLogs);
-    document.getElementById('log-autoscroll').addEventListener('change', toggleAutoscroll);
-    document.getElementById('clear-logs-btn').addEventListener('click', clearLogs);
-    document.getElementById('download-logs-btn').addEventListener('click', downloadLogs);
+    // Event listeners - remove old ones first to prevent duplicates
+    const realtimeToggle = document.getElementById('log-realtime-toggle');
+    const refreshBtn = document.getElementById('refresh-logs-btn');
+    const levelFilter = document.getElementById('log-level-filter');
+    const searchInput = document.getElementById('log-search');
+    const autoscrollToggle = document.getElementById('log-autoscroll');
+    const clearBtn = document.getElementById('clear-logs-btn');
+    const downloadBtn = document.getElementById('download-logs-btn');
+    
+    // Clone and replace to remove old listeners
+    if (realtimeToggle) {
+        const newToggle = realtimeToggle.cloneNode(true);
+        realtimeToggle.parentNode.replaceChild(newToggle, realtimeToggle);
+        newToggle.addEventListener('change', toggleRealtime);
+    }
+    if (refreshBtn) {
+        const newBtn = refreshBtn.cloneNode(true);
+        refreshBtn.parentNode.replaceChild(newBtn, refreshBtn);
+        newBtn.addEventListener('click', refreshLogs);
+    }
+    if (levelFilter) {
+        const newFilter = levelFilter.cloneNode(true);
+        levelFilter.parentNode.replaceChild(newFilter, levelFilter);
+        newFilter.addEventListener('change', filterLogs);
+    }
+    if (searchInput) {
+        const newInput = searchInput.cloneNode(true);
+        searchInput.parentNode.replaceChild(newInput, searchInput);
+        newInput.addEventListener('input', filterLogs);
+    }
+    if (autoscrollToggle) {
+        const newToggle = autoscrollToggle.cloneNode(true);
+        autoscrollToggle.parentNode.replaceChild(newToggle, autoscrollToggle);
+        newToggle.addEventListener('change', toggleAutoscroll);
+    }
+    if (clearBtn) {
+        const newBtn = clearBtn.cloneNode(true);
+        clearBtn.parentNode.replaceChild(newBtn, clearBtn);
+        newBtn.addEventListener('click', clearLogs);
+    }
+    if (downloadBtn) {
+        const newBtn = downloadBtn.cloneNode(true);
+        downloadBtn.parentNode.replaceChild(newBtn, downloadBtn);
+        newBtn.addEventListener('click', downloadLogs);
+    }
 
     // Handle window resize for responsive height
     window.addEventListener('resize', function() {
-        if (logContainer) {
+        if (window._logContainer) {
             // Force a reflow to update sizing
-            logContainer.style.display = 'none';
-            logContainer.offsetHeight; // Trigger reflow
-            logContainer.style.display = '';
+            window._logContainer.style.display = 'none';
+            window._logContainer.offsetHeight; // Trigger reflow
+            window._logContainer.style.display = '';
 
             // Re-evaluate scroll position after resize
             setTimeout(function() {
-                const distanceFromBottom = logContainer.scrollHeight - logContainer.scrollTop - logContainer.clientHeight;
-                isUserNearBottom = distanceFromBottom <= scrollThreshold;
+                const distanceFromBottom = window._logContainer.scrollHeight - window._logContainer.scrollTop - window._logContainer.clientHeight;
+                window._isUserNearBottom = distanceFromBottom <= window._scrollThreshold;
             }, 100);
         }
     });
@@ -168,23 +231,23 @@ function loadLogs() {
 }
 
 function setupRealtimeLogs() {
-    if (logsEventSource) {
-        logsEventSource.close();
+    if (window._logsEventSource) {
+        window._logsEventSource.close();
     }
 
-    logsEventSource = new EventSource('/api/v3/stream/logs');
+    window._logsEventSource = new EventSource('/api/v3/stream/logs');
 
-    logsEventSource.onopen = function() {
+    window._logsEventSource.onopen = function() {
         document.getElementById('log-connection-status').innerHTML = `
             <div class="w-2 h-2 bg-green-500 rounded-full"></div>
             <span>Connected to log stream</span>
         `;
     };
 
-    logsEventSource.onmessage = function(event) {
+    window._logsEventSource.onmessage = function(event) {
         const data = JSON.parse(event.data);
 
-        if (data.logs && isRealtime) {
+        if (data.logs && window._isRealtime) {
             processLogs(data.logs, true);
             updateLogStats();
 
@@ -193,7 +256,7 @@ function setupRealtimeLogs() {
         }
     };
 
-    logsEventSource.onerror = function() {
+    window._logsEventSource.onerror = function() {
         document.getElementById('log-connection-status').innerHTML = `
             <div class="w-2 h-2 bg-red-500 rounded-full"></div>
             <span>Disconnected from log stream</span>
@@ -206,8 +269,10 @@ function setupRealtimeLogs() {
 
 function processLogs(logsText, append = false) {
     if (!append) {
-        allLogs = [];
-        logsContent.innerHTML = '';
+        window._allLogs = [];
+        if (window._logsContent) {
+            window._logsContent.innerHTML = '';
+        }
 
         // Container cleared for new logs
     }
@@ -271,30 +336,32 @@ function processLogs(logsText, append = false) {
         };
         
         // Don't add duplicate entries when appending
-        if (!append || !allLogs.find(log => log.raw === line)) {
-            allLogs.push(logEntry);
+        if (!append || !window._allLogs.find(log => log.raw === line)) {
+            window._allLogs.push(logEntry);
         }
     });
 
     // Trim logs if we exceed the maximum
-    if (allLogs.length > MAX_LOGS) {
-        allLogs = allLogs.slice(-MAX_LOGS);
+    if (window._allLogs.length > window._MAX_LOGS) {
+        window._allLogs = window._allLogs.slice(-window._MAX_LOGS);
     }
 
     filterLogs();
 }
 
 function renderLogs() {
-    if (filteredLogs.length === 0) {
+    if (window._filteredLogs.length === 0) {
         showEmptyState();
         return;
     }
 
     showLogs();
 
-    logsContent.innerHTML = '';
+    if (window._logsContent) {
+        window._logsContent.innerHTML = '';
+    }
 
-    filteredLogs.forEach(log => {
+    window._filteredLogs.forEach(log => {
         const logElement = document.createElement('div');
         logElement.className = `log-entry py-1 px-2 hover:bg-gray-800 rounded transition-colors duration-150 ${getLogLevelClass(log.level)}`;
         logElement.innerHTML = `
@@ -304,7 +371,9 @@ function renderLogs() {
                 <span class="log-message flex-1 ${getLogLevelTextClass(log.level)} break-words">${escapeHtml(log.message)}</span>
             </div>
         `;
-        logsContent.appendChild(logElement);
+        if (window._logsContent) {
+            window._logsContent.appendChild(logElement);
+        }
     });
 }
 
@@ -340,10 +409,14 @@ function getLogLevelTextClass(level) {
 }
 
 function filterLogs() {
-    const levelFilter = document.getElementById('log-level-filter').value;
-    const searchTerm = document.getElementById('log-search').value.toLowerCase();
+    const levelFilterEl = document.getElementById('log-level-filter');
+    const searchEl = document.getElementById('log-search');
+    if (!levelFilterEl || !searchEl) return;
+    
+    const levelFilter = levelFilterEl.value;
+    const searchTerm = searchEl.value.toLowerCase();
 
-    filteredLogs = allLogs.filter(log => {
+    window._filteredLogs = window._allLogs.filter(log => {
         // Level filter
         if (levelFilter) {
             const levels = {
@@ -370,13 +443,16 @@ function filterLogs() {
 }
 
 function toggleRealtime() {
-    isRealtime = document.getElementById('log-realtime-toggle').checked;
+    const toggleEl = document.getElementById('log-realtime-toggle');
+    if (!toggleEl) return;
+    
+    window._isRealtime = toggleEl.checked;
 
-    if (isRealtime) {
+    if (window._isRealtime) {
         setupRealtimeLogs();
-    } else if (logsEventSource) {
-        logsEventSource.close();
-        logsEventSource = null;
+    } else if (window._logsEventSource) {
+        window._logsEventSource.close();
+        window._logsEventSource = null;
     }
 }
 
@@ -388,9 +464,11 @@ function refreshLogs() {
 }
 
 function clearLogs() {
-    allLogs = [];
-    filteredLogs = [];
-    logsContent.innerHTML = '';
+    window._allLogs = [];
+    window._filteredLogs = [];
+    if (window._logsContent) {
+        window._logsContent.innerHTML = '';
+    }
     showEmptyState();
     updateLogStats();
     if (typeof showNotification !== 'undefined') {
@@ -399,14 +477,14 @@ function clearLogs() {
 }
 
 function downloadLogs() {
-    if (filteredLogs.length === 0) {
+    if (window._filteredLogs.length === 0) {
         if (typeof showNotification !== 'undefined') {
             showNotification('No logs to download', 'warning');
         }
         return;
     }
 
-    const logText = filteredLogs.map(log => log.raw).join('\n');
+    const logText = window._filteredLogs.map(log => log.raw).join('\n');
     const blob = new Blob([logText], { type: 'text/plain' });
     const url = URL.createObjectURL(blob);
 
@@ -424,40 +502,46 @@ function downloadLogs() {
 }
 
 // Track if user is near bottom for smart auto-scroll
-let isUserNearBottom = true;
-let scrollThreshold = 100; // pixels from bottom to consider "near bottom"
+if (typeof window._isUserNearBottom === 'undefined') {
+    window._isUserNearBottom = true;
+}
+if (typeof window._scrollThreshold === 'undefined') {
+    window._scrollThreshold = 100; // pixels from bottom to consider "near bottom"
+}
 
 function setupAutoscroll() {
+    if (!window._logsContent) return;
+    
     const observer = new MutationObserver(function() {
         // Use requestAnimationFrame for better timing
         requestAnimationFrame(scrollToBottomIfNeeded);
     });
-    observer.observe(logsContent, { childList: true });
+    observer.observe(window._logsContent, { childList: true });
 
     // Also listen for manual scroll events to detect when user is not at bottom
-    if (logContainer) {
-        logContainer.addEventListener('scroll', function() {
-            const distanceFromBottom = logContainer.scrollHeight - logContainer.scrollTop - logContainer.clientHeight;
-            isUserNearBottom = distanceFromBottom <= scrollThreshold;
+    if (window._logContainer) {
+        window._logContainer.addEventListener('scroll', function() {
+            const distanceFromBottom = window._logContainer.scrollHeight - window._logContainer.scrollTop - window._logContainer.clientHeight;
+            window._isUserNearBottom = distanceFromBottom <= window._scrollThreshold;
         });
     }
 }
 
 function scrollToBottomIfNeeded() {
     const autoscrollEl = document.getElementById('log-autoscroll');
-    if (autoscrollEl && autoscrollEl.checked && logContainer && isUserNearBottom) {
+    if (autoscrollEl && autoscrollEl.checked && window._logContainer && window._isUserNearBottom) {
         // Use requestAnimationFrame for smooth scrolling
         requestAnimationFrame(function() {
             // Remember current scroll position
-            const previousScrollHeight = logContainer.scrollHeight;
+            const previousScrollHeight = window._logContainer.scrollHeight;
 
             // Scroll to bottom
-            logContainer.scrollTop = logContainer.scrollHeight;
+            window._logContainer.scrollTop = window._logContainer.scrollHeight;
 
             // Ensure we're actually at the bottom after a brief delay
             setTimeout(function() {
-                if (logContainer.scrollTop + logContainer.clientHeight >= logContainer.scrollHeight - 10) {
-                    isUserNearBottom = true;
+                if (window._logContainer.scrollTop + window._logContainer.clientHeight >= window._logContainer.scrollHeight - 10) {
+                    window._isUserNearBottom = true;
                 }
             }, 50);
         });
@@ -466,9 +550,9 @@ function scrollToBottomIfNeeded() {
 
 function scrollToBottom() {
     // Legacy function for backward compatibility
-    if (logContainer) {
-        logContainer.scrollTop = logContainer.scrollHeight;
-        isUserNearBottom = true;
+    if (window._logContainer) {
+        window._logContainer.scrollTop = window._logContainer.scrollHeight;
+        window._isUserNearBottom = true;
     }
 }
 
@@ -476,12 +560,12 @@ function toggleAutoscroll() {
     const autoscrollEl = document.getElementById('log-autoscroll');
     if (!autoscrollEl || !autoscrollEl.checked) {
         // Don't auto-scroll if unchecked or element doesn't exist
-        isUserNearBottom = false;
+        window._isUserNearBottom = false;
         return;
     }
 
     // Scroll to bottom when re-enabled and user was near bottom
-    if (isUserNearBottom) {
+    if (window._isUserNearBottom) {
         scrollToBottom();
     }
 }
@@ -491,7 +575,7 @@ function updateLogStats() {
     const count = document.getElementById('log-count');
 
     if (stats && count) {
-        count.textContent = filteredLogs.length;
+        count.textContent = window._filteredLogs.length;
         stats.classList.remove('hidden');
     }
 }
@@ -520,8 +604,10 @@ function showEmptyState() {
 }
 
 function showError(message) {
-    logsContent.innerHTML = `<div class="text-red-400 p-4">${escapeHtml(message)}</div>`;
-    logsContent.classList.remove('hidden');
+    if (window._logsContent) {
+        window._logsContent.innerHTML = `<div class="text-red-400 p-4">${escapeHtml(message)}</div>`;
+        window._logsContent.classList.remove('hidden');
+    }
 }
 
 // Utility function to escape HTML
@@ -533,8 +619,8 @@ function escapeHtml(text) {
 
 // Cleanup on page unload
 window.addEventListener('beforeunload', function() {
-    if (logsEventSource) {
-        logsEventSource.close();
+    if (window._logsEventSource) {
+        window._logsEventSource.close();
     }
 });
 </script>
