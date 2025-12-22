@@ -1733,18 +1733,31 @@ def get_plugin_config():
                         plugin_config['uploaded_files'] = uploaded_files
                     
                     # Merge categories from files with existing config
-                    existing_categories = plugin_config.get('categories', {})
-                    existing_categories.update(categories_from_files)
+                    # Start with existing categories (preserve user settings like enabled/disabled)
+                    existing_categories = plugin_config.get('categories', {}).copy()
+                    
+                    # Update existing categories with file info, add new ones from files
+                    for cat_name, cat_data in categories_from_files.items():
+                        if cat_name in existing_categories:
+                            # Preserve existing enabled state and display_name, but update data_file path
+                            existing_categories[cat_name]['data_file'] = cat_data['data_file']
+                            if 'display_name' not in existing_categories[cat_name] or not existing_categories[cat_name]['display_name']:
+                                existing_categories[cat_name]['display_name'] = cat_data['display_name']
+                        else:
+                            # Add new category from file (default to disabled)
+                            existing_categories[cat_name] = cat_data
+                    
                     if existing_categories:
                         plugin_config['categories'] = existing_categories
                     
                     # Update category_order to include all categories
-                    category_order = plugin_config.get('category_order', [])
-                    all_category_names = set(categories_from_files.keys()) | set(existing_categories.keys())
+                    category_order = plugin_config.get('category_order', []).copy()
+                    all_category_names = set(existing_categories.keys())
                     for cat_name in all_category_names:
                         if cat_name not in category_order:
                             category_order.append(cat_name)
-                    plugin_config['category_order'] = category_order
+                    if category_order:
+                        plugin_config['category_order'] = category_order
         
         # If no config exists, return defaults
         if not plugin_config:
