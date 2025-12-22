@@ -6,9 +6,45 @@
     <title>LED Matrix Control Panel - v3</title>
 
     <!-- HTMX for dynamic content loading -->
-    <script src="https://unpkg.com/htmx.org@1.9.10"></script>
-    <script src="https://unpkg.com/htmx.org/dist/ext/sse.js"></script>
-    <script src="https://unpkg.com/htmx.org/dist/ext/json-enc.js"></script>
+    <!-- Use local files when in AP mode (192.168.4.x) to avoid CDN dependency -->
+    <script>
+        (function() {
+            // Detect AP mode by IP address
+            const isAPMode = window.location.hostname === '192.168.4.1' || 
+                           window.location.hostname.startsWith('192.168.4.');
+            
+            // In AP mode, use local files; otherwise use CDN
+            const htmxSrc = isAPMode ? '/static/v3/js/htmx.min.js' : 'https://unpkg.com/htmx.org@1.9.10';
+            const sseSrc = isAPMode ? '/static/v3/js/htmx-sse.js' : 'https://unpkg.com/htmx.org/dist/ext/sse.js';
+            const jsonEncSrc = isAPMode ? '/static/v3/js/htmx-json-enc.js' : 'https://unpkg.com/htmx.org/dist/ext/json-enc.js';
+            
+            // Load HTMX with fallback
+            function loadScript(src, fallback, onLoad) {
+                const script = document.createElement('script');
+                script.src = src;
+                script.onload = onLoad || (() => {});
+                script.onerror = function() {
+                    if (fallback && src !== fallback) {
+                        console.warn(`Failed to load ${src}, trying fallback ${fallback}`);
+                        const fallbackScript = document.createElement('script');
+                        fallbackScript.src = fallback;
+                        fallbackScript.onload = onLoad || (() => {});
+                        document.head.appendChild(fallbackScript);
+                    } else {
+                        console.error(`Failed to load script: ${src}`);
+                    }
+                };
+                document.head.appendChild(script);
+            }
+            
+            // Load HTMX core
+            loadScript(htmxSrc, isAPMode ? 'https://unpkg.com/htmx.org@1.9.10' : '/static/v3/js/htmx.min.js', function() {
+                // Load extensions after core loads
+                loadScript(sseSrc, isAPMode ? 'https://unpkg.com/htmx.org/dist/ext/sse.js' : '/static/v3/js/htmx-sse.js');
+                loadScript(jsonEncSrc, isAPMode ? 'https://unpkg.com/htmx.org/dist/ext/json-enc.js' : '/static/v3/js/htmx-json-enc.js');
+            });
+        })();
+    </script>
     <script>
         // Configure HTMX to evaluate scripts in swapped content and fix insertBefore errors
         (function() {
@@ -715,7 +751,49 @@
     </script>
 
     <!-- Alpine.js for reactive components -->
-    <script defer src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js"></script>
+    <!-- Use local file when in AP mode (192.168.4.x) to avoid CDN dependency -->
+    <script>
+        (function() {
+            // Detect AP mode by IP address
+            const isAPMode = window.location.hostname === '192.168.4.1' || 
+                           window.location.hostname.startsWith('192.168.4.');
+            
+            const alpineSrc = isAPMode ? '/static/v3/js/alpinejs.min.js' : 'https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js';
+            const alpineFallback = isAPMode ? 'https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js' : '/static/v3/js/alpinejs.min.js';
+            
+            const script = document.createElement('script');
+            script.defer = true;
+            script.src = alpineSrc;
+            script.onload = function() {
+                setTimeout(() => {
+                    if (window.Alpine) {
+                        window.Alpine.start();
+                    } else if (alpineSrc !== alpineFallback) {
+                        // Try fallback
+                        const fallback = document.createElement('script');
+                        fallback.defer = true;
+                        fallback.src = alpineFallback;
+                        fallback.onload = function() {
+                            if (window.Alpine) window.Alpine.start();
+                        };
+                        document.head.appendChild(fallback);
+                    }
+                }, 100);
+            };
+            script.onerror = function() {
+                if (alpineSrc !== alpineFallback) {
+                    const fallback = document.createElement('script');
+                    fallback.defer = true;
+                    fallback.src = alpineFallback;
+                    fallback.onload = function() {
+                        if (window.Alpine) window.Alpine.start();
+                    };
+                    document.head.appendChild(fallback);
+                }
+            };
+            document.head.appendChild(script);
+        })();
+    </script>
 
     <!-- CodeMirror for JSON editing -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/codemirror.min.css">
@@ -876,7 +954,11 @@
 
             <!-- WiFi tab -->
             <div x-show="activeTab === 'wifi'" x-transition>
-                <div id="wifi-content" hx-get="/v3/partials/wifi" hx-trigger="revealed" hx-swap="innerHTML">
+                <div id="wifi-content" 
+                     hx-get="/v3/partials/wifi" 
+                     hx-trigger="revealed" 
+                     hx-swap="innerHTML"
+                     hx-on::htmx:response-error="loadWifiDirect()">
                     <div class="animate-pulse">
                         <div class="bg-white rounded-lg shadow p-6">
                             <div class="h-4 bg-gray-200 rounded w-1/4 mb-4"></div>
@@ -889,6 +971,39 @@
                     </div>
                 </div>
             </div>
+            
+            <script>
+                // Fallback: Load WiFi content directly if HTMX fails
+                function loadWifiDirect() {
+                    const wifiContent = document.getElementById('wifi-content');
+                    if (wifiContent && !wifiContent.hasAttribute('data-loaded')) {
+                        fetch('/v3/partials/wifi')
+                            .then(response => response.text())
+                            .then(html => {
+                                wifiContent.innerHTML = html;
+                                wifiContent.setAttribute('data-loaded', 'true');
+                                // Re-initialize Alpine.js for the new content
+                                if (window.Alpine) {
+                                    window.Alpine.initTree(wifiContent);
+                                }
+                            })
+                            .catch(err => {
+                                console.error('Failed to load WiFi content:', err);
+                                wifiContent.innerHTML = '<div class="bg-red-50 border border-red-200 rounded-lg p-4"><p class="text-red-800">Failed to load WiFi setup page. Please refresh the page.</p></div>';
+                            });
+                    }
+                }
+                
+                // Also try direct load if HTMX doesn't load within 3 seconds (AP mode detection)
+                setTimeout(() => {
+                    const isAPMode = window.location.hostname === '192.168.4.1' || 
+                                   window.location.hostname.startsWith('192.168.4.');
+                    if (isAPMode && typeof htmx === 'undefined') {
+                        console.warn('HTMX not loaded, using direct fetch for WiFi content');
+                        loadWifiDirect();
+                    }
+                }, 3000);
+            </script>
 
             <!-- Schedule tab -->
             <div x-show="activeTab === 'schedule'" x-transition>
@@ -1450,7 +1565,12 @@
         // Alpine.js app function
         function app() {
             return {
-                activeTab: 'overview',
+                activeTab: (function() {
+                    // Auto-open WiFi tab when in AP mode (192.168.4.x)
+                    const isAPMode = window.location.hostname === '192.168.4.1' || 
+                                   window.location.hostname.startsWith('192.168.4.');
+                    return isAPMode ? 'wifi' : 'overview';
+                })(),
                 installedPlugins: [],
 
                 init() {

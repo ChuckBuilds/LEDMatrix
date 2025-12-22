@@ -1400,20 +1400,18 @@ class WiFiManager:
             
             # Get AP settings from config
             ap_ssid = self.config.get("ap_ssid", DEFAULT_AP_SSID)
-            ap_password = self.config.get("ap_password", DEFAULT_AP_PASSWORD)
             
             # Use nmcli hotspot command (simpler, works with Broadcom chips)
-            logger.info(f"Creating hotspot with nmcli: {ap_ssid}")
+            # Open network (no password) for easy setup access
+            logger.info(f"Creating open hotspot with nmcli: {ap_ssid} (no password)")
             cmd = [
                 "nmcli", "device", "wifi", "hotspot",
                 "ifname", "wlan0",
                 "con-name", "LEDMatrix-Setup-AP",
                 "ssid", ap_ssid,
                 "band", "bg"  # 2.4GHz for maximum compatibility
+                # No password parameter = open network
             ]
-            
-            if ap_password:
-                cmd.extend(["password", ap_password])
             
             result = subprocess.run(
                 cmd,
@@ -1658,9 +1656,9 @@ class WiFiManager:
             config_dir.mkdir(parents=True, exist_ok=True)
             
             ap_ssid = self.config.get("ap_ssid", DEFAULT_AP_SSID)
-            ap_password = self.config.get("ap_password", DEFAULT_AP_PASSWORD)
             ap_channel = self.config.get("ap_channel", DEFAULT_AP_CHANNEL)
             
+            # Open network configuration (no password) for easy setup access
             config_content = f"""interface=wlan0
 driver=nl80211
 ssid={ap_ssid}
@@ -1670,11 +1668,7 @@ wmm_enabled=0
 macaddr_acl=0
 auth_algs=1
 ignore_broadcast_ssid=0
-wpa=2
-wpa_passphrase={ap_password}
-wpa_key_mgmt=WPA-PSK
-wpa_pairwise=TKIP
-rsn_pairwise=CCMP
+# Open network - no WPA/WPA2 encryption
 """
             
             # Write config (requires sudo)
