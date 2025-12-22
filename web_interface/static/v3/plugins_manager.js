@@ -1866,9 +1866,12 @@ function generateFieldHtml(key, prop, value, prefix = '') {
         // Render each category
         entries.forEach(([categoryKey, categoryValue]) => {
             const categoryId = `${fieldId}_${categoryKey}`;
-            const enabled = categoryValue?.enabled !== undefined ? categoryValue.enabled : (categorySchema.properties?.enabled?.default !== undefined ? categorySchema.properties.enabled.default : true);
-            const dataFile = categoryValue?.data_file || '';
-            const displayName = categoryValue?.display_name || categoryKey.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+            // Ensure categoryValue is an object
+            const catValue = typeof categoryValue === 'object' && categoryValue !== null ? categoryValue : {};
+            const enabled = catValue.enabled !== undefined ? catValue.enabled : (categorySchema.properties?.enabled?.default !== undefined ? categorySchema.properties.enabled.default : true);
+            // Safely extract string values, ensuring they're strings
+            const dataFile = (typeof catValue.data_file === 'string' ? catValue.data_file : '') || '';
+            const displayName = (typeof catValue.display_name === 'string' ? catValue.display_name : '') || categoryKey.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
             
             html += `
                 <div class="category-item border border-gray-300 rounded-lg p-4 bg-white">
