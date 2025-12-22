@@ -58,3 +58,4 @@ plugins/*
 !plugins/ledmatrix-leaderboard/
 !plugins/ledmatrix-weather/
 !plugins/ledmatrix-news/
+!plugins/ledmatrix-of-the-day/

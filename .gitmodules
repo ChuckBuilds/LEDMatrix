@@ -58,3 +58,6 @@
 [submodule "plugins/ledmatrix-news"]
 	path = plugins/ledmatrix-news
 	url = https://github.com/ChuckBuilds/ledmatrix-news.git
+[submodule "plugins/ledmatrix-of-the-day"]
+	path = plugins/ledmatrix-of-the-day
+	url = https://github.com/ChuckBuilds/ledmatrix-of-the-day.git
