@@ -3365,42 +3365,7 @@ sys.exit(proc.returncode)
                                 os.unlink(wrapper_path)
                             return jsonify({'status': 'error', 'message': 'Action timed out'}), 408
                     else:
-                        # No params, run script normally
-                        result = subprocess.run(
-                            ['python3', str(script_file)],
-                            capture_output=True,
-                            text=True,
-                            timeout=60,
-                            env=env
-                        )
-                        
-                        # Try to parse output as JSON
-                        try:
-                            import json as json_module
-                            output_data = json_module.loads(result.stdout)
-                            if result.returncode == 0:
-                                return jsonify(output_data)
-                            else:
-                                return jsonify({
-                                    'status': 'error',
-                                    'message': output_data.get('message', action_def.get('error_message', 'Action failed')),
-                                    'output': result.stdout + result.stderr
-                                }), 400
-                        except json.JSONDecodeError:
-                            # Output is not JSON, return as text
-                            if result.returncode == 0:
-                                return jsonify({
-                                    'status': 'success',
-                                    'message': action_def.get('success_message', 'Action completed successfully'),
-                                    'output': result.stdout
-                                })
-                            else:
-                                return jsonify({
-                                    'status': 'error',
-                                    'message': action_def.get('error_message', 'Action failed'),
-                                    'output': result.stdout + result.stderr
-                                }), 400
-                        
+                        # No params - check for OAuth flow first, then run script normally
                         # Step 1: Get initial data (like auth URL)
                         # For OAuth flows, we might need to import the script as a module
                         if action_def.get('oauth_flow'):
@@ -3465,18 +3430,32 @@ sys.exit(proc.returncode)
                                 env=env
                             )
                             
-                            if result.returncode == 0:
-                                return jsonify({
-                                    'status': 'success',
-                                    'message': action_def.get('success_message', 'Action completed successfully'),
-                                    'output': result.stdout
-                                })
-                            else:
-                                return jsonify({
-                                    'status': 'error',
-                                    'message': action_def.get('error_message', 'Action failed'),
-                                    'output': result.stdout + result.stderr
-                                }), 400
+                            # Try to parse output as JSON
+                            try:
+                                import json as json_module
+                                output_data = json_module.loads(result.stdout)
+                                if result.returncode == 0:
+                                    return jsonify(output_data)
+                                else:
+                                    return jsonify({
+                                        'status': 'error',
+                                        'message': output_data.get('message', action_def.get('error_message', 'Action failed')),
+                                        'output': result.stdout + result.stderr
+                                    }), 400
+                            except json.JSONDecodeError:
+                                # Output is not JSON, return as text
+                                if result.returncode == 0:
+                                    return jsonify({
+                                        'status': 'success',
+                                        'message': action_def.get('success_message', 'Action completed successfully'),
+                                        'output': result.stdout
+                                    })
+                                else:
+                                    return jsonify({
+                                        'status': 'error',
+                                        'message': action_def.get('error_message', 'Action failed'),
+                                        'output': result.stdout + result.stderr
+                                    }), 400
         
         elif action_type == 'endpoint':
             # Call a plugin-defined HTTP endpoint (future feature)
