@@ -2358,31 +2358,8 @@ function generateFormFromSchema(schema, config, webUiActions = []) {
 
             let value = config[key] !== undefined ? config[key] : prop.default;
             
-            // Special handling: populate uploaded_files from categories for of-the-day plugin
-            if (key === 'uploaded_files' && prop['x-widget'] === 'file-upload' && 
-                prop['x-upload-config'] && prop['x-upload-config'].file_type === 'json') {
-                // Populate from categories if uploaded_files is empty or doesn't exist
-                if (!value || !Array.isArray(value) || value.length === 0) {
-                    const categories = config.categories || {};
-                    value = Object.entries(categories).map(([categoryName, categoryData]) => {
-                        // Extract filename from data_file path
-                        const dataFile = categoryData.data_file || '';
-                        const filename = dataFile.split('/').pop() || `${categoryName}.json`;
-                        
-                        return {
-                            id: categoryName,
-                            category_name: categoryName,
-                            filename: filename,
-                            original_filename: filename,
-                            path: dataFile,
-                            display_name: categoryData.display_name || categoryName.replace(/_/g, ' ').title(),
-                            size: 0, // Size not stored in categories
-                            uploaded_at: new Date().toISOString(), // Approximate
-                            entry_count: 0 // Not stored in categories
-                        };
-                    });
-                }
-            }
+            // Special handling: use uploaded_files from config if available (populated by backend from disk)
+            // No need to populate from categories here since backend does it
             
             formHtml += generateFieldHtml(key, prop, value);
         });

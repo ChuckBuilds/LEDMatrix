@@ -1662,6 +1662,90 @@ def get_plugin_config():
         main_config = api_v3.config_manager.load_config()
         plugin_config = main_config.get(plugin_id, {})
         
+        # Special handling for of-the-day plugin: populate uploaded_files and categories from disk
+        if plugin_id == 'of-the-day' or plugin_id == 'ledmatrix-of-the-day':
+            # Get plugin directory - plugin_id in manifest is 'of-the-day', but directory is 'ledmatrix-of-the-day'
+            plugin_dir_name = 'ledmatrix-of-the-day'
+            if api_v3.plugin_manager:
+                plugin_dir = api_v3.plugin_manager.get_plugin_directory(plugin_dir_name)
+                # If not found, try with the plugin_id
+                if not plugin_dir or not Path(plugin_dir).exists():
+                    plugin_dir = api_v3.plugin_manager.get_plugin_directory(plugin_id)
+            else:
+                plugin_dir = PROJECT_ROOT / 'plugins' / plugin_dir_name
+                if not plugin_dir.exists():
+                    plugin_dir = PROJECT_ROOT / 'plugins' / plugin_id
+            
+            if plugin_dir and Path(plugin_dir).exists():
+                data_dir = Path(plugin_dir) / 'of_the_day'
+                if data_dir.exists():
+                    # Scan for JSON files
+                    uploaded_files = []
+                    categories_from_files = {}
+                    
+                    for json_file in data_dir.glob('*.json'):
+                        try:
+                            # Get file stats
+                            stat = json_file.stat()
+                            
+                            # Read JSON to count entries
+                            with open(json_file, 'r', encoding='utf-8') as f:
+                                json_data = json.load(f)
+                                entry_count = len(json_data) if isinstance(json_data, dict) else 0
+                            
+                            # Extract category name from filename
+                            category_name = json_file.stem
+                            filename = json_file.name
+                            
+                            # Create file entry
+                            file_entry = {
+                                'id': category_name,
+                                'category_name': category_name,
+                                'filename': filename,
+                                'original_filename': filename,
+                                'path': f'of_the_day/{filename}',
+                                'size': stat.st_size,
+                                'uploaded_at': datetime.fromtimestamp(stat.st_mtime).isoformat() + 'Z',
+                                'entry_count': entry_count
+                            }
+                            uploaded_files.append(file_entry)
+                            
+                            # Create/update category entry if not in config
+                            if category_name not in plugin_config.get('categories', {}):
+                                display_name = category_name.replace('_', ' ').title()
+                                categories_from_files[category_name] = {
+                                    'enabled': False,  # Default to disabled, user can enable
+                                    'data_file': f'of_the_day/{filename}',
+                                    'display_name': display_name
+                                }
+                            else:
+                                # Update with file info if needed
+                                categories_from_files[category_name] = plugin_config['categories'][category_name]
+                                # Ensure data_file is correct
+                                categories_from_files[category_name]['data_file'] = f'of_the_day/{filename}'
+                        
+                        except Exception as e:
+                            print(f"Warning: Could not read {json_file}: {e}")
+                            continue
+                    
+                    # Update plugin_config with scanned files
+                    if uploaded_files:
+                        plugin_config['uploaded_files'] = uploaded_files
+                    
+                    # Merge categories from files with existing config
+                    existing_categories = plugin_config.get('categories', {})
+                    existing_categories.update(categories_from_files)
+                    if existing_categories:
+                        plugin_config['categories'] = existing_categories
+                    
+                    # Update category_order to include all categories
+                    category_order = plugin_config.get('category_order', [])
+                    all_category_names = set(categories_from_files.keys()) | set(existing_categories.keys())
+                    for cat_name in all_category_names:
+                        if cat_name not in category_order:
+                            category_order.append(cat_name)
+                    plugin_config['category_order'] = category_order
+        
         # If no config exists, return defaults
         if not plugin_config:
             plugin_config = {
