@@ -794,7 +794,7 @@
                     installedPlugins: [],
                     
                     init() {
-                        // Wait for full implementation to load, then enhance this component
+                        // Try to enhance immediately with full implementation
                         const tryEnhance = () => {
                             if (typeof window.app === 'function') {
                                 const fullApp = window.app();
@@ -818,14 +818,29 @@
                             return false;
                         };
                         
-                        // Try immediately, then retry if needed
+                        // Try immediately - if full implementation is already loaded, use it right away
                         if (!tryEnhance()) {
-                            setTimeout(() => {
-                                if (!tryEnhance()) {
-                                    // Try one more time after a longer delay
-                                    setTimeout(tryEnhance, 200);
+                            // Full implementation not ready yet, load plugins directly while waiting
+                            this.loadInstalledPluginsDirectly();
+                            // Try again very soon
+                            setTimeout(tryEnhance, 10);
+                        }
+                    },
+                    
+                    // Direct plugin loading for stub (before full implementation loads)
+                    async loadInstalledPluginsDirectly() {
+                        try {
+                            const response = await fetch('/api/v3/plugins/installed');
+                            const data = await response.json();
+                            if (data.status === 'success') {
+                                this.installedPlugins = data.data.plugins || [];
+                                // Update tabs if we have the method
+                                if (typeof this.updatePluginTabs === 'function') {
+                                    this.updatePluginTabs();
                                 }
-                            }, 100);
+                            }
+                        } catch (error) {
+                            console.error('Error loading plugins directly:', error);
                         }
                     },
                     
@@ -1741,7 +1756,13 @@
                     this._initialized = true;
                     
                     // Load plugins on page load so tabs are available on any page
-                    this.loadInstalledPlugins();
+                    // Only load if not already loaded (stub might have loaded them)
+                    if (!this.installedPlugins || this.installedPlugins.length === 0) {
+                        this.loadInstalledPlugins();
+                    } else {
+                        // Plugins already loaded, just update tabs
+                        this.updatePluginTabs();
+                    }
 
                     // Initialize installedPlugins from global if available
                     if (typeof window.installedPlugins !== 'undefined') {
@@ -2823,9 +2844,10 @@
                 return fullImplementation;
             };
             
-            // If Alpine is already initialized, update the existing component
+            // If Alpine is already initialized, update the existing component immediately
             if (window.Alpine) {
-                setTimeout(() => {
+                // Use requestAnimationFrame for immediate execution without blocking
+                requestAnimationFrame(() => {
                     const appElement = document.querySelector('[x-data]');
                     if (appElement && appElement._x_dataStack && appElement._x_dataStack[0]) {
                         const existingComponent = appElement._x_dataStack[0];
@@ -2833,12 +2855,12 @@
                         Object.keys(fullImplementation).forEach(key => {
                             existingComponent[key] = fullImplementation[key];
                         });
-                        // Call init to load plugins and set up watchers
-                        if (typeof existingComponent.init === 'function') {
+                        // Call init to load plugins and set up watchers (only if not already initialized)
+                        if (typeof existingComponent.init === 'function' && !existingComponent._initialized) {
                             existingComponent.init();
                         }
                     }
-                }, 50);
+                });
             }
             
             return fullImplementation;
