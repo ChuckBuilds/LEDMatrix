@@ -1421,7 +1421,30 @@ class WiFiManager:
             self.disconnect_from_network()
             time.sleep(1)
             
-            # Delete any existing hotspot connections
+            # Delete any existing hotspot connections (more thorough cleanup)
+            # First, list all connections to find any hotspot-related ones
+            result = subprocess.run(
+                ["nmcli", "-t", "-f", "NAME,TYPE", "connection", "show"],
+                capture_output=True,
+                text=True,
+                timeout=10
+            )
+            if result.returncode == 0:
+                for line in result.stdout.strip().split('\n'):
+                    if ':' in line:
+                        conn_name, conn_type = line.split(':', 1)
+                        conn_name = conn_name.strip()
+                        conn_type = conn_type.strip().lower()
+                        # Delete if it's a hotspot or matches our known names
+                        if conn_type == '802-11-wireless' or 'hotspot' in conn_name.lower() or conn_name in ["Hotspot", "LEDMatrix-Setup-AP", "TickerSetup-AP"]:
+                            logger.info(f"Deleting existing connection: {conn_name}")
+                            subprocess.run(
+                                ["nmcli", "connection", "delete", conn_name],
+                                capture_output=True,
+                                timeout=10
+                            )
+            
+            # Also explicitly delete known connection names
             for conn_name in ["Hotspot", "LEDMatrix-Setup-AP", "TickerSetup-AP"]:
                 subprocess.run(
                     ["nmcli", "connection", "delete", conn_name],
@@ -1452,6 +1475,44 @@ class WiFiManager:
             )
             
             if result.returncode == 0:
+                # Verify the connection was created as open (no password) and fix if needed
+                time.sleep(2)  # Give it a moment to create
+                verify_result = subprocess.run(
+                    ["nmcli", "-t", "-f", "802-11-wireless-security.key-mgmt", "connection", "show", "LEDMatrix-Setup-AP"],
+                    capture_output=True,
+                    text=True,
+                    timeout=5
+                )
+                if verify_result.returncode == 0:
+                    key_mgmt = verify_result.stdout.strip()
+                    if key_mgmt and key_mgmt != "none":
+                        logger.warning(f"Hotspot has security enabled ({key_mgmt}), removing password to make it open...")
+                        # Remove security settings to make it open
+                        subprocess.run(
+                            ["nmcli", "connection", "modify", "LEDMatrix-Setup-AP", "802-11-wireless-security.key-mgmt", "none"],
+                            capture_output=True,
+                            timeout=5
+                        )
+                        subprocess.run(
+                            ["nmcli", "connection", "modify", "LEDMatrix-Setup-AP", "802-11-wireless-security.psk", ""],
+                            capture_output=True,
+                            timeout=5
+                        )
+                        # Restart the connection to apply changes
+                        subprocess.run(
+                            ["nmcli", "connection", "down", "LEDMatrix-Setup-AP"],
+                            capture_output=True,
+                            timeout=5
+                        )
+                        time.sleep(1)
+                        subprocess.run(
+                            ["nmcli", "connection", "up", "LEDMatrix-Setup-AP"],
+                            capture_output=True,
+                            timeout=10
+                        )
+                        logger.info("Removed password from hotspot connection - it should now be open")
+                else:
+                    logger.debug("Could not verify hotspot security settings")
                 logger.info(f"AP mode started via nmcli hotspot: {ap_ssid}")
                 time.sleep(2)
                 
