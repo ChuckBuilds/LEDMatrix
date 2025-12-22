@@ -61,7 +61,7 @@ More to come on plugins but hopefully it's a more sustainable future for this LE
 ### Installing Plugins
 
 **Via Web Interface (Recommended):**
-1. Open the web interface at `http://your-pi-ip:5001`
+1. Open the web interface at `http://your-pi-ip:5000`
 2. Navigate to the **Plugin Store** tab
 3. Browse or search for plugins
 4. Click **Install** on any plugin
@@ -216,12 +216,22 @@ cd LEDMatrix
 
 4. First-time installation (recommended)
 
+**Before running the installation:**
+- Ensure WiFi is connected (or use Ethernet)
+- If WiFi is not connected, the WiFi monitor service will enable AP mode after installation
+- You can connect to the **LEDMatrix-Setup** network (password: `ledmatrix123`) to access the web UI
+
 ```bash
 chmod +x first_time_install.sh
 sudo ./first_time_install.sh
 ```
 
 This single script installs services, dependencies, configures permissions and sudoers, and validates the setup.
+
+**After installation:**
+- The script will display your Pi's IP address and web UI access URL
+- If AP mode is active, connect to **LEDMatrix-Setup** WiFi and access `http://192.168.4.1:5000`
+- Use the web UI to configure WiFi and other settings
 
 
 ## Configuration
@@ -242,7 +252,7 @@ The system uses a template-based configuration approach to avoid Git conflicts d
    ```bash
    sudo nano config/config.json
    ```
-or edit via web interface at http://ledpi:5001
+or edit via web interface at http://ledpi:5000
 
 3. **Having Issues?**: Run the First Time Script again:
   ```bash
@@ -845,7 +855,7 @@ sudo ./stop_display.sh
 
 ## Web Interface Installation (V2)
 
-The LEDMatrix system includes Web Interface V2 that runs on port 5001 and provides real-time display preview, configuration management, and on-demand display controls.
+The LEDMatrix system includes Web Interface V3 that runs on port 5000 and provides real-time display preview, configuration management, and on-demand display controls.
 
 ### Installing the Web Interface Service
 
@@ -884,7 +894,7 @@ The web interface can be configured to start automatically with the main display
 
 Once installed, you can access the web interface at:
 ```
-http://your-pi-ip:5001
+http://your-pi-ip:5000
 ```
 
 ### Managing the Web Interface Service
@@ -937,15 +947,44 @@ All API endpoints support JSON requests and return standardized responses. See t
 3. Check logs for errors: `journalctl -u ledmatrix-web.service -f`
 4. Ensure `web_display_autostart` is set to `true` in `config/config.json`
 
-**Port 5001 Not Accessible:**
-1. Check if the service is running on the correct port
-2. Verify firewall settings allow access to port 5001
-3. Check if another service is using port 5001
+**Port 5000 Not Accessible:**
+1. Check if the service is running on the correct port (5000, not 5001)
+2. Verify firewall settings allow access to port 5000:
+   - For UFW: `sudo ufw allow 5000/tcp`
+   - For iptables: `sudo iptables -A INPUT -p tcp --dport 5000 -j ACCEPT`
+3. Check if another service is using port 5000: `sudo netstat -tulpn | grep 5000`
+4. Verify the service is binding to 0.0.0.0 (all interfaces), not just localhost
+
+**Network Access Issues:**
+1. **Cannot access web UI after fresh install:**
+   - Check if WiFi is connected: `nmcli device status`
+   - If WiFi is not connected, the WiFi monitor may have enabled AP mode
+   - Connect to the **LEDMatrix-Setup** WiFi network (password: `ledmatrix123`)
+   - Access web UI at: `http://192.168.4.1:5000`
+   - Use the web UI to connect to your WiFi network
+
+2. **IP Address Display Shows "127.0.11:5000" or Incorrect IP:**
+   - This indicates the IP detection failed (no internet connectivity or network issues)
+   - The web-ui-info plugin will automatically refresh the IP every 30 seconds
+   - Check network connectivity: `ping -c 3 8.8.8.8`
+   - Verify WiFi/Ethernet is connected: `ip addr show`
+
+3. **SSH Not Accessible:**
+   - SSH must be configured during initial Pi setup (via Raspberry Pi Imager or `raspi-config`)
+   - The installation script does not configure SSH credentials
+   - If SSH is not working, connect via AP mode and use the web UI
+
+4. **AP Mode Active (LEDMatrix-Setup Network):**
+   - This is normal if WiFi is not connected
+   - Connect to the LEDMatrix-Setup network to access the web UI
+   - Use the web UI WiFi tab to connect to your network
+   - AP mode will automatically disable when WiFi connects
 
 **Service Fails to Start:**
 1. Check Python dependencies are installed
 2. Verify the virtual environment is set up correctly
 3. Check file permissions and ownership
+4. Review service logs: `journalctl -u ledmatrix-web.service -n 50`
 
 
 -----------------------------------------------------------------------------------

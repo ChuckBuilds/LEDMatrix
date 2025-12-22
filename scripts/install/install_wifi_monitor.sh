@@ -83,7 +83,77 @@ EOF
 
 echo "$SERVICE_FILE_CONTENT" | sudo tee /etc/systemd/system/ledmatrix-wifi-monitor.service > /dev/null
 
+# Check WiFi connection status before enabling service
+echo ""
+echo "Checking WiFi connection status..."
+WIFI_CONNECTED=false
+ETHERNET_CONNECTED=false
+
+# Check WiFi status
+if command -v nmcli >/dev/null 2>&1; then
+    # Check if WiFi is connected
+    WIFI_STATUS=$(nmcli -t -f DEVICE,TYPE,STATE device status 2>/dev/null | grep -i wifi || echo "")
+    if echo "$WIFI_STATUS" | grep -q "connected"; then
+        WIFI_CONNECTED=true
+        SSID=$(nmcli -t -f active,ssid device wifi 2>/dev/null | grep "^yes:" | cut -d: -f2 | head -1)
+        if [ -n "$SSID" ]; then
+            echo "✓ WiFi is connected to: $SSID"
+        else
+            echo "✓ WiFi is connected"
+        fi
+    else
+        echo "⚠ WiFi is not connected"
+    fi
+    
+    # Check Ethernet status
+    ETH_STATUS=$(nmcli -t -f DEVICE,TYPE,STATE device status 2>/dev/null | grep -E "ethernet|eth" || echo "")
+    if echo "$ETH_STATUS" | grep -q "connected"; then
+        ETHERNET_CONNECTED=true
+        echo "✓ Ethernet is connected"
+    fi
+elif command -v ip >/dev/null 2>&1; then
+    # Fallback: check using ip command
+    if ip addr show wlan0 2>/dev/null | grep -q "inet " && ! ip addr show wlan0 2>/dev/null | grep -q "192.168.4.1"; then
+        WIFI_CONNECTED=true
+        echo "✓ WiFi appears to be connected (has IP address)"
+    else
+        echo "⚠ WiFi does not appear to be connected"
+    fi
+    
+    # Check Ethernet
+    if ip addr show eth0 2>/dev/null | grep -q "inet " || ip addr show 2>/dev/null | grep -E "eth|enp" | grep -q "inet "; then
+        ETHERNET_CONNECTED=true
+        echo "✓ Ethernet appears to be connected (has IP address)"
+    fi
+else
+    echo "⚠ Cannot check network status (nmcli and ip commands not available)"
+fi
+
+# Warn if neither WiFi nor Ethernet is connected
+if [ "$WIFI_CONNECTED" = false ] && [ "$ETHERNET_CONNECTED" = false ]; then
+    echo ""
+    echo "⚠ WARNING: Neither WiFi nor Ethernet is connected!"
+    echo "  The WiFi monitor service will automatically enable AP mode when no network"
+    echo "  connection is detected. This will create a WiFi network named 'LEDMatrix-Setup'"
+    echo "  that you can connect to for initial configuration."
+    echo ""
+    echo "  If you want to connect to WiFi first, you can:"
+    echo "  1. Connect to WiFi using: sudo nmcli device wifi connect <SSID> password <password>"
+    echo "  2. Or connect via Ethernet cable"
+    echo "  3. Or proceed with installation - you can connect to LEDMatrix-Setup AP after reboot"
+    echo ""
+    if [ -z "${ASSUME_YES:-}" ] && [ -z "${LEDMATRIX_ASSUME_YES:-}" ]; then
+        read -p "Continue with WiFi monitor installation? (y/N): " -n 1 -r
+        echo ""
+        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+            echo "Installation cancelled. Connect to WiFi/Ethernet and run this script again."
+            exit 0
+        fi
+    fi
+fi
+
 # Reload systemd
+echo ""
 echo "Reloading systemd..."
 sudo systemctl daemon-reload
 

@@ -1372,35 +1372,165 @@ echo "=========================================="
 echo "Installation Complete!"
 echo "=========================================="
 echo ""
-echo "IMPORTANT: For group changes to take effect, you need to:"
-echo "1. Log out and log back in to your SSH session, OR"
-echo "2. Run: newgrp systemd-journal"
+
+# Network Diagnostics Section
+echo "=========================================="
+echo "Network Status & Access Information"
+echo "=========================================="
 echo ""
-echo "After logging back in, you can:"
+
+# Get current IP addresses
+echo "Current IP Addresses:"
+if command -v hostname >/dev/null 2>&1; then
+    IPS=$(hostname -I 2>/dev/null | tr ' ' '\n' | grep -v '^$' || echo "")
+    if [ -n "$IPS" ]; then
+        echo "$IPS" | while read -r ip; do
+            if [ -n "$ip" ]; then
+                echo "  - $ip"
+            fi
+        done
+    else
+        echo "  ⚠ No IP addresses found"
+    fi
+else
+    echo "  ⚠ Could not determine IP addresses (hostname command not available)"
+fi
+
 echo ""
-echo "Access the web interface at:"
-echo "  http://your-pi-ip:5001"
+
+# Check WiFi status
+echo "WiFi Connection Status:"
+if command -v nmcli >/dev/null 2>&1; then
+    WIFI_STATUS=$(nmcli -t -f DEVICE,TYPE,STATE device status 2>/dev/null | grep -i wifi || echo "")
+    if [ -n "$WIFI_STATUS" ]; then
+        echo "$WIFI_STATUS" | while IFS=':' read -r device type state; do
+            if [ "$state" = "connected" ]; then
+                SSID=$(nmcli -t -f active,ssid device wifi 2>/dev/null | grep "^yes:" | cut -d: -f2 | head -1)
+                if [ -n "$SSID" ]; then
+                    echo "  ✓ Connected to: $SSID"
+                else
+                    echo "  ✓ Connected (SSID unknown)"
+                fi
+            else
+                echo "  ✗ Not connected ($state)"
+            fi
+        done
+    else
+        echo "  ⚠ Could not determine WiFi status"
+    fi
+else
+    echo "  ⚠ nmcli not available, cannot check WiFi status"
+fi
+
 echo ""
-echo "Check service status:"
-echo "  sudo systemctl status ledmatrix.service"
-echo "  sudo systemctl status ledmatrix-web.service"
-echo "  sudo systemctl status ledmatrix-wifi-monitor.service"
+
+# Check AP mode status
+echo "AP Mode Status:"
+if systemctl is-active --quiet hostapd 2>/dev/null; then
+    echo "  ✓ AP Mode is ACTIVE"
+    echo "  → Connect to WiFi network: LEDMatrix-Setup"
+    echo "  → Password: ledmatrix123"
+    echo "  → Access web UI at: http://192.168.4.1:5000"
+    AP_MODE_ACTIVE=true
+else
+    # Check if wlan0 has AP IP
+    if ip addr show wlan0 2>/dev/null | grep -q "192.168.4.1"; then
+        echo "  ✓ AP Mode is ACTIVE (IP detected)"
+        echo "  → Connect to WiFi network: LEDMatrix-Setup"
+        echo "  → Password: ledmatrix123"
+        echo "  → Access web UI at: http://192.168.4.1:5000"
+        AP_MODE_ACTIVE=true
+    else
+        echo "  ✗ AP Mode is inactive"
+        AP_MODE_ACTIVE=false
+    fi
+fi
+
 echo ""
-echo "View logs:"
-echo "  journalctl -u ledmatrix.service -f"
-echo "  journalctl -u ledmatrix-web.service -f"
-echo "  journalctl -u ledmatrix-wifi-monitor.service -f"
+
+# Web UI access information
+echo "Web UI Access:"
+if [ "$AP_MODE_ACTIVE" = true ]; then
+    echo "  → Via AP Mode: http://192.168.4.1:5000"
+    echo ""
+    echo "  To connect to your WiFi network:"
+    echo "  1. Connect to LEDMatrix-Setup network"
+    echo "  2. Open http://192.168.4.1:5000 in your browser"
+    echo "  3. Go to WiFi tab and connect to your network"
+else
+    # Get primary IP for web UI access
+    PRIMARY_IP=""
+    if command -v hostname >/dev/null 2>&1; then
+        PRIMARY_IP=$(hostname -I 2>/dev/null | awk '{print $1}' | grep -v '^$' || echo "")
+    fi
+    
+    if [ -n "$PRIMARY_IP" ] && [ "$PRIMARY_IP" != "127.0.0.1" ] && [ "$PRIMARY_IP" != "192.168.4.1" ]; then
+        echo "  → Access at: http://$PRIMARY_IP:5000"
+    else
+        echo "  → Access at: http://<your-pi-ip>:5000"
+        echo "    (Replace <your-pi-ip> with your Pi's IP address)"
+    fi
+    
+    if systemctl is-active --quiet ledmatrix-web.service 2>/dev/null; then
+        echo "  ✓ Web service is running"
+    else
+        echo "  ⚠ Web service is not running"
+        echo "    Start with: sudo systemctl start ledmatrix-web"
+    fi
+fi
+
 echo ""
-echo "Control the display:"
-echo "  sudo systemctl start ledmatrix.service"
-echo "  sudo systemctl stop ledmatrix.service"
+
+# Service status summary
+echo "Service Status:"
+if systemctl is-active --quiet ledmatrix.service 2>/dev/null; then
+    echo "  ✓ Main display service: running"
+else
+    echo "  ✗ Main display service: not running"
+fi
+
+if systemctl is-active --quiet ledmatrix-web.service 2>/dev/null; then
+    echo "  ✓ Web interface service: running"
+else
+    echo "  ✗ Web interface service: not running"
+fi
+
+if systemctl list-unit-files | grep -q "ledmatrix-wifi-monitor.service"; then
+    if systemctl is-active --quiet ledmatrix-wifi-monitor.service 2>/dev/null; then
+        echo "  ✓ WiFi monitor service: running"
+    else
+        echo "  ⚠ WiFi monitor service: installed but not running"
+    fi
+else
+    echo "  - WiFi monitor service: not installed"
+fi
+
 echo ""
-echo "Enable/disable web interface autostart:"
-echo "  Edit config/config.json and set 'web_display_autostart': true"
+echo "=========================================="
+echo "Important Notes"
+echo "=========================================="
 echo ""
-echo "Configuration files:"
-echo "  Main config: config/config.json (created from template automatically)"
-echo "  Secrets: config/config_secrets.json (created from template automatically)"
-echo "  Template: config/config.template.json (reference for new options)"
+echo "1. For group changes to take effect:"
+echo "   - Log out and log back in to your SSH session, OR"
+echo "   - Run: newgrp systemd-journal"
+echo ""
+echo "2. If you cannot access the web UI:"
+echo "   - Check that the web service is running: sudo systemctl status ledmatrix-web"
+echo "   - Verify firewall allows port 5000: sudo ufw status (if using UFW)"
+echo "   - Check network connectivity: ping -c 3 8.8.8.8"
+echo "   - If WiFi is not connected, connect to LEDMatrix-Setup AP network"
+echo ""
+echo "3. SSH Access:"
+echo "   - SSH must be configured during initial Pi setup (via Raspberry Pi Imager or raspi-config)"
+echo "   - This installation script does not configure SSH credentials"
+echo ""
+echo "4. Useful Commands:"
+echo "   - Check service status: sudo systemctl status ledmatrix.service"
+echo "   - View logs: journalctl -u ledmatrix-web.service -f"
+echo "   - Start/stop display: sudo systemctl start/stop ledmatrix.service"
+echo ""
+echo "5. Configuration Files:"
+echo "   - Main config: $PROJECT_ROOT_DIR/config/config.json"
+echo "   - Secrets: $PROJECT_ROOT_DIR/config/config_secrets.json"
 echo ""
 echo "Enjoy your LED Matrix display!"

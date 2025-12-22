@@ -10,9 +10,10 @@ API Version: 1.0.0
 import logging
 import os
 import socket
+import subprocess
 import time
 from pathlib import Path
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 from PIL import Image, ImageDraw, ImageFont
 
 from src.plugin_system.base_plugin import BasePlugin
@@ -44,6 +45,10 @@ class WebUIInfoPlugin(BasePlugin):
         # Get device IP address
         self.device_ip = self._get_local_ip()
         
+        # IP refresh tracking
+        self.last_ip_refresh = time.time()
+        self.ip_refresh_interval = 30.0  # Refresh IP every 30 seconds
+        
         # Rotation state
         self.current_display_mode = "hostname"  # "hostname" or "ip"
         self.last_rotation_time = time.time()
@@ -53,38 +58,150 @@ class WebUIInfoPlugin(BasePlugin):
         
         self.logger.info(f"Web UI Info plugin initialized - Hostname: {self.device_id}, IP: {self.device_ip}")
     
+    def _is_ap_mode_active(self) -> bool:
+        """
+        Check if AP mode is currently active.
+        
+        Returns:
+            bool: True if AP mode is active, False otherwise
+        """
+        try:
+            # Check if hostapd service is running
+            result = subprocess.run(
+                ["systemctl", "is-active", "hostapd"],
+                capture_output=True,
+                text=True,
+                timeout=2
+            )
+            if result.returncode == 0 and result.stdout.strip() == "active":
+                return True
+            
+            # Check if wlan0 has AP mode IP (192.168.4.1)
+            result = subprocess.run(
+                ["ip", "addr", "show", "wlan0"],
+                capture_output=True,
+                text=True,
+                timeout=2
+            )
+            if result.returncode == 0 and "192.168.4.1" in result.stdout:
+                return True
+            
+            return False
+        except Exception as e:
+            self.logger.debug(f"Error checking AP mode status: {e}")
+            return False
+    
     def _get_local_ip(self) -> str:
         """
-        Get the local IP address of the device.
+        Get the local IP address of the device using network interfaces.
+        Handles AP mode, no internet connectivity, and network state changes.
         
         Returns:
             str: Local IP address, or "localhost" if unable to determine
         """
+        # First check if AP mode is active
+        if self._is_ap_mode_active():
+            self.logger.debug("AP mode detected, returning AP IP: 192.168.4.1")
+            return "192.168.4.1"
+        
         try:
-            # Connect to a remote address to determine local IP
-            # This doesn't actually send data, just determines the route
-            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            # Try using 'hostname -I' first (fastest, gets all IPs)
+            result = subprocess.run(
+                ["hostname", "-I"],
+                capture_output=True,
+                text=True,
+                timeout=2
+            )
+            if result.returncode == 0:
+                ips = result.stdout.strip().split()
+                # Filter out loopback and AP mode IPs
+                for ip in ips:
+                    ip = ip.strip()
+                    if ip and not ip.startswith("127.") and ip != "192.168.4.1":
+                        self.logger.debug(f"Found IP via hostname -I: {ip}")
+                        return ip
+            
+            # Fallback: Use 'ip addr show' to get interface IPs
+            result = subprocess.run(
+                ["ip", "-4", "addr", "show"],
+                capture_output=True,
+                text=True,
+                timeout=3
+            )
+            if result.returncode == 0:
+                current_interface = None
+                for line in result.stdout.split('\n'):
+                    line = line.strip()
+                    # Check for interface name
+                    if ':' in line and not line.startswith('inet'):
+                        parts = line.split(':')
+                        if len(parts) >= 2:
+                            current_interface = parts[1].strip().split('@')[0]
+                    # Check for inet address
+                    elif line.startswith('inet '):
+                        parts = line.split()
+                        if len(parts) >= 2:
+                            ip_with_cidr = parts[1]
+                            ip = ip_with_cidr.split('/')[0]
+                            # Skip loopback and AP mode IPs
+                            if not ip.startswith("127.") and ip != "192.168.4.1":
+                                # Prefer eth0/ethernet interfaces, then wlan0, then others
+                                if current_interface and (
+                                    current_interface.startswith("eth") or 
+                                    current_interface.startswith("enp")
+                                ):
+                                    self.logger.debug(f"Found Ethernet IP: {ip} on {current_interface}")
+                                    return ip
+                                elif current_interface == "wlan0":
+                                    self.logger.debug(f"Found WiFi IP: {ip} on {current_interface}")
+                                    return ip
+            
+            # Fallback: Try socket method (requires internet connectivity)
             try:
-                # Connect to a public DNS server (doesn't actually connect)
-                s.connect(('8.8.8.8', 80))
-                ip = s.getsockname()[0]
+                s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                try:
+                    # Connect to a public DNS server (doesn't actually connect)
+                    s.connect(('8.8.8.8', 80))
+                    ip = s.getsockname()[0]
+                    if ip and not ip.startswith("127.") and ip != "192.168.4.1":
+                        self.logger.debug(f"Found IP via socket method: {ip}")
+                        return ip
+                finally:
+                    s.close()
             except Exception:
-                # Fallback: try to get IP from hostname
+                pass
+            
+            # Last resort: try hostname resolution (often returns 127.0.0.1)
+            try:
                 ip = socket.gethostbyname(socket.gethostname())
-            finally:
-                s.close()
-            return ip
+                if ip and not ip.startswith("127.") and ip != "192.168.4.1":
+                    self.logger.debug(f"Found IP via hostname resolution: {ip}")
+                    return ip
+            except Exception:
+                pass
+            
+            self.logger.warning("Could not determine IP address, using 'localhost'")
+            return "localhost"
+            
         except Exception as e:
-            self.logger.warning(f"Could not get IP address: {e}, using 'localhost'")
+            self.logger.warning(f"Error getting IP address: {e}, using 'localhost'")
             return "localhost"
     
     def update(self) -> None:
         """
-        Update method - no data fetching needed.
+        Update method - refreshes IP address periodically to handle network state changes.
         
-        The hostname is determined at initialization and doesn't change.
+        The hostname is determined at initialization and doesn't change,
+        but IP address can change when network state changes (WiFi connect/disconnect, AP mode, etc.)
         """
-        pass
+        current_time = time.time()
+        if current_time - self.last_ip_refresh >= self.ip_refresh_interval:
+            # Refresh IP address to handle network state changes
+            new_ip = self._get_local_ip()
+            if new_ip != self.device_ip:
+                self.logger.info(f"IP address changed from {self.device_ip} to {new_ip}")
+                self.device_ip = new_ip
+            self.last_ip_refresh = current_time
     
     def display(self, force_clear: bool = False) -> None:
         """
