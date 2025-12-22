@@ -1513,9 +1513,10 @@ class WiFiManager:
             time.sleep(1)
             
             # Delete any existing hotspot connections (more thorough cleanup)
-            # First, list all connections to find any hotspot-related ones
+            # First, list all connections to find any with the same SSID or hotspot-related ones
+            ap_ssid = self.config.get("ap_ssid", DEFAULT_AP_SSID)
             result = subprocess.run(
-                ["nmcli", "-t", "-f", "NAME,TYPE", "connection", "show"],
+                ["nmcli", "-t", "-f", "NAME,TYPE,802-11-wireless.ssid", "connection", "show"],
                 capture_output=True,
                 text=True,
                 timeout=10
@@ -1523,25 +1524,53 @@ class WiFiManager:
             if result.returncode == 0:
                 for line in result.stdout.strip().split('\n'):
                     if ':' in line:
-                        conn_name, conn_type = line.split(':', 1)
-                        conn_name = conn_name.strip()
-                        conn_type = conn_type.strip().lower()
-                        # Delete if it's a hotspot or matches our known names
-                        if conn_type == '802-11-wireless' or 'hotspot' in conn_name.lower() or conn_name in ["Hotspot", "LEDMatrix-Setup-AP", "TickerSetup-AP"]:
-                            logger.info(f"Deleting existing connection: {conn_name}")
-                            subprocess.run(
-                                ["nmcli", "connection", "delete", conn_name],
-                                capture_output=True,
-                                timeout=10
+                        parts = line.split(':')
+                        if len(parts) >= 2:
+                            conn_name = parts[0].strip()
+                            conn_type = parts[1].strip().lower() if len(parts) > 1 else ""
+                            conn_ssid = parts[2].strip() if len(parts) > 2 else ""
+                            
+                            # Delete if:
+                            # 1. It's a hotspot type
+                            # 2. It has the same SSID as our AP
+                            # 3. It matches our known connection names
+                            should_delete = (
+                                'hotspot' in conn_type or
+                                conn_ssid == ap_ssid or
+                                'hotspot' in conn_name.lower() or
+                                conn_name in ["Hotspot", "LEDMatrix-Setup-AP", "TickerSetup-AP"]
                             )
+                            
+                            if should_delete:
+                                logger.info(f"Deleting existing connection: {conn_name} (type: {conn_type}, SSID: {conn_ssid})")
+                                # First disconnect it if active
+                                subprocess.run(
+                                    ["nmcli", "connection", "down", conn_name],
+                                    capture_output=True,
+                                    timeout=5
+                                )
+                                # Then delete it
+                                subprocess.run(
+                                    ["nmcli", "connection", "delete", conn_name],
+                                    capture_output=True,
+                                    timeout=10
+                                )
             
-            # Also explicitly delete known connection names
+            # Also explicitly delete known connection names (in case they weren't caught above)
             for conn_name in ["Hotspot", "LEDMatrix-Setup-AP", "TickerSetup-AP"]:
+                subprocess.run(
+                    ["nmcli", "connection", "down", conn_name],
+                    capture_output=True,
+                    timeout=5
+                )
                 subprocess.run(
                     ["nmcli", "connection", "delete", conn_name],
                     capture_output=True,
                     timeout=10
                 )
+            
+            # Wait a moment for deletions to complete
+            time.sleep(1)
             
             # Get AP settings from config
             ap_ssid = self.config.get("ap_ssid", DEFAULT_AP_SSID)
@@ -1549,13 +1578,15 @@ class WiFiManager:
             # Use nmcli hotspot command (simpler, works with Broadcom chips)
             # Open network (no password) for easy setup access
             logger.info(f"Creating open hotspot with nmcli: {ap_ssid} (no password)")
+            # Note: Some NetworkManager versions add a default password to hotspots
+            # We'll create it and then immediately remove all security settings
             cmd = [
                 "nmcli", "device", "wifi", "hotspot",
                 "ifname", "wlan0",
                 "con-name", "LEDMatrix-Setup-AP",
                 "ssid", ap_ssid,
                 "band", "bg"  # 2.4GHz for maximum compatibility
-                # No password parameter = open network
+                # Don't pass password parameter - we'll remove security after creation
             ]
             
             result = subprocess.run(
@@ -1566,44 +1597,88 @@ class WiFiManager:
             )
             
             if result.returncode == 0:
-                # Verify the connection was created as open (no password) and fix if needed
+                # Always explicitly remove all security settings to ensure open network
+                # NetworkManager sometimes adds default security even when not specified
+                logger.info("Ensuring hotspot is open (no password)...")
                 time.sleep(2)  # Give it a moment to create
+                
+                # Remove all possible security settings
+                security_settings = [
+                    ("802-11-wireless-security.key-mgmt", "none"),
+                    ("802-11-wireless-security.psk", ""),
+                    ("802-11-wireless-security.wep-key", ""),
+                    ("802-11-wireless-security.wep-key-type", ""),
+                    ("802-11-wireless-security.auth-alg", "open"),
+                ]
+                
+                for setting, value in security_settings:
+                    result_modify = subprocess.run(
+                        ["nmcli", "connection", "modify", "LEDMatrix-Setup-AP", setting, str(value)],
+                        capture_output=True,
+                        text=True,
+                        timeout=5
+                    )
+                    if result_modify.returncode != 0:
+                        logger.debug(f"Could not set {setting} to {value}: {result_modify.stderr}")
+                
+                # Verify it's open
                 verify_result = subprocess.run(
-                    ["nmcli", "-t", "-f", "802-11-wireless-security.key-mgmt", "connection", "show", "LEDMatrix-Setup-AP"],
+                    ["nmcli", "-t", "-f", "802-11-wireless-security.key-mgmt,802-11-wireless-security.psk", "connection", "show", "LEDMatrix-Setup-AP"],
                     capture_output=True,
                     text=True,
                     timeout=5
                 )
+                
                 if verify_result.returncode == 0:
-                    key_mgmt = verify_result.stdout.strip()
-                    if key_mgmt and key_mgmt != "none":
-                        logger.warning(f"Hotspot has security enabled ({key_mgmt}), removing password to make it open...")
-                        # Remove security settings to make it open
-                        subprocess.run(
-                            ["nmcli", "connection", "modify", "LEDMatrix-Setup-AP", "802-11-wireless-security.key-mgmt", "none"],
-                            capture_output=True,
-                            timeout=5
-                        )
-                        subprocess.run(
-                            ["nmcli", "connection", "modify", "LEDMatrix-Setup-AP", "802-11-wireless-security.psk", ""],
-                            capture_output=True,
-                            timeout=5
-                        )
-                        # Restart the connection to apply changes
+                    output = verify_result.stdout.strip()
+                    key_mgmt = ""
+                    psk = ""
+                    for line in output.split('\n'):
+                        if 'key-mgmt:' in line:
+                            key_mgmt = line.split(':', 1)[1].strip() if ':' in line else ""
+                        elif 'psk:' in line:
+                            psk = line.split(':', 1)[1].strip() if ':' in line else ""
+                    
+                    if key_mgmt != "none" or (psk and psk != ""):
+                        logger.warning(f"Hotspot still has security (key-mgmt={key_mgmt}, psk={'set' if psk else 'empty'}), deleting and recreating...")
+                        # Delete and recreate as last resort
                         subprocess.run(
                             ["nmcli", "connection", "down", "LEDMatrix-Setup-AP"],
                             capture_output=True,
                             timeout=5
                         )
-                        time.sleep(1)
                         subprocess.run(
-                            ["nmcli", "connection", "up", "LEDMatrix-Setup-AP"],
+                            ["nmcli", "connection", "delete", "LEDMatrix-Setup-AP"],
                             capture_output=True,
-                            timeout=10
+                            timeout=5
                         )
-                        logger.info("Removed password from hotspot connection - it should now be open")
-                else:
-                    logger.debug("Could not verify hotspot security settings")
+                        time.sleep(1)
+                        # Recreate without any password parameters
+                        cmd_recreate = [
+                            "nmcli", "device", "wifi", "hotspot",
+                            "ifname", "wlan0",
+                            "con-name", "LEDMatrix-Setup-AP",
+                            "ssid", ap_ssid,
+                            "band", "bg"
+                        ]
+                        subprocess.run(cmd_recreate, capture_output=True, timeout=30)
+                        logger.info("Recreated hotspot as open network")
+                    else:
+                        logger.info("Hotspot verified as open (no password)")
+                
+                # Restart the connection to apply all changes
+                subprocess.run(
+                    ["nmcli", "connection", "down", "LEDMatrix-Setup-AP"],
+                    capture_output=True,
+                    timeout=5
+                )
+                time.sleep(1)
+                subprocess.run(
+                    ["nmcli", "connection", "up", "LEDMatrix-Setup-AP"],
+                    capture_output=True,
+                    timeout=10
+                )
+                logger.info("Hotspot restarted with open network settings")
                 logger.info(f"AP mode started via nmcli hotspot: {ap_ssid}")
                 time.sleep(2)
                 
