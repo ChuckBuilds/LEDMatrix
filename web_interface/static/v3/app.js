@@ -212,14 +212,59 @@ window.performanceMonitor = {
     },
 
     getMeasures: function() {
-        if (window.performance.getEntriesByType) {
-            return performance.getEntriesByType('measure');
+        if (window.performance && window.performance.getEntriesByType) {
+            return window.performance.getEntriesByType('measure');
         }
         return [];
+    },
+    
+    getMetrics: function() {
+        if (!window.performance || !window.performance.getEntriesByType) {
+            return {};
+        }
+        
+        const navigation = window.performance.getEntriesByType('navigation')[0];
+        const paint = window.performance.getEntriesByType('paint');
+        const resources = window.performance.getEntriesByType('resource');
+        
+        return {
+            domContentLoaded: navigation ? navigation.domContentLoadedEventEnd - navigation.domContentLoadedEventStart : 0,
+            loadComplete: navigation ? navigation.loadEventEnd - navigation.fetchStart : 0,
+            firstPaint: paint.find(p => p.name === 'first-paint')?.startTime || 0,
+            firstContentfulPaint: paint.find(p => p.name === 'first-contentful-paint')?.startTime || 0,
+            resourceCount: resources.length,
+            totalResourceSize: resources.reduce((sum, r) => sum + (r.transferSize || 0), 0),
+            measures: this.measures
+        };
+    },
+    
+    logMetrics: function() {
+        const metrics = this.getMetrics();
+        console.group('Performance Metrics');
+        console.log('DOM Content Loaded:', metrics.domContentLoaded?.toFixed(2) || 'N/A', 'ms');
+        console.log('Load Complete:', metrics.loadComplete?.toFixed(2) || 'N/A', 'ms');
+        console.log('First Paint:', metrics.firstPaint?.toFixed(2) || 'N/A', 'ms');
+        console.log('First Contentful Paint:', metrics.firstContentfulPaint?.toFixed(2) || 'N/A', 'ms');
+        console.log('Resources:', metrics.resourceCount || 0, 'files,', (metrics.totalResourceSize / 1024).toFixed(2) || '0', 'KB');
+        if (Object.keys(metrics.measures || {}).length > 0) {
+            console.log('Custom Measures:', metrics.measures);
+        }
+        console.groupEnd();
     }
 };
 
 // Initialize performance monitoring
 document.addEventListener('DOMContentLoaded', function() {
     window.performanceMonitor.mark('app-start');
+    
+    // Log metrics after page load
+    window.addEventListener('load', function() {
+        setTimeout(() => {
+            window.performanceMonitor.mark('app-loaded');
+            window.performanceMonitor.measure('app-load-time', 'app-start', 'app-loaded');
+            if (window.location.search.includes('debug=perf')) {
+                window.performanceMonitor.logMetrics();
+            }
+        }, 100);
+    });
 });

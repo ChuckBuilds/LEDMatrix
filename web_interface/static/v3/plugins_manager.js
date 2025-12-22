@@ -656,10 +656,17 @@ function initializePlugins() {
 function loadInstalledPlugins() {
     console.log('Loading installed plugins...');
 
-    return fetch('/api/v3/plugins/installed')
+    // Use PluginAPI if available, otherwise fall back to direct fetch
+    const fetchPromise = (window.PluginAPI && window.PluginAPI.getInstalledPlugins) ?
+        window.PluginAPI.getInstalledPlugins().then(plugins => ({ status: 'success', data: { plugins: plugins } })) :
+        fetch('/api/v3/plugins/installed').then(response => response.json());
+
+    return fetchPromise
         .then(response => {
-            console.log('Installed plugins response:', response.status);
-            return response.json();
+            if (response.status) {
+                console.log('Installed plugins response:', response.status);
+            }
+            return response;
         })
         .then(data => {
             console.log('Installed plugins data:', data);
@@ -1717,9 +1724,13 @@ function generatePluginConfigForm(pluginId, config) {
     console.log('[DEBUG] ===== Generating plugin config form =====');
     console.log('[DEBUG] Plugin ID:', pluginId);
     // Load plugin schema and actions for dynamic form generation
+    const installedPluginsPromise = (window.PluginAPI && window.PluginAPI.getInstalledPlugins) ?
+        window.PluginAPI.getInstalledPlugins().then(plugins => ({ status: 'success', data: { plugins: plugins } })) :
+        fetch(`/api/v3/plugins/installed`).then(r => r.json());
+    
     return Promise.all([
         fetch(`/api/v3/plugins/schema?plugin_id=${pluginId}`).then(r => r.json()),
-        fetch(`/api/v3/plugins/installed`).then(r => r.json())
+        installedPluginsPromise
     ])
         .then(([schemaData, pluginsData]) => {
             console.log('[DEBUG] Schema data received:', schemaData.status);
@@ -2772,15 +2783,25 @@ let currentPluginConfigState = {
 };
 
 // Initialize JSON editor
-function initJsonEditor() {
+async function initJsonEditor() {
     const textarea = document.getElementById('plugin-config-json-editor');
     if (!textarea) return null;
     
-    // Check if CodeMirror is available
+    // Lazy load CodeMirror if needed
     if (typeof CodeMirror === 'undefined') {
-        console.error('CodeMirror not loaded. Please refresh the page.');
-        showNotification('JSON editor not available. Please refresh the page.', 'error');
-        return null;
+        if (typeof window.loadCodeMirror === 'function') {
+            try {
+                await window.loadCodeMirror();
+            } catch (error) {
+                console.error('Failed to load CodeMirror:', error);
+                showNotification('JSON editor not available. Please refresh the page.', 'error');
+                return null;
+            }
+        } else {
+            console.error('CodeMirror not loaded and loadCodeMirror not available. Please refresh the page.');
+            showNotification('JSON editor not available. Please refresh the page.', 'error');
+            return null;
+        }
     }
     
     if (currentPluginConfigState.jsonEditor) {
@@ -2835,9 +2856,9 @@ function switchPluginConfigView(view) {
         
         // Initialize editor if not already done
         if (!currentPluginConfigState.jsonEditor) {
-            // Small delay to ensure textarea is visible
-            setTimeout(() => {
-                currentPluginConfigState.jsonEditor = initJsonEditor();
+            // Small delay to ensure textarea is visible, then load CodeMirror and initialize
+            setTimeout(async () => {
+                currentPluginConfigState.jsonEditor = await initJsonEditor();
                 if (currentPluginConfigState.jsonEditor) {
                     const jsonText = JSON.stringify(currentPluginConfigState.config, null, 2);
                     currentPluginConfigState.jsonEditor.setValue(jsonText);

@@ -5,6 +5,7 @@ import sys
 import subprocess
 import time
 from pathlib import Path
+from datetime import datetime, timedelta
 
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -195,15 +196,31 @@ def captive_portal_redirect():
     # Static files (/static/) and API calls (/api/v3/) are also allowed
     return redirect(url_for('pages_v3.index'), code=302)
 
-# Add security headers to all responses
+# Add security headers and caching to all responses
 @app.after_request
 def add_security_headers(response):
-    """Add security headers to all responses"""
+    """Add security headers and caching to all responses"""
     # Only set standard security headers - avoid Permissions-Policy to prevent browser warnings
     # about unrecognized features
     response.headers['X-Content-Type-Options'] = 'nosniff'
     response.headers['X-Frame-Options'] = 'SAMEORIGIN'
     response.headers['X-XSS-Protection'] = '1; mode=block'
+    
+    # Add caching headers for static assets
+    if request.path.startswith('/static/'):
+        # Cache static assets for 1 year (with versioning via query params)
+        response.headers['Cache-Control'] = 'public, max-age=31536000, immutable'
+        response.headers['Expires'] = (datetime.now() + timedelta(days=365)).strftime('%a, %d %b %Y %H:%M:%S GMT')
+    elif request.path.startswith('/api/v3/'):
+        # Short cache for API responses (5 seconds) to allow for quick updates
+        # but reduce server load for repeated requests
+        if request.method == 'GET' and 'stream' not in request.path:
+            response.headers['Cache-Control'] = 'private, max-age=5, must-revalidate'
+    else:
+        # No cache for HTML pages to ensure fresh content
+        response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+        response.headers['Pragma'] = 'no-cache'
+        response.headers['Expires'] = '0'
     
     return response
 
@@ -261,7 +278,7 @@ def system_status_generator():
             yield status
         except Exception as e:
             yield {'error': str(e)}
-        time.sleep(5)  # Update every 5 seconds
+        time.sleep(10)  # Update every 10 seconds (reduced frequency for better performance)
 
 # Display preview generator for SSE
 def display_preview_generator():
@@ -325,7 +342,7 @@ def display_preview_generator():
         except Exception as e:
             yield {'error': str(e)}
         
-        time.sleep(0.1)  # Check 10 times per second
+        time.sleep(0.5)  # Check 2 times per second (reduced frequency for better performance)
 
 # Logs generator for SSE
 def logs_generator():
@@ -380,7 +397,7 @@ def logs_generator():
             }
             yield error_data
 
-        time.sleep(2)  # Update every 2 seconds
+        time.sleep(5)  # Update every 5 seconds (reduced frequency for better performance)
 
 # SSE endpoints
 @app.route('/api/v3/stream/stats')

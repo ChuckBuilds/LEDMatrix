@@ -259,8 +259,15 @@
     // Populate plugin filter
     async function populatePluginFilter() {
         try {
-            const response = await fetch('/api/v3/plugins/installed');
-            const data = await response.json();
+            // Use PluginAPI if available, otherwise fall back to direct fetch
+            let data;
+            if (window.PluginAPI && window.PluginAPI.getInstalledPlugins) {
+                const plugins = await window.PluginAPI.getInstalledPlugins();
+                data = { status: 'success', data: { plugins: plugins } };
+            } else {
+                const response = await fetch('/api/v3/plugins/installed');
+                data = await response.json();
+            }
             
             if (data.status === 'success' && data.data) {
                 const select = document.getElementById('history-plugin-filter');

@@ -5,6 +5,12 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>LED Matrix Control Panel - v3</title>
 
+    <!-- Resource hints for CDN resources -->
+    <link rel="preconnect" href="https://unpkg.com" crossorigin>
+    <link rel="preconnect" href="https://cdnjs.cloudflare.com" crossorigin>
+    <link rel="dns-prefetch" href="https://unpkg.com">
+    <link rel="dns-prefetch" href="https://cdnjs.cloudflare.com">
+
     <!-- HTMX for dynamic content loading -->
     <!-- Use local files when in AP mode (192.168.4.x) to avoid CDN dependency -->
     <script>
@@ -636,8 +642,18 @@
                                     
                                     // Load both installed plugins and plugin store
                                     Promise.all([
-                                        fetch('/api/v3/plugins/installed').then(r => r.json()),
-                                        fetch('/api/v3/plugins/store/list?fetch_commit_info=true').then(r => r.json())
+                                        // Use batched API requests for better performance
+                                        window.PluginAPI && window.PluginAPI.batch ? 
+                                            window.PluginAPI.batch([
+                                                {endpoint: '/plugins/installed', method: 'GET'},
+                                                {endpoint: '/plugins/store/list?fetch_commit_info=true', method: 'GET'}
+                                            ]).then(([installedRes, storeRes]) => {
+                                                return [installedRes, storeRes];
+                                            }) :
+                                            Promise.all([
+                                                getInstalledPluginsSafe(),
+                                                fetch('/api/v3/plugins/store/list?fetch_commit_info=true').then(r => r.json())
+                                            ])
                                     ]).then(([installedData, storeData]) => {
                                         console.log('Fetched plugins:', installedData);
                                         console.log('Fetched store:', storeData);
@@ -830,8 +846,7 @@
                     // Direct plugin loading for stub (before full implementation loads)
                     async loadInstalledPluginsDirectly() {
                         try {
-                            const response = await fetch('/api/v3/plugins/installed');
-                            const data = await response.json();
+                            const data = await getInstalledPluginsSafe();
                             if (data.status === 'success') {
                                 this.installedPlugins = data.data.plugins || [];
                                 // Update tabs if we have the method
@@ -932,14 +947,41 @@
         })();
     </script>
 
-    <!-- CodeMirror for JSON editing -->
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/codemirror.min.css">
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/theme/monokai.min.css">
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/codemirror.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/mode/javascript/javascript.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/mode/json/json.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/addon/edit/closebrackets.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/addon/edit/matchbrackets.min.js"></script>
+    <!-- CodeMirror for JSON editing - lazy loaded when needed -->
+    <link rel="preload" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/codemirror.min.css" as="style" onload="this.onload=null;this.rel='stylesheet'">
+    <noscript><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/codemirror.min.css"></noscript>
+    <link rel="preload" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/theme/monokai.min.css" as="style" onload="this.onload=null;this.rel='stylesheet'">
+    <noscript><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/theme/monokai.min.css"></noscript>
+    <!-- CodeMirror scripts loaded on demand when JSON editor is opened -->
+    <script>
+        // Lazy load CodeMirror when needed
+        window.loadCodeMirror = function() {
+            if (window.CodeMirror) return Promise.resolve();
+            
+            return new Promise((resolve, reject) => {
+                const scripts = [
+                    'https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/codemirror.min.js',
+                    'https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/mode/javascript/javascript.min.js',
+                    'https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/mode/json/json.min.js',
+                    'https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/addon/edit/closebrackets.min.js',
+                    'https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/addon/edit/matchbrackets.min.js'
+                ];
+                
+                let loaded = 0;
+                scripts.forEach((src, index) => {
+                    const script = document.createElement('script');
+                    script.src = src;
+                    script.defer = true;
+                    script.onload = () => {
+                        loaded++;
+                        if (loaded === scripts.length) resolve();
+                    };
+                    script.onerror = reject;
+                    document.head.appendChild(script);
+                });
+            });
+        };
+    </script>
 
     <!-- Font Awesome icons -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
@@ -1513,7 +1555,7 @@
                                                 this.onDemandStopping = false;
                                             });
                                     }
-                                }" x-init="loadPluginConfig(plugin.id)">
+                                }" x-init="if (typeof loadPluginConfig === 'function') { $nextTick(() => loadPluginConfig(plugin.id)); }">
                                 <form x-on:submit.prevent="savePluginConfig(plugin.id, $event)">
                                     <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
                                         <!-- Plugin Info -->
@@ -1609,7 +1651,7 @@
                                                 </div>
 
                                                 <!-- Configuration fields loaded dynamically -->
-                                                <div x-show="!loading" x-html="generateConfigForm(plugin.id, config, schema, webUiActions)"></div>
+                                                <div x-show="!loading && typeof generateConfigForm === 'function'" x-html="generateConfigForm(plugin.id, config, schema, webUiActions)"></div>
                                             </div>
                                         </div>
                                     </div>
@@ -1885,8 +1927,7 @@
                     // Otherwise, load plugins directly (fallback for when plugins.html isn't loaded)
                     try {
                         console.log('Loading installed plugins directly...');
-                        const response = await fetch('/api/v3/plugins/installed');
-                        const data = await response.json();
+                        const data = await getInstalledPluginsSafe();
 
                         if (data.status === 'success') {
                             this.installedPlugins = data.data.plugins || [];
@@ -2036,17 +2077,28 @@
 
                     try {
                         // Load config, schema, and installed plugins (for web_ui_actions) in parallel
-                        const [configResponse, schemaResponse, pluginsResponse] = await Promise.all([
-                            fetch(`/api/v3/plugins/config?plugin_id=${pluginId}`),
-                            fetch(`/api/v3/plugins/schema?plugin_id=${pluginId}`),
-                            fetch(`/api/v3/plugins/installed`)
-                        ]);
-
-                        const [configData, schemaData, pluginsData] = await Promise.all([
-                            configResponse.json(),
-                            schemaResponse.json(),
-                            pluginsResponse.json()
-                        ]);
+                        // Use batched API if available for better performance
+                        let configData, schemaData, pluginsData;
+                        
+                        if (window.PluginAPI && window.PluginAPI.batch) {
+                            // PluginAPI.batch returns already-parsed JSON objects
+                            const results = await window.PluginAPI.batch([
+                                {endpoint: `/plugins/config?plugin_id=${pluginId}`, method: 'GET'},
+                                {endpoint: `/plugins/schema?plugin_id=${pluginId}`, method: 'GET'},
+                                {endpoint: '/plugins/installed', method: 'GET'}
+                            ]);
+                            [configData, schemaData, pluginsData] = results;
+                        } else {
+                            // Direct fetch returns Response objects that need parsing
+                            const [configResponse, schemaResponse, pluginsResponse] = await Promise.all([
+                                fetch(`/api/v3/plugins/config?plugin_id=${pluginId}`).then(r => r.json()),
+                                fetch(`/api/v3/plugins/schema?plugin_id=${pluginId}`).then(r => r.json()),
+                                fetch(`/api/v3/plugins/installed`).then(r => r.json())
+                            ]);
+                            configData = configResponse;
+                            schemaData = schemaResponse;
+                            pluginsData = pluginsResponse;
+                        }
 
                         if (configData.status === 'success') {
                             this.config = configData.data;
@@ -2088,6 +2140,11 @@
                 },
 
                 generateConfigForm(pluginId, config, schema, webUiActions = []) {
+                    // Safety check - if schema/config not ready, return empty
+                    if (!pluginId || !config) {
+                        return '<div class="text-gray-500">Loading configuration...</div>';
+                    }
+                    
                     // Only log once per plugin to avoid spam (Alpine.js may call this multiple times during rendering)
                     if (!this._configFormLogged || this._configFormLogged !== pluginId) {
                         console.log('[DEBUG] generateConfigForm called for', pluginId, 'with', webUiActions?.length || 0, 'actions');
@@ -3695,6 +3752,22 @@
             }
         }
 
+        // Helper function to get installed plugins with fallback
+        async function getInstalledPluginsSafe() {
+            if (window.PluginAPI && window.PluginAPI.getInstalledPlugins) {
+                try {
+                    const plugins = await window.PluginAPI.getInstalledPlugins();
+                    return { status: 'success', data: { plugins: plugins } };
+                } catch (error) {
+                    console.error('Error using PluginAPI.getInstalledPlugins, falling back to direct fetch:', error);
+                    // Fall through to direct fetch
+                }
+            }
+            // Fallback to direct fetch if PluginAPI not loaded
+            const response = await fetch('/api/v3/plugins/installed');
+            return await response.json();
+        }
+
         // Format commit information for display
         function formatCommitInfo(commit, branch) {
             if (!commit && !branch) return 'Unknown';
@@ -3748,26 +3821,26 @@
     </script>
 
     <!-- Custom v3 JavaScript -->
-    <script src="{{ url_for('static', filename='v3/app.js') }}"></script>
+    <script src="{{ url_for('static', filename='v3/app.js') }}" defer></script>
     
     <!-- Modular Plugin Management JavaScript -->
     <!-- Load utilities first -->
-    <script src="{{ url_for('static', filename='v3/js/utils/error_handler.js') }}"></script>
+    <script src="{{ url_for('static', filename='v3/js/utils/error_handler.js') }}" defer></script>
     
     <!-- Load core API client first (used by other modules) -->
-    <script src="{{ url_for('static', filename='v3/js/plugins/api_client.js') }}"></script>
+    <script src="{{ url_for('static', filename='v3/js/plugins/api_client.js') }}" defer></script>
     
     <!-- Load plugin management modules -->
-    <script src="{{ url_for('static', filename='v3/js/plugins/store_manager.js') }}"></script>
-    <script src="{{ url_for('static', filename='v3/js/plugins/state_manager.js') }}"></script>
-    <script src="{{ url_for('static', filename='v3/js/plugins/config_manager.js') }}"></script>
-    <script src="{{ url_for('static', filename='v3/js/plugins/install_manager.js') }}"></script>
+    <script src="{{ url_for('static', filename='v3/js/plugins/store_manager.js') }}" defer></script>
+    <script src="{{ url_for('static', filename='v3/js/plugins/state_manager.js') }}" defer></script>
+    <script src="{{ url_for('static', filename='v3/js/plugins/config_manager.js') }}" defer></script>
+    <script src="{{ url_for('static', filename='v3/js/plugins/install_manager.js') }}" defer></script>
     
     <!-- Load config utilities -->
-    <script src="{{ url_for('static', filename='v3/js/config/diff_viewer.js') }}"></script>
+    <script src="{{ url_for('static', filename='v3/js/config/diff_viewer.js') }}" defer></script>
     
     <!-- Legacy plugins_manager.js (for backward compatibility during migration) -->
-    <script src="{{ url_for('static', filename='v3/plugins_manager.js') }}"></script>
+    <script src="{{ url_for('static', filename='v3/plugins_manager.js') }}" defer></script>
 </body>
 </html>
 
