@@ -2189,6 +2189,13 @@ function generateFieldHtml(key, prop, value, prefix = '') {
         const pluginId = currentPluginConfig?.pluginId || window.currentPluginConfig?.pluginId || '';
         const fieldId = fullKey.replace(/\./g, '_');
         
+        console.log(`[Custom HTML Widget] Generating widget for ${fullKey}:`, {
+            htmlFile,
+            pluginId,
+            fieldId,
+            hasPluginId: !!pluginId
+        });
+        
         if (htmlFile && pluginId) {
             html += `
                 <div id="${fieldId}_custom_html" 
@@ -2197,7 +2204,7 @@ function generateFieldHtml(key, prop, value, prefix = '') {
                      class="custom-html-widget">
                     <div class="animate-pulse text-center py-4">
                         <i class="fas fa-spinner fa-spin text-gray-400"></i>
-                        <p class="text-sm text-gray-500 mt-2">Loading...</p>
+                        <p class="text-sm text-gray-500 mt-2">Loading file manager...</p>
                     </div>
                 </div>
             `;
@@ -2207,10 +2214,17 @@ function generateFieldHtml(key, prop, value, prefix = '') {
                 loadCustomHtmlWidget(fieldId, pluginId, htmlFile);
             }, 100);
         } else {
+            console.error(`[Custom HTML Widget] Missing configuration for ${fullKey}:`, {
+                htmlFile,
+                pluginId,
+                currentPluginConfig: currentPluginConfig?.pluginId,
+                windowPluginConfig: window.currentPluginConfig?.pluginId
+            });
             html += `
-                <div class="text-sm text-red-600">
+                <div class="text-sm text-red-600 p-4 border border-red-200 rounded">
                     <i class="fas fa-exclamation-triangle mr-1"></i>
                     Custom HTML widget configuration error: missing html-file or plugin-id
+                    <br><small>htmlFile: ${htmlFile || 'missing'}, pluginId: ${pluginId || 'missing'}</small>
                 </div>
             `;
         }
