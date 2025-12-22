@@ -847,7 +847,32 @@
                     // Stub methods that will be replaced by full implementation
                     loadTabContent: function(tab) {},
                     loadInstalledPlugins: async function() {},
-                    updatePluginTabs: function() {},
+                    updatePluginTabs: function() {
+                        // Basic implementation for stub - will be replaced by full implementation
+                        const pluginTabsRow = document.getElementById('plugin-tabs-row');
+                        const pluginTabsNav = pluginTabsRow?.querySelector('nav');
+                        if (!pluginTabsRow || !pluginTabsNav || !this.installedPlugins || this.installedPlugins.length === 0) {
+                            return;
+                        }
+                        
+                        // Clear existing plugin tabs (except Plugin Manager)
+                        const existingTabs = pluginTabsNav.querySelectorAll('.plugin-tab');
+                        existingTabs.forEach(tab => tab.remove());
+                        
+                        // Add tabs for each installed plugin
+                        this.installedPlugins.forEach(plugin => {
+                            const tabButton = document.createElement('button');
+                            tabButton.type = 'button';
+                            tabButton.className = `plugin-tab whitespace-nowrap py-2 px-1 lg:px-2 xl:px-3 border-b-2 font-medium text-sm ${this.activeTab === plugin.id ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'}`;
+                            tabButton.onclick = () => {
+                                this.activeTab = plugin.id;
+                            };
+                            const div = document.createElement('div');
+                            div.textContent = plugin.name || plugin.id;
+                            tabButton.innerHTML = `<i class="fas fa-puzzle-piece mr-2"></i>${div.innerHTML}`;
+                            pluginTabsNav.appendChild(tabButton);
+                        });
+                    },
                     showNotification: function(message, type) {},
                     escapeHtml: function(text) { return String(text || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
                 };
