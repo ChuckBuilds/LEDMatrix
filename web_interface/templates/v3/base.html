@@ -779,26 +779,53 @@
         })();
     </script>
 
+    <!-- Alpine.js app function - defined early so it's available when Alpine initializes -->
+    <script>
+        // Define app() function early so Alpine can find it when it initializes
+        // This is a complete implementation that will work immediately
+        (function() {
+            const isAPMode = window.location.hostname === '192.168.4.1' || 
+                           window.location.hostname.startsWith('192.168.4.');
+            
+            // Create the app function - will be enhanced by full implementation later
+            window.app = function() {
+                return {
+                    activeTab: isAPMode ? 'wifi' : 'overview',
+                    installedPlugins: [],
+                    
+                    init() {
+                        // This will be enhanced by the full implementation when it loads
+                        // For now, just ensure basic functionality works
+                        if (typeof window._enhanceApp === 'function') {
+                            window._enhanceApp(this);
+                        }
+                    },
+                    
+                    // Stub methods that will be replaced by full implementation
+                    loadTabContent: function(tab) {},
+                    loadInstalledPlugins: async function() {},
+                    updatePluginTabs: function() {},
+                    showNotification: function(message, type) {},
+                    escapeHtml: function(text) { return String(text || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+                };
+            };
+        })();
+    </script>
+
     <!-- Alpine.js for reactive components -->
     <!-- Use local file when in AP mode (192.168.4.x) to avoid CDN dependency -->
     <script>
         (function() {
             // Prevent Alpine from auto-initializing by setting deferLoadingAlpine before it loads
             window.deferLoadingAlpine = function(callback) {
-                // Wait for DOM and app() function to be ready
+                // Wait for DOM to be ready
                 function waitForReady() {
                     if (document.readyState === 'loading') {
                         document.addEventListener('DOMContentLoaded', waitForReady);
                         return;
                     }
                     
-                    // Wait for app() function to be defined
-                    if (typeof window.app !== 'function' && typeof app !== 'function') {
-                        setTimeout(waitForReady, 50);
-                        return;
-                    }
-                    
-                    // Now initialize Alpine
+                    // app() is already defined in head, so we can initialize Alpine
                     if (callback && typeof callback === 'function') {
                         callback();
                     } else if (window.Alpine && typeof window.Alpine.start === 'function') {
@@ -1658,9 +1685,18 @@
             }
         });
 
-        // Alpine.js app function
+        // Alpine.js app function - full implementation
         function app() {
-            return {
+            // If Alpine is already initialized, get the current component and enhance it
+            let baseComponent = {};
+            if (window.Alpine) {
+                const appElement = document.querySelector('[x-data]');
+                if (appElement && appElement._x_dataStack && appElement._x_dataStack[0]) {
+                    baseComponent = appElement._x_dataStack[0];
+                }
+            }
+            
+            const fullImplementation = {
                 activeTab: (function() {
                     // Auto-open WiFi tab when in AP mode (192.168.4.x)
                     const isAPMode = window.location.hostname === '192.168.4.1' || 
@@ -2730,7 +2766,27 @@
                         return 'Unknown';
                     }
                 }
+            };
+            
+            // Update window.app to return full implementation
+            window.app = function() {
+                return fullImplementation;
+            };
+            
+            // If Alpine is already initialized, update the existing component
+            if (window.Alpine) {
+                const appElement = document.querySelector('[x-data]');
+                if (appElement && appElement._x_dataStack && appElement._x_dataStack[0]) {
+                    // Merge full implementation into existing component
+                    Object.assign(appElement._x_dataStack[0], fullImplementation);
+                    // Re-initialize if needed
+                    if (typeof fullImplementation.init === 'function') {
+                        fullImplementation.init.call(appElement._x_dataStack[0]);
+                    }
+                }
             }
+            
+            return fullImplementation;
         }
         
         // Make app() available globally
