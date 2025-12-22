@@ -779,9 +779,33 @@ class WiFiManager:
             logger.debug(f"Could not save original connection info: {e}")
         
         try:
+            # Check if already connected to the target network
+            if original_ssid and original_ssid == ssid:
+                logger.info(f"Already connected to {ssid}, verifying connection...")
+                status = self.get_wifi_status()
+                if status.connected and status.ssid == ssid:
+                    logger.info(f"Already connected to {ssid} with IP {status.ip_address}")
+                    return True, f"Already connected to {ssid}"
+                else:
+                    logger.warning(f"Status shows not connected to {ssid}, attempting reconnection...")
+            
             # First, disable AP mode if active
             self.disable_ap_mode()
             time.sleep(2)
+            
+            # If we're currently connected to a different network, disconnect first
+            # This ensures a clean switch between networks
+            if original_ssid and original_ssid != ssid:
+                logger.info(f"Switching networks: disconnecting from {original_ssid} before connecting to {ssid}")
+                self._show_led_message(f"Switching networks...", duration=3)
+                # Skip AP mode check since we're about to connect to a new network
+                disconnect_success, disconnect_msg = self.disconnect_from_network(skip_ap_check=True)
+                if disconnect_success:
+                    logger.info(f"Disconnected from {original_ssid}: {disconnect_msg}")
+                    time.sleep(1)  # Brief pause after disconnect
+                else:
+                    logger.warning(f"Failed to disconnect from {original_ssid}: {disconnect_msg}")
+                    # Continue anyway - NetworkManager might handle it
             
             # Ensure WiFi radio is enabled before attempting connection (safety measure)
             if not self._ensure_wifi_radio_enabled():
@@ -1011,9 +1035,13 @@ class WiFiManager:
             logger.error(f"Error connecting with wpa_supplicant: {e}")
             return False, str(e)
     
-    def disconnect_from_network(self) -> Tuple[bool, str]:
+    def disconnect_from_network(self, skip_ap_check: bool = False) -> Tuple[bool, str]:
         """
         Disconnect from the current WiFi network
+        
+        Args:
+            skip_ap_check: If True, skip auto-enabling AP mode after disconnect
+                          (useful when switching networks)
         
         Returns:
             Tuple of (success, message)
@@ -1039,12 +1067,15 @@ class WiFiManager:
                     time.sleep(1)
                     
                     # Check if AP mode should be auto-enabled
-                    # This will be handled by the monitor daemon, but we can trigger it here too
-                    auto_enable = self.config.get("auto_enable_ap_mode", True)
-                    if auto_enable:
-                        # Give it a moment, then check if we should enable AP mode
-                        time.sleep(1)
-                        self.check_and_manage_ap_mode()
+                    # Skip if we're switching networks (skip_ap_check=True)
+                    if not skip_ap_check:
+                        auto_enable = self.config.get("auto_enable_ap_mode", True)
+                        if auto_enable:
+                            # Give it a moment, then check if we should enable AP mode
+                            time.sleep(1)
+                            self.check_and_manage_ap_mode()
+                    else:
+                        logger.debug("Skipping AP mode check (network switch in progress)")
                     
                     return True, "Disconnected from WiFi network"
                 else:

@@ -308,6 +308,15 @@ function wifiSetup() {
                 return;
             }
 
+            // Check if we're switching networks
+            const isSwitching = this.status.connected && 
+                               this.status.ssid && 
+                               this.status.ssid !== ssid.trim();
+            
+            if (isSwitching) {
+                this.showMessage(`Switching from ${this.status.ssid} to ${ssid.trim()}...`, 'info');
+            }
+
             this.connecting = true;
             this.message = '';
             try {
@@ -340,13 +349,18 @@ function wifiSetup() {
                 
                 const data = await response.json();
                 if (data.status === 'success') {
-                    this.showMessage(data.message, 'success');
+                    const successMsg = isSwitching 
+                        ? `Successfully switched to ${ssid.trim()}` 
+                        : data.message;
+                    this.showMessage(successMsg, 'success');
                     // Clear form
                     this.password = '';
                     this.selectedSSID = '';
                     this.manualSSID = '';
-                    // Reload status after a delay
+                    // Reload status multiple times to catch connection updates
                     setTimeout(() => this.loadStatus(), 2000);
+                    setTimeout(() => this.loadStatus(), 5000);
+                    setTimeout(() => this.loadStatus(), 10000);
                 } else {
                     this.showMessage(data.message || 'Failed to connect to network', 'error');
                 }
