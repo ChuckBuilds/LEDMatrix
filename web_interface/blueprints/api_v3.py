@@ -3404,57 +3404,57 @@ sys.exit(proc.returncode)
                     # Step 1: Get initial data (like auth URL)
                     # For OAuth flows, we might need to import the script as a module
                     if action_def.get('oauth_flow'):
-                    # Import script as module to get auth URL
-                    import sys
-                    import importlib.util
-                    
-                    spec = importlib.util.spec_from_file_location("plugin_action", script_file)
-                    action_module = importlib.util.module_from_spec(spec)
-                    sys.modules["plugin_action"] = action_module
-                    
-                    try:
-                        spec.loader.exec_module(action_module)
+                        # Import script as module to get auth URL
+                        import sys
+                        import importlib.util
                         
-                        # Try to get auth URL using common patterns
-                        auth_url = None
-                        if hasattr(action_module, 'get_auth_url'):
-                            auth_url = action_module.get_auth_url()
-                        elif hasattr(action_module, 'load_spotify_credentials'):
-                            # Spotify-specific pattern
-                            client_id, client_secret, redirect_uri = action_module.load_spotify_credentials()
-                            if all([client_id, client_secret, redirect_uri]):
-                                from spotipy.oauth2 import SpotifyOAuth
-                                sp_oauth = SpotifyOAuth(
-                                    client_id=client_id,
-                                    client_secret=client_secret,
-                                    redirect_uri=redirect_uri,
-                                    scope=getattr(action_module, 'SCOPE', ''),
-                                    cache_path=getattr(action_module, 'SPOTIFY_AUTH_CACHE_PATH', None),
-                                    open_browser=False
-                                )
-                                auth_url = sp_oauth.get_authorize_url()
+                        spec = importlib.util.spec_from_file_location("plugin_action", script_file)
+                        action_module = importlib.util.module_from_spec(spec)
+                        sys.modules["plugin_action"] = action_module
                         
-                        if auth_url:
-                            return jsonify({
-                                'status': 'success',
-                                'message': action_def.get('step1_message', 'Authorization URL generated'),
-                                'auth_url': auth_url,
-                                'requires_step2': True
-                            })
-                        else:
+                        try:
+                            spec.loader.exec_module(action_module)
+                            
+                            # Try to get auth URL using common patterns
+                            auth_url = None
+                            if hasattr(action_module, 'get_auth_url'):
+                                auth_url = action_module.get_auth_url()
+                            elif hasattr(action_module, 'load_spotify_credentials'):
+                                # Spotify-specific pattern
+                                client_id, client_secret, redirect_uri = action_module.load_spotify_credentials()
+                                if all([client_id, client_secret, redirect_uri]):
+                                    from spotipy.oauth2 import SpotifyOAuth
+                                    sp_oauth = SpotifyOAuth(
+                                        client_id=client_id,
+                                        client_secret=client_secret,
+                                        redirect_uri=redirect_uri,
+                                        scope=getattr(action_module, 'SCOPE', ''),
+                                        cache_path=getattr(action_module, 'SPOTIFY_AUTH_CACHE_PATH', None),
+                                        open_browser=False
+                                    )
+                                    auth_url = sp_oauth.get_authorize_url()
+                            
+                            if auth_url:
+                                return jsonify({
+                                    'status': 'success',
+                                    'message': action_def.get('step1_message', 'Authorization URL generated'),
+                                    'auth_url': auth_url,
+                                    'requires_step2': True
+                                })
+                            else:
+                                return jsonify({
+                                    'status': 'error',
+                                    'message': 'Could not generate authorization URL'
+                                }), 400
+                        except Exception as e:
+                            import traceback
+                            error_details = traceback.format_exc()
+                            print(f"Error executing action step 1: {e}")
+                            print(error_details)
                             return jsonify({
                                 'status': 'error',
-                                'message': 'Could not generate authorization URL'
-                            }), 400
-                    except Exception as e:
-                        import traceback
-                        error_details = traceback.format_exc()
-                        print(f"Error executing action step 1: {e}")
-                        print(error_details)
-                        return jsonify({
-                            'status': 'error',
-                            'message': f'Error executing action: {str(e)}'
-                        }), 500
+                                'message': f'Error executing action: {str(e)}'
+                            }), 500
                 else:
                     # Simple script execution
                     result = subprocess.run(
