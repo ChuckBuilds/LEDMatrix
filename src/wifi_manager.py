@@ -97,6 +97,11 @@ class WiFiManager:
         self.has_hostapd = self._check_command("hostapd")
         self.has_dnsmasq = self._check_command("dnsmasq")
         
+        # Initialize disconnected check counter for grace period
+        # This prevents AP mode from enabling on transient network hiccups
+        self._disconnected_checks = 0
+        self._disconnected_checks_required = 3  # Require 3 consecutive disconnected checks (90 seconds at 30s interval)
+        
         logger.info(f"WiFi Manager initialized - nmcli: {self.has_nmcli}, iwlist: {self.has_iwlist}, "
                    f"hostapd: {self.has_hostapd}, dnsmasq: {self.has_dnsmasq}")
     
@@ -174,14 +179,14 @@ class WiFiManager:
                 "ap_ssid": DEFAULT_AP_SSID,
                 "ap_password": DEFAULT_AP_PASSWORD,
                 "ap_channel": DEFAULT_AP_CHANNEL,
-                "auto_enable_ap_mode": True,  # Default: auto-enable when no network connection
+                "auto_enable_ap_mode": False,  # Default: manual enable only (safer)
                 "saved_networks": []
             }
             self._save_config()
         
         # Ensure auto_enable_ap_mode exists in config (for existing configs)
         if "auto_enable_ap_mode" not in self.config:
-            self.config["auto_enable_ap_mode"] = True  # Default: auto-enable when no network connection
+            self.config["auto_enable_ap_mode"] = False  # Default: manual enable only (safer)
             self._save_config()
     
     def _save_config(self):
@@ -212,38 +217,51 @@ class WiFiManager:
     def _get_status_nmcli(self) -> WiFiStatus:
         """Get WiFi status using nmcli"""
         try:
-            # Check if connected
+            # Check if connected - use device status first (more reliable)
             result = subprocess.run(
-                ["nmcli", "-t", "-f", "STATE,CONNECTION", "device", "status"],
+                ["nmcli", "-t", "-f", "DEVICE,TYPE,STATE", "device", "status"],
                 capture_output=True,
                 text=True,
                 timeout=5
             )
             
             if result.returncode != 0:
+                logger.warning("nmcli device status failed, assuming disconnected")
                 return WiFiStatus(connected=False)
             
             wifi_connected = False
             ssid = None
             ip_address = None
             signal = 0
+            wlan_device = None
             
+            # Find WiFi device and check its state
             for line in result.stdout.strip().split('\n'):
-                if 'wifi' in line.lower() or 'wlan' in line.lower():
-                    parts = line.split(':')
-                    if len(parts) >= 2:
-                        state = parts[0].strip()
-                        
+                if not line:
+                    continue
+                parts = line.split(':')
+                if len(parts) >= 3:
+                    device = parts[0].strip()
+                    dev_type = parts[1].strip().lower()
+                    state = parts[2].strip().lower()
+                    
+                    # Check if it's a WiFi device
+                    if dev_type == "wifi" or device.startswith("wlan"):
+                        wlan_device = device
                         if state == "connected":
                             wifi_connected = True
+                            break
+                        elif state in ["disconnected", "unavailable", "unmanaged"]:
+                            # Explicitly disconnected
+                            wifi_connected = False
                             break
             
             # Get actual SSID and signal strength from WiFi device if connected
             # Use device show to get the real SSID and signal, not the connection name
-            if wifi_connected:
+            if wifi_connected and wlan_device:
                 # Get both SSID and signal in one query for efficiency
                 result = subprocess.run(
-                    ["nmcli", "-t", "-f", "802-11-wireless.ssid,WIFI.SIGNAL", "device", "show", "wlan0"],
+                    ["nmcli", "-t", "-f", "802-11-wireless.ssid,WIFI.SIGNAL", "device", "show", wlan_device],
                     capture_output=True,
                     text=True,
                     timeout=5
@@ -277,9 +295,9 @@ class WiFiManager:
                                     break
                 
                 # Fallback: Get signal strength if not already retrieved
-                if signal == 0:
+                if signal == 0 and wlan_device:
                     result = subprocess.run(
-                        ["nmcli", "-t", "-f", "WIFI.SIGNAL", "device", "show", "wlan0"],
+                        ["nmcli", "-t", "-f", "WIFI.SIGNAL", "device", "show", wlan_device],
                         capture_output=True,
                         text=True,
                         timeout=5
@@ -294,9 +312,9 @@ class WiFiManager:
                                     pass
             
             # Get IP address if connected
-            if wifi_connected:
+            if wifi_connected and wlan_device:
                 result = subprocess.run(
-                    ["nmcli", "-t", "-f", "IP4.ADDRESS", "device", "show", "wlan0"],
+                    ["nmcli", "-t", "-f", "IP4.ADDRESS", "device", "show", wlan_device],
                     capture_output=True,
                     text=True,
                     timeout=5
@@ -1718,7 +1736,8 @@ address=/detectportal.firefox.com/192.168.4.1
         Only auto-enables AP mode if:
         - auto_enable_ap_mode is enabled in config AND
         - WiFi is NOT connected AND
-        - Ethernet is NOT connected
+        - Ethernet is NOT connected AND
+        - Multiple consecutive disconnected checks (grace period to avoid false positives)
         
         Always auto-disables AP mode when WiFi or Ethernet connects.
         
@@ -1728,26 +1747,50 @@ address=/detectportal.firefox.com/192.168.4.1
             True if AP mode state changed, False otherwise
         """
         try:
-            status = self.get_wifi_status()
+            # Get status with retry for more reliable detection
+            status = self._get_wifi_status_with_retry()
             ethernet_connected = self._is_ethernet_connected()
             ap_active = self._is_ap_mode_active()
-            auto_enable = self.config.get("auto_enable_ap_mode", True)  # Default: True
+            auto_enable = self.config.get("auto_enable_ap_mode", False)  # Default: False (manual enable)
+            
+            # Log current state for debugging
+            logger.debug(f"WiFi status: connected={status.connected}, SSID={status.ssid}, "
+                        f"Ethernet={ethernet_connected}, AP_active={ap_active}, "
+                        f"auto_enable={auto_enable}, disconnected_checks={self._disconnected_checks}")
             
             # Determine if we should have AP mode active
             # AP mode should only be auto-enabled if:
             # - auto_enable_ap_mode is True AND
             # - WiFi is NOT connected AND
-            # - Ethernet is NOT connected
-            should_have_ap = auto_enable and not status.connected and not ethernet_connected
+            # - Ethernet is NOT connected AND
+            # - We've had multiple consecutive disconnected checks (grace period)
+            is_disconnected = not status.connected and not ethernet_connected
+            
+            if is_disconnected:
+                # Increment disconnected check counter
+                self._disconnected_checks += 1
+                logger.debug(f"Network disconnected (check {self._disconnected_checks}/{self._disconnected_checks_required})")
+            else:
+                # Reset counter if we're connected
+                if self._disconnected_checks > 0:
+                    logger.debug(f"Network connected, resetting disconnected check counter")
+                self._disconnected_checks = 0
+            
+            # Only enable AP if we've had enough consecutive disconnected checks
+            should_have_ap = (auto_enable and 
+                            is_disconnected and 
+                            self._disconnected_checks >= self._disconnected_checks_required)
             
             if should_have_ap and not ap_active:
-                # Should have AP but don't - enable AP mode (only if auto-enable is on)
+                # Should have AP but don't - enable AP mode (only if auto-enable is on and grace period passed)
+                logger.info(f"Enabling AP mode after {self._disconnected_checks} consecutive disconnected checks")
                 success, message = self.enable_ap_mode()
                 if success:
-                    logger.info("Auto-enabled AP mode (no WiFi or Ethernet connection)")
+                    logger.info("Auto-enabled AP mode (no WiFi or Ethernet connection after grace period)")
+                    self._disconnected_checks = 0  # Reset counter after enabling
                     return True
                 else:
-                    logger.debug(f"Did not enable AP mode: {message}")
+                    logger.warning(f"Failed to enable AP mode: {message}")
             elif not should_have_ap and ap_active:
                 # Should not have AP but do - disable AP mode
                 # Always disable if WiFi or Ethernet connects, regardless of auto_enable setting
@@ -1758,6 +1801,7 @@ address=/detectportal.firefox.com/192.168.4.1
                             logger.info("Auto-disabled AP mode (WiFi connected)")
                         elif ethernet_connected:
                             logger.info("Auto-disabled AP mode (Ethernet connected)")
+                        self._disconnected_checks = 0  # Reset counter
                         return True
                     else:
                         logger.warning(f"Failed to auto-disable AP mode: {message}")
@@ -1768,6 +1812,30 @@ address=/detectportal.firefox.com/192.168.4.1
             
             return False
         except Exception as e:
-            logger.error(f"Error checking AP mode: {e}")
+            logger.error(f"Error checking AP mode: {e}", exc_info=True)
             return False
+    
+    def _get_wifi_status_with_retry(self, max_retries=2) -> WiFiStatus:
+        """
+        Get WiFi status with retry logic to avoid false negatives.
+        
+        Args:
+            max_retries: Number of retry attempts if first check fails
+            
+        Returns:
+            WiFiStatus object
+        """
+        for attempt in range(max_retries + 1):
+            status = self.get_wifi_status()
+            # If we get a connected status, trust it immediately
+            if status.connected:
+                return status
+            
+            # If disconnected, wait a bit and retry (in case of transient issues)
+            if attempt < max_retries:
+                time.sleep(1)
+                logger.debug(f"WiFi status check attempt {attempt + 1}/{max_retries + 1}: disconnected, retrying...")
+        
+        # Return the last status (disconnected)
+        return status
 
