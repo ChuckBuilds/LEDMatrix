@@ -3290,10 +3290,120 @@ sys.exit(proc.returncode)
                     if os.path.exists(wrapper_path):
                         os.unlink(wrapper_path)
                     return jsonify({'status': 'error', 'message': 'Action timed out'}), 408
-            else:
-                # Step 1: Get initial data (like auth URL)
-                # For OAuth flows, we might need to import the script as a module
-                if action_def.get('oauth_flow'):
+                else:
+                    # Regular script execution - pass params via stdin if provided
+                    if action_params:
+                        # Pass params as JSON via stdin
+                        import tempfile
+                        import json as json_lib
+                        
+                        params_json = json_lib.dumps(action_params)
+                        with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as wrapper:
+                            wrapper.write(f'''import sys
+import subprocess
+import os
+import json
+
+# Set LEDMATRIX_ROOT
+os.environ['LEDMATRIX_ROOT'] = r"{PROJECT_ROOT}"
+
+# Run the script and provide params as JSON via stdin
+proc = subprocess.Popen(
+    [sys.executable, r"{script_file}"],
+    stdin=subprocess.PIPE,
+    stdout=subprocess.PIPE,
+    stderr=subprocess.STDOUT,
+    text=True,
+    env=os.environ
+)
+
+# Send params as JSON to stdin
+params = {params_json}
+stdout, _ = proc.communicate(input=json.dumps(params), timeout=120)
+print(stdout)
+sys.exit(proc.returncode)
+''')
+                            wrapper_path = wrapper.name
+                        
+                        try:
+                            result = subprocess.run(
+                                ['python3', wrapper_path],
+                                capture_output=True,
+                                text=True,
+                                timeout=120,
+                                env=env
+                            )
+                            os.unlink(wrapper_path)
+                            
+                            # Try to parse output as JSON
+                            try:
+                                output_data = json.loads(result.stdout)
+                                if result.returncode == 0:
+                                    return jsonify(output_data)
+                                else:
+                                    return jsonify({
+                                        'status': 'error',
+                                        'message': output_data.get('message', action_def.get('error_message', 'Action failed')),
+                                        'output': result.stdout + result.stderr
+                                    }), 400
+                            except json.JSONDecodeError:
+                                # Output is not JSON, return as text
+                                if result.returncode == 0:
+                                    return jsonify({
+                                        'status': 'success',
+                                        'message': action_def.get('success_message', 'Action completed successfully'),
+                                        'output': result.stdout
+                                    })
+                                else:
+                                    return jsonify({
+                                        'status': 'error',
+                                        'message': action_def.get('error_message', 'Action failed'),
+                                        'output': result.stdout + result.stderr
+                                    }), 400
+                        except subprocess.TimeoutExpired:
+                            if os.path.exists(wrapper_path):
+                                os.unlink(wrapper_path)
+                            return jsonify({'status': 'error', 'message': 'Action timed out'}), 408
+                    else:
+                        # No params, run script normally
+                        result = subprocess.run(
+                            ['python3', str(script_file)],
+                            capture_output=True,
+                            text=True,
+                            timeout=60,
+                            env=env
+                        )
+                        
+                        # Try to parse output as JSON
+                        try:
+                            import json as json_module
+                            output_data = json_module.loads(result.stdout)
+                            if result.returncode == 0:
+                                return jsonify(output_data)
+                            else:
+                                return jsonify({
+                                    'status': 'error',
+                                    'message': output_data.get('message', action_def.get('error_message', 'Action failed')),
+                                    'output': result.stdout + result.stderr
+                                }), 400
+                        except json.JSONDecodeError:
+                            # Output is not JSON, return as text
+                            if result.returncode == 0:
+                                return jsonify({
+                                    'status': 'success',
+                                    'message': action_def.get('success_message', 'Action completed successfully'),
+                                    'output': result.stdout
+                                })
+                            else:
+                                return jsonify({
+                                    'status': 'error',
+                                    'message': action_def.get('error_message', 'Action failed'),
+                                    'output': result.stdout + result.stderr
+                                }), 400
+                    
+                    # Step 1: Get initial data (like auth URL)
+                    # For OAuth flows, we might need to import the script as a module
+                    if action_def.get('oauth_flow'):
                     # Import script as module to get auth URL
                     import sys
                     import importlib.util
@@ -3819,6 +3929,52 @@ def upload_plugin_asset():
             'uploaded_files': uploaded_files,
             'total_files': len(metadata)
         })
+        
+    except Exception as e:
+        import traceback
+        return jsonify({'status': 'error', 'message': str(e), 'traceback': traceback.format_exc()}), 500
+
+@api_v3.route('/plugins/<plugin_id>/static/<path:file_path>', methods=['GET'])
+def serve_plugin_static(plugin_id, file_path):
+    """Serve static files from plugin directory"""
+    try:
+        # Get plugin directory
+        if api_v3.plugin_manager:
+            plugin_dir = api_v3.plugin_manager.get_plugin_directory(plugin_id)
+        else:
+            plugin_dir = PROJECT_ROOT / 'plugins' / plugin_id
+        
+        if not plugin_dir or not Path(plugin_dir).exists():
+            return jsonify({'status': 'error', 'message': f'Plugin {plugin_id} not found'}), 404
+        
+        # Resolve file path (prevent directory traversal)
+        plugin_dir = Path(plugin_dir).resolve()
+        requested_file = (plugin_dir / file_path).resolve()
+        
+        # Security check: ensure file is within plugin directory
+        if not str(requested_file).startswith(str(plugin_dir)):
+            return jsonify({'status': 'error', 'message': 'Invalid file path'}), 403
+        
+        # Check if file exists
+        if not requested_file.exists() or not requested_file.is_file():
+            return jsonify({'status': 'error', 'message': 'File not found'}), 404
+        
+        # Determine content type
+        content_type = 'text/plain'
+        if file_path.endswith('.html'):
+            content_type = 'text/html'
+        elif file_path.endswith('.js'):
+            content_type = 'application/javascript'
+        elif file_path.endswith('.css'):
+            content_type = 'text/css'
+        elif file_path.endswith('.json'):
+            content_type = 'application/json'
+        
+        # Read and return file
+        with open(requested_file, 'r', encoding='utf-8') as f:
+            content = f.read()
+        
+        return Response(content, mimetype=content_type)
         
     except Exception as e:
         import traceback

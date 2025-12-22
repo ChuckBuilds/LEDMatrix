@@ -2108,6 +2108,37 @@ function generateFieldHtml(key, prop, value, prefix = '') {
             html += `<option value="${option}" ${selected}>${option}</option>`;
         });
         html += `</select>`;
+    } else if (prop['x-widget'] === 'custom-html') {
+        // Custom HTML widget - load HTML from plugin directory
+        const htmlFile = prop['x-html-file'];
+        const pluginId = currentPluginConfig?.pluginId || window.currentPluginConfig?.pluginId || '';
+        const fieldId = fullKey.replace(/\./g, '_');
+        
+        if (htmlFile && pluginId) {
+            html += `
+                <div id="${fieldId}_custom_html" 
+                     data-plugin-id="${pluginId}" 
+                     data-html-file="${htmlFile}"
+                     class="custom-html-widget">
+                    <div class="animate-pulse text-center py-4">
+                        <i class="fas fa-spinner fa-spin text-gray-400"></i>
+                        <p class="text-sm text-gray-500 mt-2">Loading...</p>
+                    </div>
+                </div>
+            `;
+            
+            // Load HTML asynchronously
+            setTimeout(() => {
+                loadCustomHtmlWidget(fieldId, pluginId, htmlFile);
+            }, 100);
+        } else {
+            html += `
+                <div class="text-sm text-red-600">
+                    <i class="fas fa-exclamation-triangle mr-1"></i>
+                    Custom HTML widget configuration error: missing html-file or plugin-id
+                </div>
+            `;
+        }
     } else {
         // Check if this is a secret field
         const isSecret = prop['x-secret'] === true;
@@ -2135,6 +2166,53 @@ function generateFieldHtml(key, prop, value, prefix = '') {
     html += `</div>`;
     
     return html;
+}
+
+// Load custom HTML widget from plugin directory
+async function loadCustomHtmlWidget(fieldId, pluginId, htmlFile) {
+    try {
+        const container = document.getElementById(`${fieldId}_custom_html`);
+        if (!container) {
+            console.warn(`[Custom HTML Widget] Container not found: ${fieldId}_custom_html`);
+            return;
+        }
+        
+        // Fetch HTML from plugin static files endpoint
+        const response = await fetch(`/api/v3/plugins/${pluginId}/static/${htmlFile}`);
+        
+        if (!response.ok) {
+            throw new Error(`Failed to load custom HTML: ${response.statusText}`);
+        }
+        
+        const html = await response.text();
+        
+        // Inject HTML into container
+        container.innerHTML = html;
+        
+        // Execute any script tags in the loaded HTML
+        const scripts = container.querySelectorAll('script');
+        scripts.forEach(oldScript => {
+            const newScript = document.createElement('script');
+            Array.from(oldScript.attributes).forEach(attr => {
+                newScript.setAttribute(attr.name, attr.value);
+            });
+            newScript.appendChild(document.createTextNode(oldScript.innerHTML));
+            oldScript.parentNode.replaceChild(newScript, oldScript);
+        });
+        
+        console.log(`[Custom HTML Widget] Loaded ${htmlFile} for plugin ${pluginId}`);
+    } catch (error) {
+        console.error(`[Custom HTML Widget] Error loading ${htmlFile} for plugin ${pluginId}:`, error);
+        const container = document.getElementById(`${fieldId}_custom_html`);
+        if (container) {
+            container.innerHTML = `
+                <div class="text-sm text-red-600 p-4 border border-red-200 rounded">
+                    <i class="fas fa-exclamation-triangle mr-1"></i>
+                    Failed to load custom HTML: ${error.message}
+                </div>
+            `;
+        }
+    }
 }
 
 function generateFormFromSchema(schema, config, webUiActions = []) {
