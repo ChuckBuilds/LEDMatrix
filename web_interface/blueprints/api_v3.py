@@ -1,6 +1,7 @@
 from flask import Blueprint, request, jsonify, Response
 import json
 import os
+import sys
 import subprocess
 import time
 import hashlib
@@ -3907,6 +3908,203 @@ def upload_plugin_asset():
             'status': 'success',
             'uploaded_files': uploaded_files,
             'total_files': len(metadata)
+        })
+        
+    except Exception as e:
+        import traceback
+        return jsonify({'status': 'error', 'message': str(e), 'traceback': traceback.format_exc()}), 500
+
+@api_v3.route('/plugins/of-the-day/json/upload', methods=['POST'])
+def upload_of_the_day_json():
+    """Upload JSON files for of-the-day plugin"""
+    try:
+        if 'files' not in request.files:
+            return jsonify({'status': 'error', 'message': 'No files provided'}), 400
+        
+        files = request.files.getlist('files')
+        if not files or all(not f.filename for f in files):
+            return jsonify({'status': 'error', 'message': 'No files provided'}), 400
+        
+        # Get plugin directory
+        plugin_id = 'ledmatrix-of-the-day'
+        if api_v3.plugin_manager:
+            plugin_dir = api_v3.plugin_manager.get_plugin_directory(plugin_id)
+        else:
+            plugin_dir = PROJECT_ROOT / 'plugins' / plugin_id
+        
+        if not plugin_dir or not Path(plugin_dir).exists():
+            return jsonify({'status': 'error', 'message': f'Plugin {plugin_id} not found'}), 404
+        
+        # Setup of_the_day directory
+        data_dir = Path(plugin_dir) / 'of_the_day'
+        data_dir.mkdir(parents=True, exist_ok=True)
+        
+        uploaded_files = []
+        max_size_per_file = 5 * 1024 * 1024  # 5MB
+        
+        for file in files:
+            if not file.filename:
+                continue
+            
+            # Validate file extension
+            if not file.filename.lower().endswith('.json'):
+                return jsonify({
+                    'status': 'error',
+                    'message': f'File {file.filename} must be a JSON file (.json)'
+                }), 400
+            
+            # Read and validate file size
+            file.seek(0, os.SEEK_END)
+            file_size = file.tell()
+            file.seek(0)
+            
+            if file_size > max_size_per_file:
+                return jsonify({
+                    'status': 'error',
+                    'message': f'File {file.filename} exceeds 5MB limit'
+                }), 400
+            
+            # Read and validate JSON content
+            try:
+                file_content = file.read().decode('utf-8')
+                json_data = json.loads(file_content)
+            except json.JSONDecodeError as e:
+                return jsonify({
+                    'status': 'error',
+                    'message': f'Invalid JSON in {file.filename}: {str(e)}'
+                }), 400
+            except UnicodeDecodeError:
+                return jsonify({
+                    'status': 'error',
+                    'message': f'File {file.filename} is not valid UTF-8 text'
+                }), 400
+            
+            # Validate JSON structure (must be object with day number keys)
+            if not isinstance(json_data, dict):
+                return jsonify({
+                    'status': 'error',
+                    'message': f'JSON in {file.filename} must be an object with day numbers (1-365) as keys'
+                }), 400
+            
+            # Check if keys are valid day numbers
+            for key in json_data.keys():
+                try:
+                    day_num = int(key)
+                    if day_num < 1 or day_num > 365:
+                        return jsonify({
+                            'status': 'error',
+                            'message': f'Day number {day_num} in {file.filename} is out of range (must be 1-365)'
+                        }), 400
+                except ValueError:
+                    return jsonify({
+                        'status': 'error',
+                        'message': f'Invalid key "{key}" in {file.filename}: must be a day number (1-365)'
+                    }), 400
+            
+            # Generate safe filename from original (preserve user's filename)
+            original_filename = file.filename
+            safe_filename = original_filename.lower().replace(' ', '_')
+            # Ensure it's a valid filename
+            safe_filename = ''.join(c for c in safe_filename if c.isalnum() or c in '._-')
+            if not safe_filename.endswith('.json'):
+                safe_filename += '.json'
+            
+            file_path = data_dir / safe_filename
+            
+            # If file exists, add counter
+            counter = 1
+            base_name = safe_filename.replace('.json', '')
+            while file_path.exists():
+                safe_filename = f"{base_name}_{counter}.json"
+                file_path = data_dir / safe_filename
+                counter += 1
+            
+            # Save file
+            with open(file_path, 'w', encoding='utf-8') as f:
+                json.dump(json_data, f, indent=2, ensure_ascii=False)
+            
+            # Make file readable
+            os.chmod(file_path, 0o644)
+            
+            # Extract category name from filename (remove .json extension)
+            category_name = safe_filename.replace('.json', '')
+            display_name = category_name.replace('_', ' ').title()
+            
+            # Update plugin config to add category
+            try:
+                sys.path.insert(0, str(plugin_dir))
+                from scripts.update_config import add_category_to_config
+                add_category_to_config(category_name, f'of_the_day/{safe_filename}', display_name)
+            except Exception as e:
+                print(f"Warning: Could not update config: {e}")
+                # Continue anyway - file is uploaded
+            
+            # Generate file ID (use category name as ID for simplicity)
+            file_id = category_name
+            
+            uploaded_files.append({
+                'id': file_id,
+                'filename': safe_filename,
+                'original_filename': original_filename,
+                'path': f'of_the_day/{safe_filename}',
+                'size': file_size,
+                'uploaded_at': datetime.utcnow().isoformat() + 'Z',
+                'category_name': category_name,
+                'display_name': display_name,
+                'entry_count': len(json_data)
+            })
+        
+        return jsonify({
+            'status': 'success',
+            'uploaded_files': uploaded_files,
+            'total_files': len(uploaded_files)
+        })
+        
+    except Exception as e:
+        import traceback
+        return jsonify({'status': 'error', 'message': str(e), 'traceback': traceback.format_exc()}), 500
+
+@api_v3.route('/plugins/of-the-day/json/delete', methods=['POST'])
+def delete_of_the_day_json():
+    """Delete a JSON file from of-the-day plugin"""
+    try:
+        data = request.get_json() or {}
+        file_id = data.get('file_id')  # This is the category_name
+        
+        if not file_id:
+            return jsonify({'status': 'error', 'message': 'file_id is required'}), 400
+        
+        # Get plugin directory
+        plugin_id = 'ledmatrix-of-the-day'
+        if api_v3.plugin_manager:
+            plugin_dir = api_v3.plugin_manager.get_plugin_directory(plugin_id)
+        else:
+            plugin_dir = PROJECT_ROOT / 'plugins' / plugin_id
+        
+        if not plugin_dir or not Path(plugin_dir).exists():
+            return jsonify({'status': 'error', 'message': f'Plugin {plugin_id} not found'}), 404
+        
+        data_dir = Path(plugin_dir) / 'of_the_day'
+        filename = f"{file_id}.json"
+        file_path = data_dir / filename
+        
+        if not file_path.exists():
+            return jsonify({'status': 'error', 'message': f'File {filename} not found'}), 404
+        
+        # Delete file
+        file_path.unlink()
+        
+        # Update config to remove category
+        try:
+            sys.path.insert(0, str(plugin_dir))
+            from scripts.update_config import remove_category_from_config
+            remove_category_from_config(file_id)
+        except Exception as e:
+            print(f"Warning: Could not update config: {e}")
+        
+        return jsonify({
+            'status': 'success',
+            'message': f'File {filename} deleted successfully'
         })
         
     except Exception as e:

@@ -2067,10 +2067,13 @@ function generateFieldHtml(key, prop, value, prefix = '') {
             const uploadConfig = prop['x-upload-config'] || {};
             const pluginId = uploadConfig.plugin_id || currentPluginConfig?.pluginId || 'static-image';
             const maxFiles = uploadConfig.max_files || 10;
-            const allowedTypes = uploadConfig.allowed_types || ['image/png', 'image/jpeg', 'image/bmp', 'image/gif'];
+            const fileType = uploadConfig.file_type || 'image'; // 'image' or 'json'
+            const allowedTypes = uploadConfig.allowed_types || (fileType === 'json' ? ['application/json'] : ['image/png', 'image/jpeg', 'image/bmp', 'image/gif']);
             const maxSizeMB = uploadConfig.max_size_mb || 5;
+            const customUploadEndpoint = uploadConfig.endpoint; // Custom endpoint if specified
+            const customDeleteEndpoint = uploadConfig.delete_endpoint; // Custom delete endpoint if specified
             
-            const currentImages = Array.isArray(value) ? value : [];
+            const currentFiles = Array.isArray(value) ? value : [];
             const fieldId = fullKey.replace(/\./g, '_');
             
             html += `
@@ -2088,60 +2091,74 @@ function generateFieldHtml(key, prop, value, prefix = '') {
                                style="display: none;"
                                onchange="handleFileSelect(event, '${fieldId}')">
                         <i class="fas fa-cloud-upload-alt text-3xl text-gray-400 mb-2"></i>
-                        <p class="text-sm text-gray-600">Drag and drop images here or click to browse</p>
-                        <p class="text-xs text-gray-500 mt-1">Max ${maxFiles} files, ${maxSizeMB}MB each (PNG, JPG, GIF, BMP)</p>
+                        <p class="text-sm text-gray-600">Drag and drop ${fileType === 'json' ? 'JSON files' : 'images'} here or click to browse</p>
+                        <p class="text-xs text-gray-500 mt-1">Max ${maxFiles} files, ${maxSizeMB}MB each ${fileType === 'json' ? '(JSON)' : '(PNG, JPG, GIF, BMP)'}</p>
                     </div>
                     
-                    <!-- Uploaded Images List -->
+                    <!-- Uploaded Files List -->
                     <div id="${fieldId}_image_list" class="mt-4 space-y-2">
-                        ${currentImages.map((img, idx) => {
-                            const imgSchedule = img.schedule || {};
-                            const hasSchedule = imgSchedule.enabled && imgSchedule.mode && imgSchedule.mode !== 'always';
-                            const scheduleSummary = hasSchedule ? getScheduleSummary(imgSchedule) : 'Always shown';
+                        ${currentFiles.map((file, idx) => {
+                            const fileId = file.id || file.category_name || idx;
+                            const fileName = file.original_filename || file.filename || (fileType === 'json' ? 'JSON File' : 'Image');
+                            const entryCount = file.entry_count ? `${file.entry_count} entries` : '';
                             
                             return `
-                            <div id="img_${img.id || idx}" class="bg-gray-50 p-3 rounded-lg border border-gray-200">
+                            <div id="file_${fileId}" class="bg-gray-50 p-3 rounded-lg border border-gray-200">
                                 <div class="flex items-center justify-between mb-2">
                                     <div class="flex items-center space-x-3 flex-1">
-                                        <img src="/${img.path || ''}" 
-                                             alt="${img.filename || ''}" 
+                                        ${fileType === 'json' ? `
+                                        <div class="w-16 h-16 bg-blue-100 rounded flex items-center justify-center">
+                                            <i class="fas fa-file-code text-2xl text-blue-600"></i>
+                                        </div>
+                                        ` : `
+                                        <img src="/${file.path || ''}" 
+                                             alt="${fileName}" 
                                              class="w-16 h-16 object-cover rounded"
                                              onerror="this.style.display='none'; this.nextElementSibling.style.display='block';">
                                         <div style="display:none;" class="w-16 h-16 bg-gray-200 rounded flex items-center justify-center">
                                             <i class="fas fa-image text-gray-400"></i>
                                         </div>
+                                        `}
                                         <div class="flex-1 min-w-0">
-                                            <p class="text-sm font-medium text-gray-900 truncate">${img.original_filename || img.filename || 'Image'}</p>
-                                            <p class="text-xs text-gray-500">${formatFileSize(img.size || 0)} • ${formatDate(img.uploaded_at)}</p>
+                                            <p class="text-sm font-medium text-gray-900 truncate">${escapeHtml(fileName)}</p>
+                                            <p class="text-xs text-gray-500">${formatFileSize(file.size || 0)} • ${formatDate(file.uploaded_at)}</p>
+                                            ${entryCount ? `<p class="text-xs text-blue-600 mt-1"><i class="fas fa-database mr-1"></i>${entryCount}</p>` : ''}
+                                            ${fileType === 'image' && file.schedule ? `
                                             <p class="text-xs text-blue-600 mt-1">
-                                                <i class="fas fa-clock mr-1"></i>${scheduleSummary}
+                                                <i class="fas fa-clock mr-1"></i>${file.schedule.enabled && file.schedule.mode !== 'always' ? (window.getScheduleSummary ? window.getScheduleSummary(file.schedule) : 'Scheduled') : 'Always shown'}
                                             </p>
+                                            ` : ''}
                                         </div>
                                     </div>
                                     <div class="flex items-center space-x-2 ml-4">
+                                        ${fileType === 'image' ? `
                                         <button type="button" 
-                                                onclick="openImageSchedule('${fieldId}', '${img.id}', ${idx})"
+                                                onclick="openImageSchedule('${fieldId}', '${fileId}', ${idx})"
                                                 class="text-blue-600 hover:text-blue-800 p-2" 
                                                 title="Schedule this image">
                                             <i class="fas fa-calendar-alt"></i>
                                         </button>
+                                        ` : ''}
                                         <button type="button" 
-                                                onclick="deleteUploadedImage('${fieldId}', '${img.id}', '${pluginId}')"
+                                                onclick="deleteUploadedFile('${fieldId}', '${fileId}', '${pluginId}', '${fileType}', ${customDeleteEndpoint ? `'${customDeleteEndpoint}'` : 'null'})"
                                                 class="text-red-600 hover:text-red-800 p-2"
-                                                title="Delete image">
+                                                title="Delete ${fileType === 'json' ? 'file' : 'image'}">
                                             <i class="fas fa-trash"></i>
                                         </button>
                                     </div>
                                 </div>
-                                <!-- Schedule widget will be inserted here when opened -->
-                                <div id="schedule_${img.id || idx}" class="hidden mt-3 pt-3 border-t border-gray-300"></div>
+                                ${fileType === 'image' ? `<!-- Schedule widget will be inserted here when opened -->
+                                <div id="schedule_${fileId}" class="hidden mt-3 pt-3 border-t border-gray-300"></div>
+                                ` : ''}
                             </div>
                             `;
                         }).join('')}
                     </div>
                     
-                    <!-- Hidden input to store image data -->
-                    <input type="hidden" id="${fieldId}_images_data" name="${fullKey}" value="${JSON.stringify(currentImages).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/'/g, '&#39;')}">
+                    <!-- Hidden input to store file data -->
+                    <input type="hidden" id="${fieldId}_images_data" name="${fullKey}" value="${JSON.stringify(currentFiles).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/'/g, '&#39;')}"
+                           data-upload-endpoint="${customUploadEndpoint || '/api/v3/plugins/assets/upload'}"
+                           data-file-type="${fileType}">
                 </div>
             `;
         } else if (xWidgetValue === 'checkbox-group' || xWidgetValue2 === 'checkbox-group') {
@@ -2339,7 +2356,34 @@ function generateFormFromSchema(schema, config, webUiActions = []) {
             // Skip the 'enabled' property - it's managed separately via the header toggle
             if (key === 'enabled') return;
 
-            const value = config[key] !== undefined ? config[key] : prop.default;
+            let value = config[key] !== undefined ? config[key] : prop.default;
+            
+            // Special handling: populate uploaded_files from categories for of-the-day plugin
+            if (key === 'uploaded_files' && prop['x-widget'] === 'file-upload' && 
+                prop['x-upload-config'] && prop['x-upload-config'].file_type === 'json') {
+                // Populate from categories if uploaded_files is empty or doesn't exist
+                if (!value || !Array.isArray(value) || value.length === 0) {
+                    const categories = config.categories || {};
+                    value = Object.entries(categories).map(([categoryName, categoryData]) => {
+                        // Extract filename from data_file path
+                        const dataFile = categoryData.data_file || '';
+                        const filename = dataFile.split('/').pop() || `${categoryName}.json`;
+                        
+                        return {
+                            id: categoryName,
+                            category_name: categoryName,
+                            filename: filename,
+                            original_filename: filename,
+                            path: dataFile,
+                            display_name: categoryData.display_name || categoryName.replace(/_/g, ' ').title(),
+                            size: 0, // Size not stored in categories
+                            uploaded_at: new Date().toISOString(), // Approximate
+                            entry_count: 0 // Not stored in categories
+                        };
+                    });
+                }
+            }
+            
             formHtml += generateFieldHtml(key, prop, value);
         });
     }
@@ -4763,11 +4807,13 @@ window.handleFiles = async function(fieldId, files) {
     const pluginId = uploadConfig.plugin_id || window.currentPluginConfig?.pluginId || 'static-image';
     const maxFiles = uploadConfig.max_files || 10;
     const maxSizeMB = uploadConfig.max_size_mb || 5;
+    const fileType = uploadConfig.file_type || 'image';
+    const customUploadEndpoint = uploadConfig.endpoint || '/api/v3/plugins/assets/upload';
     
-    // Validate file count
-    const currentImages = window.getCurrentImages(fieldId);
-    if (currentImages.length + files.length > maxFiles) {
-        showNotification(`Maximum ${maxFiles} files allowed. You have ${currentImages.length} and tried to add ${files.length}.`, 'error');
+    // Get current files list (works for both images and JSON)
+    const currentFiles = window.getCurrentImages ? window.getCurrentImages(fieldId) : [];
+    if (currentFiles.length + files.length > maxFiles) {
+        showNotification(`Maximum ${maxFiles} files allowed. You have ${currentFiles.length} and tried to add ${files.length}.`, 'error');
         return;
     }
     
@@ -4779,10 +4825,19 @@ window.handleFiles = async function(fieldId, files) {
             continue;
         }
         
-        const allowedTypes = ['image/png', 'image/jpeg', 'image/jpg', 'image/bmp', 'image/gif'];
-        if (!allowedTypes.includes(file.type)) {
-            showNotification(`File ${file.name} is not a valid image type`, 'error');
-            continue;
+        if (fileType === 'json') {
+            // Validate JSON files
+            if (!file.name.toLowerCase().endsWith('.json')) {
+                showNotification(`File ${file.name} must be a JSON file (.json)`, 'error');
+                continue;
+            }
+        } else {
+            // Validate image files
+            const allowedTypes = ['image/png', 'image/jpeg', 'image/jpg', 'image/bmp', 'image/gif'];
+            if (!allowedTypes.includes(file.type)) {
+                showNotification(`File ${file.name} is not a valid image type`, 'error');
+                continue;
+            }
         }
         
         validFiles.push(file);
@@ -4797,11 +4852,13 @@ window.handleFiles = async function(fieldId, files) {
     
     // Upload files
     const formData = new FormData();
-    formData.append('plugin_id', pluginId);
+    if (fileType !== 'json') {
+        formData.append('plugin_id', pluginId);
+    }
     validFiles.forEach(file => formData.append('files', file));
     
     try {
-        const response = await fetch('/api/v3/plugins/assets/upload', {
+        const response = await fetch(customUploadEndpoint, {
             method: 'POST',
             body: formData
         });
@@ -4809,12 +4866,12 @@ window.handleFiles = async function(fieldId, files) {
         const data = await response.json();
         
         if (data.status === 'success') {
-            // Add uploaded images to current list
-            const currentImages = window.getCurrentImages(fieldId);
-            const newImages = [...currentImages, ...data.uploaded_files];
-            window.updateImageList(fieldId, newImages);
+            // Add uploaded files to current list
+            const currentFiles = window.getCurrentImages ? window.getCurrentImages(fieldId) : [];
+            const newFiles = [...currentFiles, ...data.uploaded_files];
+            window.updateImageList(fieldId, newFiles);
             
-            showNotification(`Successfully uploaded ${data.uploaded_files.length} image(s)`, 'success');
+            showNotification(`Successfully uploaded ${data.uploaded_files.length} ${fileType === 'json' ? 'file(s)' : 'image(s)'}`, 'success');
         } else {
             showNotification(`Upload failed: ${data.message}`, 'error');
         }
@@ -4832,26 +4889,36 @@ window.handleFiles = async function(fieldId, files) {
 }
 
 window.deleteUploadedImage = async function(fieldId, imageId, pluginId) {
-    if (!confirm('Are you sure you want to delete this image?')) {
+    return window.deleteUploadedFile(fieldId, imageId, pluginId, 'image', null);
+}
+
+window.deleteUploadedFile = async function(fieldId, fileId, pluginId, fileType, customDeleteEndpoint) {
+    const fileTypeLabel = fileType === 'json' ? 'file' : 'image';
+    if (!confirm(`Are you sure you want to delete this ${fileTypeLabel}?`)) {
         return;
     }
     
     try {
-        const response = await fetch('/api/v3/plugins/assets/delete', {
+        const deleteEndpoint = customDeleteEndpoint || (fileType === 'json' ? '/api/v3/plugins/of-the-day/json/delete' : '/api/v3/plugins/assets/delete');
+        const requestBody = fileType === 'json' 
+            ? { file_id: fileId }
+            : { plugin_id: pluginId, image_id: fileId };
+        
+        const response = await fetch(deleteEndpoint, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ plugin_id: pluginId, image_id: imageId })
+            body: JSON.stringify(requestBody)
         });
         
         const data = await response.json();
         
         if (data.status === 'success') {
             // Remove from current list
-            const currentImages = window.getCurrentImages(fieldId);
-            const newImages = currentImages.filter(img => img.id !== imageId);
-            window.updateImageList(fieldId, newImages);
+            const currentFiles = window.getCurrentImages ? window.getCurrentImages(fieldId) : [];
+            const newFiles = currentFiles.filter(file => (file.id || file.category_name) !== fileId);
+            window.updateImageList(fieldId, newFiles);
             
-            showNotification('Image deleted successfully', 'success');
+            showNotification(`${fileType === 'json' ? 'File' : 'Image'} deleted successfully`, 'success');
         } else {
             showNotification(`Delete failed: ${data.message}`, 'error');
         }
