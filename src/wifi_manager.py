@@ -802,10 +802,32 @@ class WiFiManager:
                 disconnect_success, disconnect_msg = self.disconnect_from_network(skip_ap_check=True)
                 if disconnect_success:
                     logger.info(f"Disconnected from {original_ssid}: {disconnect_msg}")
-                    time.sleep(1)  # Brief pause after disconnect
+                    # Wait for device to be ready for new connection
+                    # Check device state before proceeding
+                    max_wait = 5
+                    wait_count = 0
+                    while wait_count < max_wait:
+                        time.sleep(1)
+                        result = subprocess.run(
+                            ["nmcli", "-t", "-f", "STATE", "device", "status", "wlan0"],
+                            capture_output=True,
+                            text=True,
+                            timeout=5
+                        )
+                        if result.returncode == 0:
+                            state = result.stdout.strip().split(':')[-1] if ':' in result.stdout else result.stdout.strip()
+                            # Device is ready if it's disconnected or unavailable (not connecting/connected)
+                            if state in ["disconnected", "unavailable", "unmanaged"]:
+                                logger.info(f"Device ready for new connection (state: {state})")
+                                break
+                        wait_count += 1
+                    
+                    if wait_count >= max_wait:
+                        logger.warning("Device may not be ready, but proceeding with connection attempt")
                 else:
                     logger.warning(f"Failed to disconnect from {original_ssid}: {disconnect_msg}")
-                    # Continue anyway - NetworkManager might handle it
+                    # Continue anyway - NetworkManager might handle it, but wait a bit
+                    time.sleep(2)
             
             # Ensure WiFi radio is enabled before attempting connection (safety measure)
             if not self._ensure_wifi_radio_enabled():
@@ -926,18 +948,60 @@ class WiFiManager:
             self._show_led_message(f"Connecting to {ssid}...", duration=10)
             
             # First, check if connection already exists and try to activate it
+            # NetworkManager connection names might not match SSID exactly, so search by SSID
             check_result = subprocess.run(
-                ["nmcli", "connection", "show", ssid],
+                ["nmcli", "-t", "-f", "NAME,802-11-wireless.ssid", "connection", "show"],
                 capture_output=True,
                 text=True,
                 timeout=5
             )
             
+            existing_conn_name = None
             if check_result.returncode == 0:
+                for line in check_result.stdout.strip().split('\n'):
+                    if ':' in line:
+                        parts = line.split(':')
+                        if len(parts) >= 2:
+                            conn_name = parts[0].strip()
+                            conn_ssid = parts[1].strip() if len(parts) > 1 else ""
+                            if conn_ssid == ssid:
+                                existing_conn_name = conn_name
+                                break
+            
+            # Also try direct lookup by SSID (in case connection name matches SSID)
+            if not existing_conn_name:
+                direct_check = subprocess.run(
+                    ["nmcli", "connection", "show", ssid],
+                    capture_output=True,
+                    text=True,
+                    timeout=5
+                )
+                if direct_check.returncode == 0:
+                    existing_conn_name = ssid
+            
+            if existing_conn_name:
                 # Connection exists, try to activate it first (faster and more reliable)
                 logger.info(f"Found existing connection for {ssid}, activating...")
+                
+                # Ensure device is ready before activating
+                # Wait for device to be in disconnected/unavailable state
+                max_wait = 3
+                for wait_attempt in range(max_wait):
+                    device_result = subprocess.run(
+                        ["nmcli", "-t", "-f", "STATE", "device", "status", "wlan0"],
+                        capture_output=True,
+                        text=True,
+                        timeout=5
+                    )
+                    if device_result.returncode == 0:
+                        state = device_result.stdout.strip().split(':')[-1] if ':' in device_result.stdout else device_result.stdout.strip()
+                        if state in ["disconnected", "unavailable", "unmanaged"]:
+                            break
+                    if wait_attempt < max_wait - 1:
+                        time.sleep(1)
+                
                 result = subprocess.run(
-                    ["nmcli", "connection", "up", ssid],
+                    ["nmcli", "connection", "up", existing_conn_name],
                     capture_output=True,
                     text=True,
                     timeout=30
@@ -1054,8 +1118,35 @@ class WiFiManager:
             
             # Disconnect using nmcli
             if self.has_nmcli:
+                # Try to disconnect the specific connection first (more reliable)
+                if status.ssid:
+                    # Find the connection name for this SSID
+                    conn_result = subprocess.run(
+                        ["nmcli", "-t", "-f", "NAME,802-11-wireless.ssid", "connection", "show"],
+                        capture_output=True,
+                        text=True,
+                        timeout=5
+                    )
+                    if conn_result.returncode == 0:
+                        for line in conn_result.stdout.strip().split('\n'):
+                            if ':' in line:
+                                parts = line.split(':')
+                                if len(parts) >= 2:
+                                    conn_name = parts[0].strip()
+                                    conn_ssid = parts[1].strip() if len(parts) > 1 else ""
+                                    if conn_ssid == status.ssid:
+                                        # Disconnect this specific connection
+                                        subprocess.run(
+                                            ["nmcli", "connection", "down", conn_name],
+                                            capture_output=True,
+                                            timeout=10
+                                        )
+                                        logger.info(f"Disconnected connection {conn_name} for {status.ssid}")
+                                        break
+                
+                # Also disconnect the device to ensure clean state
                 result = subprocess.run(
-                    ["sudo", "nmcli", "device", "disconnect", "wlan0"],
+                    ["nmcli", "device", "disconnect", "wlan0"],
                     capture_output=True,
                     text=True,
                     timeout=10
@@ -1063,8 +1154,8 @@ class WiFiManager:
                 
                 if result.returncode == 0:
                     logger.info("Successfully disconnected from WiFi network")
-                    # Wait a moment for the disconnect to complete
-                    time.sleep(1)
+                    # Wait longer for the disconnect to fully complete
+                    time.sleep(2)
                     
                     # Check if AP mode should be auto-enabled
                     # Skip if we're switching networks (skip_ap_check=True)
