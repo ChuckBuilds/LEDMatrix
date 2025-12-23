@@ -89,7 +89,7 @@
                     hx-vals='{"action": "start_display"}'
                     hx-swap="none"
                     hx-on:htmx:after-request="if (typeof showNotification !== 'undefined' && event.detail.xhr && event.detail.xhr.responseJSON) { showNotification(event.detail.xhr.responseJSON.message || 'Display started', event.detail.xhr.responseJSON.status || 'success'); }"
-                    class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-green-600 hover:bg-green-700">
+                    class="inline-flex items-center px-4 py-2 border border-transparent text-base font-semibold rounded-md text-white bg-green-600 hover:bg-green-700">
                 <i class="fas fa-play mr-2"></i>
                 Start Display
             </button>
@@ -98,7 +98,7 @@
                     hx-vals='{"action": "stop_display"}'
                     hx-swap="none"
                     hx-on:htmx:after-request="if (typeof showNotification !== 'undefined' && event.detail.xhr && event.detail.xhr.responseJSON) { showNotification(event.detail.xhr.responseJSON.message || 'Display stopped', event.detail.xhr.responseJSON.status || 'success'); }"
-                    class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-red-600 hover:bg-red-700">
+                    class="inline-flex items-center px-4 py-2 border border-transparent text-base font-semibold rounded-md text-white bg-red-600 hover:bg-red-700">
                 <i class="fas fa-stop mr-2"></i>
                 Stop Display
             </button>
@@ -118,7 +118,7 @@
                     hx-confirm="Are you sure you want to reboot the system?"
                     hx-swap="none"
                     hx-on:htmx:after-request="if (typeof showNotification !== 'undefined' && event.detail.xhr && event.detail.xhr.responseJSON) { showNotification(event.detail.xhr.responseJSON.message || 'System rebooting...', event.detail.xhr.responseJSON.status || 'info'); }"
-                    class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-yellow-600 hover:bg-yellow-700">
+                    class="inline-flex items-center px-4 py-2 border border-transparent text-base font-semibold rounded-md text-white bg-yellow-600 hover:bg-yellow-700">
                 <i class="fas fa-power-off mr-2"></i>
                 Reboot System
             </button>
