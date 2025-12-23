@@ -2240,9 +2240,13 @@
                             
                             nestedPropertyEntries.forEach(([nestedKey, nestedProp]) => {
                                 // Use config value if it exists and is not null (including false), otherwise use schema default
-                                // Check if key exists in config and value is not null
-                                const hasValue = nestedKey in nestedConfig && nestedConfig[nestedKey] !== null;
-                                const nestedValue = hasValue ? nestedConfig[nestedKey] : (nestedProp.default !== undefined ? nestedProp.default : false);
+                                // Check if key exists in config and value is not null/undefined
+                                const hasValue = nestedKey in nestedConfig && nestedConfig[nestedKey] !== null && nestedConfig[nestedKey] !== undefined;
+                                // For nested objects, if the value is an empty object, still use it (don't fall back to default)
+                                const isNestedObject = nestedProp.type === 'object' && nestedProp.properties;
+                                const nestedValue = hasValue ? nestedConfig[nestedKey] : 
+                                    (nestedProp.default !== undefined ? nestedProp.default : 
+                                     (isNestedObject ? {} : (nestedProp.type === 'array' ? [] : (nestedProp.type === 'boolean' ? false : ''))));
                                 html += generateFieldHtml(nestedKey, nestedProp, nestedValue, fullKey);
                             });
                             
@@ -2503,10 +2507,14 @@
                     propertyEntries.forEach(([key, prop]) => {
                         // Skip the 'enabled' property - it's managed separately via the header toggle
                         if (key === 'enabled') return;
-                        // Use config value if key exists and is not null (including false), otherwise use schema default
-                        // Check if key exists in config and value is not null
-                        const hasValue = key in config && config[key] !== null;
-                        const value = hasValue ? config[key] : (prop.default !== undefined ? prop.default : false);
+                        // Use config value if key exists and is not null/undefined, otherwise use schema default
+                        // Check if key exists in config and value is not null/undefined
+                        const hasValue = key in config && config[key] !== null && config[key] !== undefined;
+                        // For nested objects, if the value is an empty object, still use it (don't fall back to default)
+                        const isNestedObject = prop.type === 'object' && prop.properties;
+                        const value = hasValue ? config[key] : 
+                            (prop.default !== undefined ? prop.default : 
+                             (isNestedObject ? {} : (prop.type === 'array' ? [] : (prop.type === 'boolean' ? false : ''))));
                         formHtml += generateFieldHtml(key, prop, value);
                     });
 
@@ -2741,7 +2749,20 @@
                                 // Check if this is a file upload widget (JSON array in hidden input)
                                 if (propSchema && propSchema['x-widget'] === 'file-upload') {
                                     try {
-                                        const jsonValue = JSON.parse(value);
+                                        // Unescape HTML entities that were escaped when setting the value
+                                        let unescapedValue = value;
+                                        if (typeof value === 'string') {
+                                            // Reverse the HTML escaping: &quot; -> ", &#39; -> ', &amp; -> &
+                                            unescapedValue = value
+                                                .replace(/&quot;/g, '"')
+                                                .replace(/&#39;/g, "'")
+                                                .replace(/&amp;/g, '&')
+                                                .replace(/&lt;/g, '<')
+                                                .replace(/&gt;/g, '>');
+                                        }
+                                        
+                                        // Try to parse as JSON
+                                        const jsonValue = JSON.parse(unescapedValue);
                                         if (Array.isArray(jsonValue)) {
                                             flatConfig[key] = jsonValue;
                                             console.log(`File upload array field ${key}: parsed JSON array with ${jsonValue.length} items`);
@@ -2750,10 +2771,26 @@
                                             flatConfig[key] = [];
                                         }
                                     } catch (e) {
+                                        console.warn(`Failed to parse JSON for file upload field ${key}:`, e, 'Value:', value);
                                         // Not valid JSON, use empty array or try comma-separated
                                         if (value && value.trim()) {
-                                            const arrayValue = value.split(',').map(v => v.trim()).filter(v => v);
-                                            flatConfig[key] = arrayValue;
+                                            // Try to unescape and parse again
+                                            try {
+                                                const unescaped = value
+                                                    .replace(/&quot;/g, '"')
+                                                    .replace(/&#39;/g, "'")
+                                                    .replace(/&amp;/g, '&');
+                                                const jsonValue = JSON.parse(unescaped);
+                                                if (Array.isArray(jsonValue)) {
+                                                    flatConfig[key] = jsonValue;
+                                                } else {
+                                                    flatConfig[key] = [];
+                                                }
+                                            } catch (e2) {
+                                                // If still fails, try comma-separated or empty array
+                                                const arrayValue = value.split(',').map(v => v.trim()).filter(v => v);
+                                                flatConfig[key] = arrayValue.length > 0 ? arrayValue : [];
+                                            }
                                         } else {
                                             flatConfig[key] = [];
                                         }
@@ -3545,11 +3582,29 @@
                         // Check if this is a file upload widget (JSON array in hidden input)
                         if (propSchema && propSchema['x-widget'] === 'file-upload') {
                             try {
-                                const jsonValue = JSON.parse(value);
-                                if (Array.isArray(jsonValue)) {
-                                    flatConfig[key] = jsonValue;
-                                    console.log(`File upload array field ${key}: parsed JSON array with ${jsonValue.length} items`);
-                                } else {
+                                // Unescape HTML entities that were escaped when setting the value
+                                let unescapedValue = value;
+                                if (typeof value === 'string') {
+                                    // Reverse the HTML escaping: &quot; -> ", &#39; -> ', &amp; -> &
+                                    unescapedValue = value
+                                        .replace(/&quot;/g, '"')
+                                        .replace(/&#39;/g, "'")
+                                        .replace(/&amp;/g, '&')
+                                        .replace(/&lt;/g, '<')
+                                        .replace(/&gt;/g, '>');
+                                }
+                                
+                                try {
+                                    const jsonValue = JSON.parse(unescapedValue);
+                                    if (Array.isArray(jsonValue)) {
+                                        flatConfig[key] = jsonValue;
+                                        console.log(`File upload array field ${key}: parsed JSON array with ${jsonValue.length} items`);
+                                    } else {
+                                        // Fallback to empty array
+                                        flatConfig[key] = [];
+                                    }
+                                } catch (e) {
+                                    console.warn(`Failed to parse JSON for file upload field ${key}:`, e, 'Value:', value);
                                     // Fallback to empty array
                                     flatConfig[key] = [];
                                 }
