@@ -1911,7 +1911,9 @@ function generateFieldHtml(key, prop, value, prefix = '') {
     }
     
     // Handle objects with additionalProperties (dynamic keys with object values, like categories)
+    // Must have additionalProperties, no top-level properties, and additionalProperties must be an object type
     const hasAdditionalProperties = prop.type === 'object' && 
+                                    !prop.properties && // Explicitly exclude objects with properties (those use nested handler)
                                     prop.additionalProperties && 
                                     typeof prop.additionalProperties === 'object' && 
                                     prop.additionalProperties.type === 'object';
