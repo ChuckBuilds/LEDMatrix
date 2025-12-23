@@ -1818,10 +1818,31 @@ def get_plugin_config():
 def update_plugin():
     """Update plugin"""
     try:
-        # Validate request
-        data, error = validate_request_json(['plugin_id'])
-        if error:
-            return error
+        # Support both JSON and form data
+        content_type = request.content_type or ''
+        
+        if 'application/json' in content_type:
+            # JSON request
+            data, error = validate_request_json(['plugin_id'])
+            if error:
+                # Log what we received for debugging
+                print(f"[UPDATE] JSON validation failed. Content-Type: {content_type}")
+                print(f"[UPDATE] Request data: {request.data}")
+                print(f"[UPDATE] Request form: {request.form.to_dict()}")
+                return error
+        else:
+            # Form data or query string
+            plugin_id = request.args.get('plugin_id') or request.form.get('plugin_id')
+            if not plugin_id:
+                print(f"[UPDATE] Missing plugin_id. Content-Type: {content_type}")
+                print(f"[UPDATE] Query args: {request.args.to_dict()}")
+                print(f"[UPDATE] Form data: {request.form.to_dict()}")
+                return error_response(
+                    ErrorCode.INVALID_INPUT,
+                    'plugin_id required',
+                    status_code=400
+                )
+            data = {'plugin_id': plugin_id}
         
         if not api_v3.plugin_store_manager:
             return error_response(

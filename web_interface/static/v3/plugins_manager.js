@@ -50,18 +50,57 @@ window.requestOnDemandStop = function({ stopService = false } = {}) {
 window.updatePlugin = window.updatePlugin || function(pluginId) {
     if (_PLUGIN_DEBUG_EARLY) console.log('[PLUGINS STUB] updatePlugin called for', pluginId);
     
+    // Validate pluginId
+    if (!pluginId || typeof pluginId !== 'string') {
+        console.error('Invalid pluginId:', pluginId);
+        if (typeof showNotification === 'function') {
+            showNotification('Invalid plugin ID', 'error');
+        }
+        return Promise.reject(new Error('Invalid plugin ID'));
+    }
+    
     // Show immediate feedback
     if (typeof showNotification === 'function') {
         showNotification(`Updating ${pluginId}...`, 'info');
     }
     
+    // Prepare request body
+    const requestBody = { plugin_id: pluginId };
+    const requestBodyJson = JSON.stringify(requestBody);
+    
+    console.log('[UPDATE] Sending request:', { url: '/api/v3/plugins/update', body: requestBodyJson });
+    
     // Make the API call directly
     return fetch('/api/v3/plugins/update', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ plugin_id: pluginId })
+        headers: { 
+            'Content-Type': 'application/json',
+            'Accept': 'application/json'
+        },
+        body: requestBodyJson
     })
-    .then(response => response.json())
+    .then(async response => {
+        // Check if response is OK before parsing
+        if (!response.ok) {
+            // Try to parse error response
+            let errorData;
+            try {
+                const text = await response.text();
+                console.error('[UPDATE] Error response:', { status: response.status, statusText: response.statusText, body: text });
+                errorData = JSON.parse(text);
+            } catch (e) {
+                errorData = { message: `Server error: ${response.status} ${response.statusText}` };
+            }
+            
+            if (typeof showNotification === 'function') {
+                showNotification(errorData.message || `Update failed: ${response.status}`, 'error');
+            }
+            throw new Error(errorData.message || `Update failed: ${response.status}`);
+        }
+        
+        // Parse successful response
+        return response.json();
+    })
     .then(data => {
         if (typeof showNotification === 'function') {
             showNotification(data.message || 'Update initiated', data.status || 'info');
@@ -75,7 +114,7 @@ window.updatePlugin = window.updatePlugin || function(pluginId) {
         return data;
     })
     .catch(error => {
-        console.error('Error updating plugin:', error);
+        console.error('[UPDATE] Error updating plugin:', error);
         if (typeof showNotification === 'function') {
             showNotification('Error updating plugin: ' + error.message, 'error');
         }
@@ -3424,24 +3463,76 @@ window.executePluginAction = function(actionId, actionIndex, pluginIdParam = nul
 
 // togglePlugin is already defined at the top of the script - no need to redefine
 
-window.updatePlugin = function(pluginId) {
-    showNotification(`Updating ${pluginId}...`, 'info');
-
-    fetch('/api/v3/plugins/update', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ plugin_id: pluginId })
-    })
-    .then(response => response.json())
-    .then(data => {
-        showNotification(data.message, data.status);
-        if (data.status === 'success') {
-            loadInstalledPlugins(); // Refresh the list
+// Only override updatePlugin if it doesn't already have improved error handling
+if (!window.updatePlugin || window.updatePlugin.toString().includes('[UPDATE]')) {
+    window.updatePlugin = function(pluginId) {
+        // Validate pluginId
+        if (!pluginId || typeof pluginId !== 'string') {
+            console.error('[UPDATE] Invalid pluginId:', pluginId);
+            if (typeof showNotification === 'function') {
+                showNotification('Invalid plugin ID', 'error');
+            }
+            return Promise.reject(new Error('Invalid plugin ID'));
         }
-    })
-    .catch(error => {
-        showNotification('Error updating plugin: ' + error.message, 'error');
-    });
+        
+        showNotification(`Updating ${pluginId}...`, 'info');
+
+        // Prepare request body
+        const requestBody = { plugin_id: pluginId };
+        const requestBodyJson = JSON.stringify(requestBody);
+        
+        console.log('[UPDATE] Sending request:', { url: '/api/v3/plugins/update', body: requestBodyJson });
+
+        return fetch('/api/v3/plugins/update', {
+            method: 'POST',
+            headers: { 
+                'Content-Type': 'application/json',
+                'Accept': 'application/json'
+            },
+            body: requestBodyJson
+        })
+        .then(async response => {
+            // Check if response is OK before parsing
+            if (!response.ok) {
+                // Try to parse error response
+                let errorData;
+                try {
+                    const text = await response.text();
+                    console.error('[UPDATE] Error response:', { status: response.status, statusText: response.statusText, body: text });
+                    errorData = JSON.parse(text);
+                } catch (e) {
+                    errorData = { message: `Server error: ${response.status} ${response.statusText}` };
+                }
+                
+                if (typeof showNotification === 'function') {
+                    showNotification(errorData.message || `Update failed: ${response.status}`, 'error');
+                }
+                throw new Error(errorData.message || `Update failed: ${response.status}`);
+            }
+            
+            // Parse successful response
+            return response.json();
+        })
+        .then(data => {
+            showNotification(data.message || 'Update initiated', data.status || 'info');
+            if (data.status === 'success') {
+                // Refresh the list
+                if (typeof loadInstalledPlugins === 'function') {
+                    loadInstalledPlugins();
+                } else if (typeof window.pluginManager?.loadInstalledPlugins === 'function') {
+                    window.pluginManager.loadInstalledPlugins();
+                }
+            }
+            return data;
+        })
+        .catch(error => {
+            console.error('[UPDATE] Error updating plugin:', error);
+            if (typeof showNotification === 'function') {
+                showNotification('Error updating plugin: ' + error.message, 'error');
+            }
+            throw error;
+        });
+    };
 }
 
 window.uninstallPlugin = function(pluginId) {
