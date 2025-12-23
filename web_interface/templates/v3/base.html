@@ -1400,7 +1400,7 @@
                         <!-- Plugin Configuration Form -->
                         <div>
                             <div x-data="{ plugin: plugin }" x-init="Object.assign($data, pluginConfigData(plugin)); $nextTick(() => { if (plugin && plugin.id) { $data.loadPluginConfig(plugin.id); } })">
-                                <form x-on:submit.prevent="$root.savePluginConfig(plugin.id, $event)">
+                                <form x-on:submit.prevent="window.PluginConfigHelpers.savePluginConfig(plugin.id, $event)">
                                     <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
                                         <!-- Plugin Info -->
                                         <div class="bg-gray-50 rounded-lg p-4">
@@ -1495,8 +1495,8 @@
                                                 </div>
 
                                                 <!-- Configuration fields loaded dynamically -->
-                                                <div x-show="!loading && $root && typeof $root.generateConfigForm === 'function'" x-html="$root.generateConfigForm(plugin.id, config, schema, webUiActions)"></div>
-                                                <div x-show="!loading && (!$root || typeof $root.generateConfigForm !== 'function')" class="text-gray-500">Loading configuration form...</div>
+                                                <div x-show="!loading && window.PluginConfigHelpers && typeof window.PluginConfigHelpers.generateConfigForm === 'function'" x-html="window.PluginConfigHelpers.generateConfigForm(plugin.id, config, schema, webUiActions)"></div>
+                                                <div x-show="!loading && (!window.PluginConfigHelpers || typeof window.PluginConfigHelpers.generateConfigForm !== 'function')" class="text-gray-500">Loading configuration form...</div>
                                             </div>
                                         </div>
                                     </div>
@@ -1842,10 +1842,11 @@
                     console.error('loadPluginConfig not available');
                     this.loading = false;
                 }
-                // Note: generateConfigForm and savePluginConfig are now called via $root 
-                // to avoid delegation recursion. See template usage:
-                // x-html="$root.generateConfigForm(...)" and 
-                // x-on:submit.prevent="$root.savePluginConfig(...)"
+                // Note: generateConfigForm and savePluginConfig are now called via window.PluginConfigHelpers 
+                // to avoid delegation recursion and ensure proper access to app component.
+                // See template usage:
+                // x-html="window.PluginConfigHelpers.generateConfigForm(...)" and 
+                // x-on:submit.prevent="window.PluginConfigHelpers.savePluginConfig(...)"
             };
         }
 
