@@ -129,10 +129,13 @@
                 <label class="flex items-center cursor-pointer">
                     <input type="checkbox"
                            id="plugin-enabled-{{ plugin.id }}"
+                           name="enabled"
+                           value="true"
                            {% if plugin.enabled %}checked{% endif %}
                            hx-post="/api/v3/plugins/toggle?plugin_id={{ plugin.id }}"
                            hx-trigger="change"
                            hx-swap="none"
+                           hx-vals='js:{enabled: document.getElementById("plugin-enabled-{{ plugin.id }}").checked ? "true" : "false"}'
                            hx-on::after-request="handleToggleResponse(event, '{{ plugin.id }}')"
                            class="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded">
                     <span class="ml-2 text-sm {% if plugin.enabled %}text-green-600{% else %}text-gray-500{% endif %}">

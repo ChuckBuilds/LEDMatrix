@@ -1390,12 +1390,37 @@ def toggle_plugin():
         if not api_v3.plugin_manager or not api_v3.config_manager:
             return jsonify({'status': 'error', 'message': 'Plugin or config manager not initialized'}), 500
         
-        data = request.get_json()
-        if not data or 'plugin_id' not in data or 'enabled' not in data:
-            return jsonify({'status': 'error', 'message': 'plugin_id and enabled required'}), 400
-
-        plugin_id = data['plugin_id']
-        enabled = data['enabled']
+        # Support both JSON and form data (for HTMX submissions)
+        content_type = request.content_type or ''
+        
+        if 'application/json' in content_type:
+            data = request.get_json()
+            if not data or 'plugin_id' not in data or 'enabled' not in data:
+                return jsonify({'status': 'error', 'message': 'plugin_id and enabled required'}), 400
+            plugin_id = data['plugin_id']
+            enabled = data['enabled']
+        else:
+            # Form data or query string (HTMX submission)
+            plugin_id = request.args.get('plugin_id') or request.form.get('plugin_id')
+            if not plugin_id:
+                return jsonify({'status': 'error', 'message': 'plugin_id required'}), 400
+            
+            # For checkbox toggle, if form was submitted, the checkbox was checked (enabled)
+            # If using HTMX with hx-trigger="change", we need to check if checkbox is checked
+            # The checkbox value or 'enabled' form field indicates the state
+            enabled_str = request.form.get('enabled', request.args.get('enabled', ''))
+            
+            # Handle various truthy/falsy values
+            if enabled_str.lower() in ('true', '1', 'on', 'yes'):
+                enabled = True
+            elif enabled_str.lower() in ('false', '0', 'off', 'no', ''):
+                # Empty string means checkbox was unchecked (toggle off)
+                enabled = False
+            else:
+                # Default: toggle based on current state
+                config = api_v3.config_manager.load_config()
+                current_enabled = config.get(plugin_id, {}).get('enabled', False)
+                enabled = not current_enabled
         
         # Check if plugin exists in manifests (discovered but may not be loaded)
         if plugin_id not in api_v3.plugin_manager.plugin_manifests:
