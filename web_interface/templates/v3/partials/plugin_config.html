@@ -232,9 +232,10 @@
                 <div class="space-y-4 max-h-96 overflow-y-auto pr-2">
                     {% if schema and schema.properties %}
                         {# Use property order if defined, otherwise use natural order #}
+                        {# Skip 'enabled' field - it's handled by the header toggle #}
                         {% set property_order = schema['x-propertyOrder'] if 'x-propertyOrder' in schema else schema.properties.keys()|list %}
                         {% for key in property_order %}
-                            {% if key in schema.properties %}
+                            {% if key in schema.properties and key != 'enabled' %}
                                 {% set prop = schema.properties[key] %}
                                 {% set value = config[key] if key in config else none %}
                                 {{ render_field(key, prop, value, '', plugin.id) }}
