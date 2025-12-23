@@ -2650,33 +2650,62 @@ def _parse_form_value(value):
     
     # Handle string values
     if isinstance(value, str):
+        stripped = value.strip()
+        
         # Check for boolean strings
-        if value.lower() == 'true':
+        if stripped.lower() == 'true':
             return True
-        if value.lower() == 'false':
+        if stripped.lower() == 'false':
             return False
-        if value.lower() in ('null', 'none', ''):
+        if stripped.lower() in ('null', 'none') or stripped == '':
             return None
         
-        # Try parsing as number
-        try:
-            if '.' in value:
-                return float(value)
-            return int(value)
-        except ValueError:
-            pass
-        
-        # Try parsing as JSON (for arrays and objects)
-        if value.startswith('[') or value.startswith('{'):
+        # Try parsing as JSON (for arrays and objects) - do this BEFORE number parsing
+        # This handles RGB arrays like "[255, 0, 0]" correctly
+        if stripped.startswith('[') or stripped.startswith('{'):
             try:
-                return json.loads(value)
+                return json.loads(stripped)
             except json.JSONDecodeError:
                 pass
         
-        # Return as string
+        # Try parsing as number
+        try:
+            if '.' in stripped:
+                return float(stripped)
+            return int(stripped)
+        except ValueError:
+            pass
+        
+        # Return as string (original value, not stripped)
         return value
     
     return value
+
+
+def _set_nested_value(config, key_path, value):
+    """
+    Set a value in a nested dict using dot notation path.
+    Handles existing nested dicts correctly by merging instead of replacing.
+    
+    Args:
+        config: The config dict to modify
+        key_path: Dot-separated path (e.g., "customization.period_text.font")
+        value: The value to set
+    """
+    parts = key_path.split('.')
+    current = config
+    
+    # Navigate/create intermediate dicts
+    for i, part in enumerate(parts[:-1]):
+        if part not in current:
+            current[part] = {}
+        elif not isinstance(current[part], dict):
+            # If the existing value is not a dict, replace it with a dict
+            current[part] = {}
+        current = current[part]
+    
+    # Set the final value
+    current[parts[-1]] = value
 
 
 @api_v3.route('/plugins/config', methods=['POST'])
@@ -2711,25 +2740,23 @@ def save_plugin_config():
                     status_code=400
                 )
             
+            # Load existing config as base (partial form updates should merge, not replace)
+            existing_config = {}
+            if api_v3.config_manager:
+                full_config = api_v3.config_manager.load_config()
+                existing_config = full_config.get(plugin_id, {}).copy()
+            
+            # Start with existing config and apply form updates
+            plugin_config = existing_config
+            
             # Convert form data to config dict
             # Form fields can use dot notation for nested values (e.g., "transition.type")
             form_data = request.form.to_dict()
-            plugin_config = {}
             
             for key, value in form_data.items():
-                # Handle nested keys (e.g., "transition.type" -> {"transition": {"type": ...}})
-                if '.' in key:
-                    parts = key.split('.')
-                    current = plugin_config
-                    for part in parts[:-1]:
-                        if part not in current:
-                            current[part] = {}
-                        current = current[part]
-                    current[parts[-1]] = _parse_form_value(value)
-                else:
-                    plugin_config[key] = _parse_form_value(value)
-            
-            print(f"[DEBUG] Parsed plugin_config for {plugin_id}: {plugin_config}")
+                parsed_value = _parse_form_value(value)
+                # Use helper to set nested values correctly
+                _set_nested_value(plugin_config, key, parsed_value)
         
         # Get schema manager instance
         schema_mgr = api_v3.schema_manager
