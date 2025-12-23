@@ -1840,6 +1840,17 @@ function generateFieldHtml(key, prop, value, prefix = '') {
     const label = prop.title || key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
     const description = prop.description || '';
     let html = '';
+    
+    // Debug logging for categories field
+    if (key === 'categories') {
+        console.log(`[DEBUG] Processing categories field:`, {
+            type: prop.type,
+            hasAdditionalProperties: !!(prop.additionalProperties),
+            additionalPropertiesType: prop.additionalProperties?.type,
+            hasProperties: !!(prop.properties),
+            allKeys: Object.keys(prop)
+        });
+    }
 
     // Handle patternProperties objects (dynamic key-value pairs like custom_feeds, feed_logo_map)
     if (prop.type === 'object' && prop.patternProperties && !prop.properties) {
@@ -1900,16 +1911,27 @@ function generateFieldHtml(key, prop, value, prefix = '') {
     }
     
     // Handle objects with additionalProperties (dynamic keys with object values, like categories)
-    if (prop.type === 'object' && prop.additionalProperties && typeof prop.additionalProperties === 'object' && prop.additionalProperties.type === 'object') {
+    const hasAdditionalProperties = prop.type === 'object' && 
+                                    prop.additionalProperties && 
+                                    typeof prop.additionalProperties === 'object' && 
+                                    prop.additionalProperties.type === 'object';
+    
+    if (hasAdditionalProperties) {
         const fieldId = fullKey.replace(/\./g, '_');
         const currentValue = value || {};
         const categorySchema = prop.additionalProperties;
         const entries = Object.entries(currentValue);
         
+        console.log(`[DEBUG] Rendering additionalProperties object for ${fullKey}:`, {
+            entries: entries.length,
+            keys: Object.keys(currentValue)
+        });
+        
         html += `
             <div class="categories-container mb-4">
-                <div class="mb-2">
-                    <p class="text-sm text-gray-600 mb-3">${description || 'Category configurations'}</p>
+                <div class="mb-4">
+                    <h4 class="text-lg font-semibold text-gray-900 mb-2">${label}</h4>
+                    ${description ? `<p class="text-sm text-gray-600 mb-3">${description}</p>` : ''}
                     <div id="${fieldId}_categories" class="space-y-3">
         `;
         
