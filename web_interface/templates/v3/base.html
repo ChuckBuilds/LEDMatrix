@@ -195,10 +195,45 @@
                         originalWarn.apply(console, args);
                     };
                     
-                    // Handle HTMX errors gracefully
+                    // Handle HTMX errors gracefully with detailed logging
                     document.body.addEventListener('htmx:responseError', function(event) {
-                        // Log but don't break the app
-                        console.warn('HTMX response error:', event.detail);
+                        const detail = event.detail;
+                        const xhr = detail.xhr;
+                        const target = detail.target;
+                        
+                        // Enhanced error logging
+                        console.error('HTMX response error:', {
+                            status: xhr?.status,
+                            statusText: xhr?.statusText,
+                            url: xhr?.responseURL,
+                            target: target?.id || target?.tagName,
+                            responseText: xhr?.responseText
+                        });
+                        
+                        // For form submissions, log the form data
+                        if (target && target.tagName === 'FORM') {
+                            const formData = new FormData(target);
+                            const formPayload = {};
+                            for (const [key, value] of formData.entries()) {
+                                formPayload[key] = value;
+                            }
+                            console.error('Form payload:', formPayload);
+                            
+                            // Try to parse error response for validation details
+                            if (xhr?.responseText) {
+                                try {
+                                    const errorData = JSON.parse(xhr.responseText);
+                                    console.error('Error details:', {
+                                        message: errorData.message,
+                                        details: errorData.details,
+                                        validation_errors: errorData.validation_errors,
+                                        context: errorData.context
+                                    });
+                                } catch (e) {
+                                    console.error('Error response (non-JSON):', xhr.responseText.substring(0, 500));
+                                }
+                            }
+                        }
                     });
                     
                     document.body.addEventListener('htmx:swapError', function(event) {
@@ -3765,6 +3800,158 @@
                 notification.style.opacity = '0';
                 setTimeout(() => notification.remove(), 500);
             }, 3000);
+        }
+
+        // Plugin config handler functions (idempotent initialization)
+        if (!window.__pluginConfigHandlersInitialized) {
+            window.__pluginConfigHandlersInitialized = true;
+            
+            // Initialize state on window object
+            window.pluginConfigRefreshInProgress = window.pluginConfigRefreshInProgress || new Set();
+            
+            // Section toggle function
+            window.toggleSection = function(sectionId) {
+                const section = document.getElementById(sectionId);
+                const icon = document.getElementById(sectionId + '-icon');
+                if (section && icon) {
+                    section.classList.toggle('hidden');
+                    icon.classList.toggle('fa-chevron-right');
+                    icon.classList.toggle('fa-chevron-down');
+                }
+            };
+            
+            // Handle config save response with detailed error logging
+            window.handleConfigSave = function(event, pluginId) {
+                const btn = event.target.querySelector('[type=submit]');
+                if (btn) btn.disabled = false;
+                
+                if (event.detail.successful) {
+                    showNotification('Configuration saved successfully!', 'success');
+                } else {
+                    // Log detailed error information
+                    const xhr = event.detail.xhr;
+                    console.error('Config save failed:', {
+                        status: xhr?.status,
+                        statusText: xhr?.statusText,
+                        responseText: xhr?.responseText
+                    });
+                    
+                    // Try to parse error response
+                    let errorMessage = 'Failed to save configuration';
+                    try {
+                        if (xhr?.responseText) {
+                            const errorData = JSON.parse(xhr.responseText);
+                            errorMessage = errorData.message || errorData.details || errorMessage;
+                            if (errorData.validation_errors) {
+                                errorMessage += ': ' + errorData.validation_errors.join(', ');
+                            }
+                        }
+                    } catch (e) {
+                        // If parsing fails, use status text
+                        errorMessage = xhr?.statusText || errorMessage;
+                    }
+                    
+                    showNotification(errorMessage, 'error');
+                }
+            };
+            
+            // Handle toggle response
+            window.handleToggleResponse = function(event, pluginId) {
+                if (event.detail.successful) {
+                    // Update UI in place instead of refreshing to avoid duplication
+                    const checkbox = document.getElementById(`plugin-enabled-${pluginId}`);
+                    const label = checkbox?.nextElementSibling;
+                    
+                    if (checkbox && label) {
+                        const isEnabled = checkbox.checked;
+                        label.textContent = isEnabled ? 'Enabled' : 'Disabled';
+                        label.className = `ml-2 text-sm ${isEnabled ? 'text-green-600' : 'text-gray-500'}`;
+                    }
+                    
+                    showNotification('Plugin status updated', 'success');
+                } else {
+                    // Revert checkbox state on error
+                    const checkbox = document.getElementById(`plugin-enabled-${pluginId}`);
+                    if (checkbox) {
+                        checkbox.checked = !checkbox.checked;
+                    }
+                    showNotification('Failed to update plugin status', 'error');
+                }
+            };
+            
+            // Handle plugin update response
+            window.handlePluginUpdate = function(event, pluginId) {
+                if (event.detail.successful) {
+                    showNotification('Plugin update initiated', 'success');
+                } else {
+                    const xhr = event.detail.xhr;
+                    console.error('Plugin update failed:', {
+                        status: xhr?.status,
+                        statusText: xhr?.statusText,
+                        responseText: xhr?.responseText
+                    });
+                    showNotification('Failed to update plugin', 'error');
+                }
+            };
+            
+            // Refresh plugin config (with duplicate prevention)
+            window.refreshPluginConfig = function(pluginId) {
+                // Prevent concurrent refreshes
+                if (window.pluginConfigRefreshInProgress.has(pluginId)) {
+                    return;
+                }
+                
+                const container = document.getElementById(`plugin-config-${pluginId}`);
+                if (container && window.htmx) {
+                    window.pluginConfigRefreshInProgress.add(pluginId);
+                    
+                    // Clear container first, then reload
+                    container.innerHTML = '';
+                    window.htmx.ajax('GET', `/v3/partials/plugin-config/${pluginId}`, {
+                        target: container,
+                        swap: 'innerHTML'
+                    });
+                    
+                    // Clear flag after delay
+                    setTimeout(() => {
+                        window.pluginConfigRefreshInProgress.delete(pluginId);
+                    }, 1000);
+                }
+            };
+            
+            // Plugin action handlers
+            window.runPluginOnDemand = function(pluginId) {
+                if (typeof window.openOnDemandModal === 'function') {
+                    window.openOnDemandModal(pluginId);
+                } else {
+                    showNotification('On-demand modal not available', 'error');
+                }
+            };
+            
+            window.stopOnDemand = function() {
+                if (typeof window.requestOnDemandStop === 'function') {
+                    window.requestOnDemandStop({});
+                } else {
+                    showNotification('Stop function not available', 'error');
+                }
+            };
+            
+            window.executePluginAction = function(pluginId, actionId) {
+                fetch(`/api/v3/plugins/action?plugin_id=${pluginId}&action_id=${actionId}`, {
+                    method: 'POST'
+                })
+                .then(r => r.json())
+                .then(data => {
+                    if (data.status === 'success') {
+                        showNotification(data.message || 'Action executed', 'success');
+                    } else {
+                        showNotification(data.message || 'Action failed', 'error');
+                    }
+                })
+                .catch(err => {
+                    showNotification('Failed to execute action', 'error');
+                });
+            };
         }
 
         function getAppComponent() {

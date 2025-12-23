@@ -3317,11 +3317,19 @@ def save_plugin_config():
                 logger.error(f"Validation errors: {validation_errors}")
                 logger.error(f"Config that failed: {plugin_config}")
                 logger.error(f"Schema properties: {list(enhanced_schema.get('properties', {}).keys())}")
+                
                 # Also print to console for immediate visibility
+                import json
                 print(f"[ERROR] Config validation failed for {plugin_id}")
                 print(f"[ERROR] Validation errors: {validation_errors}")
                 print(f"[ERROR] Config keys: {list(plugin_config.keys())}")
                 print(f"[ERROR] Schema property keys: {list(enhanced_schema.get('properties', {}).keys())}")
+                
+                # Log raw form data if this was a form submission
+                if 'application/json' not in (request.content_type or ''):
+                    form_data = request.form.to_dict()
+                    print(f"[ERROR] Raw form data: {json.dumps({k: str(v)[:200] for k, v in form_data.items()}, indent=2)}")
+                    print(f"[ERROR] Parsed config: {json.dumps(plugin_config, indent=2, default=str)}")
                 return error_response(
                     ErrorCode.CONFIG_VALIDATION_FAILED,
                     'Configuration validation failed',
