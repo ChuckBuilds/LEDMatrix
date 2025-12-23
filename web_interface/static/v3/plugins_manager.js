@@ -806,9 +806,12 @@ function renderInstalledPlugins(plugins) {
     };
 
     container.innerHTML = plugins.map(plugin => {
+        // Convert enabled to boolean for consistent rendering
+        const enabledBool = Boolean(plugin.enabled);
+        
         // Debug: Log enabled status during rendering (only when debug enabled)
         if (PLUGIN_DEBUG) {
-            console.log(`[DEBUG RENDER] Plugin ${plugin.id}: enabled=${plugin.enabled}`);
+            console.log(`[DEBUG RENDER] Plugin ${plugin.id}: enabled=${enabledBool}`);
         }
         
         // Escape plugin ID for use in HTML attributes and JavaScript
