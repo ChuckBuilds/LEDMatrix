@@ -634,9 +634,16 @@
                                 console.log('Found pluginManager.loadInstalledPlugins, calling it...');
                                 window.pluginManager.loadInstalledPlugins();
                                 // Also try to load plugin store
-                                if (window.searchPluginStore && typeof window.searchPluginStore === 'function') {
-                                    setTimeout(() => window.searchPluginStore(true), 500);
-                                }
+                                setTimeout(() => {
+                                    const searchFn = window.searchPluginStore || 
+                                                     (window.pluginManager && window.pluginManager.searchPluginStore);
+                                    if (searchFn && typeof searchFn === 'function') {
+                                        console.log('Loading plugin store...');
+                                        searchFn(true);
+                                    } else {
+                                        console.warn('searchPluginStore not available');
+                                    }
+                                }, 500);
                             } else if (attempts >= maxAttempts) {
                                     console.log('loadInstalledPlugins not found after', maxAttempts, 'attempts, fetching and rendering directly...');
                                     clearInterval(checkInterval);

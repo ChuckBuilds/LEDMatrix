@@ -5389,16 +5389,18 @@ if (typeof searchPluginStore !== 'undefined') {
     window.searchPluginStore = searchPluginStore;
 }
 
+// Also expose on pluginManager for easier access
+if (typeof searchPluginStore !== 'undefined') {
+    window.pluginManager.searchPluginStore = searchPluginStore;
+}
+
 // Verify critical functions are available
-console.log('Plugin functions available:', {
-        configurePlugin: typeof window.configurePlugin,
-        togglePlugin: typeof window.togglePlugin,
-        showPluginConfigModal: typeof window.showPluginConfigModal,
-    updatePlugin: typeof window.updatePlugin,
-    uninstallPlugin: typeof window.uninstallPlugin,
+pluginLog('Plugin functions available:', {
+    configurePlugin: typeof window.configurePlugin,
+    togglePlugin: typeof window.togglePlugin,
     initializePlugins: typeof window.initializePlugins,
     loadInstalledPlugins: typeof window.loadInstalledPlugins,
-    renderInstalledPlugins: typeof window.renderInstalledPlugins
+    searchPluginStore: typeof window.searchPluginStore
 });
 
 setTimeout(function() {
