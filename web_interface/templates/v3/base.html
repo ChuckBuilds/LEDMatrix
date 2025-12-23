@@ -280,8 +280,7 @@
                             // Execute scripts manually - ensure they run properly
                             if (scriptsToExecute.length > 0) {
                                 try {
-                                
-                                scriptsToExecute.forEach((scriptData, index) => {
+                                    scriptsToExecute.forEach((scriptData, index) => {
                                     try {
                                         // Skip if script has no content and no src
                                         const scriptContent = scriptData.content ? scriptData.content.trim() : '';
@@ -582,11 +581,11 @@
                                         }
                                     }
                                 }, 100);
+                                } catch (executionError) {
+                                    console.error('Script execution error:', executionError);
+                                }
                             } else {
                                 console.log('No scripts found in loaded HTML');
-                            }
-                            } catch (executionError) {
-                                console.error('Script execution error:', executionError);
                             }
                             
                         // Wait for scripts to execute, then load plugins
