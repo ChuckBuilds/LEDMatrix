@@ -923,7 +923,27 @@
                     
                     // Stub methods that will be replaced by full implementation
                     loadTabContent: function(tab) {},
-                    loadInstalledPlugins: async function() {},
+                    loadInstalledPlugins: async function() {
+                        // Try to use global function if available, otherwise use direct loading
+                        if (typeof window.loadInstalledPlugins === 'function') {
+                            await window.loadInstalledPlugins();
+                            // Update tabs after loading (window.installedPlugins should be set by the global function)
+                            if (window.installedPlugins && Array.isArray(window.installedPlugins)) {
+                                this.installedPlugins = window.installedPlugins;
+                                this.updatePluginTabs();
+                            }
+                        } else if (typeof window.pluginManager?.loadInstalledPlugins === 'function') {
+                            await window.pluginManager.loadInstalledPlugins();
+                            // Update tabs after loading
+                            if (window.installedPlugins && Array.isArray(window.installedPlugins)) {
+                                this.installedPlugins = window.installedPlugins;
+                                this.updatePluginTabs();
+                            }
+                        } else {
+                            // Fallback to direct loading (which already calls updatePluginTabs)
+                            await this.loadInstalledPluginsDirectly();
+                        }
+                    },
                     updatePluginTabs: function() {
                         // Basic implementation for stub - will be replaced by full implementation
                         const pluginTabsRow = document.getElementById('plugin-tabs-row');
