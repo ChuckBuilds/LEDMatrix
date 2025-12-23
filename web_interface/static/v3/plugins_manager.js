@@ -3568,8 +3568,9 @@ function searchPluginStore(fetchCommitInfo = true) {
                 // Ensure plugin store grid exists before rendering
                 const storeGrid = document.getElementById('plugin-store-grid');
                 if (!storeGrid) {
-                    console.error('plugin-store-grid element not found, cannot render plugins');
-                    showError('Plugin store container not found. Please refresh the page.');
+                    // Defer rendering until plugin tab loads
+                    pluginLog('[STORE] plugin-store-grid not ready, deferring render');
+                    window.__pendingStorePlugins = plugins;
                     return;
                 }
                 
@@ -3629,14 +3630,8 @@ window.pluginManager.searchPluginStore = searchPluginStore;
 function renderPluginStore(plugins) {
     const container = document.getElementById('plugin-store-grid');
     if (!container) {
-        console.warn('[RENDER] plugin-store-grid not yet available, deferring render until plugin tab loads');
+        pluginLog('[RENDER] plugin-store-grid not yet available, deferring render');
         window.__pendingStorePlugins = plugins;
-        return;
-    }
-    
-    if (!container) {
-        console.error('plugin-store-grid element not found');
-        showError('Plugin store container not found. Please refresh the page.');
         return;
     }
 
