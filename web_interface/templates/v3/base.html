@@ -1399,8 +1399,8 @@
 
                         <!-- Plugin Configuration Form -->
                         <div>
-                            <div x-data="{ plugin: plugin }" x-init="Object.assign($data, pluginConfigData(plugin)); $nextTick(() => { if (plugin && plugin.id) { loadPluginConfig(plugin.id); } })">
-                                <form x-on:submit.prevent="this.savePluginConfig(this.plugin.id, $event)">
+                            <div x-data="{ plugin: plugin }" x-init="Object.assign($data, pluginConfigData(plugin)); $nextTick(() => { if (plugin && plugin.id) { $data.loadPluginConfig(plugin.id); } })">
+                                <form x-on:submit.prevent="savePluginConfig(plugin.id, $event)">
                                     <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
                                         <!-- Plugin Info -->
                                         <div class="bg-gray-50 rounded-lg p-4">
@@ -1408,28 +1408,28 @@
                                             <dl class="space-y-2">
                                                 <div>
                                                     <dt class="text-sm font-medium text-gray-500">Name</dt>
-                                                    <dd class="text-sm text-gray-900" x-text="this.plugin.name || this.plugin.id"></dd>
+                                                    <dd class="text-sm text-gray-900" x-text="plugin.name || plugin.id"></dd>
                                                 </div>
                                                 <div>
                                                     <dt class="text-sm font-medium text-gray-500">Author</dt>
-                                                    <dd class="text-sm text-gray-900" x-text="this.plugin.author || 'Unknown'"></dd>
+                                                    <dd class="text-sm text-gray-900" x-text="plugin.author || 'Unknown'"></dd>
                                                 </div>
                                                 <div>
                                                     <dt class="text-sm font-medium text-gray-500">Commit</dt>
-                                                    <dd class="text-sm text-gray-900" x-text="formatCommitInfo(this.plugin.last_commit, this.plugin.branch)"></dd>
+                                                    <dd class="text-sm text-gray-900" x-text="formatCommitInfo(plugin.last_commit, plugin.branch)"></dd>
                                                 </div>
                                                 <div>
                                                     <dt class="text-sm font-medium text-gray-500">Date</dt>
-                                                    <dd class="text-sm text-gray-900" x-text="formatDateInfo(this.plugin.last_updated)"></dd>
+                                                    <dd class="text-sm text-gray-900" x-text="formatDateInfo(plugin.last_updated)"></dd>
                                                 </div>
                                                 <div>
                                                     <dt class="text-sm font-medium text-gray-500">Category</dt>
-                                                    <dd class="text-sm text-gray-900" x-text="this.plugin.category || 'General'"></dd>
+                                                    <dd class="text-sm text-gray-900" x-text="plugin.category || 'General'"></dd>
                                                 </div>
-                                                <div x-show="this.plugin.tags && this.plugin.tags.length > 0">
+                                                <div x-show="plugin.tags && plugin.tags.length > 0">
                                                     <dt class="text-sm font-medium text-gray-500">Tags</dt>
                                                     <dd class="flex flex-wrap gap-1 mt-1">
-                                                        <template x-for="tag in this.plugin.tags" :key="tag">
+                                                        <template x-for="tag in plugin.tags" :key="tag">
                                                             <span class="bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded" x-text="tag"></span>
                                                         </template>
                                                     </dd>
@@ -1487,7 +1487,7 @@
                                             <h3 class="text-md font-medium text-gray-900 mb-3">Configuration</h3>
                                             <div class="space-y-4">
                                                 <!-- Loading state -->
-                                                <div x-show="this.loading" class="animate-pulse space-y-3">
+                                                <div x-show="loading" class="animate-pulse space-y-3">
                                                     <div class="h-4 bg-gray-200 rounded w-3/4"></div>
                                                     <div class="h-10 bg-gray-200 rounded"></div>
                                                     <div class="h-4 bg-gray-200 rounded w-1/2"></div>
@@ -1495,8 +1495,8 @@
                                                 </div>
 
                                                 <!-- Configuration fields loaded dynamically -->
-                                                <div x-show="!this.loading && typeof this.generateConfigForm === 'function'" x-html="this.generateConfigForm(this.plugin.id, this.config, this.schema, this.webUiActions)"></div>
-                                                <div x-show="!this.loading && typeof this.generateConfigForm !== 'function'" class="text-gray-500">Loading configuration form...</div>
+                                                <div x-show="!loading && typeof generateConfigForm === 'function'" x-html="generateConfigForm(plugin.id, config, schema, webUiActions)"></div>
+                                                <div x-show="!loading && typeof generateConfigForm !== 'function'" class="text-gray-500">Loading configuration form...</div>
                                             </div>
                                         </div>
                                     </div>
@@ -1509,17 +1509,17 @@
                                         <i class="fas fa-sync-alt mr-2"></i>Refresh All
                                     </button>
                                     <button type="button"
-                                            x-on:click="$root.refreshPlugin(this.plugin.id)"
+                                            x-on:click="$root.refreshPlugin(plugin.id)"
                                             class="btn bg-gray-600 hover:bg-gray-700 text-white px-4 py-2">
                                         <i class="fas fa-sync-alt mr-2"></i>Refresh
                                     </button>
                                     <button type="button"
-                                            x-on:click="$root.updatePlugin(this.plugin.id)"
+                                            x-on:click="$root.updatePlugin(plugin.id)"
                                             class="btn bg-yellow-600 hover:bg-yellow-700 text-white px-4 py-2">
                                         <i class="fas fa-download mr-2"></i>Update
                                     </button>
                                     <button type="button"
-                                            x-on:click.prevent="if(!confirm('Are you sure you want to uninstall ' + (this.plugin.name || this.plugin.id) + '?')) return false; $root.uninstallPlugin(this.plugin.id)"
+                                            x-on:click.prevent="if(!confirm('Are you sure you want to uninstall ' + (plugin.name || plugin.id) + '?')) return false; $root.uninstallPlugin(plugin.id)"
                                             class="btn bg-red-600 hover:bg-red-700 text-white px-4 py-2">
                                         <i class="fas fa-trash mr-2"></i>Uninstall
                                     </button>
@@ -1685,10 +1685,10 @@
                 },
                 get onDemandActive() {
                     const state = this.onDemandState;
-                    return !!(state.active && state.plugin_id === this.plugin.id);
+                    return !!(state.active && state.plugin_id === plugin.id);
                 },
                 resolvePluginName() {
-                    return this.plugin.name || this.plugin.id;
+                    return plugin.name || plugin.id;
                 },
                 resolvePluginDisplayName(id) {
                     if (!id) {
@@ -1724,7 +1724,7 @@
                     const state = this.onDemandState;
                     if (state.active) {
                         const activeName = this.resolvePluginDisplayName(state.plugin_id);
-                        if (state.plugin_id !== this.plugin.id) {
+                        if (state.plugin_id !== plugin.id) {
                             return `${activeName} is running on-demand.`;
                         }
                         const modeLabel = state.mode ? ` (${state.mode})` : '';
@@ -1789,10 +1789,10 @@
                     return this.onDemandActive;
                 },
                 get disableRunButton() {
-                    return !this.plugin.enabled;
+                    return !plugin.enabled;
                 },
                 get showEnableHint() {
-                    return !this.plugin.enabled;
+                    return !plugin.enabled;
                 },
                 notify(message, type = 'info') {
                     if (typeof showNotification === 'function') {
@@ -1811,12 +1811,12 @@
                         });
                 },
                 runOnDemand() {
-                    if (!this.plugin.enabled) {
+                    if (!plugin.enabled) {
                         this.notify('Enable the plugin before running it on-demand.', 'warning');
                         return;
                     }
                     if (typeof window.openOnDemandModal === 'function') {
-                        window.openOnDemandModal(this.plugin.id);
+                        window.openOnDemandModal(plugin.id);
                     } else {
                         this.notify('On-demand modal unavailable. Refresh the Plugin Manager tab.', 'error');
                     }
