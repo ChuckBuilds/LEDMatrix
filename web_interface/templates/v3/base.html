@@ -1399,241 +1399,8 @@
 
                         <!-- Plugin Configuration Form -->
                         <div>
-                            <div x-data="{
-                                    plugin: plugin,
-                                    loading: true,
-                                    config: {},
-                                    schema: {},
-                                    webUiActions: [],
-                                    onDemandRefreshing: false,
-                                    onDemandStopping: false,
-                                    get onDemandStore() {
-                                        if (window.Alpine && typeof Alpine.store === 'function' && Alpine.store('onDemand')) {
-                                            return Alpine.store('onDemand');
-                                        }
-                                        return window.__onDemandStore || { loading: true, state: {}, service: {}, error: null, lastUpdated: null };
-                                    },
-                                    get isOnDemandLoading() {
-                                        const store = this.onDemandStore || {};
-                                        return !!store.loading;
-                                    },
-                                    get onDemandState() {
-                                        const store = this.onDemandStore || {};
-                                        return store.state || {};
-                                    },
-                                    get onDemandService() {
-                                        const store = this.onDemandStore || {};
-                                        return store.service || {};
-                                    },
-                                    get onDemandError() {
-                                        const store = this.onDemandStore || {};
-                                        return store.error || null;
-                                    },
-                                    get onDemandActive() {
-                                        const state = this.onDemandState;
-                                        return !!(state.active && state.plugin_id === this.plugin.id);
-                                    },
-                                    resolvePluginName() {
-                                        return this.plugin.name || this.plugin.id;
-                                    },
-                                    resolvePluginDisplayName(id) {
-                                        if (!id) {
-                                            return 'Another plugin';
-                                        }
-                                        const list = window.installedPlugins || [];
-                                        const match = Array.isArray(list) ? list.find(p => p.id === id) : null;
-                                        return match ? (match.name || match.id) : id;
-                                    },
-                                    formatDuration(value) {
-                                        if (value === undefined || value === null) {
-                                            return '';
-                                        }
-                                        const total = Number(value);
-                                        if (Number.isNaN(total)) {
-                                            return '';
-                                        }
-                                        const seconds = Math.max(0, Math.round(total));
-                                        const minutes = Math.floor(seconds / 60);
-                                        const remainingSeconds = seconds % 60;
-                                        if (minutes > 0) {
-                                            return `${minutes}m${remainingSeconds > 0 ? ` ${remainingSeconds}s` : ''}`;
-                                        }
-                                        return `${remainingSeconds}s`;
-                                    },
-                                    get onDemandStatusText() {
-                                        if (this.isOnDemandLoading) {
-                                            return 'Loading on-demand status...';
-                                        }
-                                        if (this.onDemandError) {
-                                            return `On-demand error: ${this.onDemandError}`;
-                                        }
-                                        const state = this.onDemandState;
-                                        if (state.active) {
-                                            const activeName = this.resolvePluginDisplayName(state.plugin_id);
-                                            if (state.plugin_id !== this.plugin.id) {
-                                                return `${activeName} is running on-demand.`;
-                                            }
-                                            const modeLabel = state.mode ? ` (${state.mode})` : '';
-                                            const remaining = this.formatDuration(state.remaining);
-                                            const duration = this.formatDuration(state.duration);
-                                            let message = `${this.resolvePluginName()}${modeLabel} is running on-demand`;
-                                            if (remaining) {
-                                                message += ` — ${remaining} remaining`;
-                                            } else if (duration) {
-                                                message += ` — duration ${duration}`;
-                                            } else {
-                                                message += ' — until stopped';
-                                            }
-                                            return message;
-                                        }
-                                        const lastEvent = state.last_event ? state.last_event.replace(/-/g, ' ') : null;
-                                        if (lastEvent && lastEvent !== 'cleared') {
-                                            return `No on-demand session active (last event: ${lastEvent})`;
-                                        }
-                                        return 'No on-demand session active.';
-                                    },
-                                    get onDemandStatusClass() {
-                                        if (this.isOnDemandLoading) return 'text-blue-600';
-                                        if (this.onDemandError) return 'text-red-600';
-                                        if (this.onDemandActive) return 'text-green-600';
-                                        return 'text-blue-600';
-                                    },
-                                    get onDemandServiceText() {
-                                        if (this.isOnDemandLoading) {
-                                            return 'Checking display service status...';
-                                        }
-                                        if (this.onDemandError) {
-                                            return 'Display service status unavailable.';
-                                        }
-                                        if (this.onDemandService.active) {
-                                            return 'Display service is running.';
-                                        }
-                                        const serviceError = this.onDemandService.stderr || this.onDemandService.error;
-                                        return serviceError ? `Display service inactive (${serviceError})` : 'Display service is not running.';
-                                    },
-                                    get onDemandServiceClass() {
-                                        if (this.isOnDemandLoading) return 'text-blue-500';
-                                        if (this.onDemandError) return 'text-red-500';
-                                        return this.onDemandService.active ? 'text-blue-500' : 'text-red-500';
-                                    },
-                                    get onDemandLastUpdated() {
-                                        const store = this.onDemandStore || {};
-                                        if (!store.lastUpdated) {
-                                            return '';
-                                        }
-                                        const deltaSeconds = Math.round((Date.now() - store.lastUpdated) / 1000);
-                                        if (deltaSeconds < 5) return 'Just now';
-                                        if (deltaSeconds < 60) return `${deltaSeconds}s ago`;
-                                        const minutes = Math.round(deltaSeconds / 60);
-                                        if (minutes < 60) return `${minutes}m ago`;
-                                        const hours = Math.round(minutes / 60);
-                                        return `${hours}h ago`;
-                                    },
-                                    get canStopOnDemand() {
-                                        if (this.isOnDemandLoading) return false;
-                                        if (this.onDemandError) return true;
-                                        return this.onDemandActive;
-                                    },
-                                    get disableRunButton() {
-                                        return !this.plugin.enabled;
-                                    },
-                                    get showEnableHint() {
-                                        return !this.plugin.enabled;
-                                    },
-                                    notify(message, type = 'info') {
-                                        if (typeof showNotification === 'function') {
-                                            showNotification(message, type);
-                                        }
-                                    },
-                                    refreshOnDemandStatus() {
-                                        if (typeof window.loadOnDemandStatus !== 'function') {
-                                            this.notify('On-demand status controls unavailable. Refresh the Plugin Manager tab.', 'error');
-                                            return;
-                                        }
-                                        this.onDemandRefreshing = true;
-                                        Promise.resolve(window.loadOnDemandStatus(true))
-                                            .finally(() => {
-                                                this.onDemandRefreshing = false;
-                                            });
-                                    },
-                                    runOnDemand() {
-                                        if (!this.plugin.enabled) {
-                                            this.notify('Enable the plugin before running it on-demand.', 'warning');
-                                            return;
-                                        }
-                                        if (typeof window.openOnDemandModal === 'function') {
-                                            window.openOnDemandModal(this.plugin.id);
-                                        } else {
-                                            this.notify('On-demand modal unavailable. Refresh the Plugin Manager tab.', 'error');
-                                        }
-                                    },
-                                    stopOnDemandWithEvent(stopService = false) {
-                                        if (typeof window.requestOnDemandStop !== 'function') {
-                                            this.notify('Unable to stop on-demand mode. Refresh the Plugin Manager tab.', 'error');
-                                            return;
-                                        }
-                                        this.onDemandStopping = true;
-                                        Promise.resolve(window.requestOnDemandStop({ stopService }))
-                                            .finally(() => {
-                                                this.onDemandStopping = false;
-                                            });
-                                    },
-                                    // Helper methods to access parent component functions
-                                    getParentApp() {
-                                        // Try to get parent component via $root
-                                        if (this.$root && typeof this.$root.generateConfigForm === 'function') {
-                                            return this.$root;
-                                        }
-                                        // Fallback: get app component from DOM
-                                        if (window.Alpine) {
-                                            const appElement = document.querySelector('[x-data=\'app()\']');
-                                            if (appElement && appElement._x_dataStack && appElement._x_dataStack[0]) {
-                                                return appElement._x_dataStack[0];
-                                            }
-                                        }
-                                        return null;
-                                    },
-                                    async loadPluginConfig(pluginId) {
-                                        const parent = this.getParentApp();
-                                        if (parent && typeof parent.loadPluginConfig === 'function') {
-                                            // Call parent method but update this component's state
-                                            await parent.loadPluginConfig(pluginId);
-                                            // Copy the loaded data to this component
-                                            this.config = parent.config || {};
-                                            this.schema = parent.schema || {};
-                                            this.webUiActions = parent.webUiActions || [];
-                                            return;
-                                        }
-                                        // Fallback: load directly
-                                        if (window.PluginConfigHelpers) {
-                                            return window.PluginConfigHelpers.loadPluginConfig(pluginId, this);
-                                        }
-                                        console.error('loadPluginConfig not available');
-                                    },
-                                    generateConfigForm(pluginId, config, schema, webUiActions) {
-                                        const parent = this.getParentApp();
-                                        if (parent && typeof parent.generateConfigForm === 'function') {
-                                            return parent.generateConfigForm(pluginId, config, schema, webUiActions);
-                                        }
-                                        // Fallback to global helper
-                                        if (window.PluginConfigHelpers) {
-                                            return window.PluginConfigHelpers.generateConfigForm(pluginId, config, schema, webUiActions, this);
-                                        }
-                                        return '<div class="text-gray-500">Configuration form not available...</div>';
-                                    },
-                                    async savePluginConfig(pluginId, event) {
-                                        const parent = this.getParentApp();
-                                        if (parent && typeof parent.savePluginConfig === 'function') {
-                                            return parent.savePluginConfig(pluginId, event);
-                                        }
-                                        // Fallback to global helper
-                                        if (window.PluginConfigHelpers) {
-                                            return window.PluginConfigHelpers.savePluginConfig(pluginId, event, this);
-                                        }
-                                        console.error('savePluginConfig not available');
-                                    }
-                                }" x-init="$nextTick(() => { this.loadPluginConfig(this.plugin.id); })">
-                                <form x-on:submit.prevent="savePluginConfig(this.plugin.id, $event)">
+                            <div x-data="pluginConfigData(plugin)" x-init="$nextTick(() => { this.loadPluginConfig(this.plugin.id); })">
+                                <form x-on:submit.prevent="this.savePluginConfig(this.plugin.id, $event)">
                                     <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
                                         <!-- Plugin Info -->
                                         <div class="bg-gray-50 rounded-lg p-4">
@@ -1641,28 +1408,28 @@
                                             <dl class="space-y-2">
                                                 <div>
                                                     <dt class="text-sm font-medium text-gray-500">Name</dt>
-                                                    <dd class="text-sm text-gray-900" x-text="plugin.name || plugin.id"></dd>
+                                                    <dd class="text-sm text-gray-900" x-text="this.plugin.name || this.plugin.id"></dd>
                                                 </div>
                                                 <div>
                                                     <dt class="text-sm font-medium text-gray-500">Author</dt>
-                                                    <dd class="text-sm text-gray-900" x-text="plugin.author || 'Unknown'"></dd>
+                                                    <dd class="text-sm text-gray-900" x-text="this.plugin.author || 'Unknown'"></dd>
                                                 </div>
                                                 <div>
                                                     <dt class="text-sm font-medium text-gray-500">Commit</dt>
-                                                    <dd class="text-sm text-gray-900" x-text="formatCommitInfo(plugin.last_commit, plugin.branch)"></dd>
+                                                    <dd class="text-sm text-gray-900" x-text="formatCommitInfo(this.plugin.last_commit, this.plugin.branch)"></dd>
                                                 </div>
                                                 <div>
                                                     <dt class="text-sm font-medium text-gray-500">Date</dt>
-                                                    <dd class="text-sm text-gray-900" x-text="formatDateInfo(plugin.last_updated)"></dd>
+                                                    <dd class="text-sm text-gray-900" x-text="formatDateInfo(this.plugin.last_updated)"></dd>
                                                 </div>
                                                 <div>
                                                     <dt class="text-sm font-medium text-gray-500">Category</dt>
-                                                    <dd class="text-sm text-gray-900" x-text="plugin.category || 'General'"></dd>
+                                                    <dd class="text-sm text-gray-900" x-text="this.plugin.category || 'General'"></dd>
                                                 </div>
-                                                <div x-show="plugin.tags && plugin.tags.length > 0">
+                                                <div x-show="this.plugin.tags && this.plugin.tags.length > 0">
                                                     <dt class="text-sm font-medium text-gray-500">Tags</dt>
                                                     <dd class="flex flex-wrap gap-1 mt-1">
-                                                        <template x-for="tag in plugin.tags" :key="tag">
+                                                        <template x-for="tag in this.plugin.tags" :key="tag">
                                                             <span class="bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded" x-text="tag"></span>
                                                         </template>
                                                     </dd>
@@ -1680,7 +1447,7 @@
                                                                 class="px-3 py-1.5 text-xs bg-blue-600 hover:bg-blue-700 text-white rounded-md flex items-center gap-1 transition-colors"
                                                                 :class="{'opacity-60 cursor-not-allowed': this.onDemandRefreshing}"
                                                                 :disabled="this.onDemandRefreshing"
-                                                                x-on:click="refreshOnDemandStatus">
+                                                                x-on:click="this.refreshOnDemandStatus()">
                                                             <i class="fas fa-sync" :class="this.onDemandRefreshing ? 'fa-spin' : ''"></i>
                                                             <span>Refresh</span>
                                                         </button>
@@ -1693,7 +1460,7 @@
                                                             class="px-3 py-2 text-sm bg-green-600 hover:bg-green-700 text-white rounded-md flex items-center gap-2 transition-colors"
                                                             :class="{'opacity-60 cursor-not-allowed': this.disableRunButton || this.onDemandStopping || this.onDemandRefreshing}"
                                                             :disabled="this.disableRunButton || this.onDemandStopping || this.onDemandRefreshing"
-                                                            x-on:click="runOnDemand">
+                                                            x-on:click="this.runOnDemand()">
                                                         <i class="fas fa-play-circle"></i>
                                                         <span>Run On-Demand</span>
                                                     </button>
@@ -1701,7 +1468,7 @@
                                                             class="px-3 py-2 text-sm bg-red-600 hover:bg-red-700 text-white rounded-md flex items-center gap-2 transition-colors"
                                                             :class="{'opacity-60 cursor-not-allowed': !this.canStopOnDemand || this.onDemandStopping}"
                                                             :disabled="!this.canStopOnDemand || this.onDemandStopping"
-                                                            x-on:click="stopOnDemandWithEvent($event.shiftKey)">
+                                                            x-on:click="this.stopOnDemandWithEvent($event.shiftKey)">
                                                         <i class="fas fa-stop"></i>
                                                         <span>Stop On-Demand</span>
                                                     </button>
@@ -1752,8 +1519,7 @@
                                         <i class="fas fa-download mr-2"></i>Update
                                     </button>
                                     <button type="button"
-                                            x-on:click="$root.uninstallPlugin(this.plugin.id)"
-                                            x-on:click.prevent="if(!confirm('Are you sure you want to uninstall ' + (this.plugin.name || this.plugin.id) + '?')) return false"
+                                            x-on:click.prevent="if(!confirm('Are you sure you want to uninstall ' + (this.plugin.name || this.plugin.id) + '?')) return false; $root.uninstallPlugin(this.plugin.id)"
                                             class="btn bg-red-600 hover:bg-red-700 text-white px-4 py-2">
                                         <i class="fas fa-trash mr-2"></i>Uninstall
                                     </button>
@@ -1872,6 +1638,248 @@
                 window.__onDemandStore = window.Alpine.store('onDemand');
             }
         });
+
+        // Helper function to create plugin configuration data object
+        function pluginConfigData(plugin) {
+            return {
+                plugin: plugin,
+                loading: true,
+                config: {},
+                schema: {},
+                webUiActions: [],
+                onDemandRefreshing: false,
+                onDemandStopping: false,
+                get onDemandStore() {
+                    if (window.Alpine && typeof Alpine.store === 'function' && Alpine.store('onDemand')) {
+                        return Alpine.store('onDemand');
+                    }
+                    return window.__onDemandStore || { loading: true, state: {}, service: {}, error: null, lastUpdated: null };
+                },
+                get isOnDemandLoading() {
+                    const store = this.onDemandStore || {};
+                    return !!store.loading;
+                },
+                get onDemandState() {
+                    const store = this.onDemandStore || {};
+                    return store.state || {};
+                },
+                get onDemandService() {
+                    const store = this.onDemandStore || {};
+                    return store.service || {};
+                },
+                get onDemandError() {
+                    const store = this.onDemandStore || {};
+                    return store.error || null;
+                },
+                get onDemandActive() {
+                    const state = this.onDemandState;
+                    return !!(state.active && state.plugin_id === this.plugin.id);
+                },
+                resolvePluginName() {
+                    return this.plugin.name || this.plugin.id;
+                },
+                resolvePluginDisplayName(id) {
+                    if (!id) {
+                        return 'Another plugin';
+                    }
+                    const list = window.installedPlugins || [];
+                    const match = Array.isArray(list) ? list.find(p => p.id === id) : null;
+                    return match ? (match.name || match.id) : id;
+                },
+                formatDuration(value) {
+                    if (value === undefined || value === null) {
+                        return '';
+                    }
+                    const total = Number(value);
+                    if (Number.isNaN(total)) {
+                        return '';
+                    }
+                    const seconds = Math.max(0, Math.round(total));
+                    const minutes = Math.floor(seconds / 60);
+                    const remainingSeconds = seconds % 60;
+                    if (minutes > 0) {
+                        return `${minutes}m${remainingSeconds > 0 ? ` ${remainingSeconds}s` : ''}`;
+                    }
+                    return `${remainingSeconds}s`;
+                },
+                get onDemandStatusText() {
+                    if (this.isOnDemandLoading) {
+                        return 'Loading on-demand status...';
+                    }
+                    if (this.onDemandError) {
+                        return `On-demand error: ${this.onDemandError}`;
+                    }
+                    const state = this.onDemandState;
+                    if (state.active) {
+                        const activeName = this.resolvePluginDisplayName(state.plugin_id);
+                        if (state.plugin_id !== this.plugin.id) {
+                            return `${activeName} is running on-demand.`;
+                        }
+                        const modeLabel = state.mode ? ` (${state.mode})` : '';
+                        const remaining = this.formatDuration(state.remaining);
+                        const duration = this.formatDuration(state.duration);
+                        let message = `${this.resolvePluginName()}${modeLabel} is running on-demand`;
+                        if (remaining) {
+                            message += ` — ${remaining} remaining`;
+                        } else if (duration) {
+                            message += ` — duration ${duration}`;
+                        } else {
+                            message += ' — until stopped';
+                        }
+                        return message;
+                    }
+                    const lastEvent = state.last_event ? state.last_event.replace(/-/g, ' ') : null;
+                    if (lastEvent && lastEvent !== 'cleared') {
+                        return `No on-demand session active (last event: ${lastEvent})`;
+                    }
+                    return 'No on-demand session active.';
+                },
+                get onDemandStatusClass() {
+                    if (this.isOnDemandLoading) return 'text-blue-600';
+                    if (this.onDemandError) return 'text-red-600';
+                    if (this.onDemandActive) return 'text-green-600';
+                    return 'text-blue-600';
+                },
+                get onDemandServiceText() {
+                    if (this.isOnDemandLoading) {
+                        return 'Checking display service status...';
+                    }
+                    if (this.onDemandError) {
+                        return 'Display service status unavailable.';
+                    }
+                    if (this.onDemandService.active) {
+                        return 'Display service is running.';
+                    }
+                    const serviceError = this.onDemandService.stderr || this.onDemandService.error;
+                    return serviceError ? `Display service inactive (${serviceError})` : 'Display service is not running.';
+                },
+                get onDemandServiceClass() {
+                    if (this.isOnDemandLoading) return 'text-blue-500';
+                    if (this.onDemandError) return 'text-red-500';
+                    return this.onDemandService.active ? 'text-blue-500' : 'text-red-500';
+                },
+                get onDemandLastUpdated() {
+                    const store = this.onDemandStore || {};
+                    if (!store.lastUpdated) {
+                        return '';
+                    }
+                    const deltaSeconds = Math.round((Date.now() - store.lastUpdated) / 1000);
+                    if (deltaSeconds < 5) return 'Just now';
+                    if (deltaSeconds < 60) return `${deltaSeconds}s ago`;
+                    const minutes = Math.round(deltaSeconds / 60);
+                    if (minutes < 60) return `${minutes}m ago`;
+                    const hours = Math.round(minutes / 60);
+                    return `${hours}h ago`;
+                },
+                get canStopOnDemand() {
+                    if (this.isOnDemandLoading) return false;
+                    if (this.onDemandError) return true;
+                    return this.onDemandActive;
+                },
+                get disableRunButton() {
+                    return !this.plugin.enabled;
+                },
+                get showEnableHint() {
+                    return !this.plugin.enabled;
+                },
+                notify(message, type = 'info') {
+                    if (typeof showNotification === 'function') {
+                        showNotification(message, type);
+                    }
+                },
+                refreshOnDemandStatus() {
+                    if (typeof window.loadOnDemandStatus !== 'function') {
+                        this.notify('On-demand status controls unavailable. Refresh the Plugin Manager tab.', 'error');
+                        return;
+                    }
+                    this.onDemandRefreshing = true;
+                    Promise.resolve(window.loadOnDemandStatus(true))
+                        .finally(() => {
+                            this.onDemandRefreshing = false;
+                        });
+                },
+                runOnDemand() {
+                    if (!this.plugin.enabled) {
+                        this.notify('Enable the plugin before running it on-demand.', 'warning');
+                        return;
+                    }
+                    if (typeof window.openOnDemandModal === 'function') {
+                        window.openOnDemandModal(this.plugin.id);
+                    } else {
+                        this.notify('On-demand modal unavailable. Refresh the Plugin Manager tab.', 'error');
+                    }
+                },
+                stopOnDemandWithEvent(stopService = false) {
+                    if (typeof window.requestOnDemandStop !== 'function') {
+                        this.notify('Unable to stop on-demand mode. Refresh the Plugin Manager tab.', 'error');
+                        return;
+                    }
+                    this.onDemandStopping = true;
+                    Promise.resolve(window.requestOnDemandStop({ stopService }))
+                        .finally(() => {
+                            this.onDemandStopping = false;
+                        });
+                },
+                // Helper methods to access parent component functions
+                getParentApp() {
+                    // Try to get parent component via $root
+                    if (this.$root && typeof this.$root.generateConfigForm === 'function') {
+                        return this.$root;
+                    }
+                    // Fallback: get app component from DOM
+                    if (window.Alpine) {
+                        const appElement = document.querySelector('[x-data=\'app()\']');
+                        if (appElement && appElement._x_dataStack && appElement._x_dataStack[0]) {
+                            return appElement._x_dataStack[0];
+                        }
+                    }
+                    return null;
+                },
+                async loadPluginConfig(pluginId) {
+                    const parent = this.getParentApp();
+                    if (parent && typeof parent.loadPluginConfig === 'function') {
+                        // Call parent method but update this component's state
+                        await parent.loadPluginConfig(pluginId);
+                        // Copy the loaded data to this component
+                        this.config = parent.config || {};
+                        this.schema = parent.schema || {};
+                        this.webUiActions = parent.webUiActions || [];
+                        this.loading = false;
+                        return;
+                    }
+                    // Fallback: load directly
+                    if (window.PluginConfigHelpers) {
+                        await window.PluginConfigHelpers.loadPluginConfig(pluginId, this);
+                        this.loading = false;
+                        return;
+                    }
+                    console.error('loadPluginConfig not available');
+                    this.loading = false;
+                },
+                generateConfigForm(pluginId, config, schema, webUiActions) {
+                    const parent = this.getParentApp();
+                    if (parent && typeof parent.generateConfigForm === 'function') {
+                        return parent.generateConfigForm(pluginId, config, schema, webUiActions);
+                    }
+                    // Fallback to global helper
+                    if (window.PluginConfigHelpers) {
+                        return window.PluginConfigHelpers.generateConfigForm(pluginId, config, schema, webUiActions, this);
+                    }
+                    return '<div class="text-gray-500">Configuration form not available...</div>';
+                },
+                async savePluginConfig(pluginId, event) {
+                    const parent = this.getParentApp();
+                    if (parent && typeof parent.savePluginConfig === 'function') {
+                        return parent.savePluginConfig(pluginId, event);
+                    }
+                    // Fallback to global helper
+                    if (window.PluginConfigHelpers) {
+                        return window.PluginConfigHelpers.savePluginConfig(pluginId, event, this);
+                    }
+                    console.error('savePluginConfig not available');
+                }
+            };
+        }
 
         // Alpine.js app function - full implementation
         function app() {
