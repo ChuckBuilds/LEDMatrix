@@ -2872,8 +2872,45 @@ def _set_nested_value(config, key_path, value):
             current[part] = {}
         current = current[part]
     
-    # Set the final value
-    current[parts[-1]] = value
+    # Set the final value (don't overwrite with empty dict if value is None and we want to preserve structure)
+    if value is not None or parts[-1] not in current:
+        current[parts[-1]] = value
+
+
+def _filter_config_by_schema(config, schema, prefix=''):
+    """
+    Filter config to only include fields defined in the schema.
+    Removes fields not in schema, especially important when additionalProperties is false.
+    
+    Args:
+        config: The config dict to filter
+        schema: The JSON schema dict
+        prefix: Prefix for nested paths (used recursively)
+    
+    Returns:
+        Filtered config dict containing only schema-defined fields
+    """
+    if not schema or 'properties' not in schema:
+        return config
+    
+    filtered = {}
+    schema_props = schema.get('properties', {})
+    
+    for key, value in config.items():
+        if key not in schema_props:
+            # Field not in schema, skip it
+            continue
+        
+        prop_schema = schema_props[key]
+        
+        # Handle nested objects recursively
+        if isinstance(value, dict) and prop_schema.get('type') == 'object' and 'properties' in prop_schema:
+            filtered[key] = _filter_config_by_schema(value, prop_schema, f"{prefix}.{key}" if prefix else key)
+        else:
+            # Keep the value as-is for non-object types
+            filtered[key] = value
+    
+    return filtered
 
 
 @api_v3.route('/plugins/config', methods=['POST'])
@@ -3279,6 +3316,10 @@ def save_plugin_config():
         # Normalize config before validation
         if schema and 'properties' in schema:
             plugin_config = normalize_config_values(plugin_config, schema['properties'])
+        
+        # Filter config to only include schema-defined fields (important when additionalProperties is false)
+        if schema and 'properties' in schema:
+            plugin_config = _filter_config_by_schema(plugin_config, schema)
         
         # Debug logging for union type fields (temporary)
         if 'rotation_settings' in plugin_config and 'random_seed' in plugin_config.get('rotation_settings', {}):
