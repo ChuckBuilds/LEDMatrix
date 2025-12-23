@@ -2028,10 +2028,25 @@ function generateFieldHtml(key, prop, value, prefix = '') {
     // Handle objects with additionalProperties (dynamic keys with object values, like categories)
     // Must have additionalProperties, no top-level properties, and additionalProperties must be an object type
     const hasAdditionalProperties = prop.type === 'object' && 
-                                    !prop.properties && // Explicitly exclude objects with properties (those use nested handler)
+                                    (prop.properties === undefined || prop.properties === null) && // Explicitly exclude objects with properties (those use nested handler)
                                     prop.additionalProperties && 
                                     typeof prop.additionalProperties === 'object' && 
-                                    prop.additionalProperties.type === 'object';
+                                    prop.additionalProperties !== null &&
+                                    prop.additionalProperties.type === 'object' &&
+                                    !prop.patternProperties; // Also exclude patternProperties objects
+    
+    // Debug logging for categories field specifically
+    if (key === 'categories') {
+        console.log(`[DEBUG] Categories field check:`, {
+            type: prop.type,
+            hasProperties: !!prop.properties,
+            hasAdditionalProperties: !!prop.additionalProperties,
+            additionalPropertiesType: prop.additionalProperties?.type,
+            additionalPropertiesIsObject: typeof prop.additionalProperties === 'object',
+            matchesCondition: hasAdditionalProperties,
+            allPropKeys: Object.keys(prop)
+        });
+    }
     
     if (hasAdditionalProperties) {
         const fieldId = fullKey.replace(/\./g, '_');
@@ -2437,6 +2452,14 @@ function generateFieldHtml(key, prop, value, prefix = '') {
                 </div>
             `;
         }
+    } else if (prop.type === 'object') {
+        // Fallback for objects that don't match any special case - render as JSON textarea
+        console.warn(`[DEBUG] Object field ${fullKey} doesn't match any special handler, rendering as JSON textarea`);
+        const jsonValue = typeof value === 'object' && value !== null ? JSON.stringify(value, null, 2) : (value || '{}');
+        html += `
+            <textarea id="${fullKey}" name="${fullKey}" rows="8" class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm font-mono text-xs" style="font-family: 'Courier New', monospace;">${escapeHtml(jsonValue)}</textarea>
+            <p class="text-sm text-gray-600 mt-1">Edit as JSON object</p>
+        `;
     } else {
         // Check if this is a secret field
         const isSecret = prop['x-secret'] === true;
