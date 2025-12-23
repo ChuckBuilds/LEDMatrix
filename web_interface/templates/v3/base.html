@@ -1633,7 +1633,7 @@
                                         console.error('savePluginConfig not available');
                                     }
                                 }" x-init="$nextTick(() => { this.loadPluginConfig(this.plugin.id); })">
-                                <form x-on:submit.prevent="savePluginConfig(plugin.id, $event)">
+                                <form x-on:submit.prevent="savePluginConfig(this.plugin.id, $event)">
                                     <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
                                         <!-- Plugin Info -->
                                         <div class="bg-gray-50 rounded-lg p-4">
@@ -1728,8 +1728,8 @@
                                                 </div>
 
                                                 <!-- Configuration fields loaded dynamically -->
-                                                <div x-show="!loading && typeof generateConfigForm === 'function'" x-html="generateConfigForm(plugin.id, config, schema, webUiActions)"></div>
-                                                <div x-show="!loading && typeof generateConfigForm !== 'function'" class="text-gray-500">Loading configuration form...</div>
+                                                <div x-show="!loading && typeof this.generateConfigForm === 'function'" x-html="this.generateConfigForm(this.plugin.id, this.config, this.schema, this.webUiActions)"></div>
+                                                <div x-show="!loading && typeof this.generateConfigForm !== 'function'" class="text-gray-500">Loading configuration form...</div>
                                             </div>
                                         </div>
                                     </div>
@@ -1737,23 +1737,23 @@
                                 <!-- Action Buttons -->
                                 <div class="flex justify-end space-x-3 mt-6 pt-6 border-t border-gray-200">
                                     <button type="button"
-                                            x-on:click="refreshPlugins()"
+                                            x-on:click="$root.refreshPlugins()"
                                             class="btn bg-gray-600 hover:bg-gray-700 text-white px-4 py-2">
                                         <i class="fas fa-sync-alt mr-2"></i>Refresh All
                                     </button>
                                     <button type="button"
-                                            x-on:click="refreshPlugin(plugin.id)"
+                                            x-on:click="$root.refreshPlugin(this.plugin.id)"
                                             class="btn bg-gray-600 hover:bg-gray-700 text-white px-4 py-2">
                                         <i class="fas fa-sync-alt mr-2"></i>Refresh
                                     </button>
                                     <button type="button"
-                                            x-on:click="updatePlugin(plugin.id)"
+                                            x-on:click="$root.updatePlugin(this.plugin.id)"
                                             class="btn bg-yellow-600 hover:bg-yellow-700 text-white px-4 py-2">
                                         <i class="fas fa-download mr-2"></i>Update
                                     </button>
                                     <button type="button"
-                                            x-on:click="uninstallPlugin(plugin.id)"
-                                            x-on:click.prevent="if(!confirm('Are you sure you want to uninstall ${plugin.name || plugin.id}?')) return false"
+                                            x-on:click="$root.uninstallPlugin(this.plugin.id)"
+                                            x-on:click.prevent="if(!confirm('Are you sure you want to uninstall ' + (this.plugin.name || this.plugin.id) + '?')) return false"
                                             class="btn bg-red-600 hover:bg-red-700 text-white px-4 py-2">
                                         <i class="fas fa-trash mr-2"></i>Uninstall
                                     </button>
