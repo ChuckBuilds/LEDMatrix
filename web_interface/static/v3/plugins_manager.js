@@ -747,6 +747,7 @@ function refreshInstalledPlugins() {
 
 // Expose loadInstalledPlugins on window.pluginManager for Alpine.js integration
 window.pluginManager.loadInstalledPlugins = loadInstalledPlugins;
+// Note: searchPluginStore will be exposed after its definition (see below)
 
 function renderInstalledPlugins(plugins) {
     const container = document.getElementById('installed-plugins-grid');
@@ -3621,6 +3622,10 @@ function showStoreLoading(show) {
     }
 }
 
+// Expose searchPluginStore on window.pluginManager for Alpine.js integration
+window.searchPluginStore = searchPluginStore;
+window.pluginManager.searchPluginStore = searchPluginStore;
+
 function renderPluginStore(plugins) {
     const container = document.getElementById('plugin-store-grid');
     if (!container) {
@@ -5385,14 +5390,7 @@ if (typeof loadInstalledPlugins !== 'undefined') {
 if (typeof renderInstalledPlugins !== 'undefined') {
     window.renderInstalledPlugins = renderInstalledPlugins;
 }
-if (typeof searchPluginStore !== 'undefined') {
-    window.searchPluginStore = searchPluginStore;
-}
-
-// Also expose on pluginManager for easier access
-if (typeof searchPluginStore !== 'undefined') {
-    window.pluginManager.searchPluginStore = searchPluginStore;
-}
+// searchPluginStore is now exposed inside the IIFE after its definition
 
 // Verify critical functions are available
 pluginLog('Plugin functions available:', {
