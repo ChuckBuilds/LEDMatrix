@@ -1400,6 +1400,7 @@
                         <!-- Plugin Configuration Form -->
                         <div>
                             <div x-data="{
+                                    plugin: plugin,
                                     loading: true,
                                     config: {},
                                     schema: {},
@@ -1430,10 +1431,10 @@
                                     },
                                     get onDemandActive() {
                                         const state = this.onDemandState;
-                                        return !!(state.active && state.plugin_id === plugin.id);
+                                        return !!(state.active && state.plugin_id === this.plugin.id);
                                     },
                                     resolvePluginName() {
-                                        return plugin.name || plugin.id;
+                                        return this.plugin.name || this.plugin.id;
                                     },
                                     resolvePluginDisplayName(id) {
                                         if (!id) {
@@ -1469,7 +1470,7 @@
                                         const state = this.onDemandState;
                                         if (state.active) {
                                             const activeName = this.resolvePluginDisplayName(state.plugin_id);
-                                            if (state.plugin_id !== plugin.id) {
+                                            if (state.plugin_id !== this.plugin.id) {
                                                 return `${activeName} is running on-demand.`;
                                             }
                                             const modeLabel = state.mode ? ` (${state.mode})` : '';
@@ -1534,10 +1535,10 @@
                                         return this.onDemandActive;
                                     },
                                     get disableRunButton() {
-                                        return !plugin.enabled;
+                                        return !this.plugin.enabled;
                                     },
                                     get showEnableHint() {
-                                        return !plugin.enabled;
+                                        return !this.plugin.enabled;
                                     },
                                     notify(message, type = 'info') {
                                         if (typeof showNotification === 'function') {
@@ -1556,12 +1557,12 @@
                                             });
                                     },
                                     runOnDemand() {
-                                        if (!plugin.enabled) {
+                                        if (!this.plugin.enabled) {
                                             this.notify('Enable the plugin before running it on-demand.', 'warning');
                                             return;
                                         }
                                         if (typeof window.openOnDemandModal === 'function') {
-                                            window.openOnDemandModal(plugin.id);
+                                            window.openOnDemandModal(this.plugin.id);
                                         } else {
                                             this.notify('On-demand modal unavailable. Refresh the Plugin Manager tab.', 'error');
                                         }
@@ -1631,7 +1632,7 @@
                                         }
                                         console.error('savePluginConfig not available');
                                     }
-                                }" x-init="$nextTick(() => { if (typeof loadPluginConfig === 'function') { loadPluginConfig(plugin.id); } })">
+                                }" x-init="$nextTick(() => { this.loadPluginConfig(this.plugin.id); })">
                                 <form x-on:submit.prevent="savePluginConfig(plugin.id, $event)">
                                     <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
                                         <!-- Plugin Info -->
