@@ -5393,13 +5393,15 @@ if (typeof renderInstalledPlugins !== 'undefined') {
 // searchPluginStore is now exposed inside the IIFE after its definition
 
 // Verify critical functions are available
-pluginLog('Plugin functions available:', {
-    configurePlugin: typeof window.configurePlugin,
-    togglePlugin: typeof window.togglePlugin,
-    initializePlugins: typeof window.initializePlugins,
-    loadInstalledPlugins: typeof window.loadInstalledPlugins,
-    searchPluginStore: typeof window.searchPluginStore
-});
+if (_PLUGIN_DEBUG_EARLY) {
+    console.log('Plugin functions available:', {
+        configurePlugin: typeof window.configurePlugin,
+        togglePlugin: typeof window.togglePlugin,
+        initializePlugins: typeof window.initializePlugins,
+        loadInstalledPlugins: typeof window.loadInstalledPlugins,
+        searchPluginStore: typeof window.searchPluginStore
+    });
+}
 
 setTimeout(function() {
     const installedGrid = document.getElementById('installed-plugins-grid');
