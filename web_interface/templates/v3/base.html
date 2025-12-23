@@ -803,7 +803,9 @@
             if (window.PluginAPI && window.PluginAPI.getInstalledPlugins) {
                 try {
                     const plugins = await window.PluginAPI.getInstalledPlugins();
-                    return { status: 'success', data: { plugins: plugins } };
+                    // Ensure plugins is always an array
+                    const pluginsArray = Array.isArray(plugins) ? plugins : [];
+                    return { status: 'success', data: { plugins: pluginsArray } };
                 } catch (error) {
                     console.error('Error using PluginAPI.getInstalledPlugins, falling back to direct fetch:', error);
                     // Fall through to direct fetch

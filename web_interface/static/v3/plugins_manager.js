@@ -658,7 +658,12 @@ function loadInstalledPlugins() {
 
     // Use PluginAPI if available, otherwise fall back to direct fetch
     const fetchPromise = (window.PluginAPI && window.PluginAPI.getInstalledPlugins) ?
-        window.PluginAPI.getInstalledPlugins().then(plugins => ({ status: 'success', data: { plugins: plugins } })) :
+        window.PluginAPI.getInstalledPlugins().then(plugins => {
+            // PluginAPI.getInstalledPlugins() returns the plugins array directly
+            // Ensure it's always an array
+            const pluginsArray = Array.isArray(plugins) ? plugins : [];
+            return { status: 'success', data: { plugins: pluginsArray } };
+        }) :
         fetch('/api/v3/plugins/installed').then(response => response.json());
 
     return fetchPromise
@@ -672,9 +677,11 @@ function loadInstalledPlugins() {
             console.log('Installed plugins data:', data);
 
             if (data.status === 'success') {
-                installedPlugins = data.data.plugins || [];
+                // Ensure plugins is always an array
+                const pluginsData = data.data?.plugins;
+                installedPlugins = Array.isArray(pluginsData) ? pluginsData : [];
                 // Only update if plugin list actually changed (setter will check)
-                const currentPlugins = window.installedPlugins || [];
+                const currentPlugins = Array.isArray(window.installedPlugins) ? window.installedPlugins : [];
                 const currentIds = currentPlugins.map(p => p.id).sort().join(',');
                 const newIds = installedPlugins.map(p => p.id).sort().join(',');
                 if (currentIds !== newIds) {
