@@ -3481,9 +3481,13 @@ function restartDisplay() {
 }
 
 function searchPluginStore(fetchCommitInfo = true) {
-    console.log('Searching plugin store...', { fetchCommitInfo });
-    const query = document.getElementById('plugin-search').value;
-    const category = document.getElementById('plugin-category').value;
+    pluginLog('[STORE] Searching plugin store...', { fetchCommitInfo });
+    
+    // Safely get search values (elements may not exist yet)
+    const searchInput = document.getElementById('plugin-search');
+    const categorySelect = document.getElementById('plugin-category');
+    const query = searchInput ? searchInput.value : '';
+    const category = categorySelect ? categorySelect.value : '';
 
     // For filtered searches (user typing), we can use cache to avoid excessive API calls
     // For initial load or refresh, always fetch fresh metadata
