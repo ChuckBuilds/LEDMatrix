@@ -1399,7 +1399,7 @@
 
                         <!-- Plugin Configuration Form -->
                         <div>
-                            <div x-data="pluginConfigData(plugin)" x-init="$nextTick(() => { this.loadPluginConfig(this.plugin.id); })">
+                            <div x-data="{ plugin: plugin }" x-init="Object.assign(this, pluginConfigData(this.plugin || plugin)); $nextTick(() => { if (this.plugin && this.plugin.id) { this.loadPluginConfig(this.plugin.id); } })">
                                 <form x-on:submit.prevent="this.savePluginConfig(this.plugin.id, $event)">
                                     <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
                                         <!-- Plugin Info -->
@@ -1641,6 +1641,18 @@
 
         // Helper function to create plugin configuration data object
         function pluginConfigData(plugin) {
+            if (!plugin) {
+                console.error('pluginConfigData called with undefined plugin');
+                return {
+                    plugin: { id: 'unknown', name: 'Unknown Plugin', enabled: false },
+                    loading: false,
+                    config: {},
+                    schema: {},
+                    webUiActions: [],
+                    onDemandRefreshing: false,
+                    onDemandStopping: false
+                };
+            }
             return {
                 plugin: plugin,
                 loading: true,
