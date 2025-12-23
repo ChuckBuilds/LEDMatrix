@@ -1379,6 +1379,7 @@
                 - Each plugin tab loads its config via HTMX when first viewed
                 - Forms are generated server-side using Jinja2 macros
                 - Reduces client-side complexity and improves performance
+                - Uses x-init to trigger HTMX after Alpine renders the element
             -->
             <template x-for="plugin in installedPlugins" :key="plugin.id">
                 <div x-show="activeTab === plugin.id" x-transition>
@@ -1386,9 +1387,12 @@
                     <template x-if="activeTab === plugin.id">
                         <div class="bg-white rounded-lg shadow p-6 plugin-config-tab"
                              :id="'plugin-config-' + plugin.id"
-                             :hx-get="'/v3/partials/plugin-config/' + plugin.id"
-                             hx-trigger="load"
-                             hx-swap="innerHTML">
+                             x-init="$nextTick(() => { 
+                                 if (window.htmx && !$el.dataset.htmxLoaded) {
+                                     $el.dataset.htmxLoaded = 'true';
+                                     htmx.ajax('GET', '/v3/partials/plugin-config/' + plugin.id, {target: $el, swap: 'innerHTML'});
+                                 }
+                             })">
                             <!-- Loading skeleton shown until HTMX loads server-rendered content -->
                             <div class="animate-pulse space-y-6">
                                 <div class="border-b border-gray-200 pb-4">
