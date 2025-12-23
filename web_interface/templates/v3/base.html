@@ -3802,23 +3802,28 @@
             }, 3000);
         }
 
+        // Section toggle function (always ensure it's defined, outside guard)
+        window.toggleSection = window.toggleSection || function(sectionId) {
+            const section = document.getElementById(sectionId);
+            const icon = document.getElementById(sectionId + '-icon');
+            if (section && icon) {
+                section.classList.toggle('hidden');
+                icon.classList.toggle('fa-chevron-right');
+                icon.classList.toggle('fa-chevron-down');
+            } else {
+                console.warn('toggleSection: Could not find section or icon for', sectionId, {
+                    section: section,
+                    icon: icon
+                });
+            }
+        };
+
         // Plugin config handler functions (idempotent initialization)
         if (!window.__pluginConfigHandlersInitialized) {
             window.__pluginConfigHandlersInitialized = true;
             
             // Initialize state on window object
             window.pluginConfigRefreshInProgress = window.pluginConfigRefreshInProgress || new Set();
-            
-            // Section toggle function
-            window.toggleSection = function(sectionId) {
-                const section = document.getElementById(sectionId);
-                const icon = document.getElementById(sectionId + '-icon');
-                if (section && icon) {
-                    section.classList.toggle('hidden');
-                    icon.classList.toggle('fa-chevron-right');
-                    icon.classList.toggle('fa-chevron-down');
-                }
-            };
             
             // Handle config save response with detailed error logging
             window.handleConfigSave = function(event, pluginId) {
