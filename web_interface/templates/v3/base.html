@@ -254,25 +254,40 @@
                     fetch('/v3/partials/plugins')
                         .then(r => r.text())
                         .then(html => {
-                            content.innerHTML = html;
-                            console.log('Plugins HTML loaded, executing scripts...');
+                            // Parse HTML into a temporary container to extract scripts
+                            const tempDiv = document.createElement('div');
+                            tempDiv.innerHTML = html;
+                            
+                            // Extract scripts BEFORE inserting into DOM (browser may remove them)
+                            const scripts = Array.from(tempDiv.querySelectorAll('script'));
+                            console.log('Found', scripts.length, 'scripts to execute');
+                            
+                            // Insert content WITHOUT scripts first
+                            const scriptsToExecute = [];
+                            scripts.forEach(script => {
+                                scriptsToExecute.push({
+                                    content: script.textContent || script.innerHTML,
+                                    src: script.src,
+                                    type: script.type
+                                });
+                                script.remove(); // Remove from temp div
+                            });
+                            
+                            // Now insert the HTML (without scripts)
+                            content.innerHTML = tempDiv.innerHTML;
+                            console.log('Plugins HTML loaded, executing', scriptsToExecute.length, 'scripts...');
                             
                             // Execute scripts manually - ensure they run properly
-                            try {
-                                const scripts = Array.from(content.querySelectorAll('script'));
-                                console.log('Found', scripts.length, 'scripts to execute');
+                            if (scriptsToExecute.length > 0) {
+                                try {
                                 
-                                scripts.forEach((oldScript, index) => {
+                                scriptsToExecute.forEach((scriptData, index) => {
                                     try {
                                         // Skip if script has no content and no src
-                                        if (!oldScript.innerHTML.trim() && !oldScript.src) {
-                                            oldScript.remove();
+                                        const scriptContent = scriptData.content ? scriptData.content.trim() : '';
+                                        if (!scriptContent && !scriptData.src) {
                                             return;
                                         }
-                                        
-                                        // Get script content - use textContent for better reliability with large scripts
-                                        // innerHTML can sometimes have issues with special characters
-                                        const scriptContent = oldScript.textContent || oldScript.innerHTML.trim();
                                         
                                         // Log script info for debugging
                                         if (scriptContent) {
@@ -286,9 +301,9 @@
                                         }
                                         
                                         // Only execute if we have valid content
-                                        if (scriptContent || oldScript.src) {
+                                        if (scriptContent || scriptData.src) {
                                             // For inline scripts, use appendChild for reliable execution
-                                            if (scriptContent && !oldScript.src) {
+                                            if (scriptContent && !scriptData.src) {
                                                 // For very large scripts (>100KB), try fallback methods first
                                                 // as appendChild can sometimes have issues with large scripts
                                                 const isLargeScript = scriptContent.length > 100000;
@@ -335,8 +350,8 @@
                                                     // Create new script element and append to head/body
                                                     // This ensures proper execution context and window attachment
                                                     const newScript = document.createElement('script');
-                                                    if (oldScript.type) {
-                                                        newScript.type = oldScript.type;
+                                                    if (scriptData.type) {
+                                                        newScript.type = scriptData.type;
                                                     }
                                                     
                                                     // Wrap in a promise to wait for execution
@@ -520,38 +535,22 @@
                                                 } catch (appendError) {
                                                     console.error('Failed to execute script:', appendError);
                                                 }
-                                            } else if (oldScript.src) {
+                                            } else if (scriptData.src) {
                                                 // For external scripts, use appendChild
                                                 const newScript = document.createElement('script');
-                                                newScript.src = oldScript.src;
-                                                if (oldScript.type) {
-                                                    newScript.type = oldScript.type;
+                                                newScript.src = scriptData.src;
+                                                if (scriptData.type) {
+                                                    newScript.type = scriptData.type;
                                                 }
                                                 const target = document.head || document.body;
                                                 if (target) {
                                                     target.appendChild(newScript);
                                                 }
-                                                console.log('Loaded external script', index + 1, 'of', scripts.length);
+                                                console.log('Loaded external script', index + 1, 'of', scriptsToExecute.length);
                                             }
-                                            
-                                            // Remove old script after execution
-                                            setTimeout(() => {
-                                                try {
-                                                    oldScript.remove();
-                                                } catch (e) {
-                                                    // Ignore removal errors
-                                                }
-                                            }, 0);
-                                        } else {
-                                            oldScript.remove();
                                         }
                                     } catch (scriptError) {
                                         console.warn('Error executing script', index + 1, ':', scriptError);
-                                        try {
-                                            oldScript.remove();
-                                        } catch (removeErr) {
-                                            // Ignore removal errors
-                                        }
                                     }
                                 });
                                 
@@ -583,6 +582,9 @@
                                         }
                                     }
                                 }, 100);
+                            } else {
+                                console.log('No scripts found in loaded HTML');
+                            }
                             } catch (executionError) {
                                 console.error('Script execution error:', executionError);
                             }
@@ -1575,8 +1577,62 @@
                                             .finally(() => {
                                                 this.onDemandStopping = false;
                                             });
+                                    },
+                                    // Helper methods to access parent component functions
+                                    getParentApp() {
+                                        // Try to get parent component via $root
+                                        if (this.$root && typeof this.$root.generateConfigForm === 'function') {
+                                            return this.$root;
+                                        }
+                                        // Fallback: get app component from DOM
+                                        if (window.Alpine) {
+                                            const appElement = document.querySelector('[x-data="app()"]');
+                                            if (appElement && appElement._x_dataStack && appElement._x_dataStack[0]) {
+                                                return appElement._x_dataStack[0];
+                                            }
+                                        }
+                                        return null;
+                                    },
+                                    async loadPluginConfig(pluginId) {
+                                        const parent = this.getParentApp();
+                                        if (parent && typeof parent.loadPluginConfig === 'function') {
+                                            // Call parent method but update this component's state
+                                            await parent.loadPluginConfig(pluginId);
+                                            // Copy the loaded data to this component
+                                            this.config = parent.config || {};
+                                            this.schema = parent.schema || {};
+                                            this.webUiActions = parent.webUiActions || [];
+                                            return;
+                                        }
+                                        // Fallback: load directly
+                                        if (window.PluginConfigHelpers) {
+                                            return window.PluginConfigHelpers.loadPluginConfig(pluginId, this);
+                                        }
+                                        console.error('loadPluginConfig not available');
+                                    },
+                                    generateConfigForm(pluginId, config, schema, webUiActions) {
+                                        const parent = this.getParentApp();
+                                        if (parent && typeof parent.generateConfigForm === 'function') {
+                                            return parent.generateConfigForm(pluginId, config, schema, webUiActions);
+                                        }
+                                        // Fallback to global helper
+                                        if (window.PluginConfigHelpers) {
+                                            return window.PluginConfigHelpers.generateConfigForm(pluginId, config, schema, webUiActions, this);
+                                        }
+                                        return '<div class="text-gray-500">Configuration form not available...</div>';
+                                    },
+                                    async savePluginConfig(pluginId, event) {
+                                        const parent = this.getParentApp();
+                                        if (parent && typeof parent.savePluginConfig === 'function') {
+                                            return parent.savePluginConfig(pluginId, event);
+                                        }
+                                        // Fallback to global helper
+                                        if (window.PluginConfigHelpers) {
+                                            return window.PluginConfigHelpers.savePluginConfig(pluginId, event, this);
+                                        }
+                                        console.error('savePluginConfig not available');
                                     }
-                                }" x-init="if (typeof loadPluginConfig === 'function') { $nextTick(() => loadPluginConfig(plugin.id)); }">
+                                }" x-init="$nextTick(() => { if (typeof loadPluginConfig === 'function') { loadPluginConfig(plugin.id); } })">
                                 <form x-on:submit.prevent="savePluginConfig(plugin.id, $event)">
                                     <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
                                         <!-- Plugin Info -->
@@ -1672,7 +1728,7 @@
                                                 </div>
 
                                                 <!-- Configuration fields loaded dynamically -->
-                                                <div x-show="!loading && typeof generateConfigForm === 'function'" x-html="generateConfigForm(plugin.id, config, schema, webUiActions)"></div>
+                                                <div x-show="!loading" x-html="generateConfigForm(plugin.id, config, schema, webUiActions)"></div>
                                             </div>
                                         </div>
                                     </div>
@@ -2990,6 +3046,110 @@
         
         // Make app() available globally
         window.app = app;
+
+        // ===== Plugin Configuration Functions (Global Access) =====
+        // Make plugin config functions available globally so inline components can access them
+        window.PluginConfigHelpers = {
+            loadPluginConfig: async function(pluginId, componentContext) {
+                // This function can be called from inline components
+                // It loads config, schema, and updates the component context
+                if (!componentContext) {
+                    console.error('loadPluginConfig requires component context');
+                    return;
+                }
+                
+                console.log('Loading config for plugin:', pluginId);
+                componentContext.loading = true;
+
+                try {
+                    // Load config, schema, and installed plugins (for web_ui_actions) in parallel
+                    let configData, schemaData, pluginsData;
+                    
+                    if (window.PluginAPI && window.PluginAPI.batch) {
+                        const results = await window.PluginAPI.batch([
+                            {endpoint: `/plugins/config?plugin_id=${pluginId}`, method: 'GET'},
+                            {endpoint: `/plugins/schema?plugin_id=${pluginId}`, method: 'GET'},
+                            {endpoint: '/plugins/installed', method: 'GET'}
+                        ]);
+                        [configData, schemaData, pluginsData] = results;
+                    } else {
+                        const [configResponse, schemaResponse, pluginsResponse] = await Promise.all([
+                            fetch(`/api/v3/plugins/config?plugin_id=${pluginId}`).then(r => r.json()),
+                            fetch(`/api/v3/plugins/schema?plugin_id=${pluginId}`).then(r => r.json()),
+                            fetch(`/api/v3/plugins/installed`).then(r => r.json())
+                        ]);
+                        configData = configResponse;
+                        schemaData = schemaResponse;
+                        pluginsData = pluginsResponse;
+                    }
+
+                    if (configData.status === 'success') {
+                        componentContext.config = configData.data;
+                    }
+
+                    if (schemaData.status === 'success') {
+                        componentContext.schema = schemaData.data.schema || {};
+                    }
+
+                    if (pluginsData.status === 'success' && pluginsData.data && pluginsData.data.plugins) {
+                        const pluginInfo = pluginsData.data.plugins.find(p => p.id === pluginId);
+                        componentContext.webUiActions = pluginInfo ? (pluginInfo.web_ui_actions || []) : [];
+                    } else {
+                        componentContext.webUiActions = [];
+                    }
+
+                    console.log('Loaded config, schema, and actions for', pluginId);
+                } catch (error) {
+                    console.error('Error loading plugin config:', error);
+                    componentContext.config = { enabled: true, display_duration: 30 };
+                    componentContext.schema = {};
+                    componentContext.webUiActions = [];
+                } finally {
+                    componentContext.loading = false;
+                }
+            },
+
+            generateConfigForm: function(pluginId, config, schema, webUiActions, componentContext) {
+                // Try to get the app component
+                let appComponent = null;
+                if (window.Alpine) {
+                    const appElement = document.querySelector('[x-data="app()"]');
+                    if (appElement && appElement._x_dataStack && appElement._x_dataStack[0]) {
+                        appComponent = appElement._x_dataStack[0];
+                    }
+                }
+
+                // If we have access to the app component, use its method
+                if (appComponent && typeof appComponent.generateConfigForm === 'function') {
+                    return appComponent.generateConfigForm(pluginId, config, schema, webUiActions);
+                }
+
+                // Fallback: return loading message if function not available
+                if (!pluginId || !config) {
+                    return '<div class="text-gray-500">Loading configuration...</div>';
+                }
+                return '<div class="text-gray-500">Configuration form not available yet...</div>';
+            },
+
+            savePluginConfig: async function(pluginId, event, componentContext) {
+                // Try to get the app component
+                let appComponent = null;
+                if (window.Alpine) {
+                    const appElement = document.querySelector('[x-data="app()"]');
+                    if (appElement && appElement._x_dataStack && appElement._x_dataStack[0]) {
+                        appComponent = appElement._x_dataStack[0];
+                    }
+                }
+
+                // If we have access to the app component, use its method
+                if (appComponent && typeof appComponent.savePluginConfig === 'function') {
+                    return appComponent.savePluginConfig(pluginId, event);
+                }
+
+                console.error('savePluginConfig not available');
+                throw new Error('Save configuration method not available');
+            }
+        };
 
         // ===== Nested Section Toggle =====
         window.toggleNestedSection = function(sectionId, event) {

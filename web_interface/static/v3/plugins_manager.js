@@ -435,14 +435,24 @@ window.currentPluginConfig = null;
 // Track initialization state
 window.pluginManager = window.pluginManager || {};
 window.pluginManager.initialized = false;
+window.pluginManager.initializing = false; // Track if initialization is in progress
 
 // Initialize when DOM is ready or when HTMX loads content
 window.initPluginsPage = function() {
-    if (window.pluginManager.initialized) {
-        console.log('Plugin page already initialized, skipping...');
+    // Prevent duplicate initialization
+    if (window.pluginManager.initialized || window.pluginManager.initializing) {
+        console.log('Plugin page already initialized or initializing, skipping...');
         return;
     }
-    window.pluginManager.initialized = true;
+    
+    // Check if required elements exist
+    const installedGrid = document.getElementById('installed-plugins-grid');
+    if (!installedGrid) {
+        console.log('Plugin elements not ready yet');
+        return false;
+    }
+    
+    window.pluginManager.initializing = true;
     window.__pluginDomReady = true;
     
     // If we fetched data before the DOM existed, render it now
@@ -458,6 +468,10 @@ window.initPluginsPage = function() {
     }
 
     initializePlugins();
+    
+    window.pluginManager.initialized = true;
+    window.pluginManager.initializing = false;
+    return true;
 
     // Event listeners (remove old ones first to prevent duplicates)
     const refreshBtn = document.getElementById('refresh-plugins-btn');
@@ -520,46 +534,46 @@ window.initPluginsPage = function() {
     startOnDemandStatusPolling();
 }
 
-// Initialize when DOM is ready or when HTMX loads content
+// Consolidated initialization function
 function initializePluginPageWhenReady() {
     console.log('Checking for plugin elements...');
-    const installedGrid = document.getElementById('installed-plugins-grid');
-    const storeGrid = document.getElementById('plugin-store-grid');
-    
-    // Only require installed-plugins-grid to exist (plugin-store-grid may load later)
-    if (installedGrid) {
-        console.log('Plugin elements found, initializing now!', {
-            installedGrid: !!installedGrid,
-            storeGrid: !!storeGrid
-        });
-        initPluginsPage();
-        return true;
-    } else {
-        console.warn('Plugin elements not found yet. Retrying...', {
-            installedGrid: !!installedGrid,
-            storeGrid: !!storeGrid
-        });
-        return false;
-    }
+    return window.initPluginsPage();
 }
 
-// Try multiple initialization strategies
-console.log('Plugin manager script loaded, initializing...');
-
-// Strategy 1: Immediate check (for direct page loads)
-if (initializePluginPageWhenReady()) {
-    console.log('Initialized immediately');
-} else {
-    // Strategy 2: DOMContentLoaded (for direct page loads)
-    if (document.readyState === 'loading') {
+// Single initialization entry point
+(function() {
+    console.log('Plugin manager script loaded, setting up initialization...');
+    
+    let initTimer = null;
+    
+    function attemptInit() {
+        // Clear any pending timer
+        if (initTimer) {
+            clearTimeout(initTimer);
+            initTimer = null;
+        }
+        
+        // Try immediate initialization
+        if (initializePluginPageWhenReady()) {
+            console.log('Initialized immediately');
+            return;
+        }
+    }
+    
+    // Strategy 1: Immediate check (for direct page loads)
+    if (document.readyState === 'complete' || document.readyState === 'interactive') {
+        // DOM is already ready, try immediately with a small delay to ensure scripts are loaded
+        initTimer = setTimeout(attemptInit, 50);
+    } else {
+        // Strategy 2: DOMContentLoaded (for direct page loads)
         document.addEventListener('DOMContentLoaded', function() {
-            setTimeout(initializePluginPageWhenReady, 50);
+            initTimer = setTimeout(attemptInit, 50);
         });
     }
     
-    // Strategy 3: HTMX swap event (for HTMX-loaded content)
+    // Strategy 3: HTMX afterSwap event (for HTMX-loaded content)
+    // This is the primary way plugins content is loaded
     if (typeof htmx !== 'undefined') {
-        // Use htmx:afterSwap to detect when plugins content is loaded
         document.body.addEventListener('htmx:afterSwap', function(event) {
             const target = event.detail.target;
             // Check if plugins content was swapped in
@@ -567,65 +581,14 @@ if (initializePluginPageWhenReady()) {
                 target.querySelector('#installed-plugins-grid') ||
                 document.getElementById('installed-plugins-grid')) {
                 console.log('HTMX swap detected for plugins, initializing...');
-                // Reset initialization flag to allow re-initialization
+                // Reset initialization flag to allow re-initialization after HTMX swap
                 window.pluginManager.initialized = false;
-                setTimeout(initializePluginPageWhenReady, 100);
+                window.pluginManager.initializing = false;
+                initTimer = setTimeout(attemptInit, 100);
             }
-        });
+        }, { once: false }); // Allow multiple swaps
     }
-    
-    // Strategy 4: Fallback timeout (for edge cases)
-    setTimeout(function() {
-        if (!window.pluginManager || !window.pluginManager.initialized) {
-            console.log('Fallback initialization...');
-            initializePluginPageWhenReady();
-        }
-    }, 500);
-}
-
-// Also listen for HTMX load event (fires when content is swapped)
-if (typeof htmx !== 'undefined') {
-    document.body.addEventListener('htmx:load', function(event) {
-        // Check if plugins content was loaded (only need installed-plugins-grid)
-        if (document.getElementById('installed-plugins-grid')) {
-            console.log('HTMX load event detected, initializing plugins...');
-            window.pluginManager.initialized = false;
-            setTimeout(initializePluginPageWhenReady, 100);
-        }
-    });
-}
-
-// Use MutationObserver as a final fallback to detect when elements are added
-if (typeof MutationObserver !== 'undefined') {
-    const observer = new MutationObserver(function(mutations) {
-        const installedGrid = document.getElementById('installed-plugins-grid');
-        const storeGrid = document.getElementById('plugin-store-grid');
-        
-        // Only require installed-plugins-grid (storeGrid may load later)
-        if (installedGrid && (!window.pluginManager || !window.pluginManager.initialized)) {
-            console.log('MutationObserver detected plugin elements, initializing...', {
-                installedGrid: !!installedGrid,
-                storeGrid: !!storeGrid
-            });
-            setTimeout(initializePluginPageWhenReady, 100);
-        }
-    });
-    
-    // Start observing when DOM is ready
-    if (document.body) {
-        observer.observe(document.body, {
-            childList: true,
-            subtree: true
-        });
-    } else {
-        document.addEventListener('DOMContentLoaded', function() {
-            observer.observe(document.body, {
-                childList: true,
-                subtree: true
-            });
-        });
-    }
-}
+})();
 
 function initializePlugins() {
     console.log('Initializing plugins...');
@@ -653,7 +616,16 @@ function initializePlugins() {
     console.log('Plugins initialized');
 }
 
+// Track in-flight requests to prevent duplicates
+let loadInstalledPluginsPromise = null;
+
 function loadInstalledPlugins() {
+    // If a request is already in progress, return the existing promise
+    if (loadInstalledPluginsPromise) {
+        console.log('Plugin load already in progress, returning existing promise');
+        return loadInstalledPluginsPromise;
+    }
+
     console.log('Loading installed plugins...');
 
     // Use PluginAPI if available, otherwise fall back to direct fetch
@@ -666,7 +638,8 @@ function loadInstalledPlugins() {
         }) :
         fetch('/api/v3/plugins/installed').then(response => response.json());
 
-    return fetchPromise
+    // Store the promise and clear it when done
+    loadInstalledPluginsPromise = fetchPromise
         .then(response => {
             if (response.status) {
                 console.log('Installed plugins response:', response.status);
@@ -716,7 +689,13 @@ function loadInstalledPlugins() {
             }
             showError(errorMsg);
             throw error;
+        })
+        .finally(() => {
+            // Clear the promise when done
+            loadInstalledPluginsPromise = null;
         });
+
+    return loadInstalledPluginsPromise;
 }
 
 // Expose loadInstalledPlugins on window.pluginManager for Alpine.js integration
