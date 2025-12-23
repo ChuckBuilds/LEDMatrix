@@ -316,12 +316,19 @@ def _load_plugin_config_partial(plugin_id):
         if not pages_v3.plugin_manager:
             return '<div class="text-red-500 p-4">Plugin manager not available</div>', 500
         
-        # Get plugin instance and info
-        plugin_instance = pages_v3.plugin_manager.get_plugin(plugin_id)
+        # Try to get plugin info first
         plugin_info = pages_v3.plugin_manager.get_plugin_info(plugin_id)
+        
+        # If not found, re-discover plugins (handles plugins added after startup)
+        if not plugin_info:
+            pages_v3.plugin_manager.discover_plugins()
+            plugin_info = pages_v3.plugin_manager.get_plugin_info(plugin_id)
         
         if not plugin_info:
             return f'<div class="text-red-500 p-4">Plugin "{plugin_id}" not found</div>', 404
+        
+        # Get plugin instance (may be None if not loaded)
+        plugin_instance = pages_v3.plugin_manager.get_plugin(plugin_id)
         
         # Get plugin configuration from config file
         config = {}

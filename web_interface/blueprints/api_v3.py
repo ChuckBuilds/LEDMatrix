@@ -2714,7 +2714,6 @@ def save_plugin_config():
             # Convert form data to config dict
             # Form fields can use dot notation for nested values (e.g., "transition.type")
             form_data = request.form.to_dict()
-            print(f"[DEBUG] Form data received for {plugin_id}: {form_data}")
             plugin_config = {}
             
             for key, value in form_data.items():
