@@ -900,20 +900,70 @@
                         if (!tryEnhance()) {
                             // Full implementation not ready yet, load plugins directly while waiting
                             this.loadInstalledPluginsDirectly();
-                            // Try again very soon
+                            // Try again very soon to enhance with full implementation
                             setTimeout(tryEnhance, 10);
+                            
+                            // Also set up a periodic check to update tabs if plugins get loaded by plugins_manager.js
+                            let retryCount = 0;
+                            const maxRetries = 20; // Check for 2 seconds (20 * 100ms)
+                            const checkAndUpdateTabs = () => {
+                                if (retryCount >= maxRetries) return;
+                                
+                                // Check if plugins are available (either from window or component)
+                                const plugins = window.installedPlugins || this.installedPlugins || [];
+                                if (plugins.length > 0) {
+                                    this.installedPlugins = plugins;
+                                    if (typeof this.updatePluginTabs === 'function') {
+                                        this.updatePluginTabs();
+                                    }
+                                } else {
+                                    retryCount++;
+                                    setTimeout(checkAndUpdateTabs, 100);
+                                }
+                            };
+                            // Start checking after a short delay
+                            setTimeout(checkAndUpdateTabs, 200);
                         }
                     },
                     
                     // Direct plugin loading for stub (before full implementation loads)
                     async loadInstalledPluginsDirectly() {
                         try {
+                            // Ensure DOM is ready
+                            const ensureDOMReady = () => {
+                                return new Promise((resolve) => {
+                                    if (document.readyState === 'complete' || document.readyState === 'interactive') {
+                                        // Use requestAnimationFrame to ensure DOM is painted
+                                        requestAnimationFrame(() => {
+                                            setTimeout(resolve, 50); // Small delay to ensure rendering
+                                        });
+                                    } else {
+                                        document.addEventListener('DOMContentLoaded', () => {
+                                            requestAnimationFrame(() => {
+                                                setTimeout(resolve, 50);
+                                            });
+                                        });
+                                    }
+                                });
+                            };
+                            
+                            await ensureDOMReady();
+                            
                             const data = await getInstalledPluginsSafe();
                             if (data.status === 'success') {
                                 this.installedPlugins = data.data.plugins || [];
-                                // Update tabs if we have the method
+                                // Update tabs if we have the method - use $nextTick if available
                                 if (typeof this.updatePluginTabs === 'function') {
-                                    this.updatePluginTabs();
+                                    if (this.$nextTick && typeof this.$nextTick === 'function') {
+                                        this.$nextTick(() => {
+                                            this.updatePluginTabs();
+                                        });
+                                    } else {
+                                        // Fallback: wait a bit for DOM
+                                        setTimeout(() => {
+                                            this.updatePluginTabs();
+                                        }, 100);
+                                    }
                                 }
                             }
                         } catch (error) {
@@ -1869,20 +1919,34 @@
                     }
                     this._initialized = true;
                     
-                    // Load plugins on page load so tabs are available on any page
-                    // Only load if not already loaded (stub might have loaded them)
-                    if (!this.installedPlugins || this.installedPlugins.length === 0) {
-                        this.loadInstalledPlugins();
-                    } else {
-                        // Plugins already loaded, just update tabs
-                        this.updatePluginTabs();
-                    }
-
-                    // Initialize installedPlugins from global if available
-                    if (typeof window.installedPlugins !== 'undefined') {
+                    // Load plugins on page load so tabs are available on any page, regardless of active tab
+                    // First check if plugins are already in window.installedPlugins (from plugins_manager.js)
+                    if (typeof window.installedPlugins !== 'undefined' && Array.isArray(window.installedPlugins) && window.installedPlugins.length > 0) {
                         this.installedPlugins = window.installedPlugins;
                         console.log('Initialized installedPlugins from global:', this.installedPlugins.length);
-                        this.updatePluginTabs();
+                        // Ensure tabs are updated immediately
+                        this.$nextTick(() => {
+                            this.updatePluginTabs();
+                        });
+                    } else if (!this.installedPlugins || this.installedPlugins.length === 0) {
+                        // Load plugins asynchronously, but ensure tabs update when done
+                        this.loadInstalledPlugins().then(() => {
+                            // Ensure tabs are updated after loading
+                            this.$nextTick(() => {
+                                this.updatePluginTabs();
+                            });
+                        }).catch(err => {
+                            console.error('Error loading plugins in init:', err);
+                            // Still try to update tabs in case some plugins are available
+                            this.$nextTick(() => {
+                                this.updatePluginTabs();
+                            });
+                        });
+                    } else {
+                        // Plugins already loaded, just update tabs
+                        this.$nextTick(() => {
+                            this.updatePluginTabs();
+                        });
                     }
                     
                     // Ensure content loads for the active tab
