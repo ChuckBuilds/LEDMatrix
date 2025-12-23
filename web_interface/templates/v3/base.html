@@ -1675,38 +1675,38 @@
                                                         <span class="text-sm font-semibold text-gray-900">On-Demand Controls</span>
                                                     </div>
                                                     <div class="flex items-center gap-2">
-                                                        <span x-show="!isOnDemandLoading && onDemandLastUpdated" class="text-xs text-gray-500" x-text="onDemandLastUpdated ? ('Updated ' + onDemandLastUpdated) : ''"></span>
+                                                        <span x-show="!this.isOnDemandLoading && this.onDemandLastUpdated" class="text-xs text-gray-500" x-text="this.onDemandLastUpdated ? ('Updated ' + this.onDemandLastUpdated) : ''"></span>
                                                         <button type="button"
                                                                 class="px-3 py-1.5 text-xs bg-blue-600 hover:bg-blue-700 text-white rounded-md flex items-center gap-1 transition-colors"
-                                                                :class="{'opacity-60 cursor-not-allowed': onDemandRefreshing}"
-                                                                :disabled="onDemandRefreshing"
+                                                                :class="{'opacity-60 cursor-not-allowed': this.onDemandRefreshing}"
+                                                                :disabled="this.onDemandRefreshing"
                                                                 x-on:click="refreshOnDemandStatus">
-                                                            <i class="fas fa-sync" :class="onDemandRefreshing ? 'fa-spin' : ''"></i>
+                                                            <i class="fas fa-sync" :class="this.onDemandRefreshing ? 'fa-spin' : ''"></i>
                                                             <span>Refresh</span>
                                                         </button>
                                                     </div>
                                                 </div>
-                                                <p class="text-sm leading-relaxed" :class="onDemandStatusClass" x-text="onDemandStatusText"></p>
-                                                <p class="text-xs" :class="onDemandServiceClass" x-text="onDemandServiceText"></p>
+                                                <p class="text-sm leading-relaxed" :class="this.onDemandStatusClass" x-text="this.onDemandStatusText"></p>
+                                                <p class="text-xs" :class="this.onDemandServiceClass" x-text="this.onDemandServiceText"></p>
                                                 <div class="flex flex-wrap gap-2">
                                                     <button type="button"
                                                             class="px-3 py-2 text-sm bg-green-600 hover:bg-green-700 text-white rounded-md flex items-center gap-2 transition-colors"
-                                                            :class="{'opacity-60 cursor-not-allowed': disableRunButton || onDemandStopping || onDemandRefreshing}"
-                                                            :disabled="disableRunButton || onDemandStopping || onDemandRefreshing"
+                                                            :class="{'opacity-60 cursor-not-allowed': this.disableRunButton || this.onDemandStopping || this.onDemandRefreshing}"
+                                                            :disabled="this.disableRunButton || this.onDemandStopping || this.onDemandRefreshing"
                                                             x-on:click="runOnDemand">
                                                         <i class="fas fa-play-circle"></i>
                                                         <span>Run On-Demand</span>
                                                     </button>
                                                     <button type="button"
                                                             class="px-3 py-2 text-sm bg-red-600 hover:bg-red-700 text-white rounded-md flex items-center gap-2 transition-colors"
-                                                            :class="{'opacity-60 cursor-not-allowed': !canStopOnDemand || onDemandStopping}"
-                                                            :disabled="!canStopOnDemand || onDemandStopping"
+                                                            :class="{'opacity-60 cursor-not-allowed': !this.canStopOnDemand || this.onDemandStopping}"
+                                                            :disabled="!this.canStopOnDemand || this.onDemandStopping"
                                                             x-on:click="stopOnDemandWithEvent($event.shiftKey)">
                                                         <i class="fas fa-stop"></i>
                                                         <span>Stop On-Demand</span>
                                                     </button>
                                                 </div>
-                                                <p class="text-xs text-amber-600" x-show="showEnableHint">
+                                                <p class="text-xs text-amber-600" x-show="this.showEnableHint">
                                                     Enable this plugin before launching on-demand.
                                                 </p>
                                                 <p class="text-xs text-gray-400">
@@ -1720,7 +1720,7 @@
                                             <h3 class="text-md font-medium text-gray-900 mb-3">Configuration</h3>
                                             <div class="space-y-4">
                                                 <!-- Loading state -->
-                                                <div x-show="loading" class="animate-pulse space-y-3">
+                                                <div x-show="this.loading" class="animate-pulse space-y-3">
                                                     <div class="h-4 bg-gray-200 rounded w-3/4"></div>
                                                     <div class="h-10 bg-gray-200 rounded"></div>
                                                     <div class="h-4 bg-gray-200 rounded w-1/2"></div>
@@ -1728,8 +1728,8 @@
                                                 </div>
 
                                                 <!-- Configuration fields loaded dynamically -->
-                                                <div x-show="!loading && typeof this.generateConfigForm === 'function'" x-html="this.generateConfigForm(this.plugin.id, this.config, this.schema, this.webUiActions)"></div>
-                                                <div x-show="!loading && typeof this.generateConfigForm !== 'function'" class="text-gray-500">Loading configuration form...</div>
+                                                <div x-show="!this.loading && typeof this.generateConfigForm === 'function'" x-html="this.generateConfigForm(this.plugin.id, this.config, this.schema, this.webUiActions)"></div>
+                                                <div x-show="!this.loading && typeof this.generateConfigForm !== 'function'" class="text-gray-500">Loading configuration form...</div>
                                             </div>
                                         </div>
                                     </div>
