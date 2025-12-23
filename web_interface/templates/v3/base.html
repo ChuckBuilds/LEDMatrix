@@ -897,13 +897,15 @@
                         this.installedPlugins.forEach(plugin => {
                             const tabButton = document.createElement('button');
                             tabButton.type = 'button';
-                            tabButton.className = `plugin-tab whitespace-nowrap py-2 px-1 lg:px-2 xl:px-3 border-b-2 font-medium text-sm ${this.activeTab === plugin.id ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'}`;
+                            tabButton.setAttribute('data-plugin-id', plugin.id);
+                            tabButton.className = `plugin-tab nav-tab ${this.activeTab === plugin.id ? 'nav-tab-active' : ''}`;
                             tabButton.onclick = () => {
                                 this.activeTab = plugin.id;
+                                this.updatePluginTabStates();
                             };
                             const div = document.createElement('div');
                             div.textContent = plugin.name || plugin.id;
-                            tabButton.innerHTML = `<i class="fas fa-puzzle-piece mr-2"></i>${div.innerHTML}`;
+                            tabButton.innerHTML = `<i class="fas fa-puzzle-piece"></i>${div.innerHTML}`;
                             pluginTabsNav.appendChild(tabButton);
                         });
                     },
@@ -1055,54 +1057,54 @@
             <div class="border-b border-gray-200 mb-4">
                 <nav class="-mb-px flex space-x-4 lg:space-x-6 xl:space-x-8 overflow-x-auto">
                     <button @click="activeTab = 'overview'"
-                            :class="activeTab === 'overview' ? 'border-blue-600 text-blue-600 font-semibold' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'"
-                            class="whitespace-nowrap py-2 px-1 lg:px-2 xl:px-3 border-b-2 font-medium text-sm transition-colors">
-                        <i class="fas fa-tachometer-alt mr-2"></i>Overview
+                            :class="activeTab === 'overview' ? 'nav-tab-active' : ''"
+                            class="nav-tab">
+                        <i class="fas fa-tachometer-alt"></i>Overview
                     </button>
                     <button @click="activeTab = 'general'"
-                            :class="activeTab === 'general' ? 'border-blue-600 text-blue-600 font-semibold' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'"
-                            class="whitespace-nowrap py-2 px-1 lg:px-2 xl:px-3 border-b-2 font-medium text-sm transition-colors">
-                        <i class="fas fa-sliders-h mr-2"></i>General
+                            :class="activeTab === 'general' ? 'nav-tab-active' : ''"
+                            class="nav-tab">
+                        <i class="fas fa-sliders-h"></i>General
                     </button>
                     <button @click="activeTab = 'wifi'"
-                            :class="activeTab === 'wifi' ? 'border-blue-600 text-blue-600 font-semibold' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'"
-                            class="whitespace-nowrap py-2 px-1 lg:px-2 xl:px-3 border-b-2 font-medium text-sm transition-colors">
-                        <i class="fas fa-wifi mr-2"></i>WiFi
+                            :class="activeTab === 'wifi' ? 'nav-tab-active' : ''"
+                            class="nav-tab">
+                        <i class="fas fa-wifi"></i>WiFi
                     </button>
                     <button @click="activeTab = 'schedule'"
-                            :class="activeTab === 'schedule' ? 'border-blue-600 text-blue-600 font-semibold' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'"
-                            class="whitespace-nowrap py-2 px-1 lg:px-2 xl:px-3 border-b-2 font-medium text-sm transition-colors">
-                        <i class="fas fa-clock mr-2"></i>Schedule
+                            :class="activeTab === 'schedule' ? 'nav-tab-active' : ''"
+                            class="nav-tab">
+                        <i class="fas fa-clock"></i>Schedule
                     </button>
                     <button @click="activeTab = 'display'"
-                            :class="activeTab === 'display' ? 'border-blue-600 text-blue-600 font-semibold' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'"
-                            class="whitespace-nowrap py-2 px-1 lg:px-2 xl:px-3 border-b-2 font-medium text-sm transition-colors">
-                        <i class="fas fa-desktop mr-2"></i>Display
+                            :class="activeTab === 'display' ? 'nav-tab-active' : ''"
+                            class="nav-tab">
+                        <i class="fas fa-desktop"></i>Display
                     </button>
                     <button @click="activeTab = 'config-editor'"
-                            :class="activeTab === 'config-editor' ? 'border-blue-600 text-blue-600 font-semibold' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'"
-                            class="whitespace-nowrap py-2 px-1 lg:px-2 xl:px-3 border-b-2 font-medium text-sm transition-colors">
-                        <i class="fas fa-file-code mr-2"></i>Config Editor
+                            :class="activeTab === 'config-editor' ? 'nav-tab-active' : ''"
+                            class="nav-tab">
+                        <i class="fas fa-file-code"></i>Config Editor
                     </button>
                     <button @click="activeTab = 'fonts'"
-                            :class="activeTab === 'fonts' ? 'border-blue-600 text-blue-600 font-semibold' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'"
-                            class="whitespace-nowrap py-2 px-1 lg:px-2 xl:px-3 border-b-2 font-medium text-sm transition-colors">
-                        <i class="fas fa-font mr-2"></i>Fonts
+                            :class="activeTab === 'fonts' ? 'nav-tab-active' : ''"
+                            class="nav-tab">
+                        <i class="fas fa-font"></i>Fonts
                     </button>
                     <button @click="activeTab = 'logs'"
-                            :class="activeTab === 'logs' ? 'border-blue-600 text-blue-600 font-semibold' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'"
-                            class="whitespace-nowrap py-2 px-1 lg:px-2 xl:px-3 border-b-2 font-medium text-sm transition-colors">
-                        <i class="fas fa-file-alt mr-2"></i>Logs
+                            :class="activeTab === 'logs' ? 'nav-tab-active' : ''"
+                            class="nav-tab">
+                        <i class="fas fa-file-alt"></i>Logs
                     </button>
                     <button @click="activeTab = 'cache'"
-                            :class="activeTab === 'cache' ? 'border-blue-600 text-blue-600 font-semibold' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'"
-                            class="whitespace-nowrap py-2 px-1 lg:px-2 xl:px-3 border-b-2 font-medium text-sm transition-colors">
-                        <i class="fas fa-database mr-2"></i>Cache
+                            :class="activeTab === 'cache' ? 'nav-tab-active' : ''"
+                            class="nav-tab">
+                        <i class="fas fa-database"></i>Cache
                     </button>
                     <button @click="activeTab = 'operation-history'"
-                            :class="activeTab === 'operation-history' ? 'border-blue-600 text-blue-600 font-semibold' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'"
-                            class="whitespace-nowrap py-2 px-1 lg:px-2 xl:px-3 border-b-2 font-medium text-sm transition-colors">
-                        <i class="fas fa-history mr-2"></i>Operation History
+                            :class="activeTab === 'operation-history' ? 'nav-tab-active' : ''"
+                            class="nav-tab">
+                        <i class="fas fa-history"></i>Operation History
                     </button>
                 </nav>
             </div>
@@ -1111,9 +1113,9 @@
             <div id="plugin-tabs-row" class="border-b border-gray-200">
                 <nav class="-mb-px flex space-x-4 lg:space-x-6 xl:space-x-8 overflow-x-auto">
                     <button @click="activeTab = 'plugins'; $nextTick(() => { if (typeof htmx !== 'undefined' && !document.getElementById('plugins-content').hasAttribute('data-loaded')) { htmx.trigger('#plugins-content', 'load'); } })"
-                            :class="activeTab === 'plugins' ? 'border-blue-600 text-blue-600 font-semibold' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'"
-                            class="whitespace-nowrap py-2 px-1 lg:px-2 xl:px-3 border-b-2 font-medium text-sm transition-colors">
-                        <i class="fas fa-plug mr-2"></i>Plugin Manager
+                            :class="activeTab === 'plugins' ? 'nav-tab-active' : ''"
+                            class="nav-tab">
+                        <i class="fas fa-plug"></i>Plugin Manager
                     </button>
                     <!-- Installed plugin tabs will be added here dynamically -->
                 </nav>
@@ -1859,6 +1861,8 @@
                     
                     // Ensure content loads for the active tab
                     this.$watch('activeTab', (newTab, oldTab) => {
+                        // Update plugin tab states when activeTab changes
+                        this.updatePluginTabStates();
                         // Trigger content load when tab changes
                         this.$nextTick(() => {
                             this.loadTabContent(newTab);
@@ -2038,12 +2042,14 @@
                     pluginsToShow.forEach(plugin => {
                         const tabButton = document.createElement('button');
                         tabButton.type = 'button';
-                        tabButton.className = `plugin-tab whitespace-nowrap py-2 px-1 lg:px-2 xl:px-3 border-b-2 font-medium text-sm ${this.activeTab === plugin.id ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'}`;
+                        tabButton.setAttribute('data-plugin-id', plugin.id);
+                        tabButton.className = `plugin-tab nav-tab ${this.activeTab === plugin.id ? 'nav-tab-active' : ''}`;
                         tabButton.onclick = () => {
                             this.activeTab = plugin.id;
+                            this.updatePluginTabStates();
                         };
                         tabButton.innerHTML = `
-                            <i class="fas fa-puzzle-piece mr-2"></i>${this.escapeHtml(plugin.name || plugin.id)}
+                            <i class="fas fa-puzzle-piece"></i>${this.escapeHtml(plugin.name || plugin.id)}
                         `;
 
                         // Insert before the closing </nav> tag
@@ -2054,6 +2060,21 @@
                     console.log('Plugin tabs update completed');
                 },
 
+                updatePluginTabStates() {
+                    // Update active state of all plugin tabs when activeTab changes
+                    const pluginTabsNav = document.getElementById('plugin-tabs-row')?.querySelector('nav');
+                    if (!pluginTabsNav) return;
+                    
+                    const pluginTabs = pluginTabsNav.querySelectorAll('.plugin-tab');
+                    pluginTabs.forEach(tab => {
+                        const pluginId = tab.getAttribute('data-plugin-id');
+                        if (pluginId && this.activeTab === pluginId) {
+                            tab.classList.add('nav-tab-active');
+                        } else {
+                            tab.classList.remove('nav-tab-active');
+                        }
+                    });
+                },
 
                 showNotification(message, type = 'info') {
                     const notifications = document.getElementById('notifications');
