@@ -2707,6 +2707,149 @@ def _parse_form_value(value):
     return value
 
 
+def _get_schema_property(schema, key_path):
+    """
+    Get the schema property for a given key path (supports dot notation).
+    
+    Args:
+        schema: The JSON schema dict
+        key_path: Dot-separated path like "customization.time_text.font"
+    
+    Returns:
+        The property schema dict or None if not found
+    """
+    if not schema or 'properties' not in schema:
+        return None
+    
+    parts = key_path.split('.')
+    current = schema['properties']
+    
+    for i, part in enumerate(parts):
+        if part not in current:
+            return None
+        
+        prop = current[part]
+        
+        # If this is the last part, return the property
+        if i == len(parts) - 1:
+            return prop
+        
+        # If this is an object with properties, navigate deeper
+        if isinstance(prop, dict) and 'properties' in prop:
+            current = prop['properties']
+        else:
+            return None
+    
+    return None
+
+
+def _parse_form_value_with_schema(value, key_path, schema):
+    """
+    Parse a form value using schema information to determine correct type.
+    Handles arrays (comma-separated strings), objects, and other types.
+    
+    Args:
+        value: The form value (usually a string)
+        key_path: Dot-separated path like "category_order" or "customization.time_text.font"
+        schema: The plugin's JSON schema
+    
+    Returns:
+        Parsed value with correct type
+    """
+    import json
+    
+    # Get the schema property for this field
+    prop = _get_schema_property(schema, key_path)
+    
+    # Handle None/empty values
+    if value is None or (isinstance(value, str) and value.strip() == ''):
+        # If schema says it's an array, return empty array instead of None
+        if prop and prop.get('type') == 'array':
+            return []
+        # If schema says it's an object, return empty dict instead of None
+        if prop and prop.get('type') == 'object':
+            return {}
+        return None
+    
+    # Handle string values
+    if isinstance(value, str):
+        stripped = value.strip()
+        
+        # Check for boolean strings
+        if stripped.lower() == 'true':
+            return True
+        if stripped.lower() == 'false':
+            return False
+        
+        # Handle arrays based on schema
+        if prop and prop.get('type') == 'array':
+            # Try parsing as JSON first (handles "[1,2,3]" format)
+            if stripped.startswith('['):
+                try:
+                    return json.loads(stripped)
+                except json.JSONDecodeError:
+                    pass
+            
+            # Otherwise, treat as comma-separated string
+            if stripped:
+                # Split by comma and strip each item
+                items = [item.strip() for item in stripped.split(',') if item.strip()]
+                # Try to convert items to numbers if schema items are numbers
+                items_schema = prop.get('items', {})
+                if items_schema.get('type') in ('number', 'integer'):
+                    try:
+                        return [int(item) if '.' not in item else float(item) for item in items]
+                    except ValueError:
+                        pass
+                return items
+            return []
+        
+        # Handle objects based on schema
+        if prop and prop.get('type') == 'object':
+            # Try parsing as JSON
+            if stripped.startswith('{'):
+                try:
+                    return json.loads(stripped)
+                except json.JSONDecodeError:
+                    pass
+            # If it's not JSON, return empty dict (form shouldn't send objects as strings)
+            return {}
+        
+        # Try parsing as JSON (for arrays and objects) - do this BEFORE number parsing
+        if stripped.startswith('[') or stripped.startswith('{'):
+            try:
+                return json.loads(stripped)
+            except json.JSONDecodeError:
+                pass
+        
+        # Handle numbers based on schema
+        if prop:
+            prop_type = prop.get('type')
+            if prop_type == 'integer':
+                try:
+                    return int(stripped)
+                except ValueError:
+                    return prop.get('default', 0)
+            elif prop_type == 'number':
+                try:
+                    return float(stripped)
+                except ValueError:
+                    return prop.get('default', 0.0)
+        
+        # Try parsing as number (fallback)
+        try:
+            if '.' in stripped:
+                return float(stripped)
+            return int(stripped)
+        except ValueError:
+            pass
+        
+        # Return as string
+        return value
+    
+    return value
+
+
 def _set_nested_value(config, key_path, value):
     """
     Set a value in a nested dict using dot notation path.
@@ -2771,6 +2914,18 @@ def save_plugin_config():
                 full_config = api_v3.config_manager.load_config()
                 existing_config = full_config.get(plugin_id, {}).copy()
             
+            # Get schema manager instance (needed for type conversion)
+            schema_mgr = api_v3.schema_manager
+            if not schema_mgr:
+                return error_response(
+                    ErrorCode.SYSTEM_ERROR,
+                    'Schema manager not initialized',
+                    status_code=500
+                )
+            
+            # Load plugin schema BEFORE processing form data (needed for type conversion)
+            schema = schema_mgr.load_schema(plugin_id, use_cache=False)
+            
             # Start with existing config and apply form updates
             plugin_config = existing_config
             
@@ -2779,11 +2934,69 @@ def save_plugin_config():
             form_data = request.form.to_dict()
             
             for key, value in form_data.items():
-                parsed_value = _parse_form_value(value)
+                # Parse value using schema to determine correct type
+                parsed_value = _parse_form_value_with_schema(value, key, schema)
                 # Use helper to set nested values correctly
                 _set_nested_value(plugin_config, key, parsed_value)
+            
+            # Post-process: Ensure array fields that are None get converted to empty arrays
+            # This handles cases where the form doesn't send array fields
+            if schema and 'properties' in schema:
+                def fix_array_types(config_dict, schema_props, prefix=''):
+                    """Recursively fix array types"""
+                    for prop_key, prop_schema in schema_props.items():
+                        prop_type = prop_schema.get('type')
+                        
+                        if prop_type == 'array':
+                            # Check if this field exists and is None
+                            if prefix:
+                                # Nested field - check if parent exists
+                                parent_parts = prefix.split('.')
+                                parent = config_dict
+                                for part in parent_parts:
+                                    if isinstance(parent, dict) and part in parent:
+                                        parent = parent[part]
+                                    else:
+                                        parent = None
+                                        break
+                                
+                                if parent is not None and isinstance(parent, dict):
+                                    if prop_key not in parent or parent[prop_key] is None:
+                                        default = prop_schema.get('default', [])
+                                        parent[prop_key] = default if default else []
+                            else:
+                                # Top-level field
+                                if prop_key not in config_dict or config_dict[prop_key] is None:
+                                    default = prop_schema.get('default', [])
+                                    config_dict[prop_key] = default if default else []
+                        
+                        # Recurse into nested objects
+                        elif prop_type == 'object' and 'properties' in prop_schema:
+                            nested_prefix = f"{prefix}.{prop_key}" if prefix else prop_key
+                            nested_dict = config_dict.get(prop_key) if not prefix else None
+                            
+                            if nested_dict is None:
+                                # Create nested dict if it doesn't exist
+                                if prefix:
+                                    parent_parts = prefix.split('.')
+                                    parent = config_dict
+                                    for part in parent_parts:
+                                        if part not in parent:
+                                            parent[part] = {}
+                                        parent = parent[part]
+                                    if prop_key not in parent:
+                                        parent[prop_key] = {}
+                                    nested_dict = parent[prop_key]
+                                else:
+                                    if prop_key not in config_dict:
+                                        config_dict[prop_key] = {}
+                                    nested_dict = config_dict[prop_key]
+                            
+                            fix_array_types(nested_dict, prop_schema['properties'], nested_prefix)
+                
+                fix_array_types(plugin_config, schema['properties'])
         
-        # Get schema manager instance
+        # Get schema manager instance (for JSON requests)
         schema_mgr = api_v3.schema_manager
         if not schema_mgr:
             return error_response(
@@ -2793,7 +3006,9 @@ def save_plugin_config():
             )
         
         # Load plugin schema using SchemaManager (force refresh to get latest schema)
-        schema = schema_mgr.load_schema(plugin_id, use_cache=False)
+        # For JSON requests, schema wasn't loaded yet
+        if 'application/json' in content_type:
+            schema = schema_mgr.load_schema(plugin_id, use_cache=False)
         
         # PRE-PROCESSING: Preserve 'enabled' state if not in request
         # This prevents overwriting the enabled state when saving config from a form that doesn't include the toggle

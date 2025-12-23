@@ -347,29 +347,12 @@ function handleConfigSave(event, pluginId) {
     }
 }
 
-// Track refresh operations to prevent duplicates
-const pluginConfigRefreshInProgress = new Set();
-
 function handleToggleResponse(event, pluginId) {
     if (event.detail.successful) {
-        // Update the UI in place instead of refreshing entire config to avoid duplication
-        const checkbox = document.getElementById(`plugin-enabled-${pluginId}`);
-        const label = checkbox?.nextElementSibling;
-        
-        if (checkbox && label) {
-            // Update label text and styling
-            const isEnabled = checkbox.checked;
-            label.textContent = isEnabled ? 'Enabled' : 'Disabled';
-            label.className = `ml-2 text-sm ${isEnabled ? 'text-green-600' : 'text-gray-500'}`;
-        }
-        
+        // Refresh the plugin config to update the UI
+        refreshPluginConfig(pluginId);
         showNotification('Plugin status updated', 'success');
     } else {
-        // Revert checkbox state on error
-        const checkbox = document.getElementById(`plugin-enabled-${pluginId}`);
-        if (checkbox) {
-            checkbox.checked = !checkbox.checked;
-        }
         showNotification('Failed to update plugin status', 'error');
     }
 }
@@ -383,31 +366,9 @@ function handlePluginUpdate(event, pluginId) {
 }
 
 function refreshPluginConfig(pluginId) {
-    // Prevent concurrent refreshes for the same plugin
-    if (pluginConfigRefreshInProgress.has(pluginId)) {
-        return;
-    }
-    
-    // Find the container that HTMX loads into (the one with id="plugin-config-{pluginId}")
-    const container = document.getElementById(`plugin-config-${pluginId}`);
-    if (container && window.htmx) {
-        pluginConfigRefreshInProgress.add(pluginId);
-        
-        // Clear container first to prevent duplication, then reload
-        container.innerHTML = '';
-        
-        // Reload the plugin config partial
-        window.htmx.ajax('GET', `/v3/partials/plugin-config/${pluginId}`, {
-            target: container,
-            swap: 'innerHTML'
-        });
-        
-        // Clear the flag after a delay to allow HTMX to complete
-        setTimeout(() => {
-            pluginConfigRefreshInProgress.delete(pluginId);
-        }, 1000);
-    } else {
-        console.warn('Could not find container for plugin config refresh:', pluginId);
+    const container = document.querySelector(`[data-plugin-id="${pluginId}"]`).parentElement;
+    if (container) {
+        htmx.ajax('GET', `/v3/partials/plugin-config/${pluginId}`, {target: container, swap: 'innerHTML'});
     }
 }
 
