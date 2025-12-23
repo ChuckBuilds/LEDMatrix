@@ -46,6 +46,82 @@ window.requestOnDemandStop = function({ stopService = false } = {}) {
     return Promise.resolve();
 };
 
+// Define updatePlugin early as a stub to ensure it's always available
+window.updatePlugin = window.updatePlugin || function(pluginId) {
+    if (_PLUGIN_DEBUG_EARLY) console.log('[PLUGINS STUB] updatePlugin called for', pluginId);
+    
+    // Show immediate feedback
+    if (typeof showNotification === 'function') {
+        showNotification(`Updating ${pluginId}...`, 'info');
+    }
+    
+    // Make the API call directly
+    return fetch('/api/v3/plugins/update', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ plugin_id: pluginId })
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (typeof showNotification === 'function') {
+            showNotification(data.message || 'Update initiated', data.status || 'info');
+        }
+        // Refresh installed plugins if available
+        if (typeof loadInstalledPlugins === 'function') {
+            loadInstalledPlugins();
+        } else if (typeof window.pluginManager?.loadInstalledPlugins === 'function') {
+            window.pluginManager.loadInstalledPlugins();
+        }
+        return data;
+    })
+    .catch(error => {
+        console.error('Error updating plugin:', error);
+        if (typeof showNotification === 'function') {
+            showNotification('Error updating plugin: ' + error.message, 'error');
+        }
+        throw error;
+    });
+};
+
+// Define uninstallPlugin early as a stub
+window.uninstallPlugin = window.uninstallPlugin || function(pluginId) {
+    if (_PLUGIN_DEBUG_EARLY) console.log('[PLUGINS STUB] uninstallPlugin called for', pluginId);
+    
+    if (!confirm(`Are you sure you want to uninstall ${pluginId}?`)) {
+        return Promise.resolve({ cancelled: true });
+    }
+    
+    if (typeof showNotification === 'function') {
+        showNotification(`Uninstalling ${pluginId}...`, 'info');
+    }
+    
+    return fetch('/api/v3/plugins/uninstall', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ plugin_id: pluginId })
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (typeof showNotification === 'function') {
+            showNotification(data.message || 'Uninstall initiated', data.status || 'info');
+        }
+        // Refresh installed plugins if available
+        if (typeof loadInstalledPlugins === 'function') {
+            loadInstalledPlugins();
+        } else if (typeof window.pluginManager?.loadInstalledPlugins === 'function') {
+            window.pluginManager.loadInstalledPlugins();
+        }
+        return data;
+    })
+    .catch(error => {
+        console.error('Error uninstalling plugin:', error);
+        if (typeof showNotification === 'function') {
+            showNotification('Error uninstalling plugin: ' + error.message, 'error');
+        }
+        throw error;
+    });
+};
+
 // Cleanup orphaned modals from previous executions to prevent duplicates when moving to body
 try {
     const existingModals = document.querySelectorAll('#plugin-config-modal');
