@@ -1585,7 +1585,7 @@
                                         }
                                         // Fallback: get app component from DOM
                                         if (window.Alpine) {
-                                            const appElement = document.querySelector('[x-data="app()"]');
+                                            const appElement = document.querySelector('[x-data=\'app()\']');
                                             if (appElement && appElement._x_dataStack && appElement._x_dataStack[0]) {
                                                 return appElement._x_dataStack[0];
                                             }
