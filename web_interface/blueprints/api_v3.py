@@ -2637,6 +2637,48 @@ def deep_merge(base_dict, update_dict):
             result[key] = value
     return result
 
+
+def _parse_form_value(value):
+    """
+    Parse a form value into the appropriate Python type.
+    Handles booleans, numbers, JSON arrays/objects, and strings.
+    """
+    import json
+    
+    if value is None:
+        return None
+    
+    # Handle string values
+    if isinstance(value, str):
+        # Check for boolean strings
+        if value.lower() == 'true':
+            return True
+        if value.lower() == 'false':
+            return False
+        if value.lower() in ('null', 'none', ''):
+            return None
+        
+        # Try parsing as number
+        try:
+            if '.' in value:
+                return float(value)
+            return int(value)
+        except ValueError:
+            pass
+        
+        # Try parsing as JSON (for arrays and objects)
+        if value.startswith('[') or value.startswith('{'):
+            try:
+                return json.loads(value)
+            except json.JSONDecodeError:
+                pass
+        
+        # Return as string
+        return value
+    
+    return value
+
+
 @api_v3.route('/plugins/config', methods=['POST'])
 def save_plugin_config():
     """Save plugin configuration, separating secrets from regular config"""
@@ -2648,13 +2690,44 @@ def save_plugin_config():
                 status_code=500
             )
 
-        # Validate request
-        data, error = validate_request_json(['plugin_id'])
-        if error:
-            return error
-
-        plugin_id = data['plugin_id']
-        plugin_config = data.get('config', {})
+        # Support both JSON and form data (for HTMX submissions)
+        content_type = request.content_type or ''
+        
+        if 'application/json' in content_type:
+            # JSON request
+            data, error = validate_request_json(['plugin_id'])
+            if error:
+                return error
+            plugin_id = data['plugin_id']
+            plugin_config = data.get('config', {})
+        else:
+            # Form data (HTMX submission)
+            # plugin_id comes from query string, config from form fields
+            plugin_id = request.args.get('plugin_id')
+            if not plugin_id:
+                return error_response(
+                    ErrorCode.INVALID_INPUT,
+                    'plugin_id required in query string',
+                    status_code=400
+                )
+            
+            # Convert form data to config dict
+            # Form fields can use dot notation for nested values (e.g., "transition.type")
+            form_data = request.form.to_dict()
+            plugin_config = {}
+            
+            for key, value in form_data.items():
+                # Handle nested keys (e.g., "transition.type" -> {"transition": {"type": ...}})
+                if '.' in key:
+                    parts = key.split('.')
+                    current = plugin_config
+                    for part in parts[:-1]:
+                        if part not in current:
+                            current[part] = {}
+                        current = current[part]
+                    current[parts[-1]] = _parse_form_value(value)
+                else:
+                    plugin_config[key] = _parse_form_value(value)
         
         # Get schema manager instance
         schema_mgr = api_v3.schema_manager
