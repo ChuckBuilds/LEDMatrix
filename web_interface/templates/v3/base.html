@@ -1728,7 +1728,8 @@
                                                 </div>
 
                                                 <!-- Configuration fields loaded dynamically -->
-                                                <div x-show="!loading" x-html="generateConfigForm(plugin.id, config, schema, webUiActions)"></div>
+                                                <div x-show="!loading && typeof generateConfigForm === 'function'" x-html="generateConfigForm(plugin.id, config, schema, webUiActions)"></div>
+                                                <div x-show="!loading && typeof generateConfigForm !== 'function'" class="text-gray-500">Loading configuration form...</div>
                                             </div>
                                         </div>
                                     </div>
