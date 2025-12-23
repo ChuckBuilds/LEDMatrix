@@ -790,8 +790,33 @@ class WiFiManager:
                     logger.warning(f"Status shows not connected to {ssid}, attempting reconnection...")
             
             # First, disable AP mode if active
-            self.disable_ap_mode()
-            time.sleep(2)
+            # This is critical - if AP mode is active, we must disable it before connecting
+            if self._is_ap_mode_active():
+                logger.info("AP mode is active, disabling before connecting to WiFi network...")
+                disable_success, disable_msg = self.disable_ap_mode()
+                if not disable_success:
+                    error_msg = f"Failed to disable AP mode: {disable_msg}. Cannot connect to WiFi while AP mode is active."
+                    logger.error(error_msg)
+                    return False, error_msg
+                
+                # Wait for NetworkManager to restart and stabilize (if it was restarted)
+                # NetworkManager restart can take 3-5 seconds, so wait a bit longer
+                logger.info("Waiting for NetworkManager to stabilize after AP mode disable...")
+                time.sleep(5)
+                
+                # Verify AP mode is actually disabled
+                max_verify_attempts = 5
+                for attempt in range(max_verify_attempts):
+                    if not self._is_ap_mode_active():
+                        logger.info("AP mode successfully disabled, proceeding with connection")
+                        break
+                    if attempt < max_verify_attempts - 1:
+                        logger.debug(f"AP mode still active, waiting... (attempt {attempt + 1}/{max_verify_attempts})")
+                        time.sleep(2)
+                    else:
+                        error_msg = "AP mode disable reported success but AP mode is still active. Cannot connect to WiFi."
+                        logger.error(error_msg)
+                        return False, error_msg
             
             # If we're currently connected to a different network, disconnect first
             # This ensures a clean switch between networks

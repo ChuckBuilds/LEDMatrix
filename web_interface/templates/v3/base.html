@@ -254,25 +254,39 @@
                     fetch('/v3/partials/plugins')
                         .then(r => r.text())
                         .then(html => {
-                            content.innerHTML = html;
-                            console.log('Plugins HTML loaded, executing scripts...');
+                            // Parse HTML into a temporary container to extract scripts
+                            const tempDiv = document.createElement('div');
+                            tempDiv.innerHTML = html;
+                            
+                            // Extract scripts BEFORE inserting into DOM (browser may remove them)
+                            const scripts = Array.from(tempDiv.querySelectorAll('script'));
+                            console.log('Found', scripts.length, 'scripts to execute');
+                            
+                            // Insert content WITHOUT scripts first
+                            const scriptsToExecute = [];
+                            scripts.forEach(script => {
+                                scriptsToExecute.push({
+                                    content: script.textContent || script.innerHTML,
+                                    src: script.src,
+                                    type: script.type
+                                });
+                                script.remove(); // Remove from temp div
+                            });
+                            
+                            // Now insert the HTML (without scripts)
+                            content.innerHTML = tempDiv.innerHTML;
+                            console.log('Plugins HTML loaded, executing', scriptsToExecute.length, 'scripts...');
                             
                             // Execute scripts manually - ensure they run properly
-                            try {
-                                const scripts = Array.from(content.querySelectorAll('script'));
-                                console.log('Found', scripts.length, 'scripts to execute');
-                                
-                                scripts.forEach((oldScript, index) => {
+                            if (scriptsToExecute.length > 0) {
+                                try {
+                                    scriptsToExecute.forEach((scriptData, index) => {
                                     try {
                                         // Skip if script has no content and no src
-                                        if (!oldScript.innerHTML.trim() && !oldScript.src) {
-                                            oldScript.remove();
+                                        const scriptContent = scriptData.content ? scriptData.content.trim() : '';
+                                        if (!scriptContent && !scriptData.src) {
                                             return;
                                         }
-                                        
-                                        // Get script content - use textContent for better reliability with large scripts
-                                        // innerHTML can sometimes have issues with special characters
-                                        const scriptContent = oldScript.textContent || oldScript.innerHTML.trim();
                                         
                                         // Log script info for debugging
                                         if (scriptContent) {
@@ -286,9 +300,9 @@
                                         }
                                         
                                         // Only execute if we have valid content
-                                        if (scriptContent || oldScript.src) {
+                                        if (scriptContent || scriptData.src) {
                                             // For inline scripts, use appendChild for reliable execution
-                                            if (scriptContent && !oldScript.src) {
+                                            if (scriptContent && !scriptData.src) {
                                                 // For very large scripts (>100KB), try fallback methods first
                                                 // as appendChild can sometimes have issues with large scripts
                                                 const isLargeScript = scriptContent.length > 100000;
@@ -335,8 +349,8 @@
                                                     // Create new script element and append to head/body
                                                     // This ensures proper execution context and window attachment
                                                     const newScript = document.createElement('script');
-                                                    if (oldScript.type) {
-                                                        newScript.type = oldScript.type;
+                                                    if (scriptData.type) {
+                                                        newScript.type = scriptData.type;
                                                     }
                                                     
                                                     // Wrap in a promise to wait for execution
@@ -520,38 +534,22 @@
                                                 } catch (appendError) {
                                                     console.error('Failed to execute script:', appendError);
                                                 }
-                                            } else if (oldScript.src) {
+                                            } else if (scriptData.src) {
                                                 // For external scripts, use appendChild
                                                 const newScript = document.createElement('script');
-                                                newScript.src = oldScript.src;
-                                                if (oldScript.type) {
-                                                    newScript.type = oldScript.type;
+                                                newScript.src = scriptData.src;
+                                                if (scriptData.type) {
+                                                    newScript.type = scriptData.type;
                                                 }
                                                 const target = document.head || document.body;
                                                 if (target) {
                                                     target.appendChild(newScript);
                                                 }
-                                                console.log('Loaded external script', index + 1, 'of', scripts.length);
+                                                console.log('Loaded external script', index + 1, 'of', scriptsToExecute.length);
                                             }
-                                            
-                                            // Remove old script after execution
-                                            setTimeout(() => {
-                                                try {
-                                                    oldScript.remove();
-                                                } catch (e) {
-                                                    // Ignore removal errors
-                                                }
-                                            }, 0);
-                                        } else {
-                                            oldScript.remove();
                                         }
                                     } catch (scriptError) {
                                         console.warn('Error executing script', index + 1, ':', scriptError);
-                                        try {
-                                            oldScript.remove();
-                                        } catch (removeErr) {
-                                            // Ignore removal errors
-                                        }
                                     }
                                 });
                                 
@@ -583,8 +581,11 @@
                                         }
                                     }
                                 }, 100);
-                            } catch (executionError) {
-                                console.error('Script execution error:', executionError);
+                                } catch (executionError) {
+                                    console.error('Script execution error:', executionError);
+                                }
+                            } else {
+                                console.log('No scripts found in loaded HTML');
                             }
                             
                         // Wait for scripts to execute, then load plugins
@@ -633,9 +634,16 @@
                                 console.log('Found pluginManager.loadInstalledPlugins, calling it...');
                                 window.pluginManager.loadInstalledPlugins();
                                 // Also try to load plugin store
-                                if (window.searchPluginStore && typeof window.searchPluginStore === 'function') {
-                                    setTimeout(() => window.searchPluginStore(true), 500);
-                                }
+                                setTimeout(() => {
+                                    const searchFn = window.searchPluginStore || 
+                                                     (window.pluginManager && window.pluginManager.searchPluginStore);
+                                    if (searchFn && typeof searchFn === 'function') {
+                                        console.log('Loading plugin store...');
+                                        searchFn(true);
+                                    } else {
+                                        console.warn('searchPluginStore not available');
+                                    }
+                                }, 500);
                             } else if (attempts >= maxAttempts) {
                                     console.log('loadInstalledPlugins not found after', maxAttempts, 'attempts, fetching and rendering directly...');
                                     clearInterval(checkInterval);
@@ -797,6 +805,25 @@
 
     <!-- Alpine.js app function - defined early so it's available when Alpine initializes -->
     <script>
+        // Helper function to get installed plugins with fallback
+        // Must be defined before app() function that uses it
+        async function getInstalledPluginsSafe() {
+            if (window.PluginAPI && window.PluginAPI.getInstalledPlugins) {
+                try {
+                    const plugins = await window.PluginAPI.getInstalledPlugins();
+                    // Ensure plugins is always an array
+                    const pluginsArray = Array.isArray(plugins) ? plugins : [];
+                    return { status: 'success', data: { plugins: pluginsArray } };
+                } catch (error) {
+                    console.error('Error using PluginAPI.getInstalledPlugins, falling back to direct fetch:', error);
+                    // Fall through to direct fetch
+                }
+            }
+            // Fallback to direct fetch if PluginAPI not loaded
+            const response = await fetch('/api/v3/plugins/installed');
+            return await response.json();
+        }
+
         // Define app() function early so Alpine can find it when it initializes
         // This is a complete implementation that will work immediately
         (function() {
@@ -878,13 +905,15 @@
                         this.installedPlugins.forEach(plugin => {
                             const tabButton = document.createElement('button');
                             tabButton.type = 'button';
-                            tabButton.className = `plugin-tab whitespace-nowrap py-2 px-1 lg:px-2 xl:px-3 border-b-2 font-medium text-sm ${this.activeTab === plugin.id ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'}`;
+                            tabButton.setAttribute('data-plugin-id', plugin.id);
+                            tabButton.className = `plugin-tab nav-tab ${this.activeTab === plugin.id ? 'nav-tab-active' : ''}`;
                             tabButton.onclick = () => {
                                 this.activeTab = plugin.id;
+                                this.updatePluginTabStates();
                             };
                             const div = document.createElement('div');
                             div.textContent = plugin.name || plugin.id;
-                            tabButton.innerHTML = `<i class="fas fa-puzzle-piece mr-2"></i>${div.innerHTML}`;
+                            tabButton.innerHTML = `<i class="fas fa-puzzle-piece"></i>${div.innerHTML}`;
                             pluginTabsNav.appendChild(tabButton);
                         });
                     },
@@ -1036,54 +1065,54 @@
             <div class="border-b border-gray-200 mb-4">
                 <nav class="-mb-px flex space-x-4 lg:space-x-6 xl:space-x-8 overflow-x-auto">
                     <button @click="activeTab = 'overview'"
-                            :class="activeTab === 'overview' ? 'border-blue-600 text-blue-600 font-semibold' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'"
-                            class="whitespace-nowrap py-2 px-1 lg:px-2 xl:px-3 border-b-2 font-medium text-sm transition-colors">
-                        <i class="fas fa-tachometer-alt mr-2"></i>Overview
+                            :class="activeTab === 'overview' ? 'nav-tab-active' : ''"
+                            class="nav-tab">
+                        <i class="fas fa-tachometer-alt"></i>Overview
                     </button>
                     <button @click="activeTab = 'general'"
-                            :class="activeTab === 'general' ? 'border-blue-600 text-blue-600 font-semibold' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'"
-                            class="whitespace-nowrap py-2 px-1 lg:px-2 xl:px-3 border-b-2 font-medium text-sm transition-colors">
-                        <i class="fas fa-sliders-h mr-2"></i>General
+                            :class="activeTab === 'general' ? 'nav-tab-active' : ''"
+                            class="nav-tab">
+                        <i class="fas fa-sliders-h"></i>General
                     </button>
                     <button @click="activeTab = 'wifi'"
-                            :class="activeTab === 'wifi' ? 'border-blue-600 text-blue-600 font-semibold' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'"
-                            class="whitespace-nowrap py-2 px-1 lg:px-2 xl:px-3 border-b-2 font-medium text-sm transition-colors">
-                        <i class="fas fa-wifi mr-2"></i>WiFi
+                            :class="activeTab === 'wifi' ? 'nav-tab-active' : ''"
+                            class="nav-tab">
+                        <i class="fas fa-wifi"></i>WiFi
                     </button>
                     <button @click="activeTab = 'schedule'"
-                            :class="activeTab === 'schedule' ? 'border-blue-600 text-blue-600 font-semibold' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'"
-                            class="whitespace-nowrap py-2 px-1 lg:px-2 xl:px-3 border-b-2 font-medium text-sm transition-colors">
-                        <i class="fas fa-clock mr-2"></i>Schedule
+                            :class="activeTab === 'schedule' ? 'nav-tab-active' : ''"
+                            class="nav-tab">
+                        <i class="fas fa-clock"></i>Schedule
                     </button>
                     <button @click="activeTab = 'display'"
-                            :class="activeTab === 'display' ? 'border-blue-600 text-blue-600 font-semibold' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'"
-                            class="whitespace-nowrap py-2 px-1 lg:px-2 xl:px-3 border-b-2 font-medium text-sm transition-colors">
-                        <i class="fas fa-desktop mr-2"></i>Display
+                            :class="activeTab === 'display' ? 'nav-tab-active' : ''"
+                            class="nav-tab">
+                        <i class="fas fa-desktop"></i>Display
                     </button>
                     <button @click="activeTab = 'config-editor'"
-                            :class="activeTab === 'config-editor' ? 'border-blue-600 text-blue-600 font-semibold' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'"
-                            class="whitespace-nowrap py-2 px-1 lg:px-2 xl:px-3 border-b-2 font-medium text-sm transition-colors">
-                        <i class="fas fa-file-code mr-2"></i>Config Editor
+                            :class="activeTab === 'config-editor' ? 'nav-tab-active' : ''"
+                            class="nav-tab">
+                        <i class="fas fa-file-code"></i>Config Editor
                     </button>
                     <button @click="activeTab = 'fonts'"
-                            :class="activeTab === 'fonts' ? 'border-blue-600 text-blue-600 font-semibold' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'"
-                            class="whitespace-nowrap py-2 px-1 lg:px-2 xl:px-3 border-b-2 font-medium text-sm transition-colors">
-                        <i class="fas fa-font mr-2"></i>Fonts
+                            :class="activeTab === 'fonts' ? 'nav-tab-active' : ''"
+                            class="nav-tab">
+                        <i class="fas fa-font"></i>Fonts
                     </button>
                     <button @click="activeTab = 'logs'"
-                            :class="activeTab === 'logs' ? 'border-blue-600 text-blue-600 font-semibold' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'"
-                            class="whitespace-nowrap py-2 px-1 lg:px-2 xl:px-3 border-b-2 font-medium text-sm transition-colors">
-                        <i class="fas fa-file-alt mr-2"></i>Logs
+                            :class="activeTab === 'logs' ? 'nav-tab-active' : ''"
+                            class="nav-tab">
+                        <i class="fas fa-file-alt"></i>Logs
                     </button>
                     <button @click="activeTab = 'cache'"
-                            :class="activeTab === 'cache' ? 'border-blue-600 text-blue-600 font-semibold' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'"
-                            class="whitespace-nowrap py-2 px-1 lg:px-2 xl:px-3 border-b-2 font-medium text-sm transition-colors">
-                        <i class="fas fa-database mr-2"></i>Cache
+                            :class="activeTab === 'cache' ? 'nav-tab-active' : ''"
+                            class="nav-tab">
+                        <i class="fas fa-database"></i>Cache
                     </button>
                     <button @click="activeTab = 'operation-history'"
-                            :class="activeTab === 'operation-history' ? 'border-blue-600 text-blue-600 font-semibold' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'"
-                            class="whitespace-nowrap py-2 px-1 lg:px-2 xl:px-3 border-b-2 font-medium text-sm transition-colors">
-                        <i class="fas fa-history mr-2"></i>Operation History
+                            :class="activeTab === 'operation-history' ? 'nav-tab-active' : ''"
+                            class="nav-tab">
+                        <i class="fas fa-history"></i>Operation History
                     </button>
                 </nav>
             </div>
@@ -1092,9 +1121,9 @@
             <div id="plugin-tabs-row" class="border-b border-gray-200">
                 <nav class="-mb-px flex space-x-4 lg:space-x-6 xl:space-x-8 overflow-x-auto">
                     <button @click="activeTab = 'plugins'; $nextTick(() => { if (typeof htmx !== 'undefined' && !document.getElementById('plugins-content').hasAttribute('data-loaded')) { htmx.trigger('#plugins-content', 'load'); } })"
-                            :class="activeTab === 'plugins' ? 'border-blue-600 text-blue-600 font-semibold' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'"
-                            class="whitespace-nowrap py-2 px-1 lg:px-2 xl:px-3 border-b-2 font-medium text-sm transition-colors">
-                        <i class="fas fa-plug mr-2"></i>Plugin Manager
+                            :class="activeTab === 'plugins' ? 'nav-tab-active' : ''"
+                            class="nav-tab">
+                        <i class="fas fa-plug"></i>Plugin Manager
                     </button>
                     <!-- Installed plugin tabs will be added here dynamically -->
                 </nav>
@@ -1351,341 +1380,59 @@
                 </div>
             </div>
 
-            <!-- Dynamic Plugin Tabs -->
+            <!-- Dynamic Plugin Tabs - HTMX Lazy Loading -->
+            <!-- 
+                Architecture: Server-side rendered plugin configuration forms
+                - Each plugin tab loads its config via HTMX when first viewed
+                - Forms are generated server-side using Jinja2 macros
+                - Reduces client-side complexity and improves performance
+                - Uses x-init to trigger HTMX after Alpine renders the element
+            -->
             <template x-for="plugin in installedPlugins" :key="plugin.id">
                 <div x-show="activeTab === plugin.id" x-transition>
-                    <div class="bg-white rounded-lg shadow p-6">
-                        <div class="border-b border-gray-200 pb-4 mb-6">
-                            <div class="flex items-center justify-between">
-                                <div>
-                                    <h2 class="text-lg font-semibold text-gray-900" x-text="plugin.name || plugin.id"></h2>
-                                    <p class="mt-1 text-sm text-gray-600" x-text="plugin.description || 'Plugin configuration'"></p>
+                    <!-- Only load content when tab is active (lazy loading) -->
+                    <template x-if="activeTab === plugin.id">
+                        <div class="bg-white rounded-lg shadow p-6 plugin-config-tab"
+                             :id="'plugin-config-' + plugin.id"
+                             x-init="$nextTick(() => { 
+                                 if (window.htmx && !$el.dataset.htmxLoaded) {
+                                     $el.dataset.htmxLoaded = 'true';
+                                     htmx.ajax('GET', '/v3/partials/plugin-config/' + plugin.id, {target: $el, swap: 'innerHTML'});
+                                 }
+                             })">
+                            <!-- Loading skeleton shown until HTMX loads server-rendered content -->
+                            <div class="animate-pulse space-y-6">
+                                <div class="border-b border-gray-200 pb-4">
+                                    <div class="flex items-center justify-between">
+                                        <div class="space-y-2">
+                                            <div class="h-6 bg-gray-200 rounded w-48"></div>
+                                            <div class="h-4 bg-gray-200 rounded w-96"></div>
+                                        </div>
+                                        <div class="h-6 bg-gray-200 rounded w-24"></div>
+                                    </div>
                                 </div>
-                                <div class="flex items-center space-x-4">
-                                    <label class="flex items-center">
-                                        <input type="checkbox"
-                                               x-bind:checked="plugin.enabled"
-                                               x-on:change="togglePluginFromTab(plugin.id, $event.target.checked)"
-                                               class="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded">
-                                        <span class="ml-2 text-sm" x-bind:class="plugin.enabled ? 'text-green-600' : 'text-gray-500'">
-                                            <span x-text="plugin.enabled ? 'Enabled' : 'Disabled'"></span>
-                                        </span>
-                                    </label>
+                                <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                    <div class="bg-gray-50 rounded-lg p-4 space-y-4">
+                                        <div class="h-5 bg-gray-200 rounded w-32"></div>
+                                        <div class="space-y-3">
+                                            <div class="h-4 bg-gray-200 rounded w-full"></div>
+                                            <div class="h-4 bg-gray-200 rounded w-3/4"></div>
+                                            <div class="h-4 bg-gray-200 rounded w-1/2"></div>
+                                        </div>
+                                    </div>
+                                    <div class="bg-gray-50 rounded-lg p-4 space-y-4">
+                                        <div class="h-5 bg-gray-200 rounded w-32"></div>
+                                        <div class="space-y-3">
+                                            <div class="h-4 bg-gray-200 rounded w-full"></div>
+                                            <div class="h-10 bg-gray-200 rounded w-full"></div>
+                                            <div class="h-4 bg-gray-200 rounded w-3/4"></div>
+                                            <div class="h-10 bg-gray-200 rounded w-full"></div>
+                                        </div>
+                                    </div>
                                 </div>
                             </div>
                         </div>
-
-                        <!-- Plugin Configuration Form -->
-                        <div>
-                            <div x-data="{
-                                    loading: true,
-                                    config: {},
-                                    schema: {},
-                                    webUiActions: [],
-                                    onDemandRefreshing: false,
-                                    onDemandStopping: false,
-                                    get onDemandStore() {
-                                        if (window.Alpine && typeof Alpine.store === 'function' && Alpine.store('onDemand')) {
-                                            return Alpine.store('onDemand');
-                                        }
-                                        return window.__onDemandStore || { loading: true, state: {}, service: {}, error: null, lastUpdated: null };
-                                    },
-                                    get isOnDemandLoading() {
-                                        const store = this.onDemandStore || {};
-                                        return !!store.loading;
-                                    },
-                                    get onDemandState() {
-                                        const store = this.onDemandStore || {};
-                                        return store.state || {};
-                                    },
-                                    get onDemandService() {
-                                        const store = this.onDemandStore || {};
-                                        return store.service || {};
-                                    },
-                                    get onDemandError() {
-                                        const store = this.onDemandStore || {};
-                                        return store.error || null;
-                                    },
-                                    get onDemandActive() {
-                                        const state = this.onDemandState;
-                                        return !!(state.active && state.plugin_id === plugin.id);
-                                    },
-                                    resolvePluginName() {
-                                        return plugin.name || plugin.id;
-                                    },
-                                    resolvePluginDisplayName(id) {
-                                        if (!id) {
-                                            return 'Another plugin';
-                                        }
-                                        const list = window.installedPlugins || [];
-                                        const match = Array.isArray(list) ? list.find(p => p.id === id) : null;
-                                        return match ? (match.name || match.id) : id;
-                                    },
-                                    formatDuration(value) {
-                                        if (value === undefined || value === null) {
-                                            return '';
-                                        }
-                                        const total = Number(value);
-                                        if (Number.isNaN(total)) {
-                                            return '';
-                                        }
-                                        const seconds = Math.max(0, Math.round(total));
-                                        const minutes = Math.floor(seconds / 60);
-                                        const remainingSeconds = seconds % 60;
-                                        if (minutes > 0) {
-                                            return `${minutes}m${remainingSeconds > 0 ? ` ${remainingSeconds}s` : ''}`;
-                                        }
-                                        return `${remainingSeconds}s`;
-                                    },
-                                    get onDemandStatusText() {
-                                        if (this.isOnDemandLoading) {
-                                            return 'Loading on-demand status...';
-                                        }
-                                        if (this.onDemandError) {
-                                            return `On-demand error: ${this.onDemandError}`;
-                                        }
-                                        const state = this.onDemandState;
-                                        if (state.active) {
-                                            const activeName = this.resolvePluginDisplayName(state.plugin_id);
-                                            if (state.plugin_id !== plugin.id) {
-                                                return `${activeName} is running on-demand.`;
-                                            }
-                                            const modeLabel = state.mode ? ` (${state.mode})` : '';
-                                            const remaining = this.formatDuration(state.remaining);
-                                            const duration = this.formatDuration(state.duration);
-                                            let message = `${this.resolvePluginName()}${modeLabel} is running on-demand`;
-                                            if (remaining) {
-                                                message += ` — ${remaining} remaining`;
-                                            } else if (duration) {
-                                                message += ` — duration ${duration}`;
-                                            } else {
-                                                message += ' — until stopped';
-                                            }
-                                            return message;
-                                        }
-                                        const lastEvent = state.last_event ? state.last_event.replace(/-/g, ' ') : null;
-                                        if (lastEvent && lastEvent !== 'cleared') {
-                                            return `No on-demand session active (last event: ${lastEvent})`;
-                                        }
-                                        return 'No on-demand session active.';
-                                    },
-                                    get onDemandStatusClass() {
-                                        if (this.isOnDemandLoading) return 'text-blue-600';
-                                        if (this.onDemandError) return 'text-red-600';
-                                        if (this.onDemandActive) return 'text-green-600';
-                                        return 'text-blue-600';
-                                    },
-                                    get onDemandServiceText() {
-                                        if (this.isOnDemandLoading) {
-                                            return 'Checking display service status...';
-                                        }
-                                        if (this.onDemandError) {
-                                            return 'Display service status unavailable.';
-                                        }
-                                        if (this.onDemandService.active) {
-                                            return 'Display service is running.';
-                                        }
-                                        const serviceError = this.onDemandService.stderr || this.onDemandService.error;
-                                        return serviceError ? `Display service inactive (${serviceError})` : 'Display service is not running.';
-                                    },
-                                    get onDemandServiceClass() {
-                                        if (this.isOnDemandLoading) return 'text-blue-500';
-                                        if (this.onDemandError) return 'text-red-500';
-                                        return this.onDemandService.active ? 'text-blue-500' : 'text-red-500';
-                                    },
-                                    get onDemandLastUpdated() {
-                                        const store = this.onDemandStore || {};
-                                        if (!store.lastUpdated) {
-                                            return '';
-                                        }
-                                        const deltaSeconds = Math.round((Date.now() - store.lastUpdated) / 1000);
-                                        if (deltaSeconds < 5) return 'Just now';
-                                        if (deltaSeconds < 60) return `${deltaSeconds}s ago`;
-                                        const minutes = Math.round(deltaSeconds / 60);
-                                        if (minutes < 60) return `${minutes}m ago`;
-                                        const hours = Math.round(minutes / 60);
-                                        return `${hours}h ago`;
-                                    },
-                                    get canStopOnDemand() {
-                                        if (this.isOnDemandLoading) return false;
-                                        if (this.onDemandError) return true;
-                                        return this.onDemandActive;
-                                    },
-                                    get disableRunButton() {
-                                        return !plugin.enabled;
-                                    },
-                                    get showEnableHint() {
-                                        return !plugin.enabled;
-                                    },
-                                    notify(message, type = 'info') {
-                                        if (typeof showNotification === 'function') {
-                                            showNotification(message, type);
-                                        }
-                                    },
-                                    refreshOnDemandStatus() {
-                                        if (typeof window.loadOnDemandStatus !== 'function') {
-                                            this.notify('On-demand status controls unavailable. Refresh the Plugin Manager tab.', 'error');
-                                            return;
-                                        }
-                                        this.onDemandRefreshing = true;
-                                        Promise.resolve(window.loadOnDemandStatus(true))
-                                            .finally(() => {
-                                                this.onDemandRefreshing = false;
-                                            });
-                                    },
-                                    runOnDemand() {
-                                        if (!plugin.enabled) {
-                                            this.notify('Enable the plugin before running it on-demand.', 'warning');
-                                            return;
-                                        }
-                                        if (typeof window.openOnDemandModal === 'function') {
-                                            window.openOnDemandModal(plugin.id);
-                                        } else {
-                                            this.notify('On-demand modal unavailable. Refresh the Plugin Manager tab.', 'error');
-                                        }
-                                    },
-                                    stopOnDemandWithEvent(stopService = false) {
-                                        if (typeof window.requestOnDemandStop !== 'function') {
-                                            this.notify('Unable to stop on-demand mode. Refresh the Plugin Manager tab.', 'error');
-                                            return;
-                                        }
-                                        this.onDemandStopping = true;
-                                        Promise.resolve(window.requestOnDemandStop({ stopService }))
-                                            .finally(() => {
-                                                this.onDemandStopping = false;
-                                            });
-                                    }
-                                }" x-init="if (typeof loadPluginConfig === 'function') { $nextTick(() => loadPluginConfig(plugin.id)); }">
-                                <form x-on:submit.prevent="savePluginConfig(plugin.id, $event)">
-                                    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-                                        <!-- Plugin Info -->
-                                        <div class="bg-gray-50 rounded-lg p-4">
-                                            <h3 class="text-md font-medium text-gray-900 mb-3">Plugin Information</h3>
-                                            <dl class="space-y-2">
-                                                <div>
-                                                    <dt class="text-sm font-medium text-gray-500">Name</dt>
-                                                    <dd class="text-sm text-gray-900" x-text="plugin.name || plugin.id"></dd>
-                                                </div>
-                                                <div>
-                                                    <dt class="text-sm font-medium text-gray-500">Author</dt>
-                                                    <dd class="text-sm text-gray-900" x-text="plugin.author || 'Unknown'"></dd>
-                                                </div>
-                                                <div>
-                                                    <dt class="text-sm font-medium text-gray-500">Commit</dt>
-                                                    <dd class="text-sm text-gray-900" x-text="formatCommitInfo(plugin.last_commit, plugin.branch)"></dd>
-                                                </div>
-                                                <div>
-                                                    <dt class="text-sm font-medium text-gray-500">Date</dt>
-                                                    <dd class="text-sm text-gray-900" x-text="formatDateInfo(plugin.last_updated)"></dd>
-                                                </div>
-                                                <div>
-                                                    <dt class="text-sm font-medium text-gray-500">Category</dt>
-                                                    <dd class="text-sm text-gray-900" x-text="plugin.category || 'General'"></dd>
-                                                </div>
-                                                <div x-show="plugin.tags && plugin.tags.length > 0">
-                                                    <dt class="text-sm font-medium text-gray-500">Tags</dt>
-                                                    <dd class="flex flex-wrap gap-1 mt-1">
-                                                        <template x-for="tag in plugin.tags" :key="tag">
-                                                            <span class="bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded" x-text="tag"></span>
-                                                        </template>
-                                                    </dd>
-                                                </div>
-                                            </dl>
-                                            <div class="mt-4 pt-4 border-t border-gray-200 space-y-3">
-                                                <div class="flex items-center justify-between">
-                                                    <div class="flex items-center gap-2">
-                                                        <i class="fas fa-bolt text-blue-500"></i>
-                                                        <span class="text-sm font-semibold text-gray-900">On-Demand Controls</span>
-                                                    </div>
-                                                    <div class="flex items-center gap-2">
-                                                        <span x-show="!isOnDemandLoading && onDemandLastUpdated" class="text-xs text-gray-500" x-text="onDemandLastUpdated ? ('Updated ' + onDemandLastUpdated) : ''"></span>
-                                                        <button type="button"
-                                                                class="px-3 py-1.5 text-xs bg-blue-600 hover:bg-blue-700 text-white rounded-md flex items-center gap-1 transition-colors"
-                                                                :class="{'opacity-60 cursor-not-allowed': onDemandRefreshing}"
-                                                                :disabled="onDemandRefreshing"
-                                                                x-on:click="refreshOnDemandStatus">
-                                                            <i class="fas fa-sync" :class="onDemandRefreshing ? 'fa-spin' : ''"></i>
-                                                            <span>Refresh</span>
-                                                        </button>
-                                                    </div>
-                                                </div>
-                                                <p class="text-sm leading-relaxed" :class="onDemandStatusClass" x-text="onDemandStatusText"></p>
-                                                <p class="text-xs" :class="onDemandServiceClass" x-text="onDemandServiceText"></p>
-                                                <div class="flex flex-wrap gap-2">
-                                                    <button type="button"
-                                                            class="px-3 py-2 text-sm bg-green-600 hover:bg-green-700 text-white rounded-md flex items-center gap-2 transition-colors"
-                                                            :class="{'opacity-60 cursor-not-allowed': disableRunButton || onDemandStopping || onDemandRefreshing}"
-                                                            :disabled="disableRunButton || onDemandStopping || onDemandRefreshing"
-                                                            x-on:click="runOnDemand">
-                                                        <i class="fas fa-play-circle"></i>
-                                                        <span>Run On-Demand</span>
-                                                    </button>
-                                                    <button type="button"
-                                                            class="px-3 py-2 text-sm bg-red-600 hover:bg-red-700 text-white rounded-md flex items-center gap-2 transition-colors"
-                                                            :class="{'opacity-60 cursor-not-allowed': !canStopOnDemand || onDemandStopping}"
-                                                            :disabled="!canStopOnDemand || onDemandStopping"
-                                                            x-on:click="stopOnDemandWithEvent($event.shiftKey)">
-                                                        <i class="fas fa-stop"></i>
-                                                        <span>Stop On-Demand</span>
-                                                    </button>
-                                                </div>
-                                                <p class="text-xs text-amber-600" x-show="showEnableHint">
-                                                    Enable this plugin before launching on-demand.
-                                                </p>
-                                                <p class="text-xs text-gray-400">
-                                                    Hold Shift while stopping to also stop the display service.
-                                                </p>
-                                            </div>
-                                        </div>
-
-                                        <!-- Configuration Schema -->
-                                        <div class="bg-gray-50 rounded-lg p-4">
-                                            <h3 class="text-md font-medium text-gray-900 mb-3">Configuration</h3>
-                                            <div class="space-y-4">
-                                                <!-- Loading state -->
-                                                <div x-show="loading" class="animate-pulse space-y-3">
-                                                    <div class="h-4 bg-gray-200 rounded w-3/4"></div>
-                                                    <div class="h-10 bg-gray-200 rounded"></div>
-                                                    <div class="h-4 bg-gray-200 rounded w-1/2"></div>
-                                                    <div class="h-10 bg-gray-200 rounded"></div>
-                                                </div>
-
-                                                <!-- Configuration fields loaded dynamically -->
-                                                <div x-show="!loading && typeof generateConfigForm === 'function'" x-html="generateConfigForm(plugin.id, config, schema, webUiActions)"></div>
-                                            </div>
-                                        </div>
-                                    </div>
-
-                                <!-- Action Buttons -->
-                                <div class="flex justify-end space-x-3 mt-6 pt-6 border-t border-gray-200">
-                                    <button type="button"
-                                            x-on:click="refreshPlugins()"
-                                            class="btn bg-gray-600 hover:bg-gray-700 text-white px-4 py-2">
-                                        <i class="fas fa-sync-alt mr-2"></i>Refresh All
-                                    </button>
-                                    <button type="button"
-                                            x-on:click="refreshPlugin(plugin.id)"
-                                            class="btn bg-gray-600 hover:bg-gray-700 text-white px-4 py-2">
-                                        <i class="fas fa-sync-alt mr-2"></i>Refresh
-                                    </button>
-                                    <button type="button"
-                                            x-on:click="updatePlugin(plugin.id)"
-                                            class="btn bg-yellow-600 hover:bg-yellow-700 text-white px-4 py-2">
-                                        <i class="fas fa-download mr-2"></i>Update
-                                    </button>
-                                    <button type="button"
-                                            x-on:click="uninstallPlugin(plugin.id)"
-                                            x-on:click.prevent="if(!confirm('Are you sure you want to uninstall ${plugin.name || plugin.id}?')) return false"
-                                            class="btn bg-red-600 hover:bg-red-700 text-white px-4 py-2">
-                                        <i class="fas fa-trash mr-2"></i>Uninstall
-                                    </button>
-                                    <button type="submit" class="btn bg-blue-600 hover:bg-blue-700 text-white px-4 py-2">
-                                        <i class="fas fa-save mr-2"></i>Save Configuration
-                                    </button>
-                                </div>
-                            </form>
-                        </div>
-                    </div>
+                    </template>
                 </div>
             </template>
         </div>
@@ -1781,6 +1528,7 @@
         };
 
         document.addEventListener('alpine:init', () => {
+            // On-Demand state store
             if (window.Alpine && !window.Alpine.store('onDemand')) {
                 window.Alpine.store('onDemand', {
                     loading: window.__onDemandStore.loading,
@@ -1793,7 +1541,251 @@
             if (window.Alpine) {
                 window.__onDemandStore = window.Alpine.store('onDemand');
             }
+            
+            // Plugin state store - centralized state management for plugins
+            // Used primarily by HTMX-loaded plugin config partials
+            if (window.Alpine && !window.Alpine.store('plugins')) {
+                window.Alpine.store('plugins', {
+                    // Track which plugin configs have been loaded
+                    loadedConfigs: {},
+                    
+                    // Mark a plugin config as loaded
+                    markLoaded(pluginId) {
+                        this.loadedConfigs[pluginId] = true;
+                    },
+                    
+                    // Check if a plugin config is loaded
+                    isLoaded(pluginId) {
+                        return !!this.loadedConfigs[pluginId];
+                    },
+                    
+                    // Refresh a plugin config tab via HTMX
+                    refreshConfig(pluginId) {
+                        const container = document.querySelector(`#plugin-config-${pluginId}`);
+                        if (container && window.htmx) {
+                            htmx.ajax('GET', `/v3/partials/plugin-config/${pluginId}`, {
+                                target: container,
+                                swap: 'innerHTML'
+                            });
+                        }
+                    }
+                });
+            }
         });
+
+        // ===== DEPRECATED: pluginConfigData =====
+        // This function is no longer used - plugin configuration forms are now
+        // rendered server-side and loaded via HTMX. Kept for backwards compatibility.
+        // See: /v3/partials/plugin-config/<plugin_id> for the new implementation.
+        function pluginConfigData(plugin) {
+            if (!plugin) {
+                console.error('pluginConfigData called with undefined plugin');
+                return {
+                    plugin: { id: 'unknown', name: 'Unknown Plugin', enabled: false },
+                    loading: false,
+                    config: {},
+                    schema: {},
+                    webUiActions: [],
+                    onDemandRefreshing: false,
+                    onDemandStopping: false
+                };
+            }
+            return {
+                plugin: plugin,
+                loading: true,
+                config: {},
+                schema: {},
+                webUiActions: [],
+                onDemandRefreshing: false,
+                onDemandStopping: false,
+                get onDemandStore() {
+                    if (window.Alpine && typeof Alpine.store === 'function' && Alpine.store('onDemand')) {
+                        return Alpine.store('onDemand');
+                    }
+                    return window.__onDemandStore || { loading: true, state: {}, service: {}, error: null, lastUpdated: null };
+                },
+                get isOnDemandLoading() {
+                    const store = this.onDemandStore || {};
+                    return !!store.loading;
+                },
+                get onDemandState() {
+                    const store = this.onDemandStore || {};
+                    return store.state || {};
+                },
+                get onDemandService() {
+                    const store = this.onDemandStore || {};
+                    return store.service || {};
+                },
+                get onDemandError() {
+                    const store = this.onDemandStore || {};
+                    return store.error || null;
+                },
+                get onDemandActive() {
+                    const state = this.onDemandState;
+                    return !!(state.active && state.plugin_id === plugin.id);
+                },
+                resolvePluginName() {
+                    return plugin.name || plugin.id;
+                },
+                resolvePluginDisplayName(id) {
+                    if (!id) {
+                        return 'Another plugin';
+                    }
+                    const list = window.installedPlugins || [];
+                    const match = Array.isArray(list) ? list.find(p => p.id === id) : null;
+                    return match ? (match.name || match.id) : id;
+                },
+                formatDuration(value) {
+                    if (value === undefined || value === null) {
+                        return '';
+                    }
+                    const total = Number(value);
+                    if (Number.isNaN(total)) {
+                        return '';
+                    }
+                    const seconds = Math.max(0, Math.round(total));
+                    const minutes = Math.floor(seconds / 60);
+                    const remainingSeconds = seconds % 60;
+                    if (minutes > 0) {
+                        return `${minutes}m${remainingSeconds > 0 ? ` ${remainingSeconds}s` : ''}`;
+                    }
+                    return `${remainingSeconds}s`;
+                },
+                get onDemandStatusText() {
+                    if (this.isOnDemandLoading) {
+                        return 'Loading on-demand status...';
+                    }
+                    if (this.onDemandError) {
+                        return `On-demand error: ${this.onDemandError}`;
+                    }
+                    const state = this.onDemandState;
+                    if (state.active) {
+                        const activeName = this.resolvePluginDisplayName(state.plugin_id);
+                        if (state.plugin_id !== plugin.id) {
+                            return `${activeName} is running on-demand.`;
+                        }
+                        const modeLabel = state.mode ? ` (${state.mode})` : '';
+                        const remaining = this.formatDuration(state.remaining);
+                        const duration = this.formatDuration(state.duration);
+                        let message = `${this.resolvePluginName()}${modeLabel} is running on-demand`;
+                        if (remaining) {
+                            message += ` — ${remaining} remaining`;
+                        } else if (duration) {
+                            message += ` — duration ${duration}`;
+                        } else {
+                            message += ' — until stopped';
+                        }
+                        return message;
+                    }
+                    const lastEvent = state.last_event ? state.last_event.replace(/-/g, ' ') : null;
+                    if (lastEvent && lastEvent !== 'cleared') {
+                        return `No on-demand session active (last event: ${lastEvent})`;
+                    }
+                    return 'No on-demand session active.';
+                },
+                get onDemandStatusClass() {
+                    if (this.isOnDemandLoading) return 'text-blue-600';
+                    if (this.onDemandError) return 'text-red-600';
+                    if (this.onDemandActive) return 'text-green-600';
+                    return 'text-blue-600';
+                },
+                get onDemandServiceText() {
+                    if (this.isOnDemandLoading) {
+                        return 'Checking display service status...';
+                    }
+                    if (this.onDemandError) {
+                        return 'Display service status unavailable.';
+                    }
+                    if (this.onDemandService.active) {
+                        return 'Display service is running.';
+                    }
+                    const serviceError = this.onDemandService.stderr || this.onDemandService.error;
+                    return serviceError ? `Display service inactive (${serviceError})` : 'Display service is not running.';
+                },
+                get onDemandServiceClass() {
+                    if (this.isOnDemandLoading) return 'text-blue-500';
+                    if (this.onDemandError) return 'text-red-500';
+                    return this.onDemandService.active ? 'text-blue-500' : 'text-red-500';
+                },
+                get onDemandLastUpdated() {
+                    const store = this.onDemandStore || {};
+                    if (!store.lastUpdated) {
+                        return '';
+                    }
+                    const deltaSeconds = Math.round((Date.now() - store.lastUpdated) / 1000);
+                    if (deltaSeconds < 5) return 'Just now';
+                    if (deltaSeconds < 60) return `${deltaSeconds}s ago`;
+                    const minutes = Math.round(deltaSeconds / 60);
+                    if (minutes < 60) return `${minutes}m ago`;
+                    const hours = Math.round(minutes / 60);
+                    return `${hours}h ago`;
+                },
+                get canStopOnDemand() {
+                    if (this.isOnDemandLoading) return false;
+                    if (this.onDemandError) return true;
+                    return this.onDemandActive;
+                },
+                get disableRunButton() {
+                    return !plugin.enabled;
+                },
+                get showEnableHint() {
+                    return !plugin.enabled;
+                },
+                notify(message, type = 'info') {
+                    if (typeof showNotification === 'function') {
+                        showNotification(message, type);
+                    }
+                },
+                refreshOnDemandStatus() {
+                    if (typeof window.loadOnDemandStatus !== 'function') {
+                        this.notify('On-demand status controls unavailable. Refresh the Plugin Manager tab.', 'error');
+                        return;
+                    }
+                    this.onDemandRefreshing = true;
+                    Promise.resolve(window.loadOnDemandStatus(true))
+                        .finally(() => {
+                            this.onDemandRefreshing = false;
+                        });
+                },
+                runOnDemand() {
+                    if (!plugin.enabled) {
+                        this.notify('Enable the plugin before running it on-demand.', 'warning');
+                        return;
+                    }
+                    if (typeof window.openOnDemandModal === 'function') {
+                        window.openOnDemandModal(plugin.id);
+                    } else {
+                        this.notify('On-demand modal unavailable. Refresh the Plugin Manager tab.', 'error');
+                    }
+                },
+                stopOnDemandWithEvent(stopService = false) {
+                    if (typeof window.requestOnDemandStop !== 'function') {
+                        this.notify('Unable to stop on-demand mode. Refresh the Plugin Manager tab.', 'error');
+                        return;
+                    }
+                    this.onDemandStopping = true;
+                    Promise.resolve(window.requestOnDemandStop({ stopService }))
+                        .finally(() => {
+                            this.onDemandStopping = false;
+                        });
+                },
+                async loadPluginConfig(pluginId) {
+                    // Use PluginConfigHelpers to load config directly into this component
+                    if (window.PluginConfigHelpers) {
+                        await window.PluginConfigHelpers.loadPluginConfig(pluginId, this);
+                        this.loading = false;
+                        return;
+                    }
+                    console.error('loadPluginConfig not available');
+                    this.loading = false;
+                }
+                // Note: generateConfigForm and savePluginConfig are now called via window.PluginConfigHelpers 
+                // to avoid delegation recursion and ensure proper access to app component.
+                // See template usage:
+                // x-html="window.PluginConfigHelpers.generateConfigForm(...)" and 
+                // x-on:submit.prevent="window.PluginConfigHelpers.savePluginConfig(...)"
+            };
+        }
 
         // Alpine.js app function - full implementation
         function app() {
@@ -1840,6 +1832,8 @@
                     
                     // Ensure content loads for the active tab
                     this.$watch('activeTab', (newTab, oldTab) => {
+                        // Update plugin tab states when activeTab changes
+                        this.updatePluginTabStates();
                         // Trigger content load when tab changes
                         this.$nextTick(() => {
                             this.loadTabContent(newTab);
@@ -2019,12 +2013,14 @@
                     pluginsToShow.forEach(plugin => {
                         const tabButton = document.createElement('button');
                         tabButton.type = 'button';
-                        tabButton.className = `plugin-tab whitespace-nowrap py-2 px-1 lg:px-2 xl:px-3 border-b-2 font-medium text-sm ${this.activeTab === plugin.id ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'}`;
+                        tabButton.setAttribute('data-plugin-id', plugin.id);
+                        tabButton.className = `plugin-tab nav-tab ${this.activeTab === plugin.id ? 'nav-tab-active' : ''}`;
                         tabButton.onclick = () => {
                             this.activeTab = plugin.id;
+                            this.updatePluginTabStates();
                         };
                         tabButton.innerHTML = `
-                            <i class="fas fa-puzzle-piece mr-2"></i>${this.escapeHtml(plugin.name || plugin.id)}
+                            <i class="fas fa-puzzle-piece"></i>${this.escapeHtml(plugin.name || plugin.id)}
                         `;
 
                         // Insert before the closing </nav> tag
@@ -2035,6 +2031,21 @@
                     console.log('Plugin tabs update completed');
                 },
 
+                updatePluginTabStates() {
+                    // Update active state of all plugin tabs when activeTab changes
+                    const pluginTabsNav = document.getElementById('plugin-tabs-row')?.querySelector('nav');
+                    if (!pluginTabsNav) return;
+                    
+                    const pluginTabs = pluginTabsNav.querySelectorAll('.plugin-tab');
+                    pluginTabs.forEach(tab => {
+                        const pluginId = tab.getAttribute('data-plugin-id');
+                        if (pluginId && this.activeTab === pluginId) {
+                            tab.classList.add('nav-tab-active');
+                        } else {
+                            tab.classList.remove('nav-tab-active');
+                        }
+                    });
+                },
 
                 showNotification(message, type = 'info') {
                     const notifications = document.getElementById('notifications');
@@ -2082,34 +2093,55 @@
                         
                         if (window.PluginAPI && window.PluginAPI.batch) {
                             // PluginAPI.batch returns already-parsed JSON objects
-                            const results = await window.PluginAPI.batch([
-                                {endpoint: `/plugins/config?plugin_id=${pluginId}`, method: 'GET'},
-                                {endpoint: `/plugins/schema?plugin_id=${pluginId}`, method: 'GET'},
-                                {endpoint: '/plugins/installed', method: 'GET'}
-                            ]);
-                            [configData, schemaData, pluginsData] = results;
+                            try {
+                                const results = await window.PluginAPI.batch([
+                                    {endpoint: `/plugins/config?plugin_id=${pluginId}`, method: 'GET'},
+                                    {endpoint: `/plugins/schema?plugin_id=${pluginId}`, method: 'GET'},
+                                    {endpoint: '/plugins/installed', method: 'GET'}
+                                ]);
+                                [configData, schemaData, pluginsData] = results;
+                            } catch (batchError) {
+                                console.error('Batch API request failed, falling back to individual requests:', batchError);
+                                // Fall back to individual requests
+                                const [configResponse, schemaResponse, pluginsResponse] = await Promise.all([
+                                    fetch(`/api/v3/plugins/config?plugin_id=${pluginId}`).then(r => r.json()).catch(e => ({ status: 'error', message: e.message })),
+                                    fetch(`/api/v3/plugins/schema?plugin_id=${pluginId}`).then(r => r.json()).catch(e => ({ status: 'error', message: e.message })),
+                                    fetch(`/api/v3/plugins/installed`).then(r => r.json()).catch(e => ({ status: 'error', message: e.message }))
+                                ]);
+                                configData = configResponse;
+                                schemaData = schemaResponse;
+                                pluginsData = pluginsResponse;
+                            }
                         } else {
                             // Direct fetch returns Response objects that need parsing
                             const [configResponse, schemaResponse, pluginsResponse] = await Promise.all([
-                                fetch(`/api/v3/plugins/config?plugin_id=${pluginId}`).then(r => r.json()),
-                                fetch(`/api/v3/plugins/schema?plugin_id=${pluginId}`).then(r => r.json()),
-                                fetch(`/api/v3/plugins/installed`).then(r => r.json())
+                                fetch(`/api/v3/plugins/config?plugin_id=${pluginId}`).then(r => r.json()).catch(e => ({ status: 'error', message: e.message })),
+                                fetch(`/api/v3/plugins/schema?plugin_id=${pluginId}`).then(r => r.json()).catch(e => ({ status: 'error', message: e.message })),
+                                fetch(`/api/v3/plugins/installed`).then(r => r.json()).catch(e => ({ status: 'error', message: e.message }))
                             ]);
                             configData = configResponse;
                             schemaData = schemaResponse;
                             pluginsData = pluginsResponse;
                         }
 
-                        if (configData.status === 'success') {
+                        if (configData && configData.status === 'success') {
                             this.config = configData.data;
+                        } else {
+                            console.warn('Config API returned non-success status:', configData);
+                            // Set defaults if config failed to load
+                            this.config = { enabled: true, display_duration: 30 };
                         }
 
-                        if (schemaData.status === 'success') {
+                        if (schemaData && schemaData.status === 'success') {
                             this.schema = schemaData.data.schema || {};
+                        } else {
+                            console.warn('Schema API returned non-success status:', schemaData);
+                            // Set empty schema as fallback
+                            this.schema = {};
                         }
 
                         // Extract web_ui_actions from installed plugins and update plugin data
-                        if (pluginsData.status === 'success' && pluginsData.data && pluginsData.data.plugins) {
+                        if (pluginsData && pluginsData.status === 'success' && pluginsData.data && pluginsData.data.plugins) {
                             // Update window.installedPlugins with fresh data (includes commit info)
                             // The setter will check if data actually changed before updating tabs
                             window.installedPlugins = pluginsData.data.plugins;
@@ -2125,6 +2157,7 @@
                                 last_updated: pluginInfo.last_updated
                             } : 'plugin not found');
                         } else {
+                            console.warn('Plugins API returned non-success status:', pluginsData);
                             this.webUiActions = [];
                         }
 
@@ -2207,9 +2240,13 @@
                             
                             nestedPropertyEntries.forEach(([nestedKey, nestedProp]) => {
                                 // Use config value if it exists and is not null (including false), otherwise use schema default
-                                // Check if key exists in config and value is not null
-                                const hasValue = nestedKey in nestedConfig && nestedConfig[nestedKey] !== null;
-                                const nestedValue = hasValue ? nestedConfig[nestedKey] : (nestedProp.default !== undefined ? nestedProp.default : false);
+                                // Check if key exists in config and value is not null/undefined
+                                const hasValue = nestedKey in nestedConfig && nestedConfig[nestedKey] !== null && nestedConfig[nestedKey] !== undefined;
+                                // For nested objects, if the value is an empty object, still use it (don't fall back to default)
+                                const isNestedObject = nestedProp.type === 'object' && nestedProp.properties;
+                                const nestedValue = hasValue ? nestedConfig[nestedKey] : 
+                                    (nestedProp.default !== undefined ? nestedProp.default : 
+                                     (isNestedObject ? {} : (nestedProp.type === 'array' ? [] : (nestedProp.type === 'boolean' ? false : ''))));
                                 html += generateFieldHtml(nestedKey, nestedProp, nestedValue, fullKey);
                             });
                             
@@ -2470,10 +2507,14 @@
                     propertyEntries.forEach(([key, prop]) => {
                         // Skip the 'enabled' property - it's managed separately via the header toggle
                         if (key === 'enabled') return;
-                        // Use config value if key exists and is not null (including false), otherwise use schema default
-                        // Check if key exists in config and value is not null
-                        const hasValue = key in config && config[key] !== null;
-                        const value = hasValue ? config[key] : (prop.default !== undefined ? prop.default : false);
+                        // Use config value if key exists and is not null/undefined, otherwise use schema default
+                        // Check if key exists in config and value is not null/undefined
+                        const hasValue = key in config && config[key] !== null && config[key] !== undefined;
+                        // For nested objects, if the value is an empty object, still use it (don't fall back to default)
+                        const isNestedObject = prop.type === 'object' && prop.properties;
+                        const value = hasValue ? config[key] : 
+                            (prop.default !== undefined ? prop.default : 
+                             (isNestedObject ? {} : (prop.type === 'array' ? [] : (prop.type === 'boolean' ? false : ''))));
                         formHtml += generateFieldHtml(key, prop, value);
                     });
 
@@ -2708,7 +2749,20 @@
                                 // Check if this is a file upload widget (JSON array in hidden input)
                                 if (propSchema && propSchema['x-widget'] === 'file-upload') {
                                     try {
-                                        const jsonValue = JSON.parse(value);
+                                        // Unescape HTML entities that were escaped when setting the value
+                                        let unescapedValue = value;
+                                        if (typeof value === 'string') {
+                                            // Reverse the HTML escaping: &quot; -> ", &#39; -> ', &amp; -> &
+                                            unescapedValue = value
+                                                .replace(/&quot;/g, '"')
+                                                .replace(/&#39;/g, "'")
+                                                .replace(/&amp;/g, '&')
+                                                .replace(/&lt;/g, '<')
+                                                .replace(/&gt;/g, '>');
+                                        }
+                                        
+                                        // Try to parse as JSON
+                                        const jsonValue = JSON.parse(unescapedValue);
                                         if (Array.isArray(jsonValue)) {
                                             flatConfig[key] = jsonValue;
                                             console.log(`File upload array field ${key}: parsed JSON array with ${jsonValue.length} items`);
@@ -2717,10 +2771,26 @@
                                             flatConfig[key] = [];
                                         }
                                     } catch (e) {
+                                        console.warn(`Failed to parse JSON for file upload field ${key}:`, e, 'Value:', value);
                                         // Not valid JSON, use empty array or try comma-separated
                                         if (value && value.trim()) {
-                                            const arrayValue = value.split(',').map(v => v.trim()).filter(v => v);
-                                            flatConfig[key] = arrayValue;
+                                            // Try to unescape and parse again
+                                            try {
+                                                const unescaped = value
+                                                    .replace(/&quot;/g, '"')
+                                                    .replace(/&#39;/g, "'")
+                                                    .replace(/&amp;/g, '&');
+                                                const jsonValue = JSON.parse(unescaped);
+                                                if (Array.isArray(jsonValue)) {
+                                                    flatConfig[key] = jsonValue;
+                                                } else {
+                                                    flatConfig[key] = [];
+                                                }
+                                            } catch (e2) {
+                                                // If still fails, try comma-separated or empty array
+                                                const arrayValue = value.split(',').map(v => v.trim()).filter(v => v);
+                                                flatConfig[key] = arrayValue.length > 0 ? arrayValue : [];
+                                            }
                                         } else {
                                             flatConfig[key] = [];
                                         }
@@ -2950,6 +3020,135 @@
         
         // Make app() available globally
         window.app = app;
+
+        // ===== DEPRECATED: Plugin Configuration Functions (Global Access) =====
+        // These functions are no longer the primary method for loading plugin configs.
+        // Plugin configuration forms are now rendered server-side via HTMX.
+        // See: /v3/partials/plugin-config/<plugin_id> for the new implementation.
+        // Kept for backwards compatibility with any remaining client-side code.
+        window.PluginConfigHelpers = {
+            loadPluginConfig: async function(pluginId, componentContext) {
+                // This function can be called from inline components
+                // It loads config, schema, and updates the component context
+                if (!componentContext) {
+                    console.error('loadPluginConfig requires component context');
+                    return;
+                }
+                
+                console.log('Loading config for plugin:', pluginId);
+                componentContext.loading = true;
+
+                try {
+                    // Load config, schema, and installed plugins (for web_ui_actions) in parallel
+                    let configData, schemaData, pluginsData;
+                    
+                    if (window.PluginAPI && window.PluginAPI.batch) {
+                        try {
+                            const results = await window.PluginAPI.batch([
+                                {endpoint: `/plugins/config?plugin_id=${pluginId}`, method: 'GET'},
+                                {endpoint: `/plugins/schema?plugin_id=${pluginId}`, method: 'GET'},
+                                {endpoint: '/plugins/installed', method: 'GET'}
+                            ]);
+                            [configData, schemaData, pluginsData] = results;
+                        } catch (batchError) {
+                            console.error('Batch API request failed, falling back to individual requests:', batchError);
+                            // Fall back to individual requests
+                            const [configResponse, schemaResponse, pluginsResponse] = await Promise.all([
+                                fetch(`/api/v3/plugins/config?plugin_id=${pluginId}`).then(r => r.json()).catch(e => ({ status: 'error', message: e.message })),
+                                fetch(`/api/v3/plugins/schema?plugin_id=${pluginId}`).then(r => r.json()).catch(e => ({ status: 'error', message: e.message })),
+                                fetch(`/api/v3/plugins/installed`).then(r => r.json()).catch(e => ({ status: 'error', message: e.message }))
+                            ]);
+                            configData = configResponse;
+                            schemaData = schemaResponse;
+                            pluginsData = pluginsResponse;
+                        }
+                    } else {
+                        const [configResponse, schemaResponse, pluginsResponse] = await Promise.all([
+                            fetch(`/api/v3/plugins/config?plugin_id=${pluginId}`).then(r => r.json()).catch(e => ({ status: 'error', message: e.message })),
+                            fetch(`/api/v3/plugins/schema?plugin_id=${pluginId}`).then(r => r.json()).catch(e => ({ status: 'error', message: e.message })),
+                            fetch(`/api/v3/plugins/installed`).then(r => r.json()).catch(e => ({ status: 'error', message: e.message }))
+                        ]);
+                        configData = configResponse;
+                        schemaData = schemaResponse;
+                        pluginsData = pluginsResponse;
+                    }
+
+                    if (configData && configData.status === 'success') {
+                        componentContext.config = configData.data;
+                    } else {
+                        console.warn('Config API returned non-success status:', configData);
+                        // Set defaults if config failed to load
+                        componentContext.config = { enabled: true, display_duration: 30 };
+                    }
+
+                    if (schemaData && schemaData.status === 'success') {
+                        componentContext.schema = schemaData.data.schema || {};
+                    } else {
+                        console.warn('Schema API returned non-success status:', schemaData);
+                        // Set empty schema as fallback
+                        componentContext.schema = {};
+                    }
+
+                    if (pluginsData && pluginsData.status === 'success' && pluginsData.data && pluginsData.data.plugins) {
+                        const pluginInfo = pluginsData.data.plugins.find(p => p.id === pluginId);
+                        componentContext.webUiActions = pluginInfo ? (pluginInfo.web_ui_actions || []) : [];
+                    } else {
+                        console.warn('Plugins API returned non-success status:', pluginsData);
+                        componentContext.webUiActions = [];
+                    }
+
+                    console.log('Loaded config, schema, and actions for', pluginId);
+                } catch (error) {
+                    console.error('Error loading plugin config:', error);
+                    componentContext.config = { enabled: true, display_duration: 30 };
+                    componentContext.schema = {};
+                    componentContext.webUiActions = [];
+                } finally {
+                    componentContext.loading = false;
+                }
+            },
+
+            generateConfigForm: function(pluginId, config, schema, webUiActions, componentContext) {
+                // Try to get the app component
+                let appComponent = null;
+                if (window.Alpine) {
+                    const appElement = document.querySelector('[x-data="app()"]');
+                    if (appElement && appElement._x_dataStack && appElement._x_dataStack[0]) {
+                        appComponent = appElement._x_dataStack[0];
+                    }
+                }
+
+                // If we have access to the app component, use its method
+                if (appComponent && typeof appComponent.generateConfigForm === 'function') {
+                    return appComponent.generateConfigForm(pluginId, config, schema, webUiActions);
+                }
+
+                // Fallback: return loading message if function not available
+                if (!pluginId || !config) {
+                    return '<div class="text-gray-500">Loading configuration...</div>';
+                }
+                return '<div class="text-gray-500">Configuration form not available yet...</div>';
+            },
+
+            savePluginConfig: async function(pluginId, event, componentContext) {
+                // Try to get the app component
+                let appComponent = null;
+                if (window.Alpine) {
+                    const appElement = document.querySelector('[x-data="app()"]');
+                    if (appElement && appElement._x_dataStack && appElement._x_dataStack[0]) {
+                        appComponent = appElement._x_dataStack[0];
+                    }
+                }
+
+                // If we have access to the app component, use its method
+                if (appComponent && typeof appComponent.savePluginConfig === 'function') {
+                    return appComponent.savePluginConfig(pluginId, event);
+                }
+
+                console.error('savePluginConfig not available');
+                throw new Error('Save configuration method not available');
+            }
+        };
 
         // ===== Nested Section Toggle =====
         window.toggleNestedSection = function(sectionId, event) {
@@ -3383,11 +3582,29 @@
                         // Check if this is a file upload widget (JSON array in hidden input)
                         if (propSchema && propSchema['x-widget'] === 'file-upload') {
                             try {
-                                const jsonValue = JSON.parse(value);
-                                if (Array.isArray(jsonValue)) {
-                                    flatConfig[key] = jsonValue;
-                                    console.log(`File upload array field ${key}: parsed JSON array with ${jsonValue.length} items`);
-                                } else {
+                                // Unescape HTML entities that were escaped when setting the value
+                                let unescapedValue = value;
+                                if (typeof value === 'string') {
+                                    // Reverse the HTML escaping: &quot; -> ", &#39; -> ', &amp; -> &
+                                    unescapedValue = value
+                                        .replace(/&quot;/g, '"')
+                                        .replace(/&#39;/g, "'")
+                                        .replace(/&amp;/g, '&')
+                                        .replace(/&lt;/g, '<')
+                                        .replace(/&gt;/g, '>');
+                                }
+                                
+                                try {
+                                    const jsonValue = JSON.parse(unescapedValue);
+                                    if (Array.isArray(jsonValue)) {
+                                        flatConfig[key] = jsonValue;
+                                        console.log(`File upload array field ${key}: parsed JSON array with ${jsonValue.length} items`);
+                                    } else {
+                                        // Fallback to empty array
+                                        flatConfig[key] = [];
+                                    }
+                                } catch (e) {
+                                    console.warn(`Failed to parse JSON for file upload field ${key}:`, e, 'Value:', value);
                                     // Fallback to empty array
                                     flatConfig[key] = [];
                                 }
@@ -3752,22 +3969,6 @@
             }
         }
 
-        // Helper function to get installed plugins with fallback
-        async function getInstalledPluginsSafe() {
-            if (window.PluginAPI && window.PluginAPI.getInstalledPlugins) {
-                try {
-                    const plugins = await window.PluginAPI.getInstalledPlugins();
-                    return { status: 'success', data: { plugins: plugins } };
-                } catch (error) {
-                    console.error('Error using PluginAPI.getInstalledPlugins, falling back to direct fetch:', error);
-                    // Fall through to direct fetch
-                }
-            }
-            // Fallback to direct fetch if PluginAPI not loaded
-            const response = await fetch('/api/v3/plugins/installed');
-            return await response.json();
-        }
-
         // Format commit information for display
         function formatCommitInfo(commit, branch) {
             if (!commit && !branch) return 'Unknown';
@@ -3840,7 +4041,7 @@
     <script src="{{ url_for('static', filename='v3/js/config/diff_viewer.js') }}" defer></script>
     
     <!-- Legacy plugins_manager.js (for backward compatibility during migration) -->
-    <script src="{{ url_for('static', filename='v3/plugins_manager.js') }}" defer></script>
+    <script src="{{ url_for('static', filename='v3/plugins_manager.js') }}?v=20241223c" defer></script>
 </body>
 </html>
 

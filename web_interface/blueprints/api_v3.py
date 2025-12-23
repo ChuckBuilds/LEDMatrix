@@ -1662,6 +1662,17 @@ def get_plugin_config():
         main_config = api_v3.config_manager.load_config()
         plugin_config = main_config.get(plugin_id, {})
         
+        # Merge with defaults from schema so form shows default values for missing fields
+        schema_mgr = api_v3.schema_manager
+        if schema_mgr:
+            try:
+                defaults = schema_mgr.generate_default_config(plugin_id, use_cache=True)
+                plugin_config = schema_mgr.merge_with_defaults(plugin_config, defaults)
+            except Exception as e:
+                # Log but don't fail - defaults merge is best effort
+                import logging
+                logging.warning(f"Could not merge defaults for {plugin_id}: {e}")
+        
         # Special handling for of-the-day plugin: populate uploaded_files and categories from disk
         if plugin_id == 'of-the-day' or plugin_id == 'ledmatrix-of-the-day':
             # Get plugin directory - plugin_id in manifest is 'of-the-day', but directory is 'ledmatrix-of-the-day'

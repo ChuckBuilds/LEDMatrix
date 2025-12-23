@@ -1,5 +1,7 @@
 // Define critical functions immediately so they're available before any HTML is rendered
-console.log('[PLUGINS SCRIPT] Defining configurePlugin and togglePlugin at top level...');
+// Debug logging controlled by localStorage.setItem('pluginDebug', 'true')
+const _PLUGIN_DEBUG_EARLY = typeof localStorage !== 'undefined' && localStorage.getItem('pluginDebug') === 'true';
+if (_PLUGIN_DEBUG_EARLY) console.log('[PLUGINS SCRIPT] Defining configurePlugin and togglePlugin at top level...');
 
 // Expose on-demand functions early as stubs (will be replaced when IIFE runs)
 window.openOnDemandModal = function(pluginId) {
@@ -318,29 +320,24 @@ window.togglePlugin = window.togglePlugin || function(pluginId, enabled) {
     });
 };
 
-// Verify functions are defined immediately after assignment
-console.log('[PLUGINS SCRIPT] Functions defined:', {
-    configurePlugin: typeof window.configurePlugin,
-    togglePlugin: typeof window.togglePlugin
-});
-
-// Double-check that functions are actually callable
-if (typeof window.configurePlugin === 'function') {
-    console.log('[PLUGINS SCRIPT] ✓ configurePlugin is a function and ready');
-} else {
-    console.error('[PLUGINS SCRIPT] ✗ configurePlugin is NOT a function!');
-}
-
-if (typeof window.togglePlugin === 'function') {
-    console.log('[PLUGINS SCRIPT] ✓ togglePlugin is a function and ready');
-} else {
-    console.error('[PLUGINS SCRIPT] ✗ togglePlugin is NOT a function!');
+// Verify functions are defined (debug only)
+if (_PLUGIN_DEBUG_EARLY) {
+    console.log('[PLUGINS SCRIPT] Functions defined:', {
+        configurePlugin: typeof window.configurePlugin,
+        togglePlugin: typeof window.togglePlugin
+    });
+    if (typeof window.configurePlugin === 'function') {
+        console.log('[PLUGINS SCRIPT] ✓ configurePlugin ready');
+    }
+    if (typeof window.togglePlugin === 'function') {
+        console.log('[PLUGINS SCRIPT] ✓ togglePlugin ready');
+    }
 }
 
 (function() {
     'use strict';
 
-    console.log('Plugin manager script starting...');
+    if (_PLUGIN_DEBUG_EARLY) console.log('Plugin manager script starting...');
     
     // Local variables for this instance
 let installedPlugins = [];
@@ -435,14 +432,24 @@ window.currentPluginConfig = null;
 // Track initialization state
 window.pluginManager = window.pluginManager || {};
 window.pluginManager.initialized = false;
+window.pluginManager.initializing = false; // Track if initialization is in progress
 
 // Initialize when DOM is ready or when HTMX loads content
 window.initPluginsPage = function() {
-    if (window.pluginManager.initialized) {
-        console.log('Plugin page already initialized, skipping...');
+    // Prevent duplicate initialization
+    if (window.pluginManager.initialized || window.pluginManager.initializing) {
+        console.log('Plugin page already initialized or initializing, skipping...');
         return;
     }
-    window.pluginManager.initialized = true;
+    
+    // Check if required elements exist
+    const installedGrid = document.getElementById('installed-plugins-grid');
+    if (!installedGrid) {
+        console.log('Plugin elements not ready yet');
+        return false;
+    }
+    
+    window.pluginManager.initializing = true;
     window.__pluginDomReady = true;
     
     // If we fetched data before the DOM existed, render it now
@@ -458,6 +465,10 @@ window.initPluginsPage = function() {
     }
 
     initializePlugins();
+    
+    window.pluginManager.initialized = true;
+    window.pluginManager.initializing = false;
+    return true;
 
     // Event listeners (remove old ones first to prevent duplicates)
     const refreshBtn = document.getElementById('refresh-plugins-btn');
@@ -520,46 +531,46 @@ window.initPluginsPage = function() {
     startOnDemandStatusPolling();
 }
 
-// Initialize when DOM is ready or when HTMX loads content
+// Consolidated initialization function
 function initializePluginPageWhenReady() {
     console.log('Checking for plugin elements...');
-    const installedGrid = document.getElementById('installed-plugins-grid');
-    const storeGrid = document.getElementById('plugin-store-grid');
-    
-    // Only require installed-plugins-grid to exist (plugin-store-grid may load later)
-    if (installedGrid) {
-        console.log('Plugin elements found, initializing now!', {
-            installedGrid: !!installedGrid,
-            storeGrid: !!storeGrid
-        });
-        initPluginsPage();
-        return true;
-    } else {
-        console.warn('Plugin elements not found yet. Retrying...', {
-            installedGrid: !!installedGrid,
-            storeGrid: !!storeGrid
-        });
-        return false;
-    }
+    return window.initPluginsPage();
 }
 
-// Try multiple initialization strategies
-console.log('Plugin manager script loaded, initializing...');
-
-// Strategy 1: Immediate check (for direct page loads)
-if (initializePluginPageWhenReady()) {
-    console.log('Initialized immediately');
-} else {
-    // Strategy 2: DOMContentLoaded (for direct page loads)
-    if (document.readyState === 'loading') {
+// Single initialization entry point
+(function() {
+    console.log('Plugin manager script loaded, setting up initialization...');
+    
+    let initTimer = null;
+    
+    function attemptInit() {
+        // Clear any pending timer
+        if (initTimer) {
+            clearTimeout(initTimer);
+            initTimer = null;
+        }
+        
+        // Try immediate initialization
+        if (initializePluginPageWhenReady()) {
+            console.log('Initialized immediately');
+            return;
+        }
+    }
+    
+    // Strategy 1: Immediate check (for direct page loads)
+    if (document.readyState === 'complete' || document.readyState === 'interactive') {
+        // DOM is already ready, try immediately with a small delay to ensure scripts are loaded
+        initTimer = setTimeout(attemptInit, 50);
+    } else {
+        // Strategy 2: DOMContentLoaded (for direct page loads)
         document.addEventListener('DOMContentLoaded', function() {
-            setTimeout(initializePluginPageWhenReady, 50);
+            initTimer = setTimeout(attemptInit, 50);
         });
     }
     
-    // Strategy 3: HTMX swap event (for HTMX-loaded content)
+    // Strategy 3: HTMX afterSwap event (for HTMX-loaded content)
+    // This is the primary way plugins content is loaded
     if (typeof htmx !== 'undefined') {
-        // Use htmx:afterSwap to detect when plugins content is loaded
         document.body.addEventListener('htmx:afterSwap', function(event) {
             const target = event.detail.target;
             // Check if plugins content was swapped in
@@ -567,68 +578,27 @@ if (initializePluginPageWhenReady()) {
                 target.querySelector('#installed-plugins-grid') ||
                 document.getElementById('installed-plugins-grid')) {
                 console.log('HTMX swap detected for plugins, initializing...');
-                // Reset initialization flag to allow re-initialization
+                // Reset initialization flag to allow re-initialization after HTMX swap
                 window.pluginManager.initialized = false;
-                setTimeout(initializePluginPageWhenReady, 100);
+                window.pluginManager.initializing = false;
+                initTimer = setTimeout(attemptInit, 100);
             }
-        });
+        }, { once: false }); // Allow multiple swaps
     }
-    
-    // Strategy 4: Fallback timeout (for edge cases)
-    setTimeout(function() {
-        if (!window.pluginManager || !window.pluginManager.initialized) {
-            console.log('Fallback initialization...');
-            initializePluginPageWhenReady();
-        }
-    }, 500);
-}
+})();
 
-// Also listen for HTMX load event (fires when content is swapped)
-if (typeof htmx !== 'undefined') {
-    document.body.addEventListener('htmx:load', function(event) {
-        // Check if plugins content was loaded (only need installed-plugins-grid)
-        if (document.getElementById('installed-plugins-grid')) {
-            console.log('HTMX load event detected, initializing plugins...');
-            window.pluginManager.initialized = false;
-            setTimeout(initializePluginPageWhenReady, 100);
-        }
-    });
-}
-
-// Use MutationObserver as a final fallback to detect when elements are added
-if (typeof MutationObserver !== 'undefined') {
-    const observer = new MutationObserver(function(mutations) {
-        const installedGrid = document.getElementById('installed-plugins-grid');
-        const storeGrid = document.getElementById('plugin-store-grid');
-        
-        // Only require installed-plugins-grid (storeGrid may load later)
-        if (installedGrid && (!window.pluginManager || !window.pluginManager.initialized)) {
-            console.log('MutationObserver detected plugin elements, initializing...', {
-                installedGrid: !!installedGrid,
-                storeGrid: !!storeGrid
-            });
-            setTimeout(initializePluginPageWhenReady, 100);
-        }
-    });
-    
-    // Start observing when DOM is ready
-    if (document.body) {
-        observer.observe(document.body, {
-            childList: true,
-            subtree: true
-        });
-    } else {
-        document.addEventListener('DOMContentLoaded', function() {
-            observer.observe(document.body, {
-                childList: true,
-                subtree: true
-            });
-        });
-    }
-}
+// Initialization guard to prevent multiple initializations
+let pluginsInitialized = false;
 
 function initializePlugins() {
-    console.log('Initializing plugins...');
+    // Guard against multiple initializations
+    if (pluginsInitialized) {
+        pluginLog('[INIT] Plugins already initialized, skipping');
+        return;
+    }
+    pluginsInitialized = true;
+    
+    pluginLog('[INIT] Initializing plugins...');
 
     // Check GitHub authentication status
     checkGitHubAuthStatus();
@@ -637,9 +607,18 @@ function initializePlugins() {
     loadInstalledPlugins();
     searchPluginStore(true); // Load plugin store with fresh metadata from GitHub
 
-    // Setup search functionality
-    document.getElementById('plugin-search').addEventListener('input', debounce(searchPluginStore, 300));
-    document.getElementById('plugin-category').addEventListener('change', searchPluginStore);
+    // Setup search functionality (with guard against duplicate listeners)
+    const searchInput = document.getElementById('plugin-search');
+    const categorySelect = document.getElementById('plugin-category');
+    
+    if (searchInput && !searchInput._listenerSetup) {
+        searchInput._listenerSetup = true;
+        searchInput.addEventListener('input', debounce(searchPluginStore, 300));
+    }
+    if (categorySelect && !categorySelect._listenerSetup) {
+        categorySelect._listenerSetup = true;
+        categorySelect.addEventListener('change', searchPluginStore);
+    }
     
     // Setup GitHub installation handlers
     setupGitHubInstallHandlers();
@@ -650,42 +629,84 @@ function initializePlugins() {
     // Load saved repositories
     loadSavedRepositories();
 
-    console.log('Plugins initialized');
+    pluginLog('[INIT] Plugins initialized');
 }
 
-function loadInstalledPlugins() {
-    console.log('Loading installed plugins...');
+// Track in-flight requests to prevent duplicates
+// ===== PLUGIN LOADING WITH REQUEST DEDUPLICATION & CACHING =====
+// Prevents redundant API calls by caching results for a short time
+const pluginLoadCache = {
+    promise: null,           // Current in-flight request
+    data: null,              // Cached plugin data
+    timestamp: 0,            // When cache was last updated
+    TTL: 3000,               // Cache valid for 3 seconds
+    isValid() {
+        return this.data && (Date.now() - this.timestamp < this.TTL);
+    },
+    invalidate() {
+        this.data = null;
+        this.timestamp = 0;
+    }
+};
+
+// Debug flag - set via localStorage.setItem('pluginDebug', 'true')
+const PLUGIN_DEBUG = typeof localStorage !== 'undefined' && localStorage.getItem('pluginDebug') === 'true';
+function pluginLog(...args) {
+    if (PLUGIN_DEBUG) console.log(...args);
+}
+
+function loadInstalledPlugins(forceRefresh = false) {
+    // Return cached data if valid and not forcing refresh
+    if (!forceRefresh && pluginLoadCache.isValid()) {
+        pluginLog('[CACHE] Returning cached plugin data');
+        // Still render to ensure UI is updated
+        renderInstalledPlugins(pluginLoadCache.data);
+        return Promise.resolve(pluginLoadCache.data);
+    }
+
+    // If a request is already in progress, return the existing promise
+    if (pluginLoadCache.promise) {
+        pluginLog('[CACHE] Request in progress, returning existing promise');
+        return pluginLoadCache.promise;
+    }
+
+    pluginLog('[FETCH] Loading installed plugins...');
 
     // Use PluginAPI if available, otherwise fall back to direct fetch
     const fetchPromise = (window.PluginAPI && window.PluginAPI.getInstalledPlugins) ?
-        window.PluginAPI.getInstalledPlugins().then(plugins => ({ status: 'success', data: { plugins: plugins } })) :
+        window.PluginAPI.getInstalledPlugins().then(plugins => {
+            const pluginsArray = Array.isArray(plugins) ? plugins : [];
+            return { status: 'success', data: { plugins: pluginsArray } };
+        }) :
         fetch('/api/v3/plugins/installed').then(response => response.json());
 
-    return fetchPromise
-        .then(response => {
-            if (response.status) {
-                console.log('Installed plugins response:', response.status);
-            }
-            return response;
-        })
+    // Store the promise
+    pluginLoadCache.promise = fetchPromise
         .then(data => {
-            console.log('Installed plugins data:', data);
-
             if (data.status === 'success') {
-                installedPlugins = data.data.plugins || [];
-                // Only update if plugin list actually changed (setter will check)
-                const currentPlugins = window.installedPlugins || [];
+                const pluginsData = data.data?.plugins;
+                installedPlugins = Array.isArray(pluginsData) ? pluginsData : [];
+                
+                // Update cache
+                pluginLoadCache.data = installedPlugins;
+                pluginLoadCache.timestamp = Date.now();
+                
+                // Only update window if plugin list actually changed
+                const currentPlugins = Array.isArray(window.installedPlugins) ? window.installedPlugins : [];
                 const currentIds = currentPlugins.map(p => p.id).sort().join(',');
                 const newIds = installedPlugins.map(p => p.id).sort().join(',');
                 if (currentIds !== newIds) {
-                    window.installedPlugins = installedPlugins; // Also set on window for global access
+                    window.installedPlugins = installedPlugins;
                 }
-                console.log('Installed plugins count:', installedPlugins.length);
                 
-                // Debug: Log enabled status for each plugin
-                installedPlugins.forEach(plugin => {
-                    console.log(`[DEBUG] Plugin ${plugin.id}: enabled=${plugin.enabled} (type: ${typeof plugin.enabled})`);
-                });
+                pluginLog('[FETCH] Loaded', installedPlugins.length, 'plugins');
+                
+                // Debug logging only when enabled
+                if (PLUGIN_DEBUG) {
+                    installedPlugins.forEach(plugin => {
+                        console.log(`[DEBUG] Plugin ${plugin.id}: enabled=${plugin.enabled}`);
+                    });
+                }
                 
                 renderInstalledPlugins(installedPlugins);
 
@@ -709,11 +730,24 @@ function loadInstalledPlugins() {
             }
             showError(errorMsg);
             throw error;
+        })
+        .finally(() => {
+            // Clear the in-flight promise (but keep cache data)
+            pluginLoadCache.promise = null;
         });
+
+    return pluginLoadCache.promise;
+}
+
+// Force refresh function for explicit user actions
+function refreshInstalledPlugins() {
+    pluginLoadCache.invalidate();
+    return loadInstalledPlugins(true);
 }
 
 // Expose loadInstalledPlugins on window.pluginManager for Alpine.js integration
 window.pluginManager.loadInstalledPlugins = loadInstalledPlugins;
+// Note: searchPluginStore will be exposed after its definition (see below)
 
 function renderInstalledPlugins(plugins) {
     const container = document.getElementById('installed-plugins-grid');
@@ -731,7 +765,7 @@ function renderInstalledPlugins(plugins) {
     
     if (currentIds !== newIds) {
         window.installedPlugins = plugins;
-        console.log('Set window.installedPlugins to:', plugins.length, 'plugins');
+        pluginLog('[RENDER] Set window.installedPlugins to:', plugins.length, 'plugins');
         
         // Trigger the main app to update plugin tabs
         if (window.Alpine && document.querySelector('[x-data="app()"]')) {
@@ -739,12 +773,12 @@ function renderInstalledPlugins(plugins) {
             if (appElement && appElement._x_dataStack && appElement._x_dataStack[0]) {
                 appElement._x_dataStack[0].installedPlugins = plugins;
                 appElement._x_dataStack[0].updatePluginTabs();
-                console.log('Triggered Alpine.js to update plugin tabs');
+                pluginLog('[RENDER] Triggered Alpine.js to update plugin tabs');
             }
         }
     } else {
         // Plugin list hasn't changed, skip update
-        console.log('Plugin list unchanged, skipping tab update');
+        pluginLog('[RENDER] Plugin list unchanged, skipping tab update');
     }
 
     if (plugins.length === 0) {
@@ -772,11 +806,13 @@ function renderInstalledPlugins(plugins) {
     };
 
     container.innerHTML = plugins.map(plugin => {
-        // Debug: Log enabled status during rendering
-        const enabledValue = plugin.enabled;
-        const enabledType = typeof enabledValue;
-        const enabledBool = Boolean(enabledValue);
-        console.log(`[DEBUG RENDER] Plugin ${plugin.id}: enabled=${enabledValue} (type: ${enabledType}, bool: ${enabledBool})`);
+        // Convert enabled to boolean for consistent rendering
+        const enabledBool = Boolean(plugin.enabled);
+        
+        // Debug: Log enabled status during rendering (only when debug enabled)
+        if (PLUGIN_DEBUG) {
+            console.log(`[DEBUG RENDER] Plugin ${plugin.id}: enabled=${enabledBool}`);
+        }
         
         // Escape plugin ID for use in HTML attributes and JavaScript
         const escapedPluginId = escapeAttr(plugin.id);
@@ -854,25 +890,28 @@ function renderInstalledPlugins(plugins) {
     }).join('');
     
     // Set up event delegation for plugin action buttons (fallback if onclick doesn't work)
-    // Set up immediately and also retry to ensure it's attached
+    // Only set up once per container to avoid redundant listeners
     const setupEventDelegation = () => {
         const container = document.getElementById('installed-plugins-grid');
-        if (container) {
-            // Remove old listeners if any (use a named function reference)
-            const oldHandler = container._pluginActionHandler;
-            if (oldHandler) {
-                container.removeEventListener('click', oldHandler);
-                container.removeEventListener('change', oldHandler);
-            }
-            // Store reference for future removal
-            container._pluginActionHandler = handlePluginAction;
-            // Add new listeners for both click and change events
-            container.addEventListener('click', handlePluginAction, true); // Use capture phase
-            container.addEventListener('change', handlePluginAction, true); // Use capture phase
-            console.log('[RENDER] Event delegation set up for installed-plugins-grid');
-        } else {
-            console.warn('[RENDER] installed-plugins-grid not found for event delegation');
+        if (!container) {
+            pluginLog('[RENDER] installed-plugins-grid not found for event delegation');
+            return;
         }
+        
+        // Skip if already set up (guard against multiple calls)
+        if (container._eventDelegationSetup) {
+            pluginLog('[RENDER] Event delegation already set up, skipping');
+            return;
+        }
+        
+        // Mark as set up
+        container._eventDelegationSetup = true;
+        container._pluginActionHandler = handlePluginAction;
+        
+        // Add listeners for both click and change events
+        container.addEventListener('click', handlePluginAction, true);
+        container.addEventListener('change', handlePluginAction, true);
+        pluginLog('[RENDER] Event delegation set up for installed-plugins-grid');
     };
     
     // Set up immediately
@@ -1801,6 +1840,17 @@ function generateFieldHtml(key, prop, value, prefix = '') {
     const label = prop.title || key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
     const description = prop.description || '';
     let html = '';
+    
+    // Debug logging for categories field
+    if (key === 'categories') {
+        console.log(`[DEBUG] Processing categories field:`, {
+            type: prop.type,
+            hasAdditionalProperties: !!(prop.additionalProperties),
+            additionalPropertiesType: prop.additionalProperties?.type,
+            hasProperties: !!(prop.properties),
+            allKeys: Object.keys(prop)
+        });
+    }
 
     // Handle patternProperties objects (dynamic key-value pairs like custom_feeds, feed_logo_map)
     if (prop.type === 'object' && prop.patternProperties && !prop.properties) {
@@ -1861,16 +1911,29 @@ function generateFieldHtml(key, prop, value, prefix = '') {
     }
     
     // Handle objects with additionalProperties (dynamic keys with object values, like categories)
-    if (prop.type === 'object' && prop.additionalProperties && typeof prop.additionalProperties === 'object' && prop.additionalProperties.type === 'object') {
+    // Must have additionalProperties, no top-level properties, and additionalProperties must be an object type
+    const hasAdditionalProperties = prop.type === 'object' && 
+                                    !prop.properties && // Explicitly exclude objects with properties (those use nested handler)
+                                    prop.additionalProperties && 
+                                    typeof prop.additionalProperties === 'object' && 
+                                    prop.additionalProperties.type === 'object';
+    
+    if (hasAdditionalProperties) {
         const fieldId = fullKey.replace(/\./g, '_');
         const currentValue = value || {};
         const categorySchema = prop.additionalProperties;
         const entries = Object.entries(currentValue);
         
+        console.log(`[DEBUG] Rendering additionalProperties object for ${fullKey}:`, {
+            entries: entries.length,
+            keys: Object.keys(currentValue)
+        });
+        
         html += `
             <div class="categories-container mb-4">
-                <div class="mb-2">
-                    <p class="text-sm text-gray-600 mb-3">${description || 'Category configurations'}</p>
+                <div class="mb-4">
+                    <h4 class="text-lg font-semibold text-gray-900 mb-2">${label}</h4>
+                    ${description ? `<p class="text-sm text-gray-600 mb-3">${description}</p>` : ''}
                     <div id="${fieldId}_categories" class="space-y-3">
         `;
         
@@ -3446,9 +3509,13 @@ function restartDisplay() {
 }
 
 function searchPluginStore(fetchCommitInfo = true) {
-    console.log('Searching plugin store...', { fetchCommitInfo });
-    const query = document.getElementById('plugin-search').value;
-    const category = document.getElementById('plugin-category').value;
+    pluginLog('[STORE] Searching plugin store...', { fetchCommitInfo });
+    
+    // Safely get search values (elements may not exist yet)
+    const searchInput = document.getElementById('plugin-search');
+    const categorySelect = document.getElementById('plugin-category');
+    const query = searchInput ? searchInput.value : '';
+    const category = categorySelect ? categorySelect.value : '';
 
     // For filtered searches (user typing), we can use cache to avoid excessive API calls
     // For initial load or refresh, always fetch fresh metadata
@@ -3528,8 +3595,9 @@ function searchPluginStore(fetchCommitInfo = true) {
                 // Ensure plugin store grid exists before rendering
                 const storeGrid = document.getElementById('plugin-store-grid');
                 if (!storeGrid) {
-                    console.error('plugin-store-grid element not found, cannot render plugins');
-                    showError('Plugin store container not found. Please refresh the page.');
+                    // Defer rendering until plugin tab loads
+                    pluginLog('[STORE] plugin-store-grid not ready, deferring render');
+                    window.__pendingStorePlugins = plugins;
                     return;
                 }
                 
@@ -3582,17 +3650,15 @@ function showStoreLoading(show) {
     }
 }
 
+// Expose searchPluginStore on window.pluginManager for Alpine.js integration
+window.searchPluginStore = searchPluginStore;
+window.pluginManager.searchPluginStore = searchPluginStore;
+
 function renderPluginStore(plugins) {
     const container = document.getElementById('plugin-store-grid');
     if (!container) {
-        console.warn('[RENDER] plugin-store-grid not yet available, deferring render until plugin tab loads');
+        pluginLog('[RENDER] plugin-store-grid not yet available, deferring render');
         window.__pendingStorePlugins = plugins;
-        return;
-    }
-    
-    if (!container) {
-        console.error('plugin-store-grid element not found');
-        showError('Plugin store container not found. Please refresh the page.');
         return;
     }
 
@@ -5346,21 +5412,18 @@ if (typeof loadInstalledPlugins !== 'undefined') {
 if (typeof renderInstalledPlugins !== 'undefined') {
     window.renderInstalledPlugins = renderInstalledPlugins;
 }
-if (typeof searchPluginStore !== 'undefined') {
-    window.searchPluginStore = searchPluginStore;
-}
+// searchPluginStore is now exposed inside the IIFE after its definition
 
 // Verify critical functions are available
-console.log('Plugin functions available:', {
+if (_PLUGIN_DEBUG_EARLY) {
+    console.log('Plugin functions available:', {
         configurePlugin: typeof window.configurePlugin,
         togglePlugin: typeof window.togglePlugin,
-        showPluginConfigModal: typeof window.showPluginConfigModal,
-    updatePlugin: typeof window.updatePlugin,
-    uninstallPlugin: typeof window.uninstallPlugin,
-    initializePlugins: typeof window.initializePlugins,
-    loadInstalledPlugins: typeof window.loadInstalledPlugins,
-    renderInstalledPlugins: typeof window.renderInstalledPlugins
-});
+        initializePlugins: typeof window.initializePlugins,
+        loadInstalledPlugins: typeof window.loadInstalledPlugins,
+        searchPluginStore: typeof window.searchPluginStore
+    });
+}
 
 setTimeout(function() {
     const installedGrid = document.getElementById('installed-plugins-grid');

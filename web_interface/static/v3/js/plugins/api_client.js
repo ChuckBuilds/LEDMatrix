@@ -214,7 +214,12 @@ const PluginAPI = {
      */
     async getInstalledPlugins() {
         const response = await this.request('/plugins/installed');
-        return response.data?.plugins || [];
+        // API returns {status: 'success', data: {plugins: [...]}}
+        // Extract the plugins array from response.data.plugins
+        if (response.data && Array.isArray(response.data.plugins)) {
+            return response.data.plugins;
+        }
+        return [];
     },
     
     /**

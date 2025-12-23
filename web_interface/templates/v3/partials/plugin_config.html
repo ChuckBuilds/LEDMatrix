@@ -1,0 +1,424 @@
+{# Plugin Configuration Partial - Server-side rendered form #}
+{# This template is loaded via HTMX when a plugin tab is clicked #}
+
+{# ===== MACROS FOR FORM FIELD GENERATION ===== #}
+
+{# Render a single form field based on schema type #}
+{% macro render_field(key, prop, value, prefix='', plugin_id='') %}
+    {% set full_key = (prefix ~ '.' ~ key) if prefix else key %}
+    {% set field_id = (plugin_id ~ '-' ~ full_key)|replace('.', '-')|replace('_', '-') %}
+    {% set label = prop.title if prop.title else key|replace('_', ' ')|title %}
+    {% set description = prop.description if prop.description else '' %}
+    {% set field_type = prop.type if prop.type is string else (prop.type[0] if prop.type is iterable else 'string') %}
+    
+    {# Handle nested objects recursively #}
+    {% if field_type == 'object' and prop.properties %}
+        {{ render_nested_section(key, prop, value, prefix, plugin_id) }}
+    {% else %}
+        <div class="form-group mb-4">
+            <label for="{{ field_id }}" class="block text-sm font-medium text-gray-700 mb-1">
+                {{ label }}
+            </label>
+            
+            {% if description %}
+            <p class="text-sm text-gray-500 mb-2">{{ description }}</p>
+            {% endif %}
+            
+            {# Boolean checkbox #}
+            {% if field_type == 'boolean' %}
+            <label class="flex items-center cursor-pointer">
+                <input type="checkbox" 
+                       id="{{ field_id }}"
+                       name="{{ full_key }}" 
+                       {% if value %}checked{% endif %}
+                       class="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded">
+                <span class="ml-2 text-sm text-gray-600">Enabled</span>
+            </label>
+            
+            {# Enum dropdown #}
+            {% elif prop.enum %}
+            <select id="{{ field_id }}"
+                    name="{{ full_key }}" 
+                    class="form-select w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500">
+                {% for option in prop.enum %}
+                <option value="{{ option }}" {% if value == option %}selected{% endif %}>
+                    {{ option|replace('_', ' ')|title }}
+                </option>
+                {% endfor %}
+            </select>
+            
+            {# Number input #}
+            {% elif field_type in ['number', 'integer'] %}
+            <input type="number" 
+                   id="{{ field_id }}"
+                   name="{{ full_key }}" 
+                   value="{{ value if value is not none else (prop.default if prop.default is defined else '') }}"
+                   {% if prop.minimum is defined %}min="{{ prop.minimum }}"{% endif %}
+                   {% if prop.maximum is defined %}max="{{ prop.maximum }}"{% endif %}
+                   {% if field_type == 'integer' %}step="1"{% else %}step="any"{% endif %}
+                   class="form-input w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 bg-gray-800 text-white">
+            
+            {# Array of strings (comma-separated) #}
+            {% elif field_type == 'array' %}
+            <input type="text" 
+                   id="{{ field_id }}"
+                   name="{{ full_key }}" 
+                   value="{{ value|join(', ') if value is iterable and value is not string else value }}"
+                   placeholder="Enter values separated by commas"
+                   class="form-input w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 bg-gray-800 text-white">
+            <p class="text-xs text-gray-400 mt-1">Separate multiple values with commas</p>
+            
+            {# Text input (default) #}
+            {% else %}
+            <input type="text" 
+                   id="{{ field_id }}"
+                   name="{{ full_key }}" 
+                   value="{{ value if value is not none else (prop.default if prop.default is defined else '') }}"
+                   class="form-input w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 bg-gray-800 text-white">
+            {% endif %}
+        </div>
+    {% endif %}
+{% endmacro %}
+
+{# Render a nested/collapsible section for object types #}
+{% macro render_nested_section(key, prop, value, prefix='', plugin_id='') %}
+    {% set full_key = (prefix ~ '.' ~ key) if prefix else key %}
+    {% set section_id = (plugin_id ~ '-section-' ~ full_key)|replace('.', '-')|replace('_', '-') %}
+    {% set label = prop.title if prop.title else key|replace('_', ' ')|title %}
+    {% set description = prop.description if prop.description else '' %}
+    {% set nested_value = value if value else {} %}
+    
+    <div class="nested-section border border-gray-300 rounded-lg mb-4">
+        <button type="button" 
+                class="w-full bg-gray-100 hover:bg-gray-200 px-4 py-3 flex items-center justify-between text-left transition-colors rounded-t-lg"
+                onclick="toggleSection('{{ section_id }}')">
+            <div class="flex-1">
+                <h4 class="font-semibold text-gray-900">{{ label }}</h4>
+                {% if description %}
+                <p class="text-sm text-gray-600 mt-1">{{ description }}</p>
+                {% endif %}
+            </div>
+            <i id="{{ section_id }}-icon" class="fas fa-chevron-right text-gray-500 transition-transform"></i>
+        </button>
+        <div id="{{ section_id }}" class="nested-content bg-gray-50 px-4 py-4 space-y-3 hidden">
+            {% set property_order = prop['x-propertyOrder'] if 'x-propertyOrder' in prop else prop.properties.keys()|list %}
+            {% for nested_key in property_order %}
+                {% if nested_key in prop.properties %}
+                    {% set nested_prop = prop.properties[nested_key] %}
+                    {% set nested_val = nested_value[nested_key] if nested_key in nested_value else none %}
+                    {{ render_field(nested_key, nested_prop, nested_val, full_key, plugin_id) }}
+                {% endif %}
+            {% endfor %}
+        </div>
+    </div>
+{% endmacro %}
+
+{# ===== MAIN TEMPLATE ===== #}
+
+<div class="plugin-config-container" 
+     data-plugin-id="{{ plugin.id }}"
+     x-data="{ saving: false, saveError: null, saveSuccess: false }">
+    
+    <div class="border-b border-gray-200 pb-4 mb-6">
+        <div class="flex items-center justify-between">
+            <div>
+                <h2 class="text-lg font-semibold text-gray-900">{{ plugin.name or plugin.id }}</h2>
+                <p class="mt-1 text-sm text-gray-600">{{ plugin.description or 'Plugin configuration' }}</p>
+            </div>
+            <div class="flex items-center space-x-4">
+                <label class="flex items-center cursor-pointer">
+                    <input type="checkbox"
+                           id="plugin-enabled-{{ plugin.id }}"
+                           {% if plugin.enabled %}checked{% endif %}
+                           hx-post="/api/v3/plugins/toggle?plugin_id={{ plugin.id }}"
+                           hx-trigger="change"
+                           hx-swap="none"
+                           hx-on::after-request="handleToggleResponse(event, '{{ plugin.id }}')"
+                           class="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded">
+                    <span class="ml-2 text-sm {% if plugin.enabled %}text-green-600{% else %}text-gray-500{% endif %}">
+                        {% if plugin.enabled %}Enabled{% else %}Disabled{% endif %}
+                    </span>
+                </label>
+            </div>
+        </div>
+    </div>
+
+    <form id="plugin-config-form-{{ plugin.id }}"
+          hx-post="/api/v3/plugins/config?plugin_id={{ plugin.id }}"
+          hx-trigger="submit"
+          hx-swap="none"
+          hx-indicator="#save-indicator-{{ plugin.id }}"
+          hx-on::before-request="this.querySelector('[type=submit]').disabled = true"
+          hx-on::after-request="handleConfigSave(event, '{{ plugin.id }}')">
+        
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+            {# Plugin Information Panel #}
+            <div class="bg-gray-50 rounded-lg p-4">
+                <h3 class="text-md font-medium text-gray-900 mb-3">Plugin Information</h3>
+                <dl class="space-y-2">
+                    <div>
+                        <dt class="text-sm font-medium text-gray-500">Name</dt>
+                        <dd class="text-sm text-gray-900">{{ plugin.name or plugin.id }}</dd>
+                    </div>
+                    <div>
+                        <dt class="text-sm font-medium text-gray-500">Author</dt>
+                        <dd class="text-sm text-gray-900">{{ plugin.author or 'Unknown' }}</dd>
+                    </div>
+                    {% if plugin.version %}
+                    <div>
+                        <dt class="text-sm font-medium text-gray-500">Version</dt>
+                        <dd class="text-sm text-gray-900">{{ plugin.version }}</dd>
+                    </div>
+                    {% endif %}
+                    {% if plugin.last_commit %}
+                    <div>
+                        <dt class="text-sm font-medium text-gray-500">Commit</dt>
+                        <dd class="text-sm text-gray-900 font-mono">
+                            {{ plugin.last_commit[:7] if plugin.last_commit|length > 7 else plugin.last_commit }}
+                            {% if plugin.branch %}
+                            <span class="text-gray-500">({{ plugin.branch }})</span>
+                            {% endif %}
+                        </dd>
+                    </div>
+                    {% endif %}
+                    {% if plugin.category %}
+                    <div>
+                        <dt class="text-sm font-medium text-gray-500">Category</dt>
+                        <dd class="text-sm text-gray-900">{{ plugin.category }}</dd>
+                    </div>
+                    {% endif %}
+                    {% if plugin.tags %}
+                    <div>
+                        <dt class="text-sm font-medium text-gray-500">Tags</dt>
+                        <dd class="flex flex-wrap gap-1 mt-1">
+                            {% for tag in plugin.tags %}
+                            <span class="bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded">{{ tag }}</span>
+                            {% endfor %}
+                        </dd>
+                    </div>
+                    {% endif %}
+                </dl>
+                
+                {# On-Demand Controls #}
+                <div class="mt-4 pt-4 border-t border-gray-200 space-y-3">
+                    <div class="flex items-center gap-2">
+                        <i class="fas fa-bolt text-blue-500"></i>
+                        <span class="text-sm font-semibold text-gray-900">On-Demand Controls</span>
+                    </div>
+                    <div class="flex flex-wrap gap-2">
+                        <button type="button"
+                                onclick="runPluginOnDemand('{{ plugin.id }}')"
+                                {% if not plugin.enabled %}disabled{% endif %}
+                                class="px-3 py-2 text-sm bg-green-600 hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-md flex items-center gap-2 transition-colors">
+                            <i class="fas fa-play-circle"></i>
+                            <span>Run On-Demand</span>
+                        </button>
+                        <button type="button"
+                                onclick="stopOnDemand()"
+                                class="px-3 py-2 text-sm bg-red-600 hover:bg-red-700 text-white rounded-md flex items-center gap-2 transition-colors">
+                            <i class="fas fa-stop"></i>
+                            <span>Stop On-Demand</span>
+                        </button>
+                    </div>
+                    {% if not plugin.enabled %}
+                    <p class="text-xs text-amber-600">Enable this plugin before launching on-demand.</p>
+                    {% endif %}
+                </div>
+            </div>
+            
+            {# Configuration Form Panel #}
+            <div class="bg-gray-50 rounded-lg p-4">
+                <h3 class="text-md font-medium text-gray-900 mb-3">Configuration</h3>
+                <div class="space-y-4 max-h-96 overflow-y-auto pr-2">
+                    {% if schema and schema.properties %}
+                        {# Use property order if defined, otherwise use natural order #}
+                        {# Skip 'enabled' field - it's handled by the header toggle #}
+                        {% set property_order = schema['x-propertyOrder'] if 'x-propertyOrder' in schema else schema.properties.keys()|list %}
+                        {% for key in property_order %}
+                            {% if key in schema.properties and key != 'enabled' %}
+                                {% set prop = schema.properties[key] %}
+                                {% set value = config[key] if key in config else none %}
+                                {{ render_field(key, prop, value, '', plugin.id) }}
+                            {% endif %}
+                        {% endfor %}
+                    {% else %}
+                        {# No schema - render simple form from config #}
+                        {% if config %}
+                            {% for key, value in config.items() %}
+                                {% if key not in ['enabled'] %}
+                                <div class="form-group mb-4">
+                                    <label class="block text-sm font-medium text-gray-700 mb-1">
+                                        {{ key|replace('_', ' ')|title }}
+                                    </label>
+                                    {% if value is sameas true or value is sameas false %}
+                                    <label class="flex items-center cursor-pointer">
+                                        <input type="checkbox" name="{{ key }}" {% if value %}checked{% endif %}
+                                               class="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded">
+                                        <span class="ml-2 text-sm text-gray-600">Enabled</span>
+                                    </label>
+                                    {% elif value is number %}
+                                    <input type="number" name="{{ key }}" value="{{ value }}"
+                                           class="form-input w-full rounded-md border-gray-300 bg-gray-800 text-white">
+                                    {% else %}
+                                    <input type="text" name="{{ key }}" value="{{ value }}"
+                                           class="form-input w-full rounded-md border-gray-300 bg-gray-800 text-white">
+                                    {% endif %}
+                                </div>
+                                {% endif %}
+                            {% endfor %}
+                        {% else %}
+                            <p class="text-gray-500 text-sm">No configuration options available for this plugin.</p>
+                        {% endif %}
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+        
+        {# Web UI Actions (if any) #}
+        {% if web_ui_actions %}
+        <div class="mt-6 pt-4 border-t border-gray-200">
+            <h3 class="text-md font-medium text-gray-900 mb-3">Plugin Actions</h3>
+            <div class="flex flex-wrap gap-2">
+                {% for action in web_ui_actions %}
+                <button type="button"
+                        onclick="executePluginAction('{{ plugin.id }}', '{{ action.id }}')"
+                        class="px-4 py-2 text-sm bg-indigo-600 hover:bg-indigo-700 text-white rounded-md flex items-center gap-2 transition-colors">
+                    {% if action.icon %}<i class="{{ action.icon }}"></i>{% endif %}
+                    {{ action.label or action.id }}
+                </button>
+                {% endfor %}
+            </div>
+        </div>
+        {% endif %}
+        
+        {# Action Buttons #}
+        <div class="flex justify-end space-x-3 mt-6 pt-6 border-t border-gray-200">
+            <button type="button"
+                    onclick="refreshPluginConfig('{{ plugin.id }}')"
+                    class="btn bg-gray-600 hover:bg-gray-700 text-white px-4 py-2 rounded-md">
+                <i class="fas fa-sync-alt mr-2"></i>Refresh
+            </button>
+            <button type="button"
+                    hx-post="/api/v3/plugins/update?plugin_id={{ plugin.id }}"
+                    hx-swap="none"
+                    hx-on::after-request="handlePluginUpdate(event, '{{ plugin.id }}')"
+                    class="btn bg-yellow-600 hover:bg-yellow-700 text-white px-4 py-2 rounded-md">
+                <i class="fas fa-download mr-2"></i>Update
+            </button>
+            <button type="button"
+                    onclick="if(confirm('Are you sure you want to uninstall {{ plugin.name or plugin.id }}?')) uninstallPlugin('{{ plugin.id }}')"
+                    class="btn bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-md">
+                <i class="fas fa-trash mr-2"></i>Uninstall
+            </button>
+            <button type="submit" class="btn bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md flex items-center">
+                <span id="save-indicator-{{ plugin.id }}" class="htmx-indicator mr-2">
+                    <i class="fas fa-spinner fa-spin"></i>
+                </span>
+                <i class="fas fa-save mr-2 save-icon"></i>
+                <span>Save Configuration</span>
+            </button>
+        </div>
+    </form>
+</div>
+
+{# Section toggle script (inline for partial) #}
+<script>
+function toggleSection(sectionId) {
+    const section = document.getElementById(sectionId);
+    const icon = document.getElementById(sectionId + '-icon');
+    if (section && icon) {
+        section.classList.toggle('hidden');
+        icon.classList.toggle('fa-chevron-right');
+        icon.classList.toggle('fa-chevron-down');
+    }
+}
+
+function handleConfigSave(event, pluginId) {
+    const btn = event.target.querySelector('[type=submit]');
+    if (btn) btn.disabled = false;
+    
+    if (event.detail.successful) {
+        showNotification('Configuration saved successfully!', 'success');
+    } else {
+        showNotification('Failed to save configuration', 'error');
+    }
+}
+
+function handleToggleResponse(event, pluginId) {
+    if (event.detail.successful) {
+        // Refresh the plugin config to update the UI
+        refreshPluginConfig(pluginId);
+        showNotification('Plugin status updated', 'success');
+    } else {
+        showNotification('Failed to update plugin status', 'error');
+    }
+}
+
+function handlePluginUpdate(event, pluginId) {
+    if (event.detail.successful) {
+        showNotification('Plugin update initiated', 'success');
+    } else {
+        showNotification('Failed to update plugin', 'error');
+    }
+}
+
+function refreshPluginConfig(pluginId) {
+    const container = document.querySelector(`[data-plugin-id="${pluginId}"]`).parentElement;
+    if (container) {
+        htmx.ajax('GET', `/v3/partials/plugin-config/${pluginId}`, {target: container, swap: 'innerHTML'});
+    }
+}
+
+function runPluginOnDemand(pluginId) {
+    if (typeof window.openOnDemandModal === 'function') {
+        window.openOnDemandModal(pluginId);
+    } else {
+        showNotification('On-demand modal not available', 'error');
+    }
+}
+
+function stopOnDemand() {
+    if (typeof window.requestOnDemandStop === 'function') {
+        window.requestOnDemandStop({});
+    } else {
+        showNotification('Stop function not available', 'error');
+    }
+}
+
+function executePluginAction(pluginId, actionId) {
+    fetch(`/api/v3/plugins/action?plugin_id=${pluginId}&action_id=${actionId}`, {
+        method: 'POST'
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.status === 'success') {
+            showNotification(data.message || 'Action executed', 'success');
+        } else {
+            showNotification(data.message || 'Action failed', 'error');
+        }
+    })
+    .catch(err => {
+        showNotification('Failed to execute action', 'error');
+    });
+}
+
+function uninstallPlugin(pluginId) {
+    fetch(`/api/v3/plugins/uninstall?plugin_id=${pluginId}`, {
+        method: 'POST'
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.status === 'success') {
+            showNotification('Plugin uninstalled', 'success');
+            // Refresh the page or redirect
+            window.location.reload();
+        } else {
+            showNotification(data.message || 'Uninstall failed', 'error');
+        }
+    })
+    .catch(err => {
+        showNotification('Failed to uninstall plugin', 'error');
+    });
+}
+</script>
+
