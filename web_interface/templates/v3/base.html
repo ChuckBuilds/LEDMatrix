@@ -1849,7 +1849,8 @@
                 },
                 async loadPluginConfig(pluginId) {
                     const parent = this.getParentApp();
-                    if (parent && typeof parent.loadPluginConfig === 'function') {
+                    // Check parent !== this to avoid infinite recursion
+                    if (parent && parent !== this && typeof parent.loadPluginConfig === 'function') {
                         // Call parent method but update this component's state
                         await parent.loadPluginConfig(pluginId);
                         // Copy the loaded data to this component
@@ -1870,7 +1871,8 @@
                 },
                 generateConfigForm(pluginId, config, schema, webUiActions) {
                     const parent = this.getParentApp();
-                    if (parent && typeof parent.generateConfigForm === 'function') {
+                    // Check parent !== this to avoid infinite recursion
+                    if (parent && parent !== this && typeof parent.generateConfigForm === 'function') {
                         return parent.generateConfigForm(pluginId, config, schema, webUiActions);
                     }
                     // Fallback to global helper
@@ -1881,7 +1883,8 @@
                 },
                 async savePluginConfig(pluginId, event) {
                     const parent = this.getParentApp();
-                    if (parent && typeof parent.savePluginConfig === 'function') {
+                    // Check parent !== this to avoid infinite recursion
+                    if (parent && parent !== this && typeof parent.savePluginConfig === 'function') {
                         return parent.savePluginConfig(pluginId, event);
                     }
                     // Fallback to global helper
