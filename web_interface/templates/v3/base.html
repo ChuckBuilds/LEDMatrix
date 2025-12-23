@@ -1373,163 +1373,55 @@
                 </div>
             </div>
 
-            <!-- Dynamic Plugin Tabs -->
+            <!-- Dynamic Plugin Tabs - HTMX Lazy Loading -->
+            <!-- 
+                Architecture: Server-side rendered plugin configuration forms
+                - Each plugin tab loads its config via HTMX when first viewed
+                - Forms are generated server-side using Jinja2 macros
+                - Reduces client-side complexity and improves performance
+            -->
             <template x-for="plugin in installedPlugins" :key="plugin.id">
                 <div x-show="activeTab === plugin.id" x-transition>
-                    <div class="bg-white rounded-lg shadow p-6">
-                        <div class="border-b border-gray-200 pb-4 mb-6">
-                            <div class="flex items-center justify-between">
-                                <div>
-                                    <h2 class="text-lg font-semibold text-gray-900" x-text="plugin.name || plugin.id"></h2>
-                                    <p class="mt-1 text-sm text-gray-600" x-text="plugin.description || 'Plugin configuration'"></p>
+                    <!-- Only load content when tab is active (lazy loading) -->
+                    <template x-if="activeTab === plugin.id">
+                        <div class="bg-white rounded-lg shadow p-6 plugin-config-tab"
+                             :id="'plugin-config-' + plugin.id"
+                             :hx-get="'/v3/partials/plugin-config/' + plugin.id"
+                             hx-trigger="load"
+                             hx-swap="innerHTML">
+                            <!-- Loading skeleton shown until HTMX loads server-rendered content -->
+                            <div class="animate-pulse space-y-6">
+                                <div class="border-b border-gray-200 pb-4">
+                                    <div class="flex items-center justify-between">
+                                        <div class="space-y-2">
+                                            <div class="h-6 bg-gray-200 rounded w-48"></div>
+                                            <div class="h-4 bg-gray-200 rounded w-96"></div>
+                                        </div>
+                                        <div class="h-6 bg-gray-200 rounded w-24"></div>
+                                    </div>
                                 </div>
-                                <div class="flex items-center space-x-4">
-                                    <label class="flex items-center">
-                                        <input type="checkbox"
-                                               x-bind:checked="plugin.enabled"
-                                               x-on:change="togglePluginFromTab(plugin.id, $event.target.checked)"
-                                               class="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded">
-                                        <span class="ml-2 text-sm" x-bind:class="plugin.enabled ? 'text-green-600' : 'text-gray-500'">
-                                            <span x-text="plugin.enabled ? 'Enabled' : 'Disabled'"></span>
-                                        </span>
-                                    </label>
+                                <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                    <div class="bg-gray-50 rounded-lg p-4 space-y-4">
+                                        <div class="h-5 bg-gray-200 rounded w-32"></div>
+                                        <div class="space-y-3">
+                                            <div class="h-4 bg-gray-200 rounded w-full"></div>
+                                            <div class="h-4 bg-gray-200 rounded w-3/4"></div>
+                                            <div class="h-4 bg-gray-200 rounded w-1/2"></div>
+                                        </div>
+                                    </div>
+                                    <div class="bg-gray-50 rounded-lg p-4 space-y-4">
+                                        <div class="h-5 bg-gray-200 rounded w-32"></div>
+                                        <div class="space-y-3">
+                                            <div class="h-4 bg-gray-200 rounded w-full"></div>
+                                            <div class="h-10 bg-gray-200 rounded w-full"></div>
+                                            <div class="h-4 bg-gray-200 rounded w-3/4"></div>
+                                            <div class="h-10 bg-gray-200 rounded w-full"></div>
+                                        </div>
+                                    </div>
                                 </div>
                             </div>
                         </div>
-
-                        <!-- Plugin Configuration Form -->
-                        <div>
-                            <div x-data="pluginConfigData(plugin)" x-init="$nextTick(() => { if (plugin && plugin.id) { loadPluginConfig(plugin.id); } })">
-                                <form x-on:submit.prevent="window.PluginConfigHelpers.savePluginConfig(plugin.id, $event)">
-                                    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-                                        <!-- Plugin Info -->
-                                        <div class="bg-gray-50 rounded-lg p-4">
-                                            <h3 class="text-md font-medium text-gray-900 mb-3">Plugin Information</h3>
-                                            <dl class="space-y-2">
-                                                <div>
-                                                    <dt class="text-sm font-medium text-gray-500">Name</dt>
-                                                    <dd class="text-sm text-gray-900" x-text="plugin.name || plugin.id"></dd>
-                                                </div>
-                                                <div>
-                                                    <dt class="text-sm font-medium text-gray-500">Author</dt>
-                                                    <dd class="text-sm text-gray-900" x-text="plugin.author || 'Unknown'"></dd>
-                                                </div>
-                                                <div>
-                                                    <dt class="text-sm font-medium text-gray-500">Commit</dt>
-                                                    <dd class="text-sm text-gray-900" x-text="formatCommitInfo(plugin.last_commit, plugin.branch)"></dd>
-                                                </div>
-                                                <div>
-                                                    <dt class="text-sm font-medium text-gray-500">Date</dt>
-                                                    <dd class="text-sm text-gray-900" x-text="formatDateInfo(plugin.last_updated)"></dd>
-                                                </div>
-                                                <div>
-                                                    <dt class="text-sm font-medium text-gray-500">Category</dt>
-                                                    <dd class="text-sm text-gray-900" x-text="plugin.category || 'General'"></dd>
-                                                </div>
-                                                <div x-show="plugin.tags && plugin.tags.length > 0">
-                                                    <dt class="text-sm font-medium text-gray-500">Tags</dt>
-                                                    <dd class="flex flex-wrap gap-1 mt-1">
-                                                        <template x-for="tag in plugin.tags" :key="tag">
-                                                            <span class="bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded" x-text="tag"></span>
-                                                        </template>
-                                                    </dd>
-                                                </div>
-                                            </dl>
-                                            <div class="mt-4 pt-4 border-t border-gray-200 space-y-3">
-                                                <div class="flex items-center justify-between">
-                                                    <div class="flex items-center gap-2">
-                                                        <i class="fas fa-bolt text-blue-500"></i>
-                                                        <span class="text-sm font-semibold text-gray-900">On-Demand Controls</span>
-                                                    </div>
-                                                    <div class="flex items-center gap-2">
-                                                        <span x-show="!this.isOnDemandLoading && this.onDemandLastUpdated" class="text-xs text-gray-500" x-text="this.onDemandLastUpdated ? ('Updated ' + this.onDemandLastUpdated) : ''"></span>
-                                                        <button type="button"
-                                                                class="px-3 py-1.5 text-xs bg-blue-600 hover:bg-blue-700 text-white rounded-md flex items-center gap-1 transition-colors"
-                                                                :class="{'opacity-60 cursor-not-allowed': this.onDemandRefreshing}"
-                                                                :disabled="this.onDemandRefreshing"
-                                                                x-on:click="this.refreshOnDemandStatus()">
-                                                            <i class="fas fa-sync" :class="this.onDemandRefreshing ? 'fa-spin' : ''"></i>
-                                                            <span>Refresh</span>
-                                                        </button>
-                                                    </div>
-                                                </div>
-                                                <p class="text-sm leading-relaxed" :class="this.onDemandStatusClass" x-text="this.onDemandStatusText"></p>
-                                                <p class="text-xs" :class="this.onDemandServiceClass" x-text="this.onDemandServiceText"></p>
-                                                <div class="flex flex-wrap gap-2">
-                                                    <button type="button"
-                                                            class="px-3 py-2 text-sm bg-green-600 hover:bg-green-700 text-white rounded-md flex items-center gap-2 transition-colors"
-                                                            :class="{'opacity-60 cursor-not-allowed': this.disableRunButton || this.onDemandStopping || this.onDemandRefreshing}"
-                                                            :disabled="this.disableRunButton || this.onDemandStopping || this.onDemandRefreshing"
-                                                            x-on:click="this.runOnDemand()">
-                                                        <i class="fas fa-play-circle"></i>
-                                                        <span>Run On-Demand</span>
-                                                    </button>
-                                                    <button type="button"
-                                                            class="px-3 py-2 text-sm bg-red-600 hover:bg-red-700 text-white rounded-md flex items-center gap-2 transition-colors"
-                                                            :class="{'opacity-60 cursor-not-allowed': !this.canStopOnDemand || this.onDemandStopping}"
-                                                            :disabled="!this.canStopOnDemand || this.onDemandStopping"
-                                                            x-on:click="this.stopOnDemandWithEvent($event.shiftKey)">
-                                                        <i class="fas fa-stop"></i>
-                                                        <span>Stop On-Demand</span>
-                                                    </button>
-                                                </div>
-                                                <p class="text-xs text-amber-600" x-show="this.showEnableHint">
-                                                    Enable this plugin before launching on-demand.
-                                                </p>
-                                                <p class="text-xs text-gray-400">
-                                                    Hold Shift while stopping to also stop the display service.
-                                                </p>
-                                            </div>
-                                        </div>
-
-                                        <!-- Configuration Schema -->
-                                        <div class="bg-gray-50 rounded-lg p-4">
-                                            <h3 class="text-md font-medium text-gray-900 mb-3">Configuration</h3>
-                                            <div class="space-y-4">
-                                                <!-- Loading state -->
-                                                <div x-show="loading" class="animate-pulse space-y-3">
-                                                    <div class="h-4 bg-gray-200 rounded w-3/4"></div>
-                                                    <div class="h-10 bg-gray-200 rounded"></div>
-                                                    <div class="h-4 bg-gray-200 rounded w-1/2"></div>
-                                                    <div class="h-10 bg-gray-200 rounded"></div>
-                                                </div>
-
-                                                <!-- Configuration fields loaded dynamically -->
-                                                <div x-show="!loading && window.PluginConfigHelpers && typeof window.PluginConfigHelpers.generateConfigForm === 'function'" x-html="window.PluginConfigHelpers.generateConfigForm(plugin.id, config, schema, webUiActions)"></div>
-                                                <div x-show="!loading && (!window.PluginConfigHelpers || typeof window.PluginConfigHelpers.generateConfigForm !== 'function')" class="text-gray-500">Loading configuration form...</div>
-                                            </div>
-                                        </div>
-                                    </div>
-
-                                <!-- Action Buttons -->
-                                <div class="flex justify-end space-x-3 mt-6 pt-6 border-t border-gray-200">
-                                    <button type="button"
-                                            x-on:click="$root.refreshPlugins()"
-                                            class="btn bg-gray-600 hover:bg-gray-700 text-white px-4 py-2">
-                                        <i class="fas fa-sync-alt mr-2"></i>Refresh All
-                                    </button>
-                                    <button type="button"
-                                            x-on:click="$root.refreshPlugin(plugin.id)"
-                                            class="btn bg-gray-600 hover:bg-gray-700 text-white px-4 py-2">
-                                        <i class="fas fa-sync-alt mr-2"></i>Refresh
-                                    </button>
-                                    <button type="button"
-                                            x-on:click="$root.updatePlugin(plugin.id)"
-                                            class="btn bg-yellow-600 hover:bg-yellow-700 text-white px-4 py-2">
-                                        <i class="fas fa-download mr-2"></i>Update
-                                    </button>
-                                    <button type="button"
-                                            x-on:click.prevent="if(!confirm('Are you sure you want to uninstall ' + (plugin.name || plugin.id) + '?')) return false; $root.uninstallPlugin(plugin.id)"
-                                            class="btn bg-red-600 hover:bg-red-700 text-white px-4 py-2">
-                                        <i class="fas fa-trash mr-2"></i>Uninstall
-                                    </button>
-                                    <button type="submit" class="btn bg-blue-600 hover:bg-blue-700 text-white px-4 py-2">
-                                        <i class="fas fa-save mr-2"></i>Save Configuration
-                                    </button>
-                                </div>
-                            </form>
-                        </div>
-                    </div>
+                    </template>
                 </div>
             </template>
         </div>
@@ -1625,6 +1517,7 @@
         };
 
         document.addEventListener('alpine:init', () => {
+            // On-Demand state store
             if (window.Alpine && !window.Alpine.store('onDemand')) {
                 window.Alpine.store('onDemand', {
                     loading: window.__onDemandStore.loading,
@@ -1637,9 +1530,42 @@
             if (window.Alpine) {
                 window.__onDemandStore = window.Alpine.store('onDemand');
             }
+            
+            // Plugin state store - centralized state management for plugins
+            // Used primarily by HTMX-loaded plugin config partials
+            if (window.Alpine && !window.Alpine.store('plugins')) {
+                window.Alpine.store('plugins', {
+                    // Track which plugin configs have been loaded
+                    loadedConfigs: {},
+                    
+                    // Mark a plugin config as loaded
+                    markLoaded(pluginId) {
+                        this.loadedConfigs[pluginId] = true;
+                    },
+                    
+                    // Check if a plugin config is loaded
+                    isLoaded(pluginId) {
+                        return !!this.loadedConfigs[pluginId];
+                    },
+                    
+                    // Refresh a plugin config tab via HTMX
+                    refreshConfig(pluginId) {
+                        const container = document.querySelector(`#plugin-config-${pluginId}`);
+                        if (container && window.htmx) {
+                            htmx.ajax('GET', `/v3/partials/plugin-config/${pluginId}`, {
+                                target: container,
+                                swap: 'innerHTML'
+                            });
+                        }
+                    }
+                });
+            }
         });
 
-        // Helper function to create plugin configuration data object
+        // ===== DEPRECATED: pluginConfigData =====
+        // This function is no longer used - plugin configuration forms are now
+        // rendered server-side and loaded via HTMX. Kept for backwards compatibility.
+        // See: /v3/partials/plugin-config/<plugin_id> for the new implementation.
         function pluginConfigData(plugin) {
             if (!plugin) {
                 console.error('pluginConfigData called with undefined plugin');
@@ -3047,8 +2973,11 @@
         // Make app() available globally
         window.app = app;
 
-        // ===== Plugin Configuration Functions (Global Access) =====
-        // Make plugin config functions available globally so inline components can access them
+        // ===== DEPRECATED: Plugin Configuration Functions (Global Access) =====
+        // These functions are no longer the primary method for loading plugin configs.
+        // Plugin configuration forms are now rendered server-side via HTMX.
+        // See: /v3/partials/plugin-config/<plugin_id> for the new implementation.
+        // Kept for backwards compatibility with any remaining client-side code.
         window.PluginConfigHelpers = {
             loadPluginConfig: async function(pluginId, componentContext) {
                 // This function can be called from inline components

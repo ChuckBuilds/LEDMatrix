@@ -84,6 +84,15 @@ def load_partial(partial_name):
     except Exception as e:
         return f"Error loading partial '{partial_name}': {str(e)}", 500
 
+
+@pages_v3.route('/partials/plugin-config/<plugin_id>')
+def load_plugin_config_partial(plugin_id):
+    """Load plugin configuration partial via HTMX - server-side rendered form"""
+    try:
+        return _load_plugin_config_partial(plugin_id)
+    except Exception as e:
+        return f'<div class="text-red-500 p-4">Error loading plugin config: {str(e)}</div>', 500
+
 def _load_overview_partial():
     """Load overview partial with system stats"""
     try:
@@ -296,3 +305,79 @@ def _load_operation_history_partial():
         return render_template('v3/partials/operation_history.html')
     except Exception as e:
         return f"Error: {str(e)}", 500
+
+
+def _load_plugin_config_partial(plugin_id):
+    """
+    Load plugin configuration partial - server-side rendered form.
+    This replaces the client-side generateConfigForm() JavaScript.
+    """
+    try:
+        if not pages_v3.plugin_manager:
+            return '<div class="text-red-500 p-4">Plugin manager not available</div>', 500
+        
+        # Get plugin instance and info
+        plugin_instance = pages_v3.plugin_manager.get_plugin(plugin_id)
+        plugin_info = pages_v3.plugin_manager.get_plugin_info(plugin_id)
+        
+        if not plugin_info:
+            return f'<div class="text-red-500 p-4">Plugin "{plugin_id}" not found</div>', 404
+        
+        # Get plugin configuration from config file
+        config = {}
+        if pages_v3.config_manager:
+            full_config = pages_v3.config_manager.load_config()
+            config = full_config.get(plugin_id, {})
+        
+        # Get plugin schema
+        schema = {}
+        schema_path = Path(pages_v3.plugin_manager.plugins_dir) / plugin_id / "config_schema.json"
+        if schema_path.exists():
+            try:
+                with open(schema_path, 'r', encoding='utf-8') as f:
+                    schema = json.load(f)
+            except Exception as e:
+                print(f"Warning: Could not load schema for {plugin_id}: {e}")
+        
+        # Get web UI actions from plugin manifest
+        web_ui_actions = []
+        manifest_path = Path(pages_v3.plugin_manager.plugins_dir) / plugin_id / "manifest.json"
+        if manifest_path.exists():
+            try:
+                with open(manifest_path, 'r', encoding='utf-8') as f:
+                    manifest = json.load(f)
+                    web_ui_actions = manifest.get('web_ui_actions', [])
+            except Exception as e:
+                print(f"Warning: Could not load manifest for {plugin_id}: {e}")
+        
+        # Determine enabled status
+        enabled = config.get('enabled', True)
+        if plugin_instance:
+            enabled = plugin_instance.enabled
+        
+        # Build plugin data for template
+        plugin_data = {
+            'id': plugin_id,
+            'name': plugin_info.get('name', plugin_id),
+            'author': plugin_info.get('author', 'Unknown'),
+            'version': plugin_info.get('version', ''),
+            'description': plugin_info.get('description', ''),
+            'category': plugin_info.get('category', 'General'),
+            'tags': plugin_info.get('tags', []),
+            'enabled': enabled,
+            'last_commit': plugin_info.get('last_commit') or plugin_info.get('last_commit_sha', ''),
+            'branch': plugin_info.get('branch', ''),
+        }
+        
+        return render_template(
+            'v3/partials/plugin_config.html',
+            plugin=plugin_data,
+            config=config,
+            schema=schema,
+            web_ui_actions=web_ui_actions
+        )
+        
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return f'<div class="text-red-500 p-4">Error loading plugin config: {str(e)}</div>', 500
