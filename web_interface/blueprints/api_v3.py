@@ -1853,252 +1853,127 @@ def update_plugin():
 
         plugin_id = data['plugin_id']
         
-        # Use operation queue if available
-        if api_v3.operation_queue:
-            def update_callback(operation):
-                """Callback to execute plugin update."""
-                plugin_dir = Path(api_v3.plugin_store_manager.plugins_dir) / plugin_id
-                manifest_path = plugin_dir / "manifest.json"
+        # Always do direct updates (they're fast git pull operations)
+        # Operation queue is reserved for longer operations like install/uninstall
+        plugin_dir = Path(api_v3.plugin_store_manager.plugins_dir) / plugin_id
+        manifest_path = plugin_dir / "manifest.json"
 
-                current_last_updated = None
-                current_commit = None
-                current_branch = None
+        current_last_updated = None
+        current_commit = None
+        current_branch = None
 
+        if manifest_path.exists():
+            try:
+                import json
+                with open(manifest_path, 'r', encoding='utf-8') as f:
+                    manifest = json.load(f)
+                    current_last_updated = manifest.get('last_updated')
+            except Exception as e:
+                print(f"Warning: Could not read local manifest for {plugin_id}: {e}")
+
+        if api_v3.plugin_store_manager:
+            git_info_before = api_v3.plugin_store_manager._get_local_git_info(plugin_dir)
+            if git_info_before:
+                current_commit = git_info_before.get('sha')
+                current_branch = git_info_before.get('branch')
+
+        remote_info = api_v3.plugin_store_manager.get_plugin_info(plugin_id, fetch_latest_from_github=True)
+        remote_commit = remote_info.get('last_commit_sha') if remote_info else None
+        remote_branch = remote_info.get('branch') if remote_info else None
+
+        # Update the plugin
+        success = api_v3.plugin_store_manager.update_plugin(plugin_id)
+    
+        if success:
+            updated_last_updated = current_last_updated
+            try:
                 if manifest_path.exists():
-                    try:
-                        import json
-                        with open(manifest_path, 'r', encoding='utf-8') as f:
-                            manifest = json.load(f)
-                            current_last_updated = manifest.get('last_updated')
-                    except Exception as e:
-                        print(f"Warning: Could not read local manifest for {plugin_id}: {e}")
-
-                if api_v3.plugin_store_manager:
-                    git_info_before = api_v3.plugin_store_manager._get_local_git_info(plugin_dir)
-                    if git_info_before:
-                        current_commit = git_info_before.get('sha')
-                        current_branch = git_info_before.get('branch')
-
-                remote_info = api_v3.plugin_store_manager.get_plugin_info(plugin_id, fetch_latest_from_github=True)
-                remote_commit = remote_info.get('last_commit_sha') if remote_info else None
-                remote_branch = remote_info.get('branch') if remote_info else None
-
-                # Update the plugin
-                success = api_v3.plugin_store_manager.update_plugin(plugin_id)
-                
-                if not success:
-                    error_msg = f'Failed to update plugin {plugin_id}'
-                    if api_v3.operation_history:
-                        api_v3.operation_history.record_operation(
-                            "update",
-                            plugin_id=plugin_id,
-                            status="failed",
-                            error=error_msg
-                        )
-                    raise Exception(error_msg)
-                
-                # Get updated info
-                updated_last_updated = current_last_updated
-                try:
-                    if manifest_path.exists():
-                        import json
-                        with open(manifest_path, 'r', encoding='utf-8') as f:
-                            manifest = json.load(f)
-                            updated_last_updated = manifest.get('last_updated', current_last_updated)
-                except Exception as e:
-                    print(f"Warning: Could not read updated manifest for {plugin_id}: {e}")
-
-                updated_commit = None
-                updated_branch = remote_branch or current_branch
-                if api_v3.plugin_store_manager:
-                    git_info_after = api_v3.plugin_store_manager._get_local_git_info(plugin_dir)
-                    if git_info_after:
-                        updated_commit = git_info_after.get('sha')
-                        updated_branch = git_info_after.get('branch') or updated_branch
-
-                message = f'Plugin {plugin_id} updated successfully'
-                if current_commit and updated_commit and current_commit == updated_commit:
-                    message = f'Plugin {plugin_id} already up to date (commit {updated_commit[:7]})'
-                elif updated_commit:
-                    message = f'Plugin {plugin_id} updated to commit {updated_commit[:7]}'
-                    if updated_branch:
-                        message += f' on branch {updated_branch}'
-                elif updated_last_updated and updated_last_updated != current_last_updated:
-                    message = f'Plugin {plugin_id} refreshed (Last Updated {updated_last_updated})'
-
-                remote_commit_short = remote_commit[:7] if remote_commit else None
-                if remote_commit_short and updated_commit and remote_commit_short != updated_commit[:7]:
-                    message += f' (remote latest {remote_commit_short})'
-
-                # Invalidate schema cache
-                if api_v3.schema_manager:
-                    api_v3.schema_manager.invalidate_cache(plugin_id)
-                
-                # Rediscover plugins
-                if api_v3.plugin_manager:
-                    api_v3.plugin_manager.discover_plugins()
-                    if plugin_id in api_v3.plugin_manager.plugins:
-                        api_v3.plugin_manager.reload_plugin(plugin_id)
-                
-                # Update state manager
-                if api_v3.plugin_state_manager:
-                    api_v3.plugin_state_manager.update_plugin_state(
-                        plugin_id,
-                        {'last_updated': datetime.now()}
-                    )
-                
-                # Record in history
-                if api_v3.operation_history:
-                    api_v3.operation_history.record_operation(
-                        "update",
-                        plugin_id=plugin_id,
-                        status="success",
-                        details={
-                            "commit": updated_commit,
-                            "branch": updated_branch,
-                            "last_updated": updated_last_updated
-                        }
-                    )
-                
-                return {
-                    'success': True,
-                    'message': message,
-                    'last_updated': updated_last_updated,
-                    'commit': updated_commit
-                }
-            
-            # Enqueue operation
-            operation_id = api_v3.operation_queue.enqueue_operation(
-                OperationType.UPDATE,
-                plugin_id,
-                operation_callback=update_callback
-            )
-            
-            return success_response(
-                data={'operation_id': operation_id},
-                message=f'Plugin {plugin_id} update queued'
-            )
-        else:
-            # Fallback to direct update
-            plugin_dir = Path(api_v3.plugin_store_manager.plugins_dir) / plugin_id
-            manifest_path = plugin_dir / "manifest.json"
-
-            current_last_updated = None
-            current_commit = None
-            current_branch = None
-
-            if manifest_path.exists():
-                try:
                     import json
                     with open(manifest_path, 'r', encoding='utf-8') as f:
                         manifest = json.load(f)
-                        current_last_updated = manifest.get('last_updated')
-                except Exception as e:
-                    print(f"Warning: Could not read local manifest for {plugin_id}: {e}")
+                        updated_last_updated = manifest.get('last_updated', current_last_updated)
+            except Exception as e:
+                print(f"Warning: Could not read updated manifest for {plugin_id}: {e}")
 
+            updated_commit = None
+            updated_branch = remote_branch or current_branch
             if api_v3.plugin_store_manager:
-                git_info_before = api_v3.plugin_store_manager._get_local_git_info(plugin_dir)
-                if git_info_before:
-                    current_commit = git_info_before.get('sha')
-                    current_branch = git_info_before.get('branch')
+                git_info_after = api_v3.plugin_store_manager._get_local_git_info(plugin_dir)
+                if git_info_after:
+                    updated_commit = git_info_after.get('sha')
+                    updated_branch = git_info_after.get('branch') or updated_branch
 
-            remote_info = api_v3.plugin_store_manager.get_plugin_info(plugin_id, fetch_latest_from_github=True)
-            remote_commit = remote_info.get('last_commit_sha') if remote_info else None
-            remote_branch = remote_info.get('branch') if remote_info else None
+            message = f'Plugin {plugin_id} updated successfully'
+            if current_commit and updated_commit and current_commit == updated_commit:
+                message = f'Plugin {plugin_id} already up to date (commit {updated_commit[:7]})'
+            elif updated_commit:
+                message = f'Plugin {plugin_id} updated to commit {updated_commit[:7]}'
+                if updated_branch:
+                    message += f' on branch {updated_branch}'
+            elif updated_last_updated and updated_last_updated != current_last_updated:
+                message = f'Plugin {plugin_id} refreshed (Last Updated {updated_last_updated})'
 
-            # Update the plugin
-            success = api_v3.plugin_store_manager.update_plugin(plugin_id)
-        
-            if success:
-                updated_last_updated = current_last_updated
-                try:
-                    if manifest_path.exists():
-                        import json
-                        with open(manifest_path, 'r', encoding='utf-8') as f:
-                            manifest = json.load(f)
-                            updated_last_updated = manifest.get('last_updated', current_last_updated)
-                except Exception as e:
-                    print(f"Warning: Could not read updated manifest for {plugin_id}: {e}")
+            remote_commit_short = remote_commit[:7] if remote_commit else None
+            if remote_commit_short and updated_commit and remote_commit_short != updated_commit[:7]:
+                message += f' (remote latest {remote_commit_short})'
 
-                updated_commit = None
-                updated_branch = remote_branch or current_branch
-                if api_v3.plugin_store_manager:
-                    git_info_after = api_v3.plugin_store_manager._get_local_git_info(plugin_dir)
-                    if git_info_after:
-                        updated_commit = git_info_after.get('sha')
-                        updated_branch = git_info_after.get('branch') or updated_branch
-
-                message = f'Plugin {plugin_id} updated successfully'
-                if current_commit and updated_commit and current_commit == updated_commit:
-                    message = f'Plugin {plugin_id} already up to date (commit {updated_commit[:7]})'
-                elif updated_commit:
-                    message = f'Plugin {plugin_id} updated to commit {updated_commit[:7]}'
-                    if updated_branch:
-                        message += f' on branch {updated_branch}'
-                elif updated_last_updated and updated_last_updated != current_last_updated:
-                    message = f'Plugin {plugin_id} refreshed (Last Updated {updated_last_updated})'
-
-                remote_commit_short = remote_commit[:7] if remote_commit else None
-                if remote_commit_short and updated_commit and remote_commit_short != updated_commit[:7]:
-                    message += f' (remote latest {remote_commit_short})'
-
-                # Invalidate schema cache
-                if api_v3.schema_manager:
-                    api_v3.schema_manager.invalidate_cache(plugin_id)
-                
-                # Rediscover plugins
-                if api_v3.plugin_manager:
-                    api_v3.plugin_manager.discover_plugins()
-                    if plugin_id in api_v3.plugin_manager.plugins:
-                        api_v3.plugin_manager.reload_plugin(plugin_id)
-                
-                # Update state and history
-                if api_v3.plugin_state_manager:
-                    api_v3.plugin_state_manager.update_plugin_state(
-                        plugin_id,
-                        {'last_updated': datetime.now()}
-                    )
-                if api_v3.operation_history:
-                    api_v3.operation_history.record_operation(
-                        "update",
-                        plugin_id=plugin_id,
-                        status="success",
-                        details={
-                            "last_updated": updated_last_updated,
-                            "commit": updated_commit
-                        }
-                    )
-                
-                return success_response(
-                    data={
-                        'last_updated': updated_last_updated,
-                        'commit': updated_commit
-                    },
-                    message=message
+            # Invalidate schema cache
+            if api_v3.schema_manager:
+                api_v3.schema_manager.invalidate_cache(plugin_id)
+            
+            # Rediscover plugins
+            if api_v3.plugin_manager:
+                api_v3.plugin_manager.discover_plugins()
+                if plugin_id in api_v3.plugin_manager.plugins:
+                    api_v3.plugin_manager.reload_plugin(plugin_id)
+            
+            # Update state and history
+            if api_v3.plugin_state_manager:
+                api_v3.plugin_state_manager.update_plugin_state(
+                    plugin_id,
+                    {'last_updated': datetime.now()}
                 )
+            if api_v3.operation_history:
+                api_v3.operation_history.record_operation(
+                    "update",
+                    plugin_id=plugin_id,
+                    status="success",
+                    details={
+                        "last_updated": updated_last_updated,
+                        "commit": updated_commit
+                    }
+                )
+            
+            return success_response(
+                data={
+                    'last_updated': updated_last_updated,
+                    'commit': updated_commit
+                },
+                message=message
+            )
+        else:
+            error_msg = f'Failed to update plugin {plugin_id}'
+            plugin_path_dir = Path(api_v3.plugin_store_manager.plugins_dir) / plugin_id
+            if not plugin_path_dir.exists():
+                error_msg += ': Plugin not found'
             else:
-                error_msg = f'Failed to update plugin {plugin_id}'
-                plugin_path_dir = Path(api_v3.plugin_store_manager.plugins_dir) / plugin_id
-                if not plugin_path_dir.exists():
-                    error_msg += ': Plugin not found'
-                else:
-                    plugin_info = api_v3.plugin_store_manager.get_plugin_info(plugin_id)
-                    if not plugin_info:
-                        error_msg += ': Plugin not found in registry'
-                
-                if api_v3.operation_history:
-                    api_v3.operation_history.record_operation(
-                        "update",
-                        plugin_id=plugin_id,
-                        status="failed",
-                        error=error_msg
-                    )
-                
-                return error_response(
-                    ErrorCode.PLUGIN_UPDATE_FAILED,
-                    error_msg,
-                    status_code=500
+                plugin_info = api_v3.plugin_store_manager.get_plugin_info(plugin_id)
+                if not plugin_info:
+                    error_msg += ': Plugin not found in registry'
+            
+            if api_v3.operation_history:
+                api_v3.operation_history.record_operation(
+                    "update",
+                    plugin_id=plugin_id,
+                    status="failed",
+                    error=error_msg
                 )
+            
+            return error_response(
+                ErrorCode.PLUGIN_UPDATE_FAILED,
+                error_msg,
+                status_code=500
+            )
             
     except Exception as e:
         from src.web_interface.errors import WebInterfaceError
