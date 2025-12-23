@@ -581,10 +581,6 @@ window.initPluginsPage = function() {
 
     initializePlugins();
     
-    window.pluginManager.initialized = true;
-    window.pluginManager.initializing = false;
-    return true;
-
     // Event listeners (remove old ones first to prevent duplicates)
     const refreshBtn = document.getElementById('refresh-plugins-btn');
     const updateAllBtn = document.getElementById('update-all-plugins-btn');
@@ -644,6 +640,10 @@ window.initPluginsPage = function() {
 
     loadOnDemandStatus(true);
     startOnDemandStatusPolling();
+    
+    window.pluginManager.initialized = true;
+    window.pluginManager.initializing = false;
+    return true;
 }
 
 // Consolidated initialization function
