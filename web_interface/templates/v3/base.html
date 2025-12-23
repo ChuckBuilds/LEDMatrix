@@ -3881,16 +3881,49 @@
             
             // Handle plugin update response
             window.handlePluginUpdate = function(event, pluginId) {
-                if (event.detail.successful) {
-                    showNotification('Plugin update initiated', 'success');
+                const xhr = event.detail.xhr;
+                const status = xhr?.status || 0;
+                
+                // Check if request was successful (2xx status)
+                if (status >= 200 && status < 300) {
+                    // Try to parse the response to get the actual message from server
+                    let message = 'Plugin updated successfully';
+                    
+                    if (xhr && xhr.responseText) {
+                        try {
+                            const data = JSON.parse(xhr.responseText);
+                            // Use the server's message, ensuring it says "update" not "save"
+                            message = data.message || message;
+                            // Ensure message is about updating, not saving
+                            if (message.toLowerCase().includes('save') && !message.toLowerCase().includes('update')) {
+                                message = message.replace(/save/i, 'update');
+                            }
+                        } catch (e) {
+                            // If parsing fails, use default message
+                            console.warn('Could not parse update response:', e);
+                        }
+                    }
+                    
+                    showNotification(message, 'success');
                 } else {
-                    const xhr = event.detail.xhr;
                     console.error('Plugin update failed:', {
-                        status: xhr?.status,
+                        status: status,
                         statusText: xhr?.statusText,
                         responseText: xhr?.responseText
                     });
-                    showNotification('Failed to update plugin', 'error');
+                    
+                    // Try to parse error response for better error message
+                    let errorMessage = 'Failed to update plugin';
+                    if (xhr?.responseText) {
+                        try {
+                            const errorData = JSON.parse(xhr.responseText);
+                            errorMessage = errorData.message || errorMessage;
+                        } catch (e) {
+                            // If parsing fails, use default
+                        }
+                    }
+                    
+                    showNotification(errorMessage, 'error');
                 }
             };
             
@@ -4228,7 +4261,7 @@
     <script src="{{ url_for('static', filename='v3/js/config/diff_viewer.js') }}" defer></script>
     
     <!-- Legacy plugins_manager.js (for backward compatibility during migration) -->
-    <script src="{{ url_for('static', filename='v3/plugins_manager.js') }}?v=20241223g" defer></script>
+    <script src="{{ url_for('static', filename='v3/plugins_manager.js') }}?v=20241223h" defer></script>
 </body>
 </html>
 
