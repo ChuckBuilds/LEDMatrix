@@ -214,7 +214,7 @@ const PluginAPI = {
      */
     async getInstalledPlugins() {
         const response = await this.request('/plugins/installed');
-        return response.data || [];
+        return response.data?.plugins || [];
     },
     
     /**
