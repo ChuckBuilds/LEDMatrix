@@ -1399,7 +1399,7 @@
 
                         <!-- Plugin Configuration Form -->
                         <div>
-                            <div x-data="{ plugin: plugin }" x-init="Object.assign($data, pluginConfigData(plugin)); $nextTick(() => { if (plugin && plugin.id) { $data.loadPluginConfig(plugin.id); } })">
+                            <div x-data="pluginConfigData(plugin)" x-init="$nextTick(() => { if (plugin && plugin.id) { loadPluginConfig(plugin.id); } })">
                                 <form x-on:submit.prevent="window.PluginConfigHelpers.savePluginConfig(plugin.id, $event)">
                                     <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
                                         <!-- Plugin Info -->
