@@ -3806,15 +3806,28 @@
         window.toggleSection = window.toggleSection || function(sectionId) {
             const section = document.getElementById(sectionId);
             const icon = document.getElementById(sectionId + '-icon');
-            if (section && icon) {
-                section.classList.toggle('hidden');
-                icon.classList.toggle('fa-chevron-right');
-                icon.classList.toggle('fa-chevron-down');
+            if (!section) {
+                console.warn('toggleSection: Could not find section for', sectionId);
+                return;
+            }
+            if (!icon) {
+                console.warn('toggleSection: Could not find icon for', sectionId);
+                return;
+            }
+            
+            // Check if currently hidden by checking if hidden class is present
+            const isHidden = section.classList.contains('hidden');
+            
+            if (isHidden) {
+                // Show the section - remove hidden class
+                section.classList.remove('hidden');
+                icon.classList.remove('fa-chevron-right');
+                icon.classList.add('fa-chevron-down');
             } else {
-                console.warn('toggleSection: Could not find section or icon for', sectionId, {
-                    section: section,
-                    icon: icon
-                });
+                // Hide the section - add hidden class
+                section.classList.add('hidden');
+                icon.classList.remove('fa-chevron-down');
+                icon.classList.add('fa-chevron-right');
             }
         };
 
