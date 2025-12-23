@@ -1400,7 +1400,7 @@
                         <!-- Plugin Configuration Form -->
                         <div>
                             <div x-data="{ plugin: plugin }" x-init="Object.assign($data, pluginConfigData(plugin)); $nextTick(() => { if (plugin && plugin.id) { $data.loadPluginConfig(plugin.id); } })">
-                                <form x-on:submit.prevent="savePluginConfig(plugin.id, $event)">
+                                <form x-on:submit.prevent="$root.savePluginConfig(plugin.id, $event)">
                                     <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
                                         <!-- Plugin Info -->
                                         <div class="bg-gray-50 rounded-lg p-4">
@@ -1495,8 +1495,8 @@
                                                 </div>
 
                                                 <!-- Configuration fields loaded dynamically -->
-                                                <div x-show="!loading && typeof generateConfigForm === 'function'" x-html="generateConfigForm(plugin.id, config, schema, webUiActions)"></div>
-                                                <div x-show="!loading && typeof generateConfigForm !== 'function'" class="text-gray-500">Loading configuration form...</div>
+                                                <div x-show="!loading && $root && typeof $root.generateConfigForm === 'function'" x-html="$root.generateConfigForm(plugin.id, config, schema, webUiActions)"></div>
+                                                <div x-show="!loading && (!$root || typeof $root.generateConfigForm !== 'function')" class="text-gray-500">Loading configuration form...</div>
                                             </div>
                                         </div>
                                     </div>
@@ -1832,35 +1832,8 @@
                             this.onDemandStopping = false;
                         });
                 },
-                // Helper methods to access parent component functions
-                getParentApp() {
-                    // Try to get parent component via $root
-                    if (this.$root && typeof this.$root.generateConfigForm === 'function') {
-                        return this.$root;
-                    }
-                    // Fallback: get app component from DOM
-                    if (window.Alpine) {
-                        const appElement = document.querySelector('[x-data=\'app()\']');
-                        if (appElement && appElement._x_dataStack && appElement._x_dataStack[0]) {
-                            return appElement._x_dataStack[0];
-                        }
-                    }
-                    return null;
-                },
                 async loadPluginConfig(pluginId) {
-                    const parent = this.getParentApp();
-                    // Check parent !== this to avoid infinite recursion
-                    if (parent && parent !== this && typeof parent.loadPluginConfig === 'function') {
-                        // Call parent method but update this component's state
-                        await parent.loadPluginConfig(pluginId);
-                        // Copy the loaded data to this component
-                        this.config = parent.config || {};
-                        this.schema = parent.schema || {};
-                        this.webUiActions = parent.webUiActions || [];
-                        this.loading = false;
-                        return;
-                    }
-                    // Fallback: load directly
+                    // Use PluginConfigHelpers to load config directly into this component
                     if (window.PluginConfigHelpers) {
                         await window.PluginConfigHelpers.loadPluginConfig(pluginId, this);
                         this.loading = false;
@@ -1868,31 +1841,11 @@
                     }
                     console.error('loadPluginConfig not available');
                     this.loading = false;
-                },
-                generateConfigForm(pluginId, config, schema, webUiActions) {
-                    const parent = this.getParentApp();
-                    // Check parent !== this to avoid infinite recursion
-                    if (parent && parent !== this && typeof parent.generateConfigForm === 'function') {
-                        return parent.generateConfigForm(pluginId, config, schema, webUiActions);
-                    }
-                    // Fallback to global helper
-                    if (window.PluginConfigHelpers) {
-                        return window.PluginConfigHelpers.generateConfigForm(pluginId, config, schema, webUiActions, this);
-                    }
-                    return '<div class="text-gray-500">Configuration form not available...</div>';
-                },
-                async savePluginConfig(pluginId, event) {
-                    const parent = this.getParentApp();
-                    // Check parent !== this to avoid infinite recursion
-                    if (parent && parent !== this && typeof parent.savePluginConfig === 'function') {
-                        return parent.savePluginConfig(pluginId, event);
-                    }
-                    // Fallback to global helper
-                    if (window.PluginConfigHelpers) {
-                        return window.PluginConfigHelpers.savePluginConfig(pluginId, event, this);
-                    }
-                    console.error('savePluginConfig not available');
                 }
+                // Note: generateConfigForm and savePluginConfig are now called via $root 
+                // to avoid delegation recursion. See template usage:
+                // x-html="$root.generateConfigForm(...)" and 
+                // x-on:submit.prevent="$root.savePluginConfig(...)"
             };
         }
 
