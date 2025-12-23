@@ -2199,34 +2199,55 @@
                         
                         if (window.PluginAPI && window.PluginAPI.batch) {
                             // PluginAPI.batch returns already-parsed JSON objects
-                            const results = await window.PluginAPI.batch([
-                                {endpoint: `/plugins/config?plugin_id=${pluginId}`, method: 'GET'},
-                                {endpoint: `/plugins/schema?plugin_id=${pluginId}`, method: 'GET'},
-                                {endpoint: '/plugins/installed', method: 'GET'}
-                            ]);
-                            [configData, schemaData, pluginsData] = results;
+                            try {
+                                const results = await window.PluginAPI.batch([
+                                    {endpoint: `/plugins/config?plugin_id=${pluginId}`, method: 'GET'},
+                                    {endpoint: `/plugins/schema?plugin_id=${pluginId}`, method: 'GET'},
+                                    {endpoint: '/plugins/installed', method: 'GET'}
+                                ]);
+                                [configData, schemaData, pluginsData] = results;
+                            } catch (batchError) {
+                                console.error('Batch API request failed, falling back to individual requests:', batchError);
+                                // Fall back to individual requests
+                                const [configResponse, schemaResponse, pluginsResponse] = await Promise.all([
+                                    fetch(`/api/v3/plugins/config?plugin_id=${pluginId}`).then(r => r.json()).catch(e => ({ status: 'error', message: e.message })),
+                                    fetch(`/api/v3/plugins/schema?plugin_id=${pluginId}`).then(r => r.json()).catch(e => ({ status: 'error', message: e.message })),
+                                    fetch(`/api/v3/plugins/installed`).then(r => r.json()).catch(e => ({ status: 'error', message: e.message }))
+                                ]);
+                                configData = configResponse;
+                                schemaData = schemaResponse;
+                                pluginsData = pluginsResponse;
+                            }
                         } else {
                             // Direct fetch returns Response objects that need parsing
                             const [configResponse, schemaResponse, pluginsResponse] = await Promise.all([
-                                fetch(`/api/v3/plugins/config?plugin_id=${pluginId}`).then(r => r.json()),
-                                fetch(`/api/v3/plugins/schema?plugin_id=${pluginId}`).then(r => r.json()),
-                                fetch(`/api/v3/plugins/installed`).then(r => r.json())
+                                fetch(`/api/v3/plugins/config?plugin_id=${pluginId}`).then(r => r.json()).catch(e => ({ status: 'error', message: e.message })),
+                                fetch(`/api/v3/plugins/schema?plugin_id=${pluginId}`).then(r => r.json()).catch(e => ({ status: 'error', message: e.message })),
+                                fetch(`/api/v3/plugins/installed`).then(r => r.json()).catch(e => ({ status: 'error', message: e.message }))
                             ]);
                             configData = configResponse;
                             schemaData = schemaResponse;
                             pluginsData = pluginsResponse;
                         }
 
-                        if (configData.status === 'success') {
+                        if (configData && configData.status === 'success') {
                             this.config = configData.data;
+                        } else {
+                            console.warn('Config API returned non-success status:', configData);
+                            // Set defaults if config failed to load
+                            this.config = { enabled: true, display_duration: 30 };
                         }
 
-                        if (schemaData.status === 'success') {
+                        if (schemaData && schemaData.status === 'success') {
                             this.schema = schemaData.data.schema || {};
+                        } else {
+                            console.warn('Schema API returned non-success status:', schemaData);
+                            // Set empty schema as fallback
+                            this.schema = {};
                         }
 
                         // Extract web_ui_actions from installed plugins and update plugin data
-                        if (pluginsData.status === 'success' && pluginsData.data && pluginsData.data.plugins) {
+                        if (pluginsData && pluginsData.status === 'success' && pluginsData.data && pluginsData.data.plugins) {
                             // Update window.installedPlugins with fresh data (includes commit info)
                             // The setter will check if data actually changed before updating tabs
                             window.installedPlugins = pluginsData.data.plugins;
@@ -2242,6 +2263,7 @@
                                 last_updated: pluginInfo.last_updated
                             } : 'plugin not found');
                         } else {
+                            console.warn('Plugins API returned non-success status:', pluginsData);
                             this.webUiActions = [];
                         }
 
@@ -3087,35 +3109,57 @@
                     let configData, schemaData, pluginsData;
                     
                     if (window.PluginAPI && window.PluginAPI.batch) {
-                        const results = await window.PluginAPI.batch([
-                            {endpoint: `/plugins/config?plugin_id=${pluginId}`, method: 'GET'},
-                            {endpoint: `/plugins/schema?plugin_id=${pluginId}`, method: 'GET'},
-                            {endpoint: '/plugins/installed', method: 'GET'}
-                        ]);
-                        [configData, schemaData, pluginsData] = results;
+                        try {
+                            const results = await window.PluginAPI.batch([
+                                {endpoint: `/plugins/config?plugin_id=${pluginId}`, method: 'GET'},
+                                {endpoint: `/plugins/schema?plugin_id=${pluginId}`, method: 'GET'},
+                                {endpoint: '/plugins/installed', method: 'GET'}
+                            ]);
+                            [configData, schemaData, pluginsData] = results;
+                        } catch (batchError) {
+                            console.error('Batch API request failed, falling back to individual requests:', batchError);
+                            // Fall back to individual requests
+                            const [configResponse, schemaResponse, pluginsResponse] = await Promise.all([
+                                fetch(`/api/v3/plugins/config?plugin_id=${pluginId}`).then(r => r.json()).catch(e => ({ status: 'error', message: e.message })),
+                                fetch(`/api/v3/plugins/schema?plugin_id=${pluginId}`).then(r => r.json()).catch(e => ({ status: 'error', message: e.message })),
+                                fetch(`/api/v3/plugins/installed`).then(r => r.json()).catch(e => ({ status: 'error', message: e.message }))
+                            ]);
+                            configData = configResponse;
+                            schemaData = schemaResponse;
+                            pluginsData = pluginsResponse;
+                        }
                     } else {
                         const [configResponse, schemaResponse, pluginsResponse] = await Promise.all([
-                            fetch(`/api/v3/plugins/config?plugin_id=${pluginId}`).then(r => r.json()),
-                            fetch(`/api/v3/plugins/schema?plugin_id=${pluginId}`).then(r => r.json()),
-                            fetch(`/api/v3/plugins/installed`).then(r => r.json())
+                            fetch(`/api/v3/plugins/config?plugin_id=${pluginId}`).then(r => r.json()).catch(e => ({ status: 'error', message: e.message })),
+                            fetch(`/api/v3/plugins/schema?plugin_id=${pluginId}`).then(r => r.json()).catch(e => ({ status: 'error', message: e.message })),
+                            fetch(`/api/v3/plugins/installed`).then(r => r.json()).catch(e => ({ status: 'error', message: e.message }))
                         ]);
                         configData = configResponse;
                         schemaData = schemaResponse;
                         pluginsData = pluginsResponse;
                     }
 
-                    if (configData.status === 'success') {
+                    if (configData && configData.status === 'success') {
                         componentContext.config = configData.data;
+                    } else {
+                        console.warn('Config API returned non-success status:', configData);
+                        // Set defaults if config failed to load
+                        componentContext.config = { enabled: true, display_duration: 30 };
                     }
 
-                    if (schemaData.status === 'success') {
+                    if (schemaData && schemaData.status === 'success') {
                         componentContext.schema = schemaData.data.schema || {};
+                    } else {
+                        console.warn('Schema API returned non-success status:', schemaData);
+                        // Set empty schema as fallback
+                        componentContext.schema = {};
                     }
 
-                    if (pluginsData.status === 'success' && pluginsData.data && pluginsData.data.plugins) {
+                    if (pluginsData && pluginsData.status === 'success' && pluginsData.data && pluginsData.data.plugins) {
                         const pluginInfo = pluginsData.data.plugins.find(p => p.id === pluginId);
                         componentContext.webUiActions = pluginInfo ? (pluginInfo.web_ui_actions || []) : [];
                     } else {
+                        console.warn('Plugins API returned non-success status:', pluginsData);
                         componentContext.webUiActions = [];
                     }
 
