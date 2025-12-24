@@ -60,10 +60,11 @@
             
             {# Array of strings (comma-separated) #}
             {% elif field_type == 'array' %}
+            {% set array_value = value if value is not none else (prop.default if prop.default is defined else []) %}
             <input type="text" 
                    id="{{ field_id }}"
                    name="{{ full_key }}" 
-                   value="{{ value|join(', ') if value is iterable and value is not string else value }}"
+                   value="{{ array_value|join(', ') if array_value is iterable and array_value is not string else '' }}"
                    placeholder="Enter values separated by commas"
                    class="form-input w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 bg-white text-black placeholder:text-gray-500">
             <p class="text-xs text-gray-400 mt-1">Separate multiple values with commas</p>

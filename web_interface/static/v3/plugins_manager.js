@@ -2410,7 +2410,15 @@ function generateFieldHtml(key, prop, value, prefix = '') {
         } else {
             // Regular array input
             console.log(`[DEBUG] ❌ NOT a file upload widget for ${fullKey}, using regular array input`);
-        const arrayValue = Array.isArray(value) ? value.join(', ') : '';
+            // Handle null/undefined values - use default if available
+            let arrayValue = '';
+            if (value === null || value === undefined) {
+                arrayValue = Array.isArray(prop.default) ? prop.default.join(', ') : '';
+            } else if (Array.isArray(value)) {
+                arrayValue = value.join(', ');
+            } else {
+                arrayValue = '';
+            }
         html += `
             <input type="text" id="${fullKey}" name="${fullKey}" value="${arrayValue}" placeholder="Enter values separated by commas" class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm bg-white text-black placeholder:text-gray-500">
             <p class="text-sm text-gray-600 mt-1">Enter values separated by commas</p>
