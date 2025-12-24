@@ -774,6 +774,13 @@ function loadInstalledPlugins(forceRefresh = false) {
     // Return cached data if valid and not forcing refresh
     if (!forceRefresh && pluginLoadCache.isValid()) {
         pluginLog('[CACHE] Returning cached plugin data');
+        // Update window.installedPlugins from cache
+        window.installedPlugins = pluginLoadCache.data;
+        // Dispatch event to notify Alpine component
+        document.dispatchEvent(new CustomEvent('pluginsUpdated', {
+            detail: { plugins: pluginLoadCache.data }
+        }));
+        pluginLog('[CACHE] Dispatched pluginsUpdated event from cache');
         // Still render to ensure UI is updated
         renderInstalledPlugins(pluginLoadCache.data);
         return Promise.resolve(pluginLoadCache.data);
@@ -806,13 +813,24 @@ function loadInstalledPlugins(forceRefresh = false) {
                 pluginLoadCache.data = installedPlugins;
                 pluginLoadCache.timestamp = Date.now();
                 
-                // Only update window if plugin list actually changed
+                // Always update window.installedPlugins to ensure Alpine component can detect changes
                 const currentPlugins = Array.isArray(window.installedPlugins) ? window.installedPlugins : [];
                 const currentIds = currentPlugins.map(p => p.id).sort().join(',');
                 const newIds = installedPlugins.map(p => p.id).sort().join(',');
-                if (currentIds !== newIds) {
+                const pluginsChanged = currentIds !== newIds;
+                
+                if (pluginsChanged) {
+                    window.installedPlugins = installedPlugins;
+                } else {
+                    // Even if IDs haven't changed, update the array reference to trigger Alpine reactivity
                     window.installedPlugins = installedPlugins;
                 }
+                
+                // Dispatch event to notify Alpine component to update tabs
+                document.dispatchEvent(new CustomEvent('pluginsUpdated', {
+                    detail: { plugins: installedPlugins }
+                }));
+                pluginLog('[FETCH] Dispatched pluginsUpdated event with', installedPlugins.length, 'plugins');
                 
                 pluginLog('[FETCH] Loaded', installedPlugins.length, 'plugins');
                 
@@ -872,28 +890,26 @@ function renderInstalledPlugins(plugins) {
         return;
     }
     
-    // Update global installedPlugins for navigation tabs
-    // Only update if plugin list actually changed
-    const currentPlugins = window.installedPlugins || [];
-    const currentIds = currentPlugins.map(p => p.id).sort().join(',');
-    const newIds = plugins.map(p => p.id).sort().join(',');
+    // Always update window.installedPlugins to ensure Alpine component reactivity
+    window.installedPlugins = plugins;
+    pluginLog('[RENDER] Set window.installedPlugins to:', plugins.length, 'plugins');
     
-    if (currentIds !== newIds) {
-        window.installedPlugins = plugins;
-        pluginLog('[RENDER] Set window.installedPlugins to:', plugins.length, 'plugins');
-        
-        // Trigger the main app to update plugin tabs
-        if (window.Alpine && document.querySelector('[x-data="app()"]')) {
-            const appElement = document.querySelector('[x-data="app()"]');
-            if (appElement && appElement._x_dataStack && appElement._x_dataStack[0]) {
-                appElement._x_dataStack[0].installedPlugins = plugins;
+    // Dispatch event to notify Alpine component to update tabs
+    document.dispatchEvent(new CustomEvent('pluginsUpdated', {
+        detail: { plugins: plugins }
+    }));
+    pluginLog('[RENDER] Dispatched pluginsUpdated event');
+    
+    // Also try direct Alpine update as fallback
+    if (window.Alpine && document.querySelector('[x-data="app()"]')) {
+        const appElement = document.querySelector('[x-data="app()"]');
+        if (appElement && appElement._x_dataStack && appElement._x_dataStack[0]) {
+            appElement._x_dataStack[0].installedPlugins = plugins;
+            if (typeof appElement._x_dataStack[0].updatePluginTabs === 'function') {
                 appElement._x_dataStack[0].updatePluginTabs();
-                pluginLog('[RENDER] Triggered Alpine.js to update plugin tabs');
+                pluginLog('[RENDER] Triggered Alpine.js to update plugin tabs directly');
             }
         }
-    } else {
-        // Plugin list hasn't changed, skip update
-        pluginLog('[RENDER] Plugin list unchanged, skipping tab update');
     }
 
     if (plugins.length === 0) {
