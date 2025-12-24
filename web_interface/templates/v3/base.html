@@ -2203,19 +2203,27 @@
                 async loadInstalledPlugins() {
                     // If pluginManager exists (plugins.html is loaded), delegate to it
                     if (window.pluginManager) {
-                        console.log('Delegating plugin loading to pluginManager...');
+                        console.log('[FULL] Delegating plugin loading to pluginManager...');
                         await window.pluginManager.loadInstalledPlugins();
+                        // pluginManager should set window.installedPlugins, so update our component
+                        if (window.installedPlugins && Array.isArray(window.installedPlugins)) {
+                            this.installedPlugins = window.installedPlugins;
+                            console.log('[FULL] Updated component plugins from window.installedPlugins:', this.installedPlugins.length);
+                        }
+                        this.updatePluginTabs();
                         return;
                     }
 
                     // Otherwise, load plugins directly (fallback for when plugins.html isn't loaded)
                     try {
-                        console.log('Loading installed plugins directly...');
+                        console.log('[FULL] Loading installed plugins directly...');
                         const data = await getInstalledPluginsSafe();
 
                         if (data.status === 'success') {
                             this.installedPlugins = data.data.plugins || [];
-                            console.log(`Loaded ${this.installedPlugins.length} plugins:`, this.installedPlugins.map(p => p.id));
+                            // Also update window.installedPlugins for consistency
+                            window.installedPlugins = this.installedPlugins;
+                            console.log(`[FULL] Loaded ${this.installedPlugins.length} plugins:`, this.installedPlugins.map(p => p.id));
                             
                             // Debug: Log enabled status for each plugin
                             this.installedPlugins.forEach(plugin => {
@@ -2224,10 +2232,10 @@
                             
                             this.updatePluginTabs();
                         } else {
-                            console.error('Failed to load plugins:', data.message);
+                            console.error('[FULL] Failed to load plugins:', data.message);
                         }
                     } catch (error) {
-                        console.error('Error loading installed plugins:', error);
+                        console.error('[FULL] Error loading installed plugins:', error);
                     }
                 },
 
@@ -2253,18 +2261,37 @@
                 _doUpdatePluginTabs(retryCount = 0) {
                     const maxRetries = 5;
 
-                    // Use global installedPlugins if available, otherwise use component's
-                    const pluginsToShow = window.installedPlugins || this.installedPlugins || [];
+                    // Use component's installedPlugins first (most up-to-date), then global, then empty array
+                    const pluginsToShow = (this.installedPlugins && this.installedPlugins.length > 0) 
+                        ? this.installedPlugins 
+                        : (window.installedPlugins || []);
                     
                     console.log('[FULL] _doUpdatePluginTabs called with:', pluginsToShow.length, 'plugins (attempt', retryCount + 1, ')');
+                    console.log('[FULL] Plugin sources:', {
+                        componentPlugins: this.installedPlugins?.length || 0,
+                        windowPlugins: window.installedPlugins?.length || 0,
+                        using: pluginsToShow.length > 0 ? (this.installedPlugins?.length > 0 ? 'component' : 'window') : 'none'
+                    });
                     
                     // Check if plugin list actually changed by comparing IDs
                     const currentPluginIds = pluginsToShow.map(p => p.id).sort().join(',');
                     const lastRenderedIds = (this._lastRenderedPluginIds || '');
                     
-                    if (currentPluginIds === lastRenderedIds && retryCount === 0) {
+                    // Only skip if we have plugins and they match (don't skip if both are empty)
+                    if (currentPluginIds === lastRenderedIds && retryCount === 0 && currentPluginIds.length > 0) {
                         // Plugin list hasn't changed, skip update
                         console.log('[FULL] Plugin list unchanged, skipping update');
+                        return;
+                    }
+                    
+                    // If we have no plugins and haven't rendered anything yet, still try to render (might be first load)
+                    if (pluginsToShow.length === 0 && retryCount === 0) {
+                        console.log('[FULL] No plugins to show, but will retry in case they load...');
+                        if (retryCount < maxRetries) {
+                            setTimeout(() => {
+                                this._doUpdatePluginTabs(retryCount + 1);
+                            }, 500);
+                        }
                         return;
                     }
                     
