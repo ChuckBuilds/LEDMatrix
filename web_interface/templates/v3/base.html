@@ -2208,6 +2208,7 @@
                 },
 
                 updatePluginTabs(retryCount = 0) {
+                    console.log('[FULL] updatePluginTabs called (retryCount:', retryCount, ')');
                     const maxRetries = 5;
 
                     // Debounce: Clear any pending update
@@ -2215,10 +2216,14 @@
                         clearTimeout(this._updatePluginTabsTimeout);
                     }
                     
-                    // Debounce: Schedule update after a short delay to batch rapid changes
-                    this._updatePluginTabsTimeout = setTimeout(() => {
+                    // For first call or retries, execute immediately to ensure tabs appear quickly
+                    if (retryCount === 0) {
+                        // First call - execute immediately, then debounce subsequent calls
                         this._doUpdatePluginTabs(retryCount);
-                    }, 150);
+                    } else {
+                        // Retry - execute immediately
+                        this._doUpdatePluginTabs(retryCount);
+                    }
                 },
                 
                 _doUpdatePluginTabs(retryCount = 0) {
@@ -2227,55 +2232,61 @@
                     // Use global installedPlugins if available, otherwise use component's
                     const pluginsToShow = window.installedPlugins || this.installedPlugins || [];
                     
+                    console.log('[FULL] _doUpdatePluginTabs called with:', pluginsToShow.length, 'plugins (attempt', retryCount + 1, ')');
+                    
                     // Check if plugin list actually changed by comparing IDs
                     const currentPluginIds = pluginsToShow.map(p => p.id).sort().join(',');
                     const lastRenderedIds = (this._lastRenderedPluginIds || '');
                     
                     if (currentPluginIds === lastRenderedIds && retryCount === 0) {
                         // Plugin list hasn't changed, skip update
+                        console.log('[FULL] Plugin list unchanged, skipping update');
                         return;
                     }
                     
                     // Store the current plugin IDs for next comparison
                     this._lastRenderedPluginIds = currentPluginIds;
-                    
-                    console.log('updatePluginTabs called with:', pluginsToShow.length, 'plugins (attempt', retryCount + 1, ')');
 
                     const pluginTabsRow = document.getElementById('plugin-tabs-row');
                     const pluginTabsNav = pluginTabsRow?.querySelector('nav');
 
-                    console.log('Plugin tabs elements:', {
+                    console.log('[FULL] Plugin tabs elements:', {
                         pluginTabsRow: !!pluginTabsRow,
                         pluginTabsNav: !!pluginTabsNav,
                         bodyExists: !!document.body,
-                        installedPlugins: pluginsToShow
+                        installedPlugins: pluginsToShow.length,
+                        pluginIds: pluginsToShow.map(p => p.id)
                     });
 
                     if (!pluginTabsRow || !pluginTabsNav) {
                         if (retryCount < maxRetries) {
-                            console.log('Plugin tabs container not found, retrying...');
+                            console.warn('[FULL] Plugin tabs container not found, retrying in 500ms... (attempt', retryCount + 1, 'of', maxRetries, ')');
                             setTimeout(() => {
                                 this._doUpdatePluginTabs(retryCount + 1);
                             }, 500);
                         } else {
-                            console.error('Plugin tabs container not found after maximum retries');
+                            console.error('[FULL] Plugin tabs container not found after maximum retries. Elements:', {
+                                pluginTabsRow: document.getElementById('plugin-tabs-row'),
+                                pluginTabsNav: document.getElementById('plugin-tabs-row')?.querySelector('nav'),
+                                allNavs: document.querySelectorAll('nav').length
+                            });
                         }
                         return;
                     }
 
-                    console.log(`Updating plugin tabs for ${pluginsToShow.length} plugins`);
+                    console.log(`[FULL] Updating plugin tabs for ${pluginsToShow.length} plugins`);
 
                     // Always show the plugin tabs row (Plugin Manager should always be available)
-                    console.log('Ensuring plugin tabs row is visible');
+                    console.log('[FULL] Ensuring plugin tabs row is visible');
                     pluginTabsRow.style.display = 'block';
 
                     // Clear existing plugin tabs (except the Plugin Manager tab)
                     const existingTabs = pluginTabsNav.querySelectorAll('.plugin-tab');
-                    console.log(`Removing ${existingTabs.length} existing plugin tabs`);
+                    console.log(`[FULL] Removing ${existingTabs.length} existing plugin tabs`);
                     existingTabs.forEach(tab => tab.remove());
 
                     // Add tabs for each installed plugin
-                    console.log('Adding tabs for plugins:', pluginsToShow.map(p => p.id));
+                    console.log('[FULL] Adding tabs for plugins:', pluginsToShow.map(p => p.id));
                     pluginsToShow.forEach(plugin => {
                         const tabButton = document.createElement('button');
                         tabButton.type = 'button';
@@ -2291,10 +2302,10 @@
 
                         // Insert before the closing </nav> tag
                         pluginTabsNav.appendChild(tabButton);
-                        console.log('Added tab for plugin:', plugin.id);
+                        console.log('[FULL] Added tab for plugin:', plugin.id);
                     });
 
-                    console.log('Plugin tabs update completed');
+                    console.log('[FULL] Plugin tabs update completed. Total tabs:', pluginTabsNav.querySelectorAll('.plugin-tab').length);
                 },
 
                 updatePluginTabStates() {
