@@ -2262,7 +2262,7 @@ function generateFieldHtml(key, prop, value, prefix = '') {
         }
         
         html += `
-            <input type="number" id="${fullKey}" name="${fullKey}" value="${fieldValue}" ${min} ${max} ${step} class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm">
+            <input type="number" id="${fullKey}" name="${fullKey}" value="${fieldValue}" ${min} ${max} ${step} class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm bg-gray-900 text-white placeholder:text-gray-400">
         `;
     } else if (prop.type === 'array') {
         // Check if this is a file upload widget - try multiple ways to access x-widget
@@ -2412,12 +2412,12 @@ function generateFieldHtml(key, prop, value, prefix = '') {
             console.log(`[DEBUG] ❌ NOT a file upload widget for ${fullKey}, using regular array input`);
         const arrayValue = Array.isArray(value) ? value.join(', ') : '';
         html += `
-            <input type="text" id="${fullKey}" name="${fullKey}" value="${arrayValue}" placeholder="Enter values separated by commas" class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm">
+            <input type="text" id="${fullKey}" name="${fullKey}" value="${arrayValue}" placeholder="Enter values separated by commas" class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm bg-gray-900 text-white placeholder:text-gray-400">
             <p class="text-sm text-gray-600 mt-1">Enter values separated by commas</p>
         `;
         }
     } else if (prop.enum) {
-        html += `<select id="${fullKey}" name="${fullKey}" class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm">`;
+        html += `<select id="${fullKey}" name="${fullKey}" class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm bg-gray-900 text-white">`;
         prop.enum.forEach(option => {
             const selected = value === option ? 'selected' : '';
             html += `<option value="${option}" ${selected}>${option}</option>`;
@@ -2473,7 +2473,7 @@ function generateFieldHtml(key, prop, value, prefix = '') {
         console.warn(`[DEBUG] Object field ${fullKey} doesn't match any special handler, rendering as JSON textarea`);
         const jsonValue = typeof value === 'object' && value !== null ? JSON.stringify(value, null, 2) : (value || '{}');
         html += `
-            <textarea id="${fullKey}" name="${fullKey}" rows="8" class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm font-mono text-xs" style="font-family: 'Courier New', monospace;">${escapeHtml(jsonValue)}</textarea>
+            <textarea id="${fullKey}" name="${fullKey}" rows="8" class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm font-mono text-xs bg-gray-900 text-white" style="font-family: 'Courier New', monospace;">${escapeHtml(jsonValue)}</textarea>
             <p class="text-sm text-gray-600 mt-1">Edit as JSON object</p>
         `;
     } else {
@@ -2486,7 +2486,7 @@ function generateFieldHtml(key, prop, value, prefix = '') {
         
         html += `
             <div class="relative">
-                <input type="${inputType}" id="${fullKey}" name="${fullKey}" value="${value !== undefined ? value : ''}" ${maxLengthAttr} class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm ${secretClass}">
+                <input type="${inputType}" id="${fullKey}" name="${fullKey}" value="${value !== undefined ? value : ''}" ${maxLengthAttr} class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm bg-gray-900 text-white placeholder:text-gray-400 ${secretClass}">
         `;
         
         if (isSecret) {
