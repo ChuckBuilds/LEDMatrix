@@ -1097,12 +1097,14 @@ echo "----------------------------------------"
 
 # Set ownership of project files to the user
 # Exclude plugin directories which need special permissions for root service access
+# Use -P flag to not follow symlinks when traversing, and -h flag with chown to not follow symlinks
 echo "Setting project file ownership (excluding plugin directories)..."
-find "$PROJECT_ROOT_DIR" \
+find "$PROJECT_ROOT_DIR" -P \
     -path "$PROJECT_ROOT_DIR/plugins" -prune -o \
     -path "$PROJECT_ROOT_DIR/plugin-repos" -prune -o \
+    -path "$PROJECT_ROOT_DIR/scripts/dev/plugins" -prune -o \
     -path "*/.git*" -prune -o \
-    -exec chown "$ACTUAL_USER:$ACTUAL_USER" {} +
+    -exec chown -h "$ACTUAL_USER:$ACTUAL_USER" {} +
 
 # Set proper permissions for config files
 if [ -f "$PROJECT_ROOT_DIR/config/config.json" ]; then
@@ -1192,21 +1194,26 @@ echo "Step 11.1: Normalizing project file and directory permissions..."
 echo "--------------------------------------------------------------"
 
 # Normalize directory permissions (exclude VCS metadata and plugin directories)
-find "$PROJECT_ROOT_DIR" \
+# Use -P flag to not follow symlinks when traversing
+find "$PROJECT_ROOT_DIR" -P \
     -path "$PROJECT_ROOT_DIR/plugins" -prune -o \
     -path "$PROJECT_ROOT_DIR/plugin-repos" -prune -o \
+    -path "$PROJECT_ROOT_DIR/scripts/dev/plugins" -prune -o \
     -path "*/.git*" -prune -o \
     -type d -exec chmod 755 {} +
 
 # Set default file permissions (exclude plugin directories)
-find "$PROJECT_ROOT_DIR" \
+# Use -P flag to not follow symlinks when traversing
+find "$PROJECT_ROOT_DIR" -P \
     -path "$PROJECT_ROOT_DIR/plugins" -prune -o \
     -path "$PROJECT_ROOT_DIR/plugin-repos" -prune -o \
+    -path "$PROJECT_ROOT_DIR/scripts/dev/plugins" -prune -o \
     -path "*/.git*" -prune -o \
     -type f -exec chmod 644 {} +
 
 # Ensure shell scripts are executable
-find "$PROJECT_ROOT_DIR" -path "*/.git*" -prune -o -type f -name "*.sh" -exec chmod 755 {} +
+# Use -P flag to not follow symlinks when traversing
+find "$PROJECT_ROOT_DIR" -P -path "*/.git*" -prune -o -type f -name "*.sh" -exec chmod 755 {} +
 
 # Explicitly ensure common helper scripts are executable (in case paths change)
 chmod 755 "$PROJECT_ROOT_DIR/start_display.sh" "$PROJECT_ROOT_DIR/stop_display.sh" 2>/dev/null || true
