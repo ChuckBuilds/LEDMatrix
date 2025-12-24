@@ -100,7 +100,7 @@
             </div>
             <i id="{{ section_id }}-icon" class="fas fa-chevron-right text-gray-500 transition-transform"></i>
         </button>
-        <div id="{{ section_id }}" class="nested-content bg-gray-50 px-4 py-4 space-y-3 hidden">
+        <div id="{{ section_id }}" class="nested-content bg-gray-50 px-4 py-4 space-y-3 hidden" style="display: none;">
             {% set property_order = prop['x-propertyOrder'] if 'x-propertyOrder' in prop else prop.properties.keys()|list %}
             {% for nested_key in property_order %}
                 {% if nested_key in prop.properties %}
