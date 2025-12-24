@@ -279,6 +279,35 @@
             }
             setupScriptExecution();
             
+            // Section toggle function - define early so it's available for HTMX-loaded content
+            window.toggleSection = function(sectionId) {
+                const section = document.getElementById(sectionId);
+                const icon = document.getElementById(sectionId + '-icon');
+                if (!section) {
+                    console.warn('toggleSection: Could not find section for', sectionId);
+                    return;
+                }
+                if (!icon) {
+                    console.warn('toggleSection: Could not find icon for', sectionId);
+                    return;
+                }
+                
+                // Check if currently hidden by checking if hidden class is present
+                const isHidden = section.classList.contains('hidden');
+                
+                if (isHidden) {
+                    // Show the section - remove hidden class
+                    section.classList.remove('hidden');
+                    icon.classList.remove('fa-chevron-right');
+                    icon.classList.add('fa-chevron-down');
+                } else {
+                    // Hide the section - add hidden class
+                    section.classList.add('hidden');
+                    icon.classList.remove('fa-chevron-down');
+                    icon.classList.add('fa-chevron-right');
+                }
+            };
+            
             // Function to load plugins tab
             window.loadPluginsTab = function() {
                 const content = document.getElementById('plugins-content');
@@ -3886,34 +3915,8 @@
             }, 3000);
         }
 
-        // Section toggle function (always ensure it's defined, outside guard)
-        window.toggleSection = window.toggleSection || function(sectionId) {
-            const section = document.getElementById(sectionId);
-            const icon = document.getElementById(sectionId + '-icon');
-            if (!section) {
-                console.warn('toggleSection: Could not find section for', sectionId);
-                return;
-            }
-            if (!icon) {
-                console.warn('toggleSection: Could not find icon for', sectionId);
-                return;
-            }
-            
-            // Check if currently hidden by checking if hidden class is present
-            const isHidden = section.classList.contains('hidden');
-            
-            if (isHidden) {
-                // Show the section - remove hidden class
-                section.classList.remove('hidden');
-                icon.classList.remove('fa-chevron-right');
-                icon.classList.add('fa-chevron-down');
-            } else {
-                // Hide the section - add hidden class
-                section.classList.add('hidden');
-                icon.classList.remove('fa-chevron-down');
-                icon.classList.add('fa-chevron-right');
-            }
-        };
+        // Section toggle function - already defined earlier, but ensure it's not overwritten
+        // (duplicate definition removed - function is defined in early script block above)
 
         // Plugin config handler functions (idempotent initialization)
         if (!window.__pluginConfigHandlersInitialized) {
