@@ -235,10 +235,11 @@ class ScrollHelper:
         self.scroll_position += pixels_to_move
         self.total_distance_scrolled += pixels_to_move
         
-        # Calculate required total distance: just total_scroll_width
-        # The image already includes display_width padding at the start, so we only need
-        # to scroll total_scroll_width pixels to show all content once without looping
-        required_total_distance = self.total_scroll_width
+        # Calculate required total distance: total_scroll_width + display_width
+        # The image already includes display_width padding at the start, so we need
+        # to scroll total_scroll_width pixels to show all content, plus display_width
+        # more pixels to ensure the last content scrolls completely off the screen
+        required_total_distance = self.total_scroll_width + self.display_width
         
         # Check completion FIRST (before wrap-around) to prevent visual loop
         # When dynamic duration is enabled and cycle is complete, stop at end instead of wrapping
@@ -533,9 +534,10 @@ class ScrollHelper:
         
         try:
             # Calculate total scroll distance needed
-            # The image already includes display_width padding at the start, so we only need
-            # to scroll total_scroll_width pixels to show all content once without looping
-            total_scroll_distance = self.total_scroll_width
+            # The image already includes display_width padding at the start, so we need
+            # to scroll total_scroll_width pixels to show all content, plus display_width
+            # more pixels to ensure the last content scrolls completely off the screen
+            total_scroll_distance = self.total_scroll_width + self.display_width
             
             # Calculate effective pixels per second based on scrolling mode
             if self.frame_based_scrolling:
