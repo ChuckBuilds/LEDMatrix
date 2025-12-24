@@ -39,7 +39,7 @@
             {% elif prop.enum %}
             <select id="{{ field_id }}"
                     name="{{ full_key }}" 
-                    class="form-select w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 bg-gray-900 text-white">
+                    class="form-select w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 bg-white text-black">
                 {% for option in prop.enum %}
                 <option value="{{ option }}" {% if value == option %}selected{% endif %}>
                     {{ option|replace('_', ' ')|title }}
@@ -56,7 +56,7 @@
                    {% if prop.minimum is defined %}min="{{ prop.minimum }}"{% endif %}
                    {% if prop.maximum is defined %}max="{{ prop.maximum }}"{% endif %}
                    {% if field_type == 'integer' %}step="1"{% else %}step="any"{% endif %}
-                   class="form-input w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 bg-gray-900 text-white placeholder:text-gray-400">
+                   class="form-input w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 bg-white text-black placeholder:text-gray-500">
             
             {# Array of strings (comma-separated) #}
             {% elif field_type == 'array' %}
@@ -65,7 +65,7 @@
                    name="{{ full_key }}" 
                    value="{{ value|join(', ') if value is iterable and value is not string else value }}"
                    placeholder="Enter values separated by commas"
-                   class="form-input w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 bg-gray-900 text-white placeholder:text-gray-400">
+                   class="form-input w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 bg-white text-black placeholder:text-gray-500">
             <p class="text-xs text-gray-400 mt-1">Separate multiple values with commas</p>
             
             {# Text input (default) #}
@@ -74,7 +74,7 @@
                    id="{{ field_id }}"
                    name="{{ full_key }}" 
                    value="{{ value if value is not none else (prop.default if prop.default is defined else '') }}"
-                   class="form-input w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 bg-gray-900 text-white placeholder:text-gray-400">
+                   class="form-input w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 bg-white text-black placeholder:text-gray-500">
             {% endif %}
         </div>
     {% endif %}
