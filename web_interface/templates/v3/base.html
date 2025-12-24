@@ -292,21 +292,23 @@
                     return;
                 }
                 
-                // Check if currently hidden by checking both class and computed style
+                // Check if currently hidden - prioritize hidden class check
                 const hasHiddenClass = section.classList.contains('hidden');
-                const computedDisplay = window.getComputedStyle(section).display;
+                // Only check computed style if hidden class check is ambiguous
+                const computedDisplay = hasHiddenClass ? 'none' : window.getComputedStyle(section).display;
                 const isHidden = hasHiddenClass || computedDisplay === 'none';
                 
                 if (isHidden) {
-                    // Show the section - remove hidden class and ensure display is not none
+                    // Show the section - remove hidden class and clear any inline display style
                     section.classList.remove('hidden');
                     section.style.display = '';
                     icon.classList.remove('fa-chevron-right');
                     icon.classList.add('fa-chevron-down');
                 } else {
-                    // Hide the section - add hidden class and set display to none
+                    // Hide the section - add hidden class (Tailwind will handle display:none)
                     section.classList.add('hidden');
-                    section.style.display = 'none';
+                    // Remove any inline display style to let Tailwind's hidden class work
+                    section.style.display = '';
                     icon.classList.remove('fa-chevron-down');
                     icon.classList.add('fa-chevron-right');
                 }
