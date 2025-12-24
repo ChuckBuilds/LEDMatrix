@@ -5,6 +5,12 @@
 
 set -e
 
+# Cleanup function for temp files
+cleanup() {
+    rm -f "$TEMP_SUDOERS" "$TEMP_POLKIT" 2>/dev/null || true
+}
+trap cleanup EXIT
+
 echo "Configuring WiFi management permissions for LED Matrix Web Interface..."
 
 # Get the current user (should be the user running the web interface)
@@ -32,8 +38,11 @@ echo ""
 echo "Step 1: Configuring sudo permissions for nmcli..."
 SUDOERS_FILE="/etc/sudoers.d/ledmatrix_wifi"
 
-# Create a temporary sudoers file
-TEMP_SUDOERS="/tmp/ledmatrix_wifi_sudoers_$$"
+# Create a temporary sudoers file using mktemp (handles permissions better)
+TEMP_SUDOERS=$(mktemp) || {
+    echo "✗ Failed to create temporary file"
+    exit 1
+}
 
 cat > "$TEMP_SUDOERS" << EOF
 # LED Matrix WiFi Management passwordless sudo configuration
@@ -81,8 +90,11 @@ echo "Step 2: Configuring PolicyKit permissions for NetworkManager..."
 POLKIT_RULES_DIR="/etc/polkit-1/rules.d"
 POLKIT_RULE_FILE="$POLKIT_RULES_DIR/10-ledmatrix-wifi.rules"
 
-# Create PolicyKit rule
-TEMP_POLKIT="/tmp/ledmatrix_wifi_polkit_$$"
+# Create PolicyKit rule using mktemp (handles permissions better)
+TEMP_POLKIT=$(mktemp) || {
+    echo "✗ Failed to create temporary file"
+    exit 1
+}
 
 cat > "$TEMP_POLKIT" << EOF
 // LED Matrix WiFi Management PolicyKit rules

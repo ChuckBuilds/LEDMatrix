@@ -8,6 +8,7 @@ import os
 import socket
 import subprocess
 import sys
+import logging
 from pathlib import Path
 
 def get_local_ips():
@@ -68,6 +69,36 @@ def main():
     # Add to Python path
     sys.path.insert(0, str(project_root))
     
+    # Configure logging to suppress non-critical socket errors
+    # These occur when clients disconnect and are harmless
+    werkzeug_logger = logging.getLogger('werkzeug')
+    original_log_exception = werkzeug_logger.error
+    
+    def log_exception_filtered(message, *args, **kwargs):
+        """Filter out non-critical socket errors from werkzeug logs."""
+        if isinstance(message, str):
+            # Suppress "No route to host" and similar connection errors
+            if 'No route to host' in message or 'errno 113' in message:
+                # Log at debug level instead of error
+                werkzeug_logger.debug(message, *args, **kwargs)
+                return
+            # Suppress broken pipe errors (client disconnected)
+            if 'Broken pipe' in message or 'errno 32' in message:
+                werkzeug_logger.debug(message, *args, **kwargs)
+                return
+        # For exceptions, check if it's a socket error
+        if 'exc_info' in kwargs and kwargs['exc_info']:
+            exc_type, exc_value, exc_tb = kwargs['exc_info']
+            if isinstance(exc_value, OSError):
+                # Suppress common non-critical socket errors
+                if exc_value.errno in (113, 32, 104):  # No route to host, Broken pipe, Connection reset
+                    werkzeug_logger.debug(message, *args, **kwargs)
+                    return
+        # Log everything else normally
+        original_log_exception(message, *args, **kwargs)
+    
+    werkzeug_logger.error = log_exception_filtered
+    
     # Import and run the Flask app
     from web_interface.app import app
     
@@ -87,8 +118,18 @@ def main():
         print("  - http://localhost:5000 (local only)")
         print("  - http://<your-pi-ip>:5000 (replace with your Pi's IP address)")
     
-    # Run the web server
-    app.run(host='0.0.0.0', port=5000, debug=False)
+    # Run the web server with error handling for client disconnections
+    try:
+        app.run(host='0.0.0.0', port=5000, debug=False)
+    except (OSError, BrokenPipeError) as e:
+        # Suppress non-critical socket errors (client disconnections)
+        if isinstance(e, OSError) and e.errno in (113, 32, 104):  # No route to host, Broken pipe, Connection reset
+            werkzeug_logger.debug(f"Client disconnected: {e}", exc_info=True)
+            # Re-raise only if it's not a client disconnection error
+            if e.errno not in (113, 32, 104):
+                raise
+        else:
+            raise
 
 if __name__ == '__main__':
     main()
