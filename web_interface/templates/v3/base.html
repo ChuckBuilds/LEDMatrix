@@ -4105,6 +4105,105 @@
             // Initialize state on window object
             window.pluginConfigRefreshInProgress = window.pluginConfigRefreshInProgress || new Set();
             
+            // Validate plugin config form and show helpful error messages
+            window.validatePluginConfigForm = function(form, pluginId) {
+                // Check HTML5 validation
+                if (!form.checkValidity()) {
+                    // Find all invalid fields
+                    const invalidFields = Array.from(form.querySelectorAll(':invalid'));
+                    const errors = [];
+                    let firstInvalidField = null;
+                    
+                    invalidFields.forEach((field, index) => {
+                        // Build error message
+                        let fieldName = field.name || field.id || 'field';
+                        // Make field name more readable (remove plugin ID prefix, convert dots/underscores)
+                        fieldName = fieldName.replace(new RegExp('^' + pluginId + '-'), '')
+                                            .replace(/\./g, ' → ')
+                                            .replace(/_/g, ' ')
+                                            .replace(/\b\w/g, l => l.toUpperCase()); // Capitalize words
+                        
+                        let errorMsg = field.validationMessage || 'Invalid value';
+                        
+                        // Get more specific error message based on validation state
+                        if (field.validity.valueMissing) {
+                            errorMsg = 'This field is required';
+                        } else if (field.validity.rangeUnderflow) {
+                            errorMsg = `Value must be at least ${field.min || 'the minimum'}`;
+                        } else if (field.validity.rangeOverflow) {
+                            errorMsg = `Value must be at most ${field.max || 'the maximum'}`;
+                        } else if (field.validity.stepMismatch) {
+                            errorMsg = `Value must be a multiple of ${field.step || 1}`;
+                        } else if (field.validity.typeMismatch) {
+                            errorMsg = 'Invalid format (e.g., text in number field)';
+                        } else if (field.validity.patternMismatch) {
+                            errorMsg = 'Value does not match required pattern';
+                        } else if (field.validity.tooShort) {
+                            errorMsg = `Value must be at least ${field.minLength} characters`;
+                        } else if (field.validity.tooLong) {
+                            errorMsg = `Value must be at most ${field.maxLength} characters`;
+                        } else if (field.validity.badInput) {
+                            errorMsg = 'Invalid input type';
+                        }
+                        
+                        errors.push(`${fieldName}: ${errorMsg}`);
+                        
+                        // Track first invalid field for focusing
+                        if (index === 0) {
+                            firstInvalidField = field;
+                        }
+                        
+                        // If field is in a collapsed section, expand it
+                        const nestedContent = field.closest('.nested-content');
+                        if (nestedContent && nestedContent.classList.contains('hidden')) {
+                            // Find the toggle button for this section
+                            const sectionId = nestedContent.id;
+                            if (sectionId) {
+                                // Try multiple selectors to find the toggle button
+                                const toggleBtn = document.querySelector(`button[aria-controls="${sectionId}"], button[onclick*="${sectionId}"], [data-toggle-section="${sectionId}"]`) ||
+                                                 nestedContent.previousElementSibling?.querySelector('button');
+                                if (toggleBtn && toggleBtn.onclick) {
+                                    toggleBtn.click(); // Expand the section
+                                }
+                            }
+                        }
+                    });
+                    
+                    // Focus and scroll to first invalid field after a brief delay
+                    // (allows collapsed sections to expand first)
+                    setTimeout(() => {
+                        if (firstInvalidField) {
+                            firstInvalidField.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                            firstInvalidField.focus();
+                        }
+                    }, 200);
+                    
+                    // Show error notification with details
+                    if (errors.length > 0) {
+                        // Format error message nicely
+                        const errorList = errors.slice(0, 5).join('\n'); // Show first 5 errors
+                        const moreErrors = errors.length > 5 ? `\n... and ${errors.length - 5} more error(s)` : '';
+                        const errorMessage = `Validation failed:\n${errorList}${moreErrors}`;
+                        
+                        if (typeof showNotification === 'function') {
+                            showNotification(errorMessage, 'error');
+                        } else {
+                            alert(errorMessage); // Fallback if showNotification not available
+                        }
+                        
+                        // Also log to console for debugging
+                        console.error('Form validation errors:', errors);
+                    }
+                    
+                    // Report validation failure to browser (shows native validation tooltips)
+                    form.reportValidity();
+                    
+                    return false; // Prevent form submission
+                }
+                
+                return true; // Validation passed
+            };
+            
             // Handle config save response with detailed error logging
             window.handleConfigSave = function(event, pluginId) {
                 const btn = event.target.querySelector('[type=submit]');
