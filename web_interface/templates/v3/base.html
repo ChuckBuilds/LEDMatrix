@@ -892,6 +892,59 @@
             return await response.json();
         }
 
+        // Global event listener for pluginsUpdated - works even if Alpine isn't ready yet
+        // This ensures tabs update when plugins_manager.js loads plugins
+        document.addEventListener('pluginsUpdated', function(event) {
+            console.log('[GLOBAL] Received pluginsUpdated event:', event.detail?.plugins?.length || 0, 'plugins');
+            const plugins = event.detail?.plugins || [];
+            
+            // Update window.installedPlugins
+            window.installedPlugins = plugins;
+            
+            // Try to update Alpine component if it exists
+            if (window.Alpine) {
+                const appElement = document.querySelector('[x-data="app()"]');
+                if (appElement && appElement._x_dataStack && appElement._x_dataStack[0]) {
+                    const appComponent = appElement._x_dataStack[0];
+                    appComponent.installedPlugins = plugins;
+                    if (typeof appComponent.updatePluginTabs === 'function') {
+                        console.log('[GLOBAL] Updating plugin tabs via Alpine component');
+                        appComponent.updatePluginTabs();
+                    }
+                }
+            }
+            
+            // Also try to update tabs directly if Alpine isn't available yet
+            const pluginTabsRow = document.getElementById('plugin-tabs-row');
+            const pluginTabsNav = pluginTabsRow?.querySelector('nav');
+            if (pluginTabsRow && pluginTabsNav && plugins.length > 0) {
+                // Clear existing plugin tabs (except Plugin Manager)
+                const existingTabs = pluginTabsNav.querySelectorAll('.plugin-tab');
+                existingTabs.forEach(tab => tab.remove());
+                
+                // Add tabs for each installed plugin
+                plugins.forEach(plugin => {
+                    const tabButton = document.createElement('button');
+                    tabButton.type = 'button';
+                    tabButton.setAttribute('data-plugin-id', plugin.id);
+                    tabButton.className = `plugin-tab nav-tab`;
+                    tabButton.onclick = function() {
+                        // Try to set activeTab via Alpine if available
+                        if (window.Alpine) {
+                            const appElement = document.querySelector('[x-data="app()"]');
+                            if (appElement && appElement._x_dataStack && appElement._x_dataStack[0]) {
+                                appElement._x_dataStack[0].activeTab = plugin.id;
+                                appElement._x_dataStack[0].updatePluginTabStates();
+                            }
+                        }
+                    };
+                    tabButton.innerHTML = `<i class="fas fa-puzzle-piece"></i>${(plugin.name || plugin.id).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}`;
+                    pluginTabsNav.appendChild(tabButton);
+                });
+                console.log('[GLOBAL] Updated plugin tabs directly:', plugins.length, 'tabs added');
+            }
+        });
+
         // Define app() function early so Alpine can find it when it initializes
         // This is a complete implementation that will work immediately
         (function() {
@@ -929,6 +982,26 @@
                             return false;
                         };
                         
+                        // Set up event listener for pluginsUpdated in stub
+                        const handlePluginsUpdated = (event) => {
+                            console.log('[STUB] Received pluginsUpdated event:', event.detail?.plugins?.length || 0, 'plugins');
+                            const plugins = event.detail?.plugins || [];
+                            this.installedPlugins = plugins;
+                            if (typeof this.updatePluginTabs === 'function') {
+                                if (this.$nextTick && typeof this.$nextTick === 'function') {
+                                    this.$nextTick(() => {
+                                        this.updatePluginTabs();
+                                    });
+                                } else {
+                                    setTimeout(() => {
+                                        this.updatePluginTabs();
+                                    }, 100);
+                                }
+                            }
+                        };
+                        document.addEventListener('pluginsUpdated', handlePluginsUpdated);
+                        console.log('[STUB] init: Set up pluginsUpdated event listener');
+                        
                         // Try immediately - if full implementation is already loaded, use it right away
                         if (!tryEnhance()) {
                             // Full implementation not ready yet, load plugins directly while waiting
@@ -940,11 +1013,19 @@
                             let retryCount = 0;
                             const maxRetries = 20; // Check for 2 seconds (20 * 100ms)
                             const checkAndUpdateTabs = () => {
-                                if (retryCount >= maxRetries) return;
+                                if (retryCount >= maxRetries) {
+                                    // Fallback: if plugins_manager.js hasn't loaded after 2 seconds, fetch directly
+                                    if (!window.installedPlugins || window.installedPlugins.length === 0) {
+                                        console.log('[STUB] checkAndUpdateTabs: Fallback - fetching plugins directly after timeout');
+                                        this.loadInstalledPluginsDirectly();
+                                    }
+                                    return;
+                                }
                                 
                                 // Check if plugins are available (either from window or component)
                                 const plugins = window.installedPlugins || this.installedPlugins || [];
                                 if (plugins.length > 0) {
+                                    console.log('[STUB] checkAndUpdateTabs: Found', plugins.length, 'plugins, updating tabs');
                                     this.installedPlugins = plugins;
                                     if (typeof this.updatePluginTabs === 'function') {
                                         this.updatePluginTabs();
@@ -956,12 +1037,21 @@
                             };
                             // Start checking after a short delay
                             setTimeout(checkAndUpdateTabs, 200);
+                        } else {
+                            // Full implementation loaded, but still set up fallback timer
+                            setTimeout(() => {
+                                if (!window.installedPlugins || window.installedPlugins.length === 0) {
+                                    console.log('[STUB] init: Fallback timer - fetching plugins directly');
+                                    this.loadInstalledPluginsDirectly();
+                                }
+                            }, 2000);
                         }
                     },
                     
                     // Direct plugin loading for stub (before full implementation loads)
                     async loadInstalledPluginsDirectly() {
                         try {
+                            console.log('[STUB] loadInstalledPluginsDirectly: Starting...');
                             // Ensure DOM is ready
                             const ensureDOMReady = () => {
                                 return new Promise((resolve) => {
@@ -984,7 +1074,19 @@
                             
                             const data = await getInstalledPluginsSafe();
                             if (data.status === 'success') {
-                                this.installedPlugins = data.data.plugins || [];
+                                const plugins = data.data.plugins || [];
+                                console.log('[STUB] loadInstalledPluginsDirectly: Loaded', plugins.length, 'plugins');
+                                
+                                // Update both component and window
+                                this.installedPlugins = plugins;
+                                window.installedPlugins = plugins;
+                                
+                                // Dispatch event so global listener can update tabs
+                                document.dispatchEvent(new CustomEvent('pluginsUpdated', {
+                                    detail: { plugins: plugins }
+                                }));
+                                console.log('[STUB] loadInstalledPluginsDirectly: Dispatched pluginsUpdated event');
+                                
                                 // Update tabs if we have the method - use $nextTick if available
                                 if (typeof this.updatePluginTabs === 'function') {
                                     if (this.$nextTick && typeof this.$nextTick === 'function') {
@@ -998,9 +1100,11 @@
                                         }, 100);
                                     }
                                 }
+                            } else {
+                                console.warn('[STUB] loadInstalledPluginsDirectly: Failed to load plugins:', data.message);
                             }
                         } catch (error) {
-                            console.error('Error loading plugins directly:', error);
+                            console.error('[STUB] loadInstalledPluginsDirectly: Error loading plugins:', error);
                         }
                     },
                     
@@ -1029,15 +1133,22 @@
                     },
                     updatePluginTabs: function() {
                         // Basic implementation for stub - will be replaced by full implementation
+                        console.log('[STUB] updatePluginTabs: Called with', this.installedPlugins?.length || 0, 'plugins');
                         const pluginTabsRow = document.getElementById('plugin-tabs-row');
                         const pluginTabsNav = pluginTabsRow?.querySelector('nav');
-                        if (!pluginTabsRow || !pluginTabsNav || !this.installedPlugins || this.installedPlugins.length === 0) {
+                        if (!pluginTabsRow || !pluginTabsNav) {
+                            console.warn('[STUB] updatePluginTabs: Plugin tabs container not found');
+                            return;
+                        }
+                        if (!this.installedPlugins || this.installedPlugins.length === 0) {
+                            console.log('[STUB] updatePluginTabs: No plugins to display');
                             return;
                         }
                         
                         // Clear existing plugin tabs (except Plugin Manager)
                         const existingTabs = pluginTabsNav.querySelectorAll('.plugin-tab');
                         existingTabs.forEach(tab => tab.remove());
+                        console.log('[STUB] updatePluginTabs: Cleared', existingTabs.length, 'existing tabs');
                         
                         // Add tabs for each installed plugin
                         this.installedPlugins.forEach(plugin => {
@@ -1047,13 +1158,16 @@
                             tabButton.className = `plugin-tab nav-tab ${this.activeTab === plugin.id ? 'nav-tab-active' : ''}`;
                             tabButton.onclick = () => {
                                 this.activeTab = plugin.id;
-                                this.updatePluginTabStates();
+                                if (typeof this.updatePluginTabStates === 'function') {
+                                    this.updatePluginTabStates();
+                                }
                             };
                             const div = document.createElement('div');
                             div.textContent = plugin.name || plugin.id;
                             tabButton.innerHTML = `<i class="fas fa-puzzle-piece"></i>${div.innerHTML}`;
                             pluginTabsNav.appendChild(tabButton);
                         });
+                        console.log('[STUB] updatePluginTabs: Added', this.installedPlugins.length, 'plugin tabs');
                     },
                     showNotification: function(message, type) {},
                     escapeHtml: function(text) { return String(text || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
