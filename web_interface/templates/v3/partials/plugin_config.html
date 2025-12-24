@@ -153,7 +153,8 @@
           hx-swap="none"
           hx-indicator="#save-indicator-{{ plugin.id }}"
           hx-on::before-request="this.querySelector('[type=submit]').disabled = true"
-          hx-on::after-request="handleConfigSave(event, '{{ plugin.id }}')">
+          hx-on::after-request="handleConfigSave(event, '{{ plugin.id }}')"
+          novalidate>
         
         <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
             {# Plugin Information Panel #}
