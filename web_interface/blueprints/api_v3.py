@@ -2901,6 +2901,10 @@ def save_plugin_config():
                 combined_value = ', '.join(str(v) for v in values)
                 # Parse as array using schema
                 parsed_value = _parse_form_value_with_schema(combined_value, base_path, schema)
+                # Debug logging
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.debug(f"Combined indexed array field {base_path}: {values} -> {combined_value} -> {parsed_value}")
                 _set_nested_value(plugin_config, base_path, parsed_value)
             
             # Process remaining (non-indexed) fields
@@ -2912,13 +2916,20 @@ def save_plugin_config():
                     if key not in indexed_base_paths:
                         # Parse value using schema to determine correct type
                         parsed_value = _parse_form_value_with_schema(value, key, schema)
+                        # Debug logging for array fields
+                        if schema:
+                            prop = _get_schema_property(schema, key)
+                            if prop and prop.get('type') == 'array':
+                                import logging
+                                logger = logging.getLogger(__name__)
+                                logger.debug(f"Array field {key}: form value='{value}' -> parsed={parsed_value}")
                         # Use helper to set nested values correctly
                         _set_nested_value(plugin_config, key, parsed_value)
             
             # Post-process: Fix array fields that might have been incorrectly structured
             # This handles cases where array fields are stored as dicts (e.g., from indexed form fields)
             def fix_array_structures(config_dict, schema_props, prefix=''):
-                """Recursively fix array structures (convert dicts with numeric keys to arrays)"""
+                """Recursively fix array structures (convert dicts with numeric keys to arrays, fix length issues)"""
                 for prop_key, prop_schema in schema_props.items():
                     prop_type = prop_schema.get('type')
                     
@@ -2946,9 +2957,19 @@ def save_plugin_config():
                                             sorted_keys = sorted(keys, key=int)
                                             array_value = [current_value[k] for k in sorted_keys]
                                             parent[prop_key] = array_value
+                                            current_value = array_value  # Update for length check below
                                     except (ValueError, KeyError, TypeError):
-                                        # Conversion failed, keep as-is (validation will catch it)
+                                        # Conversion failed, check if we should use default
                                         pass
+                                
+                                # If it's an array but doesn't meet minItems, use default
+                                if isinstance(current_value, list):
+                                    min_items = prop_schema.get('minItems')
+                                    if min_items is not None and len(current_value) < min_items:
+                                        # Use default if available, otherwise keep as-is (validation will catch it)
+                                        default = prop_schema.get('default')
+                                        if default and isinstance(default, list) and len(default) >= min_items:
+                                            parent[prop_key] = default
                         else:
                             # Top-level field
                             if prop_key in config_dict:
@@ -2961,8 +2982,17 @@ def save_plugin_config():
                                             sorted_keys = sorted(keys, key=int)
                                             array_value = [current_value[k] for k in sorted_keys]
                                             config_dict[prop_key] = array_value
+                                            current_value = array_value  # Update for length check below
                                     except (ValueError, KeyError, TypeError):
                                         pass
+                                
+                                # If it's an array but doesn't meet minItems, use default
+                                if isinstance(current_value, list):
+                                    min_items = prop_schema.get('minItems')
+                                    if min_items is not None and len(current_value) < min_items:
+                                        default = prop_schema.get('default')
+                                        if default and isinstance(default, list) and len(default) >= min_items:
+                                            config_dict[prop_key] = default
                     
                     # Recurse into nested objects
                     elif prop_type == 'object' and 'properties' in prop_schema:
@@ -3456,7 +3486,19 @@ def save_plugin_config():
                 current_secrets[plugin_id] = {}
             current_secrets[plugin_id] = deep_merge(current_secrets[plugin_id], secrets_config)
             # Save secrets file
-            api_v3.config_manager.save_raw_file_content('secrets', current_secrets)
+            try:
+                api_v3.config_manager.save_raw_file_content('secrets', current_secrets)
+            except Exception as e:
+                # Log the error but don't fail the entire config save
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.error(f"Error saving secrets config for {plugin_id}: {e}", exc_info=True)
+                # Return error response
+                return error_response(
+                    ErrorCode.CONFIG_SAVE_FAILED,
+                    f"Failed to save secrets configuration: {str(e)}",
+                    status_code=500
+                )
 
         # Save the updated main config using atomic save
         success, error_msg = _save_config_atomic(api_v3.config_manager, current_config, create_backup=True)
