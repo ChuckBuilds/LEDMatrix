@@ -2956,14 +2956,51 @@ def save_plugin_config():
                                             # Convert to sorted array by index
                                             sorted_keys = sorted(keys, key=int)
                                             array_value = [current_value[k] for k in sorted_keys]
+                                            # Convert array elements to correct types based on schema
+                                            items_schema = prop_schema.get('items', {})
+                                            item_type = items_schema.get('type')
+                                            if item_type in ('number', 'integer'):
+                                                converted_array = []
+                                                for v in array_value:
+                                                    if isinstance(v, str):
+                                                        try:
+                                                            if item_type == 'integer':
+                                                                converted_array.append(int(v))
+                                                            else:
+                                                                converted_array.append(float(v))
+                                                        except (ValueError, TypeError):
+                                                            converted_array.append(v)
+                                                    else:
+                                                        converted_array.append(v)
+                                                array_value = converted_array
                                             parent[prop_key] = array_value
                                             current_value = array_value  # Update for length check below
                                     except (ValueError, KeyError, TypeError):
                                         # Conversion failed, check if we should use default
                                         pass
                                 
-                                # If it's an array but doesn't meet minItems, use default
+                                # If it's an array, ensure correct types and check minItems
                                 if isinstance(current_value, list):
+                                    # First, ensure array elements are correct types
+                                    items_schema = prop_schema.get('items', {})
+                                    item_type = items_schema.get('type')
+                                    if item_type in ('number', 'integer'):
+                                        converted_array = []
+                                        for v in current_value:
+                                            if isinstance(v, str):
+                                                try:
+                                                    if item_type == 'integer':
+                                                        converted_array.append(int(v))
+                                                    else:
+                                                        converted_array.append(float(v))
+                                                except (ValueError, TypeError):
+                                                    converted_array.append(v)
+                                            else:
+                                                converted_array.append(v)
+                                        parent[prop_key] = converted_array
+                                        current_value = converted_array
+                                    
+                                    # Then check minItems
                                     min_items = prop_schema.get('minItems')
                                     if min_items is not None and len(current_value) < min_items:
                                         # Use default if available, otherwise keep as-is (validation will catch it)
@@ -2981,13 +3018,50 @@ def save_plugin_config():
                                         if all(k.isdigit() for k in keys):
                                             sorted_keys = sorted(keys, key=int)
                                             array_value = [current_value[k] for k in sorted_keys]
+                                            # Convert array elements to correct types based on schema
+                                            items_schema = prop_schema.get('items', {})
+                                            item_type = items_schema.get('type')
+                                            if item_type in ('number', 'integer'):
+                                                converted_array = []
+                                                for v in array_value:
+                                                    if isinstance(v, str):
+                                                        try:
+                                                            if item_type == 'integer':
+                                                                converted_array.append(int(v))
+                                                            else:
+                                                                converted_array.append(float(v))
+                                                        except (ValueError, TypeError):
+                                                            converted_array.append(v)
+                                                    else:
+                                                        converted_array.append(v)
+                                                array_value = converted_array
                                             config_dict[prop_key] = array_value
                                             current_value = array_value  # Update for length check below
                                     except (ValueError, KeyError, TypeError):
                                         pass
                                 
-                                # If it's an array but doesn't meet minItems, use default
+                                # If it's an array, ensure correct types and check minItems
                                 if isinstance(current_value, list):
+                                    # First, ensure array elements are correct types
+                                    items_schema = prop_schema.get('items', {})
+                                    item_type = items_schema.get('type')
+                                    if item_type in ('number', 'integer'):
+                                        converted_array = []
+                                        for v in current_value:
+                                            if isinstance(v, str):
+                                                try:
+                                                    if item_type == 'integer':
+                                                        converted_array.append(int(v))
+                                                    else:
+                                                        converted_array.append(float(v))
+                                                except (ValueError, TypeError):
+                                                    converted_array.append(v)
+                                            else:
+                                                converted_array.append(v)
+                                        config_dict[prop_key] = converted_array
+                                        current_value = converted_array
+                                    
+                                    # Then check minItems
                                     min_items = prop_schema.get('minItems')
                                     if min_items is not None and len(current_value) < min_items:
                                         default = prop_schema.get('default')
