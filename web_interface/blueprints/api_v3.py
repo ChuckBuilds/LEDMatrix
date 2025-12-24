@@ -2866,68 +2866,188 @@ def save_plugin_config():
             # Form fields can use dot notation for nested values (e.g., "transition.type")
             form_data = request.form.to_dict()
             
-            for key, value in form_data.items():
-                # Parse value using schema to determine correct type
-                parsed_value = _parse_form_value_with_schema(value, key, schema)
-                # Use helper to set nested values correctly
-                _set_nested_value(plugin_config, key, parsed_value)
+            # First pass: detect and combine array index fields (e.g., "text_color.0", "text_color.1" -> "text_color" as array)
+            # This handles cases where forms send array fields as indexed inputs
+            array_fields = {}  # Maps base field path to list of (index, value) tuples
+            processed_keys = set()
+            indexed_base_paths = set()  # Track which base paths have indexed fields
             
-            # Post-process: Ensure array fields that are None get converted to empty arrays
-            # This handles cases where the form doesn't send array fields
-            if schema and 'properties' in schema:
-                def fix_array_types(config_dict, schema_props, prefix=''):
-                    """Recursively fix array types"""
-                    for prop_key, prop_schema in schema_props.items():
-                        prop_type = prop_schema.get('type')
+            for key, value in form_data.items():
+                # Check if this looks like an array index field (ends with .0, .1, .2, etc.)
+                if '.' in key:
+                    parts = key.rsplit('.', 1)  # Split on last dot
+                    if len(parts) == 2:
+                        base_path, last_part = parts
+                        # Check if last part is a numeric string (array index)
+                        if last_part.isdigit():
+                            # Get schema property for the base path to verify it's an array
+                            base_prop = _get_schema_property(schema, base_path)
+                            if base_prop and base_prop.get('type') == 'array':
+                                # This is an array index field
+                                index = int(last_part)
+                                if base_path not in array_fields:
+                                    array_fields[base_path] = []
+                                array_fields[base_path].append((index, value))
+                                processed_keys.add(key)
+                                indexed_base_paths.add(base_path)
+                                continue
+            
+            # Process combined array fields
+            for base_path, index_values in array_fields.items():
+                # Sort by index and extract values
+                index_values.sort(key=lambda x: x[0])
+                values = [v for _, v in index_values]
+                # Combine values into comma-separated string for parsing
+                combined_value = ', '.join(str(v) for v in values)
+                # Parse as array using schema
+                parsed_value = _parse_form_value_with_schema(combined_value, base_path, schema)
+                _set_nested_value(plugin_config, base_path, parsed_value)
+            
+            # Process remaining (non-indexed) fields
+            # Skip any base paths that were processed as indexed arrays
+            for key, value in form_data.items():
+                if key not in processed_keys:
+                    # Skip if this key is a base path that was processed as indexed array
+                    # (to avoid overwriting the combined array with a single value)
+                    if key not in indexed_base_paths:
+                        # Parse value using schema to determine correct type
+                        parsed_value = _parse_form_value_with_schema(value, key, schema)
+                        # Use helper to set nested values correctly
+                        _set_nested_value(plugin_config, key, parsed_value)
+            
+            # Post-process: Fix array fields that might have been incorrectly structured
+            # This handles cases where array fields are stored as dicts (e.g., from indexed form fields)
+            def fix_array_structures(config_dict, schema_props, prefix=''):
+                """Recursively fix array structures (convert dicts with numeric keys to arrays)"""
+                for prop_key, prop_schema in schema_props.items():
+                    prop_type = prop_schema.get('type')
+                    
+                    if prop_type == 'array':
+                        # Navigate to the field location
+                        if prefix:
+                            parent_parts = prefix.split('.')
+                            parent = config_dict
+                            for part in parent_parts:
+                                if isinstance(parent, dict) and part in parent:
+                                    parent = parent[part]
+                                else:
+                                    parent = None
+                                    break
+                            
+                            if parent is not None and isinstance(parent, dict) and prop_key in parent:
+                                current_value = parent[prop_key]
+                                # If it's a dict with numeric string keys, convert to array
+                                if isinstance(current_value, dict) and not isinstance(current_value, list):
+                                    try:
+                                        # Check if all keys are numeric strings (array indices)
+                                        keys = [k for k in current_value.keys()]
+                                        if all(k.isdigit() for k in keys):
+                                            # Convert to sorted array by index
+                                            sorted_keys = sorted(keys, key=int)
+                                            array_value = [current_value[k] for k in sorted_keys]
+                                            parent[prop_key] = array_value
+                                    except (ValueError, KeyError, TypeError):
+                                        # Conversion failed, keep as-is (validation will catch it)
+                                        pass
+                        else:
+                            # Top-level field
+                            if prop_key in config_dict:
+                                current_value = config_dict[prop_key]
+                                # If it's a dict with numeric string keys, convert to array
+                                if isinstance(current_value, dict) and not isinstance(current_value, list):
+                                    try:
+                                        keys = [k for k in current_value.keys()]
+                                        if all(k.isdigit() for k in keys):
+                                            sorted_keys = sorted(keys, key=int)
+                                            array_value = [current_value[k] for k in sorted_keys]
+                                            config_dict[prop_key] = array_value
+                                    except (ValueError, KeyError, TypeError):
+                                        pass
+                    
+                    # Recurse into nested objects
+                    elif prop_type == 'object' and 'properties' in prop_schema:
+                        nested_prefix = f"{prefix}.{prop_key}" if prefix else prop_key
+                        if prefix:
+                            parent_parts = prefix.split('.')
+                            parent = config_dict
+                            for part in parent_parts:
+                                if isinstance(parent, dict) and part in parent:
+                                    parent = parent[part]
+                                else:
+                                    parent = None
+                                    break
+                            nested_dict = parent.get(prop_key) if parent is not None and isinstance(parent, dict) else None
+                        else:
+                            nested_dict = config_dict.get(prop_key)
                         
-                        if prop_type == 'array':
-                            # Check if this field exists and is None
+                        if isinstance(nested_dict, dict):
+                            fix_array_structures(nested_dict, prop_schema['properties'], nested_prefix)
+            
+            # Also ensure array fields that are None get converted to empty arrays
+            def ensure_array_defaults(config_dict, schema_props, prefix=''):
+                """Recursively ensure array fields have defaults if None"""
+                for prop_key, prop_schema in schema_props.items():
+                    prop_type = prop_schema.get('type')
+                    
+                    if prop_type == 'array':
+                        if prefix:
+                            parent_parts = prefix.split('.')
+                            parent = config_dict
+                            for part in parent_parts:
+                                if isinstance(parent, dict) and part in parent:
+                                    parent = parent[part]
+                                else:
+                                    parent = None
+                                    break
+                            
+                            if parent is not None and isinstance(parent, dict):
+                                if prop_key not in parent or parent[prop_key] is None:
+                                    default = prop_schema.get('default', [])
+                                    parent[prop_key] = default if default else []
+                        else:
+                            if prop_key not in config_dict or config_dict[prop_key] is None:
+                                default = prop_schema.get('default', [])
+                                config_dict[prop_key] = default if default else []
+                    
+                    elif prop_type == 'object' and 'properties' in prop_schema:
+                        nested_prefix = f"{prefix}.{prop_key}" if prefix else prop_key
+                        if prefix:
+                            parent_parts = prefix.split('.')
+                            parent = config_dict
+                            for part in parent_parts:
+                                if isinstance(parent, dict) and part in parent:
+                                    parent = parent[part]
+                                else:
+                                    parent = None
+                                    break
+                            nested_dict = parent.get(prop_key) if parent is not None and isinstance(parent, dict) else None
+                        else:
+                            nested_dict = config_dict.get(prop_key)
+                        
+                        if nested_dict is None:
                             if prefix:
-                                # Nested field - check if parent exists
                                 parent_parts = prefix.split('.')
                                 parent = config_dict
                                 for part in parent_parts:
-                                    if isinstance(parent, dict) and part in parent:
-                                        parent = parent[part]
-                                    else:
-                                        parent = None
-                                        break
-                                
-                                if parent is not None and isinstance(parent, dict):
-                                    if prop_key not in parent or parent[prop_key] is None:
-                                        default = prop_schema.get('default', [])
-                                        parent[prop_key] = default if default else []
+                                    if part not in parent:
+                                        parent[part] = {}
+                                    parent = parent[part]
+                                if prop_key not in parent:
+                                    parent[prop_key] = {}
+                                nested_dict = parent[prop_key]
                             else:
-                                # Top-level field
-                                if prop_key not in config_dict or config_dict[prop_key] is None:
-                                    default = prop_schema.get('default', [])
-                                    config_dict[prop_key] = default if default else []
+                                if prop_key not in config_dict:
+                                    config_dict[prop_key] = {}
+                                nested_dict = config_dict[prop_key]
                         
-                        # Recurse into nested objects
-                        elif prop_type == 'object' and 'properties' in prop_schema:
-                            nested_prefix = f"{prefix}.{prop_key}" if prefix else prop_key
-                            nested_dict = config_dict.get(prop_key) if not prefix else None
-                            
-                            if nested_dict is None:
-                                # Create nested dict if it doesn't exist
-                                if prefix:
-                                    parent_parts = prefix.split('.')
-                                    parent = config_dict
-                                    for part in parent_parts:
-                                        if part not in parent:
-                                            parent[part] = {}
-                                        parent = parent[part]
-                                    if prop_key not in parent:
-                                        parent[prop_key] = {}
-                                    nested_dict = parent[prop_key]
-                                else:
-                                    if prop_key not in config_dict:
-                                        config_dict[prop_key] = {}
-                                    nested_dict = config_dict[prop_key]
-                            
-                            fix_array_types(nested_dict, prop_schema['properties'], nested_prefix)
-                
-                fix_array_types(plugin_config, schema['properties'])
+                        if isinstance(nested_dict, dict):
+                            ensure_array_defaults(nested_dict, prop_schema['properties'], nested_prefix)
+            
+            if schema and 'properties' in schema:
+                # First, fix any dict structures that should be arrays
+                fix_array_structures(plugin_config, schema['properties'])
+                # Then, ensure None arrays get defaults
+                ensure_array_defaults(plugin_config, schema['properties'])
         
         # Get schema manager instance (for JSON requests)
         schema_mgr = api_v3.schema_manager
