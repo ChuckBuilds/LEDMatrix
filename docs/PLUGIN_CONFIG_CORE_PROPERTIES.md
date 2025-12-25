@@ -127,3 +127,4 @@ If core properties aren't being applied:
 2. Verify the schema manager is injecting core properties
 3. Check plugin initialization to ensure defaults are applied
 
+

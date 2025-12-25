@@ -242,3 +242,4 @@ Calendar plugin has configuration fields that don't match its schema:
 
 **Technical Impact**: Validation logic correctly handles system-managed fields and schema defaults
 
+
