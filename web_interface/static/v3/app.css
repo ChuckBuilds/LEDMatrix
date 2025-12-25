@@ -413,6 +413,11 @@ a, button, input, select, textarea {
     box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.3);
 }
 
+/* Global button text contrast fix: Ensure buttons with white backgrounds have dark text */
+button.bg-white {
+    color: #111827 !important; /* text-gray-900 equivalent - ensures good contrast on white background */
+}
+
 /* Form styles */
 .form-group {
     margin-bottom: 1rem;
