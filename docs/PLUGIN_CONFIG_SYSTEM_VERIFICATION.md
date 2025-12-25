@@ -12,7 +12,7 @@
 - `load_schema()`: ✅ Caching implemented, error handling present
 - `extract_defaults_from_schema()`: ✅ Recursive extraction for nested objects/arrays
 - `generate_default_config()`: ✅ Uses cache, fallback defaults provided
-- `validate_config_against_schema()`: ✅ Uses jsonschema Draft7Validator, detailed error formatting
+- `validate_config_against_schema()`: ✅ Uses jsonschema Draft7Validator, detailed error formatting, handles core/system-managed properties correctly
 - `merge_with_defaults()`: ✅ Deep merge preserves user values
 - `invalidate_cache()`: ✅ Clears both schema and defaults cache
 

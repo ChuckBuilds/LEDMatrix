@@ -277,6 +277,8 @@ Configuration forms are automatically generated from each plugin's `config_schem
 
 For more details, see [Plugin Configuration Tabs](PLUGIN_CONFIGURATION_TABS.md).
 
+For information about how core properties (enabled, display_duration, live_priority) are handled, see [Core Plugin Properties](PLUGIN_CONFIG_CORE_PROPERTIES.md).
+
 ## Schema Validation
 
 The configuration system uses JSON Schema Draft-07 for validation:
@@ -285,6 +287,7 @@ The configuration system uses JSON Schema Draft-07 for validation:
 - **Automatic defaults**: Default values extracted from schemas
 - **Error messages**: Clear error messages show exactly what's wrong
 - **Reliable loading**: Schema loading with caching and fallback paths
+- **Core properties handling**: System-managed properties (`enabled`, `display_duration`, `live_priority`) are automatically handled - they don't need to be in plugin schemas and aren't validated as required fields
 
 ### Schema Structure
 

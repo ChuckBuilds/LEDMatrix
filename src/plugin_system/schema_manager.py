@@ -229,13 +229,16 @@ class SchemaManager:
         # Extract defaults from schema
         defaults = self.extract_defaults_from_schema(schema)
         
-        # Ensure enabled is present (common required field)
+        # Ensure core properties have defaults (they may not be in the schema)
+        # These match BasePlugin behavior
         if 'enabled' not in defaults:
-            defaults['enabled'] = schema.get('properties', {}).get('enabled', {}).get('default', False)
+            defaults['enabled'] = schema.get('properties', {}).get('enabled', {}).get('default', True)
         
-        # Ensure display_duration is present (common field)
         if 'display_duration' not in defaults:
             defaults['display_duration'] = schema.get('properties', {}).get('display_duration', {}).get('default', 15)
+        
+        if 'live_priority' not in defaults:
+            defaults['live_priority'] = schema.get('properties', {}).get('live_priority', {}).get('default', False)
         
         # Cache the defaults
         self._defaults_cache[plugin_id] = defaults.copy()
@@ -264,19 +267,23 @@ class SchemaManager:
         try:
             # Core plugin properties that should always be allowed
             # These are handled by the base plugin system and should not cause validation failures
+            # Defaults match BasePlugin behavior: enabled=True, display_duration=15, live_priority=False
             core_properties = {
                 "enabled": {
                     "type": "boolean",
+                    "default": True,
                     "description": "Enable or disable this plugin"
                 },
                 "display_duration": {
                     "type": "number",
+                    "default": 15,
                     "minimum": 1,
                     "maximum": 300,
                     "description": "How long to display this plugin in seconds"
                 },
                 "live_priority": {
                     "type": "boolean",
+                    "default": False,
                     "description": "Enable live priority takeover when plugin has live content"
                 }
             }
@@ -299,6 +306,25 @@ class SchemaManager:
                 self.logger.debug(
                     f"Injected core properties into schema for {plugin_id}: {properties_added}"
                 )
+            
+            # Remove core properties from required array (they're system-managed)
+            # Core properties should be allowed but not required for validation
+            if "required" in enhanced_schema:
+                core_prop_names = list(core_properties.keys())
+                removed_from_required = [
+                    field for field in enhanced_schema["required"]
+                    if field in core_prop_names
+                ]
+                enhanced_schema["required"] = [
+                    field for field in enhanced_schema["required"] 
+                    if field not in core_prop_names
+                ]
+                
+                # Log if we removed any core properties from required (for debugging)
+                if removed_from_required and plugin_id:
+                    self.logger.debug(
+                        f"Removed core properties from required array for {plugin_id}: {removed_from_required}"
+                    )
             
             # Create validator with enhanced schema
             validator = Draft7Validator(enhanced_schema)

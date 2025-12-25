@@ -131,14 +131,16 @@ Save Request:
 ```
 Save Request:
   → Load schema (cached)
+  → Inject core properties (enabled, display_duration, live_priority) into schema
+  → Remove core properties from required array (system-managed)
   → Validate config against schema
   → If invalid: return detailed errors
-  → If valid: apply defaults
+  → If valid: apply defaults (including core property defaults)
   → Separate secrets
   → Save configs
   → Notify plugin
 ```
-**Benefits**: Invalid configs rejected, clear errors, proper defaults
+**Benefits**: Invalid configs rejected, clear errors, proper defaults, system-managed properties handled correctly
 
 ### 3. Default Management
 
