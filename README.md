@@ -8,12 +8,10 @@
 ### Connect with ChuckBuilds
 
 - Show support on Youtube: https://www.youtube.com/@ChuckBuilds
+- Check out the write-up on my website: https://www.chuck-builds.com/led-matrix/
 - Stay in touch on Instagram: https://www.instagram.com/ChuckBuilds/
-- Want to chat or need support? Reach out on the ChuckBuilds Discord: https://discord.com/invite/uW36dVAtcT
-- Feeling Generous? Support the project:
-  - Github Sponsorship: https://github.com/sponsors/ChuckBuilds
-  - Buy Me a Coffee: https://buymeacoffee.com/chuckbuilds
-  - Ko-fi: https://ko-fi.com/chuckbuilds/ 
+- Want to chat? Reach out on the ChuckBuilds Discord: https://discord.com/invite/uW36dVAtcT
+- Feeling Generous? Buy Me a Coffee : https://buymeacoffee.com/chuckbuilds              
 
 -----------------------------------------------------------------------------------
 
@@ -24,60 +22,87 @@
 - ESPN for their sports API
 - Yahoo Finance for their Stock API
 - OpenWeatherMap for their Free Weather API
-- All of my testers *ahem* users in Discord that let me know when something isn't working as intended
+- Randomwire @ https://www.thingiverse.com/thing:5169867 for their 4mm Pixel Pitch LED Matrix Stand 
+
+
 
 
 -----------------------------------------------------------------------------------
 
-## Plugins Version is HERE!
+## Core Features
 
-After months of testing, bug fixes, and generally breaking everything, I present to you: Plugins!
-This is a major refactor over the previous versions where the "managers" or displays were built into the root LEDMatrix project. Going Forward all of the "managers" will be referred to as "plugins" and will be hosted on their own repositories. This allows for more updates, more displays, 3rd party plugins, and hopefully more fun. This is absolutely a work in progress but it is in a place where I think it is 95% of functionality that we used to have in the older version.
+<details>
+<summary>Core Features</summary>
+## Core Features
+Modular, rotating Displays that can be individually enabled or disabled per the user's needs with some configuration around display durations, teams, stocks, weather, timezones, and more. Displays include:
 
-Big changes: 
-- Plugin Store
-- 100% Web interface control for Configuration files
-- API's for controlling the website and display
-- Support for Rasbian 13 (Trixie)
-- Reworked Web Interface to support plugins
+### Time and Weather
+- Real-time clock display (2x 64x32 Displays 4mm Pixel Pitch)
+![DSC01361](https://github.com/user-attachments/assets/c4487d40-5872-45f5-a553-debf8cea17e9)
 
 
-## Plugins & The Plugin Store
+- Current Weather, Daily Weather, and Hourly Weather Forecasts (2x 64x32 Displays 4mm Pixel Pitch)
+![DSC01362](https://github.com/user-attachments/assets/d31df736-522f-4f61-9451-29151d69f164)
+![DSC01364](https://github.com/user-attachments/assets/eb2d16ad-6b12-49d9-ba41-e39a6a106682)
+![DSC01365](https://github.com/user-attachments/assets/f8a23426-e6fa-4774-8c87-19bb94cfbe73)
 
-There is an official "Repository" of ChuckBuilds provided plugins available by default in the LEDMatrix Web Interface via the "Plugin Manager" tab. These can be viewed on Github at : https://github.com/ChuckBuilds/ledmatrix-plugins/ . If you wish to develop your own plugins or install someone else's plugins (at your own risk) you can use the "Install From Github" Section to add a specific plugin or a whole repository.
 
-**Plugin Development Resources:**
-- **[Plugin Development Guide](docs/PLUGIN_DEVELOPMENT_GUIDE.md)** - Complete guide for developing plugins
-- **[Plugin API Reference](docs/PLUGIN_API_REFERENCE.md)** - Available methods and APIs
-- **[Advanced Plugin Development](docs/ADVANCED_PLUGIN_DEVELOPMENT.md)** - Advanced patterns and examples
-- **[Hello World Plugin](https://github.com/ChuckBuilds/ledmatrix-hello-world)** - Starter template
+- Google Calendar event display (2x 64x32 Displays 4mm Pixel Pitch)
+![DSC01374-1](https://github.com/user-attachments/assets/5bc89917-876e-489d-b944-4d60274266e3)
 
-If you create a plugin that you think is ready to be shared with the world, reach out to me with a github issue or a discord message to talk about adding you to the default plugin store. 
 
-There is some rate-limiting from Github when using the Plugin Manager so you may need to generate a github api key to enter into your web interface for more frequent updates of the plugin store. (Optional - guide tbd)
 
-More to come on plugins but hopefully it's a more sustainable future for this LEDMatrix project.
-                                                                                                                                                                                                    
-### Installing Plugins
+### Sports Information
+The system supports live, recent, and upcoming game information for multiple sports leagues:
+- NHL (Hockey) (2x 64x32 Displays 4mm Pixel Pitch)
+![DSC01356](https://github.com/user-attachments/assets/64c359b6-4b99-4dee-aca0-b74debda30e0)
+![DSC01339](https://github.com/user-attachments/assets/2ccc52af-b4ed-4c06-a341-581506c02153)
+![DSC01337](https://github.com/user-attachments/assets/f4faf678-9f43-4d37-be56-89ecbd09acf6)
 
-**Via Web Interface (Recommended):**
-1. Open the web interface at `http://your-pi-ip:5000`
-2. Navigate to the **Plugin Store** tab
-3. Browse or search for plugins
-4. Click **Install** on any plugin
-5. Configure the plugin in its dedicated configuration tab
-6. Enable the plugin and restart the display service
+- NBA (Basketball)
+- MLB (Baseball) (2x 64x32 Displays 4mm Pixel Pitch)
+![DSC01359](https://github.com/user-attachments/assets/71e985f1-d2c9-4f0e-8ea1-13eaefeec01c)
 
-**Via GitHub URL: (For 3rd Party Plugins)**
-1. In the Plugin Store tab, scroll to "Install From GitHub"
-2. Enter the GitHub repository URL (e.g., `https://github.com/user/ledmatrix-plugin`)
-3. Click **Install**
-4. Configure and enable as above
+- NFL (Football) (2x 96x48 Displays 2.5mm Pixel Pitch)
+  <img width="2109" height="541" alt="image" src="https://github.com/user-attachments/assets/d10212c9-0d45-4f87-b61d-0a33afb9f160" />
+- NCAA Football (2x 96x48 Displays 2.5mm Pixel Pitch)
+  <img width="2417" height="610" alt="image" src="https://github.com/user-attachments/assets/9be92869-ee29-4809-9337-69977f228e23" />
 
-### Plugin Migration from Old Managers
+- NCAA Men's Basketball
+- NCAA Men's Baseball
+- Soccer (Premier League, La Liga, Bundesliga, Serie A, Ligue 1, Liga Portugal, Champions League, Europa League, MLS)
+- (Note, some of these sports seasons were not active during development and might need fine tuning when games are active)
 
-If you're upgrading from a version before the plugins branch, you'll need to install plugins to replace the old built-in managers:
 
+### Financial Information
+- Near real-time stock & crypto price updates
+- Stock news headlines
+- Customizable stock & crypto watchlists (2x 64x32 Displays 4mm Pixel Pitch)
+![DSC01366](https://github.com/user-attachments/assets/95b67f50-0f69-4479-89d0-1d87c3daefd3)
+![DSC01368](https://github.com/user-attachments/assets/c4b75546-388b-4d4a-8b8c-8c5a62f139f9)
+
+
+
+### Entertainment
+- Music playback information from multiple sources:
+  - Spotify integration
+  - YouTube Music integration
+- Album art display
+- Now playing information with scrolling text (2x 64x32 Displays 4mm Pixel Pitch)
+![DSC01354](https://github.com/user-attachments/assets/7524b149-f55d-4eb7-b6c6-6e336e0d1ac1)
+![DSC01389](https://github.com/user-attachments/assets/3f768651-5446-4ff5-9357-129cd8b3900d)
+
+
+
+### Custom Display Features
+- Custom Text display (2x 64x32 Displays 4mm Pixel Pitch)
+![DSC01379](https://github.com/user-attachments/assets/338b7578-9d4b-4465-851c-7e6a1d999e07)
+
+- Youtube Subscriber Count Display (2x 64x32 Displays 4mm Pixel Pitch)
+![DSC01376](https://github.com/user-attachments/assets/7ea5f42d-afce-422f-aa97-6b2a179aa7d2)
+
+- Font testing Display (not in rotation)
+</details>
 
 -----------------------------------------------------------------------------------
 
@@ -93,20 +118,20 @@ If you're upgrading from a version before the plugins branch, you'll need to ins
 
 ### RGB Matrix Bonnet / HAT
 - [Adafruit RGB Matrix Bonnet/HAT](https://www.adafruit.com/product/3211) – supports one “chain” of horizontally connected displays  
-- [Adafruit Triple LED Matrix Bonnet](https://www.adafruit.com/product/6358) – supports up to 3 vertical “chains” of horizontally connected displays. Does not require Soldering for E-Addressable Displays and no PWM Mod. *(use `regular-pi1` as hardware mapping)*  
+- [Adafruit Triple LED Matrix Bonnet](https://www.adafruit.com/product/6358) – supports up to 3 vertical “chains” of horizontally connected displays *(use `regular-pi1` as hardware mapping)*  
 - [Electrodragon RGB HAT](https://www.electrodragon.com/product/rgb-matrix-panel-drive-board-raspberry-pi/) – supports up to 3 vertical “chains”  
-- [Amazon Affiliate Link - Seengreat Matrix Adapter Board](https://amzn.to/3KsnT3j) – single-chain LED Matrix *(use `regular` as hardware mapping)*  
+- [Seengreat Matrix Adapter Board](https://amzn.to/3KsnT3j) – single-chain LED Matrix *(use `regular` as hardware mapping)*  
 
 ### LED Matrix Panels  
 (2x in a chain recommended)
 - [Adafruit 64×32](https://www.adafruit.com/product/2278) – designed for 128×32 but works with dynamic scaling on many displays (pixel pitch is user preference)
-- [Amazon Affiliate Link - Waveshare 64×32](https://amzn.to/3Kw55jK) - Does not require E addressable pad
-- [Amazon Affiliate Link - Waveshare 92×46](https://amzn.to/4pQdezE) – higher resolution, requires soldering the **E addressable pad** on the [Adafruit RGB Bonnet](https://www.adafruit.com/product/3211) to “8” **OR** toggling the DIP switch on the Adafruit Triple LED Matrix Bonnet *(no soldering required!)*  
+- [Waveshare 64×32](https://amzn.to/3Kw55jK) - Does not require E addressable pad
+- [Waveshare 92×46](https://amzn.to/4pQdezE) – higher resolution, requires soldering the **E addressable pad** on the [Adafruit RGB Bonnet](https://www.adafruit.com/product/3211) to “8” **OR** toggling the DIP switch on the Adafruit Triple LED Matrix Bonnet *(no soldering required!)*  
   > Amazon Affiliate Link – ChuckBuilds receives a small commission on purchases  
 
 ### Power Supply
 - [5V 4A DC Power Supply](https://www.adafruit.com/product/658) (good for 2 -3 displays, depending on brightness and pixel density, you'll need higher amperage for more)
-- [Amazon Affiliate Link - 5V 10AM DC Power Supply](https://amzn.to/3IKlYqe) (good for 6-8 displays, depending on brightness and pixel density)
+- [5V 10AM DC Power Supply](https://amzn.to/3IKlYqe) (good for 6-8 displays, depending on brightness and pixel density)
 
 ## Optional but recommended mod for Adafruit RGB Matrix Bonnet
 - By soldering a jumper between pins 4 and 18, you can run a specialized command for polling the matrix display. This provides better brightness, less flicker, and better color.
@@ -154,11 +179,9 @@ or
 
 
 ## Mount/Stand
-I 3D printed stands to keep the panels upright and snug.
+I 3D printed stands to keep the panels upright and snug. STL Files are included in the Repo but are also available at https://www.thingiverse.com/thing:5169867 Thanks to "Randomwire" for making these for the 4mm Pixel Pitch LED Matrix.
 
-Thanks to "Randomwire" for making these for the 4mm Pixel Pitch LED Matrix : https://www.thingiverse.com/thing:5169867
-
-Thanks for Rmatze for making:
+Special Thanks for Rmatze for making:
 - 3mm Pixel Pitch RGB Stand for 32x64 Display : https://www.thingiverse.com/thing:7149818 
 - 4mm Pixel Pitch RGB Stand for 32x64 Display : https://www.thingiverse.com/thing:7165993
 
@@ -177,7 +200,8 @@ These are not required and you can probably rig up something basic with stuff yo
 # Preparing the Raspberry Pi
 1. Create RPI Image on a Micro-SD card (I use 16gb because I have it, size is not too important but I would use 8gb or more) using [Raspberry Pi Imager](https://www.raspberrypi.com/software/)
 2. Choose your Raspberry Pi (3B+ in my case) 
-3. For Operating System (OS), choose "Other", then choose Raspbian OS (64-bit) Lite. Both **Debian 12 (Bookworm)** and **Debian 13 (Trixie)** are fully supported. For Trixie-specific installation guidance, see [Trixie Migration Guide](docs/TRIXIE_MIGRATION_GUIDE.md).
+3. For Operating System (OS), choose "Other", then choose Raspbian OS (Legacy, 64-bit) Lite  (This needs to be Debian Bookworm not Debian Trixie! Packages are broken on Trixie as of 10/2/25. I will try to get working as soon as requirements are met!) 
+![image](https://github.com/user-attachments/assets/e8e2e806-18a8-4175-9c25-0cefaae438ea)
 4. For Storage, choose your micro-sd card
 ![image](https://github.com/user-attachments/assets/05580e0a-86d5-4613-aadc-93207365c38f)
 5. Press Next then Edit Settings
@@ -214,24 +238,117 @@ git clone https://github.com/ChuckBuilds/LEDMatrix.git
 cd LEDMatrix
 ```
 
-4. First-time installation (recommended)
+REMOVE ME BEFORE PR:
+To use the BETA Plugins branch (things will be broken!) on Rasbian 13 Trixie type:
+```bash
+git checkout plugins
+git pull
+```
+otherwise continue to the next step for the stable older version (that only works on Rasbian 12!)
 
-**Before running the installation:**
-- Ensure WiFi is connected (or use Ethernet)
-- If WiFi is not connected, the WiFi monitor service will enable AP mode after installation
-- You can connect to the **LEDMatrix-Setup** network (password: `ledmatrix123`) to access the web UI
+4. First-time installation (recommended)
 
 ```bash
 chmod +x first_time_install.sh
-sudo ./first_time_install.sh
+sudo bash ./first_time_install.sh
 ```
 
 This single script installs services, dependencies, configures permissions and sudoers, and validates the setup.
 
-**After installation:**
-- The script will display your Pi's IP address and web UI access URL
-- If AP mode is active, connect to **LEDMatrix-Setup** WiFi and access `http://192.168.4.1:5000`
-- Use the web UI to configure WiFi and other settings
+</details>
+
+<details>
+
+<summary>Outdated Installation Steps left for reference</summary>
+
+
+-----------------------------------------------------------------------------------
+----- OLD STEPS (left for manual review, you don't need to run these if you run the First Time Install Script) -----
+4. Install dependencies:
+```bash
+sudo pip3 install --break-system-packages -r requirements.txt
+```
+--break-system-packages allows us to install without a virtual environment
+
+
+5. Install rpi-rgb-led-matrix dependencies:
+```bash
+cd rpi-rgb-led-matrix-master
+```
+```bash
+sudo make build-python PYTHON=$(which python3)
+```
+```bash
+cd bindings/python
+sudo python3 setup.py install
+```
+Test it with:
+```bash
+python3 -c 'from rgbmatrix import RGBMatrix, RGBMatrixOptions; print("Success!")'
+```
+
+## Important: Sound Module Configuration
+
+1. Remove unnecessary services that might interfere with the LED matrix:
+```bash
+sudo apt-get remove bluez bluez-firmware pi-bluetooth triggerhappy pigpio
+```
+
+2. Blacklist the sound module:
+```bash
+cat <<EOF | sudo tee /etc/modprobe.d/blacklist-rgb-matrix.conf
+blacklist snd_bcm2835
+EOF
+```
+
+then execute
+
+```bash
+sudo update-initramfs -u
+```
+
+3. Reboot:
+```bash
+sudo reboot
+```
+
+## Performance Optimization
+
+To reduce flickering and improve display quality:
+
+1. Edit `/boot/firmware/cmdline.txt`:
+```bash
+sudo nano /boot/firmware/cmdline.txt
+```
+
+2. Add `isolcpus=3` at the end of the line
+
+3. Ctrl + X to exit, Y to save, Enter to Confirm
+
+4. Edit /boot/firmware/config.txt  with
+```bash
+sudo nano /boot/firmware/config.txt
+```  
+
+6. Edit the `dtparam=audio=on` section to `dtparam=audio=off`
+
+7. Ctrl + X to exit, Y to save, Enter to Confirm
+
+8. Save and reboot:
+```bash
+sudo reboot
+```
+## Configuration
+
+### Initial Setup
+
+1. **First-time setup**: (First Time Script should do this for you) Copy the template to create your config:
+   ```bash
+   cp config/config.template.json config/config.json
+   ```
+
+</details>
+
 
 
 ## Configuration
@@ -252,7 +369,7 @@ The system uses a template-based configuration approach to avoid Git conflicts d
    ```bash
    sudo nano config/config.json
    ```
-or edit via web interface at http://ledpi:5000
+or edit via web interface at http://ledpi:5001
 
 3. **Having Issues?**: Run the First Time Script again:
   ```bash
@@ -276,31 +393,6 @@ The system automatically handles configuration updates:
 - **No conflicts**: Your custom settings are preserved while new options are added
 
 Everything is configured via `config/config.json` and `config/config_secrets.json`. The `config.json` file is not tracked by Git to prevent conflicts during updates.
-
-### Dynamic Duration Controls
-
-Scrolling, ticker, and leaderboard plugins can extend their display time automatically until a full content cycle is shown. Enable it per plugin:
-
-```json
-{
-    "display": {
-        "dynamic_duration": {
-            "max_duration_seconds": 180
-        }
-    },
-    "football-scoreboard": {
-        "enabled": true,
-        "dynamic_duration": {
-            "enabled": true,
-            "max_duration_seconds": 240
-        }
-    }
-}
-```
-
-- `dynamic_duration.enabled` toggles the feature for a plugin.
-- Optional `dynamic_duration.max_duration_seconds` sets a plugin-specific cap; otherwise the global `display.dynamic_duration.max_duration_seconds` (default 180s) applies.
-- Plugins must implement the cycle hooks in `BasePlugin` so the controller knows when to rotate.
 
 </details>
 
@@ -357,7 +449,7 @@ The odds ticker displays betting odds for upcoming sports games. To configure it
 1. In `config/config.json`, add the following section:
 ```json
 {
-    "odds-ticker": {
+    "odds_ticker": {
         "enabled": true,
         "enabled_leagues": ["nfl", "nba", "mlb", "ncaa_fb"],
         "update_interval": 3600,
@@ -794,7 +886,7 @@ chmod +x install_service.sh
 
 2. Run the install script with sudo:
 ```bash
-sudo ./scripts/install/install_service.sh
+sudo ./install_service.sh
 ```
 
 The script will:
@@ -855,7 +947,7 @@ sudo ./stop_display.sh
 
 ## Web Interface Installation (V2)
 
-The LEDMatrix system includes Web Interface V3 that runs on port 5000 and provides real-time display preview, configuration management, and on-demand display controls.
+The LEDMatrix system includes Web Interface V2 that runs on port 5001 and provides real-time display preview, configuration management, and on-demand display controls.
 
 ### Installing the Web Interface Service
 
@@ -866,7 +958,7 @@ chmod +x install_web_service.sh
 
 2. Run the install script with sudo:
 ```bash
-sudo ./scripts/install/install_web_service.sh
+sudo ./install_web_service.sh
 ```
 
 The script will:
@@ -894,7 +986,7 @@ The web interface can be configured to start automatically with the main display
 
 Once installed, you can access the web interface at:
 ```
-http://your-pi-ip:5000
+http://your-pi-ip:5001
 ```
 
 ### Managing the Web Interface Service
@@ -929,16 +1021,6 @@ sudo systemctl enable ledmatrix-web.service
 - **API Metrics**: Monitor API usage and system performance
 - **Logs**: View system logs in real-time
 
-### API Documentation
-
-The web interface provides a comprehensive REST API for programmatic control:
-
-- **[REST API Reference](docs/API_REFERENCE.md)** - Complete documentation for all `/api/v3/*` endpoints
-- **[Plugin API Reference](docs/PLUGIN_API_REFERENCE.md)** - API reference for plugin developers
-- **[Developer Quick Reference](docs/DEVELOPER_QUICK_REFERENCE.md)** - Quick reference for common tasks
-
-All API endpoints support JSON requests and return standardized responses. See the [API Reference](docs/API_REFERENCE.md) for complete documentation with request/response examples.
-
 ### Troubleshooting Web Interface
 
 **Web Interface Not Accessible After Restart:**
@@ -947,44 +1029,15 @@ All API endpoints support JSON requests and return standardized responses. See t
 3. Check logs for errors: `journalctl -u ledmatrix-web.service -f`
 4. Ensure `web_display_autostart` is set to `true` in `config/config.json`
 
-**Port 5000 Not Accessible:**
-1. Check if the service is running on the correct port (5000, not 5001)
-2. Verify firewall settings allow access to port 5000:
-   - For UFW: `sudo ufw allow 5000/tcp`
-   - For iptables: `sudo iptables -A INPUT -p tcp --dport 5000 -j ACCEPT`
-3. Check if another service is using port 5000: `sudo netstat -tulpn | grep 5000`
-4. Verify the service is binding to 0.0.0.0 (all interfaces), not just localhost
-
-**Network Access Issues:**
-1. **Cannot access web UI after fresh install:**
-   - Check if WiFi is connected: `nmcli device status`
-   - If WiFi is not connected, the WiFi monitor may have enabled AP mode
-   - Connect to the **LEDMatrix-Setup** WiFi network (password: `ledmatrix123`)
-   - Access web UI at: `http://192.168.4.1:5000`
-   - Use the web UI to connect to your WiFi network
-
-2. **IP Address Display Shows "127.0.11:5000" or Incorrect IP:**
-   - This indicates the IP detection failed (no internet connectivity or network issues)
-   - The web-ui-info plugin will automatically refresh the IP every 30 seconds
-   - Check network connectivity: `ping -c 3 8.8.8.8`
-   - Verify WiFi/Ethernet is connected: `ip addr show`
-
-3. **SSH Not Accessible:**
-   - SSH must be configured during initial Pi setup (via Raspberry Pi Imager or `raspi-config`)
-   - The installation script does not configure SSH credentials
-   - If SSH is not working, connect via AP mode and use the web UI
-
-4. **AP Mode Active (LEDMatrix-Setup Network):**
-   - This is normal if WiFi is not connected
-   - Connect to the LEDMatrix-Setup network to access the web UI
-   - Use the web UI WiFi tab to connect to your network
-   - AP mode will automatically disable when WiFi connects
+**Port 5001 Not Accessible:**
+1. Check if the service is running on the correct port
+2. Verify firewall settings allow access to port 5001
+3. Check if another service is using port 5001
 
 **Service Fails to Start:**
 1. Check Python dependencies are installed
 2. Verify the virtual environment is set up correctly
 3. Check file permissions and ownership
-4. Review service logs: `journalctl -u ledmatrix-web.service -n 50`
 
 
 -----------------------------------------------------------------------------------
@@ -1029,8 +1082,8 @@ The LEDMatrix system uses persistent caching to improve performance and reduce A
 **First-Time Setup:**
 Run the setup script to create a persistent cache directory:
 ```bash
-chmod +x scripts/install/setup_cache.sh
-./scripts/install/setup_cache.sh
+chmod +x setup_cache.sh
+./setup_cache.sh
 ```
 
 This will:
@@ -1042,8 +1095,8 @@ This will:
 **If You Still See Cache Warnings:**
 If you see warnings about using temporary cache directory, run the permissions fix:
 ```bash
-chmod +x scripts/fix_perms/fix_cache_permissions.sh
-./scripts/fix_perms/fix_cache_permissions.sh
+chmod +x fix_cache_permissions.sh
+./fix_cache_permissions.sh
 ```
 
 **Manual Setup:**
@@ -1140,9 +1193,9 @@ You can customize the date format for upcoming games across all sports displays.
 The web interface needs to run certain commands with `sudo` (e.g., `reboot`, `systemctl start/stop/enable/disable ledmatrix.service`, `python display_controller.py`). To avoid needing to enter a password for these actions through the web UI, you can configure the `sudoers` file to allow the user running the Flask application to execute these specific commands without a password.
 
 1. Shortcut to automate the below steps:
-```chmod +x scripts/install/configure_web_sudo.sh```
+```chmod +x configure_web_sudo.sh```
 then
-```./scripts/install/configure_web_sudo.sh```
+```./configure_web_sudo.sh```
 
 
 Manual Method:
@@ -1217,20 +1270,10 @@ Ensure your systemd service calls `start_web_conditionally.py` (installed by `in
 ### 4) Permissions (optional but recommended)
 - Add the service user to `systemd-journal` for viewing logs without sudo.
 - Configure passwordless sudo for actions (start/stop service, reboot, shutdown) if desired.
-    - Required for web Ui actions, look in the section above for the commands to run (chmod +x scripts/install/configure_web_sudo.sh & ./scripts/install/configure_web_sudo.sh)
+    - Required for web Ui actions, look in the section above for the commands to run (chmod +x configure_web_sudo.sh & ./configure_web_sudo.sh)
 
 
 
-
-## Documentation
-
-Comprehensive documentation is available in the `docs/` directory:
-
-- **[Documentation Index](docs/README.md)** - Complete documentation overview
-- **[API Reference](docs/API_REFERENCE.md)** - REST API documentation for web interface
-- **[Plugin API Reference](docs/PLUGIN_API_REFERENCE.md)** - API reference for plugin developers
-- **[Plugin Development Guide](docs/PLUGIN_DEVELOPMENT_GUIDE.md)** - Complete plugin development guide
-- **[Plugin Configuration Guide](docs/PLUGIN_CONFIGURATION_GUIDE.md)** - Plugin configuration documentation
 
 ## Final Notes
 - Most configuration is done via config/config.json
