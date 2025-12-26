@@ -199,7 +199,7 @@ Calendar plugin has configuration fields that don't match its schema:
 
 ### After Priority 1 Fix
 
-**User tries to configure any plugin**:
+**When configuring a plugin**:
 - ✅ Config saves successfully for most plugins
 - ✅ Can configure plugins via web interface
 - ✅ ~150 errors resolved (enabled field issues)
@@ -211,7 +211,7 @@ Calendar plugin has configuration fields that don't match its schema:
 
 ### After Priority 2 Fix
 
-**User tries to configure any plugin**:
+**During plugin configuration**:
 - ✅ Config saves successfully for almost all plugins
 - ✅ Defaults applied automatically (easier configuration)
 - ✅ ~30-40 errors → ~5-10 errors

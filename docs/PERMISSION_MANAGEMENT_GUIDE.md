@@ -62,19 +62,23 @@ These functions return the appropriate permission mode for different file types:
   - Returns `0o664` (rw-rw-r--) for asset files (logos, images)
 
 - `get_assets_dir_mode() -> int`
-  - Returns `0o775` (rwxrwxr-x) for asset directories
+  - Returns `0o2775` (rwxrwsr-x) for asset directories
+  - Setgid bit enforces inherited group ownership for new files/directories
 
 - `get_config_dir_mode() -> int`
-  - Returns `0o755` (rwxr-xr-x) for config directories
+  - Returns `0o2775` (rwxrwsr-x) for config directories
+  - Setgid bit enforces inherited group ownership for new files/directories
 
 - `get_plugin_file_mode() -> int`
   - Returns `0o664` (rw-rw-r--) for plugin files
 
 - `get_plugin_dir_mode() -> int`
-  - Returns `0o775` (rwxrwxr-x) for plugin directories
+  - Returns `0o2775` (rwxrwsr-x) for plugin directories
+  - Setgid bit enforces inherited group ownership for new files/directories
 
 - `get_cache_dir_mode() -> int`
-  - Returns `0o775` (rwxrwxr-x) for cache directories
+  - Returns `0o2775` (rwxrwsr-x) for cache directories
+  - Setgid bit enforces inherited group ownership for new files/directories
 
 ---
 

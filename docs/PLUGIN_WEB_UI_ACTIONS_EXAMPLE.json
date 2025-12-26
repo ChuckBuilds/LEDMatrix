@@ -10,10 +10,10 @@
   "display_modes": ["now_playing"],
   "update_interval": 2,
   "dependencies": [
-    "spotipy",
-    "python-socketio[client]",
-    "requests",
-    "pillow"
+    "spotipy==2.25.2",
+    "python-socketio[client]==5.15.1",
+    "requests==2.32.5",
+    "pillow==12.0.0"
   ],
   "config_schema": "config_schema.json",
   "requirements_file": "requirements.txt",
@@ -21,7 +21,7 @@
   "homepage": "https://github.com/ChuckBuilds/ledmatrix-music",
   "website": "https://github.com/ChuckBuilds/ledmatrix-music",
   "license": "MIT",
-  "compatible_versions": [">=2.0.0"],
+  "compatible_versions": [">=2.0.0 <=3.0.0"],
   "min_ledmatrix_version": "2.0.0",
   "max_ledmatrix_version": "3.0.0",
   "download_url_template": "https://github.com/ChuckBuilds/ledmatrix-music/archive/refs/tags/v{version}.zip",

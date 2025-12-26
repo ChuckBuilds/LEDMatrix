@@ -90,7 +90,7 @@ The new plugin configuration system solves critical reliability and scalability 
 ### 1. Schema Management Architecture
 
 **Old Approach**:
-```
+```text
 Every Request:
   → Try path 1
   → Try path 2
@@ -119,7 +119,7 @@ Subsequent Requests:
 ### 2. Validation Architecture
 
 **Old Approach**:
-```
+```text
 Save Request:
   → Accept config
   → Save directly

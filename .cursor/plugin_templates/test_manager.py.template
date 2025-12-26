@@ -1,5 +1,5 @@
 """
-Test file for {{PLUGIN_NAME}} plugin.
+Test file for Plugin Name plugin.
 
 This file provides example unit tests for your plugin.
 Run tests with: python -m pytest test_manager.py
@@ -16,23 +16,23 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.plugin_system.testing import PluginTestCase
-from manager import {{PLUGIN_CLASS_NAME}}
+from manager import PluginClassName
 
 
-class Test{{PLUGIN_CLASS_NAME}}(PluginTestCase):
-    """Test cases for {{PLUGIN_CLASS_NAME}} plugin."""
+class TestPluginClassName(PluginTestCase):
+    """Test cases for PluginClassName plugin."""
     
     def setUp(self):
         """Set up test fixtures."""
         super().setUp()
         
         # Update plugin_id to match the plugin being tested
-        self.plugin_id = '{{PLUGIN_ID}}'
+        self.plugin_id = 'PLUGIN_ID'
         
         # Create plugin instance
         self.plugin = self.create_plugin_instance(
-            {{PLUGIN_CLASS_NAME}},
-            plugin_id='{{PLUGIN_ID}}',
+            PluginClassName,
+            plugin_id='PLUGIN_ID',
             config=self.get_mock_config()
         )
     
@@ -49,7 +49,7 @@ class Test{{PLUGIN_CLASS_NAME}}(PluginTestCase):
         # Test with invalid config if applicable
         # invalid_config = self.get_mock_config(enabled='not-a-boolean')
         # invalid_plugin = self.create_plugin_instance(
-        #     {{PLUGIN_CLASS_NAME}},
+        #     PluginClassName,
         #     config=invalid_config
         # )
         # self.assertFalse(invalid_plugin.validate_config())
@@ -64,10 +64,10 @@ class Test{{PLUGIN_CLASS_NAME}}(PluginTestCase):
         
         # Assertions
         # Example: Check that cache was used
-        # self.assert_cache_get('{{PLUGIN_ID}}_data')
+        # self.assert_cache_get('PLUGIN_ID_data')
         
         # Example: Check that data was fetched and cached
-        # self.assert_cache_set('{{PLUGIN_ID}}_data')
+        # self.assert_cache_set('PLUGIN_ID_data')
     
     def test_display_method(self):
         """Test the display() method."""
@@ -108,7 +108,7 @@ class Test{{PLUGIN_CLASS_NAME}}(PluginTestCase):
         # Test with custom duration
         custom_config = self.get_mock_config(display_duration=30.0)
         custom_plugin = self.create_plugin_instance(
-            {{PLUGIN_CLASS_NAME}},
+            PluginClassName,
             config=custom_config
         )
         self.assertEqual(custom_plugin.get_display_duration(), 30.0)

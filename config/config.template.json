@@ -73,16 +73,8 @@
         },
         "use_short_date_format": true
     },
-    "calendar": {
-        "enabled": false,
-        "update_interval": 3600,
-        "max_events": 5,
-        "show_all_day": true,
-        "date_format": "%m/%d",
-        "time_format": "%I:%M %p"
-    },
     "plugin_system": {
-        "plugins_directory": "plugin-repos",
+        "plugins_directory": "plugins",
         "auto_discover": true,
         "auto_load_enabled": true
     },

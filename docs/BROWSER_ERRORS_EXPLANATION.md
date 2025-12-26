@@ -9,7 +9,7 @@
 ### 1. Permissions-Policy Header Warnings
 
 **Examples:**
-```
+```text
 Error with Permissions-Policy header: Unrecognized feature: 'browsing-topics'.
 Error with Permissions-Policy header: Unrecognized feature: 'run-ad-auction'.
 Error with Permissions-Policy header: Origin trial controlled feature not enabled: 'join-ad-interest-group'.
@@ -30,7 +30,7 @@ Error with Permissions-Policy header: Origin trial controlled feature not enable
 ### 2. HTMX insertBefore Errors
 
 **Example:**
-```
+```javascript
 TypeError: Cannot read properties of null (reading 'insertBefore')
     at At (htmx.org@1.9.10:1:22924)
 ```

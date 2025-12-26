@@ -144,7 +144,7 @@
 
 ### 1. Configuration Save Flow
 
-```
+```text
 User edits form/JSON
     ↓
 Frontend: syncFormToJson() or parse JSON
@@ -175,7 +175,7 @@ Frontend: Display success or validation errors
 
 ### 2. Schema Loading Flow
 
-```
+```text
 Request for schema
     ↓
 SchemaManager.load_schema()
@@ -193,7 +193,7 @@ Return schema or None
 
 ### 3. Default Generation Flow
 
-```
+```text
 Request for defaults
     ↓
 SchemaManager.generate_default_config()
@@ -213,7 +213,7 @@ Cache and return defaults
 
 ### 4. Reset Flow
 
-```
+```text
 User clicks Reset button
     ↓
 Confirmation dialog

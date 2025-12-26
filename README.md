@@ -29,6 +29,20 @@
 
 -----------------------------------------------------------------------------------
 
+## ⚠️ Breaking Changes
+
+**Important for users upgrading from older versions:**
+
+Script paths have been reorganized. If you have automation, cron jobs, or custom tooling that references old script paths, you **must** update them. See the [Migration Guide](MIGRATION_GUIDE.md) for details.
+
+**Quick Reference:**
+- Installation scripts moved: `install_service.sh` → `scripts/install/install_service.sh`
+- Permission scripts moved: `fix_cache_permissions.sh` → `scripts/fix_perms/fix_cache_permissions.sh`
+
+**Full migration instructions:** See [MIGRATION_GUIDE.md](MIGRATION_GUIDE.md)
+
+-----------------------------------------------------------------------------------
+
 ## Core Features
 
 <details>
@@ -881,12 +895,12 @@ The LEDMatrix can be installed as a systemd service to run automatically at boot
 
 1. Make the install script executable:
 ```bash
-chmod +x install_service.sh
+chmod +x scripts/install/install_service.sh
 ```
 
 2. Run the install script with sudo:
 ```bash
-sudo ./install_service.sh
+sudo ./scripts/install/install_service.sh
 ```
 
 The script will:
@@ -1095,8 +1109,8 @@ This will:
 **If You Still See Cache Warnings:**
 If you see warnings about using temporary cache directory, run the permissions fix:
 ```bash
-chmod +x fix_cache_permissions.sh
-./fix_cache_permissions.sh
+chmod +x scripts/fix_perms/fix_cache_permissions.sh
+sudo ./scripts/fix_perms/fix_cache_permissions.sh
 ```
 
 **Manual Setup:**
@@ -1270,7 +1284,7 @@ Ensure your systemd service calls `start_web_conditionally.py` (installed by `in
 ### 4) Permissions (optional but recommended)
 - Add the service user to `systemd-journal` for viewing logs without sudo.
 - Configure passwordless sudo for actions (start/stop service, reboot, shutdown) if desired.
-    - Required for web Ui actions, look in the section above for the commands to run (chmod +x configure_web_sudo.sh & ./configure_web_sudo.sh)
+    - Required for web Ui actions, look in the section above for the commands to run (chmod +x scripts/install/configure_web_sudo.sh & sudo ./scripts/install/configure_web_sudo.sh)
 
 
 
