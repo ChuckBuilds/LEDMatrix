@@ -1,7 +1,7 @@
 # LEDMatrix
 
 
-### Setup video and feature walkthrough on Youtube : 
+### Setup video and feature walkthrough on Youtube (Outdated but still useful) : 
 [![IMAGE ALT TEXT HERE](https://img.youtube.com/vi/_HaqfJy1Y54/0.jpg)](https://www.youtube.com/watch?v=_HaqfJy1Y54)
 
 -----------------------------------------------------------------------------------
@@ -291,14 +291,6 @@ sudo apt install -y git python3-pip cython3 build-essential python3-dev python3-
 git clone https://github.com/ChuckBuilds/LEDMatrix.git
 cd LEDMatrix
 ```
-
-REMOVE ME BEFORE PR:
-To use the BETA Plugins branch (things will be broken!) on Rasbian 13 Trixie type:
-```bash
-git checkout plugins
-git pull
-```
-otherwise continue to the next step for the stable older version (that only works on Rasbian 12!)
 
 4. First-time installation (recommended)
 
