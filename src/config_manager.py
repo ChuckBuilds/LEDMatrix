@@ -448,8 +448,18 @@ class ConfigManager:
             
             # If we just saved the main config or secrets, the merged self.config might be stale.
             # Reload it to reflect the new state.
+            # Note: We wrap this in try-except because reload failures (e.g., migration errors)
+            # should not cause the save operation to fail - the file was saved successfully.
             if file_type == "main" or file_type == "secrets":
-                self.load_config()
+                try:
+                    self.load_config()
+                except Exception as reload_error:
+                    # Log the reload error but don't fail the save operation
+                    # The file was saved successfully, reload is just for in-memory consistency
+                    self.logger.warning(
+                        f"Configuration file saved successfully, but reload failed: {reload_error}. "
+                        f"The file on disk is valid, but in-memory config may be stale."
+                    )
 
         except (IOError, OSError, PermissionError) as e:
             error_msg = f"Error writing {file_type} configuration to file {os.path.abspath(path_to_save)}"

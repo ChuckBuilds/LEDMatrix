@@ -218,16 +218,27 @@ function saveMainConfig() {
             },
             body: JSON.stringify(config)
         })
-        .then(response => response.json())
+        .then(response => {
+            // Check if response is OK before parsing JSON
+            if (!response.ok) {
+                // Try to parse error response as JSON, fallback to status text
+                return response.json().then(data => {
+                    throw new Error(data.message || response.statusText);
+                }).catch(() => {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                });
+            }
+            return response.json();
+        })
         .then(data => {
             if (data.status === 'success') {
                 showNotification('config.json saved successfully!', 'success');
             } else {
-                showNotification('Error saving config.json: ' + data.message, 'error');
+                showNotification('Error saving config.json: ' + (data.message || 'Unknown error'), 'error');
             }
         })
         .catch(error => {
-            showNotification('Error saving config.json: ' + error.message, 'error');
+            showNotification('Error saving config.json: ' + (error.message || 'An error occurred'), 'error');
         });
     } catch (e) {
         showNotification('Invalid JSON: ' + e.message, 'error');
@@ -254,16 +265,27 @@ function saveSecretsConfig() {
             },
             body: JSON.stringify(config)
         })
-        .then(response => response.json())
+        .then(response => {
+            // Check if response is OK before parsing JSON
+            if (!response.ok) {
+                // Try to parse error response as JSON, fallback to status text
+                return response.json().then(data => {
+                    throw new Error(data.message || response.statusText);
+                }).catch(() => {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                });
+            }
+            return response.json();
+        })
         .then(data => {
             if (data.status === 'success') {
                 showNotification('config_secrets.json saved successfully!', 'success');
             } else {
-                showNotification('Error saving config_secrets.json: ' + data.message, 'error');
+                showNotification('Error saving config_secrets.json: ' + (data.message || 'Unknown error'), 'error');
             }
         })
         .catch(error => {
-            showNotification('Error saving config_secrets.json: ' + error.message, 'error');
+            showNotification('Error saving config_secrets.json: ' + (error.message || 'An error occurred'), 'error');
         });
     } catch (e) {
         showNotification('Invalid JSON: ' + e.message, 'error');
