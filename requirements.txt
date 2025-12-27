@@ -1,17 +1,50 @@
+# LEDMatrix Core Dependencies
+# Compatible with Python 3.10, 3.11, 3.12, and 3.13
+# Tested on Raspbian OS 12 (Bookworm) and 13 (Trixie)
+
+# Image processing
 Pillow>=10.4.0,<12.0.0
-pytz==2023.3
-requests>=2.32.0
-timezonefinder==6.2.0
-geopy==2.4.1
-google-auth-oauthlib==1.0.0
-google-auth-httplib2==0.1.0
-google-api-python-client==2.86.0 
-freetype-py==2.5.1
-spotipy
-Flask
-unidecode
-icalevents
-python-socketio
-python-engineio
-websockets
-websocket-client
+numpy>=1.24.0  # For fast array operations in ScrollHelper (compatible with 2.x)
+
+# Timezone handling
+pytz>=2024.2,<2025.0  # Updated for latest timezone data
+timezonefinder>=6.5.0,<7.0.0  # Updated for better performance and accuracy
+geopy>=2.4.1,<3.0.0
+
+# HTTP requests
+requests>=2.32.0,<3.0.0
+
+# Google API integration
+google-auth-oauthlib>=1.2.0,<2.0.0
+google-auth-httplib2>=0.2.0,<1.0.0
+google-api-python-client>=2.147.0,<3.0.0
+
+# Font rendering
+freetype-py>=2.5.1,<3.0.0
+
+# Spotify integration
+spotipy>=2.24.0,<3.0.0
+
+# Flask web framework
+Flask>=3.0.0,<4.0.0
+
+# Text processing
+unidecode>=1.3.8,<2.0.0
+
+# Calendar integration
+icalevents>=0.1.27,<1.0.0
+
+# WebSocket support
+python-socketio>=5.11.0,<6.0.0
+python-engineio>=4.9.0,<5.0.0
+websockets>=12.0,<14.0
+websocket-client>=1.8.0,<2.0.0
+
+# JSON Schema validation
+jsonschema>=4.20.0,<5.0.0
+
+# Testing dependencies
+pytest>=7.4.0,<8.0.0
+pytest-cov>=4.1.0,<5.0.0
+pytest-mock>=3.11.0,<4.0.0
+mypy>=1.5.0,<2.0.0

@@ -1,0 +1,238 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Plugin Manifest Schema",
+  "description": "Schema for validating plugin manifest.json files",
+  "type": "object",
+  "properties": {
+    "id": {
+      "type": "string",
+      "description": "Unique plugin identifier"
+    },
+    "name": {
+      "type": "string",
+      "description": "Human-readable plugin name"
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+(-[\\w\\.-]+)?(\\+[\\w\\.-]+)?$",
+      "description": "Plugin version (semver format)"
+    },
+    "author": {
+      "type": "string",
+      "description": "Plugin author name"
+    },
+    "description": {
+      "type": "string",
+      "description": "Brief description of what the plugin does"
+    },
+    "homepage": {
+      "type": "string",
+      "format": "uri",
+      "description": "Plugin homepage URL"
+    },
+    "entry_point": {
+      "type": "string",
+      "default": "manager.py",
+      "description": "Python file containing the plugin class"
+    },
+    "class_name": {
+      "type": "string",
+      "description": "Name of the plugin class"
+    },
+    "category": {
+      "type": "string",
+      "description": "Plugin category (e.g., 'sports', 'weather', 'custom')"
+    },
+    "tags": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Array of tags for categorization"
+    },
+    "icon": {
+      "type": "string",
+      "description": "Icon identifier (e.g., Font Awesome class)"
+    },
+    "compatible_versions": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^(>=|<=|>|<|~|\\^)?\\d+\\.\\d+\\.\\d+(-[\\w\\.-]+)?(\\+[\\w\\.-]+)?$|^\\d+\\.\\d+\\.\\d+(-[\\w\\.-]+)?(\\+[\\w\\.-]+)?\\s+-\\s+\\d+\\.\\d+\\.\\d+(-[\\w\\.-]+)?(\\+[\\w\\.-]+)?$"
+      },
+      "minItems": 1,
+      "description": "Array of semver ranges specifying compatible LEDMatrix versions (required)"
+    },
+    "min_ledmatrix_version": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+(-[\\w\\.-]+)?(\\+[\\w\\.-]+)?$",
+      "description": "Optional: Minimum LEDMatrix version required (string)"
+    },
+    "max_ledmatrix_version": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+(-[\\w\\.-]+)?(\\+[\\w\\.-]+)?$",
+      "description": "Optional: Maximum LEDMatrix version supported (string)"
+    },
+    "requires": {
+      "type": "object",
+      "properties": {
+        "python": {
+          "type": "string",
+          "description": "Python version requirement (e.g., '>=3.9')"
+        },
+        "display_size": {
+          "type": "object",
+          "properties": {
+            "min_width": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "min_height": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        }
+      }
+    },
+    "config_schema": {
+      "type": "string",
+      "description": "Path to configuration schema file"
+    },
+    "assets": {
+      "type": "object",
+      "description": "Asset requirements description"
+    },
+    "update_interval": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Update interval in seconds"
+    },
+    "default_duration": {
+      "type": "number",
+      "minimum": 1,
+      "description": "Default display duration in seconds"
+    },
+    "display_modes": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Array of display mode names this plugin provides"
+    },
+    "api_requirements": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "required": {
+            "type": "boolean"
+          },
+          "description": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string",
+            "format": "uri"
+          },
+          "rate_limit": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "download_url_template": {
+      "type": "string",
+      "format": "uri",
+      "description": "URL template for downloading plugin releases (use {version} placeholder)"
+    },
+    "versions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "released": {
+            "type": "string",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+            "description": "Release date (YYYY-MM-DD format)"
+          },
+          "version": {
+            "type": "string",
+            "pattern": "^\\d+\\.\\d+\\.\\d+(-[\\w\\.-]+)?(\\+[\\w\\.-]+)?$",
+            "description": "Plugin version for this entry"
+          },
+          "ledmatrix_min_version": {
+            "type": "string",
+            "pattern": "^\\d+\\.\\d+\\.\\d+(-[\\w\\.-]+)?(\\+[\\w\\.-]+)?$",
+            "description": "Optional: Minimum LEDMatrix version required for this plugin version (string)"
+          }
+        },
+        "required": ["released", "version"]
+      },
+      "description": "Array of version history entries"
+    },
+    "last_updated": {
+      "type": "string",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+      "description": "Last update date (YYYY-MM-DD format)"
+    },
+    "stars": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Number of stars (for registry)"
+    },
+    "downloads": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Number of downloads (for registry)"
+    },
+    "verified": {
+      "type": "boolean",
+      "description": "Whether plugin is verified (for registry)"
+    },
+    "screenshot": {
+      "type": "string",
+      "description": "Screenshot URL (for registry)"
+    },
+    "api_version": {
+      "type": "string",
+      "description": "API version (legacy field)"
+    },
+    "dependencies": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Python dependencies (legacy - use requirements.txt instead)"
+    },
+    "requirements_file": {
+      "type": "string",
+      "description": "Path to requirements.txt file"
+    },
+    "website": {
+      "type": "string",
+      "format": "uri",
+      "description": "Plugin website URL (alias for homepage)"
+    },
+    "license": {
+      "type": "string",
+      "description": "License type (e.g., 'MIT', 'Apache-2.0')"
+    },
+    "web_ui_actions": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      },
+      "description": "Web UI action definitions"
+    },
+    "ledmatrix_version": {
+      "type": "string",
+      "description": "Deprecated: Use compatible_versions instead. LEDMatrix version this plugin targets"
+    }
+  },
+  "required": ["id", "name", "version", "author", "entry_point", "class_name", "compatible_versions"]
+}
+

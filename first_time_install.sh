@@ -39,6 +39,74 @@ else
     echo "⚠ Could not detect Raspberry Pi model (continuing anyway)"
 fi
 
+# Check OS version - must be Raspberry Pi OS Lite (Trixie)
+echo ""
+echo "Checking operating system requirements..."
+echo "----------------------------------------"
+OS_CHECK_FAILED=0
+
+if [ -f /etc/os-release ]; then
+    . /etc/os-release
+    echo "Detected OS: $PRETTY_NAME"
+    echo "Version ID: ${VERSION_ID:-unknown}"
+    
+    # Check if it's Raspberry Pi OS or Debian
+    if [[ "$ID" != "raspbian" ]] && [[ "$ID" != "debian" ]]; then
+        echo "✗ ERROR: This script requires Raspberry Pi OS (raspbian/debian)"
+        echo "  Detected OS ID: $ID"
+        OS_CHECK_FAILED=1
+    fi
+    
+    # Check if it's Debian 13 (Trixie)
+    if [ "${VERSION_ID:-0}" != "13" ]; then
+        echo "✗ ERROR: This script requires Raspberry Pi OS Lite (Trixie) - Debian 13"
+        echo "  Detected version: ${VERSION_ID:-unknown}"
+        echo "  Please upgrade to Raspberry Pi OS Lite (Trixie) before continuing"
+        OS_CHECK_FAILED=1
+    else
+        echo "✓ Debian 13 (Trixie) detected"
+    fi
+    
+    # Check if it's the Lite version (no desktop environment)
+    # Check for desktop packages or desktop services
+    DESKTOP_DETECTED=0
+    if dpkg -l | grep -qE "^ii.*raspberrypi-ui-mods|^ii.*lxde|^ii.*xfce|^ii.*gnome|^ii.*kde"; then
+        DESKTOP_DETECTED=1
+    fi
+    if systemctl list-units --type=service --state=running 2>/dev/null | grep -qE "lightdm|gdm3|sddm|lxdm"; then
+        DESKTOP_DETECTED=1
+    fi
+    if [ -d /usr/share/raspberrypi-ui-mods ] || [ -d /usr/share/xsessions ]; then
+        DESKTOP_DETECTED=1
+    fi
+    
+    if [ "$DESKTOP_DETECTED" -eq 1 ]; then
+        echo "✗ ERROR: Desktop environment detected - this script requires Raspberry Pi OS Lite"
+        echo "  Please use Raspberry Pi OS Lite (not the full desktop version)"
+        OS_CHECK_FAILED=1
+    else
+        echo "✓ Lite version confirmed (no desktop environment)"
+    fi
+else
+    echo "✗ ERROR: Could not detect OS version (/etc/os-release not found)"
+    OS_CHECK_FAILED=1
+fi
+
+if [ "$OS_CHECK_FAILED" -eq 1 ]; then
+    echo ""
+    echo "Installation cannot continue. Please install Raspberry Pi OS Lite (Trixie) and try again."
+    echo ""
+    echo "To install Raspberry Pi OS Lite (Trixie):"
+    echo "  1. Download from: https://www.raspberrypi.com/software/operating-systems/"
+    echo "  2. Select 'Raspberry Pi OS Lite (64-bit)' with Debian 13 (Trixie)"
+    echo "  3. Flash to SD card using Raspberry Pi Imager"
+    echo "  4. Boot and run this script again"
+    exit 1
+fi
+
+echo "✓ OS requirements met"
+echo ""
+
 # Get the actual user who invoked sudo (set after we ensure sudo below)
 if [ -n "${SUDO_USER:-}" ]; then
     ACTUAL_USER="$SUDO_USER"
@@ -151,13 +219,16 @@ echo "This script will perform the following steps:"
 echo "1. Install system dependencies"
 echo "2. Fix cache permissions"
 echo "3. Fix assets directory permissions"
+echo "3.1. Fix plugin directory permissions"
 echo "4. Install main LED Matrix service"
 echo "5. Install Python project dependencies (requirements.txt)"
 echo "6. Build and install rpi-rgb-led-matrix and test import"
 echo "7. Install web interface dependencies"
 echo "8. Install web interface service"
+echo "8.5. Install WiFi monitor service"
 echo "9. Configure web interface permissions"
 echo "10. Configure passwordless sudo access"
+echo "10.1. Configure WiFi management permissions"
 echo "11. Set up proper file ownership"
 echo "12. Configure sound module to avoid conflicts"
 echo "13. Apply performance optimizations"
@@ -191,7 +262,7 @@ apt_update
 
 # Install required system packages
 echo "Installing Python packages and dependencies..."
-apt_install python3-pip python3-venv python3-dev python3-pil python3-pil.imagetk build-essential python3-setuptools python3-wheel cython3
+apt_install python3-pip python3-venv python3-dev python3-pil python3-pil.imagetk python3-pillow build-essential python3-setuptools python3-wheel cython3 scons cmake ninja-build
 
 # Install additional system dependencies that might be needed
 echo "Installing additional system dependencies..."
@@ -204,17 +275,40 @@ CURRENT_STEP="Fix cache permissions"
 echo "Step 2: Fixing cache permissions..."
 echo "----------------------------------"
 
-# Run the cache permissions fix
-if [ -f "$PROJECT_ROOT_DIR/fix_cache_permissions.sh" ]; then
-    echo "Running cache permissions fix..."
-    bash "$PROJECT_ROOT_DIR/fix_cache_permissions.sh"
+# Run the cache setup script (uses proper group permissions)
+if [ -f "$PROJECT_ROOT_DIR/scripts/install/setup_cache.sh" ]; then
+    echo "Running cache setup script (proper group permissions)..."
+    bash "$PROJECT_ROOT_DIR/scripts/install/setup_cache.sh"
+    echo "✓ Cache permissions fixed with proper group setup"
+elif [ -f "$PROJECT_ROOT_DIR/scripts/fix_perms/fix_cache_permissions.sh" ]; then
+    echo "Running cache permissions fix (legacy script)..."
+    bash "$PROJECT_ROOT_DIR/scripts/fix_perms/fix_cache_permissions.sh"
     echo "✓ Cache permissions fixed"
 else
-    echo "⚠ Cache permissions script not found, creating cache directories manually..."
+    echo "⚠ Cache setup scripts not found, setting up cache directory manually..."
+    # Create ledmatrix group if it doesn't exist
+    if ! getent group ledmatrix > /dev/null 2>&1; then
+        groupadd ledmatrix
+        echo "Created ledmatrix group"
+    fi
+    
+    # Add users to ledmatrix group
+    usermod -a -G ledmatrix "$ACTUAL_USER"
+    if id daemon > /dev/null 2>&1; then
+        usermod -a -G ledmatrix daemon
+    fi
+    
+    # Create cache directory with proper permissions
     mkdir -p /var/cache/ledmatrix
-    chown "$ACTUAL_USER:$ACTUAL_USER" /var/cache/ledmatrix
-    chmod 777 /var/cache/ledmatrix
-    echo "✓ Cache directories created manually"
+    chown -R :ledmatrix /var/cache/ledmatrix
+    # Set directory permissions: 775 with setgid for group inheritance
+    find /var/cache/ledmatrix -type d -exec chmod 775 {} \;
+    chmod g+s /var/cache/ledmatrix
+    # Set file permissions: 660 for group-readable cache files
+    find /var/cache/ledmatrix -type f -exec chmod 660 {} \;
+    
+    echo "✓ Cache directory created with proper group permissions"
+    echo "  Note: You may need to log out and back in for group changes to take effect"
 fi
 echo ""
 
@@ -223,9 +317,9 @@ echo "Step 3: Fixing assets directory permissions..."
 echo "--------------------------------------------"
 
 # Run the assets permissions fix
-if [ -f "$PROJECT_ROOT_DIR/fix_assets_permissions.sh" ]; then
+if [ -f "$PROJECT_ROOT_DIR/scripts/fix_perms/fix_assets_permissions.sh" ]; then
     echo "Running assets permissions fix..."
-    bash "$PROJECT_ROOT_DIR/fix_assets_permissions.sh"
+    bash "$PROJECT_ROOT_DIR/scripts/fix_perms/fix_assets_permissions.sh"
     echo "✓ Assets permissions fixed"
 else
     echo "⚠ Assets permissions script not found, fixing permissions manually..."
@@ -234,9 +328,10 @@ else
     echo "Setting ownership of assets directory..."
     chown -R "$ACTUAL_USER:$ACTUAL_USER" "$PROJECT_ROOT_DIR/assets"
     
-    # Set permissions to allow read/write for owner and group, read for others
+    # Set permissions to allow read/write for owner, group, and others (for root service user)
+    # Note: 777 allows root (service user) to write, which is necessary when service runs as root
     echo "Setting permissions for assets directory..."
-    chmod -R 775 "$PROJECT_ROOT_DIR/assets"
+    chmod -R 777 "$PROJECT_ROOT_DIR/assets"
     
     # Specifically ensure the sports logos directories are writable
     SPORTS_DIRS=(
@@ -253,13 +348,13 @@ else
     for SPORTS_DIR in "${SPORTS_DIRS[@]}"; do
         FULL_PATH="$PROJECT_ROOT_DIR/assets/$SPORTS_DIR"
         if [ -d "$FULL_PATH" ]; then
-            chmod 775 "$FULL_PATH"
+            chmod 777 "$FULL_PATH"
             chown "$ACTUAL_USER:$ACTUAL_USER" "$FULL_PATH"
         else
             echo "Creating directory: $FULL_PATH"
             mkdir -p "$FULL_PATH"
             chown "$ACTUAL_USER:$ACTUAL_USER" "$FULL_PATH"
-            chmod 775 "$FULL_PATH"
+            chmod 777 "$FULL_PATH"
         fi
     done
     
@@ -267,19 +362,177 @@ else
 fi
 echo ""
 
+CURRENT_STEP="Fix plugin directory permissions"
+echo "Step 3.1: Fixing plugin directory permissions..."
+echo "----------------------------------------------"
+
+# Ensure home directory is traversable by root (needed for service access)
+USER_HOME=$(eval echo ~$ACTUAL_USER)
+if [ -d "$USER_HOME" ]; then
+    HOME_PERMS=$(stat -c "%a" "$USER_HOME" 2>/dev/null || echo "unknown")
+    if [ "$HOME_PERMS" = "700" ]; then
+        echo "Fixing home directory permissions (700 -> 755) so root service can access subdirectories..."
+        chmod 755 "$USER_HOME"
+        echo "✓ Home directory permissions fixed"
+    fi
+fi
+echo ""
+
+# Run the plugin permissions fix
+if [ -f "$PROJECT_ROOT_DIR/scripts/fix_perms/fix_plugin_permissions.sh" ]; then
+    echo "Running plugin permissions fix..."
+    bash "$PROJECT_ROOT_DIR/scripts/fix_perms/fix_plugin_permissions.sh"
+    echo "✓ Plugin permissions fixed"
+else
+    echo "⚠ Plugin permissions script not found, fixing permissions manually..."
+    
+    # Ensure plugins directory exists
+    if [ ! -d "$PROJECT_ROOT_DIR/plugins" ]; then
+        echo "Creating plugins directory..."
+        mkdir -p "$PROJECT_ROOT_DIR/plugins"
+    fi
+    
+    # Determine ownership based on web service user
+    # Check if web service file exists and what user it runs as
+    WEB_SERVICE_USER="root"
+    if [ -f "/etc/systemd/system/ledmatrix-web.service" ]; then
+        # Check actual installed service file (most accurate)
+        WEB_SERVICE_USER=$(grep "^User=" /etc/systemd/system/ledmatrix-web.service | cut -d'=' -f2 || echo "root")
+    elif [ -f "$PROJECT_ROOT_DIR/scripts/install/install_web_service.sh" ]; then
+        # Check install_web_service.sh (used by first_time_install.sh)
+        if grep -q "User=root" "$PROJECT_ROOT_DIR/scripts/install/install_web_service.sh"; then
+            WEB_SERVICE_USER="root"
+        elif grep -q "User=\${ACTUAL_USER}" "$PROJECT_ROOT_DIR/scripts/install/install_web_service.sh"; then
+            WEB_SERVICE_USER="$ACTUAL_USER"
+        fi
+    elif [ -f "$PROJECT_ROOT_DIR/systemd/ledmatrix-web.service" ]; then
+        # Check template file (may have placeholder)
+        WEB_SERVICE_USER=$(grep "^User=" "$PROJECT_ROOT_DIR/systemd/ledmatrix-web.service" | cut -d'=' -f2 || echo "root")
+        # If template has placeholder, check install script
+        if [ "$WEB_SERVICE_USER" = "__USER__" ] || [ -z "$WEB_SERVICE_USER" ]; then
+            # Check install_service.sh to see what user it uses
+            if [ -f "$PROJECT_ROOT_DIR/scripts/install/install_service.sh" ] && grep -q "User=\${ACTUAL_USER}" "$PROJECT_ROOT_DIR/scripts/install/install_service.sh"; then
+                WEB_SERVICE_USER="$ACTUAL_USER"
+            fi
+        fi
+    elif [ -f "$PROJECT_ROOT_DIR/scripts/install/install_service.sh" ] && grep -q "User=\${ACTUAL_USER}" "$PROJECT_ROOT_DIR/scripts/install/install_service.sh"; then
+        # Web service will be installed by install_service.sh as ACTUAL_USER
+        WEB_SERVICE_USER="$ACTUAL_USER"
+    fi
+    
+    # If web service runs as ACTUAL_USER (not root), set ownership to ACTUAL_USER
+    # so the web service can change permissions. Root service can still access via group (775).
+    # If web service runs as root, use root:ACTUAL_USER for mixed access.
+    if [ "$WEB_SERVICE_USER" = "$ACTUAL_USER" ] || [ "$WEB_SERVICE_USER" != "root" ]; then
+        echo "Web service runs as $WEB_SERVICE_USER, setting ownership to $ACTUAL_USER:$ACTUAL_USER..."
+        echo "  (Root service can still access via group permissions)"
+        chown -R "$ACTUAL_USER:$ACTUAL_USER" "$PROJECT_ROOT_DIR/plugins"
+    else
+        echo "Web service runs as root, setting ownership to root:$ACTUAL_USER..."
+        chown -R root:"$ACTUAL_USER" "$PROJECT_ROOT_DIR/plugins"
+    fi
+    
+    # Set directory permissions (775: rwxrwxr-x)
+    echo "Setting directory permissions to 775..."
+    find "$PROJECT_ROOT_DIR/plugins" -type d -exec chmod 775 {} \;
+    
+    # Set file permissions (664: rw-rw-r--)
+    echo "Setting file permissions to 664..."
+    find "$PROJECT_ROOT_DIR/plugins" -type f -exec chmod 664 {} \;
+    
+    echo "✓ Plugin permissions fixed manually"
+fi
+
+# Also ensure plugin-repos directory exists with proper permissions
+# This is where plugins installed via the plugin store are stored
+PLUGIN_REPOS_DIR="$PROJECT_ROOT_DIR/plugin-repos"
+if [ ! -d "$PLUGIN_REPOS_DIR" ]; then
+    echo "Creating plugin-repos directory..."
+    mkdir -p "$PLUGIN_REPOS_DIR"
+fi
+
+# Determine ownership based on web service user
+# Check if web service file exists and what user it runs as
+WEB_SERVICE_USER="root"
+if [ -f "/etc/systemd/system/ledmatrix-web.service" ]; then
+    # Check actual installed service file (most accurate)
+    WEB_SERVICE_USER=$(grep "^User=" /etc/systemd/system/ledmatrix-web.service | cut -d'=' -f2 || echo "root")
+elif [ -f "$PROJECT_ROOT_DIR/scripts/install/install_web_service.sh" ]; then
+    # Check install_web_service.sh (used by first_time_install.sh)
+    if grep -q "User=root" "$PROJECT_ROOT_DIR/scripts/install/install_web_service.sh"; then
+        WEB_SERVICE_USER="root"
+    elif grep -q "User=\${ACTUAL_USER}" "$PROJECT_ROOT_DIR/scripts/install/install_web_service.sh"; then
+        WEB_SERVICE_USER="$ACTUAL_USER"
+    fi
+elif [ -f "$PROJECT_ROOT_DIR/systemd/ledmatrix-web.service" ]; then
+    # Check template file (may have placeholder)
+    WEB_SERVICE_USER=$(grep "^User=" "$PROJECT_ROOT_DIR/systemd/ledmatrix-web.service" | cut -d'=' -f2 || echo "root")
+    # If template has placeholder, check install script
+    if [ "$WEB_SERVICE_USER" = "__USER__" ] || [ -z "$WEB_SERVICE_USER" ]; then
+        # Check install_service.sh to see what user it uses
+        if [ -f "$PROJECT_ROOT_DIR/scripts/install/install_service.sh" ] && grep -q "User=\${ACTUAL_USER}" "$PROJECT_ROOT_DIR/scripts/install/install_service.sh"; then
+            WEB_SERVICE_USER="$ACTUAL_USER"
+        fi
+    fi
+elif [ -f "$PROJECT_ROOT_DIR/scripts/install/install_service.sh" ] && grep -q "User=\${ACTUAL_USER}" "$PROJECT_ROOT_DIR/scripts/install/install_service.sh"; then
+    # Web service will be installed by install_service.sh as ACTUAL_USER
+    WEB_SERVICE_USER="$ACTUAL_USER"
+fi
+
+# If web service runs as ACTUAL_USER (not root), set ownership to ACTUAL_USER
+# so the web service can change permissions. Root service can still access via group (775).
+# If web service runs as root, use root:ACTUAL_USER for mixed access.
+if [ "$WEB_SERVICE_USER" = "$ACTUAL_USER" ] || [ "$WEB_SERVICE_USER" != "root" ]; then
+    echo "Web service runs as $WEB_SERVICE_USER, setting ownership to $ACTUAL_USER:$ACTUAL_USER..."
+    echo "  (Root service can still access via group permissions)"
+    chown -R "$ACTUAL_USER:$ACTUAL_USER" "$PLUGIN_REPOS_DIR"
+else
+    echo "Web service runs as root, setting ownership to root:$ACTUAL_USER..."
+    chown -R root:"$ACTUAL_USER" "$PLUGIN_REPOS_DIR"
+fi
+
+# Set directory permissions (775: rwxrwxr-x)
+echo "Setting plugin-repos directory permissions to 2775 (sticky bit)..."
+find "$PLUGIN_REPOS_DIR" -type d -exec chmod 2775 {} \;
+
+# Set file permissions (664: rw-rw-r--)
+echo "Setting plugin-repos file permissions to 664..."
+find "$PLUGIN_REPOS_DIR" -type f -exec chmod 664 {} \;
+
+echo "✓ Plugin-repos directory permissions fixed"
+echo ""
+
 CURRENT_STEP="Install main LED Matrix service"
 echo "Step 4: Installing main LED Matrix service..."
 echo "---------------------------------------------"
 
 # Run the main service installation (idempotent)
-if [ -f "$PROJECT_ROOT_DIR/install_service.sh" ]; then
-    echo "Running main service installation..."
-    bash "$PROJECT_ROOT_DIR/install_service.sh"
-    echo "✓ Main LED Matrix service installed"
+# Note: install_service.sh always overwrites the service file, so it will update paths automatically
+if [ -f "$PROJECT_ROOT_DIR/scripts/install/install_service.sh" ]; then
+    echo "Running main service installation/update..."
+    bash "$PROJECT_ROOT_DIR/scripts/install/install_service.sh"
+    echo "✓ Main LED Matrix service installed/updated"
 else
-    echo "✗ Main service installation script not found at $PROJECT_ROOT_DIR/install_service.sh"
+    echo "✗ Main service installation script not found at $PROJECT_ROOT_DIR/scripts/install/install_service.sh"
     echo "Please ensure you are running this script from the project root: $PROJECT_ROOT_DIR"
     exit 1
+fi
+
+# Configure Python capabilities for hardware timing
+echo "Configuring Python capabilities for hardware timing..."
+if [ -f "/usr/bin/python3.13" ]; then
+    sudo setcap 'cap_sys_nice=eip' /usr/bin/python3.13 2>/dev/null || echo "⚠ Could not set cap_sys_nice on python3.13 (may need manual setup)"
+    echo "✓ Python3.13 capabilities configured"
+elif [ -f "/usr/bin/python3" ]; then
+    PYTHON_VER=$(python3 --version 2>&1 | grep -oP '(?<=Python )\d\.\d+' || echo "unknown")
+    if command -v setcap >/dev/null 2>&1; then
+        sudo setcap 'cap_sys_nice=eip' /usr/bin/python3 2>/dev/null || echo "⚠ Could not set cap_sys_nice on python3"
+        echo "✓ Python3 capabilities configured (version: $PYTHON_VER)"
+    else
+        echo "⚠ setcap not found, skipping capability configuration"
+    fi
+else
+    echo "⚠ Python3 not found, skipping capability configuration"
 fi
 echo ""
 
@@ -289,14 +542,30 @@ echo "------------------------------------------------"
 
 # Ensure config directory exists
 mkdir -p "$PROJECT_ROOT_DIR/config"
-chmod 755 "$PROJECT_ROOT_DIR/config" || true
+chmod 2775 "$PROJECT_ROOT_DIR/config" || true
+
+# Create ledmatrix group if it doesn't exist (needed for shared access)
+LEDMATRIX_GROUP="ledmatrix"
+if ! getent group "$LEDMATRIX_GROUP" > /dev/null 2>&1; then
+    groupadd "$LEDMATRIX_GROUP" || true
+    echo "Created group: $LEDMATRIX_GROUP"
+fi
+
+# Add root to ledmatrix group so service can read config files
+if ! id -nG root | grep -qw "$LEDMATRIX_GROUP" 2>/dev/null; then
+    usermod -a -G "$LEDMATRIX_GROUP" root || true
+    echo "Added root to group: $LEDMATRIX_GROUP"
+fi
+
+# Set config directory ownership to user:ledmatrix group
+chown "$ACTUAL_USER:$LEDMATRIX_GROUP" "$PROJECT_ROOT_DIR/config" || true
 
 # Create config.json from template if missing
 if [ ! -f "$PROJECT_ROOT_DIR/config/config.json" ]; then
     if [ -f "$PROJECT_ROOT_DIR/config/config.template.json" ]; then
         echo "Creating config/config.json from template..."
         cp "$PROJECT_ROOT_DIR/config/config.template.json" "$PROJECT_ROOT_DIR/config/config.json"
-        chown "$ACTUAL_USER:$ACTUAL_USER" "$PROJECT_ROOT_DIR/config/config.json" || true
+        chown "$ACTUAL_USER:$LEDMATRIX_GROUP" "$PROJECT_ROOT_DIR/config/config.json" || true
         chmod 644 "$PROJECT_ROOT_DIR/config/config.json"
         echo "✓ Main config file created from template"
     else
@@ -321,7 +590,7 @@ if [ ! -f "$PROJECT_ROOT_DIR/config/config.json" ]; then
     }
 }
 EOF
-        chown "$ACTUAL_USER:$ACTUAL_USER" "$PROJECT_ROOT_DIR/config/config.json" || true
+        chown "$ACTUAL_USER:$LEDMATRIX_GROUP" "$PROJECT_ROOT_DIR/config/config.json" || true
         chmod 644 "$PROJECT_ROOT_DIR/config/config.json"
         echo "✓ Minimal config file created"
     fi
@@ -334,7 +603,19 @@ if [ ! -f "$PROJECT_ROOT_DIR/config/config_secrets.json" ]; then
     if [ -f "$PROJECT_ROOT_DIR/config/config_secrets.template.json" ]; then
         echo "Creating config/config_secrets.json from template..."
         cp "$PROJECT_ROOT_DIR/config/config_secrets.template.json" "$PROJECT_ROOT_DIR/config/config_secrets.json"
-        chown "$ACTUAL_USER:$ACTUAL_USER" "$PROJECT_ROOT_DIR/config/config_secrets.json" || true
+        # Check if service runs as root and set ownership accordingly
+        SERVICE_USER="root"
+        if [ -f "/etc/systemd/system/ledmatrix.service" ]; then
+            SERVICE_USER=$(grep "^User=" /etc/systemd/system/ledmatrix.service | cut -d'=' -f2 || echo "root")
+        elif [ -f "$PROJECT_ROOT_DIR/systemd/ledmatrix.service" ]; then
+            SERVICE_USER=$(grep "^User=" "$PROJECT_ROOT_DIR/systemd/ledmatrix.service" | cut -d'=' -f2 || echo "root")
+        fi
+        
+        if [ "$SERVICE_USER" = "root" ]; then
+            chown "root:$LEDMATRIX_GROUP" "$PROJECT_ROOT_DIR/config/config_secrets.json" || true
+        else
+            chown "$ACTUAL_USER:$LEDMATRIX_GROUP" "$PROJECT_ROOT_DIR/config/config_secrets.json" || true
+        fi
         chmod 640 "$PROJECT_ROOT_DIR/config/config_secrets.json"
         echo "✓ Secrets file created from template"
     else
@@ -346,7 +627,19 @@ if [ ! -f "$PROJECT_ROOT_DIR/config/config_secrets.json" ]; then
   }
 }
 EOF
-        chown "$ACTUAL_USER:$ACTUAL_USER" "$PROJECT_ROOT_DIR/config/config_secrets.json" || true
+        # Check if service runs as root and set ownership accordingly
+        SERVICE_USER="root"
+        if [ -f "/etc/systemd/system/ledmatrix.service" ]; then
+            SERVICE_USER=$(grep "^User=" /etc/systemd/system/ledmatrix.service | cut -d'=' -f2 || echo "root")
+        elif [ -f "$PROJECT_ROOT_DIR/systemd/ledmatrix.service" ]; then
+            SERVICE_USER=$(grep "^User=" "$PROJECT_ROOT_DIR/systemd/ledmatrix.service" | cut -d'=' -f2 || echo "root")
+        fi
+        
+        if [ "$SERVICE_USER" = "root" ]; then
+            chown "root:$LEDMATRIX_GROUP" "$PROJECT_ROOT_DIR/config/config_secrets.json" || true
+        else
+            chown "$ACTUAL_USER:$LEDMATRIX_GROUP" "$PROJECT_ROOT_DIR/config/config_secrets.json" || true
+        fi
         chmod 640 "$PROJECT_ROOT_DIR/config/config_secrets.json"
         echo "✓ Minimal secrets file created"
     fi
@@ -359,15 +652,155 @@ CURRENT_STEP="Install project Python dependencies"
 echo "Step 5: Installing Python project dependencies..."
 echo "-----------------------------------------------"
 
+# Install numpy via apt first (pre-built binary, much faster than building from source)
+echo "Installing numpy via apt (pre-built binary for faster installation)..."
+if ! python3 -c "import numpy" >/dev/null 2>&1; then
+    apt_install python3-numpy
+    echo "✓ numpy installed via apt"
+else
+    NUMPY_VERSION=$(python3 -c "import numpy; print(numpy.__version__)" 2>/dev/null || echo "unknown")
+    echo "✓ numpy already installed (version: $NUMPY_VERSION)"
+fi
+echo ""
+
 # Install main project Python dependencies
 cd "$PROJECT_ROOT_DIR"
 if [ -f "$PROJECT_ROOT_DIR/requirements.txt" ]; then
-    python3 -m pip install --break-system-packages -r "$PROJECT_ROOT_DIR/requirements.txt"
+    echo "Reading requirements from: $PROJECT_ROOT_DIR/requirements.txt"
+    
+    # Check pip version and upgrade if needed
+    echo "Checking pip version..."
+    python3 -m pip --version
+    
+    # Upgrade pip, setuptools, and wheel for better compatibility
+    echo "Upgrading pip, setuptools, and wheel..."
+    python3 -m pip install --break-system-packages --upgrade pip setuptools wheel || {
+        echo "⚠ Warning: Failed to upgrade pip/setuptools/wheel, continuing anyway..."
+    }
+    
+    # Count total packages for progress
+    TOTAL_PACKAGES=$(grep -v '^#' "$PROJECT_ROOT_DIR/requirements.txt" | grep -v '^$' | wc -l)
+    echo "Found $TOTAL_PACKAGES package(s) to install"
+    echo ""
+    
+    # Install packages one at a time for better diagnostics
+    INSTALLED=0
+    FAILED=0
+    PACKAGE_NUM=0
+    
+    while IFS= read -r line || [ -n "$line" ]; do
+        # Remove inline comments (everything after #) but preserve comment-only lines
+        # First check if line starts with # (comment-only line)
+        if [[ "$line" =~ ^[[:space:]]*# ]]; then
+            continue
+        fi
+        
+        # Remove inline comments and trim whitespace
+        line=$(echo "$line" | sed 's/[[:space:]]*#.*$//' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+        
+        # Skip empty lines
+        if [[ -z "$line" ]]; then
+            continue
+        fi
+        
+        PACKAGE_NUM=$((PACKAGE_NUM + 1))
+        echo "[$PACKAGE_NUM/$TOTAL_PACKAGES] Installing: $line"
+        
+        # Check if package is already installed (basic check - may not catch all cases)
+        PACKAGE_NAME=$(echo "$line" | sed -E 's/[<>=!].*$//' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+        
+        # Try installing with verbose output and timeout (if available)
+        # Use --no-cache-dir to avoid cache issues, --verbose for diagnostics
+        INSTALL_OUTPUT=$(mktemp)
+        INSTALL_SUCCESS=false
+        
+        if command -v timeout >/dev/null 2>&1; then
+            # Use timeout if available (10 minutes = 600 seconds)
+            if timeout 600 python3 -m pip install --break-system-packages --no-cache-dir --verbose "$line" > "$INSTALL_OUTPUT" 2>&1; then
+                INSTALL_SUCCESS=true
+            else
+                EXIT_CODE=$?
+                if [ "$EXIT_CODE" -eq 124 ]; then
+                    echo "✗ Timeout (10 minutes) installing: $line"
+                    echo "  This package may require building from source, which can be slow on Raspberry Pi."
+                    echo "  You can try installing it manually later with:"
+                    echo "    python3 -m pip install --break-system-packages --no-cache-dir --verbose '$line'"
+                else
+                    echo "✗ Failed to install: $line (exit code: $EXIT_CODE)"
+                fi
+            fi
+        else
+            # No timeout command available, install without timeout
+            echo "  Note: timeout command not available, installation may take a while..."
+            if python3 -m pip install --break-system-packages --no-cache-dir --verbose "$line" > "$INSTALL_OUTPUT" 2>&1; then
+                INSTALL_SUCCESS=true
+            else
+                EXIT_CODE=$?
+                echo "✗ Failed to install: $line (exit code: $EXIT_CODE)"
+            fi
+        fi
+        
+        # Show relevant output (filtered for readability)
+        if [ -f "$INSTALL_OUTPUT" ]; then
+            echo "  Output:"
+            grep -E "(Collecting|Installing|Successfully|Preparing metadata|Building|ERROR|WARNING|Using cached|Downloading)" "$INSTALL_OUTPUT" | head -15 | sed 's/^/    /' || true
+            # Log full output to log file
+            cat "$INSTALL_OUTPUT" >> "$LOG_FILE"
+            rm -f "$INSTALL_OUTPUT"
+        fi
+        
+        if [ "$INSTALL_SUCCESS" = true ]; then
+            INSTALLED=$((INSTALLED + 1))
+            echo "✓ Successfully installed: $line"
+        else
+            FAILED=$((FAILED + 1))
+            
+            # Ask if user wants to continue (unless in non-interactive mode)
+            if [ "$ASSUME_YES" != "1" ]; then
+                read -p "  Continue with remaining packages? (Y/n): " -n 1 -r
+                echo
+                if [[ $REPLY =~ ^[Nn]$ ]]; then
+                    echo "Installation cancelled by user"
+                    exit 1
+                fi
+            fi
+        fi
+        echo ""
+    done < "$PROJECT_ROOT_DIR/requirements.txt"
+    
+    echo "-----------------------------------------------"
+    echo "Installation summary:"
+    echo "  Installed: $INSTALLED"
+    echo "  Failed: $FAILED"
+    echo "  Total: $TOTAL_PACKAGES"
+    echo ""
+    
+    if [ "$FAILED" -gt 0 ]; then
+        echo "⚠ Some packages failed to install. The installation will continue, but"
+        echo "  you may need to install them manually later. Check the log for details:"
+        echo "  $LOG_FILE"
+        echo ""
+        echo "Common fixes for 'Preparing metadata' issues:"
+        echo "  1. Ensure you have enough disk space: df -h"
+        echo "  2. Check available memory: free -h"
+        echo "  3. Try installing failed packages individually with verbose output:"
+        echo "     python3 -m pip install --break-system-packages --no-cache-dir --verbose <package>"
+        echo "  4. For packages that build from source (like numpy), consider:"
+        echo "     - Installing pre-built wheels: python3 -m pip install --only-binary :all: <package>"
+        echo "     - Or installing via apt if available: sudo apt install python3-<package>"
+        echo ""
+    fi
+    
+    if [ "$INSTALLED" -gt 0 ]; then
+        echo "✓ Project Python dependencies installed ($INSTALLED/$TOTAL_PACKAGES successful)"
+    else
+        echo "✗ No packages were successfully installed"
+        echo "  Check the log file for details: $LOG_FILE"
+        exit 1
+    fi
 else
     echo "⚠ requirements.txt not found; skipping main dependency install"
 fi
-
-echo "✓ Project Python dependencies installed"
 echo ""
 
 CURRENT_STEP="Build and install rpi-rgb-led-matrix"
@@ -378,18 +811,61 @@ echo "-----------------------------------------------------"
 if python3 -c 'from rgbmatrix import RGBMatrix, RGBMatrixOptions' >/dev/null 2>&1 && [ "${RPI_RGB_FORCE_REBUILD:-0}" != "1" ]; then
     echo "rgbmatrix Python package already available; skipping build (set RPI_RGB_FORCE_REBUILD=1 to force rebuild)."
 else
+    # Ensure rpi-rgb-led-matrix submodule is initialized
+    if [ ! -d "$PROJECT_ROOT_DIR/rpi-rgb-led-matrix-master" ]; then
+        echo "rpi-rgb-led-matrix-master not found. Initializing git submodule..."
+        cd "$PROJECT_ROOT_DIR"
+        
+        # Try to initialize submodule if .gitmodules exists
+        if [ -f "$PROJECT_ROOT_DIR/.gitmodules" ] && grep -q "rpi-rgb-led-matrix" "$PROJECT_ROOT_DIR/.gitmodules"; then
+            echo "Initializing rpi-rgb-led-matrix submodule..."
+            if ! git submodule update --init --recursive rpi-rgb-led-matrix-master 2>&1; then
+                echo "⚠ Submodule init failed, cloning directly from GitHub..."
+                git clone https://github.com/hzeller/rpi-rgb-led-matrix.git rpi-rgb-led-matrix-master
+            fi
+        else
+            # Fallback: clone directly if submodule not configured
+            echo "Submodule not configured, cloning directly from GitHub..."
+            git clone https://github.com/hzeller/rpi-rgb-led-matrix.git rpi-rgb-led-matrix-master
+        fi
+    fi
+    
     # Build and install rpi-rgb-led-matrix Python bindings
     if [ -d "$PROJECT_ROOT_DIR/rpi-rgb-led-matrix-master" ]; then
+        # Check if submodule is properly initialized (not empty)
+        if [ ! -f "$PROJECT_ROOT_DIR/rpi-rgb-led-matrix-master/Makefile" ]; then
+            echo "⚠ Submodule appears empty, re-initializing..."
+            cd "$PROJECT_ROOT_DIR"
+            rm -rf rpi-rgb-led-matrix-master
+            if [ -f "$PROJECT_ROOT_DIR/.gitmodules" ] && grep -q "rpi-rgb-led-matrix" "$PROJECT_ROOT_DIR/.gitmodules"; then
+                git submodule update --init --recursive rpi-rgb-led-matrix-master
+            else
+                git clone https://github.com/hzeller/rpi-rgb-led-matrix.git rpi-rgb-led-matrix-master
+            fi
+        fi
+        
         pushd "$PROJECT_ROOT_DIR/rpi-rgb-led-matrix-master" >/dev/null
         echo "Building rpi-rgb-led-matrix Python bindings..."
-        make build-python PYTHON=$(which python3)
+        # Build the library first, then Python bindings
+        # The build-python target depends on the library being built
+        if ! make build-python; then
+            echo "✗ Failed to build rpi-rgb-led-matrix Python bindings"
+            echo "  Make sure you have the required build tools installed:"
+            echo "  sudo apt install -y build-essential python3-dev cython3 scons"
+            popd >/dev/null
+            exit 1
+        fi
         cd bindings/python
         echo "Installing rpi-rgb-led-matrix Python package via pip..."
-        python3 -m pip install --break-system-packages .
+        if ! python3 -m pip install --break-system-packages .; then
+            echo "✗ Failed to install rpi-rgb-led-matrix Python package"
+            popd >/dev/null
+            exit 1
+        fi
         popd >/dev/null
     else
         echo "✗ rpi-rgb-led-matrix-master directory not found at $PROJECT_ROOT_DIR"
-        echo "You can clone it with: git submodule update --init --recursive (if applicable)"
+        echo "Failed to initialize submodule or clone repository"
         exit 1
     fi
 
@@ -442,14 +918,24 @@ CURRENT_STEP="Install web interface service"
 echo "Step 8: Installing web interface service..."
 echo "-------------------------------------------"
 
-if [ -f "$PROJECT_ROOT_DIR/install_web_service.sh" ]; then
-    if [ ! -f "/etc/systemd/system/ledmatrix-web.service" ]; then
-        bash "$PROJECT_ROOT_DIR/install_web_service.sh"
+if [ -f "$PROJECT_ROOT_DIR/scripts/install/install_web_service.sh" ]; then
+    # Check if service file exists and has old paths (needs update after reorganization)
+    NEEDS_UPDATE=false
+    if [ -f "/etc/systemd/system/ledmatrix-web.service" ]; then
+        # Check if service file references old path (start_web_conditionally.py without scripts/utils/)
+        if grep -q "start_web_conditionally.py" /etc/systemd/system/ledmatrix-web.service && ! grep -q "scripts/utils/start_web_conditionally.py" /etc/systemd/system/ledmatrix-web.service; then
+            NEEDS_UPDATE=true
+            echo "⚠ Service file has old paths, updating..."
+        fi
+    fi
+    
+    if [ ! -f "/etc/systemd/system/ledmatrix-web.service" ] || [ "$NEEDS_UPDATE" = true ]; then
+        bash "$PROJECT_ROOT_DIR/scripts/install/install_web_service.sh"
         # Ensure systemd sees any new/changed unit files
         systemctl daemon-reload || true
-        echo "✓ Web interface service installed"
+        echo "✓ Web interface service installed/updated"
     else
-        echo "ledmatrix-web.service already present; preserving existing configuration and skipping static installer"
+        echo "✓ Web interface service already present with correct paths"
     fi
 else
     echo "⚠ install_web_service.sh not found; skipping web service installation"
@@ -459,7 +945,7 @@ echo ""
 CURRENT_STEP="Harden systemd unit file permissions"
 echo "Step 8.1: Setting systemd unit file permissions..."
 echo "-----------------------------------------------"
-for unit in "/etc/systemd/system/ledmatrix.service" "/etc/systemd/system/ledmatrix-web.service"; do
+for unit in "/etc/systemd/system/ledmatrix.service" "/etc/systemd/system/ledmatrix-web.service" "/etc/systemd/system/ledmatrix-wifi-monitor.service"; do
     if [ -f "$unit" ]; then
         chown root:root "$unit" || true
         chmod 644 "$unit" || true
@@ -467,6 +953,53 @@ for unit in "/etc/systemd/system/ledmatrix.service" "/etc/systemd/system/ledmatr
 done
 systemctl daemon-reload || true
 echo "✓ Systemd unit file permissions set"
+echo ""
+
+CURRENT_STEP="Install WiFi monitor service"
+echo "Step 8.5: Installing WiFi monitor service..."
+echo "---------------------------------------------"
+
+# Install WiFi monitor service if script exists
+if [ -f "$PROJECT_ROOT_DIR/scripts/install/install_wifi_monitor.sh" ]; then
+    # Check if service file exists and has old paths (needs update after reorganization)
+    NEEDS_UPDATE=false
+    if [ -f "/etc/systemd/system/ledmatrix-wifi-monitor.service" ]; then
+        # Check if service file references old path (wifi_monitor_daemon.py without scripts/utils/)
+        if grep -q "wifi_monitor_daemon.py" /etc/systemd/system/ledmatrix-wifi-monitor.service && ! grep -q "scripts/utils/wifi_monitor_daemon.py" /etc/systemd/system/ledmatrix-wifi-monitor.service; then
+            NEEDS_UPDATE=true
+            echo "⚠ WiFi monitor service file has old paths, updating..."
+        fi
+    fi
+    
+    if [ ! -f "/etc/systemd/system/ledmatrix-wifi-monitor.service" ] || [ "$NEEDS_UPDATE" = true ]; then
+        echo "Installing/updating WiFi monitor service..."
+        bash "$PROJECT_ROOT_DIR/scripts/install/install_wifi_monitor.sh"
+    
+    # Harden service file permissions (if service was created)
+    if [ -f "/etc/systemd/system/ledmatrix-wifi-monitor.service" ]; then
+        chown root:root "/etc/systemd/system/ledmatrix-wifi-monitor.service" || true
+        chmod 644 "/etc/systemd/system/ledmatrix-wifi-monitor.service" || true
+        systemctl daemon-reload || true
+    fi
+    
+    # Check if service was installed successfully
+    if systemctl list-unit-files | grep -q "ledmatrix-wifi-monitor.service"; then
+        echo "✓ WiFi monitor service installed"
+        
+        # Check if service is running
+        if systemctl is-active --quiet ledmatrix-wifi-monitor.service 2>/dev/null; then
+            echo "✓ WiFi monitor service is running"
+        else
+            echo "⚠ WiFi monitor service installed but not running (may need required packages)"
+        fi
+    else
+        echo "⚠ WiFi monitor service installation may have failed"
+    fi
+    fi
+else
+    echo "⚠ install_wifi_monitor.sh not found; skipping WiFi monitor installation"
+    echo "  You can install it later by running: sudo ./scripts/install/install_wifi_monitor.sh"
+fi
 echo ""
 
 CURRENT_STEP="Configure web interface permissions"
@@ -538,13 +1071,40 @@ fi
 echo "✓ Passwordless sudo access configured"
 echo ""
 
+CURRENT_STEP="Configure WiFi management permissions"
+echo "Step 10.1: Configuring WiFi management permissions..."
+echo "-----------------------------------------------------"
+
+# Configure WiFi permissions (sudo and PolicyKit) for WiFi management
+if [ -f "$PROJECT_ROOT_DIR/scripts/install/configure_wifi_permissions.sh" ]; then
+    echo "Configuring WiFi management permissions..."
+    # Run as the actual user (not root) since the script checks for that
+    sudo -u "$ACTUAL_USER" bash "$PROJECT_ROOT_DIR/scripts/install/configure_wifi_permissions.sh" || {
+        echo "⚠ WiFi permissions configuration failed, but continuing installation"
+        echo "  You can run it manually later: ./scripts/install/configure_wifi_permissions.sh"
+    }
+    echo "✓ WiFi management permissions configured"
+else
+    echo "⚠ configure_wifi_permissions.sh not found; skipping WiFi permissions configuration"
+    echo "  You can configure WiFi permissions later by running:"
+    echo "    ./scripts/install/configure_wifi_permissions.sh"
+fi
+echo ""
+
 CURRENT_STEP="Set proper file ownership"
 echo "Step 11: Setting proper file ownership..."
 echo "----------------------------------------"
 
 # Set ownership of project files to the user
-echo "Setting project file ownership..."
-chown -R "$ACTUAL_USER:$ACTUAL_USER" "$PROJECT_ROOT_DIR"
+# Exclude plugin directories which need special permissions for root service access
+# Use -h flag with chown to operate on symlinks themselves rather than following them
+echo "Setting project file ownership (excluding plugin directories)..."
+find "$PROJECT_ROOT_DIR" \
+    -path "$PROJECT_ROOT_DIR/plugins" -prune -o \
+    -path "$PROJECT_ROOT_DIR/plugin-repos" -prune -o \
+    -path "$PROJECT_ROOT_DIR/scripts/dev/plugins" -prune -o \
+    -path "*/.git*" -prune -o \
+    -exec chown -h "$ACTUAL_USER:$ACTUAL_USER" {} \; 2>/dev/null || true
 
 # Set proper permissions for config files
 if [ -f "$PROJECT_ROOT_DIR/config/config.json" ]; then
@@ -553,17 +1113,77 @@ if [ -f "$PROJECT_ROOT_DIR/config/config.json" ]; then
 fi
 
 # Set proper permissions for secrets file (restrictive: owner rw, group r)
+# If service runs as root, set ownership to root so it can read as owner
+# Otherwise, use ACTUAL_USER and rely on group membership
 if [ -f "$PROJECT_ROOT_DIR/config/config_secrets.json" ]; then
-    chown "$ACTUAL_USER:$ACTUAL_USER" "$PROJECT_ROOT_DIR/config/config_secrets.json" || true
+    # Check if service runs as root (from service file or template)
+    SERVICE_USER="root"
+    if [ -f "/etc/systemd/system/ledmatrix.service" ]; then
+        SERVICE_USER=$(grep "^User=" /etc/systemd/system/ledmatrix.service | cut -d'=' -f2 || echo "root")
+    elif [ -f "$PROJECT_ROOT_DIR/systemd/ledmatrix.service" ]; then
+        SERVICE_USER=$(grep "^User=" "$PROJECT_ROOT_DIR/systemd/ledmatrix.service" | cut -d'=' -f2 || echo "root")
+    fi
+    
+    if [ "$SERVICE_USER" = "root" ]; then
+        # Service runs as root - set ownership to root so it can read as owner
+        chown "root:$LEDMATRIX_GROUP" "$PROJECT_ROOT_DIR/config/config_secrets.json" || true
+        echo "✓ Secrets file permissions set (root:ledmatrix for root service)"
+    else
+        # Service runs as regular user - use ACTUAL_USER and rely on group membership
+        chown "$ACTUAL_USER:$LEDMATRIX_GROUP" "$PROJECT_ROOT_DIR/config/config_secrets.json" || true
+        echo "✓ Secrets file permissions set ($ACTUAL_USER:ledmatrix)"
+    fi
     chmod 640 "$PROJECT_ROOT_DIR/config/config_secrets.json"
-    echo "✓ Secrets file permissions set"
 fi
 
 # Set proper permissions for YTM auth file (readable by all users including root service)
 if [ -f "$PROJECT_ROOT_DIR/config/ytm_auth.json" ]; then
-    chown "$ACTUAL_USER:$ACTUAL_USER" "$PROJECT_ROOT_DIR/config/ytm_auth.json" || true
+    chown "$ACTUAL_USER:$LEDMATRIX_GROUP" "$PROJECT_ROOT_DIR/config/ytm_auth.json" || true
     chmod 644 "$PROJECT_ROOT_DIR/config/ytm_auth.json"
     echo "✓ YTM auth file permissions set"
+fi
+
+# Re-apply plugin directory permissions based on web service user
+echo "Re-applying plugin directory permissions..."
+# Determine web service user (check installed service, install scripts, or template)
+WEB_SERVICE_USER="root"
+if [ -f "/etc/systemd/system/ledmatrix-web.service" ]; then
+    # Check actual installed service file (most accurate)
+    WEB_SERVICE_USER=$(grep "^User=" /etc/systemd/system/ledmatrix-web.service | cut -d'=' -f2 || echo "root")
+elif [ -f "$PROJECT_ROOT_DIR/scripts/install/install_web_service.sh" ]; then
+    # Check install_web_service.sh (used by first_time_install.sh)
+    if grep -q "User=root" "$PROJECT_ROOT_DIR/scripts/install/install_web_service.sh"; then
+        WEB_SERVICE_USER="root"
+    elif grep -q "User=\${ACTUAL_USER}" "$PROJECT_ROOT_DIR/scripts/install/install_web_service.sh"; then
+        WEB_SERVICE_USER="$ACTUAL_USER"
+    fi
+elif [ -f "$PROJECT_ROOT_DIR/systemd/ledmatrix-web.service" ]; then
+    WEB_SERVICE_USER=$(grep "^User=" "$PROJECT_ROOT_DIR/systemd/ledmatrix-web.service" | cut -d'=' -f2 || echo "root")
+    if [ "$WEB_SERVICE_USER" = "__USER__" ] || [ -z "$WEB_SERVICE_USER" ]; then
+        if [ -f "$PROJECT_ROOT_DIR/scripts/install/install_service.sh" ] && grep -q "User=\${ACTUAL_USER}" "$PROJECT_ROOT_DIR/scripts/install/install_service.sh"; then
+            WEB_SERVICE_USER="$ACTUAL_USER"
+        fi
+    fi
+elif [ -f "$PROJECT_ROOT_DIR/scripts/install/install_service.sh" ] && grep -q "User=\${ACTUAL_USER}" "$PROJECT_ROOT_DIR/scripts/install/install_service.sh"; then
+    WEB_SERVICE_USER="$ACTUAL_USER"
+fi
+
+# Set ownership based on web service user
+if [ "$WEB_SERVICE_USER" = "$ACTUAL_USER" ] || [ "$WEB_SERVICE_USER" != "root" ]; then
+    PLUGIN_OWNER="$ACTUAL_USER:$ACTUAL_USER"
+else
+    PLUGIN_OWNER="root:$ACTUAL_USER"
+fi
+
+if [ -d "$PROJECT_ROOT_DIR/plugins" ]; then
+    chown -R "$PLUGIN_OWNER" "$PROJECT_ROOT_DIR/plugins"
+    find "$PROJECT_ROOT_DIR/plugins" -type d -exec chmod 2775 {} \;
+    find "$PROJECT_ROOT_DIR/plugins" -type f -exec chmod 664 {} \;
+fi
+if [ -d "$PROJECT_ROOT_DIR/plugin-repos" ]; then
+    chown -R "$PLUGIN_OWNER" "$PROJECT_ROOT_DIR/plugin-repos"
+    find "$PROJECT_ROOT_DIR/plugin-repos" -type d -exec chmod 2775 {} \;
+    find "$PROJECT_ROOT_DIR/plugin-repos" -type f -exec chmod 664 {} \;
 fi
 
 echo "✓ File ownership configured"
@@ -573,19 +1193,32 @@ CURRENT_STEP="Normalize project file permissions"
 echo "Step 11.1: Normalizing project file and directory permissions..."
 echo "--------------------------------------------------------------"
 
-# Normalize directory permissions (exclude VCS metadata)
-find "$PROJECT_ROOT_DIR" -path "*/.git*" -prune -o -type d -exec chmod 755 {} +
+# Normalize directory permissions (exclude VCS metadata and plugin directories)
+find "$PROJECT_ROOT_DIR" \
+    -path "$PROJECT_ROOT_DIR/plugins" -prune -o \
+    -path "$PROJECT_ROOT_DIR/plugin-repos" -prune -o \
+    -path "$PROJECT_ROOT_DIR/scripts/dev/plugins" -prune -o \
+    -path "*/.git*" -prune -o \
+    -type d -exec chmod 755 {} \; 2>/dev/null || true
 
-# Set default file permissions
-find "$PROJECT_ROOT_DIR" -path "*/.git*" -prune -o -type f -exec chmod 644 {} +
+# Set default file permissions (exclude plugin directories)
+find "$PROJECT_ROOT_DIR" \
+    -path "$PROJECT_ROOT_DIR/plugins" -prune -o \
+    -path "$PROJECT_ROOT_DIR/plugin-repos" -prune -o \
+    -path "$PROJECT_ROOT_DIR/scripts/dev/plugins" -prune -o \
+    -path "*/.git*" -prune -o \
+    -type f -exec chmod 644 {} \; 2>/dev/null || true
 
 # Ensure shell scripts are executable
-find "$PROJECT_ROOT_DIR" -path "*/.git*" -prune -o -type f -name "*.sh" -exec chmod 755 {} +
+find "$PROJECT_ROOT_DIR" -path "*/.git*" -prune -o -type f -name "*.sh" -exec chmod 755 {} \; 2>/dev/null || true
 
 # Explicitly ensure common helper scripts are executable (in case paths change)
 chmod 755 "$PROJECT_ROOT_DIR/start_display.sh" "$PROJECT_ROOT_DIR/stop_display.sh" 2>/dev/null || true
-chmod 755 "$PROJECT_ROOT_DIR/fix_cache_permissions.sh" "$PROJECT_ROOT_DIR/fix_web_permissions.sh" "$PROJECT_ROOT_DIR/fix_assets_permissions.sh" 2>/dev/null || true
-chmod 755 "$PROJECT_ROOT_DIR/install_service.sh" "$PROJECT_ROOT_DIR/install_web_service.sh" 2>/dev/null || true
+chmod 755 "$PROJECT_ROOT_DIR/scripts/fix_perms/fix_cache_permissions.sh" "$PROJECT_ROOT_DIR/scripts/fix_perms/fix_web_permissions.sh" "$PROJECT_ROOT_DIR/scripts/fix_perms/fix_assets_permissions.sh" "$PROJECT_ROOT_DIR/scripts/fix_perms/fix_plugin_permissions.sh" 2>/dev/null || true
+chmod 755 "$PROJECT_ROOT_DIR/scripts/install/install_service.sh" "$PROJECT_ROOT_DIR/scripts/install/install_web_service.sh" 2>/dev/null || true
+
+# Re-apply special permissions for config directory (lost during normalization)
+chmod 2775 "$PROJECT_ROOT_DIR/config" || true
 
 echo "✓ Project file permissions normalized"
 echo ""
@@ -716,6 +1349,14 @@ else
     echo "⚠ Web interface service is not running"
 fi
 
+if systemctl list-unit-files | grep -q "ledmatrix-wifi-monitor.service"; then
+    if systemctl is-active --quiet ledmatrix-wifi-monitor.service 2>/dev/null; then
+        echo "✓ WiFi monitor service is running"
+    else
+        echo "⚠ WiFi monitor service is not running"
+    fi
+fi
+
 echo ""
 if [ "$SKIP_REBOOT_PROMPT" = "1" ]; then
     echo "Skipping reboot prompt as requested (--no-reboot-prompt)."
@@ -735,33 +1376,165 @@ echo "=========================================="
 echo "Installation Complete!"
 echo "=========================================="
 echo ""
-echo "IMPORTANT: For group changes to take effect, you need to:"
-echo "1. Log out and log back in to your SSH session, OR"
-echo "2. Run: newgrp systemd-journal"
+
+# Network Diagnostics Section
+echo "=========================================="
+echo "Network Status & Access Information"
+echo "=========================================="
 echo ""
-echo "After logging back in, you can:"
+
+# Get current IP addresses
+echo "Current IP Addresses:"
+if command -v hostname >/dev/null 2>&1; then
+    IPS=$(hostname -I 2>/dev/null | tr ' ' '\n' | grep -v '^$' || echo "")
+    if [ -n "$IPS" ]; then
+        echo "$IPS" | while read -r ip; do
+            if [ -n "$ip" ]; then
+                echo "  - $ip"
+            fi
+        done
+    else
+        echo "  ⚠ No IP addresses found"
+    fi
+else
+    echo "  ⚠ Could not determine IP addresses (hostname command not available)"
+fi
+
 echo ""
-echo "Access the web interface at:"
-echo "  http://your-pi-ip:5001"
+
+# Check WiFi status
+echo "WiFi Connection Status:"
+if command -v nmcli >/dev/null 2>&1; then
+    WIFI_STATUS=$(nmcli -t -f DEVICE,TYPE,STATE device status 2>/dev/null | grep -i wifi || echo "")
+    if [ -n "$WIFI_STATUS" ]; then
+        echo "$WIFI_STATUS" | while IFS=':' read -r device type state; do
+            if [ "$state" = "connected" ]; then
+                SSID=$(nmcli -t -f active,ssid device wifi 2>/dev/null | grep "^yes:" | cut -d: -f2 | head -1)
+                if [ -n "$SSID" ]; then
+                    echo "  ✓ Connected to: $SSID"
+                else
+                    echo "  ✓ Connected (SSID unknown)"
+                fi
+            else
+                echo "  ✗ Not connected ($state)"
+            fi
+        done
+    else
+        echo "  ⚠ Could not determine WiFi status"
+    fi
+else
+    echo "  ⚠ nmcli not available, cannot check WiFi status"
+fi
+
 echo ""
-echo "Check service status:"
-echo "  sudo systemctl status ledmatrix.service"
-echo "  sudo systemctl status ledmatrix-web.service"
+
+# Check AP mode status
+echo "AP Mode Status:"
+if systemctl is-active --quiet hostapd 2>/dev/null; then
+    echo "  ✓ AP Mode is ACTIVE"
+    echo "  → Connect to WiFi network: LEDMatrix-Setup"
+    echo "  → Password: ledmatrix123"
+    echo "  → Access web UI at: http://192.168.4.1:5000"
+    AP_MODE_ACTIVE=true
+else
+    # Check if wlan0 has AP IP
+    if ip addr show wlan0 2>/dev/null | grep -q "192.168.4.1"; then
+        echo "  ✓ AP Mode is ACTIVE (IP detected)"
+        echo "  → Connect to WiFi network: LEDMatrix-Setup"
+        echo "  → Password: ledmatrix123"
+        echo "  → Access web UI at: http://192.168.4.1:5000"
+        AP_MODE_ACTIVE=true
+    else
+        echo "  ✗ AP Mode is inactive"
+        AP_MODE_ACTIVE=false
+    fi
+fi
+
 echo ""
-echo "View logs:"
-echo "  journalctl -u ledmatrix.service -f"
-echo "  journalctl -u ledmatrix-web.service -f"
+
+# Web UI access information
+echo "Web UI Access:"
+if [ "$AP_MODE_ACTIVE" = true ]; then
+    echo "  → Via AP Mode: http://192.168.4.1:5000"
+    echo ""
+    echo "  To connect to your WiFi network:"
+    echo "  1. Connect to LEDMatrix-Setup network"
+    echo "  2. Open http://192.168.4.1:5000 in your browser"
+    echo "  3. Go to WiFi tab and connect to your network"
+else
+    # Get primary IP for web UI access
+    PRIMARY_IP=""
+    if command -v hostname >/dev/null 2>&1; then
+        PRIMARY_IP=$(hostname -I 2>/dev/null | awk '{print $1}' | grep -v '^$' || echo "")
+    fi
+    
+    if [ -n "$PRIMARY_IP" ] && [ "$PRIMARY_IP" != "127.0.0.1" ] && [ "$PRIMARY_IP" != "192.168.4.1" ]; then
+        echo "  → Access at: http://$PRIMARY_IP:5000"
+    else
+        echo "  → Access at: http://<your-pi-ip>:5000"
+        echo "    (Replace <your-pi-ip> with your Pi's IP address)"
+    fi
+    
+    if systemctl is-active --quiet ledmatrix-web.service 2>/dev/null; then
+        echo "  ✓ Web service is running"
+    else
+        echo "  ⚠ Web service is not running"
+        echo "    Start with: sudo systemctl start ledmatrix-web"
+    fi
+fi
+
 echo ""
-echo "Control the display:"
-echo "  sudo systemctl start ledmatrix.service"
-echo "  sudo systemctl stop ledmatrix.service"
+
+# Service status summary
+echo "Service Status:"
+if systemctl is-active --quiet ledmatrix.service 2>/dev/null; then
+    echo "  ✓ Main display service: running"
+else
+    echo "  ✗ Main display service: not running"
+fi
+
+if systemctl is-active --quiet ledmatrix-web.service 2>/dev/null; then
+    echo "  ✓ Web interface service: running"
+else
+    echo "  ✗ Web interface service: not running"
+fi
+
+if systemctl list-unit-files | grep -q "ledmatrix-wifi-monitor.service"; then
+    if systemctl is-active --quiet ledmatrix-wifi-monitor.service 2>/dev/null; then
+        echo "  ✓ WiFi monitor service: running"
+    else
+        echo "  ⚠ WiFi monitor service: installed but not running"
+    fi
+else
+    echo "  - WiFi monitor service: not installed"
+fi
+
 echo ""
-echo "Enable/disable web interface autostart:"
-echo "  Edit config/config.json and set 'web_display_autostart': true"
+echo "=========================================="
+echo "Important Notes"
+echo "=========================================="
 echo ""
-echo "Configuration files:"
-echo "  Main config: config/config.json (created from template automatically)"
-echo "  Secrets: config/config_secrets.json (created from template automatically)"
-echo "  Template: config/config.template.json (reference for new options)"
+echo "1. For group changes to take effect:"
+echo "   - Log out and log back in to your SSH session, OR"
+echo "   - Run: newgrp systemd-journal"
+echo ""
+echo "2. If you cannot access the web UI:"
+echo "   - Check that the web service is running: sudo systemctl status ledmatrix-web"
+echo "   - Verify firewall allows port 5000: sudo ufw status (if using UFW)"
+echo "   - Check network connectivity: ping -c 3 8.8.8.8"
+echo "   - If WiFi is not connected, connect to LEDMatrix-Setup AP network"
+echo ""
+echo "3. SSH Access:"
+echo "   - SSH must be configured during initial Pi setup (via Raspberry Pi Imager or raspi-config)"
+echo "   - This installation script does not configure SSH credentials"
+echo ""
+echo "4. Useful Commands:"
+echo "   - Check service status: sudo systemctl status ledmatrix.service"
+echo "   - View logs: journalctl -u ledmatrix-web.service -f"
+echo "   - Start/stop display: sudo systemctl start/stop ledmatrix.service"
+echo ""
+echo "5. Configuration Files:"
+echo "   - Main config: $PROJECT_ROOT_DIR/config/config.json"
+echo "   - Secrets: $PROJECT_ROOT_DIR/config/config_secrets.json"
 echo ""
 echo "Enjoy your LED Matrix display!"

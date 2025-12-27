@@ -1,0 +1,558 @@
+<div class="bg-white rounded-lg shadow-md p-6" data-plugins-loaded="true">
+    <div class="section-header">
+        <h2 class="text-xl font-bold text-gray-900 mb-1">Plugin Management</h2>
+        <p class="text-sm text-gray-600">Manage installed plugins, configure settings, and browse the plugin store.</p>
+    </div>
+
+    <!-- Plugin Controls -->
+    <div class="flex flex-wrap items-center justify-between gap-4 mb-6">
+        <div class="flex items-center space-x-4">
+            <button id="refresh-plugins-btn" class="btn bg-gray-600 hover:bg-gray-700 text-white px-4 py-2 rounded-md">
+                <i class="fas fa-sync-alt mr-2"></i>Refresh Plugins
+            </button>
+            <button id="update-all-plugins-btn" class="btn bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-md flex items-center">
+                <i class="fas fa-cloud-download-alt mr-2"></i>Check &amp; Update All
+            </button>
+            <button id="restart-display-btn" class="btn bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md">
+                <i class="fas fa-redo mr-2"></i>Restart Display
+            </button>
+        </div>
+    </div>
+
+    <!-- Plugin Content Area -->
+    <div class="space-y-8">
+        <!-- Installed Plugins Section (Always visible at top) -->
+        <div id="installed-plugins-section" class="mb-8">
+            <div class="flex items-center justify-between mb-5 pb-3 border-b border-gray-200">
+                <div class="flex items-center gap-3">
+                    <h3 class="text-lg font-bold text-gray-900">Installed Plugins</h3>
+                    <span id="installed-count" class="text-sm text-gray-500 font-medium">0 installed</span>
+                </div>
+                <button id="toggle-installed-plugins" class="text-sm text-gray-600 hover:text-gray-900 hover:text-blue-600 transition-colors flex items-center font-medium">
+                    <i class="fas fa-chevron-down mr-1" id="installed-plugins-icon"></i>
+                    <span>Collapse</span>
+                </button>
+            </div>
+            <div id="installed-plugins-content" class="block">
+                <div id="installed-plugins-grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-6">
+                    <!-- Plugins will be loaded here -->
+                </div>
+            </div>
+        </div>
+
+        <!-- Plugin Store Section (Always visible at bottom) -->
+        <div id="plugin-store-section" class="border-t border-gray-200 pt-8 mt-8">
+            <div class="flex items-center justify-between mb-5 pb-3 border-b border-gray-200">
+                <div class="flex items-center gap-3">
+                    <h3 class="text-lg font-bold text-gray-900">Plugin Store</h3>
+                    <span id="store-count" class="text-sm text-gray-500 font-medium">
+                        <i class="fas fa-spinner fa-spin mr-1"></i>Loading...
+                    </span>
+                </div>
+                <button id="toggle-plugin-store" class="text-sm text-gray-600 hover:text-gray-900 hover:text-blue-600 transition-colors flex items-center font-medium">
+                    <i class="fas fa-chevron-down mr-1" id="plugin-store-icon"></i>
+                    <span>Collapse</span>
+                </button>
+            </div>
+            
+            <div id="plugin-store-content" class="block">
+            
+            <!-- GitHub Token Configuration (Combined Warning + Settings) -->
+            <div id="github-token-container" class="mb-5">
+                <!-- Warning Banner (shown when no token configured) -->
+                <div id="github-auth-warning" class="hidden bg-yellow-50 border-l-4 border-yellow-400 p-4 rounded-r-lg">
+                    <div class="flex">
+                        <div class="flex-shrink-0">
+                            <i class="fas fa-exclamation-triangle text-yellow-400"></i>
+                        </div>
+                        <div class="ml-3 flex-1">
+                            <p class="text-sm text-yellow-700">
+                                <strong>Limited API Access:</strong> GitHub API requests are limited to <span id="rate-limit-count">60</span> per hour without authentication.
+                                Add a GitHub token to increase this to 5,000 requests/hour and get real-time plugin stats.
+                            </p>
+                            <p class="mt-2 text-sm text-yellow-700">
+                                <a href="https://github.com/settings/tokens/new?description=LEDMatrix%20Plugin%20Manager&scopes=" target="_blank" class="font-medium underline hover:text-yellow-800">
+                                    Create a GitHub Token →
+                                </a>
+                                <span class="mx-2">|</span>
+                                <a href="#" onclick="event.preventDefault(); toggleGithubTokenSettings()" class="font-medium underline hover:text-yellow-800">
+                                    Configure Token
+                                </a>
+                            </p>
+                        </div>
+                        <div class="flex-shrink-0">
+                            <button onclick="dismissGithubWarning()" class="text-yellow-700 hover:text-yellow-900">
+                                <i class="fas fa-times"></i>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Settings Panel (expandable configuration form) -->
+                <div id="github-token-settings" class="hidden bg-blue-50 border border-blue-200 rounded-lg p-5 shadow-sm mt-3">
+                <div class="flex items-start justify-between mb-4">
+                    <div class="flex items-center space-x-2">
+                        <i class="fab fa-github text-blue-600 text-xl"></i>
+                        <h4 class="font-bold text-gray-900">GitHub API Configuration</h4>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <button id="toggle-github-token-collapse" class="text-gray-600 hover:text-gray-900 text-sm flex items-center font-medium transition-colors">
+                            <i class="fas fa-chevron-up mr-1" id="github-token-icon-collapse"></i>
+                            <span>Collapse</span>
+                        </button>
+                        <button onclick="toggleGithubTokenSettings()" class="text-gray-500 hover:text-gray-700 transition-colors">
+                            <i class="fas fa-times"></i>
+                        </button>
+                    </div>
+                </div>
+                
+                <div id="github-token-content" class="block">
+                
+                <p class="text-sm text-gray-600 mb-3">
+                    Configure your GitHub Personal Access Token to increase API rate limits and get real-time plugin statistics.
+                </p>
+
+                <div class="space-y-3">
+                    <div>
+                        <label for="github-token-input" class="block text-sm font-medium text-gray-700 mb-1">
+                            GitHub Personal Access Token
+                        </label>
+                        <div class="relative">
+                            <input type="password" id="github-token-input" 
+                                   class="w-full px-3 py-2 pr-20 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
+                                   placeholder="ghp_xxxxxxxxxxxxxxxxxxxx">
+                            <button type="button" onclick="toggleGithubTokenVisibility()" 
+                                    class="absolute inset-y-0 right-0 pr-3 flex items-center text-gray-500 hover:text-gray-700">
+                                <i id="github-token-icon" class="fas fa-eye"></i>
+                            </button>
+                        </div>
+                        <p class="text-xs text-gray-500 mt-1">
+                            Token is stored in config_secrets.json. No scopes required for public repositories.
+                        </p>
+                    </div>
+
+                    <div class="flex items-center justify-between">
+                        <a href="https://github.com/settings/tokens/new?description=LEDMatrix%20Plugin%20Manager&scopes=" 
+                           target="_blank" 
+                           class="text-sm text-blue-600 hover:text-blue-800">
+                            <i class="fas fa-external-link-alt mr-1"></i>Create Token on GitHub
+                        </a>
+                        <div class="flex gap-2">
+                            <button onclick="loadGithubToken()" class="px-3 py-1.5 text-sm bg-gray-600 hover:bg-gray-700 text-white rounded-md">
+                                <i class="fas fa-sync mr-1"></i>Load Current
+                            </button>
+                            <button onclick="saveGithubToken()" class="px-4 py-1.5 text-sm bg-blue-600 hover:bg-blue-700 text-white rounded-md">
+                                <i class="fas fa-save mr-1"></i>Save Token
+                            </button>
+                        </div>
+                    </div>
+
+                    <div class="bg-white border border-blue-200 rounded p-3">
+                        <p class="text-xs text-gray-600">
+                            <strong>Rate Limits:</strong><br>
+                            Without token: 60 requests/hour<br>
+                            With token: 5,000 requests/hour
+                        </p>
+                    </div>
+                </div>
+                </div>
+                </div>
+            </div>
+            <div class="mb-6">
+                <div class="flex gap-3">
+                    <input type="text" id="plugin-search" placeholder="Search plugins by name, description, or tags..." class="form-control text-sm flex-[3] min-w-0 px-4 py-2.5 border border-gray-300 rounded-lg shadow-sm focus:shadow-md transition-shadow">
+                    <select id="plugin-category" class="form-control text-sm flex-1 px-3 py-2.5 border border-gray-300 rounded-lg shadow-sm focus:shadow-md transition-shadow">
+                        <option value="">All Categories</option>
+                        <option value="sports">Sports</option>
+                        <option value="content">Content</option>
+                        <option value="time">Time</option>
+                        <option value="weather">Weather</option>
+                        <option value="financial">Financial</option>
+                        <option value="media">Media</option>
+                        <option value="demo">Demo</option>
+                    </select>
+                    <button id="search-plugins-btn" class="btn bg-blue-600 hover:bg-blue-700 text-white px-5 py-2.5 rounded-lg whitespace-nowrap font-semibold shadow-sm">
+                        <i class="fas fa-search mr-2"></i>Search
+                    </button>
+                </div>
+            </div>
+            <div id="plugin-store-grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-6">
+                <!-- Loading skeleton -->
+                <div class="store-loading col-span-full">
+                    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-4">
+                        <div class="bg-gray-200 rounded-lg p-4 h-48 animate-pulse"></div>
+                        <div class="bg-gray-200 rounded-lg p-4 h-48 animate-pulse"></div>
+                        <div class="bg-gray-200 rounded-lg p-4 h-48 animate-pulse"></div>
+                        <div class="bg-gray-200 rounded-lg p-4 h-48 animate-pulse"></div>
+                        <div class="bg-gray-200 rounded-lg p-4 h-48 animate-pulse"></div>
+                </div>
+            </div>
+            </div>
+        </div>
+        
+        <!-- Install from GitHub URL Section (Separate section, always visible) -->
+        <div class="border-t border-gray-200 pt-8 mt-8">
+            <div class="flex items-center justify-between mb-5 pb-3 border-b border-gray-200">
+                <div>
+                    <h3 class="text-lg font-bold text-gray-900">Install from GitHub</h3>
+                    <p class="text-sm text-gray-600 mt-1">Install plugins directly from GitHub repositories</p>
+                </div>
+                <button id="toggle-github-install" class="text-sm text-blue-600 hover:text-blue-800 flex items-center font-medium transition-colors">
+                    <i class="fas fa-chevron-down mr-1" id="github-install-icon"></i>
+                    <span>Show</span>
+                </button>
+            </div>
+            
+            <div id="github-install-section" class="hidden space-y-4">
+                <!-- Saved Repositories Section -->
+                <div class="bg-blue-50 rounded-lg p-5 border border-blue-200 shadow-sm">
+                    <div class="flex items-center justify-between mb-4">
+                        <h4 class="text-base font-bold text-gray-900">
+                            <i class="fas fa-bookmark mr-2 text-blue-600"></i>Saved Repositories
+                        </h4>
+                        <span id="saved-repos-count" class="text-xs text-gray-600 font-medium">0 saved</span>
+                    </div>
+                    <p class="text-xs text-gray-600 mb-3">Saved repositories are automatically loaded and their plugins appear in the Plugin Store above.</p>
+                    <div id="saved-repositories-list" class="space-y-2 mb-3">
+                        <!-- Saved repositories will be loaded here -->
+                    </div>
+                    <button id="refresh-saved-repos" class="text-xs text-blue-600 hover:text-blue-800">
+                        <i class="fas fa-sync mr-1"></i>Refresh
+                    </button>
+                </div>
+                
+                <!-- Direct Plugin Installation -->
+                <div class="bg-gray-50 rounded-lg p-5 border border-gray-200 shadow-sm">
+                    <h4 class="text-base font-bold text-gray-900 mb-3">
+                        <i class="fas fa-code-branch mr-2 text-blue-600"></i>Install Single Plugin
+                    </h4>
+                    <p class="text-xs text-gray-600 mb-3">Install a plugin directly from its GitHub repository URL</p>
+                    <div class="space-y-2">
+                        <div class="flex gap-2">
+                            <input type="text" id="github-plugin-url" 
+                                   placeholder="https://github.com/user/ledmatrix-plugin-name" 
+                                   class="flex-1 px-3 py-2 text-sm border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500">
+                            <button id="install-plugin-from-url" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm rounded-md whitespace-nowrap">
+                                <i class="fas fa-download mr-2"></i>Install
+                            </button>
+                        </div>
+                        <div class="flex items-center gap-2">
+                            <label for="plugin-branch-input" class="text-xs text-gray-600 whitespace-nowrap">
+                                <i class="fas fa-code-branch mr-1"></i>Branch (optional):
+                            </label>
+                            <input type="text" id="plugin-branch-input" 
+                                   placeholder="main, test, etc. (default: main)" 
+                                   class="flex-1 px-3 py-2 text-sm border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500">
+                        </div>
+                    </div>
+                    <div id="github-plugin-status" class="mt-2 text-sm"></div>
+                </div>
+                
+                <!-- Registry-Style Monorepo Installation -->
+                <div class="bg-gray-50 rounded-lg p-5 border border-gray-200 shadow-sm">
+                    <h4 class="text-base font-bold text-gray-900 mb-3">
+                        <i class="fas fa-folder-open mr-2 text-green-600"></i>Browse Plugin Registry
+                    </h4>
+                    <p class="text-xs text-gray-600 mb-3">Load a registry-style monorepo (like the official ledmatrix-plugins repo) to browse and install plugins</p>
+                    <div class="flex gap-2 mb-2">
+                        <input type="text" id="github-registry-url" 
+                               placeholder="https://github.com/user/ledmatrix-plugins" 
+                               class="flex-1 px-3 py-2 text-sm border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500">
+                        <button id="load-registry-from-url" class="px-4 py-2 bg-green-600 hover:bg-green-700 text-white text-sm rounded-md whitespace-nowrap">
+                            <i class="fas fa-search mr-2"></i>Load Registry
+                        </button>
+                    </div>
+                    <div class="flex gap-2 mb-3">
+                        <button id="save-registry-url" class="px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm rounded-md whitespace-nowrap">
+                            <i class="fas fa-bookmark mr-2"></i>Save Repository
+                        </button>
+                        <div id="registry-status" class="flex-1 text-sm"></div>
+                    </div>
+                    <div id="custom-registry-plugins" class="hidden">
+                        <div class="border-t border-gray-300 pt-3 mt-3">
+                            <p class="text-xs font-medium text-gray-700 mb-2">Available Plugins:</p>
+                            <div id="custom-registry-grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                                <!-- Custom registry plugins will be loaded here -->
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    </div>
+
+    <!-- Plugin Configuration Modal -->
+    <div id="plugin-config-modal" class="fixed inset-0 modal-backdrop flex items-center justify-center z-50" style="display: none;">
+        <div class="modal-content p-6 w-full max-w-4xl max-h-[90vh] overflow-y-auto">
+            <div class="flex justify-between items-center mb-4">
+                <h3 id="plugin-config-title" class="text-lg font-semibold">Plugin Configuration</h3>
+                <div class="flex items-center space-x-2">
+                    <!-- View Toggle -->
+                    <div class="flex items-center bg-gray-100 rounded-lg p-1">
+                        <button id="view-toggle-form" class="view-toggle-btn active px-3 py-1 rounded text-sm font-medium transition-colors" data-view="form">
+                            <i class="fas fa-list mr-1"></i>Form
+                        </button>
+                        <button id="view-toggle-json" class="view-toggle-btn px-3 py-1 rounded text-sm font-medium transition-colors" data-view="json">
+                            <i class="fas fa-code mr-1"></i>JSON
+                        </button>
+                    </div>
+                    <!-- Reset Button -->
+                    <button id="reset-to-defaults-btn" class="px-3 py-1 text-sm bg-yellow-500 hover:bg-yellow-600 text-white rounded transition-colors" title="Reset to defaults">
+                        <i class="fas fa-undo mr-1"></i>Reset
+                    </button>
+                    <button id="close-plugin-config" class="text-gray-400 hover:text-gray-600">
+                        <i class="fas fa-times"></i>
+                    </button>
+                </div>
+            </div>
+            <!-- Validation Errors Display -->
+            <div id="plugin-config-validation-errors" class="hidden mb-4 p-3 bg-red-50 border border-red-200 rounded-md">
+                <div class="flex items-start">
+                    <i class="fas fa-exclamation-circle text-red-600 mt-0.5 mr-2"></i>
+                    <div class="flex-1">
+                        <p class="text-sm font-medium text-red-800 mb-2">Configuration Validation Errors</p>
+                        <ul id="validation-errors-list" class="text-sm text-red-700 list-disc list-inside space-y-1"></ul>
+                    </div>
+                </div>
+            </div>
+            <!-- Form View -->
+            <div id="plugin-config-form-view" class="plugin-config-view">
+                <div id="plugin-config-content">
+                    <!-- Plugin config form will be loaded here -->
+                </div>
+            </div>
+            <!-- JSON Editor View -->
+            <div id="plugin-config-json-view" class="plugin-config-view hidden">
+                <div class="mb-2">
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Configuration JSON</label>
+                    <textarea id="plugin-config-json-editor" class="w-full border border-gray-300 rounded-md font-mono text-sm" rows="20"></textarea>
+                </div>
+                <div class="flex justify-end space-x-2 pt-2 border-t border-gray-200">
+                    <button type="button" onclick="closePluginConfigModal()" class="btn bg-gray-600 hover:bg-gray-700 text-white px-4 py-2 rounded-md">
+                        Cancel
+                    </button>
+                    <button type="button" id="save-json-config-btn" class="btn bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md">
+                        <i class="fas fa-save mr-2"></i>Save Configuration
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- On-Demand Modal -->
+<div id="on-demand-modal" class="fixed inset-0 modal-backdrop flex items-center justify-center z-50" style="display: none;">
+    <div class="modal-content p-6 w-full max-w-md bg-white rounded-lg shadow-lg">
+        <div class="flex justify-between items-center mb-4">
+            <h3 id="on-demand-modal-title" class="text-lg font-semibold">Run Plugin On-Demand</h3>
+            <button id="close-on-demand-modal" class="text-gray-400 hover:text-gray-600">
+                <i class="fas fa-times"></i>
+            </button>
+        </div>
+        <!-- Service Status Alert -->
+        <div id="on-demand-service-warning" class="hidden mb-4 p-3 bg-yellow-50 border border-yellow-200 rounded-md">
+            <div class="flex items-start">
+                <i class="fas fa-exclamation-triangle text-yellow-600 mt-0.5 mr-2"></i>
+                <div class="flex-1">
+                    <p class="text-sm font-medium text-yellow-800">Display service is not running</p>
+                    <p class="text-xs text-yellow-700 mt-1">
+                        The on-demand request will be queued but won't display until the service starts.
+                        Enable "Start display service" below to automatically start it.
+                    </p>
+                </div>
+            </div>
+        </div>
+        
+        <form id="on-demand-form" class="space-y-4">
+            <div>
+                <label for="on-demand-mode" class="block text-sm font-medium text-gray-700 mb-1">Display Mode</label>
+                <select id="on-demand-mode" name="mode"
+                        class="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500">
+                </select>
+                <p id="on-demand-mode-hint" class="text-xs text-gray-500 mt-1"></p>
+            </div>
+            <div>
+                <label for="on-demand-duration" class="block text-sm font-medium text-gray-700 mb-1">
+                    Duration (seconds, optional)
+                </label>
+                <input type="number" min="0" id="on-demand-duration" name="duration"
+                       class="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
+                       placeholder="Leave blank to use plugin default">
+                <p class="text-xs text-gray-500 mt-1">
+                    Use 0 or leave empty to keep the plugin running until stopped manually.
+                </p>
+            </div>
+            <div class="flex items-center">
+                <input id="on-demand-pinned" name="pinned" type="checkbox"
+                       class="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded">
+                <label for="on-demand-pinned" class="ml-2 block text-sm text-gray-700">
+                    Pin plugin to prevent rotation until stopped
+                </label>
+            </div>
+            <div class="flex items-center">
+                <input id="on-demand-start-service" name="start_service" type="checkbox" checked
+                       class="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded">
+                <label for="on-demand-start-service" class="ml-2 block text-sm text-gray-700">
+                    Start display service if it is not running
+                </label>
+            </div>
+            <div class="flex justify-end gap-3 pt-3">
+                <button type="button" id="cancel-on-demand"
+                        class="px-4 py-2 text-sm bg-gray-200 hover:bg-gray-300 text-gray-700 rounded-md">
+                    Cancel
+                </button>
+                <button type="submit"
+                        class="px-4 py-2 text-sm bg-green-600 hover:bg-green-700 text-white rounded-md font-semibold">
+                    Start On-Demand
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<style>
+/* View toggle button styles */
+.view-toggle-btn {
+    transition: all 0.2s ease;
+}
+
+.view-toggle-btn.active {
+    background-color: #2563eb;
+    color: white;
+}
+
+.view-toggle-btn:not(.active) {
+    color: #374151;
+}
+
+.view-toggle-btn:not(.active):hover {
+    background-color: #e5e7eb;
+}
+
+/* CodeMirror editor styles */
+.CodeMirror {
+    border: 1px solid #d1d5db;
+    border-radius: 0.375rem;
+    font-size: 14px;
+    height: auto;
+    min-height: 400px;
+}
+
+.CodeMirror.cm-error {
+    border-color: #ef4444;
+}
+
+/* Plugin config view styles */
+.plugin-config-view {
+    transition: opacity 0.2s ease;
+}
+
+/* Nested config section styles */
+.nested-section {
+    position: relative;
+    margin-bottom: 1.5rem;
+    transition: all 0.2s ease;
+    z-index: 1;
+    clear: both;
+    /* Contain content but allow expansion */
+    overflow: visible;
+    /* Ensure proper stacking context */
+    isolation: isolate;
+}
+
+.nested-section button {
+    position: relative;
+    z-index: 2;
+}
+
+.nested-section button:hover {
+    background-color: #f3f4f6;
+}
+
+.nested-section .nested-content {
+    position: relative;
+    transition: max-height 0.3s ease, opacity 0.3s ease;
+    overflow: hidden;
+    z-index: 1;
+    /* Ensure content doesn't get clipped by parent */
+    min-height: 0;
+    /* Contain content properly */
+    contain: layout style;
+}
+
+/* When expanded, allow content to flow naturally */
+.nested-content.expanded {
+    overflow: visible;
+    /* Ensure expanded content is fully visible */
+    min-height: auto;
+}
+
+.nested-section i {
+    transition: transform 0.3s ease;
+}
+
+/* Smooth toggle animation */
+.nested-content.collapsed {
+    opacity: 0;
+    max-height: 0;
+    overflow: hidden;
+}
+
+.nested-content.expanded {
+    opacity: 1;
+    max-height: none !important; /* Remove height constraint to allow natural expansion */
+    padding-bottom: 1rem !important; /* Ensure proper padding at bottom to prevent cutoff */
+    overflow: visible; /* Allow content to flow naturally when expanded */
+    margin-bottom: 0.5rem; /* Add spacing at bottom when expanded */
+}
+
+/* Nested sections within nested sections - add indentation and spacing */
+.nested-content .nested-section {
+    margin-left: 1rem;
+    margin-bottom: 1.5rem; /* Increased spacing to prevent overlap */
+    margin-top: 0.5rem;
+}
+
+/* Deeply nested sections need even more spacing */
+.nested-content .nested-content .nested-section {
+    margin-bottom: 2rem;
+    margin-top: 0.5rem;
+}
+
+/* Form group spacing within nested sections */
+.nested-content .form-group {
+    margin-bottom: 0.75rem;
+}
+
+/* Ensure form-groups that come after nested sections have proper spacing */
+.nested-section + .form-group {
+    margin-top: 1.5rem !important;
+    position: relative;
+    z-index: 0;
+    clear: both;
+    /* Ensure form-group doesn't overlap */
+    display: block;
+    width: 100%;
+    /* Ensure it's in normal document flow */
+    float: none;
+}
+
+/* Ensure any content after nested sections is properly spaced */
+.nested-section ~ .form-group {
+    clear: both !important;
+    position: relative;
+    z-index: 0;
+    display: block;
+    /* Prevent overlap */
+    margin-top: 1.5rem !important;
+    width: 100%;
+    float: none;
+}
+
+/* Make nested section headers slightly smaller for hierarchy */
+.nested-content .nested-section h4 {
+    font-size: 0.95em;
+}
+</style>
+

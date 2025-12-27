@@ -1,5 +1,6 @@
 import logging
 import os
+import tempfile
 import time
 from abc import ABC, abstractmethod
 from datetime import datetime, timedelta, timezone
@@ -21,7 +22,10 @@ from src.cache_manager import CacheManager
 from src.display_manager import DisplayManager
 from src.dynamic_team_resolver import DynamicTeamResolver
 from src.logo_downloader import LogoDownloader, download_missing_logo
-from src.odds_manager import OddsManager
+try:
+    from src.base_odds_manager import BaseOddsManager as OddsManager
+except ImportError:
+    OddsManager = None
 
 
 class SportsCore(ABC):
@@ -30,8 +34,16 @@ class SportsCore(ABC):
         self.config = config
         self.cache_manager = cache_manager
         self.config_manager = self.cache_manager.config_manager
-        self.odds_manager = OddsManager(
-            self.cache_manager, self.config_manager)
+        if OddsManager:
+            try:
+                self.odds_manager = OddsManager(
+                    self.cache_manager, self.config_manager)
+            except Exception as e:
+                self.logger.warning(f"Failed to initialize OddsManager: {e}")
+                self.odds_manager = None
+        else:
+            self.odds_manager = None
+            self.logger.warning("OddsManager not available - odds functionality disabled")
         self.display_manager = display_manager
         self.display_width = self.display_manager.matrix.width
         self.display_height = self.display_manager.matrix.height
@@ -47,8 +59,9 @@ class SportsCore(ABC):
         self.mode_config = config.get(f"{sport_key}_scoreboard", {})  # Changed config key
         self.is_enabled: bool = self.mode_config.get("enabled", False)
         self.show_odds: bool = self.mode_config.get("show_odds", False)
-        self.test_mode: bool = self.mode_config.get("test_mode", False)
-        self.logo_dir = Path(self.mode_config.get("logo_dir", "assets/sports/ncaa_logos")) # Changed logo dir
+        # Use LogoDownloader to get the correct default logo directory for this sport
+        default_logo_dir = Path(LogoDownloader().get_logo_directory(sport_key))
+        self.logo_dir = self._initialize_logo_dir(default_logo_dir)
         self.update_interval: int = self.mode_config.get(
             "update_interval_seconds", 60)
         self.show_records: bool = self.mode_config.get('show_records', False)
@@ -112,6 +125,69 @@ class SportsCore(ABC):
         self.background_enabled = True
         self.logger.info("Background service enabled with 1 worker (memory optimized)")
 
+    def _initialize_logo_dir(self, configured_path: Path) -> Path:
+        """Resolve and ensure a writable logo directory, falling back when necessary."""
+        downloader = LogoDownloader()
+        resolved_configured = self._resolve_project_path(configured_path)
+        candidates = [resolved_configured] + self._get_logo_directory_fallbacks(resolved_configured)
+
+        for candidate in candidates:
+            candidate_path = self._resolve_project_path(candidate)
+            if downloader.ensure_logo_directory(str(candidate_path)):
+                if candidate_path != resolved_configured:
+                    self.logger.warning(
+                        "Configured logo directory '%s' is not writable; using fallback '%s'",
+                        resolved_configured,
+                        candidate_path,
+                    )
+                return candidate_path
+
+        self.logger.error(
+            "Unable to find a writable logo directory. Logos may fail to download (last attempted: %s)",
+            resolved_configured,
+        )
+        return resolved_configured
+
+    def _resolve_project_path(self, path: Path) -> Path:
+        """Convert relative paths to absolute ones rooted at the project directory."""
+        if path.is_absolute():
+            return path
+        project_root = Path(__file__).resolve().parents[2]
+        return (project_root / path).resolve()
+
+    def _get_logo_directory_fallbacks(self, configured_dir: Path) -> List[Path]:
+        """Return fallback directories to try when the configured directory is not writable."""
+        fallbacks: List[Path] = []
+
+        env_override = os.environ.get("LEDMATRIX_LOGO_DIR")
+        if env_override:
+            env_path = Path(env_override)
+            if not env_path.is_absolute():
+                env_path = self._resolve_project_path(env_path)
+            fallbacks.append(env_path / self.sport_key)
+
+        cache_dir = getattr(self.cache_manager, "cache_dir", None)
+        if cache_dir:
+            fallbacks.append(Path(cache_dir) / "logos" / self.sport_key)
+
+        try:
+            fallbacks.append(Path.home() / ".ledmatrix" / "logos" / self.sport_key)
+        except Exception:
+            pass
+
+        fallbacks.append(Path(tempfile.gettempdir()) / "ledmatrix_logos" / self.sport_key)
+
+        unique_fallbacks: List[Path] = []
+        seen = set()
+        for candidate in fallbacks:
+            if candidate == configured_dir:
+                continue
+            if candidate not in seen:
+                unique_fallbacks.append(candidate)
+                seen.add(candidate)
+
+        return unique_fallbacks
+
     def _get_season_schedule_dates(self) -> tuple[str, str]:
         return "", ""
 
@@ -129,26 +205,89 @@ class SportsCore(ABC):
             self.logger.error(f"Error in base _draw_scorebug_layout: {e}", exc_info=True)
 
 
-    def display(self, force_clear: bool = False) -> None:
+    def display(self, force_clear: bool = False) -> bool:
         """Common display method for all NCAA FB managers""" # Updated docstring
+        # #region agent log
+        import json
+        try:
+            with open('/home/chuck/Github/LEDMatrix/.cursor/debug.log', 'a') as f:
+                f.write(json.dumps({
+                    "sessionId": "debug-session",
+                    "runId": "run1",
+                    "hypothesisId": "D",
+                    "location": "sports.py:208",
+                    "message": "Display called",
+                    "data": {
+                        "force_clear": force_clear,
+                        "has_current_game": self.current_game is not None,
+                        "current_game": self.current_game['away_abbr'] + "@" + self.current_game['home_abbr'] if self.current_game else None
+                    },
+                    "timestamp": int(time.time() * 1000)
+                }) + "\n")
+        except: pass
+        # #endregion
         if not self.is_enabled: # Check if module is enabled
-             return
+             return False
 
         if not self.current_game:
+            # Clear display if force_clear is True, even when there's no content
+            # This prevents black screens when switching to modes with no content
+            if force_clear:
+                try:
+                    self.display_manager.clear()
+                    self.display_manager.update_display()
+                except Exception as e:
+                    self.logger.debug(f"Error clearing display when no content: {e}")
+            
             current_time = time.time()
             if not hasattr(self, '_last_warning_time'):
                 self._last_warning_time = 0
             if current_time - getattr(self, '_last_warning_time', 0) > 300:
                 self.logger.warning(f"No game data available to display in {self.__class__.__name__}")
                 setattr(self, '_last_warning_time', current_time)
-            return
+            return False
 
         try:
+            # #region agent log
+            try:
+                with open('/home/chuck/Github/LEDMatrix/.cursor/debug.log', 'a') as f:
+                    f.write(json.dumps({
+                        "sessionId": "debug-session",
+                        "runId": "run1",
+                        "hypothesisId": "D",
+                        "location": "sports.py:232",
+                        "message": "About to draw scorebug",
+                        "data": {
+                            "force_clear": force_clear,
+                            "game": self.current_game['away_abbr'] + "@" + self.current_game['home_abbr'] if self.current_game else None
+                        },
+                        "timestamp": int(time.time() * 1000)
+                    }) + "\n")
+            except: pass
+            # #endregion
             self._draw_scorebug_layout(self.current_game, force_clear)
+            # #region agent log
+            try:
+                with open('/home/chuck/Github/LEDMatrix/.cursor/debug.log', 'a') as f:
+                    f.write(json.dumps({
+                        "sessionId": "debug-session",
+                        "runId": "run1",
+                        "hypothesisId": "D",
+                        "location": "sports.py:235",
+                        "message": "After draw scorebug",
+                        "data": {
+                            "force_clear": force_clear
+                        },
+                        "timestamp": int(time.time() * 1000)
+                    }) + "\n")
+            except: pass
+            # #endregion
             # display_manager.update_display() should be called within subclass draw methods
             # or after calling display() in the main loop. Let's keep it out of the base display.
+            return True
         except Exception as e:
              self.logger.error(f"Error during display call in {self.__class__.__name__}: {e}", exc_info=True)
+             return False
 
 
     def _load_fonts(self):
@@ -315,6 +454,9 @@ class SportsCore(ABC):
             if not self.show_odds:
                 return
             
+            if not self.odds_manager:
+                return
+            
             # Determine update interval based on game state
             is_live = game.get('is_live', False)
             update_interval = self.mode_config.get("live_odds_update_interval", 60) if is_live \
@@ -402,7 +544,17 @@ class SportsCore(ABC):
             situation = competition.get("situation")
             start_time_utc = None
             try:
-                start_time_utc = datetime.fromisoformat(game_date_str.replace("Z", "+00:00"))
+                # Parse the datetime string
+                if game_date_str.endswith('Z'):
+                    game_date_str = game_date_str.replace('Z', '+00:00')
+                dt = datetime.fromisoformat(game_date_str)
+                # Ensure the datetime is UTC-aware (fromisoformat may create timezone-aware but not pytz.UTC)
+                if dt.tzinfo is None:
+                    # If naive, assume it's UTC
+                    start_time_utc = dt.replace(tzinfo=pytz.UTC)
+                else:
+                    # Convert to pytz.UTC for consistency
+                    start_time_utc = dt.astimezone(pytz.UTC)
             except ValueError:
                 logging.warning(f"Could not parse game date: {game_date_str}")
 
@@ -622,18 +774,28 @@ class SportsUpcoming(SportsCore):
                 self.logger.info(f"Found {favorite_games_found} favorite team upcoming games")
 
             # Filter for favorite teams only if the config is set
-            if self.show_favorite_teams_only:                
-                # Select one game per favorite team (earliest upcoming game for each team)
+            if self.show_favorite_teams_only:
+                # Select N games per favorite team (where N = upcoming_games_to_show)
+                # Example: upcoming_games_to_show=2 with 3 favorite teams = up to 6 games total
                 team_games = []
                 for team in self.favorite_teams:
                     # Find games where this team is playing                  
                     if team_specific_games := [game for game in processed_games if game['home_abbr'] == team or game['away_abbr'] == team]:
-                        # Sort by game time and take the earliest
+                        # Sort by game time and take the earliest N games
                         team_specific_games.sort(key=lambda g: g.get('start_time_utc') or datetime.max.replace(tzinfo=timezone.utc))
-                        team_games.append(team_specific_games[0])
+                        # Take up to upcoming_games_to_show games for this team
+                        team_games.extend(team_specific_games[:self.upcoming_games_to_show])
                 
-                # Sort the final list by game time
+                # Sort the final list by game time (earliest first)
                 team_games.sort(key=lambda g: g.get('start_time_utc') or datetime.max.replace(tzinfo=timezone.utc))
+                # Remove duplicates (in case a game involves multiple favorite teams)
+                seen_ids = set()
+                unique_team_games = []
+                for game in team_games:
+                    if game['id'] not in seen_ids:
+                        seen_ids.add(game['id'])
+                        unique_team_games.append(game)
+                team_games = unique_team_games
             else:
                 team_games = processed_games # Show all upcoming if no favorites
                 # Sort by game time, earliest first
@@ -835,9 +997,9 @@ class SportsUpcoming(SportsCore):
         except Exception as e:
             self.logger.error(f"Error displaying upcoming game: {e}", exc_info=True) # Changed log prefix
 
-    def display(self, force_clear=False):
+    def display(self, force_clear=False) -> bool:
         """Display upcoming games, handling switching."""
-        if not self.is_enabled: return
+        if not self.is_enabled: return False
 
         if not self.games_list:
             if self.current_game: self.current_game = None # Clear state if list empty
@@ -846,7 +1008,7 @@ class SportsUpcoming(SportsCore):
             if current_time - self.last_warning_time > self.warning_cooldown:
                 self.logger.info("No upcoming games found for favorite teams to display.") # Changed log prefix
                 self.last_warning_time = current_time
-            return # Skip display update
+            return False # Skip display update
 
         try:
             current_time = time.time()
@@ -869,10 +1031,13 @@ class SportsUpcoming(SportsCore):
 
             if self.current_game:
                 self._draw_scorebug_layout(self.current_game, force_clear)
+                return True
             # update_display() is called within _draw_scorebug_layout for upcoming
+            return False
 
         except Exception as e:
             self.logger.error(f"Error in display loop: {e}", exc_info=True) # Changed log prefix
+            return False
 
 
 class SportsRecent(SportsCore):
@@ -925,15 +1090,16 @@ class SportsRecent(SportsCore):
                     game_time = game.get('start_time_utc')
                     if game_time and game_time >= recent_cutoff:
                         processed_games.append(game)
-            # Filter for favorite teams
-            if self.favorite_teams:
+            # Filter for favorite teams only if the config is set
+            if self.show_favorite_teams_only:
                 # Get all games involving favorite teams
                 favorite_team_games = [game for game in processed_games
                                       if game['home_abbr'] in self.favorite_teams or
                                          game['away_abbr'] in self.favorite_teams]
                 self.logger.info(f"Found {len(favorite_team_games)} favorite team games out of {len(processed_games)} total final games within last 21 days")
                 
-                # Select one game per favorite team (most recent game for each team)
+                # Select N games per favorite team (where N = recent_games_to_show)
+                # Example: recent_games_to_show=1 with 2 favorite teams = 2 games total
                 team_games = []
                 for team in self.favorite_teams:
                     # Find games where this team is playing
@@ -941,23 +1107,31 @@ class SportsRecent(SportsCore):
                                           if game['home_abbr'] == team or game['away_abbr'] == team]
                     
                     if team_specific_games:
-                        # Sort by game time and take the most recent
+                        # Sort by game time and take the most recent N games
                         team_specific_games.sort(key=lambda g: g.get('start_time_utc') or datetime.min.replace(tzinfo=timezone.utc), reverse=True)
-                        team_games.append(team_specific_games[0])
+                        # Take up to recent_games_to_show games for this team
+                        team_games.extend(team_specific_games[:self.recent_games_to_show])
                 
                 # Sort the final list by game time (most recent first)
                 team_games.sort(key=lambda g: g.get('start_time_utc') or datetime.min.replace(tzinfo=timezone.utc), reverse=True)
+                # Remove duplicates (in case a game involves multiple favorite teams)
+                seen_ids = set()
+                unique_team_games = []
+                for game in team_games:
+                    if game['id'] not in seen_ids:
+                        seen_ids.add(game['id'])
+                        unique_team_games.append(game)
+                team_games = unique_team_games
                 
                 # Debug: Show which games are selected for display
                 for i, game in enumerate(team_games):
                     self.logger.info(f"Game {i+1} for display: {game['away_abbr']} @ {game['home_abbr']} - {game.get('start_time_utc')} - Score: {game['away_score']}-{game['home_score']}")
             else:
-                 team_games = processed_games # Show all recent games if no favorites defined
-                 self.logger.info(f"Found {len(processed_games)} total final games within last 21 days (no favorite teams configured)")
-                 # Sort by game time, most recent first
-                 team_games.sort(key=lambda g: g.get('start_time_utc') or datetime.min.replace(tzinfo=timezone.utc), reverse=True)
-                 # Limit to the specified number of recent games
-                 team_games = team_games[:self.recent_games_to_show]
+                team_games = processed_games # Show all recent games if no favorites defined
+                self.logger.info(f"Found {len(processed_games)} total final games within last 21 days (no favorite teams filtering)")
+                # Sort games by start time, most recent first, and limit to recent_games_to_show
+                team_games.sort(key=lambda g: g.get('start_time_utc') or datetime.min.replace(tzinfo=timezone.utc), reverse=True)
+                team_games = team_games[:self.recent_games_to_show]
 
             # Check if the list of games to display has changed
             new_game_ids = {g['id'] for g in team_games}
@@ -1133,14 +1307,14 @@ class SportsRecent(SportsCore):
         except Exception as e:
             self.logger.error(f"Error displaying recent game: {e}", exc_info=True) # Changed log prefix
 
-    def display(self, force_clear=False):
+    def display(self, force_clear=False) -> bool:
         """Display recent games, handling switching."""
         if not self.is_enabled or not self.games_list:
             # If disabled or no games, ensure display might be cleared by main loop if needed
             # Or potentially clear it here? For now, rely on main loop/other managers.
             if not self.games_list and self.current_game:
                  self.current_game = None # Clear internal state if list becomes empty
-            return
+            return False
 
         try:
             current_time = time.time()
@@ -1163,10 +1337,13 @@ class SportsRecent(SportsCore):
 
             if self.current_game:
                 self._draw_scorebug_layout(self.current_game, force_clear)
+                return True
             # update_display() is called within _draw_scorebug_layout for recent
+            return False
 
         except Exception as e:
             self.logger.error(f"Error in display loop: {e}", exc_info=True) # Changed log prefix
+            return False
 
 class SportsLive(SportsCore):
 
@@ -1177,13 +1354,15 @@ class SportsLive(SportsCore):
         self.last_update = 0
         self.live_games = []
         self.current_game_index = 0
-        self.last_game_switch = 0
+        self.last_game_switch = 0  # Will be set to current_time when games are first loaded
         self.game_display_duration = self.mode_config.get("live_game_duration", 20)
         self.last_display_update = 0
         self.last_log_time = 0
         self.log_interval = 300
         self.last_count_log_time = 0  # Track when we last logged count data
         self.count_log_interval = 5  # Only log count data every 5 seconds
+        # Initialize test_mode - defaults to False (live mode)
+        self.test_mode = self.mode_config.get("test_mode", False)
 
     @abstractmethod
     def _test_mode_update(self) -> None:
@@ -1264,14 +1443,56 @@ class SportsLive(SportsCore):
                             self.live_games = sorted(new_live_games, key=lambda g: g.get('start_time_utc') or datetime.now(timezone.utc)) # Sort by start time
                             # Reset index if current game is gone or list is new
                             if not self.current_game or self.current_game['id'] not in new_game_ids:
+                                # #region agent log
+                                import json
+                                try:
+                                    with open('/home/chuck/Github/LEDMatrix/.cursor/debug.log', 'a') as f:
+                                        f.write(json.dumps({
+                                            "sessionId": "debug-session",
+                                            "runId": "run1",
+                                            "hypothesisId": "B",
+                                            "location": "sports.py:1393",
+                                            "message": "Games loaded - resetting index and last_game_switch",
+                                            "data": {
+                                                "current_game_before": self.current_game['id'] if self.current_game else None,
+                                                "live_games_count": len(self.live_games),
+                                                "last_game_switch_before": self.last_game_switch,
+                                                "current_time": current_time,
+                                                "time_since_init": current_time - self.last_game_switch if self.last_game_switch > 0 else None
+                                            },
+                                            "timestamp": int(time.time() * 1000)
+                                        }) + "\n")
+                                except: pass
+                                # #endregion
                                 self.current_game_index = 0
                                 self.current_game = self.live_games[0] if self.live_games else None
                                 self.last_game_switch = current_time
+                                # #region agent log
+                                try:
+                                    with open('/home/chuck/Github/LEDMatrix/.cursor/debug.log', 'a') as f:
+                                        f.write(json.dumps({
+                                            "sessionId": "debug-session",
+                                            "runId": "run1",
+                                            "hypothesisId": "B",
+                                            "location": "sports.py:1396",
+                                            "message": "Games loaded - after setting last_game_switch",
+                                            "data": {
+                                                "current_game_after": self.current_game['id'] if self.current_game else None,
+                                                "last_game_switch_after": self.last_game_switch,
+                                                "first_game": self.current_game['away_abbr'] + "@" + self.current_game['home_abbr'] if self.current_game else None
+                                            },
+                                            "timestamp": int(time.time() * 1000)
+                                        }) + "\n")
+                                except: pass
+                                # #endregion
                             else:
                                 # Find current game's new index if it still exists
                                 try:
                                      self.current_game_index = next(i for i, g in enumerate(self.live_games) if g['id'] == self.current_game['id'])
                                      self.current_game = self.live_games[self.current_game_index] # Update current_game with fresh data
+                                     # Fix: Set last_game_switch if it's still 0 (initialized) to prevent immediate switching
+                                     if self.last_game_switch == 0:
+                                         self.last_game_switch = current_time
                                 except StopIteration: # Should not happen if check above passed, but safety first
                                      self.current_game_index = 0
                                      self.current_game = self.live_games[0]
@@ -1283,6 +1504,10 @@ class SportsLive(SportsCore):
                              self.live_games = [temp_game_dict.get(g['id'], g) for g in self.live_games] # Update in place
                              if self.current_game:
                                   self.current_game = temp_game_dict.get(self.current_game['id'], self.current_game)
+                             # Fix: Set last_game_switch if it's still 0 (initialized) to prevent immediate switching
+                             # This handles the case where games were loaded previously but last_game_switch was never set
+                             if self.last_game_switch == 0:
+                                 self.last_game_switch = current_time
 
                         # Display update handled by main loop based on interval
 
@@ -1303,9 +1528,72 @@ class SportsLive(SportsCore):
                          self.current_game = None # Clear current game if fetch fails and no games were active
 
             # Handle game switching (outside test mode check)
-            if not self.test_mode and len(self.live_games) > 1 and (current_time - self.last_game_switch) >= self.game_display_duration:
+            # Fix: Don't check for switching if last_game_switch is still 0 (games haven't been loaded yet)
+            # This prevents immediate switching when the system has been running for a while before games load
+            # #region agent log
+            import json
+            try:
+                with open('/home/chuck/Github/LEDMatrix/.cursor/debug.log', 'a') as f:
+                    f.write(json.dumps({
+                        "sessionId": "debug-session",
+                        "runId": "run1",
+                        "hypothesisId": "A",
+                        "location": "sports.py:1432",
+                        "message": "Game switch check - before condition",
+                        "data": {
+                            "test_mode": self.test_mode,
+                            "live_games_count": len(self.live_games),
+                            "current_time": current_time,
+                            "last_game_switch": self.last_game_switch,
+                            "time_since_switch": current_time - self.last_game_switch,
+                            "game_display_duration": self.game_display_duration,
+                            "current_game_index": self.current_game_index,
+                            "will_switch": not self.test_mode and len(self.live_games) > 1 and self.last_game_switch > 0 and (current_time - self.last_game_switch) >= self.game_display_duration
+                        },
+                        "timestamp": int(time.time() * 1000)
+                    }) + "\n")
+            except: pass
+            # #endregion
+            if not self.test_mode and len(self.live_games) > 1 and self.last_game_switch > 0 and (current_time - self.last_game_switch) >= self.game_display_duration:
+                # #region agent log
+                try:
+                    with open('/home/chuck/Github/LEDMatrix/.cursor/debug.log', 'a') as f:
+                        f.write(json.dumps({
+                            "sessionId": "debug-session",
+                            "runId": "run1",
+                            "hypothesisId": "A",
+                            "location": "sports.py:1433",
+                            "message": "Game switch triggered",
+                            "data": {
+                                "old_index": self.current_game_index,
+                                "old_game": self.current_game['away_abbr'] + "@" + self.current_game['home_abbr'] if self.current_game else None,
+                                "time_since_switch": current_time - self.last_game_switch,
+                                "last_game_switch_before": self.last_game_switch
+                            },
+                            "timestamp": int(time.time() * 1000)
+                        }) + "\n")
+                except: pass
+                # #endregion
                 self.current_game_index = (self.current_game_index + 1) % len(self.live_games)
                 self.current_game = self.live_games[self.current_game_index]
                 self.last_game_switch = current_time
+                # #region agent log
+                try:
+                    with open('/home/chuck/Github/LEDMatrix/.cursor/debug.log', 'a') as f:
+                        f.write(json.dumps({
+                            "sessionId": "debug-session",
+                            "runId": "run1",
+                            "hypothesisId": "A",
+                            "location": "sports.py:1436",
+                            "message": "Game switch completed",
+                            "data": {
+                                "new_index": self.current_game_index,
+                                "new_game": self.current_game['away_abbr'] + "@" + self.current_game['home_abbr'] if self.current_game else None,
+                                "last_game_switch_after": self.last_game_switch
+                            },
+                            "timestamp": int(time.time() * 1000)
+                        }) + "\n")
+                except: pass
+                # #endregion
                 self.logger.info(f"Switched live view to: {self.current_game['away_abbr']}@{self.current_game['home_abbr']}") # Changed log prefix
                 # Force display update via flag or direct call if needed, but usually let main loop handle

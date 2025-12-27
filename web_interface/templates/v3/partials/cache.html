@@ -1,0 +1,231 @@
+<div class="bg-white rounded-lg shadow p-6">
+    <div class="border-b border-gray-200 pb-4 mb-6">
+        <h2 class="text-lg font-semibold text-gray-900">Cache Management</h2>
+        <p class="mt-1 text-sm text-gray-600">View and manage cached API responses. Cache files help reduce API calls and improve performance.</p>
+    </div>
+
+    <!-- Cache Info -->
+    <div id="cache-info" class="mb-6 p-4 bg-blue-50 rounded-lg border border-blue-200">
+        <div class="flex items-center justify-between">
+            <div>
+                <p class="text-sm font-medium text-blue-900">Cache Directory</p>
+                <p id="cache-dir" class="text-sm text-blue-700 font-mono mt-1">Loading...</p>
+            </div>
+            <button id="refresh-cache-btn" class="btn bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded text-sm">
+                <i class="fas fa-sync-alt mr-2"></i>Refresh
+            </button>
+        </div>
+    </div>
+
+    <!-- Cache Files Table -->
+    <div class="overflow-x-auto">
+        <table class="min-w-full divide-y divide-gray-200">
+            <thead class="bg-gray-50">
+                <tr>
+                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Cache Key</th>
+                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Age</th>
+                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Size</th>
+                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Modified</th>
+                    <th class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
+                </tr>
+            </thead>
+            <tbody id="cache-files-tbody" class="bg-white divide-y divide-gray-200">
+                <tr>
+                    <td colspan="5" class="px-6 py-8 text-center text-gray-500">
+                        <i class="fas fa-spinner fa-spin text-2xl mb-2"></i>
+                        <p>Loading cache files...</p>
+                    </td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+
+    <!-- Empty State -->
+    <div id="cache-empty" class="hidden text-center py-12">
+        <i class="fas fa-database text-4xl text-gray-400 mb-4"></i>
+        <p class="text-gray-600">No cache files found</p>
+        <p class="text-sm text-gray-500 mt-2">Cache files will appear here as plugins fetch data from APIs</p>
+    </div>
+
+    <!-- Error State -->
+    <div id="cache-error" class="hidden text-center py-12">
+        <i class="fas fa-exclamation-triangle text-4xl text-red-400 mb-4"></i>
+        <p class="text-red-600" id="cache-error-message">Error loading cache files</p>
+    </div>
+</div>
+
+<script>
+// Initialize cache management when partial loads
+(function() {
+    loadCacheFiles();
+    
+    // Event listeners
+    document.getElementById('refresh-cache-btn').addEventListener('click', loadCacheFiles);
+})();
+
+function loadCacheFiles() {
+    const tbody = document.getElementById('cache-files-tbody');
+    const emptyState = document.getElementById('cache-empty');
+    const errorState = document.getElementById('cache-error');
+    const errorMessage = document.getElementById('cache-error-message');
+    
+    // Show loading state
+    tbody.innerHTML = `
+        <tr>
+            <td colspan="5" class="px-6 py-8 text-center text-gray-500">
+                <i class="fas fa-spinner fa-spin text-2xl mb-2"></i>
+                <p>Loading cache files...</p>
+            </td>
+        </tr>
+    `;
+    emptyState.classList.add('hidden');
+    errorState.classList.add('hidden');
+    
+    fetch('/api/v3/cache/list')
+        .then(response => response.json())
+        .then(data => {
+            if (data.status === 'success') {
+                displayCacheFiles(data.data);
+                updateCacheInfo(data.data.cache_dir);
+            } else {
+                showError(data.message || 'Failed to load cache files');
+            }
+        })
+        .catch(error => {
+            showError('Error loading cache files: ' + error.message);
+        });
+}
+
+function displayCacheFiles(data) {
+    const tbody = document.getElementById('cache-files-tbody');
+    const emptyState = document.getElementById('cache-empty');
+    const errorState = document.getElementById('cache-error');
+    
+    errorState.classList.add('hidden');
+    
+    if (!data.cache_files || data.cache_files.length === 0) {
+        tbody.innerHTML = '';
+        emptyState.classList.remove('hidden');
+        return;
+    }
+    
+    emptyState.classList.add('hidden');
+    tbody.innerHTML = '';
+    
+    data.cache_files.forEach(cacheFile => {
+        const row = document.createElement('tr');
+        row.className = 'hover:bg-gray-50';
+        
+        // Format modified time
+        const modifiedDate = new Date(cacheFile.modified_datetime);
+        const modifiedStr = modifiedDate.toLocaleString('en-US', {
+            month: 'short',
+            day: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit',
+            hour12: false
+        });
+        
+        // Age color coding
+        let ageClass = 'text-gray-600';
+        if (cacheFile.age_seconds < 300) { // Less than 5 minutes
+            ageClass = 'text-green-600 font-medium';
+        } else if (cacheFile.age_seconds < 3600) { // Less than 1 hour
+            ageClass = 'text-yellow-600';
+        } else { // Older than 1 hour
+            ageClass = 'text-red-600';
+        }
+        
+        row.innerHTML = `
+            <td class="px-6 py-4 whitespace-nowrap">
+                <div class="text-sm font-medium text-gray-900 font-mono">${escapeHtml(cacheFile.key)}</div>
+                <div class="text-xs text-gray-500">${escapeHtml(cacheFile.filename)}</div>
+            </td>
+            <td class="px-6 py-4 whitespace-nowrap">
+                <span class="text-sm ${ageClass}">${escapeHtml(cacheFile.age_display)}</span>
+            </td>
+            <td class="px-6 py-4 whitespace-nowrap">
+                <span class="text-sm text-gray-600">${escapeHtml(cacheFile.size_display)}</span>
+            </td>
+            <td class="px-6 py-4 whitespace-nowrap">
+                <span class="text-sm text-gray-600">${escapeHtml(modifiedStr)}</span>
+            </td>
+            <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+                <button onclick="deleteCacheFile('${escapeHtml(cacheFile.key)}')" 
+                        class="text-red-600 hover:text-red-900 px-3 py-1 rounded hover:bg-red-50 transition-colors"
+                        title="Delete cache file">
+                    <i class="fas fa-trash mr-1"></i>Delete
+                </button>
+            </td>
+        `;
+        
+        tbody.appendChild(row);
+    });
+}
+
+function updateCacheInfo(cacheDir) {
+    const cacheDirEl = document.getElementById('cache-dir');
+    if (cacheDir) {
+        cacheDirEl.textContent = cacheDir;
+    } else {
+        cacheDirEl.textContent = 'Not configured';
+        cacheDirEl.classList.add('text-gray-500');
+    }
+}
+
+function deleteCacheFile(key) {
+    if (!confirm(`Are you sure you want to delete the cache file for "${key}"?`)) {
+        return;
+    }
+    
+    fetch('/api/v3/cache/delete', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ key: key })
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.status === 'success') {
+            if (typeof showNotification !== 'undefined') {
+                showNotification(data.message || 'Cache file deleted successfully', 'success');
+            }
+            // Reload cache files list
+            loadCacheFiles();
+        } else {
+            if (typeof showNotification !== 'undefined') {
+                showNotification(data.message || 'Failed to delete cache file', 'error');
+            }
+        }
+    })
+    .catch(error => {
+        if (typeof showNotification !== 'undefined') {
+            showNotification('Error deleting cache file: ' + error.message, 'error');
+        }
+    });
+}
+
+function showError(message) {
+    const tbody = document.getElementById('cache-files-tbody');
+    const errorState = document.getElementById('cache-error');
+    const errorMessage = document.getElementById('cache-error-message');
+    const emptyState = document.getElementById('cache-empty');
+    
+    tbody.innerHTML = '';
+    emptyState.classList.add('hidden');
+    errorState.classList.remove('hidden');
+    errorMessage.textContent = message;
+}
+
+// Utility function to escape HTML
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+// Make deleteCacheFile available globally for onclick handlers
+window.deleteCacheFile = deleteCacheFile;
+</script>

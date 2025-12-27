@@ -8,8 +8,6 @@ import time
 from typing import Dict, Any, List, Tuple
 import logging
 import math
-from .weather_icons import WeatherIcons
-import os
 import freetype
 
 # Get logger without configuring
@@ -88,6 +86,10 @@ class DisplayManager:
             options.show_refresh_rate = hardware_config.get('show_refresh_rate', False)
             options.limit_refresh_rate_hz = hardware_config.get('limit_refresh_rate_hz', 90)
             options.gpio_slowdown = runtime_config.get('gpio_slowdown', 2)
+            
+            # Disable internal privilege dropping - we manage this via systemd or remain root
+            # This prevents the library from dropping to 'daemon' user which breaks file permissions
+            options.drop_privileges = False
             
             # Additional settings from config
             if 'scan_mode' in hardware_config:
@@ -215,7 +217,7 @@ class DisplayManager:
             self.offscreen_canvas.SetImage(self.image)
             
             # Swap buffers immediately
-            self.matrix.SwapOnVSync(self.offscreen_canvas, False)
+            self.matrix.SwapOnVSync(self.offscreen_canvas)
             
             # Swap our canvas references
             self.offscreen_canvas, self.current_canvas = self.current_canvas, self.offscreen_canvas
@@ -230,10 +232,22 @@ class DisplayManager:
         try:
             if self.matrix is None:
                 # Fallback mode - just clear the image
-                self.image = Image.new('RGB', (self.image.width, self.image.height))
+                # Explicitly clear old image reference to help garbage collection
+                old_image = getattr(self, 'image', None)
+                width = old_image.width if old_image else 64
+                height = old_image.height if old_image else 64
+                if old_image is not None:
+                    del old_image
+                
+                self.image = Image.new('RGB', (width, height))
                 self.draw = ImageDraw.Draw(self.image)
                 logger.debug("Cleared display in fallback mode")
                 return
+                
+            # Explicitly clear old image reference to help garbage collection
+            old_image = getattr(self, 'image', None)
+            if old_image is not None:
+                del old_image
                 
             # Create a new black image
             self.image = Image.new('RGB', (self.matrix.width, self.matrix.height))
@@ -254,10 +268,10 @@ class DisplayManager:
             except Exception:
                 pass
             
-            # Update the display to show the clear. Swap twice to flush any latent frame.
-            self.update_display()
-            time.sleep(0.01)
-            self.update_display()
+            # Note: We do NOT call update_display() here to avoid black flashes.
+            # The caller should call update_display() after drawing new content.
+            # If an immediate clear is needed, the caller can explicitly call
+            # clear() followed by update_display().
         except Exception as e:
             logger.error(f"Error clearing display: {e}")
 
@@ -400,8 +414,18 @@ class DisplayManager:
             return 8 # A reasonable default for an 8px font.
 
     def draw_text(self, text: str, x: int = None, y: int = None, color: tuple = (255, 255, 255), 
-                 small_font: bool = False, font: ImageFont = None):
-        """Draw text on the canvas with optional font selection."""
+                 small_font: bool = False, font: ImageFont = None, centered: bool = False):
+        """Draw text on the canvas with optional font selection.
+        
+        Args:
+            text: Text to display
+            x: X position (None to auto-center, or used as center point if centered=True)
+            y: Y position (None defaults to 0)
+            color: RGB color tuple
+            small_font: Use small font if True
+            font: Custom font object (overrides small_font)
+            centered: If True, x is treated as center point; if False, x is left edge
+        """
         try:
             # Select font based on parameters
             if font:
@@ -409,10 +433,15 @@ class DisplayManager:
             else:
                 current_font = self.small_font if small_font else self.regular_font
             
-            # Calculate x position if not provided (center text)
+            # Calculate x position
             if x is None:
+                # No x provided - center text
                 text_width = self.get_text_width(text, current_font)
                 x = (self.width - text_width) // 2
+            elif centered:
+                # x is provided as center point - adjust to left edge
+                text_width = self.get_text_width(text, current_font)
+                x = x - (text_width // 2)
             
             # Set default y position if not provided
             if y is None:
@@ -704,16 +733,17 @@ class DisplayManager:
 
     def process_deferred_updates(self):
         """Process any deferred updates if not currently scrolling."""
+        current_time = time.time()
+        
+        # Always clean up expired updates, even if scrolling
+        # This prevents memory leaks from accumulated expired updates
+        self._cleanup_expired_deferred_updates(current_time)
+        
         if self.is_currently_scrolling():
             return
             
         if not self._scrolling_state['deferred_updates']:
             return
-        
-        current_time = time.time()
-        
-        # Clean up expired updates first
-        self._cleanup_expired_deferred_updates(current_time)
             
         if not self._scrolling_state['deferred_updates']:
             return
@@ -777,10 +807,17 @@ class DisplayManager:
             now = time.time()
             if (now - self._last_snapshot_ts) < self._snapshot_min_interval_sec:
                 return
-            # Ensure directory exists
-            snapshot_dir = os.path.dirname(self._snapshot_path)
-            if snapshot_dir and not os.path.exists(snapshot_dir):
-                os.makedirs(snapshot_dir, exist_ok=True)
+            # Ensure directory exists with proper permissions
+            from pathlib import Path
+            from src.common.permission_utils import (
+                ensure_directory_permissions,
+                ensure_file_permissions,
+                get_assets_dir_mode,
+                get_assets_file_mode
+            )
+            snapshot_path_obj = Path(self._snapshot_path)
+            if snapshot_path_obj.parent:
+                ensure_directory_permissions(snapshot_path_obj.parent, get_assets_dir_mode())
             # Write atomically: temp then replace
             tmp_path = f"{self._snapshot_path}.tmp"
             self.image.save(tmp_path, format='PNG')
@@ -789,9 +826,9 @@ class DisplayManager:
             except Exception:
                 # Fallback to direct save if replace not supported
                 self.image.save(self._snapshot_path, format='PNG')
-            # Try to make the snapshot world-readable so the web UI can read it regardless of user
+            # Set proper file permissions after saving
             try:
-                os.chmod(self._snapshot_path, 0o644)
+                ensure_file_permissions(snapshot_path_obj, get_assets_file_mode())
             except Exception:
                 pass
             self._last_snapshot_ts = now

@@ -1,0 +1,19 @@
+[Unit]
+Description=LED Matrix WiFi Monitor Daemon
+After=network.target
+Wants=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=__PROJECT_ROOT_DIR__
+ExecStart=/usr/bin/python3 /home/ledpi/LEDMatrix/scripts/utils/wifi_monitor_daemon.py --interval 30
+Restart=on-failure
+RestartSec=10
+StandardOutput=syslog
+StandardError=syslog
+SyslogIdentifier=ledmatrix-wifi-monitor
+
+[Install]
+WantedBy=multi-user.target
+

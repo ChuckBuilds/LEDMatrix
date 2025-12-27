@@ -19,6 +19,9 @@ class BackgroundCacheMixin:
     
     This mixin eliminates code duplication by providing a common implementation
     for the background service cache pattern used across all sports managers.
+    
+    Note: For non-sports managers (weather, stocks, news, etc.), use
+    GenericCacheMixin instead. See src/generic_cache_mixin.py for details.
     """
     
     def _fetch_data_with_background_cache(self, 

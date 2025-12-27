@@ -15,6 +15,12 @@ from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
+from src.common.permission_utils import (
+    ensure_directory_permissions,
+    ensure_file_permissions,
+    get_assets_dir_mode,
+    get_assets_file_mode
+)
 
 logger = logging.getLogger(__name__)
 
@@ -136,31 +142,38 @@ class LogoDownloader:
     
     def get_logo_directory(self, league: str) -> str:
         """Get the logo directory for a given league."""
-        return self.LOGO_DIRECTORIES.get(league, f'assets/sports/{league}_logos')
+        directory = LogoDownloader.LOGO_DIRECTORIES.get(league, f'assets/sports/{league}_logos')
+        path = Path(directory)
+        if not path.is_absolute():
+            project_root = Path(__file__).resolve().parents[1]
+            path = (project_root / path).resolve()
+        return str(path)
     
-    def ensure_logo_directory(self, logo_dir: str) -> bool:
+    def ensure_logo_directory(self, logo_dir: str | Path) -> bool:
         """Ensure the logo directory exists, create if necessary."""
+        path = Path(logo_dir)
         try:
-            os.makedirs(logo_dir, exist_ok=True)
+            # Create directory with proper permissions
+            ensure_directory_permissions(path, get_assets_dir_mode())
             
             # Check if we can actually write to the directory
-            test_file = os.path.join(logo_dir, '.write_test')
+            test_file = path / '.write_test'
             try:
                 with open(test_file, 'w') as f:
                     f.write('test')
-                os.remove(test_file)
-                logger.debug(f"Directory {logo_dir} is writable")
+                test_file.unlink(missing_ok=True)
+                logger.debug(f"Directory {path} is writable")
                 return True
             except PermissionError:
-                logger.error(f"Permission denied: Cannot write to directory {logo_dir}")
-                logger.error(f"Please run: sudo ./fix_assets_permissions.sh")
+                logger.error(f"Permission denied: Cannot write to directory {path}")
+                logger.error(f"Please run: sudo ./scripts/fix_perms/fix_assets_permissions.sh")
                 return False
             except Exception as e:
-                logger.error(f"Failed to test write access to directory {logo_dir}: {e}")
+                logger.error(f"Failed to test write access to directory {path}: {e}")
                 return False
                 
         except Exception as e:
-            logger.error(f"Failed to create logo directory {logo_dir}: {e}")
+            logger.error(f"Failed to create logo directory {path}: {e}")
             return False
     
     def download_logo(self, logo_url: str, filepath: Path, team_abbreviation: str) -> bool:
@@ -195,6 +208,9 @@ class LogoDownloader:
                     # Save the converted image
                     img.save(filepath, 'PNG')
                 
+                # Set proper file permissions after saving
+                ensure_file_permissions(filepath, get_assets_file_mode())
+                
                 logger.info(f"Successfully downloaded and converted logo for {team_abbreviation} -> {filepath.name}")
                 return True
             except Exception as e:
@@ -207,7 +223,7 @@ class LogoDownloader:
             
         except PermissionError as e:
             logger.error(f"Permission denied downloading logo for {team_abbreviation}: {e}")
-            logger.error(f"Please run: sudo ./fix_assets_permissions.sh")
+            logger.error(f"Please run: sudo ./scripts/fix_perms/fix_assets_permissions.sh")
             return False
         except requests.exceptions.RequestException as e:
             logger.error(f"Failed to download logo for {team_abbreviation}: {e}")
@@ -612,6 +628,10 @@ class LogoDownloader:
                 draw.text((16, 24), text, fill=(255, 255, 255, 255))
             
             logo.save(filepath)
+            
+            # Set proper file permissions after saving
+            ensure_file_permissions(filepath, get_assets_file_mode())
+            
             logger.info(f"Created placeholder logo for {team_abbreviation} at {filepath}")
             return True
             
@@ -678,7 +698,8 @@ def download_missing_logo(league: str, team_id: str, team_abbreviation: str, log
     Args:
         team_abbreviation: Team abbreviation (e.g., 'UGA', 'BAMA', 'TA&M')
         league: League identifier (e.g., 'ncaa_fb', 'nfl')
-        team_name: Optional team name for logging
+        logo_path: Full path to where the logo should be saved
+        logo_url: Optional direct URL to the logo
         create_placeholder: Whether to create a placeholder if download fails
         
     Returns:
@@ -686,24 +707,35 @@ def download_missing_logo(league: str, team_id: str, team_abbreviation: str, log
     """
     downloader = LogoDownloader()
     
-    # Check if logo already exists
-    logo_dir = downloader.get_logo_directory(league)
+    # Use the directory from the logo_path parameter (respects config settings)
+    logo_path = Path(logo_path)
+    if not logo_path.is_absolute():
+        project_root = Path(__file__).resolve().parents[1]
+        logo_path = (project_root / logo_path).resolve()
+
+    logo_dir = str(logo_path.parent)
+    
+    # Ensure the directory exists and is writable
     if not downloader.ensure_logo_directory(logo_dir):
         logger.error(f"Cannot download logo for {team_abbreviation}: directory {logo_dir} is not writable")
         return False
-    filename = f"{downloader.normalize_abbreviation(team_abbreviation)}.png"
-    filepath = Path(logo_dir) / filename
+    
+    # Use the exact filepath that was passed in (respects config settings)
+    filepath = logo_path
     
     if filepath.exists():
         logger.debug(f"Logo already exists for {team_abbreviation} ({league})")
         return True
     
     # Try to download the real logo first
-    logger.info(f"Attempting to download logo for {team_abbreviation}  from {league}")
+    logger.info(f"Attempting to download logo for {team_abbreviation} from {league}")
     if logo_url:
         success = downloader.download_logo(logo_url, filepath, team_abbreviation)
         if success:
             time.sleep(0.1)  # Small delay
+        if not success and create_placeholder:
+            logger.info(f"Creating placeholder logo for {team_abbreviation}")
+            success = downloader.create_placeholder_logo(team_abbreviation, logo_dir)
         return success
 
     success = downloader.download_missing_logo_for_team(league, team_id, team_abbreviation, logo_path)

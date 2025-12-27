@@ -1,0 +1,17 @@
+[Unit]
+Description=LED Matrix Display Service
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=__PROJECT_ROOT_DIR__
+ExecStart=/usr/bin/python3 __PROJECT_ROOT_DIR__/run.py
+Restart=on-failure
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=ledmatrix
+
+[Install]
+WantedBy=multi-user.target 

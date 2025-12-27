@@ -1,0 +1,11 @@
+# This directory is for development only
+# 
+# For development:
+#   - Use dev_plugin_setup.sh to symlink plugin repositories here
+#   - Work on plugin repos in their separate git repositories
+#   - This directory is ignored by git to avoid committing plugin code
+#
+# For production:
+#   - Plugins are installed via the plugin store to plugin-repos/
+#   - The plugin-repos/ directory is managed by the plugin system
+

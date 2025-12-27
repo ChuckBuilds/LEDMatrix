@@ -1,0 +1,156 @@
+# Plugin Name
+
+Brief description of what this plugin does.
+
+## Features
+
+- Feature 1
+- Feature 2
+- Feature 3
+
+## Installation
+
+1. Link the plugin to your LEDMatrix installation:
+
+```bash
+cd /path/to/LEDMatrix
+./scripts/dev/dev_plugin_setup.sh link-github PLUGIN_ID
+```
+
+Or for local development:
+
+```bash
+./scripts/dev/dev_plugin_setup.sh link PLUGIN_ID /path/to/plugin/repo
+```
+
+2. Install dependencies:
+
+```bash
+pip install -r plugins/PLUGIN_ID/requirements.txt
+```
+
+3. Configure the plugin in `config/config.json`:
+
+```json
+{
+  "PLUGIN_ID": {
+    "enabled": true,
+    "display_duration": 15
+  }
+}
+```
+
+**Note:** API keys and other sensitive credentials must be stored in `config/config_secrets.json`, not in `config/config.json`.
+
+4. Store API keys in `config/config_secrets.json`:
+
+```json
+{
+  "PLUGIN_ID": {
+    "api_key": "your-secret-api-key"
+  }
+}
+```
+
+## Configuration
+
+### Required Settings
+
+- `enabled` (boolean): Enable or disable the plugin
+- `api_key` (string): API key for external service (if required)
+
+### Optional Settings
+
+- `display_duration` (number): How long to display this plugin (default: 15 seconds)
+- `refresh_interval` (integer): How often to refresh data in seconds (default: 60)
+- `live_priority` (boolean): Enable live priority takeover (default: false)
+
+## Display Modes
+
+This plugin provides the following display modes:
+
+- `PLUGIN_ID`: Main display mode
+
+## API Requirements
+
+This plugin requires:
+
+- **API Name**: Description of API requirements
+  - URL: https://api.example.com
+  - Rate Limit: X requests per minute
+  - Authentication: API key required
+
+## Development
+
+### Running Tests
+
+```bash
+cd plugins/PLUGIN_ID
+python test_PLUGIN_ID.py
+```
+
+### Testing with Emulator
+
+```bash
+cd /path/to/LEDMatrix
+python run.py --emulator
+```
+
+### Debugging
+
+Enable debug logging in `config/config.json`:
+
+```json
+{
+  "logging": {
+    "level": "DEBUG"
+  }
+}
+```
+
+Check logs:
+
+```bash
+# On Raspberry Pi (if running as service)
+journalctl -u ledmatrix -f
+
+# Direct execution
+python run.py
+```
+
+## Troubleshooting
+
+### Plugin Not Loading
+
+1. Check that `manifest.json` exists and is valid
+2. Verify `entry_point` file exists
+3. Check that `class_name` matches the class in manager.py
+4. Review logs for import errors
+
+### Configuration Errors
+
+1. Validate config against `config_schema.json`
+2. Check required fields are present
+3. Verify data types match schema
+
+### API Errors
+
+1. Verify API key is correct
+2. Check API rate limits
+3. Review network connectivity
+4. Check API service status
+
+## License
+
+[License information]
+
+## Author
+
+Your Name
+
+## Links
+
+- GitHub: https://github.com/username/ledmatrix-PLUGIN_ID
+- Documentation: [Link to docs]
+- Issues: https://github.com/username/ledmatrix-PLUGIN_ID/issues
+

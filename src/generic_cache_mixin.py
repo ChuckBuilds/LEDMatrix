@@ -17,6 +17,9 @@ class GenericCacheMixin:
     
     This mixin can be used by weather, stock, news, or any other manager
     that needs to cache data with performance monitoring.
+    
+    Note: For sports managers that need background service cache integration,
+    use BackgroundCacheMixin instead. See src/background_cache_mixin.py for details.
     """
     
     def _fetch_data_with_cache(self, 

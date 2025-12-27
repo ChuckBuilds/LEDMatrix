@@ -1,0 +1,161 @@
+{% extends "v3/base.html" %}
+
+{% block content %}
+<div class="bg-white rounded-lg shadow p-6">
+    <div class="border-b border-gray-200 pb-4 mb-6">
+        <h2 class="text-lg font-semibold text-gray-900">System Overview</h2>
+        <p class="mt-1 text-sm text-gray-600">Monitor system status and manage your LED matrix display.</p>
+    </div>
+
+    <!-- System Stats Cards -->
+    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+        <div class="bg-gray-50 rounded-lg p-4">
+            <div class="flex items-center">
+                <div class="flex-shrink-0">
+                    <i class="fas fa-microchip text-blue-600 text-xl"></i>
+                </div>
+                <div class="ml-3 w-0 flex-1">
+                    <dl>
+                        <dt class="text-sm font-medium text-gray-500 truncate">CPU Usage</dt>
+                        <dd class="text-lg font-medium text-gray-900" id="cpu-usage">--%</dd>
+                    </dl>
+                </div>
+            </div>
+        </div>
+
+        <div class="bg-gray-50 rounded-lg p-4">
+            <div class="flex items-center">
+                <div class="flex-shrink-0">
+                    <i class="fas fa-memory text-green-600 text-xl"></i>
+                </div>
+                <div class="ml-3 w-0 flex-1">
+                    <dl>
+                        <dt class="text-sm font-medium text-gray-500 truncate">Memory Usage</dt>
+                        <dd class="text-lg font-medium text-gray-900" id="memory-usage">--%</dd>
+                    </dl>
+                </div>
+            </div>
+        </div>
+
+        <div class="bg-gray-50 rounded-lg p-4">
+            <div class="flex items-center">
+                <div class="flex-shrink-0">
+                    <i class="fas fa-thermometer-half text-red-600 text-xl"></i>
+                </div>
+                <div class="ml-3 w-0 flex-1">
+                    <dl>
+                        <dt class="text-sm font-medium text-gray-500 truncate">CPU Temperature</dt>
+                        <dd class="text-lg font-medium text-gray-900" id="cpu-temp">--°C</dd>
+                    </dl>
+                </div>
+            </div>
+        </div>
+
+        <div class="bg-gray-50 rounded-lg p-4">
+            <div class="flex items-center">
+                <div class="flex-shrink-0">
+                    <i class="fas fa-desktop text-purple-600 text-xl"></i>
+                </div>
+                <div class="ml-3 w-0 flex-1">
+                    <dl>
+                        <dt class="text-sm font-medium text-gray-500 truncate">Display Status</dt>
+                        <dd class="text-lg font-medium text-gray-900" id="display-status">Unknown</dd>
+                    </dl>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Quick Actions -->
+    <div class="border-b border-gray-200 pb-4 mb-6">
+        <h3 class="text-md font-medium text-gray-900 mb-4">Quick Actions</h3>
+        <div class="flex flex-wrap gap-3" hx-ext="json-enc">
+            <button hx-post="/api/v3/system/action"
+                    hx-vals='{"action": "start_display"}'
+                    hx-swap="none"
+                    hx-on:htmx:after-request="if (typeof showNotification !== 'undefined' && event.detail.xhr && event.detail.xhr.responseJSON) { showNotification(event.detail.xhr.responseJSON.message || 'Display started', event.detail.xhr.responseJSON.status || 'success'); }"
+                    class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-green-600 hover:bg-green-700">
+                <i class="fas fa-play mr-2"></i>
+                Start Display
+            </button>
+
+            <button hx-post="/api/v3/system/action"
+                    hx-vals='{"action": "stop_display"}'
+                    hx-swap="none"
+                    hx-on:htmx:after-request="if (typeof showNotification !== 'undefined' && event.detail.xhr && event.detail.xhr.responseJSON) { showNotification(event.detail.xhr.responseJSON.message || 'Display stopped', event.detail.xhr.responseJSON.status || 'success'); }"
+                    class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-red-600 hover:bg-red-700">
+                <i class="fas fa-stop mr-2"></i>
+                Stop Display
+            </button>
+
+            <button hx-post="/api/v3/system/action"
+                    hx-vals='{"action": "git_pull"}'
+                    hx-swap="none"
+                    hx-on:htmx:after-request="if (typeof showNotification !== 'undefined' && event.detail.xhr && event.detail.xhr.responseJSON) { showNotification(event.detail.xhr.responseJSON.message || 'Code update completed', event.detail.xhr.responseJSON.status || 'info'); }"
+                    class="inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50">
+                <i class="fas fa-download mr-2"></i>
+                Update Code
+            </button>
+
+            <button hx-post="/api/v3/system/action"
+                    hx-vals='{"action": "reboot_system"}'
+                    hx-confirm="Are you sure you want to reboot the system?"
+                    hx-swap="none"
+                    hx-on:htmx:after-request="if (typeof showNotification !== 'undefined' && event.detail.xhr && event.detail.xhr.responseJSON) { showNotification(event.detail.xhr.responseJSON.message || 'System rebooting...', event.detail.xhr.responseJSON.status || 'info'); }"
+                    class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-yellow-600 hover:bg-yellow-700">
+                <i class="fas fa-power-off mr-2"></i>
+                Reboot System
+            </button>
+        </div>
+    </div>
+
+    <!-- Display Preview -->
+    <div>
+        <h3 class="text-md font-medium text-gray-900 mb-4">Display Preview</h3>
+        <div class="bg-gray-900 rounded-lg p-4 aspect-video flex items-center justify-center">
+            <div class="text-center text-gray-400">
+                <i class="fas fa-desktop text-4xl mb-2"></i>
+                <p>Display preview will appear here</p>
+                <p class="text-sm mt-1">Connect to see live updates</p>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Update stats via SSE -->
+<script>
+    // Listen for system stats updates
+    if (typeof statsSource !== 'undefined') {
+        statsSource.onmessage = function(event) {
+            const data = JSON.parse(event.data);
+
+            // Update CPU
+            const cpuEl = document.getElementById('cpu-usage');
+            if (cpuEl && data.cpu_percent !== undefined) {
+                cpuEl.textContent = data.cpu_percent + '%';
+            }
+
+            // Update Memory
+            const memEl = document.getElementById('memory-usage');
+            if (memEl && data.memory_used_percent !== undefined) {
+                memEl.textContent = data.memory_used_percent + '%';
+            }
+
+            // Update Temperature
+            const tempEl = document.getElementById('cpu-temp');
+            if (tempEl && data.cpu_temp !== undefined) {
+                tempEl.textContent = data.cpu_temp + '°C';
+            }
+
+            // Update Display Status
+            const displayEl = document.getElementById('display-status');
+            if (displayEl) {
+                displayEl.textContent = data.service_active ? 'Active' : 'Inactive';
+                displayEl.className = data.service_active ?
+                    'text-lg font-medium text-green-600' :
+                    'text-lg font-medium text-red-600';
+            }
+        };
+    }
+</script>
+{% endblock %}

@@ -1,0 +1,136 @@
+"""
+Test file for Plugin Name plugin.
+
+This file provides example unit tests for your plugin.
+Run tests with: python -m pytest test_manager.py
+Or: python test_manager.py
+"""
+
+import unittest
+import sys
+from pathlib import Path
+
+# Add project root to path
+PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from src.plugin_system.testing import PluginTestCase
+from manager import PluginClassName
+
+
+class TestPluginClassName(PluginTestCase):
+    """Test cases for PluginClassName plugin."""
+    
+    def setUp(self):
+        """Set up test fixtures."""
+        super().setUp()
+        
+        # Update plugin_id to match the plugin being tested
+        self.plugin_id = 'PLUGIN_ID'
+        
+        # Create plugin instance
+        self.plugin = self.create_plugin_instance(
+            PluginClassName,
+            plugin_id='PLUGIN_ID',
+            config=self.get_mock_config()
+        )
+    
+    def test_plugin_initialization(self):
+        """Test that plugin initializes correctly."""
+        self.assert_plugin_initialized(self.plugin)
+        self.assertTrue(self.plugin.enabled)
+    
+    def test_config_validation(self):
+        """Test configuration validation."""
+        # Valid config should pass
+        self.assertTrue(self.plugin.validate_config())
+        
+        # Test with invalid config if applicable
+        # invalid_config = self.get_mock_config(enabled='not-a-boolean')
+        # invalid_plugin = self.create_plugin_instance(
+        #     PluginClassName,
+        #     config=invalid_config
+        # )
+        # self.assertFalse(invalid_plugin.validate_config())
+    
+    def test_update_method(self):
+        """Test the update() method."""
+        # Reset mocks
+        self.cache_manager.reset()
+        
+        # Call update
+        self.plugin.update()
+        
+        # Assertions
+        # Example: Check that cache was used
+        # self.assert_cache_get('PLUGIN_ID_data')
+        
+        # Example: Check that data was fetched and cached
+        # self.assert_cache_set('PLUGIN_ID_data')
+    
+    def test_display_method(self):
+        """Test the display() method."""
+        # Ensure plugin has data (call update first if needed)
+        # self.plugin.update()
+        
+        # Call display
+        self.plugin.display(force_clear=True)
+        
+        # Assertions
+        self.assert_display_cleared()
+        self.assert_display_updated()
+        
+        # Example: Check that text was drawn
+        # self.assert_text_drawn("Expected Text")
+        
+        # Example: Check that image was drawn
+        # self.assert_image_drawn()
+    
+    def test_display_without_data(self):
+        """Test display() behavior when no data is available."""
+        # Clear any cached data
+        self.cache_manager.reset()
+        
+        # Call display
+        self.plugin.display()
+        
+        # Should handle gracefully (no exceptions)
+        # May show error message or fallback content
+        self.assert_display_updated()
+    
+    def test_get_display_duration(self):
+        """Test display duration configuration."""
+        duration = self.plugin.get_display_duration()
+        self.assertIsInstance(duration, (int, float))
+        self.assertGreater(duration, 0)
+        
+        # Test with custom duration
+        custom_config = self.get_mock_config(display_duration=30.0)
+        custom_plugin = self.create_plugin_instance(
+            PluginClassName,
+            config=custom_config
+        )
+        self.assertEqual(custom_plugin.get_display_duration(), 30.0)
+    
+    def test_enable_disable(self):
+        """Test plugin enable/disable functionality."""
+        self.assertTrue(self.plugin.enabled)
+        
+        self.plugin.on_disable()
+        self.assertFalse(self.plugin.enabled)
+        
+        self.plugin.on_enable()
+        self.assertTrue(self.plugin.enabled)
+    
+    def test_config_change(self):
+        """Test configuration change handling."""
+        new_config = self.get_mock_config(display_duration=20.0)
+        self.plugin.on_config_change(new_config)
+        
+        self.assertEqual(self.plugin.config.get('display_duration'), 20.0)
+
+
+if __name__ == '__main__':
+    unittest.main()
+

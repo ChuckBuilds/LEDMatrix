@@ -1,0 +1,28 @@
+# This is a template file. The actual service file is generated dynamically
+# by install_web_service.sh with the correct paths based on where the project
+# is installed. Do not use this file directly - use install_web_service.sh instead.
+#
+# Template - paths will be replaced dynamically:
+# __PROJECT_ROOT_DIR__ will be replaced with the actual project directory
+
+[Unit]
+Description=LED Matrix Web Interface Service
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=__PROJECT_ROOT_DIR__
+Environment=USE_THREADING=1
+ExecStart=/usr/bin/python3 __PROJECT_ROOT_DIR__/scripts/utils/start_web_conditionally.py
+Restart=on-failure
+RestartSec=10
+StandardOutput=syslog
+StandardError=syslog
+SyslogIdentifier=ledmatrix-web
+# Automatically create and manage cache directory
+CacheDirectory=ledmatrix
+CacheDirectoryMode=0775
+
+[Install]
+WantedBy=multi-user.target

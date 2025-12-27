@@ -1,0 +1,743 @@
+/* LED Matrix v3 Custom Styles */
+/* Modern, clean design with utility classes */
+
+/* CSS Custom Properties for Theme Colors */
+:root {
+    --color-primary: #2563eb;
+    --color-primary-hover: #1d4ed8;
+    --color-secondary: #059669;
+    --color-secondary-hover: #047857;
+    --color-accent: #7c3aed;
+    --color-accent-hover: #6d28d9;
+    --color-background: #f9fafb;
+    --color-surface: #ffffff;
+    --color-text-primary: #111827;
+    --color-text-secondary: #374151;
+    --color-text-tertiary: #4b5563;
+    --color-border: #e5e7eb;
+    --color-border-light: #f3f4f6;
+    --color-success: #059669;
+    --color-success-bg: #d1fae5;
+    --color-error: #dc2626;
+    --color-error-bg: #fee2e2;
+    --color-warning: #d97706;
+    --color-warning-bg: #fef3c7;
+    --color-info: #2563eb;
+    --color-info-bg: #dbeafe;
+    --color-purple-bg: #f3e8ff;
+    --color-purple-text: #6b21a8;
+    --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+    --shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px 0 rgba(0, 0, 0, 0.06);
+    --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+    --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+}
+
+/* Base styles */
+* {
+    box-sizing: border-box;
+}
+
+html {
+    scroll-behavior: smooth;
+}
+
+body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+    line-height: 1.6;
+    color: var(--color-text-primary);
+    background-color: var(--color-background);
+}
+
+/* Utility classes */
+.bg-gray-50 { background-color: #f9fafb; }
+.bg-white { background-color: #ffffff; }
+.bg-gray-900 { background-color: #111827; }
+.bg-green-500 { background-color: #10b981; }
+.bg-red-500 { background-color: #ef4444; }
+.bg-blue-500 { background-color: #3b82f6; }
+.bg-yellow-500 { background-color: #f59e0b; }
+.bg-green-600 { background-color: #059669; }
+.bg-red-600 { background-color: #dc2626; }
+.bg-blue-600 { background-color: #2563eb; }
+.bg-yellow-600 { background-color: #d97706; }
+.bg-gray-200 { background-color: #e5e7eb; }
+
+.text-gray-900 { color: #111827; }
+.text-gray-600 { color: #374151; }
+.text-gray-500 { color: #4b5563; }
+.text-gray-400 { color: #6b7280; }
+.text-white { color: #ffffff; }
+.text-green-600 { color: #059669; }
+.text-red-600 { color: #dc2626; }
+
+.border-gray-200 { border-color: #e5e7eb; }
+.border-gray-300 { border-color: #d1d5db; }
+.border-transparent { border-color: transparent; }
+
+.rounded-lg { border-radius: 0.5rem; }
+.rounded-md { border-radius: 0.375rem; }
+.rounded { border-radius: 0.25rem; }
+
+.shadow { box-shadow: var(--shadow); }
+.shadow-sm { box-shadow: var(--shadow-sm); }
+.shadow-md { box-shadow: var(--shadow-md); }
+.shadow-lg { box-shadow: var(--shadow-lg); }
+
+.p-6 { padding: 1.5rem; }
+.p-4 { padding: 1rem; }
+.p-2 { padding: 0.5rem; }
+.px-4 { padding-left: 1rem; padding-right: 1rem; }
+.py-2 { padding-top: 0.5rem; padding-bottom: 0.5rem; }
+.py-3 { padding-top: 0.75rem; padding-bottom: 0.75rem; }
+.pb-4 { padding-bottom: 1rem; }
+.mb-6 { margin-bottom: 1.5rem; }
+.mb-4 { margin-bottom: 1rem; }
+.mb-8 { margin-bottom: 2rem; }
+.mb-2 { margin-bottom: 0.5rem; }
+.mt-1 { margin-top: 0.25rem; }
+.mt-4 { margin-top: 1rem; }
+.mr-2 { margin-right: 0.5rem; }
+.ml-3 { margin-left: 0.75rem; }
+
+.w-full { width: 100%; }
+.w-0 { width: 0; }
+.w-2 { width: 0.5rem; }
+.w-4 { width: 1rem; }
+.h-2 { height: 0.5rem; }
+.h-4 { height: 1rem; }
+.h-10 { height: 2.5rem; }
+.h-16 { height: 4rem; }
+.h-24 { height: 6rem; }
+.h-32 { height: 8rem; }
+.h-96 { height: 24rem; }
+
+.flex { display: flex; }
+.inline-flex { display: inline-flex; }
+.flex-shrink-0 { flex-shrink: 0; }
+.flex-1 { flex: 1; }
+.items-center { align-items: center; }
+.justify-center { justify-content: center; }
+.justify-between { justify-content: space-between; }
+.space-x-1 > * + * { margin-left: 0.25rem; }
+.space-x-2 > * + * { margin-left: 0.5rem; }
+.space-x-4 > * + * { margin-left: 1rem; }
+.space-y-1 > * + * { margin-top: 0.25rem; }
+.space-y-1\.5 > * + * { margin-top: 0.375rem; }
+.space-y-2 > * + * { margin-top: 0.5rem; }
+.space-y-4 > * + * { margin-top: 1rem; }
+.space-y-6 > * + * { margin-top: 1.5rem; }
+.space-y-8 > * + * { margin-top: 2rem; }
+
+.grid { display: grid; }
+.grid-cols-1 { grid-template-columns: repeat(1, minmax(0, 1fr)); }
+.grid-cols-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.grid-cols-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.grid-cols-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.gap-2 { gap: 0.5rem; }
+.gap-3 { gap: 0.75rem; }
+.gap-4 { gap: 1rem; }
+.gap-6 { gap: 1.5rem; }
+
+/* Enhanced Typography */
+.text-xs { font-size: 0.75rem; line-height: 1.4; }
+.text-sm { font-size: 0.875rem; line-height: 1.5; }
+.text-base { font-size: 1rem; line-height: 1.5; }
+.text-lg { font-size: 1.125rem; line-height: 1.75; }
+.text-xl { font-size: 1.25rem; line-height: 1.75; }
+.text-2xl { font-size: 1.5rem; line-height: 2; }
+.text-4xl { font-size: 2.25rem; line-height: 2.5; }
+.font-medium { font-weight: 500; }
+.font-semibold { font-weight: 600; }
+.font-bold { font-weight: 700; }
+
+/* Headings with improved hierarchy */
+h1, h2, h3, h4, h5, h6 {
+    font-weight: 600;
+    line-height: 1.4;
+    color: var(--color-text-primary);
+    /* Improved line-height from 1.3 to 1.4 for better readability */
+}
+
+h1 { font-size: 1.875rem; }
+h2 { font-size: 1.5rem; }
+h3 { font-size: 1.25rem; }
+h4 { font-size: 1.125rem; }
+
+.border-b { border-bottom-width: 1px; }
+.border-b-2 { border-bottom-width: 2px; }
+
+.relative { position: relative; }
+.fixed { position: fixed; }
+.absolute { position: absolute; }
+.z-50 { z-index: 50; }
+
+.top-4 { top: 1rem; }
+.right-4 { right: 1rem; }
+
+.max-w-7xl { max-width: 56rem; }
+.mx-auto { margin-left: auto; margin-right: auto; }
+.overflow-x-auto { overflow-x: auto; }
+.overflow-hidden { overflow: hidden; }
+
+.aspect-video { aspect-ratio: 16 / 9; }
+
+.truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.transition { transition-property: transform, opacity, color, border-color; transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1); transition-duration: 150ms; }
+/* Optimized: Replaced 'all' with specific properties to avoid animating expensive properties */
+
+/* Removed .duration-300 - not used anywhere */
+
+.hover\:bg-green-700:hover { background-color: #047857; }
+.hover\:bg-red-700:hover { background-color: #b91c1c; }
+.hover\:bg-gray-50:hover { background-color: #f9fafb; }
+.hover\:bg-yellow-700:hover { background-color: #b45309; }
+.hover\:text-gray-700:hover { color: #374151; }
+.hover\:border-gray-300:hover { border-color: #d1d5db; }
+
+.focus\:outline-none:focus { outline: 2px solid transparent; outline-offset: 2px; }
+.focus\:ring-2:focus {
+    --tw-ring-offset-shadow: var(--tw-ring-inset) 0 0 0 calc(2px + var(--tw-ring-offset-width)) var(--tw-ring-color);
+    box-shadow: var(--tw-ring-offset-shadow), var(--tw-shadow, 0 0 #0000);
+}
+/* Optimized: Split complex selector onto multiple lines for readability */
+.focus\:ring-blue-500:focus { --tw-ring-color: #3b82f6; }
+
+.animate-pulse {
+    animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+@keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: .5; }
+}
+
+/* Smooth transitions for all interactive elements */
+/* Optimized: Only transition properties that don't trigger expensive repaints */
+a, button, input, select, textarea {
+    transition: color 0.15s ease, border-color 0.15s ease, opacity 0.15s ease;
+    /* Removed background-color transition - can trigger repaints, use opacity or border-color instead */
+}
+
+/* Custom scrollbar for webkit browsers */
+::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+}
+
+::-webkit-scrollbar-track {
+    background: #f1f5f9;
+}
+
+::-webkit-scrollbar-thumb {
+    background: #cbd5e1;
+    border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: #94a3b8;
+}
+
+/* Logs container specific scrollbar */
+#logs-container::-webkit-scrollbar {
+    width: 10px;
+}
+
+#logs-container::-webkit-scrollbar-track {
+    background: #374151;
+}
+
+#logs-container::-webkit-scrollbar-thumb {
+    background: #6b7280;
+    border-radius: 5px;
+}
+
+#logs-container::-webkit-scrollbar-thumb:hover {
+    background: #9ca3af;
+}
+
+/* Smooth scrolling for logs container */
+#logs-container {
+    scroll-behavior: smooth;
+    position: relative;
+    overflow-y: auto !important;
+}
+
+/* Ensure logs content doesn't cause overflow issues */
+.log-entry {
+    word-wrap: break-word;
+    overflow-wrap: break-word;
+    max-width: 100%;
+    box-sizing: border-box;
+}
+
+/* Ensure proper containment of logs */
+#logs-loading {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 1;
+}
+
+#logs-empty {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 2;
+}
+
+#logs-display {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 3;
+}
+
+.logs-content {
+    height: 100%;
+    overflow-y: auto;
+    padding: 0;
+}
+
+/* Logs container responsive height - simplified for better scrolling */
+@media (max-width: 768px) {
+    #logs-container {
+        height: 400px !important;
+        min-height: 300px !important;
+    }
+}
+
+@media (max-width: 640px) {
+    #logs-container {
+        height: 350px !important;
+        min-height: 250px !important;
+    }
+}
+
+/* Responsive breakpoints */
+@media (min-width: 640px) {
+    .sm\:px-6 { padding-left: 1.5rem; padding-right: 1.5rem; }
+}
+
+@media (min-width: 768px) {
+    .md\:grid-cols-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .md\:grid-cols-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .md\:grid-cols-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+    .md\:flex { display: flex; }
+    .md\:hidden { display: none; }
+}
+
+@media (min-width: 1024px) {
+    .lg\:grid-cols-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .lg\:grid-cols-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+    .lg\:grid-cols-5 { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+    .lg\:grid-cols-6 { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+    .lg\:px-8 { padding-left: 2rem; padding-right: 2rem; }
+}
+
+@media (min-width: 1280px) {
+    .xl\:grid-cols-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+    .xl\:grid-cols-5 { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+    .xl\:grid-cols-6 { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+    .xl\:grid-cols-7 { grid-template-columns: repeat(7, minmax(0, 1fr)); }
+    .xl\:grid-cols-8 { grid-template-columns: repeat(8, minmax(0, 1fr)); }
+    .xl\:px-12 { padding-left: 3rem; padding-right: 3rem; }
+    .xl\:space-x-6 > * + * { margin-left: 1.5rem; }
+}
+
+@media (min-width: 1536px) {
+    .2xl\:grid-cols-5 { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+    .2xl\:grid-cols-6 { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+    .2xl\:grid-cols-7 { grid-template-columns: repeat(7, minmax(0, 1fr)); }
+    .2xl\:grid-cols-8 { grid-template-columns: repeat(8, minmax(0, 1fr)); }
+    .2xl\:grid-cols-9 { grid-template-columns: repeat(9, minmax(0, 1fr)); }
+    .2xl\:grid-cols-10 { grid-template-columns: repeat(10, minmax(0, 1fr)); }
+    .2xl\:px-16 { padding-left: 4rem; padding-right: 4rem; }
+    .2xl\:space-x-8 > * + * { margin-left: 2rem; }
+}
+
+/* HTMX loading states */
+.htmx-request .loading {
+    display: inline-block;
+}
+
+.htmx-request .btn-text {
+    opacity: 0.5;
+}
+
+/* Enhanced Button styles */
+.btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0.625rem 1.25rem;
+    border-radius: 0.5rem;
+    font-size: 0.875rem;
+    font-weight: 600;
+    line-height: 1.5;
+    text-decoration: none;
+    transition: transform 0.15s ease, opacity 0.15s ease;
+    cursor: pointer;
+    border: none;
+    /* Removed ::before pseudo-element animation for better performance */
+}
+
+.btn:hover {
+    transform: translateY(-1px);
+    opacity: 0.9;
+}
+
+.btn:active {
+    transform: translateY(0);
+}
+
+.btn:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+    transform: none !important;
+}
+
+.btn:disabled:hover {
+    transform: none;
+}
+
+.btn:focus {
+    outline: 2px solid transparent;
+    outline-offset: 2px;
+    box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.3);
+}
+
+/* Global button text contrast fix: Ensure buttons with white backgrounds have dark text */
+button.bg-white {
+    color: #111827 !important; /* text-gray-900 equivalent - ensures good contrast on white background */
+}
+
+/* Form styles */
+.form-group {
+    margin-bottom: 1rem;
+}
+
+.form-group label {
+    display: block;
+    font-size: 0.875rem;
+    font-weight: 500;
+    color: var(--color-text-secondary);
+    margin-bottom: 0.25rem;
+}
+
+.form-control {
+    display: block;
+    width: 100%;
+    padding: 0.5rem 0.75rem;
+    border: 1px solid #d1d5db;
+    border-radius: 0.375rem;
+    background-color: #ffffff;
+    color: #111827; /* text-gray-900 - ensure dark text on white background */
+    font-size: 0.875rem;
+    line-height: 1.25rem;
+    transition: border-color 0.15s ease-in-out;
+    /* Removed box-shadow transition - using border-color only for better performance */
+}
+
+.form-control:focus {
+    border-color: var(--color-primary);
+    /* Using outline instead of box-shadow for focus state (better performance) */
+    outline: 2px solid rgba(37, 99, 235, 0.2);
+    outline-offset: 2px;
+}
+
+.form-control:disabled {
+    background-color: #f9fafb;
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+
+/* Enhanced Card styles */
+.card {
+    background-color: var(--color-surface);
+    border-radius: 0.5rem;
+    box-shadow: var(--shadow);
+    overflow: hidden;
+    transition: transform 0.15s ease;
+    contain: layout style paint;
+    /* Removed box-shadow transition for better performance - using transform only (GPU accelerated) */
+    /* Added CSS containment for better performance isolation */
+}
+
+.card:hover {
+    transform: translateY(-2px);
+}
+
+/* Plugin Card Styles */
+.plugin-card {
+    background-color: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: 0.75rem;
+    padding: 1.25rem;
+    transition: transform 0.15s ease, border-color 0.15s ease;
+    cursor: pointer;
+    position: relative;
+    contain: layout style paint;
+    /* Simplified transitions - using only transform and border-color (cheaper than box-shadow) */
+    /* Added CSS containment for better performance isolation */
+}
+
+.plugin-card::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 3px;
+    background: linear-gradient(90deg, var(--color-primary), var(--color-secondary));
+    opacity: 0;
+    transition: opacity 0.15s ease;
+}
+
+.plugin-card:hover {
+    transform: translateY(-2px);
+    border-color: var(--color-primary);
+    /* Removed box-shadow transition for better performance */
+}
+
+.plugin-card:hover::before {
+    opacity: 1;
+}
+
+.plugin-card:focus {
+    outline: 2px solid var(--color-primary);
+    outline-offset: 2px;
+}
+
+.plugin-card:active {
+    transform: translateY(0);
+}
+
+/* Status indicators */
+.status-indicator {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.25rem 0.75rem;
+    border-radius: 9999px;
+    font-size: 0.75rem;
+    font-weight: 500;
+}
+
+.status-indicator.success {
+    background-color: #dcfce7;
+    color: #166534;
+}
+
+.status-indicator.error {
+    background-color: #fef2f2;
+    color: #991b1b;
+}
+
+.status-indicator.warning {
+    background-color: #fffbeb;
+    color: #92400e;
+}
+
+.status-indicator.info {
+    background-color: var(--color-info-bg);
+    color: var(--color-info);
+}
+
+/* Badge Styles */
+.badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.25rem 0.625rem;
+    border-radius: 0.375rem;
+    font-size: 0.75rem;
+    font-weight: 600;
+    line-height: 1.4;
+}
+
+.badge-success {
+    background-color: var(--color-success-bg);
+    color: var(--color-success);
+}
+
+.badge-error {
+    background-color: var(--color-error-bg);
+    color: var(--color-error);
+}
+
+.badge-warning {
+    background-color: var(--color-warning-bg);
+    color: var(--color-warning);
+}
+
+.badge-info {
+    background-color: var(--color-info-bg);
+    color: var(--color-info);
+}
+
+.badge-accent {
+    background-color: var(--color-purple-bg);
+    color: var(--color-purple-text);
+}
+
+/* Section Headers with Subtle Gradients */
+.section-header {
+    background: linear-gradient(135deg, rgba(255, 255, 255, 0.9) 0%, rgba(249, 250, 251, 0.9) 100%);
+    border-bottom: 1px solid var(--color-border);
+    padding: 1rem 0;
+    margin-bottom: 1.5rem;
+}
+
+/* Enhanced Empty States */
+.empty-state {
+    text-align: center;
+    padding: 3rem 1rem;
+    color: var(--color-text-tertiary);
+}
+
+.empty-state-icon {
+    font-size: 3rem;
+    color: var(--color-text-tertiary);
+    opacity: 0.5;
+    margin-bottom: 1rem;
+}
+
+/* Enhanced Loading Skeleton */
+.skeleton {
+    background-color: #f0f0f0;
+    border-radius: 0.375rem;
+    animation: skeletonPulse 1.5s ease-in-out infinite;
+    /* Simplified from gradient animation to opacity pulse for better performance */
+}
+
+@keyframes skeletonPulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.6; }
+}
+
+/* Enhanced Modal Styling */
+.modal-backdrop {
+    background-color: rgba(0, 0, 0, 0.5);
+    /* Removed backdrop-filter: blur() for better performance on Raspberry Pi */
+    transition: opacity 0.2s ease;
+}
+
+.modal-content {
+    background: var(--color-surface);
+    border-radius: 0.75rem;
+    box-shadow: var(--shadow-lg);
+    animation: modalSlideIn 0.2s ease;
+    contain: layout style paint;
+    /* Added CSS containment for better performance isolation */
+}
+
+@keyframes modalSlideIn {
+    from {
+        opacity: 0;
+        transform: translateY(-10px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+/* Removed .divider and .divider-light - not used anywhere */
+
+/* Enhanced Spacing Utilities - Only unique classes not in main utility section */
+.mt-2 { margin-top: 0.5rem; }
+.mt-3 { margin-top: 0.75rem; }
+.mt-6 { margin-top: 1.5rem; }
+.mb-3 { margin-bottom: 0.75rem; }
+.p-3 { padding: 0.75rem; }
+.p-5 { padding: 1.25rem; }
+.px-3 { padding-left: 0.75rem; padding-right: 0.75rem; }
+.px-5 { padding-left: 1.25rem; padding-right: 1.25rem; }
+.py-2\.5 { padding-top: 0.625rem; padding-bottom: 0.625rem; }
+.py-4 { padding-top: 1rem; padding-bottom: 1rem; }
+/* Removed duplicates: mt-4, mb-2, mb-4, mb-6, mb-8, p-4, p-6, px-4, py-2, py-3 (already defined above) */
+
+/* Additional Utility Classes */
+.min-w-0 { min-width: 0; }
+.leading-relaxed { line-height: 1.625; }
+
+/* Enhanced Navigation Tab Styles */
+.nav-tab {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    padding: 0.5rem 0.25rem;
+    border-bottom-width: 2px;
+    border-bottom-style: solid;
+    border-bottom-color: transparent;
+    font-size: 0.875rem;
+    font-weight: 500;
+    line-height: 1.5;
+    color: #374151; /* text-gray-700 for better readability */
+    white-space: nowrap;
+    transition: color 0.15s ease, background-color 0.15s ease, border-color 0.15s ease, opacity 0.15s ease;
+    cursor: pointer;
+    background-color: transparent;
+    border-top: none;
+    border-left: none;
+    border-right: none;
+}
+
+.nav-tab i {
+    transition: color 0.15s ease;
+    margin-right: 0.5rem;
+}
+
+/* Inactive state - improved contrast */
+.nav-tab:not(.nav-tab-active) {
+    color: #374151; /* text-gray-700 */
+}
+
+.nav-tab:not(.nav-tab-active) i {
+    color: #374151; /* text-gray-700 */
+}
+
+/* Hover state - enhanced visibility */
+.nav-tab:not(.nav-tab-active):hover {
+    color: #111827; /* text-gray-900 */
+    background-color: #f3f4f6; /* bg-gray-100 */
+    border-bottom-color: #d1d5db; /* border-gray-300 */
+}
+
+.nav-tab:not(.nav-tab-active):hover i {
+    color: #111827; /* text-gray-900 */
+}
+
+/* Active state - prominent with gradient background */
+.nav-tab-active {
+    color: #1d4ed8; /* text-blue-700 */
+    font-weight: 600;
+    border-bottom-width: 3px;
+    border-bottom-color: #2563eb; /* border-blue-600 */
+    background: linear-gradient(135deg, rgba(37, 99, 235, 0.1) 0%, rgba(59, 130, 246, 0.05) 100%);
+    box-shadow: 0 2px 4px rgba(37, 99, 235, 0.1);
+}
+
+.nav-tab-active i {
+    color: #1d4ed8; /* text-blue-700 */
+}
+
+/* Responsive padding adjustments */
+@media (min-width: 1024px) {
+    .nav-tab {
+        padding-left: 0.5rem;
+        padding-right: 0.5rem;
+    }
+}
+
+@media (min-width: 1280px) {
+    .nav-tab {
+        padding-left: 0.75rem;
+        padding-right: 0.75rem;
+    }
+}

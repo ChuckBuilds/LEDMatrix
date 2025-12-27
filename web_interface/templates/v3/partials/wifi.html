@@ -1,0 +1,508 @@
+<div class="bg-white rounded-lg shadow p-6" x-data="wifiSetup()" x-init="init(); loadStatus()">
+    <!-- Captive Portal Banner (shown when AP mode is active) -->
+    <div x-show="status.ap_mode_active" 
+         class="mb-4 p-4 bg-blue-50 border border-blue-200 rounded-lg"
+         x-cloak>
+        <div class="flex items-start">
+            <div class="flex-shrink-0">
+                <i class="fas fa-info-circle text-blue-600 text-lg"></i>
+            </div>
+            <div class="ml-3 flex-1">
+                <h3 class="text-sm font-medium text-blue-800">Captive Portal Active</h3>
+                <p class="mt-1 text-sm text-blue-700">
+                    You're connected to the LEDMatrix-Setup network. Configure your WiFi connection below to connect to your home network.
+                </p>
+            </div>
+        </div>
+    </div>
+
+    <div class="border-b border-gray-200 pb-4 mb-6">
+        <h2 class="text-lg font-semibold text-gray-900">
+            <i class="fas fa-wifi mr-2"></i>WiFi Setup
+        </h2>
+        <p class="mt-1 text-sm text-gray-600">Configure WiFi connection for your Raspberry Pi. Access point mode will automatically activate when no WiFi connection is detected.</p>
+    </div>
+
+    <!-- Current WiFi Status -->
+    <div class="mb-6 p-4 bg-gray-50 rounded-lg">
+        <h3 class="text-sm font-medium text-gray-900 mb-2">Current Status</h3>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+                <span class="text-sm text-gray-600">Connection:</span>
+                <span x-text="status.connected ? 'Connected' : 'Not Connected'" 
+                      :class="status.connected ? 'text-green-600 font-medium' : 'text-red-600 font-medium'"
+                      class="ml-2"></span>
+            </div>
+            <div x-show="status.connected">
+                <span class="text-sm text-gray-600">Network:</span>
+                <span class="ml-2 font-medium" x-text="status.ssid || 'Unknown'"></span>
+            </div>
+            <div x-show="status.connected">
+                <span class="text-sm text-gray-600">IP Address:</span>
+                <span class="ml-2 font-medium" x-text="status.ip_address || 'Unknown'"></span>
+            </div>
+            <div x-show="status.connected">
+                <span class="text-sm text-gray-600">Signal:</span>
+                <span class="ml-2 font-medium" x-text="status.signal + '%'"></span>
+            </div>
+            <div>
+                <span class="text-sm text-gray-600">AP Mode:</span>
+                <span x-text="status.ap_mode_active ? 'Active' : 'Inactive'" 
+                      :class="status.ap_mode_active ? 'text-green-600 font-medium' : 'text-gray-600 font-medium'"
+                      class="ml-2"></span>
+            </div>
+        </div>
+        <div class="mt-3 flex gap-2">
+            <button @click="loadStatus()" 
+                    class="text-sm text-blue-600 hover:text-blue-800">
+                <i class="fas fa-sync-alt mr-1"></i>Refresh Status
+            </button>
+            <button x-show="status.connected" 
+                    @click="disconnectFromNetwork()"
+                    :disabled="disconnecting"
+                    class="text-sm text-red-600 hover:text-red-800 disabled:text-gray-400 disabled:cursor-not-allowed"
+                    x-cloak>
+                <i class="fas fa-unlink" :class="disconnecting ? 'fa-spin' : ''"></i>
+                <span class="ml-1" x-text="disconnecting ? 'Disconnecting...' : 'Disconnect'"></span>
+            </button>
+        </div>
+    </div>
+
+    <!-- WiFi Connection Form -->
+    <div class="mb-6">
+        <h3 class="text-sm font-medium text-gray-900 mb-4">Connect to WiFi Network</h3>
+        
+        <!-- Network Selection -->
+        <div class="form-group mb-4">
+            <label for="wifi-ssid" class="block text-sm font-medium text-gray-700 mb-2">
+                Step 1: Select Network
+            </label>
+            <div class="flex gap-2">
+                <select id="wifi-ssid" 
+                        x-model="selectedSSID"
+                        @change="manualSSID = ''"
+                        class="form-control flex-1">
+                    <option value="">-- Select a network --</option>
+                    <template x-for="(network, index) in networks" :key="index">
+                        <option :value="network.ssid" x-text="network.ssid + ' (' + network.signal + '% - ' + network.security + ')'"></option>
+                    </template>
+                </select>
+                <!-- Debug: Show network count -->
+                <div x-show="networks.length > 0" class="text-xs text-gray-500 self-center px-2" x-cloak>
+                    (<span x-text="networks.length"></span> networks)
+                </div>
+                <button @click="scanNetworks()" 
+                        :disabled="scanning"
+                        class="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed">
+                    <i class="fas fa-sync-alt" :class="scanning ? 'fa-spin' : ''"></i>
+                    <span class="ml-2">Scan</span>
+                </button>
+            </div>
+            <p class="mt-1 text-sm text-gray-600">Scan for available networks or manually enter SSID below.</p>
+            <!-- Show selected network -->
+            <div x-show="selectedSSID" class="mt-2 p-2 bg-blue-50 border border-blue-200 rounded text-sm" x-cloak>
+                <i class="fas fa-check-circle text-blue-600 mr-2"></i>
+                <span class="font-medium">Selected:</span> <span x-text="selectedSSID"></span>
+            </div>
+        </div>
+
+        <!-- Manual SSID Entry -->
+        <div class="form-group mb-4">
+            <label for="manual-ssid" class="block text-sm font-medium text-gray-700 mb-2">
+                Or Enter SSID Manually
+            </label>
+            <input type="text" 
+                   id="manual-ssid"
+                   x-model="manualSSID"
+                   @input="selectedSSID = ''; selectedSSID = $event.target.value"
+                   placeholder="Enter network name"
+                   class="form-control">
+        </div>
+
+        <!-- Password -->
+        <div class="form-group mb-4">
+            <label for="wifi-password" class="block text-sm font-medium text-gray-700 mb-2">
+                Step 2: Enter Password
+            </label>
+            <input type="password" 
+                   id="wifi-password"
+                   x-model="password"
+                   placeholder="Enter password (leave empty for open networks)"
+                   class="form-control">
+            <p class="mt-1 text-sm text-gray-600">
+                <i class="fas fa-info-circle mr-1"></i>
+                Enter the WiFi password. Leave empty if the network is open (no password required).
+            </p>
+        </div>
+
+        <!-- Connect Button -->
+        <div class="form-group">
+            <button @click="connectToNetwork()" 
+                    :disabled="connecting || (!selectedSSID && !manualSSID)"
+                    class="w-full md:w-auto px-6 py-2 bg-green-600 text-white rounded hover:bg-green-700 disabled:bg-gray-400 disabled:cursor-not-allowed">
+                <i class="fas fa-plug" :class="connecting ? 'fa-spin' : ''"></i>
+                <span class="ml-2" x-text="connecting ? 'Connecting...' : 'Step 3: Connect'"></span>
+            </button>
+        </div>
+    </div>
+
+    <!-- AP Mode Controls -->
+    <div class="border-t border-gray-200 pt-6">
+        <h3 class="text-sm font-medium text-gray-900 mb-4">Access Point Mode</h3>
+        <p class="text-sm text-gray-600 mb-4">
+            Access point mode allows you to connect to the Raspberry Pi even when it's not connected to WiFi.
+        </p>
+        
+        <!-- Auto-Enable Toggle -->
+        <div class="mb-4 p-4 bg-gray-50 rounded-lg border border-gray-200">
+            <div class="flex items-start justify-between gap-4">
+                <div class="flex-1">
+                    <label class="text-sm font-medium text-gray-900 block mb-1">Auto-Enable AP Mode</label>
+                    <p class="text-xs text-gray-600">
+                        When enabled, AP mode will automatically activate when both WiFi and Ethernet are disconnected.
+                        When disabled, AP mode must be manually enabled.
+                    </p>
+                </div>
+                <div class="flex-shrink-0">
+                    <button type="button"
+                            @click="toggleAutoEnable(!status.auto_enable_ap_mode)"
+                            :class="status.auto_enable_ap_mode 
+                                   ? 'bg-blue-600 hover:bg-blue-700' 
+                                   : 'bg-gray-300 hover:bg-gray-400'"
+                            class="relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2">
+                        <span :class="status.auto_enable_ap_mode ? 'translate-x-6' : 'translate-x-1'"
+                              class="inline-block h-4 w-4 transform rounded-full bg-white transition-transform"></span>
+                    </button>
+                </div>
+            </div>
+            <div class="mt-2 text-xs" :class="status.auto_enable_ap_mode ? 'text-green-600' : 'text-gray-500'">
+                <span x-text="status.auto_enable_ap_mode ? '✓ Auto-enable is ON' : '○ Auto-enable is OFF'"></span>
+            </div>
+        </div>
+        
+        <!-- Manual AP Mode Controls -->
+        <div class="flex gap-2">
+            <button @click="enableAPMode()" 
+                    :disabled="apOperating || status.ap_mode_active"
+                    class="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed">
+                <i class="fas fa-broadcast-tower" :class="apOperating ? 'fa-spin' : ''"></i>
+                <span class="ml-2">Enable AP Mode</span>
+            </button>
+            <button @click="disableAPMode()" 
+                    :disabled="apOperating || !status.ap_mode_active"
+                    class="px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700 disabled:bg-gray-400 disabled:cursor-not-allowed">
+                <i class="fas fa-stop" :class="apOperating ? 'fa-spin' : ''"></i>
+                <span class="ml-2">Disable AP Mode</span>
+            </button>
+        </div>
+    </div>
+
+    <!-- Messages -->
+    <div x-show="message" 
+         x-text="message"
+         :class="messageType === 'error' ? 'bg-red-50 border-red-200 text-red-800' : 'bg-green-50 border-green-200 text-green-800'"
+         class="mt-4 p-3 rounded border"
+         x-cloak></div>
+</div>
+
+<script>
+// Ensure wifiSetup is available globally for Alpine.js
+function wifiSetup() {
+    return {
+        status: {
+            connected: false,
+            ssid: null,
+            ip_address: null,
+            signal: 0,
+            ap_mode_active: false,
+            auto_enable_ap_mode: true  // Default: true (safe due to grace period)
+        },
+        networks: [],
+        selectedSSID: '',
+        manualSSID: '',
+        password: '',
+        scanning: false,
+        connecting: false,
+        disconnecting: false,
+        apOperating: false,
+        message: '',
+        messageType: 'success',
+
+        init() {
+            // Watch networks array and update select when it changes
+            this.$watch('networks', () => {
+                this.$nextTick(() => {
+                    this.updateSelectOptions();
+                });
+            });
+        },
+
+        updateSelectOptions() {
+            // Fallback method to manually update select if x-for doesn't work
+            const select = document.getElementById('wifi-ssid');
+            if (!select) return;
+            
+            // Clear existing options except the first one
+            while (select.options.length > 1) {
+                select.remove(1);
+            }
+            
+            // Add network options
+            this.networks.forEach(network => {
+                const option = document.createElement('option');
+                option.value = network.ssid;
+                option.textContent = `${network.ssid} (${network.signal}% - ${network.security})`;
+                select.appendChild(option);
+            });
+        },
+
+        async loadStatus() {
+            try {
+                const response = await fetch('/api/v3/wifi/status');
+                const data = await response.json();
+                if (data.status === 'success') {
+                    this.status = data.data;
+                } else {
+                    this.showMessage(data.message, 'error');
+                }
+            } catch (error) {
+                this.showMessage('Failed to load WiFi status: ' + error.message, 'error');
+            }
+        },
+
+        async scanNetworks() {
+            this.scanning = true;
+            this.message = '';
+            try {
+                const response = await fetch('/api/v3/wifi/scan');
+                const data = await response.json();
+                console.log('WiFi scan response:', data); // Debug log
+                if (data.status === 'success') {
+                    // Ensure data.data is an array
+                    const networksArray = Array.isArray(data.data) ? data.data : [];
+                    console.log('WiFi scan found networks:', networksArray.length); // Debug log
+                    
+                    // Set the networks array - Alpine.js will automatically update the select dropdown via x-for
+                    this.networks = networksArray;
+                    
+                    if (networksArray.length > 0) {
+                        this.showMessage(`Found ${networksArray.length} networks`, 'success');
+                    } else {
+                        this.showMessage('No networks found. Make sure WiFi is enabled and try again.', 'warning');
+                    }
+                } else {
+                    this.showMessage(data.message || 'Failed to scan networks', 'error');
+                }
+            } catch (error) {
+                console.error('WiFi scan error:', error); // Debug log
+                this.showMessage('Failed to scan networks: ' + error.message, 'error');
+            } finally {
+                this.scanning = false;
+            }
+        },
+
+        async connectToNetwork() {
+            const ssid = this.selectedSSID || this.manualSSID;
+            if (!ssid || ssid.trim() === '') {
+                this.showMessage('Please select or enter a network SSID', 'error');
+                return;
+            }
+
+            // Check if we're switching networks
+            const isSwitching = this.status.connected && 
+                               this.status.ssid && 
+                               this.status.ssid !== ssid.trim();
+            
+            if (isSwitching) {
+                this.showMessage(`Switching from ${this.status.ssid} to ${ssid.trim()}...`, 'info');
+            }
+
+            this.connecting = true;
+            this.message = '';
+            try {
+                const response = await fetch('/api/v3/wifi/connect', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        ssid: ssid.trim(),
+                        password: this.password || ''
+                    })
+                });
+                
+                // Check if response is ok before parsing JSON
+                if (!response.ok) {
+                    // Try to parse error message from response
+                    let errorMessage = `Server error: ${response.status} ${response.statusText}`;
+                    try {
+                        const errorData = await response.json();
+                        if (errorData.message) {
+                            errorMessage = errorData.message;
+                        }
+                    } catch (e) {
+                        // If we can't parse JSON, use the status text
+                    }
+                    this.showMessage(errorMessage, 'error');
+                    return;
+                }
+                
+                const data = await response.json();
+                if (data.status === 'success') {
+                    const successMsg = isSwitching 
+                        ? `Successfully switched to ${ssid.trim()}` 
+                        : data.message;
+                    this.showMessage(successMsg, 'success');
+                    // Clear form
+                    this.password = '';
+                    this.selectedSSID = '';
+                    this.manualSSID = '';
+                    // Reload status multiple times to catch connection updates
+                    setTimeout(() => this.loadStatus(), 2000);
+                    setTimeout(() => this.loadStatus(), 5000);
+                    setTimeout(() => this.loadStatus(), 10000);
+                } else {
+                    this.showMessage(data.message || 'Failed to connect to network', 'error');
+                }
+            } catch (error) {
+                console.error('WiFi connect error:', error);
+                this.showMessage('Failed to connect: ' + error.message, 'error');
+            } finally {
+                this.connecting = false;
+            }
+        },
+
+        async disconnectFromNetwork() {
+            if (!this.status.connected) {
+                this.showMessage('Not connected to any network', 'warning');
+                return;
+            }
+
+            this.disconnecting = true;
+            this.message = '';
+            try {
+                const response = await fetch('/api/v3/wifi/disconnect', {
+                    method: 'POST'
+                });
+                
+                // Check if response is ok before parsing JSON
+                if (!response.ok) {
+                    let errorMessage = `Server error: ${response.status} ${response.statusText}`;
+                    try {
+                        const errorData = await response.json();
+                        if (errorData.message) {
+                            errorMessage = errorData.message;
+                        }
+                    } catch (e) {
+                        // If we can't parse JSON, use the status text
+                    }
+                    this.showMessage(errorMessage, 'error');
+                    return;
+                }
+                
+                const data = await response.json();
+                if (data.status === 'success') {
+                    this.showMessage(data.message, 'success');
+                    // Reload status after a delay to show updated state
+                    setTimeout(() => this.loadStatus(), 2000);
+                } else {
+                    this.showMessage(data.message || 'Failed to disconnect from network', 'error');
+                }
+            } catch (error) {
+                console.error('WiFi disconnect error:', error);
+                this.showMessage('Failed to disconnect: ' + error.message, 'error');
+            } finally {
+                this.disconnecting = false;
+            }
+        },
+
+        async enableAPMode() {
+            this.apOperating = true;
+            this.message = '';
+            try {
+                const response = await fetch('/api/v3/wifi/ap/enable', {
+                    method: 'POST'
+                });
+                const data = await response.json();
+                if (data.status === 'success') {
+                    this.showMessage(data.message, 'success');
+                    setTimeout(() => this.loadStatus(), 1000);
+                } else {
+                    this.showMessage(data.message, 'error');
+                }
+            } catch (error) {
+                this.showMessage('Failed to enable AP mode: ' + error.message, 'error');
+            } finally {
+                this.apOperating = false;
+            }
+        },
+
+        async disableAPMode() {
+            this.apOperating = true;
+            this.message = '';
+            try {
+                const response = await fetch('/api/v3/wifi/ap/disable', {
+                    method: 'POST'
+                });
+                const data = await response.json();
+                if (data.status === 'success') {
+                    this.showMessage(data.message, 'success');
+                    setTimeout(() => this.loadStatus(), 1000);
+                } else {
+                    this.showMessage(data.message, 'error');
+                }
+            } catch (error) {
+                this.showMessage('Failed to disable AP mode: ' + error.message, 'error');
+            } finally {
+                this.apOperating = false;
+            }
+        },
+
+        async toggleAutoEnable(enabled) {
+            try {
+                const response = await fetch('/api/v3/wifi/ap/auto-enable', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        auto_enable_ap_mode: enabled
+                    })
+                });
+                const data = await response.json();
+                if (data.status === 'success') {
+                    this.status.auto_enable_ap_mode = enabled;
+                    this.showMessage(
+                        enabled 
+                            ? 'Auto-enable AP mode is now enabled' 
+                            : 'Auto-enable AP mode is now disabled',
+                        'success'
+                    );
+                } else {
+                    this.showMessage(data.message, 'error');
+                    // Revert toggle on error
+                    this.status.auto_enable_ap_mode = !enabled;
+                }
+            } catch (error) {
+                this.showMessage('Failed to update auto-enable setting: ' + error.message, 'error');
+                // Revert toggle on error
+                this.status.auto_enable_ap_mode = !enabled;
+            }
+        },
+
+        showMessage(msg, type = 'success') {
+            this.message = msg;
+            this.messageType = type;
+            if (type === 'success') {
+                setTimeout(() => this.message = '', 5000);
+            }
+        }
+    }
+};
+
+// Also make it available as a global function for Alpine.js
+if (typeof window !== 'undefined') {
+    window.wifiSetup = wifiSetup;
+}
+</script>
+

@@ -6,7 +6,7 @@ then falls back to pip with --break-system-packages
 
 import subprocess
 import sys
-import os
+import warnings
 from pathlib import Path
 
 def install_via_apt(package_name):
@@ -15,10 +15,7 @@ def install_via_apt(package_name):
         # Map pip package names to apt package names
         apt_package_map = {
             'flask': 'python3-flask',
-            'flask_socketio': 'python3-flask-socketio',
             'PIL': 'python3-pil',
-            'socketio': 'python3-socketio',
-            'eventlet': 'python3-eventlet',
             'freetype': 'python3-freetype',
             'psutil': 'python3-psutil',
             'werkzeug': 'python3-werkzeug',
@@ -65,11 +62,15 @@ def install_via_pip(package_name):
 
 def check_package_installed(package_name):
     """Check if a package is already installed."""
-    try:
-        __import__(package_name)
-        return True
-    except ImportError:
-        return False
+    # Suppress deprecation warnings when checking if packages are installed
+    # (we're just checking, not using them)
+    with warnings.catch_warnings():
+        warnings.filterwarnings('ignore', category=DeprecationWarning)
+        try:
+            __import__(package_name)
+            return True
+        except ImportError:
+            return False
 
 def main():
     """Main installation function."""
@@ -78,10 +79,7 @@ def main():
     # List of required packages
     required_packages = [
         'flask',
-        'flask_socketio', 
         'PIL',
-        'socketio',
-        'eventlet',
         'freetype',
         'psutil',
         'werkzeug',
@@ -109,33 +107,52 @@ def main():
     
     # Install packages that don't have apt equivalents
     special_packages = [
-        'timezonefinder==6.2.0',
-        'google-auth-oauthlib==1.0.0',
-        'google-auth-httplib2==0.1.0',
-        'google-api-python-client==2.86.0',
+        'timezonefinder>=6.5.0,<7.0.0',
+        'google-auth-oauthlib>=1.2.0,<2.0.0',
+        'google-auth-httplib2>=0.2.0,<1.0.0',
+        'google-api-python-client>=2.147.0,<3.0.0',
         'spotipy',
         'icalevents',
-        'python-engineio'
+        'python-socketio>=5.11.0,<6.0.0',
+        'python-engineio>=4.9.0,<5.0.0'
     ]
     
     for package in special_packages:
         if not install_via_pip(package):
             failed_packages.append(package)
     
-    # Install rgbmatrix module from local source
-    print("Installing rgbmatrix module...")
-    try:
-        rgbmatrix_path = Path(__file__).parent / 'rpi-rgb-led-matrix-master' / 'bindings' / 'python'
-        if rgbmatrix_path.exists():
-            subprocess.check_call([
-                sys.executable, '-m', 'pip', 'install', '--break-system-packages', '-e', str(rgbmatrix_path)
-            ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            print("rgbmatrix module installed successfully")
-        else:
-            print("Warning: rgbmatrix source not found")
-    except subprocess.CalledProcessError as e:
-        print(f"Failed to install rgbmatrix module: {e}")
-        failed_packages.append('rgbmatrix')
+    # Install rgbmatrix module from local source (optional - may already be installed in Step 6)
+    # Check if already installed first
+    if check_package_installed('rgbmatrix'):
+        print("rgbmatrix module already installed, skipping...")
+    else:
+        print("Installing rgbmatrix module from local source...")
+        try:
+            # Get project root (parent of scripts directory)
+            PROJECT_ROOT = Path(__file__).parent.parent
+            rgbmatrix_path = PROJECT_ROOT / 'rpi-rgb-led-matrix-master' / 'bindings' / 'python'
+            if rgbmatrix_path.exists():
+                # Check if the module has been built (look for setup.py)
+                setup_py = rgbmatrix_path / 'setup.py'
+                if setup_py.exists():
+                    # Try installing - use regular install, not editable mode
+                    # This is optional for web interface and should already be installed in Step 6
+                    subprocess.check_call([
+                        sys.executable, '-m', 'pip', 'install', '--break-system-packages', str(rgbmatrix_path)
+                    ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    print("rgbmatrix module installed successfully")
+                else:
+                    print("Warning: rgbmatrix setup.py not found, module may need to be built first")
+                    print("  This is normal if Step 6 hasn't completed yet.")
+            else:
+                print("Warning: rgbmatrix source not found (this is normal if Step 6 hasn't run yet)")
+        except subprocess.CalledProcessError as e:
+            # Don't fail the whole installation - rgbmatrix is optional for web interface
+            # and should be installed in Step 6 of first_time_install.sh
+            print(f"Warning: Failed to install rgbmatrix module: {e}")
+            print("  This is normal if rgbmatrix hasn't been built yet (Step 6).")
+            print("  The web interface will work without it.")
+            # Don't add to failed_packages since it's optional
     
     if failed_packages:
         print(f"\nFailed to install the following packages: {failed_packages}")

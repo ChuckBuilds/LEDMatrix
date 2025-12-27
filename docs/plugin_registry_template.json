@@ -1,0 +1,95 @@
+{
+  "version": "1.0.0",
+  "last_updated": "2025-01-09T12:00:00Z",
+  "description": "Official plugin registry for LEDMatrix",
+  "plugins": [
+    {
+      "id": "hello-world",
+      "name": "Hello World",
+      "description": "A simple example plugin that displays customizable text messages",
+      "author": "ChuckBuilds",
+      "category": "example",
+      "tags": ["example", "tutorial", "beginner"],
+      "repo": "https://github.com/ChuckBuilds/LEDMatrix",
+      "branch": "main",
+      "path": "plugins/hello-world",
+      "versions": [
+        {
+          "version": "1.0.0",
+          "ledmatrix_min_version": "2.0.0",
+          "released": "2025-01-09",
+          "download_url": "https://github.com/ChuckBuilds/LEDMatrix/archive/refs/heads/main.zip",
+          "changelog": "Initial release"
+        }
+      ],
+      "stars": 0,
+      "downloads": 0,
+      "last_updated": "2025-01-09",
+      "verified": true,
+      "documentation": "https://github.com/ChuckBuilds/LEDMatrix/blob/main/plugins/hello-world/README.md"
+    },
+    {
+      "id": "clock-simple",
+      "name": "Simple Clock",
+      "description": "A clean, simple clock display with date and time",
+      "author": "ChuckBuilds",
+      "category": "time",
+      "tags": ["clock", "time", "date"],
+      "repo": "https://github.com/ChuckBuilds/LEDMatrix",
+      "branch": "main",
+      "path": "plugins/clock-simple",
+      "versions": [
+        {
+          "version": "1.0.0",
+          "ledmatrix_min_version": "2.0.0",
+          "released": "2025-01-09",
+          "download_url": "https://github.com/ChuckBuilds/LEDMatrix/archive/refs/heads/main.zip",
+          "changelog": "Initial release"
+        }
+      ],
+      "stars": 0,
+      "downloads": 0,
+      "last_updated": "2025-01-09",
+      "verified": true,
+      "documentation": "https://github.com/ChuckBuilds/LEDMatrix/blob/main/plugins/clock-simple/README.md"
+    }
+  ],
+  "categories": [
+    {
+      "id": "time",
+      "name": "Time & Clocks",
+      "description": "Clock displays, timers, and time-related plugins"
+    },
+    {
+      "id": "sports",
+      "name": "Sports",
+      "description": "Scoreboards, schedules, and sports statistics"
+    },
+    {
+      "id": "weather",
+      "name": "Weather",
+      "description": "Weather forecasts and conditions"
+    },
+    {
+      "id": "finance",
+      "name": "Finance",
+      "description": "Stock tickers, crypto, and market data"
+    },
+    {
+      "id": "entertainment",
+      "name": "Entertainment",
+      "description": "Games, animations, and media displays"
+    },
+    {
+      "id": "example",
+      "name": "Examples & Tutorials",
+      "description": "Example plugins for learning"
+    },
+    {
+      "id": "custom",
+      "name": "Custom",
+      "description": "Unique and miscellaneous displays"
+    }
+  ]
+}
+

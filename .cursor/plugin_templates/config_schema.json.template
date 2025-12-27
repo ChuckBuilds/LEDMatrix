@@ -1,0 +1,44 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "title": "Plugin Configuration Schema",
+  "description": "Configuration schema for Plugin Name",
+  "properties": {
+    "enabled": {
+      "type": "boolean",
+      "default": true,
+      "description": "Enable or disable this plugin"
+    },
+    "display_duration": {
+      "type": "number",
+      "default": 15,
+      "minimum": 1,
+      "maximum": 300,
+      "description": "How long to display this plugin in seconds"
+    },
+    "live_priority": {
+      "type": "boolean",
+      "default": false,
+      "description": "Enable live priority takeover when plugin has live content"
+    },
+    "refresh_interval": {
+      "type": "integer",
+      "default": 60,
+      "minimum": 1,
+      "description": "How often to refresh data in seconds"
+    },
+    "api_key": {
+      "type": "string",
+      "description": "API key for external service (store in config_secrets.json)",
+      "default": ""
+    },
+    "custom_setting": {
+      "type": "string",
+      "description": "Example custom setting - replace with your plugin's settings",
+      "default": "default_value"
+    }
+  },
+  "required": ["enabled"],
+  "additionalProperties": false
+}
+

@@ -1,0 +1,626 @@
+<div class="bg-white rounded-lg shadow p-6">
+    <div class="border-b border-gray-200 pb-4 mb-6">
+        <h2 class="text-lg font-semibold text-gray-900">System Logs</h2>
+        <p class="mt-1 text-sm text-gray-600">View real-time logs from the LED matrix service for troubleshooting.</p>
+    </div>
+
+    <!-- Controls -->
+    <div class="flex flex-wrap items-center justify-between gap-4 mb-6">
+        <div class="flex items-center space-x-4">
+            <!-- Log Mode Toggle -->
+            <div class="flex items-center space-x-2">
+                <label class="flex items-center">
+                    <input type="checkbox" id="log-realtime-toggle" class="form-control h-4 w-4" checked>
+                    <span class="ml-2 text-sm font-medium">Real-time</span>
+                </label>
+                <span class="text-sm text-gray-600">|</span>
+                <button id="refresh-logs-btn" class="btn bg-gray-600 hover:bg-gray-700 text-white px-3 py-1 rounded text-sm">
+                    <i class="fas fa-sync-alt mr-1"></i>Refresh
+                </button>
+            </div>
+
+            <!-- Log Level Filter -->
+            <select id="log-level-filter" class="form-control text-sm">
+                <option value="">All Levels</option>
+                <option value="ERROR">Errors Only</option>
+                <option value="WARNING">Warnings & Errors</option>
+                <option value="INFO">Info & Above</option>
+            </select>
+
+            <!-- Search -->
+            <div class="relative">
+                <input type="text" id="log-search" placeholder="Search logs..." class="form-control text-sm pl-8 pr-4 py-1 w-48">
+                <i class="fas fa-search absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 text-xs"></i>
+            </div>
+        </div>
+
+        <div class="flex items-center space-x-2">
+            <!-- Auto-scroll toggle -->
+            <label class="flex items-center">
+                <input type="checkbox" id="log-autoscroll" class="form-control h-4 w-4" checked>
+                <span class="ml-2 text-sm">Auto-scroll</span>
+            </label>
+
+            <!-- Clear logs -->
+            <button id="clear-logs-btn" class="btn bg-red-600 hover:bg-red-700 text-white px-3 py-1 rounded text-sm">
+                <i class="fas fa-trash mr-1"></i>Clear
+            </button>
+
+            <!-- Download logs -->
+            <button id="download-logs-btn" class="btn bg-green-600 hover:bg-green-700 text-white px-3 py-1 rounded text-sm">
+                <i class="fas fa-download mr-1"></i>Download
+            </button>
+        </div>
+    </div>
+
+    <!-- Log Display -->
+    <div class="relative">
+        <div id="logs-container" class="bg-gray-900 text-gray-100 font-mono text-sm rounded-lg p-3 border border-gray-700 shadow-inner relative" style="height: 500px; min-height: 400px; max-height: 70vh;">
+            <div id="logs-loading" class="absolute inset-0 flex items-center justify-center text-gray-400 bg-gray-900">
+                <div class="text-center">
+                    <i class="fas fa-spinner fa-spin text-2xl mb-2"></i>
+                    <p>Loading logs...</p>
+                </div>
+            </div>
+            <div id="logs-display" class="hidden absolute inset-0 overflow-y-auto bg-gray-900">
+                <div class="logs-content p-0">
+                    <!-- Logs will be inserted here -->
+                </div>
+            </div>
+            <div id="logs-empty" class="hidden absolute inset-0 flex items-center justify-center text-gray-400 bg-gray-900">
+                <div class="text-center">
+                    <i class="fas fa-file-alt text-4xl mb-2"></i>
+                    <p>No logs available</p>
+                    <p class="text-sm mt-2">Logs will appear here when the service runs</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Log stats -->
+        <div id="log-stats" class="absolute top-2 right-2 bg-black bg-opacity-70 text-white text-xs px-3 py-1.5 rounded-md backdrop-blur-sm hidden">
+            <i class="fas fa-list-ul mr-1"></i>
+            <span id="log-count">0</span> entries
+        </div>
+    </div>
+
+    <!-- Connection Status -->
+    <div id="log-connection-status" class="mt-4 text-sm text-gray-600 flex items-center space-x-2">
+        <div class="w-2 h-2 bg-green-500 rounded-full"></div>
+        <span>Connected to log stream</span>
+    </div>
+</div>
+
+<script>
+// Global variables - use window properties to avoid redeclaration errors with HTMX reloads
+// Initialize only if not already defined
+if (typeof window._logsEventSource === 'undefined') {
+    window._logsEventSource = null;
+}
+if (typeof window._allLogs === 'undefined') {
+    window._allLogs = [];
+}
+if (typeof window._filteredLogs === 'undefined') {
+    window._filteredLogs = [];
+}
+if (typeof window._logContainer === 'undefined') {
+    window._logContainer = null;
+}
+if (typeof window._logsContent === 'undefined') {
+    window._logsContent = null;
+}
+if (typeof window._isRealtime === 'undefined') {
+    window._isRealtime = true;
+}
+if (typeof window._MAX_LOGS === 'undefined') {
+    window._MAX_LOGS = 500; // Maximum number of logs to keep in memory
+}
+
+// Use window properties directly to avoid redeclaration issues
+// Clean up any existing event source before reinitializing
+if (window._logsEventSource) {
+    window._logsEventSource.close();
+    window._logsEventSource = null;
+}
+
+// Reset arrays on reload
+window._allLogs = [];
+window._filteredLogs = [];
+
+// Initialize immediately (this script runs when the partial is loaded)
+(function() {
+    window._logContainer = document.getElementById('logs-container');
+    window._logsContent = document.querySelector('#logs-display .logs-content');
+
+    // Logs container initialized successfully
+
+    initializeLogs();
+
+    // Event listeners - remove old ones first to prevent duplicates
+    const realtimeToggle = document.getElementById('log-realtime-toggle');
+    const refreshBtn = document.getElementById('refresh-logs-btn');
+    const levelFilter = document.getElementById('log-level-filter');
+    const searchInput = document.getElementById('log-search');
+    const autoscrollToggle = document.getElementById('log-autoscroll');
+    const clearBtn = document.getElementById('clear-logs-btn');
+    const downloadBtn = document.getElementById('download-logs-btn');
+    
+    // Clone and replace to remove old listeners
+    if (realtimeToggle) {
+        const newToggle = realtimeToggle.cloneNode(true);
+        realtimeToggle.parentNode.replaceChild(newToggle, realtimeToggle);
+        newToggle.addEventListener('change', toggleRealtime);
+    }
+    if (refreshBtn) {
+        const newBtn = refreshBtn.cloneNode(true);
+        refreshBtn.parentNode.replaceChild(newBtn, refreshBtn);
+        newBtn.addEventListener('click', refreshLogs);
+    }
+    if (levelFilter) {
+        const newFilter = levelFilter.cloneNode(true);
+        levelFilter.parentNode.replaceChild(newFilter, levelFilter);
+        newFilter.addEventListener('change', filterLogs);
+    }
+    if (searchInput) {
+        const newInput = searchInput.cloneNode(true);
+        searchInput.parentNode.replaceChild(newInput, searchInput);
+        newInput.addEventListener('input', filterLogs);
+    }
+    if (autoscrollToggle) {
+        const newToggle = autoscrollToggle.cloneNode(true);
+        autoscrollToggle.parentNode.replaceChild(newToggle, autoscrollToggle);
+        newToggle.addEventListener('change', toggleAutoscroll);
+    }
+    if (clearBtn) {
+        const newBtn = clearBtn.cloneNode(true);
+        clearBtn.parentNode.replaceChild(newBtn, clearBtn);
+        newBtn.addEventListener('click', clearLogs);
+    }
+    if (downloadBtn) {
+        const newBtn = downloadBtn.cloneNode(true);
+        downloadBtn.parentNode.replaceChild(newBtn, downloadBtn);
+        newBtn.addEventListener('click', downloadLogs);
+    }
+
+    // Handle window resize for responsive height
+    window.addEventListener('resize', function() {
+        if (window._logContainer) {
+            // Force a reflow to update sizing
+            window._logContainer.style.display = 'none';
+            window._logContainer.offsetHeight; // Trigger reflow
+            window._logContainer.style.display = '';
+
+            // Re-evaluate scroll position after resize
+            setTimeout(function() {
+                const distanceFromBottom = window._logContainer.scrollHeight - window._logContainer.scrollTop - window._logContainer.clientHeight;
+                window._isUserNearBottom = distanceFromBottom <= window._scrollThreshold;
+            }, 100);
+        }
+    });
+})();
+
+function initializeLogs() {
+    // Load initial logs
+    loadLogs();
+
+    // Setup SSE for real-time logs
+    setupRealtimeLogs();
+
+    // Setup auto-scroll
+    setupAutoscroll();
+}
+
+function loadLogs() {
+    showLoading();
+
+    fetch('/api/v3/logs')
+        .then(response => response.json())
+        .then(data => {
+            hideLoading();
+
+            if (data.status === 'success' && data.data && data.data.logs) {
+                processLogs(data.data.logs);
+                updateLogStats();
+            } else {
+                showEmptyState();
+            }
+        })
+        .catch(error => {
+            hideLoading();
+            showError('Failed to load logs: ' + error.message);
+        });
+}
+
+function setupRealtimeLogs() {
+    if (window._logsEventSource) {
+        window._logsEventSource.close();
+    }
+
+    window._logsEventSource = new EventSource('/api/v3/stream/logs');
+
+    window._logsEventSource.onopen = function() {
+        document.getElementById('log-connection-status').innerHTML = `
+            <div class="w-2 h-2 bg-green-500 rounded-full"></div>
+            <span>Connected to log stream</span>
+        `;
+    };
+
+    window._logsEventSource.onmessage = function(event) {
+        const data = JSON.parse(event.data);
+
+        if (data.logs && window._isRealtime) {
+            processLogs(data.logs, true);
+            updateLogStats();
+
+            // Use the new smart scroll function
+            scrollToBottomIfNeeded();
+        }
+    };
+
+    window._logsEventSource.onerror = function() {
+        document.getElementById('log-connection-status').innerHTML = `
+            <div class="w-2 h-2 bg-red-500 rounded-full"></div>
+            <span>Disconnected from log stream</span>
+        `;
+
+        // Attempt to reconnect after 5 seconds
+        setTimeout(setupRealtimeLogs, 5000);
+    };
+}
+
+function processLogs(logsText, append = false) {
+    if (!append) {
+        window._allLogs = [];
+        if (window._logsContent) {
+            window._logsContent.innerHTML = '';
+        }
+
+        // Container cleared for new logs
+    }
+
+    // Parse journalctl output
+    const lines = logsText.split('\n').filter(line => line.trim());
+
+    lines.forEach(line => {
+        // Skip empty lines
+        if (!line.trim()) return;
+
+        // Try to parse journalctl format: "MMM DD HH:MM:SS hostname service[pid]: message"
+        // Example: "Oct 13 14:23:45 raspberrypi ledmatrix[1234]: INFO: Starting display"
+        
+        let timestamp = '';
+        let level = 'INFO';
+        let message = line;
+        
+        // Extract timestamp (first part before hostname)
+        const timestampMatch = line.match(/^([A-Z][a-z]{2}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2})/);
+        if (timestampMatch) {
+            timestamp = timestampMatch[1];
+            
+            // Find the message part (after service name and pid)
+            const messageMatch = line.match(/:\s*(.+)$/);
+            if (messageMatch) {
+                message = messageMatch[1];
+                
+                // Detect log level from message
+                if (message.match(/\b(ERROR|CRITICAL|FATAL)\b/i)) {
+                    level = 'ERROR';
+                } else if (message.match(/\b(WARNING|WARN)\b/i)) {
+                    level = 'WARNING';
+                } else if (message.match(/\bDEBUG\b/i)) {
+                    level = 'DEBUG';
+                } else if (message.match(/\bINFO\b/i)) {
+                    level = 'INFO';
+                }
+                
+                // Clean up level prefix from message if it exists
+                message = message.replace(/^(ERROR|WARNING|WARN|INFO|DEBUG):\s*/i, '');
+            }
+        } else {
+            // If no timestamp, use current time
+            timestamp = new Date().toLocaleString('en-US', {
+                month: 'short',
+                day: '2-digit',
+                hour: '2-digit',
+                minute: '2-digit',
+                second: '2-digit',
+                hour12: false
+            });
+        }
+
+        const logEntry = {
+            timestamp: timestamp,
+            level: level,
+            message: message,
+            raw: line,
+            id: Date.now() + Math.random()
+        };
+        
+        // Don't add duplicate entries when appending
+        if (!append || !window._allLogs.find(log => log.raw === line)) {
+            window._allLogs.push(logEntry);
+        }
+    });
+
+    // Trim logs if we exceed the maximum
+    if (window._allLogs.length > window._MAX_LOGS) {
+        window._allLogs = window._allLogs.slice(-window._MAX_LOGS);
+    }
+
+    filterLogs();
+}
+
+function renderLogs() {
+    if (window._filteredLogs.length === 0) {
+        showEmptyState();
+        return;
+    }
+
+    showLogs();
+
+    if (window._logsContent) {
+        window._logsContent.innerHTML = '';
+    }
+
+    window._filteredLogs.forEach(log => {
+        const logElement = document.createElement('div');
+        logElement.className = `log-entry py-1 px-2 hover:bg-gray-800 rounded transition-colors duration-150 ${getLogLevelClass(log.level)}`;
+        logElement.innerHTML = `
+            <div class="flex items-start gap-3 text-xs font-mono">
+                <span class="log-timestamp text-gray-500 flex-shrink-0 w-32">${escapeHtml(log.timestamp)}</span>
+                <span class="log-level flex-shrink-0 px-2 py-0.5 rounded text-xs font-semibold ${getLogLevelBadgeClass(log.level)}">${log.level}</span>
+                <span class="log-message flex-1 ${getLogLevelTextClass(log.level)} break-words">${escapeHtml(log.message)}</span>
+            </div>
+        `;
+        if (window._logsContent) {
+            window._logsContent.appendChild(logElement);
+        }
+    });
+}
+
+function getLogLevelClass(level) {
+    // Background color for the entire log entry row
+    const classes = {
+        'ERROR': 'bg-red-900 bg-opacity-10',
+        'WARNING': 'bg-yellow-900 bg-opacity-10',
+        'INFO': '',
+        'DEBUG': 'bg-gray-800 bg-opacity-30'
+    };
+    return classes[level] || '';
+}
+
+function getLogLevelBadgeClass(level) {
+    const classes = {
+        'ERROR': 'bg-red-600 text-white',
+        'WARNING': 'bg-yellow-600 text-white',
+        'INFO': 'bg-blue-600 text-white',
+        'DEBUG': 'bg-gray-600 text-white'
+    };
+    return classes[level] || 'bg-gray-600 text-white';
+}
+
+function getLogLevelTextClass(level) {
+    const classes = {
+        'ERROR': 'text-red-300',
+        'WARNING': 'text-yellow-300',
+        'INFO': 'text-gray-200',
+        'DEBUG': 'text-gray-400'
+    };
+    return classes[level] || 'text-gray-300';
+}
+
+function filterLogs() {
+    const levelFilterEl = document.getElementById('log-level-filter');
+    const searchEl = document.getElementById('log-search');
+    if (!levelFilterEl || !searchEl) return;
+    
+    const levelFilter = levelFilterEl.value;
+    const searchTerm = searchEl.value.toLowerCase();
+
+    window._filteredLogs = window._allLogs.filter(log => {
+        // Level filter
+        if (levelFilter) {
+            const levels = {
+                'ERROR': ['ERROR'],
+                'WARNING': ['ERROR', 'WARNING'],
+                'INFO': ['ERROR', 'WARNING', 'INFO']
+            };
+
+            if (!levels[levelFilter].includes(log.level)) {
+                return false;
+            }
+        }
+
+        // Search filter
+        if (searchTerm && !log.message.toLowerCase().includes(searchTerm)) {
+            return false;
+        }
+
+        return true;
+    });
+
+    renderLogs();
+    updateLogStats();
+}
+
+function toggleRealtime() {
+    const toggleEl = document.getElementById('log-realtime-toggle');
+    if (!toggleEl) return;
+    
+    window._isRealtime = toggleEl.checked;
+
+    if (window._isRealtime) {
+        setupRealtimeLogs();
+    } else if (window._logsEventSource) {
+        window._logsEventSource.close();
+        window._logsEventSource = null;
+    }
+}
+
+function refreshLogs() {
+    loadLogs();
+    if (typeof showNotification !== 'undefined') {
+        showNotification('Logs refreshed', 'success');
+    }
+}
+
+function clearLogs() {
+    window._allLogs = [];
+    window._filteredLogs = [];
+    if (window._logsContent) {
+        window._logsContent.innerHTML = '';
+    }
+    showEmptyState();
+    updateLogStats();
+    if (typeof showNotification !== 'undefined') {
+        showNotification('Logs cleared', 'info');
+    }
+}
+
+function downloadLogs() {
+    if (window._filteredLogs.length === 0) {
+        if (typeof showNotification !== 'undefined') {
+            showNotification('No logs to download', 'warning');
+        }
+        return;
+    }
+
+    const logText = window._filteredLogs.map(log => log.raw).join('\n');
+    const blob = new Blob([logText], { type: 'text/plain' });
+    const url = URL.createObjectURL(blob);
+
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `ledmatrix-logs-${new Date().toISOString().slice(0, 19)}.txt`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+
+    if (typeof showNotification !== 'undefined') {
+        showNotification('Logs downloaded', 'success');
+    }
+}
+
+// Track if user is near bottom for smart auto-scroll
+if (typeof window._isUserNearBottom === 'undefined') {
+    window._isUserNearBottom = true;
+}
+if (typeof window._scrollThreshold === 'undefined') {
+    window._scrollThreshold = 100; // pixels from bottom to consider "near bottom"
+}
+
+function setupAutoscroll() {
+    if (!window._logsContent) return;
+    
+    const observer = new MutationObserver(function() {
+        // Use requestAnimationFrame for better timing
+        requestAnimationFrame(scrollToBottomIfNeeded);
+    });
+    observer.observe(window._logsContent, { childList: true });
+
+    // Also listen for manual scroll events to detect when user is not at bottom
+    if (window._logContainer) {
+        window._logContainer.addEventListener('scroll', function() {
+            const distanceFromBottom = window._logContainer.scrollHeight - window._logContainer.scrollTop - window._logContainer.clientHeight;
+            window._isUserNearBottom = distanceFromBottom <= window._scrollThreshold;
+        });
+    }
+}
+
+function scrollToBottomIfNeeded() {
+    const autoscrollEl = document.getElementById('log-autoscroll');
+    if (autoscrollEl && autoscrollEl.checked && window._logContainer && window._isUserNearBottom) {
+        // Use requestAnimationFrame for smooth scrolling
+        requestAnimationFrame(function() {
+            // Remember current scroll position
+            const previousScrollHeight = window._logContainer.scrollHeight;
+
+            // Scroll to bottom
+            window._logContainer.scrollTop = window._logContainer.scrollHeight;
+
+            // Ensure we're actually at the bottom after a brief delay
+            setTimeout(function() {
+                if (window._logContainer.scrollTop + window._logContainer.clientHeight >= window._logContainer.scrollHeight - 10) {
+                    window._isUserNearBottom = true;
+                }
+            }, 50);
+        });
+    }
+}
+
+function scrollToBottom() {
+    // Legacy function for backward compatibility
+    if (window._logContainer) {
+        window._logContainer.scrollTop = window._logContainer.scrollHeight;
+        window._isUserNearBottom = true;
+    }
+}
+
+function toggleAutoscroll() {
+    const autoscrollEl = document.getElementById('log-autoscroll');
+    if (!autoscrollEl || !autoscrollEl.checked) {
+        // Don't auto-scroll if unchecked or element doesn't exist
+        window._isUserNearBottom = false;
+        return;
+    }
+
+    // Scroll to bottom when re-enabled and user was near bottom
+    if (window._isUserNearBottom) {
+        scrollToBottom();
+    }
+}
+
+function updateLogStats() {
+    const stats = document.getElementById('log-stats');
+    const count = document.getElementById('log-count');
+
+    if (stats && count) {
+        count.textContent = window._filteredLogs.length;
+        stats.classList.remove('hidden');
+    }
+}
+
+function showLoading() {
+    document.getElementById('logs-loading').classList.remove('hidden');
+    document.getElementById('logs-display').classList.add('hidden');
+    document.getElementById('logs-empty').classList.add('hidden');
+}
+
+function showLogs() {
+    document.getElementById('logs-loading').classList.add('hidden');
+    document.getElementById('logs-display').classList.remove('hidden');
+    document.getElementById('logs-empty').classList.add('hidden');
+}
+
+function hideLoading() {
+    document.getElementById('logs-loading').classList.add('hidden');
+}
+
+function showEmptyState() {
+    document.getElementById('logs-loading').classList.add('hidden');
+    document.getElementById('logs-display').classList.add('hidden');
+    document.getElementById('logs-empty').classList.remove('hidden');
+    document.getElementById('log-stats').classList.add('hidden');
+}
+
+function showError(message) {
+    if (window._logsContent) {
+        window._logsContent.innerHTML = `<div class="text-red-400 p-4">${escapeHtml(message)}</div>`;
+        window._logsContent.classList.remove('hidden');
+    }
+}
+
+// Utility function to escape HTML
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+// Cleanup on page unload
+window.addEventListener('beforeunload', function() {
+    if (window._logsEventSource) {
+        window._logsEventSource.close();
+    }
+});
+</script>

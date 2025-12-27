@@ -1,0 +1,307 @@
+<div class="bg-white rounded-lg shadow p-6">
+    <div class="border-b border-gray-200 pb-4 mb-6">
+        <h2 class="text-lg font-semibold text-gray-900">System Overview</h2>
+        <p class="mt-1 text-sm text-gray-600">Monitor system status and manage your LED matrix display.</p>
+    </div>
+
+    <!-- System Stats Cards -->
+    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 xl:grid-cols-4 2xl:grid-cols-4 gap-6 mb-8">
+        <div class="bg-gray-50 rounded-lg p-4">
+            <div class="flex items-center">
+                <div class="flex-shrink-0">
+                    <i class="fas fa-microchip text-blue-600 text-xl"></i>
+                </div>
+                <div class="ml-3 w-0 flex-1">
+                    <dl>
+                        <dt class="text-sm font-medium text-gray-500 truncate">CPU Usage</dt>
+                        <dd class="text-lg font-medium text-gray-900" id="cpu-usage">--%</dd>
+                    </dl>
+                </div>
+            </div>
+        </div>
+
+        <div class="bg-gray-50 rounded-lg p-4">
+            <div class="flex items-center">
+                <div class="flex-shrink-0">
+                    <i class="fas fa-memory text-green-600 text-xl"></i>
+                </div>
+                <div class="ml-3 w-0 flex-1">
+                    <dl>
+                        <dt class="text-sm font-medium text-gray-500 truncate">Memory Usage</dt>
+                        <dd class="text-lg font-medium text-gray-900" id="memory-usage">--%</dd>
+                    </dl>
+                </div>
+            </div>
+        </div>
+
+        <div class="bg-gray-50 rounded-lg p-4">
+            <div class="flex items-center">
+                <div class="flex-shrink-0">
+                    <i class="fas fa-thermometer-half text-red-600 text-xl"></i>
+                </div>
+                <div class="ml-3 w-0 flex-1">
+                    <dl>
+                        <dt class="text-sm font-medium text-gray-500 truncate">CPU Temperature</dt>
+                        <dd class="text-lg font-medium text-gray-900" id="cpu-temp">--°C</dd>
+                    </dl>
+                </div>
+            </div>
+        </div>
+
+        <div class="bg-gray-50 rounded-lg p-4">
+            <div class="flex items-center">
+                <div class="flex-shrink-0">
+                    <i class="fas fa-desktop text-purple-600 text-xl"></i>
+                </div>
+                <div class="ml-3 w-0 flex-1">
+                    <dl>
+                        <dt class="text-sm font-medium text-gray-500 truncate">Display Status</dt>
+                        <dd class="text-lg font-medium text-gray-900" id="display-status">Unknown</dd>
+                    </dl>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Version Info -->
+    <div class="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-6">
+        <div class="flex items-center justify-between">
+            <div class="flex items-center">
+                <i class="fas fa-code-branch text-blue-600 text-xl mr-3"></i>
+                <div>
+                    <dt class="text-sm font-medium text-gray-600">LEDMatrix Version</dt>
+                    <dd class="text-lg font-semibold text-gray-900" id="ledmatrix-version">Loading...</dd>
+                </div>
+            </div>
+            <button onclick="checkForUpdates()" 
+                    class="inline-flex items-center px-3 py-2 border border-blue-300 text-sm font-medium rounded-md text-blue-700 bg-white hover:bg-blue-50">
+                <i class="fas fa-sync-alt mr-2"></i>
+                Check Updates
+            </button>
+        </div>
+    </div>
+
+    <!-- Quick Actions -->
+    <div class="border-b border-gray-200 pb-4 mb-6">
+        <h3 class="text-md font-medium text-gray-900 mb-4">Quick Actions</h3>
+        <div class="flex flex-wrap gap-3" hx-ext="json-enc">
+            <button hx-post="/api/v3/system/action"
+                    hx-vals='{"action": "start_display"}'
+                    hx-swap="none"
+                    hx-on:htmx:after-request="if (typeof showNotification !== 'undefined' && event.detail.xhr && event.detail.xhr.responseJSON) { showNotification(event.detail.xhr.responseJSON.message || 'Display started', event.detail.xhr.responseJSON.status || 'success'); }"
+                    class="inline-flex items-center px-4 py-2 border border-transparent text-base font-semibold rounded-md text-white bg-green-600 hover:bg-green-700">
+                <i class="fas fa-play mr-2"></i>
+                Start Display
+            </button>
+
+            <button hx-post="/api/v3/system/action"
+                    hx-vals='{"action": "stop_display"}'
+                    hx-swap="none"
+                    hx-on:htmx:after-request="if (typeof showNotification !== 'undefined' && event.detail.xhr && event.detail.xhr.responseJSON) { showNotification(event.detail.xhr.responseJSON.message || 'Display stopped', event.detail.xhr.responseJSON.status || 'success'); }"
+                    class="inline-flex items-center px-4 py-2 border border-transparent text-base font-semibold rounded-md text-white bg-red-600 hover:bg-red-700">
+                <i class="fas fa-stop mr-2"></i>
+                Stop Display
+            </button>
+
+            <button hx-post="/api/v3/system/action"
+                    hx-vals='{"action": "git_pull"}'
+                    hx-confirm="This will stash any local changes and update the code. Continue?"
+                    hx-swap="none"
+                    hx-on:htmx:after-request="if (typeof showNotification !== 'undefined' && event.detail.xhr && event.detail.xhr.responseJSON) { showNotification(event.detail.xhr.responseJSON.message || 'Code update completed', event.detail.xhr.responseJSON.status || 'info'); }"
+                    class="inline-flex items-center px-4 py-2 border border-gray-300 text-base font-semibold rounded-md text-gray-900 bg-white hover:bg-gray-50">
+                <i class="fas fa-download mr-2"></i>
+                Update Code
+            </button>
+
+            <button hx-post="/api/v3/system/action"
+                    hx-vals='{"action": "reboot_system"}'
+                    hx-confirm="Are you sure you want to reboot the system?"
+                    hx-swap="none"
+                    hx-on:htmx:after-request="if (typeof showNotification !== 'undefined' && event.detail.xhr && event.detail.xhr.responseJSON) { showNotification(event.detail.xhr.responseJSON.message || 'System rebooting...', event.detail.xhr.responseJSON.status || 'info'); }"
+                    class="inline-flex items-center px-4 py-2 border border-transparent text-base font-semibold rounded-md text-white bg-yellow-600 hover:bg-yellow-700">
+                <i class="fas fa-power-off mr-2"></i>
+                Reboot System
+            </button>
+
+            <button hx-post="/api/v3/system/action"
+                    hx-vals='{"action": "restart_display_service"}'
+                    hx-swap="none"
+                    hx-on:htmx:after-request="if (typeof showNotification !== 'undefined' && event.detail.xhr && event.detail.xhr.responseJSON) { showNotification(event.detail.xhr.responseJSON.message || 'Display service restarted', event.detail.xhr.responseJSON.status || 'success'); }"
+                    class="inline-flex items-center px-4 py-2 border border-gray-300 text-base font-semibold rounded-md text-gray-900 bg-white hover:bg-gray-50">
+                <i class="fas fa-redo mr-2"></i>
+                Restart Display Service
+            </button>
+
+            <button hx-post="/api/v3/system/action"
+                    hx-vals='{"action": "restart_web_service"}'
+                    hx-swap="none"
+                    hx-on:htmx:after-request="if (typeof showNotification !== 'undefined' && event.detail.xhr && event.detail.xhr.responseJSON) { showNotification(event.detail.xhr.responseJSON.message || 'Web service restarted', event.detail.xhr.responseJSON.status || 'success'); }"
+                    class="inline-flex items-center px-4 py-2 border border-gray-300 text-base font-semibold rounded-md text-gray-900 bg-white hover:bg-gray-50">
+                <i class="fas fa-redo mr-2"></i>
+                Restart Web Service
+            </button>
+        </div>
+    </div>
+
+    <!-- Display Preview -->
+    <div>
+        <h3 class="text-md font-medium text-gray-900 mb-4">
+            <i class="fas fa-desktop"></i> Live Display Preview
+        </h3>
+        <div class="bg-gray-900 rounded-lg p-6 border border-gray-700" style="position: relative;">
+            <div id="previewStage" class="preview-stage" style="display:none; position:relative; display:inline-block;">
+                <div id="previewMeta" style="position:absolute; top:-28px; left:0; color:#ddd; font-size:12px; opacity:0.85;"></div>
+                <img id="displayImage" style="image-rendering: pixelated; display: block;" alt="LED Matrix Display">
+                <canvas id="ledCanvas" style="position:absolute; top:0; left:0; pointer-events:none; display:none; z-index: 10;"></canvas>
+                <canvas id="gridOverlay" style="position:absolute; top:0; left:0; pointer-events:none; z-index: 20;"></canvas>
+            </div>
+            <div id="displayPlaceholder" class="text-center text-gray-400 py-8">
+                <i class="fas fa-spinner fa-spin text-4xl mb-3"></i>
+                <p>Connecting to display...</p>
+            </div>
+        </div>
+        
+        <!-- Display Controls -->
+        <div class="mt-4 flex flex-wrap items-center gap-3">
+            <button onclick="takeScreenshot()" class="inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-900 bg-white hover:bg-gray-50">
+                <i class="fas fa-camera mr-2"></i> Screenshot
+            </button>
+            
+            <label class="inline-flex items-center gap-2 bg-gray-100 px-3 py-2 rounded-md text-sm">
+                <span>Scale:</span>
+                <input type="range" id="scaleRange" min="2" max="16" value="8" class="w-20">
+                <span id="scaleValue" class="font-medium">8x</span>
+            </label>
+            
+            <label class="inline-flex items-center gap-2 bg-gray-100 px-3 py-2 rounded-md text-sm cursor-pointer">
+                <input type="checkbox" id="toggleGrid" class="rounded">
+                <span>Show pixel grid</span>
+            </label>
+            
+            <label class="inline-flex items-center gap-2 bg-gray-100 px-3 py-2 rounded-md text-sm cursor-pointer">
+                <input type="checkbox" id="toggleLedDots" checked class="rounded">
+                <span>LED dot mode</span>
+            </label>
+            
+            <label class="inline-flex items-center gap-2 bg-gray-100 px-3 py-2 rounded-md text-sm">
+                <span>Dot fill:</span>
+                <input type="range" id="dotFillRange" min="40" max="95" value="75" class="w-16">
+                <span id="dotFillValue" class="font-medium">75%</span>
+            </label>
+        </div>
+    </div>
+</div>
+
+<!-- Stats are updated via the global updateSystemStats function in base.html -->
+
+<script>
+// Load LEDMatrix version
+(function() {
+    fetch('/api/v3/system/version')
+        .then(response => response.json())
+        .then(data => {
+            const versionEl = document.getElementById('ledmatrix-version');
+            if (versionEl && data.status === 'success') {
+                versionEl.textContent = data.data.version;
+            }
+        })
+        .catch(error => {
+            const versionEl = document.getElementById('ledmatrix-version');
+            if (versionEl) versionEl.textContent = 'Unknown';
+        });
+})();
+
+// Check for updates function
+window.checkForUpdates = function() {
+    const btn = event.target.closest('button');
+    if (btn) {
+        const originalContent = btn.innerHTML;
+        btn.disabled = true;
+        btn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>Checking...';
+        
+        fetch('/api/v3/system/action', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'git_pull' })
+        })
+        .then(response => response.json())
+        .then(data => {
+            btn.innerHTML = originalContent;
+            btn.disabled = false;
+            
+            if (data.status === 'success') {
+                showNotification('Update successful: ' + (data.stdout || 'Code updated'), 'success');
+                // Reload version after a short delay
+                setTimeout(() => {
+                    fetch('/api/v3/system/version')
+                        .then(response => response.json())
+                        .then(data => {
+                            const versionEl = document.getElementById('ledmatrix-version');
+                            if (versionEl && data.status === 'success') {
+                                versionEl.textContent = data.data.version;
+                            }
+                        });
+                }, 1000);
+            } else {
+                showNotification('Update failed: ' + (data.stderr || data.message || 'Unknown error'), 'error');
+            }
+        })
+        .catch(error => {
+            btn.innerHTML = originalContent;
+            btn.disabled = false;
+            showNotification('Error checking for updates: ' + error.message, 'error');
+        });
+    }
+};
+
+// Setup display preview controls (runs when this partial loads)
+(function() {
+    const scaleRange = document.getElementById('scaleRange');
+    const scaleValue = document.getElementById('scaleValue');
+    const dotFillRange = document.getElementById('dotFillRange');
+    const dotFillValue = document.getElementById('dotFillValue');
+    const toggleGrid = document.getElementById('toggleGrid');
+    const toggleLedDots = document.getElementById('toggleLedDots');
+    
+    if (scaleRange && scaleValue) {
+        scaleRange.addEventListener('input', function() {
+            scaleValue.textContent = this.value + 'x';
+            // Re-render the preview with new scale
+            const img = document.getElementById('displayImage');
+            if (img && img.src) {
+                const data = {
+                    image: img.src.replace('data:image/png;base64,', ''),
+                    width: img.naturalWidth,
+                    height: img.naturalHeight
+                };
+                updateDisplayPreview(data);
+            }
+        });
+    }
+    
+    if (dotFillRange && dotFillValue) {
+        dotFillRange.addEventListener('input', function() {
+            dotFillValue.textContent = this.value + '%';
+            renderLedDots();
+        });
+    }
+    
+    if (toggleGrid) {
+        toggleGrid.addEventListener('change', function() {
+            const canvas = document.getElementById('gridOverlay');
+            const img = document.getElementById('displayImage');
+            if (canvas && img && img.src) {
+                const scale = parseInt(scaleRange?.value || '8');
+                drawGrid(canvas, img.naturalWidth, img.naturalHeight, scale);
+            }
+        });
+    }
+    
+    if (toggleLedDots) {
+        toggleLedDots.addEventListener('change', function() {
+            renderLedDots();
+        });
+    }
+})();
+</script>
+

@@ -1,0 +1,279 @@
+<div class="bg-white rounded-lg shadow p-6">
+    <div class="border-b border-gray-200 pb-4 mb-6">
+        <h2 class="text-lg font-semibold text-gray-900">Display Settings</h2>
+        <p class="mt-1 text-sm text-gray-600">Configure LED matrix hardware settings and display options.</p>
+    </div>
+
+    <form hx-post="/api/v3/config/main"
+          hx-ext="json-enc"
+          hx-headers='{"Content-Type": "application/json"}'
+          hx-swap="none"
+          hx-on:htmx:after-request="showNotification(event.detail.xhr.responseJSON?.message || 'Display settings saved', event.detail.xhr.responseJSON?.status || 'success')"
+          class="space-y-6"
+          novalidate
+          onsubmit="fixInvalidNumberInputs(this); return true;">
+
+        <!-- Hardware Settings -->
+        <div class="bg-gray-50 rounded-lg p-4">
+            <h3 class="text-md font-medium text-gray-900 mb-4">Hardware Configuration</h3>
+
+            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 xl:grid-cols-4 2xl:grid-cols-4 gap-4 mb-4">
+                <div class="form-group">
+                    <label for="rows" class="block text-sm font-medium text-gray-700">Rows</label>
+                    <input type="number"
+                           id="rows"
+                           name="rows"
+                           value="{{ main_config.display.hardware.rows or 32 }}"
+                           min="1"
+                           max="64"
+                           class="form-control">
+                    <p class="mt-1 text-sm text-gray-600">Number of LED rows</p>
+                </div>
+
+                <div class="form-group">
+                    <label for="cols" class="block text-sm font-medium text-gray-700">Columns</label>
+                    <input type="number"
+                           id="cols"
+                           name="cols"
+                           value="{{ main_config.display.hardware.cols or 64 }}"
+                           min="1"
+                           max="128"
+                           class="form-control">
+                    <p class="mt-1 text-sm text-gray-600">Number of LED columns</p>
+                </div>
+
+                <div class="form-group">
+                    <label for="chain_length" class="block text-sm font-medium text-gray-700">Chain Length</label>
+                    <input type="number"
+                           id="chain_length"
+                           name="chain_length"
+                           value="{{ main_config.display.hardware.chain_length or 2 }}"
+                           min="1"
+                           max="8"
+                           class="form-control">
+                    <p class="mt-1 text-sm text-gray-600">Number of LED panels chained together</p>
+                </div>
+
+                <div class="form-group">
+                    <label for="parallel" class="block text-sm font-medium text-gray-700">Parallel</label>
+                    <input type="number"
+                           id="parallel"
+                           name="parallel"
+                           value="{{ main_config.display.hardware.parallel or 1 }}"
+                           min="1"
+                           max="4"
+                           class="form-control">
+                    <p class="mt-1 text-sm text-gray-600">Number of parallel chains</p>
+                </div>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div class="form-group">
+                    <label for="brightness" class="block text-sm font-medium text-gray-700">Brightness</label>
+                    <div class="flex items-center space-x-2">
+                        <input type="range"
+                               id="brightness"
+                               name="brightness"
+                               value="{{ main_config.display.hardware.brightness or 95 }}"
+                               min="1"
+                               max="100"
+                               class="flex-1">
+                        <span id="brightness-value" class="text-sm font-medium w-12">{{ main_config.display.hardware.brightness or 95 }}</span>
+                    </div>
+                    <p class="mt-1 text-sm text-gray-600">LED brightness: <span id="brightness-display">{{ main_config.display.hardware.brightness or 95 }}</span>%</p>
+                </div>
+
+                <div class="form-group">
+                    <label for="hardware_mapping" class="block text-sm font-medium text-gray-700">Hardware Mapping</label>
+                    <select id="hardware_mapping" name="hardware_mapping" class="form-control">
+                        <option value="adafruit-hat-pwm" {% if main_config.display.hardware.hardware_mapping == "adafruit-hat-pwm" %}selected{% endif %}>Adafruit HAT PWM</option>
+                        <option value="adafruit-hat" {% if main_config.display.hardware.hardware_mapping == "adafruit-hat" %}selected{% endif %}>Adafruit HAT</option>
+                        <option value="regular" {% if main_config.display.hardware.hardware_mapping == "regular" %}selected{% endif %}>Regular</option>
+                        <option value="regular-pi1" {% if main_config.display.hardware.hardware_mapping == "regular-pi1" %}selected{% endif %}>Regular Pi1</option>
+                    </select>
+                </div>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div class="form-group">
+                    <label for="gpio_slowdown" class="block text-sm font-medium text-gray-700">GPIO Slowdown</label>
+                    <input type="number"
+                           id="gpio_slowdown"
+                           name="gpio_slowdown"
+                           value="{{ main_config.display.runtime.gpio_slowdown or 3 }}"
+                           min="0"
+                           max="5"
+                           class="form-control">
+                    <p class="mt-1 text-sm text-gray-600">GPIO slowdown factor (0-5)</p>
+                </div>
+
+                <div class="form-group">
+                    <label for="scan_mode" class="block text-sm font-medium text-gray-700">Scan Mode</label>
+                    <input type="number"
+                           id="scan_mode"
+                           name="scan_mode"
+                           value="{{ main_config.display.hardware.scan_mode or 0 }}"
+                           min="0"
+                           max="1"
+                           class="form-control">
+                    <p class="mt-1 text-sm text-gray-600">Scan mode for LED matrix (0-1)</p>
+                </div>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div class="form-group">
+                    <label for="pwm_bits" class="block text-sm font-medium text-gray-700">PWM Bits</label>
+                    <input type="number"
+                           id="pwm_bits"
+                           name="pwm_bits"
+                           value="{{ main_config.display.hardware.pwm_bits or 9 }}"
+                           min="1"
+                           max="11"
+                           class="form-control">
+                    <p class="mt-1 text-sm text-gray-600">PWM bits for brightness control (1-11)</p>
+                </div>
+
+                <div class="form-group">
+                    <label for="pwm_dither_bits" class="block text-sm font-medium text-gray-700">PWM Dither Bits</label>
+                    <input type="number"
+                           id="pwm_dither_bits"
+                           name="pwm_dither_bits"
+                           value="{{ main_config.display.hardware.pwm_dither_bits or 1 }}"
+                           min="0"
+                           max="4"
+                           class="form-control">
+                    <p class="mt-1 text-sm text-gray-600">PWM dither bits (0-4)</p>
+                </div>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div class="form-group">
+                    <label for="pwm_lsb_nanoseconds" class="block text-sm font-medium text-gray-700">PWM LSB Nanoseconds</label>
+                    <input type="number"
+                           id="pwm_lsb_nanoseconds"
+                           name="pwm_lsb_nanoseconds"
+                           value="{{ main_config.display.hardware.pwm_lsb_nanoseconds or 130 }}"
+                           min="50"
+                           max="500"
+                           class="form-control">
+                    <p class="mt-1 text-sm text-gray-600">PWM LSB nanoseconds (50-500)</p>
+                </div>
+
+                <div class="form-group">
+                    <label for="limit_refresh_rate_hz" class="block text-sm font-medium text-gray-700">Limit Refresh Rate (Hz)</label>
+                    <input type="number"
+                           id="limit_refresh_rate_hz"
+                           name="limit_refresh_rate_hz"
+                           value="{{ main_config.display.hardware.limit_refresh_rate_hz or 120 }}"
+                           min="1"
+                           max="1000"
+                           class="form-control">
+                    <p class="mt-1 text-sm text-gray-600">Limit refresh rate in Hz (1-1000)</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Display Options -->
+        <div class="bg-gray-50 rounded-lg p-4">
+            <h3 class="text-md font-medium text-gray-900 mb-4">Display Options</h3>
+
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div class="form-group">
+                    <label class="flex items-center">
+                        <input type="checkbox"
+                               name="disable_hardware_pulsing"
+                               {% if main_config.display.hardware.disable_hardware_pulsing %}checked{% endif %}
+                               class="form-control h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded">
+                        <span class="ml-2 text-sm font-medium text-gray-900">Disable Hardware Pulsing</span>
+                    </label>
+                </div>
+
+                <div class="form-group">
+                    <label class="flex items-center">
+                        <input type="checkbox"
+                               name="inverse_colors"
+                               {% if main_config.display.hardware.inverse_colors %}checked{% endif %}
+                               class="form-control h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded">
+                        <span class="ml-2 text-sm font-medium text-gray-900">Inverse Colors</span>
+                    </label>
+                </div>
+
+                <div class="form-group">
+                    <label class="flex items-center">
+                        <input type="checkbox"
+                               name="show_refresh_rate"
+                               {% if main_config.display.hardware.show_refresh_rate %}checked{% endif %}
+                               class="form-control h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded">
+                        <span class="ml-2 text-sm font-medium text-gray-900">Show Refresh Rate</span>
+                    </label>
+                </div>
+
+                <div class="form-group">
+                    <label class="flex items-center">
+                        <input type="checkbox"
+                               name="use_short_date_format"
+                               {% if main_config.display.use_short_date_format %}checked{% endif %}
+                               class="form-control h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded">
+                        <span class="ml-2 text-sm font-medium text-gray-900">Use Short Date Format</span>
+                    </label>
+                </div>
+            </div>
+
+            <!-- Dynamic Duration Settings -->
+            <div class="mt-6 pt-4 border-t border-gray-300">
+                <h4 class="text-sm font-medium text-gray-900 mb-3">Dynamic Duration</h4>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div class="form-group">
+                        <label for="max_dynamic_duration_seconds" class="block text-sm font-medium text-gray-700">Max Dynamic Duration (seconds)</label>
+                        <input type="number"
+                               id="max_dynamic_duration_seconds"
+                               name="max_dynamic_duration_seconds"
+                               value="{{ main_config.display.get('dynamic_duration', {}).get('max_duration_seconds', 180) }}"
+                               min="30"
+                               max="1800"
+                               class="form-control">
+                        <p class="mt-1 text-sm text-gray-600">Maximum time plugins can extend display duration (30-1800 seconds)</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Submit Button -->
+        <div class="flex justify-end">
+            <button type="submit"
+                    class="btn bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md">
+                <i class="fas fa-save mr-2"></i>
+                Save Display Settings
+            </button>
+        </div>
+    </form>
+</div>
+
+<script>
+// Update brightness display
+document.getElementById('brightness').addEventListener('input', function() {
+    document.getElementById('brightness-value').textContent = this.value;
+    document.getElementById('brightness-display').textContent = this.value;
+});
+
+// Fix invalid number inputs function (if not already defined globally)
+if (typeof window.fixInvalidNumberInputs !== 'function') {
+    window.fixInvalidNumberInputs = function(form) {
+        if (!form) return;
+        const allInputs = form.querySelectorAll('input[type="number"]');
+        allInputs.forEach(input => {
+            const min = parseFloat(input.getAttribute('min'));
+            const max = parseFloat(input.getAttribute('max'));
+            const value = parseFloat(input.value);
+            
+            if (!isNaN(value)) {
+                if (!isNaN(min) && value < min) {
+                    input.value = min;
+                } else if (!isNaN(max) && value > max) {
+                    input.value = max;
+                }
+            }
+        });
+    };
+}
+</script>
