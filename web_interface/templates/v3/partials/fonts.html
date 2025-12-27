@@ -497,8 +497,9 @@ function updateAvailableFontsDisplay() {
         return;
     }
 
-    const lines = Object.entries(fontCatalog).map(([name, path]) => {
-        const fullPath = path.startsWith('/') ? path : `assets/fonts/${path}`;
+    const lines = Object.entries(fontCatalog).map(([name, fontInfo]) => {
+        const fontPath = typeof fontInfo === 'string' ? fontInfo : (fontInfo?.path || '');
+        const fullPath = fontPath.startsWith('/') ? fontPath : `assets/fonts/${fontPath}`;
         return `${name}: ${fullPath}`;
     });
     container.textContent = lines.join('\n');

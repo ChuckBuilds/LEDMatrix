@@ -632,7 +632,12 @@ def save_main_config():
         import traceback
         error_msg = f"Error saving config: {str(e)}\n{traceback.format_exc()}"
         logging.error(error_msg)
-        return jsonify({'status': 'error', 'message': str(e)}), 500
+        return error_response(
+            ErrorCode.CONFIG_SAVE_FAILED,
+            f"Error saving configuration: {str(e)}",
+            details=traceback.format_exc(),
+            status_code=500
+        )
 
 @api_v3.route('/config/secrets', methods=['GET'])
 def get_secrets_config():
@@ -675,14 +680,24 @@ def save_raw_main_config():
         
         # Extract more specific error message if it's a ConfigError
         if isinstance(e, ConfigError):
-            # ConfigError has a message attribute and may have context
             error_message = str(e)
             if hasattr(e, 'config_path') and e.config_path:
                 error_message = f"{error_message} (config_path: {e.config_path})"
+            return error_response(
+                ErrorCode.CONFIG_SAVE_FAILED,
+                error_message,
+                details=traceback.format_exc(),
+                context={'config_path': e.config_path} if hasattr(e, 'config_path') and e.config_path else None,
+                status_code=500
+            )
         else:
             error_message = str(e) if str(e) else "An unexpected error occurred while saving the configuration"
-        
-        return jsonify({'status': 'error', 'message': error_message}), 500
+            return error_response(
+                ErrorCode.UNKNOWN_ERROR,
+                error_message,
+                details=traceback.format_exc(),
+                status_code=500
+            )
 
 @api_v3.route('/config/raw/secrets', methods=['POST'])
 def save_raw_secrets_config():
