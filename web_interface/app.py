@@ -544,11 +544,15 @@ if csrf:
     csrf.exempt(stream_display)
     csrf.exempt(stream_logs)
     
-    # Exempt API config save endpoints from CSRF (called via fetch from JavaScript)
-    from web_interface.blueprints.api_v3 import save_raw_main_config, save_raw_secrets_config, save_main_config
+    # Exempt API endpoints from CSRF (called via fetch/HTMX from JavaScript)
+    from web_interface.blueprints.api_v3 import (
+        save_raw_main_config, save_raw_secrets_config, save_main_config,
+        execute_system_action
+    )
     csrf.exempt(save_raw_main_config)
     csrf.exempt(save_raw_secrets_config)
     csrf.exempt(save_main_config)
+    csrf.exempt(execute_system_action)
 
 if limiter:
     limiter.limit("20 per minute")(stream_stats)
