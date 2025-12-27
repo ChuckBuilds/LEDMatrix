@@ -39,13 +39,22 @@ try:
         f.csrf_exempt = True
         return f
     
-    # Mark SSE streams as exempt
+    # Mark SSE streams and API endpoints as exempt
     @app.before_request
     def check_csrf_exempt():
         """Check if route should be exempt from CSRF."""
-        if request.endpoint and 'stream' in request.endpoint:
+        if request.endpoint:
             # SSE streams are read-only, exempt from CSRF
-            pass
+            if 'stream' in request.endpoint:
+                pass
+            # All API v3 endpoints are programmatic API calls (HTMX/fetch) and don't include CSRF tokens
+            elif request.endpoint.startswith('api_v3.'):
+                # Exempt this endpoint from CSRF validation
+                from flask_wtf.csrf import exempt
+                # Get the view function for this endpoint
+                view_func = app.view_functions.get(request.endpoint)
+                if view_func:
+                    view_func.csrf_exempt = True
 except ImportError:
     # flask-wtf not installed, CSRF protection disabled
     csrf = None
@@ -156,6 +165,11 @@ api_v3.cache_manager = CacheManager()
 
 app.register_blueprint(pages_v3, url_prefix='/v3')
 app.register_blueprint(api_v3, url_prefix='/api/v3')
+
+# Exempt entire API v3 blueprint from CSRF (all endpoints are programmatic API calls)
+# This is safer and cleaner than exempting individual endpoints
+if csrf:
+    csrf.exempt(api_v3)
 
 # Helper function to check if AP mode is active
 def is_ap_mode_active():
@@ -543,16 +557,7 @@ if csrf:
     csrf.exempt(stream_stats)
     csrf.exempt(stream_display)
     csrf.exempt(stream_logs)
-    
-    # Exempt API endpoints from CSRF (called via fetch/HTMX from JavaScript)
-    from web_interface.blueprints.api_v3 import (
-        save_raw_main_config, save_raw_secrets_config, save_main_config,
-        execute_system_action
-    )
-    csrf.exempt(save_raw_main_config)
-    csrf.exempt(save_raw_secrets_config)
-    csrf.exempt(save_main_config)
-    csrf.exempt(execute_system_action)
+    # Note: api_v3 blueprint is exempted above after registration
 
 if limiter:
     limiter.limit("20 per minute")(stream_stats)
