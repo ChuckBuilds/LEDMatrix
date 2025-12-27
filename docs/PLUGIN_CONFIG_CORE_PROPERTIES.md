@@ -128,3 +128,4 @@ If core properties aren't being applied:
 3. Check plugin initialization to ensure defaults are applied
 
 
+
