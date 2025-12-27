@@ -190,27 +190,35 @@
 </div>
 
 <script>
-// Global variables - use window object to prevent redeclaration errors on HTMX reload
-// Only declare if not already declared (prevents errors on HTMX content swap)
+// Prevent script from running multiple times when HTMX reloads content
 (function() {
-    if (typeof window._fontsScriptLoaded === 'undefined') {
-        window._fontsScriptLoaded = true;
-        window.fontCatalog = window.fontCatalog || {};
-        window.fontTokens = window.fontTokens || {};
-        window.fontOverrides = window.fontOverrides || {};
-        window.selectedFontFiles = window.selectedFontFiles || [];
+    // If script has already loaded, just re-initialize the tab without redeclaring variables/functions
+    if (typeof window._fontsScriptLoaded !== 'undefined') {
+        // Script already loaded, just trigger initialization
+        setTimeout(function() {
+            if (typeof window.initializeFontsTab === 'function') {
+                window.initializeFontsTab();
+            }
+        }, 50);
+        return;
     }
-})();
-
-// Create references that can be reassigned
-var fontCatalog = window.fontCatalog;
-var fontTokens = window.fontTokens;
-var fontOverrides = window.fontOverrides;
-var selectedFontFiles = window.selectedFontFiles;
-
-// Initialize when DOM is ready or after HTMX load
-// Prevent multiple initializations
-let fontsTabInitialized = false;
+    
+    // Mark script as loaded
+    window._fontsScriptLoaded = true;
+    
+    // Initialize global variables on window object
+    window.fontCatalog = window.fontCatalog || {};
+    window.fontTokens = window.fontTokens || {};
+    window.fontOverrides = window.fontOverrides || {};
+    window.selectedFontFiles = window.selectedFontFiles || [];
+    window.fontsTabInitialized = false;
+    
+    // Create references that can be reassigned
+    var fontCatalog = window.fontCatalog;
+    var fontTokens = window.fontTokens;
+    var fontOverrides = window.fontOverrides;
+    var selectedFontFiles = window.selectedFontFiles;
+    var fontsTabInitialized = window.fontsTabInitialized;
 
 function initializeFontsTab() {
     // Check if already initialized
@@ -232,6 +240,7 @@ function initializeFontsTab() {
     }
     
     // Mark as initialized to prevent duplicate initialization
+    window.fontsTabInitialized = true;
     fontsTabInitialized = true;
     
     // Ensure showNotification function is available
@@ -326,6 +335,9 @@ function initializeFontsTab() {
 
     console.log('Fonts tab initialized successfully');
 }
+
+// Expose initializeFontsTab to window for re-initialization after HTMX reload
+window.initializeFontsTab = initializeFontsTab;
 
 // Initialize after HTMX content swap for dynamic loading
 // Note: We don't use DOMContentLoaded here because this partial is loaded via HTMX
@@ -817,6 +829,8 @@ function updateUploadProgress(percent) {
     document.getElementById('upload-percent').textContent = Math.round(percent) + '%';
     document.getElementById('upload-progress-bar').style.width = percent + '%';
 }
+
+})(); // End of script load guard - prevents redeclaration on HTMX reload
 </script>
 
 <style>
