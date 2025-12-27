@@ -190,11 +190,23 @@
 </div>
 
 <script>
-// Global variables
-let fontCatalog = {};
-let fontTokens = {};
-let fontOverrides = {};
-let selectedFontFiles = [];
+// Global variables - use window object to prevent redeclaration errors on HTMX reload
+// Only declare if not already declared (prevents errors on HTMX content swap)
+(function() {
+    if (typeof window._fontsScriptLoaded === 'undefined') {
+        window._fontsScriptLoaded = true;
+        window.fontCatalog = window.fontCatalog || {};
+        window.fontTokens = window.fontTokens || {};
+        window.fontOverrides = window.fontOverrides || {};
+        window.selectedFontFiles = window.selectedFontFiles || [];
+    }
+})();
+
+// Create references that can be reassigned
+var fontCatalog = window.fontCatalog;
+var fontTokens = window.fontTokens;
+var fontOverrides = window.fontOverrides;
+var selectedFontFiles = window.selectedFontFiles;
 
 // Initialize when DOM is ready or after HTMX load
 // Prevent multiple initializations
@@ -411,9 +423,15 @@ async function loadFontData() {
             throw new Error('Invalid response format from font API');
         }
 
-        fontCatalog = catalogData.data.catalog || {};
-        fontTokens = tokensData.data.tokens || {};
-        fontOverrides = overridesData.data.overrides || {};
+        // Update both window properties and local references
+        window.fontCatalog = catalogData.data.catalog || {};
+        window.fontTokens = tokensData.data.tokens || {};
+        window.fontOverrides = overridesData.data.overrides || {};
+        
+        // Update local variable references
+        fontCatalog = window.fontCatalog;
+        fontTokens = window.fontTokens;
+        fontOverrides = window.fontOverrides;
 
         // Update displays
         updateDetectedFontsDisplay();
