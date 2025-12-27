@@ -197,97 +197,162 @@ let fontOverrides = {};
 let selectedFontFiles = [];
 
 // Initialize when DOM is ready or after HTMX load
+// Prevent multiple initializations
+let fontsTabInitialized = false;
+
 function initializeFontsTab() {
-    if (document.getElementById('detected-fonts') && document.getElementById('available-fonts')) {
-        // Ensure showNotification function is available
-        if (typeof window.showNotification !== 'function') {
-            window.showNotification = function(message, type = 'info') {
-                // Create notification element like in base template
-                const notifications = document.getElementById('notifications');
-                if (notifications) {
-                    const notification = document.createElement('div');
-
-                    const colors = {
-                        success: 'bg-green-500',
-                        error: 'bg-red-500',
-                        warning: 'bg-yellow-500',
-                        info: 'bg-blue-500'
-                    };
-
-                    notification.className = `px-4 py-3 rounded-md text-white text-sm ${colors[type] || colors.info}`;
-                    notification.textContent = message;
-
-                    notifications.appendChild(notification);
-
-                    setTimeout(() => {
-                        notification.remove();
-                    }, 5000);
-                } else {
-                    console.log(`${type}: ${message}`);
-                }
-            };
-        }
-
-        initializeFontManagement();
-
-        // Event listeners
-        document.getElementById('upload-dropzone').addEventListener('click', () => {
-            document.getElementById('font-file-input').click();
+    // Check if already initialized
+    if (fontsTabInitialized) {
+        console.log('Fonts tab already initialized, skipping...');
+        return;
+    }
+    
+    const detectedEl = document.getElementById('detected-fonts');
+    const availableEl = document.getElementById('available-fonts');
+    
+    if (!detectedEl || !availableEl) {
+        console.log('Fonts tab elements not found, retrying...', {
+            detectedFonts: !!detectedEl,
+            availableFonts: !!availableEl
         });
+        setTimeout(initializeFontsTab, 100);
+        return;
+    }
+    
+    // Mark as initialized to prevent duplicate initialization
+    fontsTabInitialized = true;
+    
+    // Ensure showNotification function is available
+    if (typeof window.showNotification !== 'function') {
+        window.showNotification = function(message, type = 'info') {
+            // Try to use the base template's notification system first
+            if (typeof window.app !== 'undefined' && window.app.showNotification) {
+                window.app.showNotification(message, type);
+                return;
+            }
+            
+            // Create notification element like in base template
+            const notifications = document.getElementById('notifications');
+            if (notifications) {
+                const notification = document.createElement('div');
 
-        document.getElementById('font-file-input').addEventListener('change', handleFileSelection);
-        document.getElementById('upload-fonts-btn').addEventListener('click', uploadSelectedFonts);
-        document.getElementById('cancel-upload-btn').addEventListener('click', cancelFontUpload);
-        document.getElementById('add-override-btn').addEventListener('click', addFontOverride);
-        document.getElementById('update-preview-btn').addEventListener('click', updateFontPreview);
+                const colors = {
+                    success: 'bg-green-500',
+                    error: 'bg-red-500',
+                    warning: 'bg-yellow-500',
+                    info: 'bg-blue-500'
+                };
 
-        // Drag and drop for upload area
-        const dropzone = document.getElementById('upload-dropzone');
-        dropzone.addEventListener('dragover', (e) => {
+                notification.className = `px-4 py-3 rounded-md text-white text-sm ${colors[type] || colors.info}`;
+                notification.textContent = message;
+
+                notifications.appendChild(notification);
+
+                setTimeout(() => {
+                    notification.remove();
+                }, 5000);
+            } else {
+                console.log(`${type}: ${message}`);
+            }
+        };
+    }
+
+    console.log('Initializing font management...');
+    initializeFontManagement();
+
+    // Event listeners (use event delegation or ensure elements exist)
+    const uploadDropzone = document.getElementById('upload-dropzone');
+    const fontFileInput = document.getElementById('font-file-input');
+    const uploadFontsBtn = document.getElementById('upload-fonts-btn');
+    const cancelUploadBtn = document.getElementById('cancel-upload-btn');
+    const addOverrideBtn = document.getElementById('add-override-btn');
+    const updatePreviewBtn = document.getElementById('update-preview-btn');
+    
+    if (uploadDropzone && fontFileInput) {
+        uploadDropzone.addEventListener('click', () => {
+            fontFileInput.click();
+        });
+    }
+    
+    if (fontFileInput) {
+        fontFileInput.addEventListener('change', handleFileSelection);
+    }
+    
+    if (uploadFontsBtn) {
+        uploadFontsBtn.addEventListener('click', uploadSelectedFonts);
+    }
+    
+    if (cancelUploadBtn) {
+        cancelUploadBtn.addEventListener('click', cancelFontUpload);
+    }
+    
+    if (addOverrideBtn) {
+        addOverrideBtn.addEventListener('click', addFontOverride);
+    }
+    
+    if (updatePreviewBtn) {
+        updatePreviewBtn.addEventListener('click', updateFontPreview);
+    }
+
+    // Drag and drop for upload area
+    if (uploadDropzone) {
+        uploadDropzone.addEventListener('dragover', (e) => {
             e.preventDefault();
-            dropzone.classList.add('drag-over');
+            uploadDropzone.classList.add('drag-over');
         });
 
-        dropzone.addEventListener('dragleave', () => {
-            dropzone.classList.remove('drag-over');
+        uploadDropzone.addEventListener('dragleave', () => {
+            uploadDropzone.classList.remove('drag-over');
         });
 
-        dropzone.addEventListener('drop', (e) => {
+        uploadDropzone.addEventListener('drop', (e) => {
             e.preventDefault();
-            dropzone.classList.remove('drag-over');
+            uploadDropzone.classList.remove('drag-over');
             handleFileSelection({ target: { files: e.dataTransfer.files } });
         });
-
-        console.log('Fonts tab initialized successfully');
-    } else {
-        console.log('Fonts tab elements not found, retrying...');
-        setTimeout(initializeFontsTab, 100);
     }
+
+    console.log('Fonts tab initialized successfully');
 }
 
-// Initialize when DOM is ready or after HTMX load
-document.addEventListener('DOMContentLoaded', initializeFontsTab);
-
-// Also initialize after HTMX content swap for dynamic loading
-document.body.addEventListener('htmx:afterSettle', function(event) {
-    if (event.target.id === 'fonts-content') {
-        console.log('HTMX loaded fonts content, initializing...', event.target.id);
-        initializeFontsTab();
-    }
-});
-
-// Also listen for when fonts tab becomes visible (Alpine.js)
-document.addEventListener('alpine:init', () => {
-    document.addEventListener('alpine:initialized', () => {
-        // Check if we're already on the fonts tab
-        setTimeout(() => {
-            if (window.app && window.app.activeTab === 'fonts') {
-                console.log('Already on fonts tab, initializing...');
+// Initialize after HTMX content swap for dynamic loading
+// Note: We don't use DOMContentLoaded here because this partial is loaded via HTMX
+// after the main page's DOMContentLoaded has already fired
+(function() {
+    // Function to initialize when fonts content is loaded
+    function tryInitializeFontsTab() {
+        const fontsContent = document.getElementById('fonts-content');
+        const detectedFonts = document.getElementById('detected-fonts');
+        
+        if (fontsContent && detectedFonts) {
+            console.log('Fonts content detected, initializing...');
+            setTimeout(() => {
                 initializeFontsTab();
+            }, 50);
+        }
+    }
+    
+    // Set up HTMX event listener for when content is swapped
+    if (typeof document.body !== 'undefined') {
+        document.body.addEventListener('htmx:afterSettle', function(event) {
+            // Check if the event target is the fonts-content container or contains it
+            const target = event.target;
+            if (target && (target.id === 'fonts-content' || target.querySelector && target.querySelector('#fonts-content'))) {
+                console.log('HTMX loaded fonts content, initializing...', target.id);
+                tryInitializeFontsTab();
             }
-        }, 100);
-    });
-});
+        });
+    }
+    
+    // Also check if content is already loaded (e.g., if script runs after HTMX swap)
+    // This handles the case where the script executes after HTMX has already swapped
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', tryInitializeFontsTab);
+    } else {
+        // DOM already loaded, check immediately
+        tryInitializeFontsTab();
+    }
+})();
 
 async function initializeFontManagement() {
     try {
@@ -306,13 +371,15 @@ async function loadFontData() {
     const detectedContainer = document.getElementById('detected-fonts');
     const availableContainer = document.getElementById('available-fonts');
 
+    // Ensure containers exist before proceeding
+    if (!detectedContainer || !availableContainer) {
+        console.error('Font containers not found, cannot load font data');
+        return;
+    }
+
     // Show loading states
-    if (detectedContainer) {
-        detectedContainer.innerHTML = '<div class="text-blue-400">Loading font data...</div>';
-    }
-    if (availableContainer) {
-        availableContainer.innerHTML = '<div class="text-blue-400">Loading font data...</div>';
-    }
+    detectedContainer.innerHTML = '<div class="text-blue-400">Loading font data...</div>';
+    availableContainer.innerHTML = '<div class="text-blue-400">Loading font data...</div>';
 
     try {
         // Use absolute URLs to ensure they work when loaded via HTMX
@@ -325,32 +392,53 @@ async function loadFontData() {
 
         // Check if all responses are successful
         if (!catalogRes.ok || !tokensRes.ok || !overridesRes.ok) {
-            throw new Error(`HTTP ${catalogRes.status}/${tokensRes.status}/${overridesRes.status}`);
+            const statusText = `HTTP ${catalogRes.status}/${tokensRes.status}/${overridesRes.status}`;
+            console.error('Font API error:', statusText);
+            throw new Error(`Failed to load font data: ${statusText}`);
         }
 
         const catalogData = await catalogRes.json();
         const tokensData = await tokensRes.json();
         const overridesData = await overridesRes.json();
 
-        fontCatalog = catalogData.data?.catalog || {};
-        fontTokens = tokensData.data?.tokens || {};
-        fontOverrides = overridesData.data?.overrides || {};
+        // Validate response structure
+        if (!catalogData || !catalogData.data || !tokensData || !tokensData.data || !overridesData || !overridesData.data) {
+            console.error('Invalid font API response structure:', {
+                catalog: !!catalogData?.data,
+                tokens: !!tokensData?.data,
+                overrides: !!overridesData?.data
+            });
+            throw new Error('Invalid response format from font API');
+        }
+
+        fontCatalog = catalogData.data.catalog || {};
+        fontTokens = tokensData.data.tokens || {};
+        fontOverrides = overridesData.data.overrides || {};
 
         // Update displays
         updateDetectedFontsDisplay();
         updateAvailableFontsDisplay();
+        
+        console.log('Font data loaded successfully', {
+            catalogSize: Object.keys(fontCatalog).length,
+            tokensSize: Object.keys(fontTokens).length,
+            overridesSize: Object.keys(fontOverrides).length
+        });
     } catch (error) {
         console.error('Error loading font data:', error);
 
         // Show error states
-        if (detectedContainer) {
-            detectedContainer.innerHTML = '<div class="text-red-400">Error loading font data</div>';
-        }
-        if (availableContainer) {
-            availableContainer.innerHTML = '<div class="text-red-400">Error loading font data</div>';
-        }
+        detectedContainer.innerHTML = '<div class="text-red-400">Error loading font data. Please refresh the page.</div>';
+        availableContainer.innerHTML = '<div class="text-red-400">Error loading font data. Please refresh the page.</div>';
 
-        showNotification('Error loading font configuration', 'error');
+        // Only show notification if showNotification is available
+        if (typeof showNotification === 'function') {
+            showNotification('Error loading font configuration', 'error');
+        } else if (typeof window.showNotification === 'function') {
+            window.showNotification('Error loading font configuration', 'error');
+        } else {
+            console.error('Error loading font configuration:', error.message);
+        }
     }
 }
 
