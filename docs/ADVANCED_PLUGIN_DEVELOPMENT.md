@@ -184,9 +184,10 @@ def update(self):
         self.logger.info("Fetched and cached new data")
     except Exception as e:
         self.logger.error(f"Failed to fetch data: {e}")
-        # Use stale cache if available
-        if cached:
-            self.data = cached
+        # Use stale cache if available (re-fetch with large max_age to bypass expiration)
+        expired_cached = self.cache_manager.get(cache_key, max_age=31536000)  # 1 year
+        if expired_cached:
+            self.data = expired_cached
             self.logger.warning("Using stale cached data due to API error")
 ```
 
@@ -483,8 +484,11 @@ def update(self):
         self.cache_manager.set(cache_key, self.data)
     except Exception as e:
         self.logger.error(f"Update failed: {e}")
-        if cached:
-            self.data = cached
+        # Use stale cache if available (re-fetch with large max_age to bypass expiration)
+        expired_cached = self.cache_manager.get(cache_key, max_age=31536000)  # 1 year
+        if expired_cached:
+            self.data = expired_cached
+            self.logger.warning("Using stale cached data due to update failure")
 ```
 
 ### Optimized Rendering

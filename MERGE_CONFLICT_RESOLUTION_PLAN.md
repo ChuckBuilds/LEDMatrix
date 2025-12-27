@@ -91,11 +91,11 @@ git checkout --theirs README.md
 
 ## Step-by-Step Resolution Process
 
-### Step 1: Checkout plugins branch and prepare for merge
+### Step 1: Checkout main branch and prepare for merge
 ```bash
-git checkout plugins
+git checkout main
 git fetch origin
-git merge origin/main --no-commit --no-ff
+git merge origin/plugins --no-commit --no-ff
 ```
 
 ### Step 2: Resolve file deletion conflicts
@@ -140,7 +140,7 @@ ls -la plugins/ledmatrix-news/
 ### Step 6: Complete the merge
 ```bash
 git add .
-git commit -m "Merge main into plugins: Remove deprecated managers, keep plugin-based README"
+git commit -m "Merge plugins into main: Remove deprecated managers, keep plugin-based README"
 ```
 
 ---
