@@ -218,19 +218,28 @@ function saveMainConfig() {
             },
             body: JSON.stringify(config)
         })
-        .then(response => {
-            // Check if response is OK before parsing JSON
-            if (!response.ok) {
-                // Try to parse error response as JSON, fallback to status text
-                return response.json().then(data => {
-                    throw new Error(data.message || response.statusText);
-                }).catch(() => {
-                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-                });
+        .then(async response => {
+            // Store status and statusText before parsing
+            const status = response.status;
+            const statusText = response.statusText;
+            
+            // Try to parse JSON response
+            let data;
+            try {
+                data = await response.json();
+            } catch (parseError) {
+                // If JSON parsing fails, throw generic HTTP error
+                throw new Error(`HTTP ${status}: ${statusText}`);
             }
-            return response.json();
-        })
-        .then(data => {
+            
+            // Handle non-OK responses
+            if (!response.ok) {
+                // Extract specific error message from API response if available
+                const errorMessage = data.message || data.status || statusText;
+                throw new Error(errorMessage);
+            }
+            
+            // Handle successful responses
             if (data.status === 'success') {
                 showNotification('config.json saved successfully!', 'success');
             } else {
@@ -238,6 +247,7 @@ function saveMainConfig() {
             }
         })
         .catch(error => {
+            // Preserve the error message that was intentionally thrown
             showNotification('Error saving config.json: ' + (error.message || 'An error occurred'), 'error');
         });
     } catch (e) {
@@ -265,19 +275,28 @@ function saveSecretsConfig() {
             },
             body: JSON.stringify(config)
         })
-        .then(response => {
-            // Check if response is OK before parsing JSON
-            if (!response.ok) {
-                // Try to parse error response as JSON, fallback to status text
-                return response.json().then(data => {
-                    throw new Error(data.message || response.statusText);
-                }).catch(() => {
-                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-                });
+        .then(async response => {
+            // Store status and statusText before parsing
+            const status = response.status;
+            const statusText = response.statusText;
+            
+            // Try to parse JSON response
+            let data;
+            try {
+                data = await response.json();
+            } catch (parseError) {
+                // If JSON parsing fails, throw generic HTTP error
+                throw new Error(`HTTP ${status}: ${statusText}`);
             }
-            return response.json();
-        })
-        .then(data => {
+            
+            // Handle non-OK responses
+            if (!response.ok) {
+                // Extract specific error message from API response if available
+                const errorMessage = data.message || data.status || statusText;
+                throw new Error(errorMessage);
+            }
+            
+            // Handle successful responses
             if (data.status === 'success') {
                 showNotification('config_secrets.json saved successfully!', 'success');
             } else {
@@ -285,6 +304,7 @@ function saveSecretsConfig() {
             }
         })
         .catch(error => {
+            // Preserve the error message that was intentionally thrown
             showNotification('Error saving config_secrets.json: ' + (error.message || 'An error occurred'), 'error');
         });
     } catch (e) {
