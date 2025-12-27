@@ -14,6 +14,10 @@ from src.web_interface.api_helpers import success_response, error_response, vali
 from src.web_interface.errors import ErrorCode
 from src.plugin_system.operation_types import OperationType
 from src.web_interface.logging_config import log_plugin_operation, log_config_change
+from src.web_interface.validators import (
+    validate_image_url, validate_file_upload, validate_mime_type,
+    validate_numeric_range, validate_string_length, sanitize_plugin_config
+)
 
 # Will be initialized when blueprint is registered
 config_manager = None
@@ -326,6 +330,13 @@ def save_schedule_config():
                 status_code=500
             )
         
+        # Invalidate cache on config change
+        try:
+            from web_interface.cache import invalidate_cache
+            invalidate_cache()
+        except ImportError:
+            pass
+        
         return success_response(message='Schedule configuration saved successfully')
     except Exception as e:
         import logging
@@ -607,6 +618,13 @@ def save_main_config():
                 f"Failed to save configuration: {error_msg}",
                 status_code=500
             )
+        
+        # Invalidate cache on config change
+        try:
+            from web_interface.cache import invalidate_cache
+            invalidate_cache()
+        except ImportError:
+            pass
 
         return success_response(message='Configuration saved successfully')
     except Exception as e:
@@ -677,19 +695,191 @@ def save_raw_secrets_config():
 def get_system_status():
     """Get system status"""
     try:
-        # This would integrate with actual system monitoring
+        # Check cache first (10 second TTL for system status)
+        try:
+            from web_interface.cache import get_cached, set_cached
+            cached_result = get_cached('system_status', ttl_seconds=10)
+            if cached_result is not None:
+                return jsonify({'status': 'success', 'data': cached_result})
+        except ImportError:
+            # Cache not available, continue without caching
+            get_cached = None
+            set_cached = None
+        
+        # Import psutil for system monitoring
+        try:
+            import psutil
+        except ImportError:
+            # Fallback if psutil not available
+            return jsonify({
+                'status': 'error',
+                'message': 'psutil not available for system monitoring'
+            }), 503
+        
+        # Get system metrics using psutil
+        cpu_percent = psutil.cpu_percent(interval=0.1)  # Short interval for responsiveness
+        memory = psutil.virtual_memory()
+        memory_percent = memory.percent
+        disk = psutil.disk_usage('/')
+        disk_percent = disk.percent
+        
+        # Calculate uptime
+        boot_time = psutil.boot_time()
+        uptime_seconds = time.time() - boot_time
+        uptime_hours = uptime_seconds / 3600
+        uptime_days = uptime_hours / 24
+        
+        # Format uptime string
+        if uptime_days >= 1:
+            uptime_str = f"{int(uptime_days)}d {int(uptime_hours % 24)}h"
+        elif uptime_hours >= 1:
+            uptime_str = f"{int(uptime_hours)}h {int((uptime_seconds % 3600) / 60)}m"
+        else:
+            uptime_str = f"{int(uptime_seconds / 60)}m"
+        
+        # Get CPU temperature (Raspberry Pi)
+        cpu_temp = None
+        try:
+            temp_file = '/sys/class/thermal/thermal_zone0/temp'
+            if os.path.exists(temp_file):
+                with open(temp_file, 'r') as f:
+                    temp_millidegrees = int(f.read().strip())
+                    cpu_temp = temp_millidegrees / 1000.0  # Convert to Celsius
+        except (IOError, ValueError, OSError):
+            # Temperature sensor not available or error reading
+            cpu_temp = None
+        
+        # Get display service status
+        service_status = _get_display_service_status()
+        
         status = {
             'timestamp': time.time(),
-            'uptime': 'Running',
-            'service_active': True,
-            'cpu_percent': 0,  # Would need psutil or similar
-            'memory_used_percent': 0,
-            'cpu_temp': 0,
-            'disk_used_percent': 0
+            'uptime': uptime_str,
+            'uptime_seconds': int(uptime_seconds),
+            'service_active': service_status.get('active', False),
+            'cpu_percent': round(cpu_percent, 1),
+            'memory_used_percent': round(memory_percent, 1),
+            'memory_total_mb': round(memory.total / (1024 * 1024), 1),
+            'memory_used_mb': round(memory.used / (1024 * 1024), 1),
+            'cpu_temp': round(cpu_temp, 1) if cpu_temp is not None else None,
+            'disk_used_percent': round(disk_percent, 1),
+            'disk_total_gb': round(disk.total / (1024 * 1024 * 1024), 1),
+            'disk_used_gb': round(disk.used / (1024 * 1024 * 1024), 1)
         }
+        
+        # Cache the result if available
+        if set_cached:
+            try:
+                set_cached('system_status', status, ttl_seconds=10)
+            except Exception:
+                pass  # Cache write failed, but continue
+        
         return jsonify({'status': 'success', 'data': status})
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)}), 500
+
+@api_v3.route('/health', methods=['GET'])
+def get_health():
+    """Get system health status"""
+    try:
+        health_status = {
+            'status': 'healthy',
+            'timestamp': time.time(),
+            'services': {},
+            'checks': {}
+        }
+        
+        # Check web interface service
+        health_status['services']['web_interface'] = {
+            'status': 'running',
+            'uptime_seconds': time.time() - (getattr(get_health, '_start_time', time.time()))
+        }
+        get_health._start_time = getattr(get_health, '_start_time', time.time())
+        
+        # Check display service
+        display_service_status = _get_display_service_status()
+        health_status['services']['display_service'] = {
+            'status': 'active' if display_service_status.get('active') else 'inactive',
+            'details': display_service_status
+        }
+        
+        # Check config file accessibility
+        try:
+            if config_manager:
+                test_config = config_manager.load_config()
+                health_status['checks']['config_file'] = {
+                    'status': 'accessible',
+                    'readable': True
+                }
+            else:
+                health_status['checks']['config_file'] = {
+                    'status': 'unknown',
+                    'readable': False
+                }
+        except Exception as e:
+            health_status['checks']['config_file'] = {
+                'status': 'error',
+                'readable': False,
+                'error': str(e)
+            }
+        
+        # Check plugin system
+        try:
+            if plugin_manager:
+                # Try to discover plugins (lightweight check)
+                plugin_count = len(plugin_manager.get_available_plugins()) if hasattr(plugin_manager, 'get_available_plugins') else 0
+                health_status['checks']['plugin_system'] = {
+                    'status': 'operational',
+                    'plugin_count': plugin_count
+                }
+            else:
+                health_status['checks']['plugin_system'] = {
+                    'status': 'not_initialized'
+                }
+        except Exception as e:
+            health_status['checks']['plugin_system'] = {
+                'status': 'error',
+                'error': str(e)
+            }
+        
+        # Check hardware connectivity (if display manager available)
+        try:
+            snapshot_path = "/tmp/led_matrix_preview.png"
+            if os.path.exists(snapshot_path):
+                # Check if snapshot is recent (updated in last 60 seconds)
+                mtime = os.path.getmtime(snapshot_path)
+                age_seconds = time.time() - mtime
+                health_status['checks']['hardware'] = {
+                    'status': 'connected' if age_seconds < 60 else 'stale',
+                    'snapshot_age_seconds': round(age_seconds, 1)
+                }
+            else:
+                health_status['checks']['hardware'] = {
+                    'status': 'no_snapshot',
+                    'note': 'Display service may not be running'
+                }
+        except Exception as e:
+            health_status['checks']['hardware'] = {
+                'status': 'unknown',
+                'error': str(e)
+            }
+        
+        # Determine overall health
+        all_healthy = all(
+            check.get('status') in ['accessible', 'operational', 'connected', 'running', 'active']
+            for check in health_status['checks'].values()
+        )
+        
+        if not all_healthy:
+            health_status['status'] = 'degraded'
+        
+        return jsonify({'status': 'success', 'data': health_status})
+    except Exception as e:
+        return jsonify({
+            'status': 'error',
+            'message': str(e),
+            'data': {'status': 'unhealthy'}
+        }), 500
 
 def get_git_version(project_dir=None):
     """Get git version information from the repository"""
@@ -886,12 +1076,48 @@ def execute_system_action():
 def get_display_current():
     """Get current display state"""
     try:
-        # This would integrate with the actual display controller
+        import base64
+        from PIL import Image
+        import io
+        
+        snapshot_path = "/tmp/led_matrix_preview.png"
+        
+        # Get display dimensions from config
+        try:
+            if config_manager:
+                main_config = config_manager.load_config()
+                hardware_config = main_config.get('display', {}).get('hardware', {})
+                cols = hardware_config.get('cols', 64)
+                chain_length = hardware_config.get('chain_length', 2)
+                rows = hardware_config.get('rows', 32)
+                parallel = hardware_config.get('parallel', 1)
+                width = cols * chain_length
+                height = rows * parallel
+            else:
+                width = 128
+                height = 64
+        except Exception:
+            width = 128
+            height = 64
+        
+        # Try to read snapshot file
+        image_data = None
+        if os.path.exists(snapshot_path):
+            try:
+                with Image.open(snapshot_path) as img:
+                    # Convert to PNG and encode as base64
+                    buffer = io.BytesIO()
+                    img.save(buffer, format='PNG')
+                    image_data = base64.b64encode(buffer.getvalue()).decode('utf-8')
+            except Exception as img_err:
+                # File might be being written or corrupted, return None
+                pass
+        
         display_data = {
             'timestamp': time.time(),
-            'width': 128,
-            'height': 64,
-            'image': None  # Base64 encoded image data
+            'width': width,
+            'height': height,
+            'image': image_data  # Base64 encoded image data or None if unavailable
         }
         return jsonify({'status': 'success', 'data': display_data})
     except Exception as e:
@@ -4306,14 +4532,71 @@ def authenticate_ytm():
 def get_fonts_catalog():
     """Get fonts catalog"""
     try:
-        # This would integrate with the actual font system
-        # For now, return sample fonts
-        catalog = {
-            'press_start': 'assets/fonts/press-start-2p.ttf',
-            'four_by_six': 'assets/fonts/4x6.bdf',
-            'cozette_bdf': 'assets/fonts/cozette.bdf',
-            'matrix_light_6': 'assets/fonts/matrix-light-6.bdf'
-        }
+        # Check cache first (5 minute TTL)
+        try:
+            from web_interface.cache import get_cached, set_cached
+            cached_result = get_cached('fonts_catalog', ttl_seconds=300)
+            if cached_result is not None:
+                return jsonify({'status': 'success', 'data': {'catalog': cached_result}})
+        except ImportError:
+            # Cache not available, continue without caching
+            get_cached = None
+            set_cached = None
+        
+        # Try to import freetype, but continue without it if unavailable
+        try:
+            import freetype
+            freetype_available = True
+        except ImportError:
+            freetype_available = False
+        
+        # Scan assets/fonts directory for actual font files
+        fonts_dir = PROJECT_ROOT / "assets" / "fonts"
+        catalog = {}
+        
+        if fonts_dir.exists() and fonts_dir.is_dir():
+            for filename in os.listdir(fonts_dir):
+                if filename.endswith(('.ttf', '.otf', '.bdf')):
+                    filepath = fonts_dir / filename
+                    # Generate family name from filename (without extension)
+                    family_name = os.path.splitext(filename)[0]
+                    
+                    # Try to get font metadata using freetype (for TTF/OTF)
+                    metadata = {}
+                    if filename.endswith(('.ttf', '.otf')) and freetype_available:
+                        try:
+                            face = freetype.Face(str(filepath))
+                            if face.valid:
+                                # Get font family name from font file
+                                family_name_from_font = face.family_name.decode('utf-8') if face.family_name else family_name
+                                metadata = {
+                                    'family': family_name_from_font,
+                                    'style': face.style_name.decode('utf-8') if face.style_name else 'Regular',
+                                    'num_glyphs': face.num_glyphs,
+                                    'units_per_em': face.units_per_EM
+                                }
+                                # Use font's family name if available
+                                if family_name_from_font:
+                                    family_name = family_name_from_font
+                        except Exception:
+                            # If freetype fails, use filename-based name
+                            pass
+                    
+                    # Store relative path from project root
+                    relative_path = str(filepath.relative_to(PROJECT_ROOT))
+                    catalog[family_name] = {
+                        'path': relative_path,
+                        'type': 'ttf' if filename.endswith('.ttf') else 'otf' if filename.endswith('.otf') else 'bdf',
+                        'metadata': metadata if metadata else None
+                    }
+        
+        # Cache the result (5 minute TTL) if available
+        if set_cached:
+            try:
+                set_cached('fonts_catalog', catalog, ttl_seconds=300)
+            except Exception:
+                pass  # Cache write failed, but continue
+        
         return jsonify({'status': 'success', 'data': {'catalog': catalog}})
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)}), 500
@@ -4375,6 +4658,19 @@ def upload_font():
     try:
         if 'font_file' not in request.files:
             return jsonify({'status': 'error', 'message': 'No font file provided'}), 400
+        
+        font_file = request.files['font_file']
+        if font_file.filename == '':
+            return jsonify({'status': 'error', 'message': 'No file selected'}), 400
+        
+        # Validate filename
+        is_valid, error_msg = validate_file_upload(
+            font_file.filename,
+            max_size_mb=10,
+            allowed_extensions=['.ttf', '.otf', '.bdf']
+        )
+        if not is_valid:
+            return jsonify({'status': 'error', 'message': error_msg}), 400
 
         font_file = request.files['font_file']
         font_family = request.form.get('font_family', '')

@@ -84,26 +84,86 @@ Best for: Unique branding; requires image file
 
 ## Code Example
 
-Here's what the icon detection logic does:
+Here's what the icon detection logic does. **Important:** Plugin manifests must be treated as untrusted input and require escaping/validation before rendering.
 
 ```javascript
+// Helper function to escape HTML entities
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+// Helper function to validate and sanitize image URLs
+function isValidImageUrl(url) {
+    if (!url || typeof url !== 'string') {
+        return false;
+    }
+    
+    // Only allow http, https, or relative paths starting with /
+    const allowedProtocols = ['http:', 'https:'];
+    const urlLower = url.toLowerCase().trim();
+    
+    // Reject dangerous protocols
+    if (urlLower.startsWith('javascript:') || 
+        urlLower.startsWith('data:') || 
+        urlLower.startsWith('vbscript:') ||
+        urlLower.startsWith('onerror=') ||
+        urlLower.startsWith('onload=')) {
+        return false;
+    }
+    
+    // Allow relative paths starting with /
+    if (url.startsWith('/')) {
+        return true;
+    }
+    
+    // Validate absolute URLs
+    try {
+        const urlObj = new URL(url);
+        return allowedProtocols.includes(urlObj.protocol);
+    } catch (e) {
+        // Invalid URL format
+        return false;
+    }
+}
+
+// Helper function to safely validate Font Awesome class names
+function isValidFontAwesomeClass(icon) {
+    // Whitelist pattern: only allow alphanumeric, dash, underscore, and spaces
+    // Must contain 'fa-' for Font Awesome
+    const faPattern = /^[a-zA-Z0-9\s_-]*fa-[a-zA-Z0-9-]+[a-zA-Z0-9\s_-]*$/;
+    return faPattern.test(icon) && icon.includes('fa-');
+}
+
 function getPluginIcon(plugin) {
     if (plugin.icon) {
-        const icon = plugin.icon;
+        const icon = String(plugin.icon).trim();
         
-        // Font Awesome icon
-        if (icon.includes('fa-')) {
-            return `<i class="${icon}"></i>`;
+        // Font Awesome icon - escape class name to prevent XSS
+        if (isValidFontAwesomeClass(icon)) {
+            const escapedIcon = escapeHtml(icon);
+            return `<i class="${escapedIcon}"></i>`;
         }
         
-        // Emoji
+        // Emoji - use textContent to safely render (no HTML injection possible)
         if (icon.length <= 4) {
-            return `<span style="font-size: 1.1em;">${icon}</span>`;
+            // Create element and set textContent (safe from XSS)
+            const span = document.createElement('span');
+            span.style.fontSize = '1.1em';
+            span.textContent = icon; // textContent automatically escapes
+            return span.outerHTML;
         }
         
-        // Custom image
-        if (icon.startsWith('http://') || icon.startsWith('https://') || icon.startsWith('/')) {
-            return `<img src="${icon}" alt="" style="width: 16px; height: 16px;">`;
+        // Custom image - validate URL and set src attribute safely
+        if (isValidImageUrl(icon)) {
+            // Create img element and set attributes safely
+            const img = document.createElement('img');
+            img.src = icon; // URL already validated
+            img.alt = '';
+            img.style.width = '16px';
+            img.style.height = '16px';
+            return img.outerHTML;
         }
     }
     
@@ -111,6 +171,14 @@ function getPluginIcon(plugin) {
     return '<i class="fas fa-puzzle-piece"></i>';
 }
 ```
+
+**Security Notes:**
+- Plugin manifests are treated as untrusted input
+- All text content is escaped using `escapeHtml()` or `textContent`
+- Image URLs are validated to only allow `http://`, `https://`, or relative paths starting with `/`
+- Dangerous protocols (`javascript:`, `data:`, etc.) are explicitly rejected
+- Font Awesome class names are validated against a whitelist pattern
+- DOM elements are created and attributes set directly rather than using string interpolation
 
 ## Visual Examples
 

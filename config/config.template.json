@@ -2,6 +2,7 @@
     "web_display_autostart": true,
     "schedule": {
         "enabled": true,
+        "mode": "per-day",
         "start_time": "07:00",
         "end_time": "23:00",
         "days": {

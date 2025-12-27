@@ -5,6 +5,8 @@
 # Web framework
 flask>=3.0.0,<4.0.0
 werkzeug>=3.0.0,<4.0.0
+flask-wtf>=1.2.0  # CSRF protection (optional for local-only, but recommended)
+flask-limiter>=3.5.0  # Rate limiting (prevent accidental abuse)
 
 # WebSocket support for plugins
 # Note: Web interface uses Server-Sent Events (SSE) for real-time updates, not WebSockets

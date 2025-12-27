@@ -340,14 +340,15 @@ def save_config_atomic(config_data: dict, config_path: str) -> None:
 
 | Directory Type | Mode | Octal | Description |
 |----------------|------|-------|-------------|
-| Config directories | `rwxr-xr-x` | `0o755` | Traversable by all, writable by owner |
-| Asset directories | `rwxrwxr-x` | `0o775` | Group-writable for root:user access |
-| Plugin directories | `rwxrwxr-x` | `0o775` | Group-writable for root:user access |
-| Cache directories | `rwxrwxr-x` | `0o775` | Group-writable for root:user access |
+| Config directories | `rwxrwsr-x` | `0o2775` (setgid) | Group-writable with setgid bit for inherited group ownership |
+| Asset directories | `rwxrwsr-x` | `0o2775` (setgid) | Group-writable with setgid bit for inherited group ownership |
+| Plugin directories | `rwxrwsr-x` | `0o2775` (setgid) | Group-writable with setgid bit for inherited group ownership |
+| Cache directories | `rwxrwsr-x` | `0o2775` (setgid) | Group-writable with setgid bit for inherited group ownership |
 
 ### Why These Permissions?
 
-- **Group-writable (775/664)**: Allows both root service and web user to read/write files
+- **Group-writable (664)**: Allows both root service and web user to read/write files
+- **Directory setgid bit (2775)**: Ensures new files and directories inherit the group ownership, maintaining consistent permissions
 - **World-readable (644)**: Config files need to be readable by root service
 - **Restricted (640)**: Secrets files should only be readable by owner and group
 

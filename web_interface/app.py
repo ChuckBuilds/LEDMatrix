@@ -26,6 +26,50 @@ app = Flask(__name__)
 app.secret_key = os.urandom(24)
 config_manager = ConfigManager()
 
+# Initialize CSRF protection (optional for local-only, but recommended for defense-in-depth)
+try:
+    from flask_wtf.csrf import CSRFProtect
+    csrf = CSRFProtect(app)
+    # Exempt SSE streams from CSRF (read-only)
+    from functools import wraps
+    from flask import request
+    
+    def csrf_exempt(f):
+        """Decorator to exempt a route from CSRF protection."""
+        f.csrf_exempt = True
+        return f
+    
+    # Mark SSE streams as exempt
+    @app.before_request
+    def check_csrf_exempt():
+        """Check if route should be exempt from CSRF."""
+        if request.endpoint and 'stream' in request.endpoint:
+            # SSE streams are read-only, exempt from CSRF
+            pass
+except ImportError:
+    # flask-wtf not installed, CSRF protection disabled
+    csrf = None
+    pass
+
+# Initialize rate limiting (prevent accidental abuse, not security)
+try:
+    from flask_limiter import Limiter
+    from flask_limiter.util import get_remote_address
+    
+    limiter = Limiter(
+        app=app,
+        key_func=get_remote_address,
+        default_limits=["1000 per minute"],  # Generous limit for local use
+        storage_uri="memory://"  # In-memory storage for simplicity
+    )
+except ImportError:
+    # flask-limiter not installed, rate limiting disabled
+    limiter = None
+    pass
+
+# Import cache functions from separate module to avoid circular imports
+from web_interface.cache import get_cached, set_cached, invalidate_cache
+
 # Initialize plugin managers - read plugins directory from config
 config = config_manager.load_config()
 plugin_system_config = config.get('plugin_system', {})
@@ -156,6 +200,88 @@ def success_txt():
     """Firefox captive portal detection endpoint"""
     # Return simple text response
     return 'success', 200
+
+# Initialize logging
+try:
+    from web_interface.logging_config import setup_web_interface_logging, log_api_request
+    # Use JSON logging in production, readable logs in development
+    use_json_logging = os.environ.get('LEDMATRIX_JSON_LOGGING', 'false').lower() == 'true'
+    setup_web_interface_logging(level='INFO', use_json=use_json_logging)
+except ImportError:
+    # Logging config not available, use default
+    log_api_request = None
+    pass
+
+# Request timing and logging middleware
+@app.before_request
+def before_request():
+    """Track request start time for logging."""
+    from flask import request
+    request.start_time = time.time()
+
+@app.after_request
+def after_request_logging(response):
+    """Log API requests after response."""
+    if log_api_request:
+        try:
+            from flask import request
+            duration_ms = (time.time() - getattr(request, 'start_time', time.time())) * 1000
+            ip_address = request.remote_addr if hasattr(request, 'remote_addr') else None
+            log_api_request(
+                method=request.method,
+                path=request.path,
+                status_code=response.status_code,
+                duration_ms=duration_ms,
+                ip_address=ip_address
+            )
+        except Exception:
+            pass  # Don't break response if logging fails
+    return response
+
+# Global error handlers
+@app.errorhandler(404)
+def not_found_error(error):
+    """Handle 404 errors."""
+    return jsonify({
+        'status': 'error',
+        'error_code': 'NOT_FOUND',
+        'message': 'Resource not found',
+        'path': request.path
+    }), 404
+
+@app.errorhandler(500)
+def internal_error(error):
+    """Handle 500 errors."""
+    import traceback
+    error_details = traceback.format_exc()
+    
+    # Log the error
+    import logging
+    logger = logging.getLogger('web_interface')
+    logger.error(f"Internal server error: {error}", exc_info=True)
+    
+    # Return user-friendly error (hide internal details in production)
+    return jsonify({
+        'status': 'error',
+        'error_code': 'INTERNAL_ERROR',
+        'message': 'An internal error occurred',
+        'details': error_details if app.debug else None
+    }), 500
+
+@app.errorhandler(Exception)
+def handle_exception(error):
+    """Handle all unhandled exceptions."""
+    import traceback
+    import logging
+    logger = logging.getLogger('web_interface')
+    logger.error(f"Unhandled exception: {error}", exc_info=True)
+    
+    return jsonify({
+        'status': 'error',
+        'error_code': 'UNKNOWN_ERROR',
+        'message': str(error) if app.debug else 'An error occurred',
+        'details': traceback.format_exc() if app.debug else None
+    }), 500
 
 # Captive portal redirect middleware
 @app.before_request
@@ -411,6 +537,17 @@ def stream_display():
 @app.route('/api/v3/stream/logs')
 def stream_logs():
     return sse_response(logs_generator)
+
+# Exempt SSE streams from CSRF and add rate limiting
+if csrf:
+    csrf.exempt(stream_stats)
+    csrf.exempt(stream_display)
+    csrf.exempt(stream_logs)
+
+if limiter:
+    limiter.limit("20 per minute")(stream_stats)
+    limiter.limit("20 per minute")(stream_display)
+    limiter.limit("20 per minute")(stream_logs)
 
 # Main route - redirect to v3 interface as default
 @app.route('/')

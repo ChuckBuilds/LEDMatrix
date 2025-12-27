@@ -16,9 +16,9 @@
 -----------------------------------------------------------------------------------
 
 ### Special Thanks to:
-- Hzeller @ https://github.com/hzeller/rpi-rgb-led-matrix for his groundwork on controlling an LED Matrix from the Raspberry Pi
-- Basmilius @ https://github.com/basmilius/weather-icons/ for his free and extensive weather icons
-- nvstly @ https://github.com/nvstly/icons for their Stock and Crypto Icons
+- Hzeller @ [GitHub](https://github.com/hzeller/rpi-rgb-led-matrix) for his groundwork on controlling an LED Matrix from the Raspberry Pi
+- Basmilius @ [GitHub](https://github.com/basmilius/weather-icons/) for his free and extensive weather icons
+- nvstly @ [GitHub](https://github.com/nvstly/icons) for their Stock and Crypto Icons
 - ESPN for their sports API
 - Yahoo Finance for their Stock API
 - OpenWeatherMap for their Free Weather API
@@ -117,6 +117,46 @@ The system supports live, recent, and upcoming game information for multiple spo
 
 - Font testing Display (not in rotation)
 </details>
+
+-----------------------------------------------------------------------------------
+
+## Plugins
+
+LEDMatrix uses a plugin-based architecture where all display functionality (except the core calendar) is implemented as plugins. All managers that were previously built into the core system are now available as plugins through the Plugin Store.
+
+### Plugin Store
+
+The easiest way to discover and install plugins is through the **Plugin Store** in the LEDMatrix web interface:
+
+1. Open the web interface (`http://your-pi-ip:5001`)
+2. Navigate to the **Plugin Manager** tab
+3. Browse available plugins in the Plugin Store
+4. Click **Install** on any plugin you want
+5. Configure and enable plugins through the web UI
+
+### Installing 3rd-Party Plugins
+
+You can also install plugins directly from GitHub repositories:
+
+- **Single Plugin**: Install from any GitHub repository URL
+- **Registry/Monorepo**: Install multiple plugins from a single repository
+
+See the [Plugin Store documentation](https://github.com/ChuckBuilds/ledmatrix-plugins) for detailed installation instructions.
+
+For plugin development, check out the [Hello World Plugin](https://github.com/ChuckBuilds/ledmatrix-hello-world) repository as a starter template.
+
+## ⚠️ Breaking Changes
+
+**Important for users upgrading from older versions:**
+
+1. **Script Path Reorganization**: Installation scripts have been moved to `scripts/install/`:
+   - `./install_service.sh` → `./scripts/install/install_service.sh`
+   - `./install_web_service.sh` → `./scripts/install/install_web_service.sh`
+   - `./configure_web_sudo.sh` → `./scripts/install/configure_web_sudo.sh`
+   
+   If you have automation, cron jobs, or custom tooling that references these scripts, you **must** update them to use the new paths. See the [Migration Guide](MIGRATION_GUIDE.md) for complete details.
+
+2. **Built-in Managers Deprecated**: The built-in managers (hockey, football, stocks, etc.) are now deprecated and have been moved to the plugin system. **You must install replacement plugins from the Plugin Store** in the web interface instead. The plugin system provides the same functionality with better maintainability and extensibility.
 
 -----------------------------------------------------------------------------------
 
