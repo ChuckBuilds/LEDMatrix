@@ -665,7 +665,24 @@ def save_raw_main_config():
     except json.JSONDecodeError as e:
         return jsonify({'status': 'error', 'message': f'Invalid JSON: {str(e)}'}), 400
     except Exception as e:
-        return jsonify({'status': 'error', 'message': str(e)}), 500
+        import logging
+        import traceback
+        from src.exceptions import ConfigError
+        
+        # Log the full error for debugging
+        error_msg = f"Error saving raw main config: {str(e)}\n{traceback.format_exc()}"
+        logging.error(error_msg)
+        
+        # Extract more specific error message if it's a ConfigError
+        if isinstance(e, ConfigError):
+            # ConfigError has a message attribute and may have context
+            error_message = str(e)
+            if hasattr(e, 'config_path') and e.config_path:
+                error_message = f"{error_message} (config_path: {e.config_path})"
+        else:
+            error_message = str(e) if str(e) else "An unexpected error occurred while saving the configuration"
+        
+        return jsonify({'status': 'error', 'message': error_message}), 500
 
 @api_v3.route('/config/raw/secrets', methods=['POST'])
 def save_raw_secrets_config():
@@ -689,7 +706,24 @@ def save_raw_secrets_config():
     except json.JSONDecodeError as e:
         return jsonify({'status': 'error', 'message': f'Invalid JSON: {str(e)}'}), 400
     except Exception as e:
-        return jsonify({'status': 'error', 'message': str(e)}), 500
+        import logging
+        import traceback
+        from src.exceptions import ConfigError
+        
+        # Log the full error for debugging
+        error_msg = f"Error saving raw secrets config: {str(e)}\n{traceback.format_exc()}"
+        logging.error(error_msg)
+        
+        # Extract more specific error message if it's a ConfigError
+        if isinstance(e, ConfigError):
+            # ConfigError has a message attribute and may have context
+            error_message = str(e)
+            if hasattr(e, 'config_path') and e.config_path:
+                error_message = f"{error_message} (config_path: {e.config_path})"
+        else:
+            error_message = str(e) if str(e) else "An unexpected error occurred while saving the configuration"
+        
+        return jsonify({'status': 'error', 'message': error_message}), 500
 
 @api_v3.route('/system/status', methods=['GET'])
 def get_system_status():
@@ -2999,6 +3033,57 @@ def _set_nested_value(config, key_path, value):
         current[parts[-1]] = value
 
 
+def _enhance_schema_with_core_properties(schema):
+    """
+    Enhance schema with core plugin properties (enabled, display_duration, live_priority).
+    These properties are system-managed and should always be allowed even if not in the plugin's schema.
+    
+    Args:
+        schema: The original JSON schema dict
+    
+    Returns:
+        Enhanced schema dict with core properties injected
+    """
+    import copy
+    
+    if not schema:
+        return schema
+    
+    # Core plugin properties that should always be allowed
+    # These match the definitions in SchemaManager.validate_config_against_schema()
+    core_properties = {
+        "enabled": {
+            "type": "boolean",
+            "default": True,
+            "description": "Enable or disable this plugin"
+        },
+        "display_duration": {
+            "type": "number",
+            "default": 15,
+            "minimum": 1,
+            "maximum": 300,
+            "description": "How long to display this plugin in seconds"
+        },
+        "live_priority": {
+            "type": "boolean",
+            "default": False,
+            "description": "Enable live priority takeover when plugin has live content"
+        }
+    }
+    
+    # Create a deep copy of the schema to modify (to avoid mutating the original)
+    enhanced_schema = copy.deepcopy(schema)
+    if "properties" not in enhanced_schema:
+        enhanced_schema["properties"] = {}
+    
+    # Inject core properties if they're not already defined in the schema
+    for prop_name, prop_def in core_properties.items():
+        if prop_name not in enhanced_schema["properties"]:
+            enhanced_schema["properties"][prop_name] = copy.deepcopy(prop_def)
+    
+    return enhanced_schema
+
+
 def _filter_config_by_schema(config, schema, prefix=''):
     """
     Filter config to only include fields defined in the schema.
@@ -3664,8 +3749,10 @@ def save_plugin_config():
             plugin_config = normalize_config_values(plugin_config, schema['properties'])
         
         # Filter config to only include schema-defined fields (important when additionalProperties is false)
+        # Use enhanced schema with core properties to ensure core properties are preserved during filtering
         if schema and 'properties' in schema:
-            plugin_config = _filter_config_by_schema(plugin_config, schema)
+            enhanced_schema_for_filtering = _enhance_schema_with_core_properties(schema)
+            plugin_config = _filter_config_by_schema(plugin_config, enhanced_schema_for_filtering)
         
         # Debug logging for union type fields (temporary)
         if 'rotation_settings' in plugin_config and 'random_seed' in plugin_config.get('rotation_settings', {}):
