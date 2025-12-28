@@ -26,39 +26,14 @@ app = Flask(__name__)
 app.secret_key = os.urandom(24)
 config_manager = ConfigManager()
 
-# Initialize CSRF protection (optional for local-only, but recommended for defense-in-depth)
-try:
-    from flask_wtf.csrf import CSRFProtect
-    csrf = CSRFProtect(app)
-    # Exempt SSE streams from CSRF (read-only)
-    from functools import wraps
-    from flask import request
-    
-    def csrf_exempt(f):
-        """Decorator to exempt a route from CSRF protection."""
-        f.csrf_exempt = True
-        return f
-    
-    # Mark SSE streams and API endpoints as exempt
-    @app.before_request
-    def check_csrf_exempt():
-        """Check if route should be exempt from CSRF."""
-        if request.endpoint:
-            # SSE streams are read-only, exempt from CSRF
-            if 'stream' in request.endpoint:
-                pass
-            # All API v3 endpoints are programmatic API calls (HTMX/fetch) and don't include CSRF tokens
-            elif request.endpoint.startswith('api_v3.'):
-                # Exempt this endpoint from CSRF validation
-                from flask_wtf.csrf import exempt
-                # Get the view function for this endpoint
-                view_func = app.view_functions.get(request.endpoint)
-                if view_func:
-                    view_func.csrf_exempt = True
-except ImportError:
-    # flask-wtf not installed, CSRF protection disabled
-    csrf = None
-    pass
+# CSRF protection disabled for local-only application
+# CSRF is designed for internet-facing web apps to prevent cross-site request forgery.
+# For a local-only Raspberry Pi application, the threat model is different:
+# - If an attacker has network access to perform CSRF, they have other attack vectors
+# - All API endpoints are programmatic (HTMX/fetch) and don't include CSRF tokens
+# - Forms use HTMX which doesn't automatically include CSRF tokens
+# If you need CSRF protection (e.g., exposing to internet), properly implement CSRF tokens in HTMX forms
+csrf = None
 
 # Initialize rate limiting (prevent accidental abuse, not security)
 try:
@@ -165,11 +140,6 @@ api_v3.cache_manager = CacheManager()
 
 app.register_blueprint(pages_v3, url_prefix='/v3')
 app.register_blueprint(api_v3, url_prefix='/api/v3')
-
-# Exempt entire API v3 blueprint from CSRF (all endpoints are programmatic API calls)
-# This is safer and cleaner than exempting individual endpoints
-if csrf:
-    csrf.exempt(api_v3)
 
 # Helper function to check if AP mode is active
 def is_ap_mode_active():
