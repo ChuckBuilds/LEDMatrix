@@ -1656,8 +1656,19 @@ window.__openOnDemandModalImpl = function(pluginId) {
         });
 
     console.log('[__openOnDemandModalImpl] Setting modal display to flex');
+    // Remove inline display:none and set to flex explicitly
     modal.style.display = 'flex';
+    modal.style.visibility = 'visible';
+    modal.style.opacity = '1';
+    // Force a reflow to ensure styles are applied
+    modal.offsetHeight;
     console.log('[__openOnDemandModalImpl] Modal display set, should be visible now. Modal element:', modal);
+    console.log('[__openOnDemandModalImpl] Modal computed styles:', {
+        display: window.getComputedStyle(modal).display,
+        visibility: window.getComputedStyle(modal).visibility,
+        opacity: window.getComputedStyle(modal).opacity,
+        zIndex: window.getComputedStyle(modal).zIndex
+    });
 };
 
 // Replace the stub with the real implementation
