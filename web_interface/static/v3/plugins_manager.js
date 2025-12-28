@@ -4025,11 +4025,25 @@ function setupCollapsibleSections() {
         });
     }
     
+    // Helper function to attach event listener to GitHub token collapse button
+    // Removes any existing listeners by cloning and re-attaching
+    // Made global so it can be called from checkGitHubAuthStatus()
+    window.attachGithubTokenCollapseHandler = function() {
+        const toggleTokenCollapseBtn = document.getElementById('toggle-github-token-collapse');
+        if (toggleTokenCollapseBtn && window.toggleGithubTokenContent) {
+            // Remove any existing listeners by cloning the button
+            const newBtn = toggleTokenCollapseBtn.cloneNode(true);
+            toggleTokenCollapseBtn.parentNode.replaceChild(newBtn, toggleTokenCollapseBtn);
+            // Attach listener to the new button
+            newBtn.addEventListener('click', window.toggleGithubTokenContent);
+        }
+    };
+    
     // Toggle GitHub Token Settings section
     // Use a named function so we can re-attach it if needed
     window.toggleGithubTokenContent = function(e) {
         if (e) {
-            e.stopPropagation(); // Prevent triggering the close button
+            e.stopPropagation(); // Prevent parent click handlers
             e.preventDefault();
         }
         
@@ -4049,8 +4063,8 @@ function setupCollapsibleSections() {
         const isHidden = hasHiddenClass || hasDisplayNone || computedDisplay === 'none';
         
         if (isHidden) {
-            // Show content using both methods
-            tokenContent.style.display = 'block';
+            // Show content - use empty string to defer to CSS
+            tokenContent.style.display = '';
             tokenContent.classList.remove('hidden');
             if (tokenIconCollapse) {
                 tokenIconCollapse.classList.remove('fa-chevron-down');
@@ -4060,8 +4074,8 @@ function setupCollapsibleSections() {
             if (span) span.textContent = 'Collapse';
             console.log('GitHub token content expanded');
         } else {
-            // Hide content using both methods
-            tokenContent.style.display = 'none';
+            // Hide content - use empty string to defer to CSS (hidden class handles display)
+            tokenContent.style.display = '';
             tokenContent.classList.add('hidden');
             if (tokenIconCollapse) {
                 tokenIconCollapse.classList.remove('fa-chevron-up');
@@ -4074,14 +4088,7 @@ function setupCollapsibleSections() {
     };
     
     // Attach event listener
-    const toggleTokenCollapseBtn = document.getElementById('toggle-github-token-collapse');
-    if (toggleTokenCollapseBtn) {
-        // Remove any existing listeners by cloning the button
-        const newBtn = toggleTokenCollapseBtn.cloneNode(true);
-        toggleTokenCollapseBtn.parentNode.replaceChild(newBtn, toggleTokenCollapseBtn);
-        // Attach listener to the new button
-        newBtn.addEventListener('click', window.toggleGithubTokenContent);
-    }
+    window.attachGithubTokenCollapseHandler();
 }
 
 function loadSavedRepositories() {
@@ -5000,13 +5007,8 @@ function checkGitHubAuthStatus() {
                             if (span) span.textContent = 'Expand';
                             
                             // Ensure event listener is attached
-                            if (window.toggleGithubTokenContent) {
-                                // Remove old listener by cloning and replacing
-                                const parent = toggleTokenCollapseBtn.parentNode;
-                                const newBtn = toggleTokenCollapseBtn.cloneNode(true);
-                                parent.replaceChild(newBtn, toggleTokenCollapseBtn);
-                                // Re-attach listener to the new button
-                                newBtn.addEventListener('click', window.toggleGithubTokenContent);
+                            if (window.attachGithubTokenCollapseHandler) {
+                                window.attachGithubTokenCollapseHandler();
                             }
                         }
                     }
