@@ -529,7 +529,11 @@ function updateAvailableFontsDisplay() {
 
     const lines = Object.entries(fontCatalog).map(([name, fontInfo]) => {
         const fontPath = typeof fontInfo === 'string' ? fontInfo : (fontInfo?.path || '');
-        const fullPath = fontPath.startsWith('/') ? fontPath : `assets/fonts/${fontPath}`;
+        // Only prefix with "assets/fonts/" if path is a bare filename (no "/" and doesn't start with "assets/")
+        // If path is absolute (starts with "/") or already has "assets/" prefix, use as-is
+        const fullPath = (fontPath.startsWith('/') || fontPath.startsWith('assets/')) 
+            ? fontPath 
+            : `assets/fonts/${fontPath}`;
         return `${name}: ${fullPath}`;
     });
     container.textContent = lines.join('\n');
