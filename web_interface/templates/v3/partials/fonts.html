@@ -211,22 +211,16 @@
     window.fontTokens = window.fontTokens || {};
     window.fontOverrides = window.fontOverrides || {};
     window.selectedFontFiles = window.selectedFontFiles || [];
-    window.fontsTabInitialized = false;
     
     // Create references that can be reassigned
     var fontCatalog = window.fontCatalog;
     var fontTokens = window.fontTokens;
     var fontOverrides = window.fontOverrides;
     var selectedFontFiles = window.selectedFontFiles;
-    var fontsTabInitialized = window.fontsTabInitialized;
 
 function initializeFontsTab() {
-    // Check if already initialized
-    if (fontsTabInitialized) {
-        console.log('Fonts tab already initialized, skipping...');
-        return;
-    }
-    
+    // Allow re-initialization on each HTMX content swap
+    // The window._fontsScriptLoaded guard prevents function redeclaration
     const detectedEl = document.getElementById('detected-fonts');
     const availableEl = document.getElementById('available-fonts');
     
@@ -238,10 +232,6 @@ function initializeFontsTab() {
         setTimeout(initializeFontsTab, 100);
         return;
     }
-    
-    // Mark as initialized to prevent duplicate initialization
-    window.fontsTabInitialized = true;
-    fontsTabInitialized = true;
     
     // Ensure showNotification function is available
     if (typeof window.showNotification !== 'function') {
