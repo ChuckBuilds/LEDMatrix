@@ -449,6 +449,117 @@ if (_PLUGIN_DEBUG_EARLY) {
     }
 }
 
+// GitHub Authentication Status - Define early so it's available in IIFE
+// Shows warning banner only when token is missing or invalid
+// The token itself is never exposed to the frontend for security
+// Returns a Promise so it can be awaited
+window.checkGitHubAuthStatus = function checkGitHubAuthStatus() {
+    console.log('checkGitHubAuthStatus: Starting...');
+    return fetch('/api/v3/plugins/store/github-status')
+        .then(response => {
+            console.log('checkGitHubAuthStatus: Response status:', response.status);
+            return response.json();
+        })
+        .then(data => {
+            console.log('checkGitHubAuthStatus: Data received:', data);
+            if (data.status === 'success') {
+                const authData = data.data;
+                const tokenStatus = authData.token_status || (authData.authenticated ? 'valid' : 'none');
+                console.log('checkGitHubAuthStatus: Token status:', tokenStatus);
+                const warning = document.getElementById('github-auth-warning');
+                const settings = document.getElementById('github-token-settings');
+                const rateLimit = document.getElementById('rate-limit-count');
+                console.log('checkGitHubAuthStatus: Elements found:', {
+                    warning: !!warning,
+                    settings: !!settings,
+                    rateLimit: !!rateLimit
+                });
+
+                // Show warning only when token is missing ('none') or invalid ('invalid')
+                if (tokenStatus === 'none' || tokenStatus === 'invalid') {
+                    // Check if user has dismissed the warning (stored in session storage)
+                    const dismissed = sessionStorage.getItem('github-auth-warning-dismissed');
+                    if (!dismissed) {
+                        if (warning && rateLimit) {
+                            rateLimit.textContent = authData.rate_limit;
+                            
+                            // Update warning message for invalid tokens
+                            if (tokenStatus === 'invalid' && authData.error) {
+                                const warningText = warning.querySelector('p.text-sm.text-yellow-700');
+                                if (warningText) {
+                                    // Preserve the structure but update the message
+                                    const errorMsg = authData.message || authData.error;
+                                    warningText.innerHTML = `<strong>Token Invalid:</strong> ${errorMsg}. Please update your GitHub token to increase API rate limits to 5,000 requests/hour.`;
+                                }
+                            }
+                            // For 'none' status, use the default message from HTML template
+                            
+                            // Show warning using both classList and style.display
+                            warning.classList.remove('hidden');
+                            warning.style.display = '';
+                            console.log(`GitHub token status: ${tokenStatus} - showing API limit warning`);
+                        }
+                    }
+                    
+                    // Ensure settings panel is accessible when token is missing or invalid
+                    // Panel can be opened via "Configure Token" link in warning
+                    // Don't force it to be visible, but don't prevent it from being shown
+                } else if (tokenStatus === 'valid') {
+                    // Token is valid - hide warning and ensure settings panel is visible but collapsed
+                    if (warning) {
+                        // Hide warning using both classList and style.display
+                        warning.classList.add('hidden');
+                        warning.style.display = 'none';
+                        console.log('GitHub token is valid - hiding API limit warning');
+                    }
+                    
+                    // Make settings panel visible but collapsed (accessible for token management)
+                    if (settings) {
+                        // Remove hidden class from panel itself - make it visible using both methods
+                        settings.classList.remove('hidden');
+                        settings.style.display = '';
+                        
+                        // Always collapse the content when token is valid (user must click expand)
+                        const tokenContent = document.getElementById('github-token-content');
+                        if (tokenContent) {
+                            // Collapse the content - use hidden class (element has class="block" in HTML)
+                            tokenContent.classList.add('hidden');
+                            // Remove any inline display style that might interfere
+                            if (tokenContent.style.display) {
+                                tokenContent.style.removeProperty('display');
+                            }
+                        }
+                        
+                        // Update collapse button state to show "Expand"
+                        const tokenIconCollapse = document.getElementById('github-token-icon-collapse');
+                        if (tokenIconCollapse) {
+                            tokenIconCollapse.classList.remove('fa-chevron-up');
+                            tokenIconCollapse.classList.add('fa-chevron-down');
+                        }
+                        
+                        const toggleTokenCollapseBtn = document.getElementById('toggle-github-token-collapse');
+                        if (toggleTokenCollapseBtn) {
+                            const span = toggleTokenCollapseBtn.querySelector('span');
+                            if (span) span.textContent = 'Expand';
+                            
+                            // Ensure event listener is attached
+                            if (window.attachGithubTokenCollapseHandler) {
+                                window.attachGithubTokenCollapseHandler();
+                            }
+                        }
+                    }
+                    
+                    // Clear dismissal flag when token becomes valid
+                    sessionStorage.removeItem('github-auth-warning-dismissed');
+                }
+            }
+        })
+        .catch(error => {
+            console.error('Error checking GitHub auth status:', error);
+            console.error('Error stack:', error.stack || 'No stack trace');
+        });
+};
+
 (function() {
     'use strict';
 
@@ -716,7 +827,11 @@ function initializePlugins() {
     pluginLog('[INIT] Initializing plugins...');
 
     // Check GitHub authentication status
-    checkGitHubAuthStatus();
+    if (window.checkGitHubAuthStatus) {
+        window.checkGitHubAuthStatus();
+    } else {
+        console.warn('checkGitHubAuthStatus not available yet');
+    }
 
     // Load both installed plugins and plugin store
     loadInstalledPlugins();
@@ -3835,7 +3950,7 @@ function searchPluginStore(fetchCommitInfo = true) {
                         window.attachGithubTokenCollapseHandler();
                         // Also check auth status to update UI
                         if (window.checkGitHubAuthStatus) {
-                            checkGitHubAuthStatus();
+                            window.checkGitHubAuthStatus();
                         }
                     }, 100);
                 }
@@ -4954,7 +5069,9 @@ window.saveGithubToken = function() {
                 // Small delay to ensure backend has reloaded the token, then refresh status
                 // checkGitHubAuthStatus() will handle collapsing the panel automatically
                 setTimeout(() => {
-                    checkGitHubAuthStatus();
+                    if (window.checkGitHubAuthStatus) {
+                        window.checkGitHubAuthStatus();
+                    }
                 }, 300);
             } else {
                 throw new Error(data.message || 'Failed to save token');
@@ -4974,116 +5091,6 @@ window.saveGithubToken = function() {
         });
 }
 
-// GitHub Authentication Status
-// Shows warning banner only when token is missing or invalid
-// The token itself is never exposed to the frontend for security
-// Returns a Promise so it can be awaited
-function checkGitHubAuthStatus() {
-    console.log('checkGitHubAuthStatus: Starting...');
-    return fetch('/api/v3/plugins/store/github-status')
-        .then(response => {
-            console.log('checkGitHubAuthStatus: Response status:', response.status);
-            return response.json();
-        })
-        .then(data => {
-            console.log('checkGitHubAuthStatus: Data received:', data);
-            if (data.status === 'success') {
-                const authData = data.data;
-                const tokenStatus = authData.token_status || (authData.authenticated ? 'valid' : 'none');
-                console.log('checkGitHubAuthStatus: Token status:', tokenStatus);
-                const warning = document.getElementById('github-auth-warning');
-                const settings = document.getElementById('github-token-settings');
-                const rateLimit = document.getElementById('rate-limit-count');
-                console.log('checkGitHubAuthStatus: Elements found:', {
-                    warning: !!warning,
-                    settings: !!settings,
-                    rateLimit: !!rateLimit
-                });
-
-                // Show warning only when token is missing ('none') or invalid ('invalid')
-                if (tokenStatus === 'none' || tokenStatus === 'invalid') {
-                    // Check if user has dismissed the warning (stored in session storage)
-                    const dismissed = sessionStorage.getItem('github-auth-warning-dismissed');
-                    if (!dismissed) {
-                        if (warning && rateLimit) {
-                            rateLimit.textContent = authData.rate_limit;
-                            
-                            // Update warning message for invalid tokens
-                            if (tokenStatus === 'invalid' && authData.error) {
-                                const warningText = warning.querySelector('p.text-sm.text-yellow-700');
-                                if (warningText) {
-                                    // Preserve the structure but update the message
-                                    const errorMsg = authData.message || authData.error;
-                                    warningText.innerHTML = `<strong>Token Invalid:</strong> ${errorMsg}. Please update your GitHub token to increase API rate limits to 5,000 requests/hour.`;
-                                }
-                            }
-                            // For 'none' status, use the default message from HTML template
-                            
-                            // Show warning using both classList and style.display
-                            warning.classList.remove('hidden');
-                            warning.style.display = '';
-                            console.log(`GitHub token status: ${tokenStatus} - showing API limit warning`);
-                        }
-                    }
-                    
-                    // Ensure settings panel is accessible when token is missing or invalid
-                    // Panel can be opened via "Configure Token" link in warning
-                    // Don't force it to be visible, but don't prevent it from being shown
-                } else if (tokenStatus === 'valid') {
-                    // Token is valid - hide warning and ensure settings panel is visible but collapsed
-                    if (warning) {
-                        // Hide warning using both classList and style.display
-                        warning.classList.add('hidden');
-                        warning.style.display = 'none';
-                        console.log('GitHub token is valid - hiding API limit warning');
-                    }
-                    
-                    // Make settings panel visible but collapsed (accessible for token management)
-                    if (settings) {
-                        // Remove hidden class from panel itself - make it visible using both methods
-                        settings.classList.remove('hidden');
-                        settings.style.display = '';
-                        
-                        // Always collapse the content when token is valid (user must click expand)
-                        const tokenContent = document.getElementById('github-token-content');
-                        if (tokenContent) {
-                            // Collapse the content - use hidden class (element has class="block" in HTML)
-                            tokenContent.classList.add('hidden');
-                            // Remove any inline display style that might interfere
-                            if (tokenContent.style.display) {
-                                tokenContent.style.removeProperty('display');
-                            }
-                        }
-                        
-                        // Update collapse button state to show "Expand"
-                        const tokenIconCollapse = document.getElementById('github-token-icon-collapse');
-                        if (tokenIconCollapse) {
-                            tokenIconCollapse.classList.remove('fa-chevron-up');
-                            tokenIconCollapse.classList.add('fa-chevron-down');
-                        }
-                        
-                        const toggleTokenCollapseBtn = document.getElementById('toggle-github-token-collapse');
-                        if (toggleTokenCollapseBtn) {
-                            const span = toggleTokenCollapseBtn.querySelector('span');
-                            if (span) span.textContent = 'Expand';
-                            
-                            // Ensure event listener is attached
-                            if (window.attachGithubTokenCollapseHandler) {
-                                window.attachGithubTokenCollapseHandler();
-                            }
-                        }
-                    }
-                    
-                    // Clear dismissal flag when token becomes valid
-                    sessionStorage.removeItem('github-auth-warning-dismissed');
-                }
-            }
-        })
-        .catch(error => {
-            console.error('Error checking GitHub auth status:', error);
-            console.error('Error stack:', error.stack || 'No stack trace');
-        });
-}
 
 window.dismissGithubWarning = function() {
     const warning = document.getElementById('github-auth-warning');
