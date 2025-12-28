@@ -1300,6 +1300,8 @@ class DisplayController:
                         self.current_mode_index = self.available_modes.index(active_mode)
                     except ValueError:
                         pass
+                    logger.debug("On-demand check: active=%s, mode=%s, current_display_mode=%s, active_mode=%s", 
+                                self.on_demand_active, self.on_demand_mode, self.current_display_mode, active_mode)
                 # Check for live priority content and switch to it immediately (only if on-demand is not active)
                 elif not wifi_status_data:
                     live_priority_mode = self._check_live_priority()
