@@ -190,23 +190,37 @@
 </div>
 
 <script>
-// Global variables
-let fontCatalog = {};
-let fontTokens = {};
-let fontOverrides = {};
-let selectedFontFiles = [];
-
-// Initialize when DOM is ready or after HTMX load
-// Prevent multiple initializations
-let fontsTabInitialized = false;
-
-function initializeFontsTab() {
-    // Check if already initialized
-    if (fontsTabInitialized) {
-        console.log('Fonts tab already initialized, skipping...');
+// Prevent script from running multiple times when HTMX reloads content
+(function() {
+    // If script has already loaded, just re-initialize the tab without redeclaring variables/functions
+    if (typeof window._fontsScriptLoaded !== 'undefined') {
+        // Script already loaded, just trigger initialization
+        setTimeout(function() {
+            if (typeof window.initializeFontsTab === 'function') {
+                window.initializeFontsTab();
+            }
+        }, 50);
         return;
     }
     
+    // Mark script as loaded
+    window._fontsScriptLoaded = true;
+    
+    // Initialize global variables on window object
+    window.fontCatalog = window.fontCatalog || {};
+    window.fontTokens = window.fontTokens || {};
+    window.fontOverrides = window.fontOverrides || {};
+    window.selectedFontFiles = window.selectedFontFiles || [];
+    
+    // Create references that can be reassigned
+    var fontCatalog = window.fontCatalog;
+    var fontTokens = window.fontTokens;
+    var fontOverrides = window.fontOverrides;
+    var selectedFontFiles = window.selectedFontFiles;
+
+function initializeFontsTab() {
+    // Allow re-initialization on each HTMX content swap
+    // The window._fontsScriptLoaded guard prevents function redeclaration
     const detectedEl = document.getElementById('detected-fonts');
     const availableEl = document.getElementById('available-fonts');
     
@@ -218,9 +232,6 @@ function initializeFontsTab() {
         setTimeout(initializeFontsTab, 100);
         return;
     }
-    
-    // Mark as initialized to prevent duplicate initialization
-    fontsTabInitialized = true;
     
     // Ensure showNotification function is available
     if (typeof window.showNotification !== 'function') {
@@ -314,6 +325,9 @@ function initializeFontsTab() {
 
     console.log('Fonts tab initialized successfully');
 }
+
+// Expose initializeFontsTab to window for re-initialization after HTMX reload
+window.initializeFontsTab = initializeFontsTab;
 
 // Initialize after HTMX content swap for dynamic loading
 // Note: We don't use DOMContentLoaded here because this partial is loaded via HTMX
@@ -411,9 +425,15 @@ async function loadFontData() {
             throw new Error('Invalid response format from font API');
         }
 
-        fontCatalog = catalogData.data.catalog || {};
-        fontTokens = tokensData.data.tokens || {};
-        fontOverrides = overridesData.data.overrides || {};
+        // Update both window properties and local references
+        window.fontCatalog = catalogData.data.catalog || {};
+        window.fontTokens = tokensData.data.tokens || {};
+        window.fontOverrides = overridesData.data.overrides || {};
+        
+        // Update local variable references
+        fontCatalog = window.fontCatalog;
+        fontTokens = window.fontTokens;
+        fontOverrides = window.fontOverrides;
 
         // Update displays
         updateDetectedFontsDisplay();
@@ -497,8 +517,13 @@ function updateAvailableFontsDisplay() {
         return;
     }
 
-    const lines = Object.entries(fontCatalog).map(([name, path]) => {
-        const fullPath = path.startsWith('/') ? path : `assets/fonts/${path}`;
+    const lines = Object.entries(fontCatalog).map(([name, fontInfo]) => {
+        const fontPath = typeof fontInfo === 'string' ? fontInfo : (fontInfo?.path || '');
+        // Only prefix with "assets/fonts/" if path is a bare filename (no "/" and doesn't start with "assets/")
+        // If path is absolute (starts with "/") or already has "assets/" prefix, use as-is
+        const fullPath = (fontPath.startsWith('/') || fontPath.startsWith('assets/')) 
+            ? fontPath 
+            : `assets/fonts/${fontPath}`;
         return `${name}: ${fullPath}`;
     });
     container.textContent = lines.join('\n');
@@ -798,6 +823,8 @@ function updateUploadProgress(percent) {
     document.getElementById('upload-percent').textContent = Math.round(percent) + '%';
     document.getElementById('upload-progress-bar').style.width = percent + '%';
 }
+
+})(); // End of script load guard - prevents redeclaration on HTMX reload
 </script>
 
 <style>

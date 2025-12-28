@@ -26,30 +26,14 @@ app = Flask(__name__)
 app.secret_key = os.urandom(24)
 config_manager = ConfigManager()
 
-# Initialize CSRF protection (optional for local-only, but recommended for defense-in-depth)
-try:
-    from flask_wtf.csrf import CSRFProtect
-    csrf = CSRFProtect(app)
-    # Exempt SSE streams from CSRF (read-only)
-    from functools import wraps
-    from flask import request
-    
-    def csrf_exempt(f):
-        """Decorator to exempt a route from CSRF protection."""
-        f.csrf_exempt = True
-        return f
-    
-    # Mark SSE streams as exempt
-    @app.before_request
-    def check_csrf_exempt():
-        """Check if route should be exempt from CSRF."""
-        if request.endpoint and 'stream' in request.endpoint:
-            # SSE streams are read-only, exempt from CSRF
-            pass
-except ImportError:
-    # flask-wtf not installed, CSRF protection disabled
-    csrf = None
-    pass
+# CSRF protection disabled for local-only application
+# CSRF is designed for internet-facing web apps to prevent cross-site request forgery.
+# For a local-only Raspberry Pi application, the threat model is different:
+# - If an attacker has network access to perform CSRF, they have other attack vectors
+# - All API endpoints are programmatic (HTMX/fetch) and don't include CSRF tokens
+# - Forms use HTMX which doesn't automatically include CSRF tokens
+# If you need CSRF protection (e.g., exposing to internet), properly implement CSRF tokens in HTMX forms
+csrf = None
 
 # Initialize rate limiting (prevent accidental abuse, not security)
 try:
@@ -543,6 +527,7 @@ if csrf:
     csrf.exempt(stream_stats)
     csrf.exempt(stream_display)
     csrf.exempt(stream_logs)
+    # Note: api_v3 blueprint is exempted above after registration
 
 if limiter:
     limiter.limit("20 per minute")(stream_stats)
