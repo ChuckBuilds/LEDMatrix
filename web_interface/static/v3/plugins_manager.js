@@ -4030,24 +4030,40 @@ function setupCollapsibleSections() {
     // Made global so it can be called from checkGitHubAuthStatus()
     window.attachGithubTokenCollapseHandler = function() {
         const toggleTokenCollapseBtn = document.getElementById('toggle-github-token-collapse');
-        if (toggleTokenCollapseBtn && window.toggleGithubTokenContent) {
-            // Remove any existing listeners by cloning the button
-            const newBtn = toggleTokenCollapseBtn.cloneNode(true);
-            toggleTokenCollapseBtn.parentNode.replaceChild(newBtn, toggleTokenCollapseBtn);
-            // Attach listener to the new button
-            newBtn.addEventListener('click', window.toggleGithubTokenContent);
-            console.log('GitHub token collapse handler attached');
-        } else {
-            console.warn('Could not attach GitHub token collapse handler:', {
-                button: !!toggleTokenCollapseBtn,
-                handler: !!window.toggleGithubTokenContent
-            });
+        if (!toggleTokenCollapseBtn) {
+            console.warn('GitHub token collapse button not found');
+            return;
         }
+        
+        if (!window.toggleGithubTokenContent) {
+            console.warn('toggleGithubTokenContent function not defined');
+            return;
+        }
+        
+        // Remove any existing listeners by cloning the button
+        const parent = toggleTokenCollapseBtn.parentNode;
+        if (!parent) {
+            console.warn('Button parent not found');
+            return;
+        }
+        
+        const newBtn = toggleTokenCollapseBtn.cloneNode(true);
+        parent.replaceChild(newBtn, toggleTokenCollapseBtn);
+        
+        // Attach listener to the new button
+        newBtn.addEventListener('click', function(e) {
+            console.log('Button clicked, calling toggleGithubTokenContent');
+            window.toggleGithubTokenContent(e);
+        });
+        
+        console.log('GitHub token collapse handler attached to button:', newBtn.id);
     };
     
     // Toggle GitHub Token Settings section
     // Use a named function so we can re-attach it if needed
     window.toggleGithubTokenContent = function(e) {
+        console.log('toggleGithubTokenContent called', e);
+        
         if (e) {
             e.stopPropagation(); // Prevent parent click handlers
             e.preventDefault();
@@ -4057,6 +4073,12 @@ function setupCollapsibleSections() {
         const tokenIconCollapse = document.getElementById('github-token-icon-collapse');
         const toggleTokenCollapseBtn = document.getElementById('toggle-github-token-collapse');
         
+        console.log('Elements found:', {
+            tokenContent: !!tokenContent,
+            tokenIconCollapse: !!tokenIconCollapse,
+            toggleTokenCollapseBtn: !!toggleTokenCollapseBtn
+        });
+        
         if (!tokenContent || !toggleTokenCollapseBtn) {
             console.warn('GitHub token content or button not found');
             return;
@@ -4064,14 +4086,19 @@ function setupCollapsibleSections() {
         
         // Check current state - use hidden class (element has class="block" in HTML)
         const hasHiddenClass = tokenContent.classList.contains('hidden');
+        const computedDisplay = window.getComputedStyle(tokenContent).display;
         
-        if (hasHiddenClass) {
+        console.log('Current state:', {
+            hasHiddenClass,
+            computedDisplay,
+            buttonText: toggleTokenCollapseBtn.querySelector('span')?.textContent
+        });
+        
+        if (hasHiddenClass || computedDisplay === 'none') {
             // Show content - remove hidden class, block class will make it visible
             tokenContent.classList.remove('hidden');
-            // Ensure no inline display style interferes
-            if (tokenContent.style.display) {
-                tokenContent.style.removeProperty('display');
-            }
+            // Remove any inline display style
+            tokenContent.style.removeProperty('display');
             if (tokenIconCollapse) {
                 tokenIconCollapse.classList.remove('fa-chevron-down');
                 tokenIconCollapse.classList.add('fa-chevron-up');
@@ -4082,10 +4109,8 @@ function setupCollapsibleSections() {
         } else {
             // Hide content - add hidden class
             tokenContent.classList.add('hidden');
-            // Ensure no inline display style interferes
-            if (tokenContent.style.display) {
-                tokenContent.style.removeProperty('display');
-            }
+            // Remove any inline display style
+            tokenContent.style.removeProperty('display');
             if (tokenIconCollapse) {
                 tokenIconCollapse.classList.remove('fa-chevron-up');
                 tokenIconCollapse.classList.add('fa-chevron-down');
