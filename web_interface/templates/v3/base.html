@@ -2348,7 +2348,9 @@
                         tabButton.className = `plugin-tab nav-tab ${this.activeTab === plugin.id ? 'nav-tab-active' : ''}`;
                         tabButton.onclick = () => {
                             this.activeTab = plugin.id;
-                            this.updatePluginTabStates();
+                            if (typeof this.updatePluginTabStates === 'function') {
+                                this.updatePluginTabStates();
+                            }
                         };
                         tabButton.innerHTML = `
                             <i class="fas fa-puzzle-piece"></i>${this.escapeHtml(plugin.name || plugin.id)}
