@@ -1656,12 +1656,23 @@ window.__openOnDemandModalImpl = function(pluginId) {
         });
 
     console.log('[__openOnDemandModalImpl] Setting modal display to flex');
-    // Remove inline display:none and set to flex explicitly
-    // Also ensure z-index is high enough
-    modal.style.display = 'flex';
-    modal.style.visibility = 'visible';
-    modal.style.opacity = '1';
-    modal.style.zIndex = '9999'; // Ensure it's above everything
+    // Force modal to be visible and properly positioned
+    // Remove all inline styles that might interfere
+    modal.removeAttribute('style');
+    // Set explicit positioning to ensure it's visible
+    modal.style.cssText = 'position: fixed !important; top: 0 !important; left: 0 !important; right: 0 !important; bottom: 0 !important; display: flex !important; visibility: visible !important; opacity: 1 !important; z-index: 9999 !important; margin: 0 !important; padding: 0 !important;';
+    
+    // Ensure modal content is centered
+    const modalContent = modal.querySelector('.modal-content');
+    if (modalContent) {
+        modalContent.style.margin = 'auto';
+        modalContent.style.maxHeight = '90vh';
+        modalContent.style.overflowY = 'auto';
+    }
+    
+    // Scroll to top of page to ensure modal is visible
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+    
     // Force a reflow to ensure styles are applied
     modal.offsetHeight;
     console.log('[__openOnDemandModalImpl] Modal display set, should be visible now. Modal element:', modal);
