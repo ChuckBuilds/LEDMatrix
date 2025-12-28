@@ -4063,8 +4063,8 @@ function setupCollapsibleSections() {
         const isHidden = hasHiddenClass || hasDisplayNone || computedDisplay === 'none';
         
         if (isHidden) {
-            // Show content - use empty string to defer to CSS
-            tokenContent.style.display = '';
+            // Show content - remove inline display to defer to CSS classes
+            tokenContent.style.removeProperty('display');
             tokenContent.classList.remove('hidden');
             if (tokenIconCollapse) {
                 tokenIconCollapse.classList.remove('fa-chevron-down');
@@ -4074,8 +4074,8 @@ function setupCollapsibleSections() {
             if (span) span.textContent = 'Collapse';
             console.log('GitHub token content expanded');
         } else {
-            // Hide content - use empty string to defer to CSS (hidden class handles display)
-            tokenContent.style.display = '';
+            // Hide content - remove inline display, hidden class handles display via CSS
+            tokenContent.style.removeProperty('display');
             tokenContent.classList.add('hidden');
             if (tokenIconCollapse) {
                 tokenIconCollapse.classList.remove('fa-chevron-up');
