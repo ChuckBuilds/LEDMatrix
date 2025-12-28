@@ -3826,6 +3826,19 @@ function searchPluginStore(fetchCommitInfo = true) {
                 } catch (e) {
                     console.warn('Could not update store count:', e);
                 }
+                
+                // Ensure GitHub token collapse handler is attached after store is rendered
+                // The button might not exist until the store content is loaded
+                if (window.attachGithubTokenCollapseHandler) {
+                    setTimeout(() => {
+                        console.log('Re-attaching GitHub token collapse handler after store render');
+                        window.attachGithubTokenCollapseHandler();
+                        // Also check auth status to update UI
+                        if (window.checkGitHubAuthStatus) {
+                            checkGitHubAuthStatus();
+                        }
+                    }, 100);
+                }
             } else {
                 showError('Failed to search plugin store: ' + data.message);
                 try {
@@ -4966,15 +4979,26 @@ window.saveGithubToken = function() {
 // The token itself is never exposed to the frontend for security
 // Returns a Promise so it can be awaited
 function checkGitHubAuthStatus() {
+    console.log('checkGitHubAuthStatus: Starting...');
     return fetch('/api/v3/plugins/store/github-status')
-        .then(response => response.json())
+        .then(response => {
+            console.log('checkGitHubAuthStatus: Response status:', response.status);
+            return response.json();
+        })
         .then(data => {
+            console.log('checkGitHubAuthStatus: Data received:', data);
             if (data.status === 'success') {
                 const authData = data.data;
                 const tokenStatus = authData.token_status || (authData.authenticated ? 'valid' : 'none');
+                console.log('checkGitHubAuthStatus: Token status:', tokenStatus);
                 const warning = document.getElementById('github-auth-warning');
                 const settings = document.getElementById('github-token-settings');
                 const rateLimit = document.getElementById('rate-limit-count');
+                console.log('checkGitHubAuthStatus: Elements found:', {
+                    warning: !!warning,
+                    settings: !!settings,
+                    rateLimit: !!rateLimit
+                });
 
                 // Show warning only when token is missing ('none') or invalid ('invalid')
                 if (tokenStatus === 'none' || tokenStatus === 'invalid') {
@@ -5057,6 +5081,7 @@ function checkGitHubAuthStatus() {
         })
         .catch(error => {
             console.error('Error checking GitHub auth status:', error);
+            console.error('Error stack:', error.stack || 'No stack trace');
         });
 }
 
