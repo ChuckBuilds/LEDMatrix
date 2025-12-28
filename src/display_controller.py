@@ -750,12 +750,22 @@ class DisplayController:
             return
 
         request_id = request.get('request_id')
-        logger.debug("Polling on-demand: request_id=%s, current_on_demand_request_id=%s", 
-                    request_id, self.on_demand_request_id)
-        if not request_id or request_id == self.on_demand_request_id:
-            logger.debug("On-demand request %s already processed or invalid (current=%s)", 
-                        request_id, self.on_demand_request_id)
+        if not request_id:
             return
+        
+        # Check if this request was already processed (using instance variable)
+        if request_id == self.on_demand_request_id:
+            logger.debug("On-demand request %s already processed (instance check)", request_id)
+            return
+        
+        # Also check persistent processed_id (for restart scenarios)
+        processed_request_id = self.cache_manager.get('display_on_demand_processed_id', max_age=3600)
+        if request_id == processed_request_id:
+            logger.debug("On-demand request %s already processed (persisted check)", request_id)
+            return
+        
+        logger.info("Polling on-demand: request_id=%s, current_on_demand_request_id=%s, processed_id=%s", 
+                   request_id, self.on_demand_request_id, processed_request_id)
 
         action = request.get('action')
         logger.info("Received on-demand request %s: %s (plugin_id=%s, mode=%s)", 
