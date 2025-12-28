@@ -38,13 +38,13 @@ def get_default_for_field(prop: Dict[str, Any]) -> Any:
         maximum = prop.get('maximum')
         
         if minimum is not None:
-            return minimum
+            return float(minimum)
         elif maximum is not None:
-            # Use a reasonable fraction of max (like 30% or minimum 1)
-            return max(1, int(maximum * 0.3))
+            # Use a reasonable fraction of max (like 30% or minimum 1.0)
+            return max(1.0, float(maximum) * 0.3)
         else:
-            # No constraints, use 0
-            return 0
+            # No constraints, use 0.0
+            return 0.0
     
     elif prop_type == 'integer':
         # Similar to number
