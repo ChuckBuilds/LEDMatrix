@@ -937,7 +937,10 @@
                             const appElement = document.querySelector('[x-data="app()"]');
                             if (appElement && appElement._x_dataStack && appElement._x_dataStack[0]) {
                                 appElement._x_dataStack[0].activeTab = plugin.id;
-                                appElement._x_dataStack[0].updatePluginTabStates();
+                                // Only call updatePluginTabStates if it exists
+                                if (typeof appElement._x_dataStack[0].updatePluginTabStates === 'function') {
+                                    appElement._x_dataStack[0].updatePluginTabStates();
+                                }
                             }
                         }
                     };
