@@ -2948,6 +2948,9 @@ def _is_field_required(key_path, schema):
         return field_name in required
 
 
+# Sentinel object to indicate a field should be skipped (not set in config)
+_SKIP_FIELD = object()
+
 def _parse_form_value_with_schema(value, key_path, schema):
     """
     Parse a form value using schema information to determine correct type.
@@ -2959,7 +2962,7 @@ def _parse_form_value_with_schema(value, key_path, schema):
         schema: The plugin's JSON schema
     
     Returns:
-        Parsed value with correct type
+        Parsed value with correct type, or _SKIP_FIELD to indicate the field should not be set
     """
     import json
     
@@ -2978,6 +2981,18 @@ def _parse_form_value_with_schema(value, key_path, schema):
         if prop and prop.get('type') == 'string':
             if not _is_field_required(key_path, schema):
                 return ""  # Return empty string for optional string fields
+        # For number/integer fields, check if they have defaults or are required
+        if prop:
+            prop_type = prop.get('type')
+            if prop_type in ('number', 'integer'):
+                # If field has a default, use it
+                if 'default' in prop:
+                    return prop['default']
+                # If field is not required and has no default, skip setting it
+                if not _is_field_required(key_path, schema):
+                    return _SKIP_FIELD
+                # If field is required but empty, return None (validation will fail, which is correct)
+                return None
         return None
     
     # Handle string values
@@ -3067,8 +3082,12 @@ def _set_nested_value(config, key_path, value):
     Args:
         config: The config dict to modify
         key_path: Dot-separated path (e.g., "customization.period_text.font")
-        value: The value to set
+        value: The value to set (or _SKIP_FIELD to skip setting)
     """
+    # Skip setting if value is the sentinel
+    if value is _SKIP_FIELD:
+        return
+    
     parts = key_path.split('.')
     current = config
     
@@ -3269,7 +3288,9 @@ def save_plugin_config():
                 import logging
                 logger = logging.getLogger(__name__)
                 logger.debug(f"Combined indexed array field {base_path}: {values} -> {combined_value} -> {parsed_value}")
-                _set_nested_value(plugin_config, base_path, parsed_value)
+                # Only set if not skipped
+                if parsed_value is not _SKIP_FIELD:
+                    _set_nested_value(plugin_config, base_path, parsed_value)
             
             # Process remaining (non-indexed) fields
             # Skip any base paths that were processed as indexed arrays
@@ -3287,8 +3308,9 @@ def save_plugin_config():
                                 import logging
                                 logger = logging.getLogger(__name__)
                                 logger.debug(f"Array field {key}: form value='{value}' -> parsed={parsed_value}")
-                        # Use helper to set nested values correctly
-                        _set_nested_value(plugin_config, key, parsed_value)
+                        # Use helper to set nested values correctly (skips if _SKIP_FIELD)
+                        if parsed_value is not _SKIP_FIELD:
+                            _set_nested_value(plugin_config, key, parsed_value)
             
             # Post-process: Fix array fields that might have been incorrectly structured
             # This handles cases where array fields are stored as dicts (e.g., from indexed form fields)

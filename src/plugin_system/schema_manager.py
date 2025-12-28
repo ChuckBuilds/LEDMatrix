@@ -394,24 +394,54 @@ class SchemaManager:
     def merge_with_defaults(self, config: Dict[str, Any], defaults: Dict[str, Any]) -> Dict[str, Any]:
         """
         Merge configuration with defaults, preserving user values.
+        Also replaces None values with defaults to ensure config never has None from the start.
         
         Args:
             config: User configuration
             defaults: Default values from schema
             
         Returns:
-            Merged configuration with defaults applied where missing
+            Merged configuration with defaults applied where missing or None
         """
-        merged = defaults.copy()
+        merged = copy.deepcopy(defaults)
         
-        def deep_merge(target: Dict[str, Any], source: Dict[str, Any]) -> None:
-            """Recursively merge source into target."""
+        def deep_merge(target: Dict[str, Any], source: Dict[str, Any], default_dict: Dict[str, Any]) -> None:
+            """Recursively merge source into target, replacing None with defaults."""
             for key, value in source.items():
+                default_value = default_dict.get(key)
+                
                 if key in target and isinstance(target[key], dict) and isinstance(value, dict):
-                    deep_merge(target[key], value)
+                    # Both are dicts, recursively merge
+                    if isinstance(default_value, dict):
+                        deep_merge(target[key], value, default_value)
+                    else:
+                        deep_merge(target[key], value, {})
+                elif value is None and default_value is not None:
+                    # Value is None and we have a default, use the default
+                    target[key] = copy.deepcopy(default_value) if isinstance(default_value, (dict, list)) else default_value
                 else:
-                    target[key] = value
+                    # Normal merge: user value takes precedence (copy if dict/list)
+                    if isinstance(value, (dict, list)):
+                        target[key] = copy.deepcopy(value)
+                    else:
+                        target[key] = value
         
-        deep_merge(merged, config)
+        deep_merge(merged, config, defaults)
+        
+        # Final pass: replace any remaining None values at any level with defaults
+        def replace_none_with_defaults(target: Dict[str, Any], default_dict: Dict[str, Any]) -> None:
+            """Recursively replace None values with defaults."""
+            for key in list(target.keys()):
+                value = target[key]
+                default_value = default_dict.get(key)
+                
+                if value is None and default_value is not None:
+                    # Replace None with default
+                    target[key] = copy.deepcopy(default_value) if isinstance(default_value, (dict, list)) else default_value
+                elif isinstance(value, dict) and isinstance(default_value, dict):
+                    # Recursively process nested dicts
+                    replace_none_with_defaults(value, default_value)
+        
+        replace_none_with_defaults(merged, defaults)
         return merged
 
