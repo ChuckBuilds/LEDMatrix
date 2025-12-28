@@ -128,7 +128,7 @@ LEDMatrix uses a plugin-based architecture where all display functionality (exce
 
 The easiest way to discover and install plugins is through the **Plugin Store** in the LEDMatrix web interface:
 
-1. Open the web interface (`http://your-pi-ip:5001`)
+1. Open the web interface (`http://your-pi-ip:5000`)
 2. Navigate to the **Plugin Manager** tab
 3. Browse available plugins in the Plugin Store
 4. Click **Install** on any plugin you want
@@ -415,7 +415,7 @@ The system uses a template-based configuration approach to avoid Git conflicts d
    ```bash
    sudo nano config/config.json
    ```
-or edit via web interface at http://ledpi:5001
+or edit via web interface at http://ledpi:5000
 
 3. **Having Issues?**: Run the First Time Script again:
   ```bash
@@ -993,7 +993,7 @@ sudo ./stop_display.sh
 
 ## Web Interface Installation (V2)
 
-The LEDMatrix system includes Web Interface V2 that runs on port 5001 and provides real-time display preview, configuration management, and on-demand display controls.
+The LEDMatrix system includes Web Interface V2 that runs on port 5000 and provides real-time display preview, configuration management, and on-demand display controls.
 
 ### Installing the Web Interface Service
 
@@ -1032,7 +1032,7 @@ The web interface can be configured to start automatically with the main display
 
 Once installed, you can access the web interface at:
 ```
-http://your-pi-ip:5001
+http://your-pi-ip:5000
 ```
 
 ### Managing the Web Interface Service
@@ -1075,10 +1075,10 @@ sudo systemctl enable ledmatrix-web.service
 3. Check logs for errors: `journalctl -u ledmatrix-web.service -f`
 4. Ensure `web_display_autostart` is set to `true` in `config/config.json`
 
-**Port 5001 Not Accessible:**
+**Port 5000 Not Accessible:**
 1. Check if the service is running on the correct port
-2. Verify firewall settings allow access to port 5001
-3. Check if another service is using port 5001
+2. Verify firewall settings allow access to port 5000
+3. Check if another service is using port 5000
 
 **Service Fails to Start:**
 1. Check Python dependencies are installed
