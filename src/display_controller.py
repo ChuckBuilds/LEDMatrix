@@ -1282,8 +1282,15 @@ class DisplayController:
                             # Display failed, clear the status and continue normally
                             wifi_status_data = None
 
-                # Check for live priority content and switch to it immediately
-                if not self.on_demand_active and not wifi_status_data:
+                # On-demand mode takes priority over everything (live priority, normal rotation, etc.)
+                if self.on_demand_active and self.on_demand_mode:
+                    active_mode = self.on_demand_mode
+                    if self.current_display_mode != active_mode:
+                        logger.info("On-demand mode active: switching to %s (overriding live priority)", active_mode)
+                        self.current_display_mode = active_mode
+                        self.force_change = True
+                # Check for live priority content and switch to it immediately (only if on-demand is not active)
+                elif not wifi_status_data:
                     live_priority_mode = self._check_live_priority()
                     if live_priority_mode and self.current_display_mode != live_priority_mode:
                         logger.info("Live content detected - switching immediately to %s", live_priority_mode)
@@ -1294,12 +1301,7 @@ class DisplayController:
                             self.current_mode_index = self.available_modes.index(live_priority_mode)
                         except ValueError:
                             pass
-
-                if self.on_demand_active and self.on_demand_mode:
-                    active_mode = self.on_demand_mode
-                    if self.current_display_mode != active_mode:
-                        self.current_display_mode = active_mode
-                        self.force_change = True
+                    active_mode = self.current_display_mode
                 else:
                     active_mode = self.current_display_mode
 
