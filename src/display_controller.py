@@ -1773,11 +1773,13 @@ class DisplayController:
                 
                 # Move to next mode
                 if self.on_demand_active:
-                    # Stay on the same mode while on-demand is active
+                    # Stay on the same mode while on-demand is active (on-demand takes priority over live priority)
+                    logger.debug("On-demand active, staying on mode %s", active_mode)
                     self._publish_on_demand_state()
                     continue
 
                 # Check for live priority - don't rotate if current plugin has live content
+                # This check happens AFTER on-demand check, so on-demand always wins
                 should_rotate = True
                 if active_mode in self.plugin_modes:
                     plugin_instance = self.plugin_modes[active_mode]
