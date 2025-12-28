@@ -80,6 +80,27 @@ class DisplayController:
         
         # List of available display modes - now handled entirely by plugins
         self.available_modes = []
+        self._original_available_modes: List[str] = []  # Store full mode list for restoration
+        
+        # Check for on-demand plugin filter from environment variable or file
+        on_demand_plugin_id = os.environ.get('LEDMATRIX_ON_DEMAND_PLUGIN')
+        if not on_demand_plugin_id:
+            # Try reading from file (for systemd service compatibility)
+            try:
+                project_root = Path(__file__).parent.parent.parent.resolve()
+                env_file = project_root / "config" / "on_demand_env.conf"
+                if env_file.exists():
+                    with open(env_file, 'r', encoding='utf-8') as f:
+                        for line in f:
+                            line = line.strip()
+                            if line.startswith('LEDMATRIX_ON_DEMAND_PLUGIN='):
+                                on_demand_plugin_id = line.split('=', 1)[1].strip()
+                                break
+            except (OSError, PermissionError, ValueError) as e:
+                logger.debug("Could not read on-demand env file: %s", e)
+        
+        if on_demand_plugin_id:
+            logger.info("On-demand mode detected: filtering to plugin '%s' only", on_demand_plugin_id)
         
         # Initialize Plugin System
         plugin_time = time.time()
@@ -158,8 +179,36 @@ class DisplayController:
             discovered_plugins = self.plugin_manager.discover_plugins()
             logger.info("Discovered %d plugin(s)", len(discovered_plugins))
 
-            # Count enabled plugins for progress tracking
-            enabled_plugins = [p for p in discovered_plugins if self.config.get(p, {}).get('enabled', False)]
+            # Filter plugins if on-demand mode is active
+            if on_demand_plugin_id:
+                # Only load the on-demand plugin, but ensure it's enabled
+                if on_demand_plugin_id not in discovered_plugins:
+                    error_msg = f"On-demand plugin '{on_demand_plugin_id}' not found in discovered plugins"
+                    logger.error(error_msg)
+                    # Don't raise - instead, log error and continue with normal mode
+                    # This allows the system to recover gracefully
+                    logger.warning("Falling back to normal mode (all enabled plugins)")
+                    on_demand_plugin_id = None
+                    enabled_plugins = [p for p in discovered_plugins if self.config.get(p, {}).get('enabled', False)]
+                else:
+                    # Temporarily enable the plugin if it's disabled
+                    plugin_config = self.config.get(on_demand_plugin_id, {})
+                    was_disabled = not plugin_config.get('enabled', False)
+                    if was_disabled:
+                        logger.info("Temporarily enabling plugin '%s' for on-demand mode", on_demand_plugin_id)
+                        if on_demand_plugin_id not in self.config:
+                            self.config[on_demand_plugin_id] = {}
+                        self.config[on_demand_plugin_id]['enabled'] = True
+                    
+                    # Filter to only this plugin
+                    enabled_plugins = [on_demand_plugin_id]
+                    self.on_demand_active = True
+                    self.on_demand_plugin_id = on_demand_plugin_id
+                    logger.info("On-demand mode: loading only plugin '%s'", on_demand_plugin_id)
+            else:
+                # Normal mode: load all enabled plugins
+                enabled_plugins = [p for p in discovered_plugins if self.config.get(p, {}).get('enabled', False)]
+            
             enabled_count = len(enabled_plugins)
             logger.info("Loading %d enabled plugin(s) in parallel (max 4 concurrent)...", enabled_count)
             
@@ -256,6 +305,31 @@ class DisplayController:
                 logger.debug("%d plugin(s) disabled in config", disabled_count)
 
             logger.info("Plugin system initialized in %.3f seconds", time.time() - plugin_time)
+            
+            # Store original available_modes for restoration (before on-demand filtering)
+            self._original_available_modes = list(self.available_modes)
+            
+            # If on-demand mode is active, filter available_modes to only include the on-demand plugin's modes
+            if on_demand_plugin_id and self.on_demand_plugin_id:
+                filtered_modes = [
+                    mode for mode in self.available_modes
+                    if self.mode_to_plugin_id.get(mode) == self.on_demand_plugin_id
+                ]
+                if filtered_modes:
+                    logger.info("On-demand filtering: %d modes available for plugin '%s' (filtered from %d total modes)",
+                              len(filtered_modes), self.on_demand_plugin_id, len(self.available_modes))
+                    self.available_modes = filtered_modes
+                    # Also filter plugin_modes and mode_to_plugin_id to match
+                    self.plugin_modes = {mode: self.plugin_modes[mode] for mode in filtered_modes if mode in self.plugin_modes}
+                    self.mode_to_plugin_id = {mode: self.mode_to_plugin_id[mode] for mode in filtered_modes if mode in self.mode_to_plugin_id}
+                else:
+                    logger.warning("On-demand plugin '%s' has no available modes - falling back to normal mode", 
+                                 self.on_demand_plugin_id)
+                    # Fall back to normal mode if plugin has no modes
+                    self.on_demand_active = False
+                    self.on_demand_plugin_id = None
+                    on_demand_plugin_id = None
+            
             logger.info("Total available modes: %d", len(self.available_modes))
             logger.info("Available modes: %s", self.available_modes)
 
@@ -281,6 +355,28 @@ class DisplayController:
         # Schedule management
         self.is_display_active = True
         self._was_display_active = True  # Track previous state for schedule change detection
+        
+        # Restore on-demand state from cache if available (after plugin loading)
+        # This happens after plugins are loaded so we can validate the plugin exists
+        if on_demand_plugin_id:
+            try:
+                on_demand_config = self.cache_manager.get('display_on_demand_config', max_age=3600)
+                if on_demand_config:
+                    self.on_demand_mode = on_demand_config.get('mode')
+                    self.on_demand_duration = on_demand_config.get('duration')
+                    self.on_demand_pinned = on_demand_config.get('pinned', False)
+                    self.on_demand_requested_at = on_demand_config.get('requested_at')
+                    self.on_demand_expires_at = on_demand_config.get('expires_at')
+                    self.on_demand_schedule_override = True
+                    self.on_demand_status = 'active'
+                    logger.info("Restored on-demand state from cache: plugin=%s, mode=%s", 
+                               on_demand_plugin_id, self.on_demand_mode)
+            except Exception as e:
+                logger.warning("Could not restore on-demand state from cache: %s", e)
+        
+        # Restore rotation state from cache if not in on-demand mode
+        if not on_demand_plugin_id:
+            self._restore_rotation_state()
         
         # Publish initial on-demand state
         try:
@@ -571,6 +667,31 @@ class DisplayController:
             # This is safer - better to show content longer than to exit prematurely
             return False
 
+    def _is_running_as_service(self) -> bool:
+        """Check if running as systemd service."""
+        # Check for systemd environment variables
+        if os.environ.get('INVOCATION_ID'):
+            return True
+        
+        # Check if parent process is systemd
+        try:
+            import psutil
+            current_process = psutil.Process()
+            parent = current_process.parent()
+            if parent:
+                parent_name = parent.name().lower()
+                if 'systemd' in parent_name:
+                    return True
+        except (ImportError, psutil.NoSuchProcess, psutil.AccessDenied):
+            # psutil not available or can't access process info
+            pass
+        
+        # Check for systemd notify socket
+        if os.environ.get('NOTIFY_SOCKET'):
+            return True
+        
+        return False
+
     def _get_on_demand_remaining(self) -> Optional[float]:
         """Calculate remaining time for an active on-demand session."""
         if not self.on_demand_active or self.on_demand_expires_at is None:
@@ -642,6 +763,243 @@ class DisplayController:
             logger.warning("Unknown on-demand action: %s", action)
         self.on_demand_request_id = request_id
 
+    def _save_rotation_state(self) -> None:
+        """Save current rotation state to cache for restoration after restart."""
+        try:
+            state = {
+                'current_mode_index': self.current_mode_index,
+                'current_display_mode': self.current_display_mode,
+                'last_mode_change': self.last_mode_change,
+                'timestamp': time.time()
+            }
+            self.cache_manager.set('display_rotation_state', state, ttl=3600)  # 1 hour TTL
+            logger.debug("Saved rotation state: mode_index=%d, mode=%s", 
+                        self.current_mode_index, self.current_display_mode)
+        except Exception as e:
+            logger.warning("Failed to save rotation state: %s", e)
+
+    def _restore_rotation_state(self) -> None:
+        """Restore rotation state from cache after restart."""
+        try:
+            state = self.cache_manager.get('display_rotation_state', max_age=3600)
+            if state:
+                self.current_mode_index = state.get('current_mode_index', 0)
+                self.current_display_mode = state.get('current_display_mode')
+                self.last_mode_change = state.get('last_mode_change', time.time())
+                logger.info("Restored rotation state: mode_index=%d, mode=%s",
+                          self.current_mode_index, self.current_display_mode)
+                # Clear the saved state after restoring
+                self.cache_manager.delete('display_rotation_state')
+        except Exception as e:
+            logger.debug("Could not restore rotation state: %s", e)
+
+    def _restart_with_on_demand_filter(self, plugin_id: str, mode: Optional[str] = None, 
+                                       duration: Optional[float] = None, pinned: bool = False) -> bool:
+        """
+        Restart display controller with only specified plugin enabled.
+        
+        Args:
+            plugin_id: Plugin ID to filter to
+            mode: Optional specific mode to start with
+            duration: Optional duration for on-demand session
+            pinned: Whether to pin the on-demand session
+            
+        Returns:
+            True if restart was initiated, False on error
+        """
+        try:
+            # Save current rotation state
+            self._save_rotation_state()
+            
+            # Save on-demand configuration to cache
+            on_demand_config = {
+                'plugin_id': plugin_id,
+                'mode': mode,
+                'duration': duration,
+                'pinned': pinned,
+                'requested_at': time.time(),
+                'expires_at': (time.time() + duration) if duration else None
+            }
+            self.cache_manager.set('display_on_demand_config', on_demand_config, ttl=3600)
+            
+            # Check if running as service
+            if self._is_running_as_service():
+                logger.info("Restarting display service with on-demand filter for plugin '%s'", plugin_id)
+                # Use systemctl to restart with environment variable
+                import subprocess
+                env = os.environ.copy()
+                env['LEDMATRIX_ON_DEMAND_PLUGIN'] = plugin_id
+                
+                # Use systemctl set-environment to set the variable for the service
+                # Then restart the service
+                try:
+                    # Use file-based approach for more reliable environment variable passing
+                    # Write plugin ID to a file that the service can read
+                    project_root = Path(__file__).parent.parent.parent.resolve()
+                    env_file = project_root / "config" / "on_demand_env.conf"
+                    try:
+                        with open(env_file, 'w', encoding='utf-8') as f:
+                            f.write(f"LEDMATRIX_ON_DEMAND_PLUGIN={plugin_id}\n")
+                        logger.debug("Wrote on-demand plugin ID to %s", env_file)
+                    except (OSError, PermissionError) as e:
+                        logger.warning("Could not write on-demand env file: %s", e)
+                        # Fall back to systemctl set-environment
+                        subprocess.run(
+                            ['sudo', 'systemctl', 'set-environment', f'LEDMATRIX_ON_DEMAND_PLUGIN={plugin_id}'],
+                            check=False,  # Don't fail if this doesn't work
+                            timeout=10
+                        )
+                    
+                    # Restart the service
+                    result = subprocess.run(
+                        ['sudo', 'systemctl', 'restart', 'ledmatrix'],
+                        check=True,
+                        timeout=30,
+                        capture_output=True,
+                        text=True
+                    )
+                    logger.info("Display service restart initiated successfully")
+                    return True
+                except subprocess.CalledProcessError as e:
+                    logger.error("Failed to restart display service: returncode=%d, stderr=%s", 
+                               e.returncode, e.stderr)
+                    return False
+                except subprocess.TimeoutExpired:
+                    logger.error("Display service restart timed out")
+                    return False
+                except FileNotFoundError:
+                    logger.warning("systemctl not found, cannot restart service")
+                    return False
+                except Exception as e:
+                    logger.error("Unexpected error restarting display service: %s", e, exc_info=True)
+                    return False
+            else:
+                # Not running as service - use subprocess to restart this process
+                logger.info("Restarting display process with on-demand filter for plugin '%s'", plugin_id)
+                import subprocess
+                import sys
+                
+                # Get the script path
+                script_path = os.path.abspath(sys.argv[0])
+                if script_path.endswith('.pyc'):
+                    script_path = script_path[:-1]
+                
+                # Prepare environment
+                env = os.environ.copy()
+                env['LEDMATRIX_ON_DEMAND_PLUGIN'] = plugin_id
+                
+                # Start new process
+                try:
+                    subprocess.Popen(
+                        [sys.executable, script_path] + sys.argv[1:],
+                        env=env,
+                        cwd=os.getcwd()
+                    )
+                    # Give it a moment to start
+                    time.sleep(1)
+                    logger.info("Display process restart initiated successfully")
+                    # Exit current process
+                    sys.exit(0)
+                except Exception as e:
+                    logger.error("Failed to restart display process: %s", e)
+                    return False
+        except Exception as e:
+            logger.error("Error in _restart_with_on_demand_filter: %s", e, exc_info=True)
+            return False
+
+    def _restart_without_on_demand_filter(self) -> bool:
+        """
+        Restart display controller with all plugins restored (normal mode).
+        
+        Returns:
+            True if restart was initiated, False on error
+        """
+        try:
+            # Save current rotation state
+            self._save_rotation_state()
+            
+            # Clear on-demand configuration from cache
+            self.cache_manager.delete('display_on_demand_config')
+            
+            # Check if running as service
+            if self._is_running_as_service():
+                logger.info("Restarting display service without on-demand filter (normal mode)")
+                import subprocess
+                try:
+                    # Clear on-demand environment file
+                    project_root = Path(__file__).parent.parent.parent.resolve()
+                    env_file = project_root / "config" / "on_demand_env.conf"
+                    try:
+                        if env_file.exists():
+                            env_file.unlink()
+                            logger.debug("Removed on-demand env file: %s", env_file)
+                    except (OSError, PermissionError) as e:
+                        logger.warning("Could not remove on-demand env file: %s", e)
+                    
+                    # Also try to unset environment variable via systemctl
+                    subprocess.run(
+                        ['sudo', 'systemctl', 'unset-environment', 'LEDMATRIX_ON_DEMAND_PLUGIN'],
+                        check=False,  # Don't fail if variable doesn't exist
+                        timeout=10
+                    )
+                    
+                    # Restart the service
+                    result = subprocess.run(
+                        ['sudo', 'systemctl', 'restart', 'ledmatrix'],
+                        check=True,
+                        timeout=30,
+                        capture_output=True,
+                        text=True
+                    )
+                    logger.info("Display service restart initiated successfully")
+                    return True
+                except subprocess.CalledProcessError as e:
+                    logger.error("Failed to restart display service: returncode=%d, stderr=%s", 
+                               e.returncode, e.stderr)
+                    return False
+                except subprocess.TimeoutExpired:
+                    logger.error("Display service restart timed out")
+                    return False
+                except FileNotFoundError:
+                    logger.warning("systemctl not found, cannot restart service")
+                    return False
+                except Exception as e:
+                    logger.error("Unexpected error restarting display service: %s", e, exc_info=True)
+                    return False
+            else:
+                # Not running as service - use subprocess to restart this process
+                logger.info("Restarting display process without on-demand filter (normal mode)")
+                import subprocess
+                import sys
+                
+                # Get the script path
+                script_path = os.path.abspath(sys.argv[0])
+                if script_path.endswith('.pyc'):
+                    script_path = script_path[:-1]
+                
+                # Prepare environment without on-demand variable
+                env = os.environ.copy()
+                env.pop('LEDMATRIX_ON_DEMAND_PLUGIN', None)
+                
+                # Start new process
+                try:
+                    subprocess.Popen(
+                        [sys.executable, script_path] + sys.argv[1:],
+                        env=env,
+                        cwd=os.getcwd()
+                    )
+                    # Give it a moment to start
+                    time.sleep(1)
+                    logger.info("Display process restart initiated successfully")
+                    # Exit current process
+                    sys.exit(0)
+                except Exception as e:
+                    logger.error("Failed to restart display process: %s", e)
+                    return False
+        except Exception as e:
+            logger.error("Error in _restart_without_on_demand_filter: %s", e, exc_info=True)
+            return False
+
     def _resolve_mode_for_plugin(self, plugin_id: Optional[str], mode: Optional[str]) -> Optional[str]:
         """Resolve the display mode to use for on-demand activation."""
         if mode:
@@ -654,7 +1012,7 @@ class DisplayController:
         return plugin_id
 
     def _activate_on_demand(self, request: Dict[str, Any]) -> None:
-        """Activate on-demand mode for a specific plugin display."""
+        """Activate on-demand mode for a specific plugin display by restarting with filter."""
         plugin_id = request.get('plugin_id')
         mode = request.get('mode')
         resolved_mode = self._resolve_mode_for_plugin(plugin_id, mode)
@@ -675,6 +1033,12 @@ class DisplayController:
             self._set_on_demand_error("unknown-plugin")
             return
 
+        # Validate plugin exists and is available
+        if resolved_plugin_id not in self.plugin_display_modes:
+            logger.error("On-demand plugin '%s' not found in plugin display modes", resolved_plugin_id)
+            self._set_on_demand_error("unknown-plugin")
+            return
+
         duration = request.get('duration')
         if duration is not None:
             try:
@@ -686,64 +1050,69 @@ class DisplayController:
                 duration = None
 
         pinned = bool(request.get('pinned', False))
-        now = time.time()
 
-        if self.available_modes:
-            self.rotation_resume_index = self.current_mode_index
-        else:
-            self.rotation_resume_index = None
-
-        if resolved_mode in self.available_modes:
-            self.current_mode_index = self.available_modes.index(resolved_mode)
-
-        self.on_demand_active = True
-        self.on_demand_mode = resolved_mode
-        self.on_demand_plugin_id = resolved_plugin_id
-        self.on_demand_duration = duration
-        self.on_demand_requested_at = now
-        self.on_demand_expires_at = (now + duration) if duration else None
-        self.on_demand_pinned = pinned
-        self.on_demand_status = 'active'
+        # Update state before restart
+        self.on_demand_status = 'restarting'
         self.on_demand_last_error = None
-        self.on_demand_last_event = 'started'
-        self.on_demand_schedule_override = True
-        self.force_change = True
-        self.current_display_mode = resolved_mode
-        logger.info("Activated on-demand mode '%s' for plugin '%s'", resolved_mode, resolved_plugin_id)
+        self.on_demand_last_event = 'restarting'
         self._publish_on_demand_state()
 
+        # Restart with on-demand filter
+        logger.info("Activating on-demand mode '%s' for plugin '%s' - restarting display controller", 
+                   resolved_mode, resolved_plugin_id)
+        success = self._restart_with_on_demand_filter(
+            plugin_id=resolved_plugin_id,
+            mode=resolved_mode,
+            duration=duration,
+            pinned=pinned
+        )
+
+        if not success:
+            logger.error("Failed to restart display controller for on-demand mode")
+            self._set_on_demand_error("restart-failed")
+            return
+
+        # If we get here, restart was initiated (process will exit)
+        # Note: The restarted process will read the on-demand config from cache
+        # and set the appropriate state during initialization
+
     def _clear_on_demand(self, reason: Optional[str] = None) -> None:
-        """Clear on-demand mode and resume normal rotation."""
+        """Clear on-demand mode and resume normal rotation by restarting without filter."""
         if not self.on_demand_active and self.on_demand_status == 'idle':
             if reason == 'requested-stop':
                 self.on_demand_last_event = 'stop-request-ignored'  # Already idle
                 self._publish_on_demand_state()
             return
 
-        self.on_demand_active = False
-        self.on_demand_mode = None
-        self.on_demand_plugin_id = None
-        self.on_demand_duration = None
-        self.on_demand_requested_at = None
-        self.on_demand_expires_at = None
-        self.on_demand_pinned = False
-        self.on_demand_status = 'idle'
+        # Update state before restart
+        self.on_demand_status = 'restarting'
         self.on_demand_last_error = None
-        self.on_demand_last_event = reason or 'cleared'
-        self.on_demand_schedule_override = False
-
-        if self.rotation_resume_index is not None and self.available_modes:
-            self.current_mode_index = self.rotation_resume_index % len(self.available_modes)
-            self.current_display_mode = self.available_modes[self.current_mode_index]
-        elif self.available_modes:
-            # Default to first mode
-            self.current_mode_index = self.current_mode_index % len(self.available_modes)
-            self.current_display_mode = self.available_modes[self.current_mode_index]
-
-        self.rotation_resume_index = None
-        self.force_change = True
-        logger.info("Cleared on-demand mode (reason=%s), resuming rotation", reason)
+        self.on_demand_last_event = reason or 'restarting'
         self._publish_on_demand_state()
+
+        # Restart without on-demand filter to restore normal operation
+        logger.info("Clearing on-demand mode (reason=%s) - restarting display controller", reason)
+        success = self._restart_without_on_demand_filter()
+
+        if not success:
+            logger.error("Failed to restart display controller to clear on-demand mode")
+            # Fall back to clearing state without restart
+            self.on_demand_active = False
+            self.on_demand_mode = None
+            self.on_demand_plugin_id = None
+            self.on_demand_duration = None
+            self.on_demand_requested_at = None
+            self.on_demand_expires_at = None
+            self.on_demand_pinned = False
+            self.on_demand_status = 'idle'
+            self.on_demand_last_error = 'restart-failed'
+            self.on_demand_last_event = reason or 'cleared'
+            self.on_demand_schedule_override = False
+            self._publish_on_demand_state()
+            return
+
+        # If we get here, restart was initiated (process will exit)
+        # Note: The restarted process will restore rotation state from cache
 
     def _check_on_demand_expiration(self) -> None:
         """Expire on-demand mode if duration has elapsed."""
