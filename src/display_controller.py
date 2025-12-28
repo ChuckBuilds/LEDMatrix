@@ -1109,42 +1109,48 @@ class DisplayController:
         self._publish_on_demand_state()
 
     def _clear_on_demand(self, reason: Optional[str] = None) -> None:
-        """Clear on-demand mode and resume normal rotation by restarting without filter."""
+        """Clear on-demand mode and resume normal rotation immediately (no restart)."""
         if not self.on_demand_active and self.on_demand_status == 'idle':
             if reason == 'requested-stop':
                 self.on_demand_last_event = 'stop-request-ignored'  # Already idle
                 self._publish_on_demand_state()
             return
 
-        # Update state before restart
-        self.on_demand_status = 'restarting'
+        logger.info("Clearing on-demand mode (reason=%s) - resuming normal rotation", reason)
+        
+        # Clear on-demand state immediately
+        self.on_demand_active = False
+        self.on_demand_mode = None
+        self.on_demand_plugin_id = None
+        self.on_demand_duration = None
+        self.on_demand_requested_at = None
+        self.on_demand_expires_at = None
+        self.on_demand_pinned = False
+        self.on_demand_status = 'idle'
         self.on_demand_last_error = None
-        self.on_demand_last_event = reason or 'restarting'
+        self.on_demand_last_event = reason or 'cleared'
+        self.on_demand_schedule_override = False
+
+        # Restore previous rotation state
+        if self.rotation_resume_index is not None and self.available_modes:
+            self.current_mode_index = self.rotation_resume_index % len(self.available_modes)
+            self.current_display_mode = self.available_modes[self.current_mode_index]
+        elif self.available_modes:
+            # Default to first mode if no resume index
+            self.current_mode_index = self.current_mode_index % len(self.available_modes)
+            self.current_display_mode = self.available_modes[self.current_mode_index]
+        else:
+            self.current_display_mode = 'none'
+
+        self.rotation_resume_index = None
+        self.force_change = True
+        
+        # Clear on-demand configuration from cache
+        self.cache_manager.clear_cache('display_on_demand_config')
+        
+        logger.info("✓ ON-DEMAND MODE CLEARED (reason=%s), resuming normal rotation to mode: %s", 
+                   reason, self.current_display_mode)
         self._publish_on_demand_state()
-
-        # Restart without on-demand filter to restore normal operation
-        logger.info("Clearing on-demand mode (reason=%s) - restarting display controller", reason)
-        success = self._restart_without_on_demand_filter()
-
-        if not success:
-            logger.error("Failed to restart display controller to clear on-demand mode")
-            # Fall back to clearing state without restart
-            self.on_demand_active = False
-            self.on_demand_mode = None
-            self.on_demand_plugin_id = None
-            self.on_demand_duration = None
-            self.on_demand_requested_at = None
-            self.on_demand_expires_at = None
-            self.on_demand_pinned = False
-            self.on_demand_status = 'idle'
-            self.on_demand_last_error = 'restart-failed'
-            self.on_demand_last_event = reason or 'cleared'
-            self.on_demand_schedule_override = False
-            self._publish_on_demand_state()
-            return
-
-        # If we get here, restart was initiated (process will exit)
-        # Note: The restarted process will restore rotation state from cache
 
     def _check_on_demand_expiration(self) -> None:
         """Expire on-demand mode if duration has elapsed."""
