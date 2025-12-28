@@ -1293,19 +1293,27 @@ class DisplayController:
                         logger.info("On-demand mode active: switching to %s (overriding live priority)", active_mode)
                         self.current_display_mode = active_mode
                         self.force_change = True
+                    # Update mode index to match the on-demand mode
+                    try:
+                        self.current_mode_index = self.available_modes.index(active_mode)
+                    except ValueError:
+                        pass
                 # Check for live priority content and switch to it immediately (only if on-demand is not active)
                 elif not wifi_status_data:
                     live_priority_mode = self._check_live_priority()
-                    if live_priority_mode and self.current_display_mode != live_priority_mode:
-                        logger.info("Live content detected - switching immediately to %s", live_priority_mode)
-                        self.current_display_mode = live_priority_mode
-                        self.force_change = True
-                        # Update mode index to match the new mode
-                        try:
-                            self.current_mode_index = self.available_modes.index(live_priority_mode)
-                        except ValueError:
-                            pass
-                    active_mode = self.current_display_mode
+                    if live_priority_mode:
+                        if self.current_display_mode != live_priority_mode:
+                            logger.info("Live content detected - switching immediately to %s", live_priority_mode)
+                            self.current_display_mode = live_priority_mode
+                            self.force_change = True
+                            # Update mode index to match the new mode
+                            try:
+                                self.current_mode_index = self.available_modes.index(live_priority_mode)
+                            except ValueError:
+                                pass
+                        active_mode = live_priority_mode
+                    else:
+                        active_mode = self.current_display_mode
                 else:
                     active_mode = self.current_display_mode
 
