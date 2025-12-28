@@ -4702,35 +4702,46 @@ function togglePasswordVisibility(fieldId) {
 }
 
 // GitHub Token Configuration Functions
-window.toggleGithubTokenSettings = function() {
+// Open GitHub Token Settings panel (only opens, doesn't close)
+// Used when user clicks "Configure Token" link
+window.openGithubTokenSettings = function() {
     const settings = document.getElementById('github-token-settings');
     const warning = document.getElementById('github-auth-warning');
+    const tokenContent = document.getElementById('github-token-content');
+    
     if (settings) {
-        // Check current state using both class and style
-        const isCurrentlyHidden = settings.classList.contains('hidden') || 
-                                  settings.style.display === 'none' ||
-                                  (settings.style.display === '' && window.getComputedStyle(settings).display === 'none');
+        // Show settings panel using both methods
+        settings.classList.remove('hidden');
+        settings.style.display = '';
         
-        if (isCurrentlyHidden) {
-            // Show settings panel using both methods
-            settings.classList.remove('hidden');
-            settings.style.display = '';
+        // Expand the content when opening
+        if (tokenContent) {
+            tokenContent.style.display = 'block';
+            tokenContent.classList.remove('hidden');
             
-            // When opening settings, hide the warning banner (they're now combined)
-            if (warning) {
-                warning.classList.add('hidden');
-                warning.style.display = 'none';
-                // Clear any dismissal state since user is actively configuring
-                sessionStorage.removeItem('github-auth-warning-dismissed');
+            // Update collapse button state
+            const tokenIconCollapse = document.getElementById('github-token-icon-collapse');
+            const toggleTokenCollapseBtn = document.getElementById('toggle-github-token-collapse');
+            if (tokenIconCollapse) {
+                tokenIconCollapse.classList.remove('fa-chevron-down');
+                tokenIconCollapse.classList.add('fa-chevron-up');
             }
-            
-            // Load token when opening the panel
-            loadGithubToken();
-        } else {
-            // Hide settings panel using both methods
-            settings.classList.add('hidden');
-            settings.style.display = 'none';
+            if (toggleTokenCollapseBtn) {
+                const span = toggleTokenCollapseBtn.querySelector('span');
+                if (span) span.textContent = 'Collapse';
+            }
         }
+        
+        // When opening settings, hide the warning banner
+        if (warning) {
+            warning.classList.add('hidden');
+            warning.style.display = 'none';
+            // Clear any dismissal state since user is actively configuring
+            sessionStorage.removeItem('github-auth-warning-dismissed');
+        }
+        
+        // Load token when opening the panel
+        loadGithubToken();
     }
 }
 
@@ -4887,51 +4898,9 @@ window.saveGithubToken = function() {
                 sessionStorage.removeItem('github-auth-warning-dismissed');
                 
                 // Small delay to ensure backend has reloaded the token, then refresh status
+                // checkGitHubAuthStatus() will handle collapsing the panel automatically
                 setTimeout(() => {
-                    checkGitHubAuthStatus().then(() => {
-                        // Collapse the settings panel content instead of hiding the entire panel
-                        // This keeps the panel accessible for future token management
-                        const settings = document.getElementById('github-token-settings');
-                        const tokenContent = document.getElementById('github-token-content');
-                        const tokenIconCollapse = document.getElementById('github-token-icon-collapse');
-                        const toggleTokenCollapseBtn = document.getElementById('toggle-github-token-collapse');
-                        
-                        // Ensure settings panel is visible but content is collapsed
-                        if (settings) {
-                            settings.classList.remove('hidden');
-                            settings.style.display = '';
-                        }
-                        
-                        if (tokenContent) {
-                            // Collapse content using both methods
-                            tokenContent.style.display = 'none';
-                            tokenContent.classList.add('hidden');
-                        }
-                        
-                        if (tokenIconCollapse) {
-                            tokenIconCollapse.classList.remove('fa-chevron-up');
-                            tokenIconCollapse.classList.add('fa-chevron-down');
-                        }
-                        
-                        if (toggleTokenCollapseBtn) {
-                            const span = toggleTokenCollapseBtn.querySelector('span');
-                            if (span) span.textContent = 'Expand';
-                            
-                            // Ensure event listener is attached (re-attach if needed)
-                            if (window.toggleGithubTokenContent) {
-                                // Remove old listener by cloning and replacing
-                                const parent = toggleTokenCollapseBtn.parentNode;
-                                const newBtn = toggleTokenCollapseBtn.cloneNode(true);
-                                parent.replaceChild(newBtn, toggleTokenCollapseBtn);
-                                // Re-attach listener to the new button
-                                newBtn.addEventListener('click', window.toggleGithubTokenContent);
-                                console.log('Re-attached GitHub token collapse button listener');
-                            }
-                        }
-                        
-                        // Keep the settings panel itself visible but collapsed
-                        // Don't hide the entire panel - user should be able to expand it later
-                    });
+                    checkGitHubAuthStatus();
                 }, 300);
             } else {
                 throw new Error(data.message || 'Failed to save token');
@@ -4996,7 +4965,7 @@ function checkGitHubAuthStatus() {
                     // Panel can be opened via "Configure Token" link in warning
                     // Don't force it to be visible, but don't prevent it from being shown
                 } else if (tokenStatus === 'valid') {
-                    // Token is valid - hide warning and ensure settings panel is accessible but collapsed
+                    // Token is valid - hide warning and ensure settings panel is visible but collapsed
                     if (warning) {
                         // Hide warning using both classList and style.display
                         warning.classList.add('hidden');
@@ -5010,7 +4979,7 @@ function checkGitHubAuthStatus() {
                         settings.classList.remove('hidden');
                         settings.style.display = '';
                         
-                        // Ensure the content inside is collapsed
+                        // Always collapse the content when token is valid (user must click expand)
                         const tokenContent = document.getElementById('github-token-content');
                         if (tokenContent) {
                             // Collapse the content using both methods
@@ -5018,7 +4987,7 @@ function checkGitHubAuthStatus() {
                             tokenContent.classList.add('hidden');
                         }
                         
-                        // Update collapse button state
+                        // Update collapse button state to show "Expand"
                         const tokenIconCollapse = document.getElementById('github-token-icon-collapse');
                         if (tokenIconCollapse) {
                             tokenIconCollapse.classList.remove('fa-chevron-up');
@@ -5029,6 +4998,16 @@ function checkGitHubAuthStatus() {
                         if (toggleTokenCollapseBtn) {
                             const span = toggleTokenCollapseBtn.querySelector('span');
                             if (span) span.textContent = 'Expand';
+                            
+                            // Ensure event listener is attached
+                            if (window.toggleGithubTokenContent) {
+                                // Remove old listener by cloning and replacing
+                                const parent = toggleTokenCollapseBtn.parentNode;
+                                const newBtn = toggleTokenCollapseBtn.cloneNode(true);
+                                parent.replaceChild(newBtn, toggleTokenCollapseBtn);
+                                // Re-attach listener to the new button
+                                newBtn.addEventListener('click', window.toggleGithubTokenContent);
+                            }
                         }
                     }
                     
