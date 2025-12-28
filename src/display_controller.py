@@ -768,8 +768,14 @@ class DisplayController:
                    request_id, self.on_demand_request_id, processed_request_id)
 
         action = request.get('action')
+        action = request.get('action')
         logger.info("Received on-demand request %s: %s (plugin_id=%s, mode=%s)", 
                    request_id, action, request.get('plugin_id'), request.get('mode'))
+        
+        # Mark as processed BEFORE processing (to prevent duplicate processing)
+        self.cache_manager.set('display_on_demand_processed_id', request_id, ttl=3600)
+        self.on_demand_request_id = request_id
+        
         if action == 'start':
             logger.info("Processing on-demand start request for plugin: %s", request.get('plugin_id'))
             self._activate_on_demand(request)
@@ -778,7 +784,6 @@ class DisplayController:
             self._clear_on_demand(reason='requested-stop')
         else:
             logger.warning("Unknown on-demand action: %s", action)
-        self.on_demand_request_id = request_id
 
     def _save_rotation_state(self) -> None:
         """Save current rotation state to cache for restoration after restart."""
