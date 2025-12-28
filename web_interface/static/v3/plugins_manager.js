@@ -776,6 +776,13 @@ window.initPluginsPage = function() {
     window.pluginManager.initializing = true;
     window.__pluginDomReady = true;
     
+    // Check GitHub auth status immediately (don't wait for full initialization)
+    // This can run in parallel with other initialization
+    if (window.checkGitHubAuthStatus) {
+        console.log('[INIT] Checking GitHub auth status immediately...');
+        window.checkGitHubAuthStatus();
+    }
+    
     // If we fetched data before the DOM existed, render it now
     if (window.__pendingInstalledPlugins) {
         console.log('[RENDER] Applying pending installed plugins data');
@@ -4059,16 +4066,17 @@ function searchPluginStore(fetchCommitInfo = true) {
                     checkGitHubAuthStatus: typeof window.checkGitHubAuthStatus
                 });
                 if (window.attachGithubTokenCollapseHandler) {
-                    setTimeout(() => {
+                    // Use requestAnimationFrame for faster execution (runs on next frame, ~16ms)
+                    requestAnimationFrame(() => {
                         console.log('[STORE] Re-attaching GitHub token collapse handler after store render');
                         try {
                             window.attachGithubTokenCollapseHandler();
                         } catch (error) {
                             console.error('[STORE] Error attaching collapse handler:', error);
                         }
-                        // Also check auth status to update UI
+                        // Also check auth status to update UI (already checked earlier, but refresh to be sure)
                         if (window.checkGitHubAuthStatus) {
-                            console.log('[STORE] Calling checkGitHubAuthStatus after store render...');
+                            console.log('[STORE] Refreshing GitHub auth status after store render...');
                             try {
                                 window.checkGitHubAuthStatus();
                             } catch (error) {
@@ -4077,7 +4085,7 @@ function searchPluginStore(fetchCommitInfo = true) {
                         } else {
                             console.warn('[STORE] checkGitHubAuthStatus not available');
                         }
-                    }, 100);
+                    });
                 } else {
                     console.warn('[STORE] attachGithubTokenCollapseHandler not available');
                 }
@@ -5101,11 +5109,12 @@ window.saveGithubToken = function() {
                 
                 // Small delay to ensure backend has reloaded the token, then refresh status
                 // checkGitHubAuthStatus() will handle collapsing the panel automatically
+                // Reduced delay from 300ms to 100ms - backend should reload quickly
                 setTimeout(() => {
                     if (window.checkGitHubAuthStatus) {
                         window.checkGitHubAuthStatus();
                     }
-                }, 300);
+                }, 100);
             } else {
                 throw new Error(data.message || 'Failed to save token');
             }
@@ -5849,6 +5858,12 @@ if (_PLUGIN_DEBUG_EARLY) {
         loadInstalledPlugins: typeof window.loadInstalledPlugins,
         searchPluginStore: typeof window.searchPluginStore
     });
+}
+
+// Check GitHub auth status immediately if elements exist (don't wait for full initialization)
+if (window.checkGitHubAuthStatus && document.getElementById('github-auth-warning')) {
+    console.log('[EARLY] Checking GitHub auth status immediately on script load...');
+    window.checkGitHubAuthStatus();
 }
 
 setTimeout(function() {
