@@ -4517,7 +4517,6 @@ function setupGitHubInstallHandlers() {
     } else {
         console.warn('[setupGitHubInstallHandlers] Required elements not found');
     }
-}
     
     // Install single plugin from URL
     const installBtn = document.getElementById('install-plugin-from-url');
