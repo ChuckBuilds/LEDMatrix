@@ -1104,6 +1104,8 @@ class DisplayController:
         self.current_display_mode = resolved_mode
         logger.info("✓ ON-DEMAND MODE ACTIVATED: Plugin '%s', Mode '%s' (pinned=%s, duration=%s)", 
                    resolved_plugin_id, resolved_mode, pinned, duration if duration else 'unlimited')
+        logger.info("On-demand state after activation: active=%s, mode=%s, plugin_id=%s, current_display_mode=%s", 
+                   self.on_demand_active, self.on_demand_mode, self.on_demand_plugin_id, self.current_display_mode)
         self._publish_on_demand_state()
 
     def _clear_on_demand(self, reason: Optional[str] = None) -> None:
