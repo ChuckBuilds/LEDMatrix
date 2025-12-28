@@ -453,8 +453,9 @@ if (_PLUGIN_DEBUG_EARLY) {
 // Shows warning banner only when token is missing or invalid
 // The token itself is never exposed to the frontend for security
 // Returns a Promise so it can be awaited
+console.log('[DEFINE] Defining checkGitHubAuthStatus function...');
 window.checkGitHubAuthStatus = function checkGitHubAuthStatus() {
-    console.log('checkGitHubAuthStatus: Starting...');
+    console.log('[checkGitHubAuthStatus] Starting...');
     return fetch('/api/v3/plugins/store/github-status')
         .then(response => {
             console.log('checkGitHubAuthStatus: Response status:', response.status);
@@ -827,10 +828,19 @@ function initializePlugins() {
     pluginLog('[INIT] Initializing plugins...');
 
     // Check GitHub authentication status
+    console.log('[INIT] Checking for checkGitHubAuthStatus function...', {
+        exists: typeof window.checkGitHubAuthStatus,
+        type: typeof window.checkGitHubAuthStatus
+    });
     if (window.checkGitHubAuthStatus) {
-        window.checkGitHubAuthStatus();
+        console.log('[INIT] Calling checkGitHubAuthStatus...');
+        try {
+            window.checkGitHubAuthStatus();
+        } catch (error) {
+            console.error('[INIT] Error calling checkGitHubAuthStatus:', error);
+        }
     } else {
-        console.warn('checkGitHubAuthStatus not available yet');
+        console.warn('[INIT] checkGitHubAuthStatus not available yet');
     }
 
     // Load both installed plugins and plugin store
@@ -3944,15 +3954,32 @@ function searchPluginStore(fetchCommitInfo = true) {
                 
                 // Ensure GitHub token collapse handler is attached after store is rendered
                 // The button might not exist until the store content is loaded
+                console.log('[STORE] Checking for attachGithubTokenCollapseHandler...', {
+                    exists: typeof window.attachGithubTokenCollapseHandler,
+                    checkGitHubAuthStatus: typeof window.checkGitHubAuthStatus
+                });
                 if (window.attachGithubTokenCollapseHandler) {
                     setTimeout(() => {
-                        console.log('Re-attaching GitHub token collapse handler after store render');
-                        window.attachGithubTokenCollapseHandler();
+                        console.log('[STORE] Re-attaching GitHub token collapse handler after store render');
+                        try {
+                            window.attachGithubTokenCollapseHandler();
+                        } catch (error) {
+                            console.error('[STORE] Error attaching collapse handler:', error);
+                        }
                         // Also check auth status to update UI
                         if (window.checkGitHubAuthStatus) {
-                            window.checkGitHubAuthStatus();
+                            console.log('[STORE] Calling checkGitHubAuthStatus after store render...');
+                            try {
+                                window.checkGitHubAuthStatus();
+                            } catch (error) {
+                                console.error('[STORE] Error calling checkGitHubAuthStatus:', error);
+                            }
+                        } else {
+                            console.warn('[STORE] checkGitHubAuthStatus not available');
                         }
                     }, 100);
+                } else {
+                    console.warn('[STORE] attachGithubTokenCollapseHandler not available');
                 }
             } else {
                 showError('Failed to search plugin store: ' + data.message);
@@ -4157,21 +4184,26 @@ function setupCollapsibleSections() {
     // Removes any existing listeners by cloning and re-attaching
     // Made global so it can be called from checkGitHubAuthStatus()
     window.attachGithubTokenCollapseHandler = function() {
+        console.log('[attachGithubTokenCollapseHandler] Starting...');
         const toggleTokenCollapseBtn = document.getElementById('toggle-github-token-collapse');
+        console.log('[attachGithubTokenCollapseHandler] Button found:', !!toggleTokenCollapseBtn);
         if (!toggleTokenCollapseBtn) {
-            console.warn('GitHub token collapse button not found');
+            console.warn('[attachGithubTokenCollapseHandler] GitHub token collapse button not found');
             return;
         }
         
+        console.log('[attachGithubTokenCollapseHandler] Checking toggleGithubTokenContent...', {
+            exists: typeof window.toggleGithubTokenContent
+        });
         if (!window.toggleGithubTokenContent) {
-            console.warn('toggleGithubTokenContent function not defined');
+            console.warn('[attachGithubTokenCollapseHandler] toggleGithubTokenContent function not defined');
             return;
         }
         
         // Remove any existing listeners by cloning the button
         const parent = toggleTokenCollapseBtn.parentNode;
         if (!parent) {
-            console.warn('Button parent not found');
+            console.warn('[attachGithubTokenCollapseHandler] Button parent not found');
             return;
         }
         
@@ -4180,11 +4212,11 @@ function setupCollapsibleSections() {
         
         // Attach listener to the new button
         newBtn.addEventListener('click', function(e) {
-            console.log('Button clicked, calling toggleGithubTokenContent');
+            console.log('[attachGithubTokenCollapseHandler] Button clicked, calling toggleGithubTokenContent');
             window.toggleGithubTokenContent(e);
         });
         
-        console.log('GitHub token collapse handler attached to button:', newBtn.id);
+        console.log('[attachGithubTokenCollapseHandler] Handler attached to button:', newBtn.id);
     };
     
     // Toggle GitHub Token Settings section
