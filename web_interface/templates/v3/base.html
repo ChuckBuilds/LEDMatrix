@@ -4209,13 +4209,28 @@
                 const btn = event.target.querySelector('[type=submit]');
                 if (btn) btn.disabled = false;
                 
-                if (event.detail.successful) {
-                    showNotification('Configuration saved successfully!', 'success');
+                const xhr = event.detail.xhr;
+                const status = xhr?.status || 0;
+                
+                // Check if request was successful (2xx status codes)
+                if (status >= 200 && status < 300) {
+                    // Try to get message from response JSON
+                    let message = 'Configuration saved successfully!';
+                    try {
+                        if (xhr?.responseJSON?.message) {
+                            message = xhr.responseJSON.message;
+                        } else if (xhr?.responseText) {
+                            const responseData = JSON.parse(xhr.responseText);
+                            message = responseData.message || message;
+                        }
+                    } catch (e) {
+                        // Use default message if parsing fails
+                    }
+                    showNotification(message, 'success');
                 } else {
-                    // Log detailed error information
-                    const xhr = event.detail.xhr;
+                    // Request failed - log detailed error information
                     console.error('Config save failed:', {
-                        status: xhr?.status,
+                        status: status,
                         statusText: xhr?.statusText,
                         responseText: xhr?.responseText
                     });
@@ -4223,7 +4238,13 @@
                     // Try to parse error response
                     let errorMessage = 'Failed to save configuration';
                     try {
-                        if (xhr?.responseText) {
+                        if (xhr?.responseJSON) {
+                            const errorData = xhr.responseJSON;
+                            errorMessage = errorData.message || errorData.details || errorMessage;
+                            if (errorData.validation_errors) {
+                                errorMessage += ': ' + errorData.validation_errors.join(', ');
+                            }
+                        } else if (xhr?.responseText) {
                             const errorData = JSON.parse(xhr.responseText);
                             errorMessage = errorData.message || errorData.details || errorMessage;
                             if (errorData.validation_errors) {
@@ -4241,7 +4262,10 @@
             
             // Handle toggle response
             window.handleToggleResponse = function(event, pluginId) {
-                if (event.detail.successful) {
+                const xhr = event.detail.xhr;
+                const status = xhr?.status || 0;
+                
+                if (status >= 200 && status < 300) {
                     // Update UI in place instead of refreshing to avoid duplication
                     const checkbox = document.getElementById(`plugin-enabled-${pluginId}`);
                     const label = checkbox?.nextElementSibling;
@@ -4252,14 +4276,39 @@
                         label.className = `ml-2 text-sm ${isEnabled ? 'text-green-600' : 'text-gray-500'}`;
                     }
                     
-                    showNotification('Plugin status updated', 'success');
+                    // Try to get message from response
+                    let message = 'Plugin status updated';
+                    try {
+                        if (xhr?.responseJSON?.message) {
+                            message = xhr.responseJSON.message;
+                        } else if (xhr?.responseText) {
+                            const responseData = JSON.parse(xhr.responseText);
+                            message = responseData.message || message;
+                        }
+                    } catch (e) {
+                        // Use default message
+                    }
+                    showNotification(message, 'success');
                 } else {
                     // Revert checkbox state on error
                     const checkbox = document.getElementById(`plugin-enabled-${pluginId}`);
                     if (checkbox) {
                         checkbox.checked = !checkbox.checked;
                     }
-                    showNotification('Failed to update plugin status', 'error');
+                    
+                    // Try to get error message from response
+                    let errorMessage = 'Failed to update plugin status';
+                    try {
+                        if (xhr?.responseJSON?.message) {
+                            errorMessage = xhr.responseJSON.message;
+                        } else if (xhr?.responseText) {
+                            const errorData = JSON.parse(xhr.responseText);
+                            errorMessage = errorData.message || errorData.details || errorMessage;
+                        }
+                    } catch (e) {
+                        // Use default message
+                    }
+                    showNotification(errorMessage, 'error');
                 }
             };
             
