@@ -2126,7 +2126,9 @@
                     // Ensure content loads for the active tab
                     this.$watch('activeTab', (newTab, oldTab) => {
                         // Update plugin tab states when activeTab changes
-                        this.updatePluginTabStates();
+                        if (typeof this.updatePluginTabStates === 'function') {
+                            this.updatePluginTabStates();
+                        }
                         // Trigger content load when tab changes
                         this.$nextTick(() => {
                             this.loadTabContent(newTab);
