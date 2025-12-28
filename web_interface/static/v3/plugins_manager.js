@@ -522,7 +522,9 @@ window.toggleGithubTokenContent = function(e) {
     });
     
     if (hasHiddenClass || computedDisplay === 'none') {
+        // Show content - remove hidden class, add block class, remove inline display
         tokenContent.classList.remove('hidden');
+        tokenContent.classList.add('block');
         tokenContent.style.removeProperty('display');
         if (tokenIconCollapse) {
             tokenIconCollapse.classList.remove('fa-chevron-down');
@@ -530,17 +532,19 @@ window.toggleGithubTokenContent = function(e) {
         }
         const span = toggleTokenCollapseBtn.querySelector('span');
         if (span) span.textContent = 'Collapse';
-        console.log('[toggleGithubTokenContent] Content shown');
+        console.log('[toggleGithubTokenContent] Content shown - removed hidden, added block');
     } else {
+        // Hide content - add hidden class, remove block class, ensure display is none
         tokenContent.classList.add('hidden');
-        tokenContent.style.removeProperty('display');
+        tokenContent.classList.remove('block');
+        tokenContent.style.display = 'none';
         if (tokenIconCollapse) {
             tokenIconCollapse.classList.remove('fa-chevron-up');
             tokenIconCollapse.classList.add('fa-chevron-down');
         }
         const span = toggleTokenCollapseBtn.querySelector('span');
         if (span) span.textContent = 'Expand';
-        console.log('[toggleGithubTokenContent] Content hidden');
+        console.log('[toggleGithubTokenContent] Content hidden - added hidden, removed block, set display:none');
     }
 };
 
@@ -618,12 +622,10 @@ window.checkGitHubAuthStatus = function checkGitHubAuthStatus() {
                         // Always collapse the content when token is valid (user must click expand)
                         const tokenContent = document.getElementById('github-token-content');
                         if (tokenContent) {
-                            // Collapse the content - use hidden class (element has class="block" in HTML)
+                            // Collapse the content - add hidden, remove block, set display none
                             tokenContent.classList.add('hidden');
-                            // Remove any inline display style that might interfere
-                            if (tokenContent.style.display) {
-                                tokenContent.style.removeProperty('display');
-                            }
+                            tokenContent.classList.remove('block');
+                            tokenContent.style.display = 'none';
                         }
                         
                         // Update collapse button state to show "Expand"
