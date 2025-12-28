@@ -1655,7 +1655,9 @@ window.__openOnDemandModalImpl = function(pluginId) {
             console.error('Error checking service status:', error);
         });
 
+    console.log('[__openOnDemandModalImpl] Setting modal display to flex');
     modal.style.display = 'flex';
+    console.log('[__openOnDemandModalImpl] Modal display set, should be visible now. Modal element:', modal);
 };
 
 // Replace the stub with the real implementation
