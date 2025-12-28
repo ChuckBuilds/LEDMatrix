@@ -2914,6 +2914,40 @@ def _get_schema_property(schema, key_path):
     return None
 
 
+def _is_field_required(key_path, schema):
+    """
+    Check if a field is required according to the schema.
+    
+    Args:
+        key_path: Dot-separated path like "mqtt.username"
+        schema: The JSON schema dict
+    
+    Returns:
+        True if field is required, False otherwise
+    """
+    if not schema or 'properties' not in schema:
+        return False
+    
+    parts = key_path.split('.')
+    if len(parts) == 1:
+        # Top-level field
+        required = schema.get('required', [])
+        return parts[0] in required
+    else:
+        # Nested field - navigate to parent object
+        parent_path = '.'.join(parts[:-1])
+        field_name = parts[-1]
+        
+        # Get parent property
+        parent_prop = _get_schema_property(schema, parent_path)
+        if not parent_prop or 'properties' not in parent_prop:
+            return False
+        
+        # Check if field is required in parent
+        required = parent_prop.get('required', [])
+        return field_name in required
+
+
 def _parse_form_value_with_schema(value, key_path, schema):
     """
     Parse a form value using schema information to determine correct type.
@@ -2940,6 +2974,10 @@ def _parse_form_value_with_schema(value, key_path, schema):
         # If schema says it's an object, return empty dict instead of None
         if prop and prop.get('type') == 'object':
             return {}
+        # If it's an optional string field, preserve empty string instead of None
+        if prop and prop.get('type') == 'string':
+            if not _is_field_required(key_path, schema):
+                return ""  # Return empty string for optional string fields
         return None
     
     # Handle string values
