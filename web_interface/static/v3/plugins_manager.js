@@ -4036,6 +4036,12 @@ function setupCollapsibleSections() {
             toggleTokenCollapseBtn.parentNode.replaceChild(newBtn, toggleTokenCollapseBtn);
             // Attach listener to the new button
             newBtn.addEventListener('click', window.toggleGithubTokenContent);
+            console.log('GitHub token collapse handler attached');
+        } else {
+            console.warn('Could not attach GitHub token collapse handler:', {
+                button: !!toggleTokenCollapseBtn,
+                handler: !!window.toggleGithubTokenContent
+            });
         }
     };
     
@@ -4056,15 +4062,16 @@ function setupCollapsibleSections() {
             return;
         }
         
-        // Check current state - primarily use hidden class, fallback to computed style
+        // Check current state - use hidden class (element has class="block" in HTML)
         const hasHiddenClass = tokenContent.classList.contains('hidden');
-        const computedDisplay = window.getComputedStyle(tokenContent).display;
-        const isHidden = hasHiddenClass || computedDisplay === 'none';
         
-        if (isHidden) {
-            // Show content - remove inline display to defer to CSS classes
-            tokenContent.style.removeProperty('display');
+        if (hasHiddenClass) {
+            // Show content - remove hidden class, block class will make it visible
             tokenContent.classList.remove('hidden');
+            // Ensure no inline display style interferes
+            if (tokenContent.style.display) {
+                tokenContent.style.removeProperty('display');
+            }
             if (tokenIconCollapse) {
                 tokenIconCollapse.classList.remove('fa-chevron-down');
                 tokenIconCollapse.classList.add('fa-chevron-up');
@@ -4073,9 +4080,12 @@ function setupCollapsibleSections() {
             if (span) span.textContent = 'Collapse';
             console.log('GitHub token content expanded');
         } else {
-            // Hide content - remove inline display, hidden class handles display via CSS
-            tokenContent.style.removeProperty('display');
+            // Hide content - add hidden class
             tokenContent.classList.add('hidden');
+            // Ensure no inline display style interferes
+            if (tokenContent.style.display) {
+                tokenContent.style.removeProperty('display');
+            }
             if (tokenIconCollapse) {
                 tokenIconCollapse.classList.remove('fa-chevron-up');
                 tokenIconCollapse.classList.add('fa-chevron-down');
@@ -4988,9 +4998,12 @@ function checkGitHubAuthStatus() {
                         // Always collapse the content when token is valid (user must click expand)
                         const tokenContent = document.getElementById('github-token-content');
                         if (tokenContent) {
-                            // Collapse the content - remove inline display, use hidden class
-                            tokenContent.style.removeProperty('display');
+                            // Collapse the content - use hidden class (element has class="block" in HTML)
                             tokenContent.classList.add('hidden');
+                            // Remove any inline display style that might interfere
+                            if (tokenContent.style.display) {
+                                tokenContent.style.removeProperty('display');
+                            }
                         }
                         
                         // Update collapse button state to show "Expand"
