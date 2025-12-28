@@ -4845,13 +4845,16 @@ window.saveGithubToken = function() {
                 // Clear input field for security (user can reload if needed)
                 input.value = '';
                 
-                // Refresh GitHub auth status to update UI (this will hide warning and settings)
-                checkGitHubAuthStatus();
+                // Clear the dismissal flag so warning can properly hide/show based on token status
+                sessionStorage.removeItem('github-auth-warning-dismissed');
                 
-                // Hide the settings panel after successful save
+                // Small delay to ensure backend has reloaded the token, then refresh status
                 setTimeout(() => {
-                    toggleGithubTokenSettings();
-                }, 1500);
+                    checkGitHubAuthStatus().then(() => {
+                        // Hide the settings panel after status check completes
+                        toggleGithubTokenSettings();
+                    });
+                }, 300);
             } else {
                 throw new Error(data.message || 'Failed to save token');
             }
@@ -4873,8 +4876,9 @@ window.saveGithubToken = function() {
 // GitHub Authentication Status
 // Only shows the warning banner if no GitHub token is configured
 // The token itself is never exposed to the frontend for security
+// Returns a Promise so it can be awaited
 function checkGitHubAuthStatus() {
-    fetch('/api/v3/plugins/store/github-status')
+    return fetch('/api/v3/plugins/store/github-status')
         .then(response => response.json())
         .then(data => {
             if (data.status === 'success') {
