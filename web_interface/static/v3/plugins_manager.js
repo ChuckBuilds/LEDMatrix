@@ -4033,14 +4033,19 @@ function setupCollapsibleSections() {
     if (toggleTokenCollapseBtn && tokenContent) {
         toggleTokenCollapseBtn.addEventListener('click', function(e) {
             e.stopPropagation(); // Prevent triggering the close button
-            const isHidden = tokenContent.style.display === 'none' || tokenContent.classList.contains('hidden');
+            // Check current state using both class and style
+            const isHidden = tokenContent.style.display === 'none' || 
+                            tokenContent.classList.contains('hidden') ||
+                            (tokenContent.style.display === '' && window.getComputedStyle(tokenContent).display === 'none');
             if (isHidden) {
+                // Show content using both methods
                 tokenContent.style.display = 'block';
                 tokenContent.classList.remove('hidden');
                 tokenIconCollapse.classList.remove('fa-chevron-down');
                 tokenIconCollapse.classList.add('fa-chevron-up');
                 toggleTokenCollapseBtn.querySelector('span').textContent = 'Collapse';
             } else {
+                // Hide content using both methods
                 tokenContent.style.display = 'none';
                 tokenContent.classList.add('hidden');
                 tokenIconCollapse.classList.remove('fa-chevron-up');
@@ -4673,25 +4678,30 @@ window.toggleGithubTokenSettings = function() {
     const settings = document.getElementById('github-token-settings');
     const warning = document.getElementById('github-auth-warning');
     if (settings) {
-        // Remove inline style if present to avoid conflicts
-        if (settings.style.display !== undefined) {
+        // Check current state using both class and style
+        const isCurrentlyHidden = settings.classList.contains('hidden') || 
+                                  settings.style.display === 'none' ||
+                                  (settings.style.display === '' && window.getComputedStyle(settings).display === 'none');
+        
+        if (isCurrentlyHidden) {
+            // Show settings panel using both methods
+            settings.classList.remove('hidden');
             settings.style.display = '';
-        }
-        // Toggle Tailwind hidden class
-        settings.classList.toggle('hidden');
-        
-        const isOpening = !settings.classList.contains('hidden');
-        
-        // When opening settings, hide the warning banner (they're now combined)
-        if (isOpening && warning) {
-            warning.classList.add('hidden');
-            // Clear any dismissal state since user is actively configuring
-            sessionStorage.removeItem('github-auth-warning-dismissed');
-        }
-        
-        // Load token when opening the panel
-        if (isOpening) {
+            
+            // When opening settings, hide the warning banner (they're now combined)
+            if (warning) {
+                warning.classList.add('hidden');
+                warning.style.display = 'none';
+                // Clear any dismissal state since user is actively configuring
+                sessionStorage.removeItem('github-auth-warning-dismissed');
+            }
+            
+            // Load token when opening the panel
             loadGithubToken();
+        } else {
+            // Hide settings panel using both methods
+            settings.classList.add('hidden');
+            settings.style.display = 'none';
         }
     }
 }
@@ -4853,11 +4863,19 @@ window.saveGithubToken = function() {
                     checkGitHubAuthStatus().then(() => {
                         // Collapse the settings panel content instead of hiding the entire panel
                         // This keeps the panel accessible for future token management
+                        const settings = document.getElementById('github-token-settings');
                         const tokenContent = document.getElementById('github-token-content');
                         const tokenIconCollapse = document.getElementById('github-token-icon-collapse');
                         const toggleTokenCollapseBtn = document.getElementById('toggle-github-token-collapse');
                         
+                        // Ensure settings panel is visible but content is collapsed
+                        if (settings) {
+                            settings.classList.remove('hidden');
+                            settings.style.display = '';
+                        }
+                        
                         if (tokenContent) {
+                            // Collapse content using both methods
                             tokenContent.style.display = 'none';
                             tokenContent.classList.add('hidden');
                         }
@@ -4928,7 +4946,9 @@ function checkGitHubAuthStatus() {
                             }
                             // For 'none' status, use the default message from HTML template
                             
+                            // Show warning using both classList and style.display
                             warning.classList.remove('hidden');
+                            warning.style.display = '';
                             console.log(`GitHub token status: ${tokenStatus} - showing API limit warning`);
                         }
                     }
@@ -4939,19 +4959,22 @@ function checkGitHubAuthStatus() {
                 } else if (tokenStatus === 'valid') {
                     // Token is valid - hide warning and ensure settings panel is accessible but collapsed
                     if (warning) {
+                        // Hide warning using both classList and style.display
                         warning.classList.add('hidden');
+                        warning.style.display = 'none';
                         console.log('GitHub token is valid - hiding API limit warning');
                     }
                     
                     // Make settings panel visible but collapsed (accessible for token management)
                     if (settings) {
-                        // Remove hidden class from panel itself - make it visible
+                        // Remove hidden class from panel itself - make it visible using both methods
                         settings.classList.remove('hidden');
+                        settings.style.display = '';
                         
                         // Ensure the content inside is collapsed
                         const tokenContent = document.getElementById('github-token-content');
                         if (tokenContent) {
-                            // Collapse the content
+                            // Collapse the content using both methods
                             tokenContent.style.display = 'none';
                             tokenContent.classList.add('hidden');
                         }
@@ -4984,10 +5007,13 @@ window.dismissGithubWarning = function() {
     const warning = document.getElementById('github-auth-warning');
     const settings = document.getElementById('github-token-settings');
     if (warning) {
+        // Hide warning using both classList and style.display
         warning.classList.add('hidden');
+        warning.style.display = 'none';
         // Also hide settings if it's open (since they're combined now)
         if (settings && !settings.classList.contains('hidden')) {
             settings.classList.add('hidden');
+            settings.style.display = 'none';
         }
         // Remember dismissal for this session
         sessionStorage.setItem('github-auth-warning-dismissed', 'true');
