@@ -449,6 +449,101 @@ if (_PLUGIN_DEBUG_EARLY) {
     }
 }
 
+// GitHub Token Collapse Handler - Define early so it's available before IIFE
+console.log('[DEFINE] Defining attachGithubTokenCollapseHandler function...');
+window.attachGithubTokenCollapseHandler = function() {
+    console.log('[attachGithubTokenCollapseHandler] Starting...');
+    const toggleTokenCollapseBtn = document.getElementById('toggle-github-token-collapse');
+    console.log('[attachGithubTokenCollapseHandler] Button found:', !!toggleTokenCollapseBtn);
+    if (!toggleTokenCollapseBtn) {
+        console.warn('[attachGithubTokenCollapseHandler] GitHub token collapse button not found');
+        return;
+    }
+    
+    console.log('[attachGithubTokenCollapseHandler] Checking toggleGithubTokenContent...', {
+        exists: typeof window.toggleGithubTokenContent
+    });
+    if (!window.toggleGithubTokenContent) {
+        console.warn('[attachGithubTokenCollapseHandler] toggleGithubTokenContent function not defined');
+        return;
+    }
+    
+    // Remove any existing listeners by cloning the button
+    const parent = toggleTokenCollapseBtn.parentNode;
+    if (!parent) {
+        console.warn('[attachGithubTokenCollapseHandler] Button parent not found');
+        return;
+    }
+    
+    const newBtn = toggleTokenCollapseBtn.cloneNode(true);
+    parent.replaceChild(newBtn, toggleTokenCollapseBtn);
+    
+    // Attach listener to the new button
+    newBtn.addEventListener('click', function(e) {
+        console.log('[attachGithubTokenCollapseHandler] Button clicked, calling toggleGithubTokenContent');
+        window.toggleGithubTokenContent(e);
+    });
+    
+    console.log('[attachGithubTokenCollapseHandler] Handler attached to button:', newBtn.id);
+};
+
+// Toggle GitHub Token Settings section
+console.log('[DEFINE] Defining toggleGithubTokenContent function...');
+window.toggleGithubTokenContent = function(e) {
+    console.log('[toggleGithubTokenContent] called', e);
+    
+    if (e) {
+        e.stopPropagation();
+        e.preventDefault();
+    }
+    
+    const tokenContent = document.getElementById('github-token-content');
+    const tokenIconCollapse = document.getElementById('github-token-icon-collapse');
+    const toggleTokenCollapseBtn = document.getElementById('toggle-github-token-collapse');
+    
+    console.log('[toggleGithubTokenContent] Elements found:', {
+        tokenContent: !!tokenContent,
+        tokenIconCollapse: !!tokenIconCollapse,
+        toggleTokenCollapseBtn: !!toggleTokenCollapseBtn
+    });
+    
+    if (!tokenContent || !toggleTokenCollapseBtn) {
+        console.warn('[toggleGithubTokenContent] GitHub token content or button not found');
+        return;
+    }
+    
+    const hasHiddenClass = tokenContent.classList.contains('hidden');
+    const computedDisplay = window.getComputedStyle(tokenContent).display;
+    
+    console.log('[toggleGithubTokenContent] Current state:', {
+        hasHiddenClass,
+        computedDisplay,
+        buttonText: toggleTokenCollapseBtn.querySelector('span')?.textContent
+    });
+    
+    if (hasHiddenClass || computedDisplay === 'none') {
+        tokenContent.classList.remove('hidden');
+        tokenContent.style.removeProperty('display');
+        if (tokenIconCollapse) {
+            tokenIconCollapse.classList.remove('fa-chevron-down');
+            tokenIconCollapse.classList.add('fa-chevron-up');
+        }
+        const span = toggleTokenCollapseBtn.querySelector('span');
+        if (span) span.textContent = 'Collapse';
+        console.log('[toggleGithubTokenContent] Content shown');
+    } else {
+        tokenContent.classList.add('hidden');
+        tokenContent.style.removeProperty('display');
+        if (tokenIconCollapse) {
+            tokenIconCollapse.classList.remove('fa-chevron-up');
+            tokenIconCollapse.classList.add('fa-chevron-down');
+        }
+        const span = toggleTokenCollapseBtn.querySelector('span');
+        if (span) span.textContent = 'Expand';
+        console.log('[toggleGithubTokenContent] Content hidden');
+    }
+};
+
 // GitHub Authentication Status - Define early so it's available in IIFE
 // Shows warning banner only when token is missing or invalid
 // The token itself is never exposed to the frontend for security
@@ -818,13 +913,16 @@ function initializePluginPageWhenReady() {
 let pluginsInitialized = false;
 
 function initializePlugins() {
+    console.log('[initializePlugins] Called, pluginsInitialized:', pluginsInitialized);
     // Guard against multiple initializations
     if (pluginsInitialized) {
+        console.log('[initializePlugins] Already initialized, skipping');
         pluginLog('[INIT] Plugins already initialized, skipping');
         return;
     }
     pluginsInitialized = true;
     
+    console.log('[initializePlugins] Starting initialization...');
     pluginLog('[INIT] Initializing plugins...');
 
     // Check GitHub authentication status
@@ -4180,109 +4278,10 @@ function setupCollapsibleSections() {
         });
     }
     
-    // Helper function to attach event listener to GitHub token collapse button
-    // Removes any existing listeners by cloning and re-attaching
-    // Made global so it can be called from checkGitHubAuthStatus()
-    window.attachGithubTokenCollapseHandler = function() {
-        console.log('[attachGithubTokenCollapseHandler] Starting...');
-        const toggleTokenCollapseBtn = document.getElementById('toggle-github-token-collapse');
-        console.log('[attachGithubTokenCollapseHandler] Button found:', !!toggleTokenCollapseBtn);
-        if (!toggleTokenCollapseBtn) {
-            console.warn('[attachGithubTokenCollapseHandler] GitHub token collapse button not found');
-            return;
-        }
-        
-        console.log('[attachGithubTokenCollapseHandler] Checking toggleGithubTokenContent...', {
-            exists: typeof window.toggleGithubTokenContent
-        });
-        if (!window.toggleGithubTokenContent) {
-            console.warn('[attachGithubTokenCollapseHandler] toggleGithubTokenContent function not defined');
-            return;
-        }
-        
-        // Remove any existing listeners by cloning the button
-        const parent = toggleTokenCollapseBtn.parentNode;
-        if (!parent) {
-            console.warn('[attachGithubTokenCollapseHandler] Button parent not found');
-            return;
-        }
-        
-        const newBtn = toggleTokenCollapseBtn.cloneNode(true);
-        parent.replaceChild(newBtn, toggleTokenCollapseBtn);
-        
-        // Attach listener to the new button
-        newBtn.addEventListener('click', function(e) {
-            console.log('[attachGithubTokenCollapseHandler] Button clicked, calling toggleGithubTokenContent');
-            window.toggleGithubTokenContent(e);
-        });
-        
-        console.log('[attachGithubTokenCollapseHandler] Handler attached to button:', newBtn.id);
-    };
-    
-    // Toggle GitHub Token Settings section
-    // Use a named function so we can re-attach it if needed
-    window.toggleGithubTokenContent = function(e) {
-        console.log('toggleGithubTokenContent called', e);
-        
-        if (e) {
-            e.stopPropagation(); // Prevent parent click handlers
-            e.preventDefault();
-        }
-        
-        const tokenContent = document.getElementById('github-token-content');
-        const tokenIconCollapse = document.getElementById('github-token-icon-collapse');
-        const toggleTokenCollapseBtn = document.getElementById('toggle-github-token-collapse');
-        
-        console.log('Elements found:', {
-            tokenContent: !!tokenContent,
-            tokenIconCollapse: !!tokenIconCollapse,
-            toggleTokenCollapseBtn: !!toggleTokenCollapseBtn
-        });
-        
-        if (!tokenContent || !toggleTokenCollapseBtn) {
-            console.warn('GitHub token content or button not found');
-            return;
-        }
-        
-        // Check current state - use hidden class (element has class="block" in HTML)
-        const hasHiddenClass = tokenContent.classList.contains('hidden');
-        const computedDisplay = window.getComputedStyle(tokenContent).display;
-        
-        console.log('Current state:', {
-            hasHiddenClass,
-            computedDisplay,
-            buttonText: toggleTokenCollapseBtn.querySelector('span')?.textContent
-        });
-        
-        if (hasHiddenClass || computedDisplay === 'none') {
-            // Show content - remove hidden class, block class will make it visible
-            tokenContent.classList.remove('hidden');
-            // Remove any inline display style
-            tokenContent.style.removeProperty('display');
-            if (tokenIconCollapse) {
-                tokenIconCollapse.classList.remove('fa-chevron-down');
-                tokenIconCollapse.classList.add('fa-chevron-up');
-            }
-            const span = toggleTokenCollapseBtn.querySelector('span');
-            if (span) span.textContent = 'Collapse';
-            console.log('GitHub token content expanded');
-        } else {
-            // Hide content - add hidden class
-            tokenContent.classList.add('hidden');
-            // Remove any inline display style
-            tokenContent.style.removeProperty('display');
-            if (tokenIconCollapse) {
-                tokenIconCollapse.classList.remove('fa-chevron-up');
-                tokenIconCollapse.classList.add('fa-chevron-down');
-            }
-            const span = toggleTokenCollapseBtn.querySelector('span');
-            if (span) span.textContent = 'Expand';
-            console.log('GitHub token content collapsed');
-        }
-    };
-    
-    // Attach event listener
-    window.attachGithubTokenCollapseHandler();
+    // Functions are now defined outside IIFE, just attach the handler
+    if (window.attachGithubTokenCollapseHandler) {
+        window.attachGithubTokenCollapseHandler();
+    }
 }
 
 function loadSavedRepositories() {
