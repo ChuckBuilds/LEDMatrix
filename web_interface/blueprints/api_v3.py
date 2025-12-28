@@ -46,7 +46,7 @@ def _ensure_cache_manager():
 def _save_config_atomic(config_manager, config_data, create_backup=True):
     """
     Save configuration using atomic save if available, fallback to regular save.
-    
+
     Returns:
         tuple: (success: bool, error_message: str or None)
     """
@@ -162,10 +162,10 @@ def get_schedule_config():
                 'Config manager not initialized',
                 status_code=500
             )
-        
+
         config = api_v3.config_manager.load_config()
         schedule_config = config.get('schedule', {})
-        
+
         return success_response(data=schedule_config)
     except Exception as e:
         return error_response(
@@ -187,11 +187,11 @@ def _validate_time_range(start_time_str, end_time_str, allow_overnight=True):
     try:
         start_time = datetime.strptime(start_time_str, '%H:%M').time()
         end_time = datetime.strptime(end_time_str, '%H:%M').time()
-        
+
         # Allow overnight schedules (start > end) or same-day schedules
         if not allow_overnight and start_time >= end_time:
             return False, f"Start time ({start_time_str}) must be before end time ({end_time_str}) for same-day schedules"
-        
+
         return True, None
     except (ValueError, TypeError) as e:
         return False, f"Invalid time format: {str(e)}"
@@ -209,7 +209,7 @@ def save_schedule_config():
 
         # Load current config
         current_config = api_v3.config_manager.load_config()
-        
+
         # Build schedule configuration
         # Handle enabled checkbox - can be True, False, or 'on'
         enabled_value = data.get('enabled', False)
@@ -218,14 +218,14 @@ def save_schedule_config():
         schedule_config = {
             'enabled': enabled_value
         }
-        
+
         mode = data.get('mode', 'global')
-        
+
         if mode == 'global':
             # Simple global schedule
             start_time = data.get('start_time', '07:00')
             end_time = data.get('end_time', '23:00')
-            
+
             # Validate time formats
             is_valid, error_msg = _validate_time_format(start_time)
             if not is_valid:
@@ -234,7 +234,7 @@ def save_schedule_config():
                     error_msg,
                     status_code=400
                 )
-            
+
             is_valid, error_msg = _validate_time_format(end_time)
             if not is_valid:
                 return error_response(
@@ -242,7 +242,7 @@ def save_schedule_config():
                     error_msg,
                     status_code=400
                 )
-            
+
             schedule_config['start_time'] = start_time
             schedule_config['end_time'] = end_time
             # Remove days config when switching to global mode
@@ -255,13 +255,13 @@ def save_schedule_config():
             schedule_config.pop('end_time', None)
             days = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday']
             enabled_days_count = 0
-            
+
             for day in days:
                 day_config = {}
                 enabled_key = f'{day}_enabled'
                 start_key = f'{day}_start'
                 end_key = f'{day}_end'
-                
+
                 # Check if day is enabled
                 if enabled_key in data:
                     enabled_val = data[enabled_key]
@@ -273,23 +273,23 @@ def save_schedule_config():
                 else:
                     # Default to enabled if not specified
                     day_config['enabled'] = True
-                
+
                 # Only add times if day is enabled
                 if day_config.get('enabled', True):
                     enabled_days_count += 1
                     start_time = None
                     end_time = None
-                    
+
                     if start_key in data and data[start_key]:
                         start_time = data[start_key]
                     else:
                         start_time = '07:00'
-                    
+
                     if end_key in data and data[end_key]:
                         end_time = data[end_key]
                     else:
                         end_time = '23:00'
-                    
+
                     # Validate time formats
                     is_valid, error_msg = _validate_time_format(start_time)
                     if not is_valid:
@@ -298,7 +298,7 @@ def save_schedule_config():
                             f"Invalid start time for {day}: {error_msg}",
                             status_code=400
                         )
-                    
+
                     is_valid, error_msg = _validate_time_format(end_time)
                     if not is_valid:
                         return error_response(
@@ -306,12 +306,12 @@ def save_schedule_config():
                             f"Invalid end time for {day}: {error_msg}",
                             status_code=400
                         )
-                    
+
                     day_config['start_time'] = start_time
                     day_config['end_time'] = end_time
-                
+
                 schedule_config['days'][day] = day_config
-            
+
             # Validate that at least one day is enabled in per-day mode
             if enabled_days_count == 0:
                 return error_response(
@@ -319,7 +319,7 @@ def save_schedule_config():
                     "At least one day must be enabled in per-day schedule mode",
                     status_code=400
                 )
-        
+
         # Update and save config using atomic save
         current_config['schedule'] = schedule_config
         success, error_msg = _save_config_atomic(api_v3.config_manager, current_config, create_backup=True)
@@ -329,14 +329,14 @@ def save_schedule_config():
                 f"Failed to save schedule configuration: {error_msg}",
                 status_code=500
             )
-        
+
         # Invalidate cache on config change
         try:
             from web_interface.cache import invalidate_cache
             invalidate_cache()
         except ImportError:
             pass
-        
+
         return success_response(message='Schedule configuration saved successfully')
     except Exception as e:
         import logging
@@ -368,10 +368,10 @@ def save_main_config():
             for key in ['web_display_autostart']:
                 if key in data:
                     data[key] = data[key] == 'on'
-        
+
         if not data:
             return jsonify({'status': 'error', 'message': 'No data provided'}), 400
-        
+
         import logging
         logging.error(f"DEBUG: save_main_config received data: {data}")
         logging.error(f"DEBUG: Content-Type header: {request.content_type}")
@@ -383,16 +383,16 @@ def save_main_config():
         # Handle general settings
         # Note: Checkboxes don't send data when unchecked, so we need to check if we're updating general settings
         # If any general setting is present, we're updating the general tab
-        is_general_update = any(k in data for k in ['timezone', 'city', 'state', 'country', 'web_display_autostart', 
+        is_general_update = any(k in data for k in ['timezone', 'city', 'state', 'country', 'web_display_autostart',
                                                      'auto_discover', 'auto_load_enabled', 'development_mode', 'plugins_directory'])
-        
+
         if is_general_update:
             # For checkbox: if not present in data during general update, it means unchecked
             current_config['web_display_autostart'] = data.get('web_display_autostart', False)
-        
+
         if 'timezone' in data:
             current_config['timezone'] = data['timezone']
-        
+
         # Handle location settings
         if 'city' in data or 'state' in data or 'country' in data:
             if 'location' not in current_config:
@@ -403,27 +403,27 @@ def save_main_config():
                 current_config['location']['state'] = data['state']
             if 'country' in data:
                 current_config['location']['country'] = data['country']
-        
+
         # Handle plugin system settings
         if 'auto_discover' in data or 'auto_load_enabled' in data or 'development_mode' in data or 'plugins_directory' in data:
             if 'plugin_system' not in current_config:
                 current_config['plugin_system'] = {}
-            
+
             # Handle plugin system checkboxes
             for checkbox in ['auto_discover', 'auto_load_enabled', 'development_mode']:
                 if checkbox in data:
                     current_config['plugin_system'][checkbox] = data.get(checkbox, False)
-            
+
             # Handle plugins_directory
             if 'plugins_directory' in data:
                 current_config['plugin_system']['plugins_directory'] = data['plugins_directory']
 
         # Handle display settings
-        display_fields = ['rows', 'cols', 'chain_length', 'parallel', 'brightness', 'hardware_mapping', 
+        display_fields = ['rows', 'cols', 'chain_length', 'parallel', 'brightness', 'hardware_mapping',
                          'gpio_slowdown', 'scan_mode', 'disable_hardware_pulsing', 'inverse_colors', 'show_refresh_rate',
                          'pwm_bits', 'pwm_dither_bits', 'pwm_lsb_nanoseconds', 'limit_refresh_rate_hz', 'use_short_date_format',
                          'max_dynamic_duration_seconds']
-        
+
         if any(k in data for k in display_fields):
             if 'display' not in current_config:
                 current_config['display'] = {}
@@ -431,29 +431,29 @@ def save_main_config():
                 current_config['display']['hardware'] = {}
             if 'runtime' not in current_config['display']:
                 current_config['display']['runtime'] = {}
-            
+
             # Handle hardware settings
-            for field in ['rows', 'cols', 'chain_length', 'parallel', 'brightness', 'hardware_mapping', 'scan_mode', 
+            for field in ['rows', 'cols', 'chain_length', 'parallel', 'brightness', 'hardware_mapping', 'scan_mode',
                          'pwm_bits', 'pwm_dither_bits', 'pwm_lsb_nanoseconds', 'limit_refresh_rate_hz']:
                 if field in data:
-                    if field in ['rows', 'cols', 'chain_length', 'parallel', 'brightness', 'scan_mode', 
+                    if field in ['rows', 'cols', 'chain_length', 'parallel', 'brightness', 'scan_mode',
                                'pwm_bits', 'pwm_dither_bits', 'pwm_lsb_nanoseconds', 'limit_refresh_rate_hz']:
                         current_config['display']['hardware'][field] = int(data[field])
                     else:
                         current_config['display']['hardware'][field] = data[field]
-            
+
             # Handle runtime settings
             if 'gpio_slowdown' in data:
                 current_config['display']['runtime']['gpio_slowdown'] = int(data['gpio_slowdown'])
-            
+
             # Handle checkboxes
             for checkbox in ['disable_hardware_pulsing', 'inverse_colors', 'show_refresh_rate']:
                 current_config['display']['hardware'][checkbox] = data.get(checkbox, False)
-            
+
             # Handle display-level checkboxes
             if 'use_short_date_format' in data:
                 current_config['display']['use_short_date_format'] = data.get('use_short_date_format', False)
-            
+
             # Handle dynamic duration settings
             if 'max_dynamic_duration_seconds' in data:
                 if 'dynamic_duration' not in current_config['display']:
@@ -467,7 +467,7 @@ def save_main_config():
                 current_config['display'] = {}
             if 'display_durations' not in current_config['display']:
                 current_config['display']['display_durations'] = {}
-            
+
             for field in duration_fields:
                 if field in data:
                     current_config['display']['display_durations'][field] = int(data[field])
@@ -481,7 +481,7 @@ def save_main_config():
             if api_v3.plugin_manager and key in api_v3.plugin_manager.plugin_manifests:
                 plugin_id = key
                 plugin_config = data[key]
-                
+
                 # Load plugin schema to identify secret fields (same logic as save_plugin_config)
                 secret_fields = set()
                 if api_v3.plugin_manager:
@@ -494,7 +494,7 @@ def save_main_config():
                     else:
                         plugins_dir = PROJECT_ROOT / plugins_dir_name
                 schema_path = plugins_dir / plugin_id / 'config_schema.json'
-                
+
                 def find_secret_fields(properties, prefix=''):
                     """Recursively find fields marked with x-secret: true"""
                     fields = set()
@@ -506,7 +506,7 @@ def save_main_config():
                         if field_props.get('type') == 'object' and 'properties' in field_props:
                             fields.update(find_secret_fields(field_props['properties'], full_path))
                     return fields
-                
+
                 if schema_path.exists():
                     try:
                         with open(schema_path, 'r', encoding='utf-8') as f:
@@ -515,7 +515,7 @@ def save_main_config():
                                 secret_fields = find_secret_fields(schema['properties'])
                     except Exception as e:
                         print(f"Error reading schema for secret detection: {e}")
-                
+
                 # Separate secrets from regular config (same logic as save_plugin_config)
                 def separate_secrets(config, secrets_set, prefix=''):
                     """Recursively separate secret fields from regular config"""
@@ -534,9 +534,9 @@ def save_main_config():
                         else:
                             regular[key] = value
                     return regular, secrets
-                
+
                 regular_config, secrets_config = separate_secrets(plugin_config, secret_fields)
-                
+
                 # PRE-PROCESSING: Preserve 'enabled' state if not in regular_config
                 # This prevents overwriting the enabled state when saving config from a form that doesn't include the toggle
                 if 'enabled' not in regular_config:
@@ -555,15 +555,15 @@ def save_main_config():
                         print(f"Error preserving enabled state for {plugin_id}: {e}")
                         # Default to True on error to avoid disabling plugins
                         regular_config['enabled'] = True
-                
+
                 # Get current secrets config
                 current_secrets = api_v3.config_manager.get_raw_file_content('secrets')
-                
+
                 # Deep merge regular config into main config
                 if plugin_id not in current_config:
                     current_config[plugin_id] = {}
                 current_config[plugin_id] = deep_merge(current_config[plugin_id], regular_config)
-                
+
                 # Deep merge secrets into secrets config
                 if secrets_config:
                     if plugin_id not in current_secrets:
@@ -571,10 +571,10 @@ def save_main_config():
                     current_secrets[plugin_id] = deep_merge(current_secrets[plugin_id], secrets_config)
                     # Save secrets file
                     api_v3.config_manager.save_raw_file_content('secrets', current_secrets)
-                
+
                 # Mark for removal from data dict (already processed)
                 plugin_keys_to_remove.append(key)
-                
+
                 # Notify plugin of config change if loaded (with merged config including secrets)
                 try:
                     if api_v3.plugin_manager:
@@ -588,19 +588,19 @@ def save_main_config():
                 except Exception as hook_err:
                     # Don't fail the save if hook fails
                     print(f"Warning: on_config_change failed for {plugin_id}: {hook_err}")
-        
+
         # Remove processed plugin keys from data (they're already in current_config)
         for key in plugin_keys_to_remove:
             del data[key]
-        
+
         # Handle any remaining config keys
         # System settings (timezone, city, etc.) are already handled above
         # Plugin configs should use /api/v3/plugins/config endpoint, but we'll handle them here too for flexibility
         for key in data:
             # Skip system settings that are already handled above
-            if key in ['timezone', 'city', 'state', 'country', 
-                       'web_display_autostart', 'auto_discover', 
-                       'auto_load_enabled', 'development_mode', 
+            if key in ['timezone', 'city', 'state', 'country',
+                       'web_display_autostart', 'auto_discover',
+                       'auto_load_enabled', 'development_mode',
                        'plugins_directory']:
                 continue
             # For any remaining keys (including plugin keys), use deep merge to preserve existing settings
@@ -618,7 +618,7 @@ def save_main_config():
                 f"Failed to save configuration: {error_msg}",
                 status_code=500
             )
-        
+
         # Invalidate cache on config change
         try:
             from web_interface.cache import invalidate_cache
@@ -673,11 +673,11 @@ def save_raw_main_config():
         import logging
         import traceback
         from src.exceptions import ConfigError
-        
+
         # Log the full error for debugging
         error_msg = f"Error saving raw main config: {str(e)}\n{traceback.format_exc()}"
         logging.error(error_msg)
-        
+
         # Extract more specific error message if it's a ConfigError
         if isinstance(e, ConfigError):
             error_message = str(e)
@@ -724,11 +724,11 @@ def save_raw_secrets_config():
         import logging
         import traceback
         from src.exceptions import ConfigError
-        
+
         # Log the full error for debugging
         error_msg = f"Error saving raw secrets config: {str(e)}\n{traceback.format_exc()}"
         logging.error(error_msg)
-        
+
         # Extract more specific error message if it's a ConfigError
         if isinstance(e, ConfigError):
             # ConfigError has a message attribute and may have context
@@ -737,7 +737,7 @@ def save_raw_secrets_config():
                 error_message = f"{error_message} (config_path: {e.config_path})"
         else:
             error_message = str(e) if str(e) else "An unexpected error occurred while saving the configuration"
-        
+
         return jsonify({'status': 'error', 'message': error_message}), 500
 
 @api_v3.route('/system/status', methods=['GET'])
@@ -754,7 +754,7 @@ def get_system_status():
             # Cache not available, continue without caching
             get_cached = None
             set_cached = None
-        
+
         # Import psutil for system monitoring
         try:
             import psutil
@@ -764,20 +764,20 @@ def get_system_status():
                 'status': 'error',
                 'message': 'psutil not available for system monitoring'
             }), 503
-        
+
         # Get system metrics using psutil
         cpu_percent = psutil.cpu_percent(interval=0.1)  # Short interval for responsiveness
         memory = psutil.virtual_memory()
         memory_percent = memory.percent
         disk = psutil.disk_usage('/')
         disk_percent = disk.percent
-        
+
         # Calculate uptime
         boot_time = psutil.boot_time()
         uptime_seconds = time.time() - boot_time
         uptime_hours = uptime_seconds / 3600
         uptime_days = uptime_hours / 24
-        
+
         # Format uptime string
         if uptime_days >= 1:
             uptime_str = f"{int(uptime_days)}d {int(uptime_hours % 24)}h"
@@ -785,7 +785,7 @@ def get_system_status():
             uptime_str = f"{int(uptime_hours)}h {int((uptime_seconds % 3600) / 60)}m"
         else:
             uptime_str = f"{int(uptime_seconds / 60)}m"
-        
+
         # Get CPU temperature (Raspberry Pi)
         cpu_temp = None
         try:
@@ -797,10 +797,10 @@ def get_system_status():
         except (IOError, ValueError, OSError):
             # Temperature sensor not available or error reading
             cpu_temp = None
-        
+
         # Get display service status
         service_status = _get_display_service_status()
-        
+
         status = {
             'timestamp': time.time(),
             'uptime': uptime_str,
@@ -815,14 +815,14 @@ def get_system_status():
             'disk_total_gb': round(disk.total / (1024 * 1024 * 1024), 1),
             'disk_used_gb': round(disk.used / (1024 * 1024 * 1024), 1)
         }
-        
+
         # Cache the result if available
         if set_cached:
             try:
                 set_cached('system_status', status, ttl_seconds=10)
             except Exception:
                 pass  # Cache write failed, but continue
-        
+
         return jsonify({'status': 'success', 'data': status})
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)}), 500
@@ -837,21 +837,21 @@ def get_health():
             'services': {},
             'checks': {}
         }
-        
+
         # Check web interface service
         health_status['services']['web_interface'] = {
             'status': 'running',
             'uptime_seconds': time.time() - (getattr(get_health, '_start_time', time.time()))
         }
         get_health._start_time = getattr(get_health, '_start_time', time.time())
-        
+
         # Check display service
         display_service_status = _get_display_service_status()
         health_status['services']['display_service'] = {
             'status': 'active' if display_service_status.get('active') else 'inactive',
             'details': display_service_status
         }
-        
+
         # Check config file accessibility
         try:
             if config_manager:
@@ -871,7 +871,7 @@ def get_health():
                 'readable': False,
                 'error': str(e)
             }
-        
+
         # Check plugin system
         try:
             if plugin_manager:
@@ -890,7 +890,7 @@ def get_health():
                 'status': 'error',
                 'error': str(e)
             }
-        
+
         # Check hardware connectivity (if display manager available)
         try:
             snapshot_path = "/tmp/led_matrix_preview.png"
@@ -912,16 +912,16 @@ def get_health():
                 'status': 'unknown',
                 'error': str(e)
             }
-        
+
         # Determine overall health
         all_healthy = all(
             check.get('status') in ['accessible', 'operational', 'connected', 'running', 'active']
             for check in health_status['checks'].values()
         )
-        
+
         if not all_healthy:
             health_status['status'] = 'degraded'
-        
+
         return jsonify({'status': 'success', 'data': health_status})
     except Exception as e:
         return jsonify({
@@ -934,7 +934,7 @@ def get_git_version(project_dir=None):
     """Get git version information from the repository"""
     if project_dir is None:
         project_dir = PROJECT_ROOT
-    
+
     try:
         # Try to get tag description (e.g., v2.4-10-g123456)
         result = subprocess.run(
@@ -944,10 +944,10 @@ def get_git_version(project_dir=None):
             timeout=5,
             cwd=str(project_dir)
         )
-        
+
         if result.returncode == 0:
             return result.stdout.strip()
-        
+
         # Fallback to short commit hash
         result = subprocess.run(
             ['git', 'rev-parse', '--short', 'HEAD'],
@@ -956,10 +956,10 @@ def get_git_version(project_dir=None):
             timeout=5,
             cwd=str(project_dir)
         )
-        
+
         if result.returncode == 0:
             return result.stdout.strip()
-        
+
         return 'Unknown'
     except Exception:
         return 'Unknown'
@@ -985,7 +985,7 @@ def execute_system_action():
                 'action': request.form.get('action'),
                 'mode': request.form.get('mode')
             }
-        
+
         if not data or 'action' not in data:
             return jsonify({'status': 'error', 'message': 'Action required'}), 400
 
@@ -1024,7 +1024,7 @@ def execute_system_action():
         elif action == 'git_pull':
             # Use PROJECT_ROOT instead of hardcoded path
             project_dir = str(PROJECT_ROOT)
-            
+
             # Check if there are local changes that need to be stashed
             # Exclude plugins directory - plugins are separate repos and shouldn't be stashed with base project
             # Use --untracked-files=no to skip untracked files check (much faster with symlinked plugins)
@@ -1038,7 +1038,7 @@ def execute_system_action():
                 )
                 # Filter out any changes in plugins directory - plugins are separate repositories
                 # Git status format: XY filename (where X is status of index, Y is status of work tree)
-                status_lines = [line for line in status_result.stdout.strip().split('\n') 
+                status_lines = [line for line in status_result.stdout.strip().split('\n')
                                if line.strip() and 'plugins/' not in line]
                 has_changes = bool('\n'.join(status_lines).strip())
             except subprocess.TimeoutExpired:
@@ -1046,9 +1046,9 @@ def execute_system_action():
                 # This is safer than failing the update
                 has_changes = True
                 status_result = type('obj', (object,), {'stdout': '', 'stderr': 'Status check timed out'})()
-            
+
             stash_info = ""
-            
+
             # Stash local changes if they exist (excluding plugins)
             # Plugins are separate repositories and shouldn't be stashed with base project updates
             if has_changes:
@@ -1069,7 +1069,7 @@ def execute_system_action():
                         print(f"Stash failed: {stash_result.stderr}")
                 except subprocess.TimeoutExpired:
                     print("Stash operation timed out, proceeding with pull")
-            
+
             # Perform the git pull
             result = subprocess.run(
                 ['git', 'pull', '--rebase'],
@@ -1078,7 +1078,7 @@ def execute_system_action():
                 timeout=60,
                 cwd=project_dir
             )
-            
+
             # Return custom response for git_pull
             if result.returncode == 0:
                 pull_message = "Code updated successfully."
@@ -1088,7 +1088,7 @@ def execute_system_action():
                     pull_message = f"Code updated successfully.{stash_info}"
             else:
                 pull_message = f"Update failed: {result.stderr or 'Unknown error'}"
-            
+
             return jsonify({
                 'status': 'success' if result.returncode == 0 else 'error',
                 'message': pull_message,
@@ -1128,9 +1128,9 @@ def get_display_current():
         import base64
         from PIL import Image
         import io
-        
+
         snapshot_path = "/tmp/led_matrix_preview.png"
-        
+
         # Get display dimensions from config
         try:
             if config_manager:
@@ -1148,7 +1148,7 @@ def get_display_current():
         except Exception:
             width = 128
             height = 64
-        
+
         # Try to read snapshot file
         image_data = None
         if os.path.exists(snapshot_path):
@@ -1161,7 +1161,7 @@ def get_display_current():
             except Exception as img_err:
                 # File might be being written or corrupted, return None
                 pass
-        
+
         display_data = {
             'timestamp': time.time(),
             'width': width,
@@ -1326,22 +1326,22 @@ def get_installed_plugins():
     try:
         if not api_v3.plugin_manager or not api_v3.plugin_store_manager:
             return jsonify({'status': 'error', 'message': 'Plugin managers not initialized'}), 500
-        
+
         import json
         from pathlib import Path
-        
+
         # Re-discover plugins to ensure we have the latest list
         # This handles cases where plugins are added/removed after app startup
         api_v3.plugin_manager.discover_plugins()
-        
+
         # Get all installed plugin info from the plugin manager
         all_plugin_info = api_v3.plugin_manager.get_all_plugin_info()
-        
+
         # Format for the web interface
         plugins = []
         for plugin_info in all_plugin_info:
             plugin_id = plugin_info.get('id')
-            
+
             # Re-read manifest from disk to ensure we have the latest metadata
             manifest_path = Path(api_v3.plugin_manager.plugins_dir) / plugin_id / "manifest.json"
             if manifest_path.exists():
@@ -1353,7 +1353,7 @@ def get_installed_plugins():
                 except Exception as e:
                     # If we can't read the fresh manifest, use the cached one
                     print(f"Warning: Could not read fresh manifest for {plugin_id}: {e}")
-            
+
             # Get enabled status from config (source of truth)
             # Read from config file first, fall back to plugin instance if config doesn't have the key
             enabled = None
@@ -1363,7 +1363,7 @@ def get_installed_plugins():
                 # Check if 'enabled' key exists in config (even if False)
                 if 'enabled' in plugin_config:
                     enabled = bool(plugin_config['enabled'])
-            
+
             # Fallback to plugin instance if config doesn't have enabled key
             if enabled is None:
                 plugin_instance = api_v3.plugin_manager.get_plugin(plugin_id)
@@ -1372,7 +1372,7 @@ def get_installed_plugins():
                 else:
                     # Default to True if no config key and plugin not loaded (matches BasePlugin default)
                     enabled = True
-            
+
             # Get verified status from store registry (if available)
             store_info = api_v3.plugin_store_manager.get_plugin_info(plugin_id)
             verified = store_info.get('verified', False) if store_info else False
@@ -1401,10 +1401,10 @@ def get_installed_plugins():
             last_commit_message = plugin_info.get('last_commit_message')
             if store_info and not last_commit_message:
                 last_commit_message = store_info.get('last_commit_message')
-            
+
             # Get web_ui_actions from manifest if available
             web_ui_actions = plugin_info.get('web_ui_actions', [])
-            
+
             plugins.append({
                 'id': plugin_id,
                 'name': plugin_info.get('name', plugin_id),
@@ -1421,7 +1421,7 @@ def get_installed_plugins():
                 'branch': branch,
                 'web_ui_actions': web_ui_actions
             })
-        
+
         return jsonify({'status': 'success', 'data': {'plugins': plugins}})
     except Exception as e:
         import traceback
@@ -1436,7 +1436,7 @@ def get_plugin_health():
     try:
         if not api_v3.plugin_manager:
             return jsonify({'status': 'error', 'message': 'Plugin manager not initialized'}), 500
-        
+
         # Check if health tracker is available
         if not hasattr(api_v3.plugin_manager, 'health_tracker') or not api_v3.plugin_manager.health_tracker:
             return jsonify({
@@ -1444,10 +1444,10 @@ def get_plugin_health():
                 'data': {},
                 'message': 'Health tracking not available'
             })
-        
+
         # Get health summaries for all plugins
         health_summaries = api_v3.plugin_manager.health_tracker.get_all_health_summaries()
-        
+
         return jsonify({
             'status': 'success',
             'data': health_summaries
@@ -1465,17 +1465,17 @@ def get_plugin_health_single(plugin_id):
     try:
         if not api_v3.plugin_manager:
             return jsonify({'status': 'error', 'message': 'Plugin manager not initialized'}), 500
-        
+
         # Check if health tracker is available
         if not hasattr(api_v3.plugin_manager, 'health_tracker') or not api_v3.plugin_manager.health_tracker:
             return jsonify({
                 'status': 'error',
                 'message': 'Health tracking not available'
             }), 503
-        
+
         # Get health summary for specific plugin
         health_summary = api_v3.plugin_manager.health_tracker.get_health_summary(plugin_id)
-        
+
         return jsonify({
             'status': 'success',
             'data': health_summary
@@ -1493,17 +1493,17 @@ def reset_plugin_health(plugin_id):
     try:
         if not api_v3.plugin_manager:
             return jsonify({'status': 'error', 'message': 'Plugin manager not initialized'}), 500
-        
+
         # Check if health tracker is available
         if not hasattr(api_v3.plugin_manager, 'health_tracker') or not api_v3.plugin_manager.health_tracker:
             return jsonify({
                 'status': 'error',
                 'message': 'Health tracking not available'
             }), 503
-        
+
         # Reset health state
         api_v3.plugin_manager.health_tracker.reset_health(plugin_id)
-        
+
         return jsonify({
             'status': 'success',
             'message': f'Health state reset for plugin {plugin_id}'
@@ -1521,7 +1521,7 @@ def get_plugin_metrics():
     try:
         if not api_v3.plugin_manager:
             return jsonify({'status': 'error', 'message': 'Plugin manager not initialized'}), 500
-        
+
         # Check if resource monitor is available
         if not hasattr(api_v3.plugin_manager, 'resource_monitor') or not api_v3.plugin_manager.resource_monitor:
             return jsonify({
@@ -1529,10 +1529,10 @@ def get_plugin_metrics():
                 'data': {},
                 'message': 'Resource monitoring not available'
             })
-        
+
         # Get metrics summaries for all plugins
         metrics_summaries = api_v3.plugin_manager.resource_monitor.get_all_metrics_summaries()
-        
+
         return jsonify({
             'status': 'success',
             'data': metrics_summaries
@@ -1550,17 +1550,17 @@ def get_plugin_metrics_single(plugin_id):
     try:
         if not api_v3.plugin_manager:
             return jsonify({'status': 'error', 'message': 'Plugin manager not initialized'}), 500
-        
+
         # Check if resource monitor is available
         if not hasattr(api_v3.plugin_manager, 'resource_monitor') or not api_v3.plugin_manager.resource_monitor:
             return jsonify({
                 'status': 'error',
                 'message': 'Resource monitoring not available'
             }), 503
-        
+
         # Get metrics summary for specific plugin
         metrics_summary = api_v3.plugin_manager.resource_monitor.get_metrics_summary(plugin_id)
-        
+
         return jsonify({
             'status': 'success',
             'data': metrics_summary
@@ -1578,17 +1578,17 @@ def reset_plugin_metrics(plugin_id):
     try:
         if not api_v3.plugin_manager:
             return jsonify({'status': 'error', 'message': 'Plugin manager not initialized'}), 500
-        
+
         # Check if resource monitor is available
         if not hasattr(api_v3.plugin_manager, 'resource_monitor') or not api_v3.plugin_manager.resource_monitor:
             return jsonify({
                 'status': 'error',
                 'message': 'Resource monitoring not available'
             }), 503
-        
+
         # Reset metrics
         api_v3.plugin_manager.resource_monitor.reset_metrics(plugin_id)
-        
+
         return jsonify({
             'status': 'success',
             'message': f'Metrics reset for plugin {plugin_id}'
@@ -1606,14 +1606,14 @@ def manage_plugin_limits(plugin_id):
     try:
         if not api_v3.plugin_manager:
             return jsonify({'status': 'error', 'message': 'Plugin manager not initialized'}), 500
-        
+
         # Check if resource monitor is available
         if not hasattr(api_v3.plugin_manager, 'resource_monitor') or not api_v3.plugin_manager.resource_monitor:
             return jsonify({
                 'status': 'error',
                 'message': 'Resource monitoring not available'
             }), 503
-        
+
         if request.method == 'GET':
             # Get limits
             limits = api_v3.plugin_manager.resource_monitor.get_limits(plugin_id)
@@ -1637,16 +1637,16 @@ def manage_plugin_limits(plugin_id):
             # POST - Set limits
             data = request.get_json() or {}
             from src.plugin_system.resource_monitor import ResourceLimits
-            
+
             limits = ResourceLimits(
                 max_memory_mb=data.get('max_memory_mb'),
                 max_cpu_percent=data.get('max_cpu_percent'),
                 max_execution_time=data.get('max_execution_time'),
                 warning_threshold=data.get('warning_threshold', 0.8)
             )
-            
+
             api_v3.plugin_manager.resource_monitor.set_limits(plugin_id, limits)
-            
+
             return jsonify({
                 'status': 'success',
                 'message': f'Resource limits updated for plugin {plugin_id}'
@@ -1664,10 +1664,10 @@ def toggle_plugin():
     try:
         if not api_v3.plugin_manager or not api_v3.config_manager:
             return jsonify({'status': 'error', 'message': 'Plugin or config manager not initialized'}), 500
-        
+
         # Support both JSON and form data (for HTMX submissions)
         content_type = request.content_type or ''
-        
+
         if 'application/json' in content_type:
             data = request.get_json()
             if not data or 'plugin_id' not in data or 'enabled' not in data:
@@ -1679,12 +1679,12 @@ def toggle_plugin():
             plugin_id = request.args.get('plugin_id') or request.form.get('plugin_id')
             if not plugin_id:
                 return jsonify({'status': 'error', 'message': 'plugin_id required'}), 400
-            
+
             # For checkbox toggle, if form was submitted, the checkbox was checked (enabled)
             # If using HTMX with hx-trigger="change", we need to check if checkbox is checked
             # The checkbox value or 'enabled' form field indicates the state
             enabled_str = request.form.get('enabled', request.args.get('enabled', ''))
-            
+
             # Handle various truthy/falsy values
             if enabled_str.lower() in ('true', '1', 'on', 'yes'):
                 enabled = True
@@ -1696,17 +1696,17 @@ def toggle_plugin():
                 config = api_v3.config_manager.load_config()
                 current_enabled = config.get(plugin_id, {}).get('enabled', False)
                 enabled = not current_enabled
-        
+
         # Check if plugin exists in manifests (discovered but may not be loaded)
         if plugin_id not in api_v3.plugin_manager.plugin_manifests:
             return jsonify({'status': 'error', 'message': f'Plugin {plugin_id} not found'}), 404
-        
+
         # Update config (this is what the display controller reads)
         config = api_v3.config_manager.load_config()
         if plugin_id not in config:
             config[plugin_id] = {}
         config[plugin_id]['enabled'] = enabled
-        
+
         # Use atomic save if available
         if hasattr(api_v3.config_manager, 'save_config_atomic'):
             result = api_v3.config_manager.save_config_atomic(config, create_backup=True)
@@ -1718,11 +1718,11 @@ def toggle_plugin():
                 )
         else:
             api_v3.config_manager.save_config(config)
-        
+
         # Update state manager if available
         if api_v3.plugin_state_manager:
             api_v3.plugin_state_manager.set_plugin_enabled(plugin_id, enabled)
-        
+
         # Log operation
         if api_v3.operation_history:
             api_v3.operation_history.record_operation(
@@ -1731,7 +1731,7 @@ def toggle_plugin():
                 status="success" if enabled else "disabled",
                 details={"enabled": enabled}
             )
-        
+
         # If plugin is loaded, also call its lifecycle methods
         # Wrap in try/except to prevent lifecycle errors from failing the toggle
         plugin = api_v3.plugin_manager.get_plugin(plugin_id)
@@ -1747,7 +1747,7 @@ def toggle_plugin():
                 # Log the error but don't fail the toggle - config is already saved
                 import logging
                 logging.warning(f"Lifecycle method error for {plugin_id}: {lifecycle_error}", exc_info=True)
-        
+
         return success_response(
             message=f"Plugin {plugin_id} {'enabled' if enabled else 'disabled'} successfully"
         )
@@ -1779,7 +1779,7 @@ def get_operation_status(operation_id):
                 'Operation queue not initialized',
                 status_code=500
             )
-        
+
         operation = api_v3.operation_queue.get_operation_status(operation_id)
         if not operation:
             return error_response(
@@ -1787,7 +1787,7 @@ def get_operation_status(operation_id):
                 f'Operation {operation_id} not found',
                 status_code=404
             )
-        
+
         return success_response(data=operation.to_dict())
     except Exception as e:
         from src.web_interface.errors import WebInterfaceError
@@ -1809,16 +1809,16 @@ def get_operation_history():
                 'Operation queue not initialized',
                 status_code=500
             )
-        
+
         limit = request.args.get('limit', 50, type=int)
         plugin_id = request.args.get('plugin_id')
-        
+
         history = api_v3.operation_queue.get_operation_history(limit=limit)
-        
+
         # Filter by plugin_id if provided
         if plugin_id:
             history = [op for op in history if op.plugin_id == plugin_id]
-        
+
         return success_response(data=[op.to_dict() for op in history])
     except Exception as e:
         from src.web_interface.errors import WebInterfaceError
@@ -1840,9 +1840,9 @@ def get_plugin_state():
                 'State manager not initialized',
                 status_code=500
             )
-        
+
         plugin_id = request.args.get('plugin_id')
-        
+
         if plugin_id:
             # Get state for specific plugin
             state = api_v3.plugin_state_manager.get_plugin_state(plugin_id)
@@ -1882,18 +1882,18 @@ def reconcile_plugin_state():
                 'State manager or plugin manager not initialized',
                 status_code=500
             )
-        
+
         from src.plugin_system.state_reconciliation import StateReconciliation
-        
+
         reconciler = StateReconciliation(
             state_manager=api_v3.plugin_state_manager,
             config_manager=api_v3.config_manager,
             plugin_manager=api_v3.plugin_manager,
             plugins_dir=Path(api_v3.plugin_manager.plugins_dir)
         )
-        
+
         result = reconciler.reconcile_state()
-        
+
         return success_response(
             data={
                 'inconsistencies_found': len(result.inconsistencies_found),
@@ -1948,7 +1948,7 @@ def get_plugin_config():
                 'Config manager not initialized',
                 status_code=500
             )
-        
+
         plugin_id = request.args.get('plugin_id')
         if not plugin_id:
             return error_response(
@@ -1961,7 +1961,7 @@ def get_plugin_config():
         # Get plugin configuration from config manager
         main_config = api_v3.config_manager.load_config()
         plugin_config = main_config.get(plugin_id, {})
-        
+
         # Merge with defaults from schema so form shows default values for missing fields
         schema_mgr = api_v3.schema_manager
         if schema_mgr:
@@ -1972,7 +1972,7 @@ def get_plugin_config():
                 # Log but don't fail - defaults merge is best effort
                 import logging
                 logging.warning(f"Could not merge defaults for {plugin_id}: {e}")
-        
+
         # Special handling for of-the-day plugin: populate uploaded_files and categories from disk
         if plugin_id == 'of-the-day' or plugin_id == 'ledmatrix-of-the-day':
             # Get plugin directory - plugin_id in manifest is 'of-the-day', but directory is 'ledmatrix-of-the-day'
@@ -1986,28 +1986,28 @@ def get_plugin_config():
                 plugin_dir = PROJECT_ROOT / 'plugins' / plugin_dir_name
                 if not plugin_dir.exists():
                     plugin_dir = PROJECT_ROOT / 'plugins' / plugin_id
-            
+
             if plugin_dir and Path(plugin_dir).exists():
                 data_dir = Path(plugin_dir) / 'of_the_day'
                 if data_dir.exists():
                     # Scan for JSON files
                     uploaded_files = []
                     categories_from_files = {}
-                    
+
                     for json_file in data_dir.glob('*.json'):
                         try:
                             # Get file stats
                             stat = json_file.stat()
-                            
+
                             # Read JSON to count entries
                             with open(json_file, 'r', encoding='utf-8') as f:
                                 json_data = json.load(f)
                                 entry_count = len(json_data) if isinstance(json_data, dict) else 0
-                            
+
                             # Extract category name from filename
                             category_name = json_file.stem
                             filename = json_file.name
-                            
+
                             # Create file entry
                             file_entry = {
                                 'id': category_name,
@@ -2020,7 +2020,7 @@ def get_plugin_config():
                                 'entry_count': entry_count
                             }
                             uploaded_files.append(file_entry)
-                            
+
                             # Create/update category entry if not in config
                             if category_name not in plugin_config.get('categories', {}):
                                 display_name = category_name.replace('_', ' ').title()
@@ -2034,19 +2034,19 @@ def get_plugin_config():
                                 categories_from_files[category_name] = plugin_config['categories'][category_name]
                                 # Ensure data_file is correct
                                 categories_from_files[category_name]['data_file'] = f'of_the_day/{filename}'
-                        
+
                         except Exception as e:
                             print(f"Warning: Could not read {json_file}: {e}")
                             continue
-                    
+
                     # Update plugin_config with scanned files
                     if uploaded_files:
                         plugin_config['uploaded_files'] = uploaded_files
-                    
+
                     # Merge categories from files with existing config
                     # Start with existing categories (preserve user settings like enabled/disabled)
                     existing_categories = plugin_config.get('categories', {}).copy()
-                    
+
                     # Update existing categories with file info, add new ones from files
                     for cat_name, cat_data in categories_from_files.items():
                         if cat_name in existing_categories:
@@ -2057,10 +2057,10 @@ def get_plugin_config():
                         else:
                             # Add new category from file (default to disabled)
                             existing_categories[cat_name] = cat_data
-                    
+
                     if existing_categories:
                         plugin_config['categories'] = existing_categories
-                    
+
                     # Update category_order to include all categories
                     category_order = plugin_config.get('category_order', []).copy()
                     all_category_names = set(existing_categories.keys())
@@ -2069,7 +2069,7 @@ def get_plugin_config():
                             category_order.append(cat_name)
                     if category_order:
                         plugin_config['category_order'] = category_order
-        
+
         # If no config exists, return defaults
         if not plugin_config:
             plugin_config = {
@@ -2095,7 +2095,7 @@ def update_plugin():
     try:
         # Support both JSON and form data
         content_type = request.content_type or ''
-        
+
         if 'application/json' in content_type:
             # JSON request
             data, error = validate_request_json(['plugin_id'])
@@ -2118,7 +2118,7 @@ def update_plugin():
                     status_code=400
                 )
             data = {'plugin_id': plugin_id}
-        
+
         if not api_v3.plugin_store_manager:
             return error_response(
                 ErrorCode.SYSTEM_ERROR,
@@ -2127,7 +2127,7 @@ def update_plugin():
             )
 
         plugin_id = data['plugin_id']
-        
+
         # Always do direct updates (they're fast git pull operations)
         # Operation queue is reserved for longer operations like install/uninstall
         plugin_dir = Path(api_v3.plugin_store_manager.plugins_dir) / plugin_id
@@ -2158,7 +2158,7 @@ def update_plugin():
 
         # Update the plugin
         success = api_v3.plugin_store_manager.update_plugin(plugin_id)
-    
+
         if success:
             updated_last_updated = current_last_updated
             try:
@@ -2195,13 +2195,13 @@ def update_plugin():
             # Invalidate schema cache
             if api_v3.schema_manager:
                 api_v3.schema_manager.invalidate_cache(plugin_id)
-            
+
             # Rediscover plugins
             if api_v3.plugin_manager:
                 api_v3.plugin_manager.discover_plugins()
                 if plugin_id in api_v3.plugin_manager.plugins:
                     api_v3.plugin_manager.reload_plugin(plugin_id)
-            
+
             # Update state and history
             if api_v3.plugin_state_manager:
                 api_v3.plugin_state_manager.update_plugin_state(
@@ -2218,7 +2218,7 @@ def update_plugin():
                         "commit": updated_commit
                     }
                 )
-            
+
             return success_response(
                 data={
                     'last_updated': updated_last_updated,
@@ -2235,7 +2235,7 @@ def update_plugin():
                 plugin_info = api_v3.plugin_store_manager.get_plugin_info(plugin_id)
                 if not plugin_info:
                     error_msg += ': Plugin not found in registry'
-            
+
             if api_v3.operation_history:
                 api_v3.operation_history.record_operation(
                     "update",
@@ -2243,13 +2243,13 @@ def update_plugin():
                     status="failed",
                     error=error_msg
                 )
-            
+
             return error_response(
                 ErrorCode.PLUGIN_UPDATE_FAILED,
                 error_msg,
                 status_code=500
             )
-            
+
     except Exception as e:
         from src.web_interface.errors import WebInterfaceError
         error = WebInterfaceError.from_exception(e, ErrorCode.PLUGIN_UPDATE_FAILED)
@@ -2276,7 +2276,7 @@ def uninstall_plugin():
         data, error = validate_request_json(['plugin_id'])
         if error:
             return error
-        
+
         if not api_v3.plugin_store_manager:
             return error_response(
                 ErrorCode.SYSTEM_ERROR,
@@ -2286,7 +2286,7 @@ def uninstall_plugin():
 
         plugin_id = data['plugin_id']
         preserve_config = data.get('preserve_config', False)
-        
+
         # Use operation queue if available
         if api_v3.operation_queue:
             def uninstall_callback(operation):
@@ -2294,10 +2294,10 @@ def uninstall_plugin():
                 # Unload the plugin first if it's loaded
                 if api_v3.plugin_manager and plugin_id in api_v3.plugin_manager.plugins:
                     api_v3.plugin_manager.unload_plugin(plugin_id)
-                
+
                 # Uninstall the plugin
                 success = api_v3.plugin_store_manager.uninstall_plugin(plugin_id)
-                
+
                 if not success:
                     error_msg = f'Failed to uninstall plugin {plugin_id}'
                     if api_v3.operation_history:
@@ -2308,22 +2308,22 @@ def uninstall_plugin():
                             error=error_msg
                         )
                     raise Exception(error_msg)
-                
+
                 # Invalidate schema cache
                 if api_v3.schema_manager:
                     api_v3.schema_manager.invalidate_cache(plugin_id)
-                
+
                 # Clean up plugin configuration if not preserving
                 if not preserve_config:
                     try:
                         api_v3.config_manager.cleanup_plugin_config(plugin_id, remove_secrets=True)
                     except Exception as cleanup_err:
                         print(f"Warning: Failed to cleanup config for {plugin_id}: {cleanup_err}")
-                
+
                 # Remove from state manager
                 if api_v3.plugin_state_manager:
                     api_v3.plugin_state_manager.remove_plugin_state(plugin_id)
-                
+
                 # Record in history
                 if api_v3.operation_history:
                     api_v3.operation_history.record_operation(
@@ -2332,16 +2332,16 @@ def uninstall_plugin():
                         status="success",
                         details={"preserve_config": preserve_config}
                     )
-                
+
                 return {'success': True, 'message': f'Plugin {plugin_id} uninstalled successfully'}
-            
+
             # Enqueue operation
             operation_id = api_v3.operation_queue.enqueue_operation(
                 OperationType.UNINSTALL,
                 plugin_id,
                 operation_callback=uninstall_callback
             )
-            
+
             return success_response(
                 data={'operation_id': operation_id},
                 message=f'Plugin {plugin_id} uninstallation queued'
@@ -2351,26 +2351,26 @@ def uninstall_plugin():
             # Unload the plugin first if it's loaded
             if api_v3.plugin_manager and plugin_id in api_v3.plugin_manager.plugins:
                 api_v3.plugin_manager.unload_plugin(plugin_id)
-            
+
             # Uninstall the plugin
             success = api_v3.plugin_store_manager.uninstall_plugin(plugin_id)
-            
+
             if success:
                 # Invalidate schema cache
                 if api_v3.schema_manager:
                     api_v3.schema_manager.invalidate_cache(plugin_id)
-                
+
                 # Clean up plugin configuration if not preserving
                 if not preserve_config:
                     try:
                         api_v3.config_manager.cleanup_plugin_config(plugin_id, remove_secrets=True)
                     except Exception as cleanup_err:
                         print(f"Warning: Failed to cleanup config for {plugin_id}: {cleanup_err}")
-                
+
                 # Remove from state manager
                 if api_v3.plugin_state_manager:
                     api_v3.plugin_state_manager.remove_plugin_state(plugin_id)
-                
+
                 # Record in history
                 if api_v3.operation_history:
                     api_v3.operation_history.record_operation(
@@ -2379,7 +2379,7 @@ def uninstall_plugin():
                         status="success",
                         details={"preserve_config": preserve_config}
                     )
-                
+
                 return success_response(message=f'Plugin {plugin_id} uninstalled successfully')
             else:
                 if api_v3.operation_history:
@@ -2389,13 +2389,13 @@ def uninstall_plugin():
                         status="failed",
                         error=f'Failed to uninstall plugin {plugin_id}'
                     )
-                
+
                 return error_response(
                     ErrorCode.PLUGIN_UNINSTALL_FAILED,
                     f'Failed to uninstall plugin {plugin_id}',
                     status_code=500
                 )
-            
+
     except Exception as e:
         from src.web_interface.errors import WebInterfaceError
         error = WebInterfaceError.from_exception(e, ErrorCode.PLUGIN_UNINSTALL_FAILED)
@@ -2420,40 +2420,40 @@ def install_plugin():
     try:
         if not api_v3.plugin_store_manager:
             return jsonify({'status': 'error', 'message': 'Plugin store manager not initialized'}), 500
-        
+
         data = request.get_json()
         if not data or 'plugin_id' not in data:
             return jsonify({'status': 'error', 'message': 'plugin_id required'}), 400
 
         plugin_id = data['plugin_id']
         branch = data.get('branch')  # Optional branch parameter
-        
+
         # Install the plugin
         # Log the plugins directory being used for debugging
         plugins_dir = api_v3.plugin_store_manager.plugins_dir
         branch_info = f" (branch: {branch})" if branch else ""
         print(f"Installing plugin {plugin_id}{branch_info} to directory: {plugins_dir}", flush=True)
-        
+
         # Use operation queue if available
         if api_v3.operation_queue:
             def install_callback(operation):
                 """Callback to execute plugin installation."""
                 success = api_v3.plugin_store_manager.install_plugin(plugin_id, branch=branch)
-                
+
                 if success:
                     # Invalidate schema cache
                     if api_v3.schema_manager:
                         api_v3.schema_manager.invalidate_cache(plugin_id)
-                    
+
                     # Discover and load the new plugin
                     if api_v3.plugin_manager:
                         api_v3.plugin_manager.discover_plugins()
                         api_v3.plugin_manager.load_plugin(plugin_id)
-                    
+
                     # Update state manager
                     if api_v3.plugin_state_manager:
                         api_v3.plugin_state_manager.set_plugin_installed(plugin_id)
-                    
+
                     # Record in history
                     if api_v3.operation_history:
                         api_v3.operation_history.record_operation(
@@ -2461,7 +2461,7 @@ def install_plugin():
                             plugin_id=plugin_id,
                             status="success"
                         )
-                    
+
                     branch_msg = f" (branch: {branch})" if branch else ""
                     return {'success': True, 'message': f'Plugin {plugin_id} installed successfully{branch_msg}'}
                 else:
@@ -2471,7 +2471,7 @@ def install_plugin():
                     plugin_info = api_v3.plugin_store_manager.get_plugin_info(plugin_id)
                     if not plugin_info:
                         error_msg += ' (plugin not found in registry)'
-                    
+
                     # Record failure in history
                     if api_v3.operation_history:
                         api_v3.operation_history.record_operation(
@@ -2480,16 +2480,16 @@ def install_plugin():
                             status="failed",
                             error=error_msg
                         )
-                    
+
                     raise Exception(error_msg)
-            
+
             # Enqueue operation
             operation_id = api_v3.operation_queue.enqueue_operation(
                 OperationType.INSTALL,
                 plugin_id,
                 operation_callback=install_callback
             )
-            
+
             branch_msg = f" (branch: {branch})" if branch else ""
             return success_response(
                 data={'operation_id': operation_id},
@@ -2498,7 +2498,7 @@ def install_plugin():
         else:
             # Fallback to direct installation
             success = api_v3.plugin_store_manager.install_plugin(plugin_id, branch=branch)
-            
+
             if success:
                 if api_v3.schema_manager:
                     api_v3.schema_manager.invalidate_cache(plugin_id)
@@ -2509,7 +2509,7 @@ def install_plugin():
                     api_v3.plugin_state_manager.set_plugin_installed(plugin_id)
                 if api_v3.operation_history:
                     api_v3.operation_history.record_operation("install", plugin_id=plugin_id, status="success")
-                
+
                 branch_msg = f" (branch: {branch})" if branch else ""
                 return success_response(message=f'Plugin {plugin_id} installed successfully{branch_msg}')
             else:
@@ -2519,13 +2519,13 @@ def install_plugin():
                 plugin_info = api_v3.plugin_store_manager.get_plugin_info(plugin_id)
                 if not plugin_info:
                     error_msg += ' (plugin not found in registry)'
-                
+
                 return error_response(
                     ErrorCode.PLUGIN_INSTALL_FAILED,
                     error_msg,
                     status_code=500
                 )
-            
+
     except Exception as e:
         import traceback
         error_details = traceback.format_exc()
@@ -2539,7 +2539,7 @@ def install_plugin_from_url():
     try:
         if not api_v3.plugin_store_manager:
             return jsonify({'status': 'error', 'message': 'Plugin store manager not initialized'}), 500
-        
+
         data = request.get_json()
         if not data or 'repo_url' not in data:
             return jsonify({'status': 'error', 'message': 'repo_url required'}), 400
@@ -2548,7 +2548,7 @@ def install_plugin_from_url():
         plugin_id = data.get('plugin_id')  # Optional, for monorepo installations
         plugin_path = data.get('plugin_path')  # Optional, for monorepo subdirectory
         branch = data.get('branch')  # Optional branch parameter
-        
+
         # Install the plugin
         result = api_v3.plugin_store_manager.install_from_url(
             repo_url=repo_url,
@@ -2556,18 +2556,18 @@ def install_plugin_from_url():
             plugin_path=plugin_path,
             branch=branch
         )
-        
+
         if result.get('success'):
             # Invalidate schema cache for the installed plugin
             installed_plugin_id = result.get('plugin_id')
             if api_v3.schema_manager and installed_plugin_id:
                 api_v3.schema_manager.invalidate_cache(installed_plugin_id)
-            
+
             # Discover and load the new plugin
             if api_v3.plugin_manager and installed_plugin_id:
                 api_v3.plugin_manager.discover_plugins()
                 api_v3.plugin_manager.load_plugin(installed_plugin_id)
-            
+
             branch_msg = f" (branch: {result.get('branch', branch)})" if (result.get('branch') or branch) else ""
             response_data = {
                 'status': 'success',
@@ -2583,7 +2583,7 @@ def install_plugin_from_url():
                 'status': 'error',
                 'message': result.get('error', 'Failed to install plugin from URL')
             }), 500
-            
+
     except Exception as e:
         import traceback
         error_details = traceback.format_exc()
@@ -2597,16 +2597,16 @@ def get_registry_from_url():
     try:
         if not api_v3.plugin_store_manager:
             return jsonify({'status': 'error', 'message': 'Plugin store manager not initialized'}), 500
-        
+
         data = request.get_json()
         if not data or 'repo_url' not in data:
             return jsonify({'status': 'error', 'message': 'repo_url required'}), 400
 
         repo_url = data['repo_url'].strip()
-        
+
         # Get registry from the URL
         registry = api_v3.plugin_store_manager.fetch_registry_from_url(repo_url)
-        
+
         if registry:
             return jsonify({
                 'status': 'success',
@@ -2618,7 +2618,7 @@ def get_registry_from_url():
                 'status': 'error',
                 'message': 'Failed to fetch registry from URL or URL does not contain a valid registry'
             }), 400
-            
+
     except Exception as e:
         import traceback
         error_details = traceback.format_exc()
@@ -2632,7 +2632,7 @@ def get_saved_repositories():
     try:
         if not api_v3.saved_repositories_manager:
             return jsonify({'status': 'error', 'message': 'Saved repositories manager not initialized'}), 500
-        
+
         repositories = api_v3.saved_repositories_manager.get_all()
         return jsonify({'status': 'success', 'data': {'repositories': repositories}})
     except Exception as e:
@@ -2648,16 +2648,16 @@ def add_saved_repository():
     try:
         if not api_v3.saved_repositories_manager:
             return jsonify({'status': 'error', 'message': 'Saved repositories manager not initialized'}), 500
-        
+
         data = request.get_json()
         if not data or 'repo_url' not in data:
             return jsonify({'status': 'error', 'message': 'repo_url required'}), 400
-        
+
         repo_url = data['repo_url'].strip()
         name = data.get('name')
-        
+
         success = api_v3.saved_repositories_manager.add(repo_url, name)
-        
+
         if success:
             return jsonify({
                 'status': 'success',
@@ -2682,15 +2682,15 @@ def remove_saved_repository():
     try:
         if not api_v3.saved_repositories_manager:
             return jsonify({'status': 'error', 'message': 'Saved repositories manager not initialized'}), 500
-        
+
         data = request.get_json()
         if not data or 'repo_url' not in data:
             return jsonify({'status': 'error', 'message': 'repo_url required'}), 400
-        
+
         repo_url = data['repo_url']
-        
+
         success = api_v3.saved_repositories_manager.remove(repo_url)
-        
+
         if success:
             return jsonify({
                 'status': 'success',
@@ -2715,7 +2715,7 @@ def list_plugin_store():
     try:
         if not api_v3.plugin_store_manager:
             return jsonify({'status': 'error', 'message': 'Plugin store manager not initialized'}), 500
-        
+
         query = request.args.get('query', '')
         category = request.args.get('category', '')
         tags = request.args.getlist('tags')
@@ -2725,14 +2725,14 @@ def list_plugin_store():
 
         # Search plugins from the registry (including saved repositories)
         plugins = api_v3.plugin_store_manager.search_plugins(
-            query=query, 
+            query=query,
             category=category,
             tags=tags,
             fetch_commit_info=fetch_commit,
             include_saved_repos=True,
             saved_repositories_manager=api_v3.saved_repositories_manager
         )
-        
+
         # Format plugins for the web interface
         formatted_plugins = []
         for plugin in plugins:
@@ -2765,22 +2765,51 @@ def list_plugin_store():
 
 @api_v3.route('/plugins/store/github-status', methods=['GET'])
 def get_github_auth_status():
-    """Check if GitHub authentication is configured"""
+    """Check if GitHub authentication is configured and validate token"""
     try:
         if not api_v3.plugin_store_manager:
             return jsonify({'status': 'error', 'message': 'Plugin store manager not initialized'}), 500
-        
+
+        token = api_v3.plugin_store_manager.github_token
+
         # Check if GitHub token is configured
-        has_token = api_v3.plugin_store_manager.github_token is not None and len(api_v3.plugin_store_manager.github_token) > 0
-        
-        return jsonify({
-            'status': 'success',
-            'data': {
-                'authenticated': has_token,
-                'rate_limit': 5000 if has_token else 60,
-                'message': 'GitHub API authenticated' if has_token else 'No GitHub token configured'
-            }
-        })
+        if not token or len(token) == 0:
+            return jsonify({
+                'status': 'success',
+                'data': {
+                    'token_status': 'none',
+                    'authenticated': False,
+                    'rate_limit': 60,
+                    'message': 'No GitHub token configured',
+                    'error': None
+                }
+            })
+
+        # Validate the token
+        is_valid, error_message = api_v3.plugin_store_manager._validate_github_token(token)
+
+        if is_valid:
+            return jsonify({
+                'status': 'success',
+                'data': {
+                    'token_status': 'valid',
+                    'authenticated': True,
+                    'rate_limit': 5000,
+                    'message': 'GitHub API authenticated',
+                    'error': None
+                }
+            })
+        else:
+            return jsonify({
+                'status': 'success',
+                'data': {
+                    'token_status': 'invalid',
+                    'authenticated': False,
+                    'rate_limit': 60,
+                    'message': f'GitHub token is invalid: {error_message}' if error_message else 'GitHub token is invalid',
+                    'error': error_message
+                }
+            })
     except Exception as e:
         import traceback
         error_details = traceback.format_exc()
@@ -2794,21 +2823,21 @@ def refresh_plugin_store():
     try:
         if not api_v3.plugin_store_manager:
             return jsonify({'status': 'error', 'message': 'Plugin store manager not initialized'}), 500
-        
+
         data = request.get_json() or {}
         fetch_commit_info = data.get('fetch_commit_info', data.get('fetch_latest_versions', False))
-        
+
         # Force refresh the registry
         registry = api_v3.plugin_store_manager.fetch_registry(force_refresh=True)
         plugin_count = len(registry.get('plugins', []))
-        
+
         message = 'Plugin store refreshed'
         if fetch_commit_info:
             message += ' (with refreshed commit metadata from GitHub)'
-        
+
         return jsonify({
-            'status': 'success', 
-            'message': message, 
+            'status': 'success',
+            'message': message,
             'plugin_count': plugin_count
         })
     except Exception as e:
@@ -2840,14 +2869,14 @@ def _parse_form_value(value):
     Handles booleans, numbers, JSON arrays/objects, and strings.
     """
     import json
-    
+
     if value is None:
         return None
-    
+
     # Handle string values
     if isinstance(value, str):
         stripped = value.strip()
-        
+
         # Check for boolean strings
         if stripped.lower() == 'true':
             return True
@@ -2855,7 +2884,7 @@ def _parse_form_value(value):
             return False
         if stripped.lower() in ('null', 'none') or stripped == '':
             return None
-        
+
         # Try parsing as JSON (for arrays and objects) - do this BEFORE number parsing
         # This handles RGB arrays like "[255, 0, 0]" correctly
         if stripped.startswith('[') or stripped.startswith('{'):
@@ -2863,7 +2892,7 @@ def _parse_form_value(value):
                 return json.loads(stripped)
             except json.JSONDecodeError:
                 pass
-        
+
         # Try parsing as number
         try:
             if '.' in stripped:
@@ -2871,63 +2900,63 @@ def _parse_form_value(value):
             return int(stripped)
         except ValueError:
             pass
-        
+
         # Return as string (original value, not stripped)
         return value
-    
+
     return value
 
 
 def _get_schema_property(schema, key_path):
     """
     Get the schema property for a given key path (supports dot notation).
-    
+
     Args:
         schema: The JSON schema dict
         key_path: Dot-separated path like "customization.time_text.font"
-    
+
     Returns:
         The property schema dict or None if not found
     """
     if not schema or 'properties' not in schema:
         return None
-    
+
     parts = key_path.split('.')
     current = schema['properties']
-    
+
     for i, part in enumerate(parts):
         if part not in current:
             return None
-        
+
         prop = current[part]
-        
+
         # If this is the last part, return the property
         if i == len(parts) - 1:
             return prop
-        
+
         # If this is an object with properties, navigate deeper
         if isinstance(prop, dict) and 'properties' in prop:
             current = prop['properties']
         else:
             return None
-    
+
     return None
 
 
 def _is_field_required(key_path, schema):
     """
     Check if a field is required according to the schema.
-    
+
     Args:
         key_path: Dot-separated path like "mqtt.username"
         schema: The JSON schema dict
-    
+
     Returns:
         True if field is required, False otherwise
     """
     if not schema or 'properties' not in schema:
         return False
-    
+
     parts = key_path.split('.')
     if len(parts) == 1:
         # Top-level field
@@ -2937,35 +2966,38 @@ def _is_field_required(key_path, schema):
         # Nested field - navigate to parent object
         parent_path = '.'.join(parts[:-1])
         field_name = parts[-1]
-        
+
         # Get parent property
         parent_prop = _get_schema_property(schema, parent_path)
         if not parent_prop or 'properties' not in parent_prop:
             return False
-        
+
         # Check if field is required in parent
         required = parent_prop.get('required', [])
         return field_name in required
 
 
+# Sentinel object to indicate a field should be skipped (not set in config)
+_SKIP_FIELD = object()
+
 def _parse_form_value_with_schema(value, key_path, schema):
     """
     Parse a form value using schema information to determine correct type.
     Handles arrays (comma-separated strings), objects, and other types.
-    
+
     Args:
         value: The form value (usually a string)
         key_path: Dot-separated path like "category_order" or "customization.time_text.font"
         schema: The plugin's JSON schema
-    
+
     Returns:
-        Parsed value with correct type
+        Parsed value with correct type, or _SKIP_FIELD to indicate the field should not be set
     """
     import json
-    
+
     # Get the schema property for this field
     prop = _get_schema_property(schema, key_path)
-    
+
     # Handle None/empty values
     if value is None or (isinstance(value, str) and value.strip() == ''):
         # If schema says it's an array, return empty array instead of None
@@ -2978,18 +3010,30 @@ def _parse_form_value_with_schema(value, key_path, schema):
         if prop and prop.get('type') == 'string':
             if not _is_field_required(key_path, schema):
                 return ""  # Return empty string for optional string fields
+        # For number/integer fields, check if they have defaults or are required
+        if prop:
+            prop_type = prop.get('type')
+            if prop_type in ('number', 'integer'):
+                # If field has a default, use it
+                if 'default' in prop:
+                    return prop['default']
+                # If field is not required and has no default, skip setting it
+                if not _is_field_required(key_path, schema):
+                    return _SKIP_FIELD
+                # If field is required but empty, return None (validation will fail, which is correct)
+                return None
         return None
-    
+
     # Handle string values
     if isinstance(value, str):
         stripped = value.strip()
-        
+
         # Check for boolean strings
         if stripped.lower() == 'true':
             return True
         if stripped.lower() == 'false':
             return False
-        
+
         # Handle arrays based on schema
         if prop and prop.get('type') == 'array':
             # Try parsing as JSON first (handles "[1,2,3]" format)
@@ -2998,7 +3042,7 @@ def _parse_form_value_with_schema(value, key_path, schema):
                     return json.loads(stripped)
                 except json.JSONDecodeError:
                     pass
-            
+
             # Otherwise, treat as comma-separated string
             if stripped:
                 # Split by comma and strip each item
@@ -3012,7 +3056,7 @@ def _parse_form_value_with_schema(value, key_path, schema):
                         pass
                 return items
             return []
-        
+
         # Handle objects based on schema
         if prop and prop.get('type') == 'object':
             # Try parsing as JSON
@@ -3023,14 +3067,14 @@ def _parse_form_value_with_schema(value, key_path, schema):
                     pass
             # If it's not JSON, return empty dict (form shouldn't send objects as strings)
             return {}
-        
+
         # Try parsing as JSON (for arrays and objects) - do this BEFORE number parsing
         if stripped.startswith('[') or stripped.startswith('{'):
             try:
                 return json.loads(stripped)
             except json.JSONDecodeError:
                 pass
-        
+
         # Handle numbers based on schema
         if prop:
             prop_type = prop.get('type')
@@ -3044,7 +3088,7 @@ def _parse_form_value_with_schema(value, key_path, schema):
                     return float(stripped)
                 except ValueError:
                     return prop.get('default', 0.0)
-        
+
         # Try parsing as number (fallback)
         try:
             if '.' in stripped:
@@ -3052,10 +3096,10 @@ def _parse_form_value_with_schema(value, key_path, schema):
             return int(stripped)
         except ValueError:
             pass
-        
+
         # Return as string
         return value
-    
+
     return value
 
 
@@ -3063,15 +3107,19 @@ def _set_nested_value(config, key_path, value):
     """
     Set a value in a nested dict using dot notation path.
     Handles existing nested dicts correctly by merging instead of replacing.
-    
+
     Args:
         config: The config dict to modify
         key_path: Dot-separated path (e.g., "customization.period_text.font")
-        value: The value to set
+        value: The value to set (or _SKIP_FIELD to skip setting)
     """
+    # Skip setting if value is the sentinel
+    if value is _SKIP_FIELD:
+        return
+
     parts = key_path.split('.')
     current = config
-    
+
     # Navigate/create intermediate dicts
     for i, part in enumerate(parts[:-1]):
         if part not in current:
@@ -3080,7 +3128,7 @@ def _set_nested_value(config, key_path, value):
             # If the existing value is not a dict, replace it with a dict
             current[part] = {}
         current = current[part]
-    
+
     # Set the final value (don't overwrite with empty dict if value is None and we want to preserve structure)
     if value is not None or parts[-1] not in current:
         current[parts[-1]] = value
@@ -3090,18 +3138,18 @@ def _enhance_schema_with_core_properties(schema):
     """
     Enhance schema with core plugin properties (enabled, display_duration, live_priority).
     These properties are system-managed and should always be allowed even if not in the plugin's schema.
-    
+
     Args:
         schema: The original JSON schema dict
-    
+
     Returns:
         Enhanced schema dict with core properties injected
     """
     import copy
-    
+
     if not schema:
         return schema
-    
+
     # Core plugin properties that should always be allowed
     # These match the definitions in SchemaManager.validate_config_against_schema()
     core_properties = {
@@ -3123,17 +3171,17 @@ def _enhance_schema_with_core_properties(schema):
             "description": "Enable live priority takeover when plugin has live content"
         }
     }
-    
+
     # Create a deep copy of the schema to modify (to avoid mutating the original)
     enhanced_schema = copy.deepcopy(schema)
     if "properties" not in enhanced_schema:
         enhanced_schema["properties"] = {}
-    
+
     # Inject core properties if they're not already defined in the schema
     for prop_name, prop_def in core_properties.items():
         if prop_name not in enhanced_schema["properties"]:
             enhanced_schema["properties"][prop_name] = copy.deepcopy(prop_def)
-    
+
     return enhanced_schema
 
 
@@ -3141,35 +3189,35 @@ def _filter_config_by_schema(config, schema, prefix=''):
     """
     Filter config to only include fields defined in the schema.
     Removes fields not in schema, especially important when additionalProperties is false.
-    
+
     Args:
         config: The config dict to filter
         schema: The JSON schema dict
         prefix: Prefix for nested paths (used recursively)
-    
+
     Returns:
         Filtered config dict containing only schema-defined fields
     """
     if not schema or 'properties' not in schema:
         return config
-    
+
     filtered = {}
     schema_props = schema.get('properties', {})
-    
+
     for key, value in config.items():
         if key not in schema_props:
             # Field not in schema, skip it
             continue
-        
+
         prop_schema = schema_props[key]
-        
+
         # Handle nested objects recursively
         if isinstance(value, dict) and prop_schema.get('type') == 'object' and 'properties' in prop_schema:
             filtered[key] = _filter_config_by_schema(value, prop_schema, f"{prefix}.{key}" if prefix else key)
         else:
             # Keep the value as-is for non-object types
             filtered[key] = value
-    
+
     return filtered
 
 
@@ -3186,7 +3234,7 @@ def save_plugin_config():
 
         # Support both JSON and form data (for HTMX submissions)
         content_type = request.content_type or ''
-        
+
         if 'application/json' in content_type:
             # JSON request
             data, error = validate_request_json(['plugin_id'])
@@ -3204,13 +3252,13 @@ def save_plugin_config():
                     'plugin_id required in query string',
                     status_code=400
                 )
-            
+
             # Load existing config as base (partial form updates should merge, not replace)
             existing_config = {}
             if api_v3.config_manager:
                 full_config = api_v3.config_manager.load_config()
                 existing_config = full_config.get(plugin_id, {}).copy()
-            
+
             # Get schema manager instance (needed for type conversion)
             schema_mgr = api_v3.schema_manager
             if not schema_mgr:
@@ -3219,23 +3267,23 @@ def save_plugin_config():
                     'Schema manager not initialized',
                     status_code=500
                 )
-            
+
             # Load plugin schema BEFORE processing form data (needed for type conversion)
             schema = schema_mgr.load_schema(plugin_id, use_cache=False)
-            
+
             # Start with existing config and apply form updates
             plugin_config = existing_config
-            
+
             # Convert form data to config dict
             # Form fields can use dot notation for nested values (e.g., "transition.type")
             form_data = request.form.to_dict()
-            
+
             # First pass: detect and combine array index fields (e.g., "text_color.0", "text_color.1" -> "text_color" as array)
             # This handles cases where forms send array fields as indexed inputs
             array_fields = {}  # Maps base field path to list of (index, value) tuples
             processed_keys = set()
             indexed_base_paths = set()  # Track which base paths have indexed fields
-            
+
             for key, value in form_data.items():
                 # Check if this looks like an array index field (ends with .0, .1, .2, etc.)
                 if '.' in key:
@@ -3255,7 +3303,7 @@ def save_plugin_config():
                                 processed_keys.add(key)
                                 indexed_base_paths.add(base_path)
                                 continue
-            
+
             # Process combined array fields
             for base_path, index_values in array_fields.items():
                 # Sort by index and extract values
@@ -3269,8 +3317,10 @@ def save_plugin_config():
                 import logging
                 logger = logging.getLogger(__name__)
                 logger.debug(f"Combined indexed array field {base_path}: {values} -> {combined_value} -> {parsed_value}")
-                _set_nested_value(plugin_config, base_path, parsed_value)
-            
+                # Only set if not skipped
+                if parsed_value is not _SKIP_FIELD:
+                    _set_nested_value(plugin_config, base_path, parsed_value)
+
             # Process remaining (non-indexed) fields
             # Skip any base paths that were processed as indexed arrays
             for key, value in form_data.items():
@@ -3287,16 +3337,17 @@ def save_plugin_config():
                                 import logging
                                 logger = logging.getLogger(__name__)
                                 logger.debug(f"Array field {key}: form value='{value}' -> parsed={parsed_value}")
-                        # Use helper to set nested values correctly
-                        _set_nested_value(plugin_config, key, parsed_value)
-            
+                        # Use helper to set nested values correctly (skips if _SKIP_FIELD)
+                        if parsed_value is not _SKIP_FIELD:
+                            _set_nested_value(plugin_config, key, parsed_value)
+
             # Post-process: Fix array fields that might have been incorrectly structured
             # This handles cases where array fields are stored as dicts (e.g., from indexed form fields)
             def fix_array_structures(config_dict, schema_props, prefix=''):
                 """Recursively fix array structures (convert dicts with numeric keys to arrays, fix length issues)"""
                 for prop_key, prop_schema in schema_props.items():
                     prop_type = prop_schema.get('type')
-                    
+
                     if prop_type == 'array':
                         # Navigate to the field location
                         if prefix:
@@ -3308,7 +3359,7 @@ def save_plugin_config():
                                 else:
                                     parent = None
                                     break
-                            
+
                             if parent is not None and isinstance(parent, dict) and prop_key in parent:
                                 current_value = parent[prop_key]
                                 # If it's a dict with numeric string keys, convert to array
@@ -3342,7 +3393,7 @@ def save_plugin_config():
                                     except (ValueError, KeyError, TypeError):
                                         # Conversion failed, check if we should use default
                                         pass
-                                
+
                                 # If it's an array, ensure correct types and check minItems
                                 if isinstance(current_value, list):
                                     # First, ensure array elements are correct types
@@ -3363,7 +3414,7 @@ def save_plugin_config():
                                                 converted_array.append(v)
                                         parent[prop_key] = converted_array
                                         current_value = converted_array
-                                    
+
                                     # Then check minItems
                                     min_items = prop_schema.get('minItems')
                                     if min_items is not None and len(current_value) < min_items:
@@ -3403,7 +3454,7 @@ def save_plugin_config():
                                             current_value = array_value  # Update for length check below
                                     except (ValueError, KeyError, TypeError):
                                         pass
-                                
+
                                 # If it's an array, ensure correct types and check minItems
                                 if isinstance(current_value, list):
                                     # First, ensure array elements are correct types
@@ -3424,14 +3475,14 @@ def save_plugin_config():
                                                 converted_array.append(v)
                                         config_dict[prop_key] = converted_array
                                         current_value = converted_array
-                                    
+
                                     # Then check minItems
                                     min_items = prop_schema.get('minItems')
                                     if min_items is not None and len(current_value) < min_items:
                                         default = prop_schema.get('default')
                                         if default and isinstance(default, list) and len(default) >= min_items:
                                             config_dict[prop_key] = default
-                    
+
                     # Recurse into nested objects
                     elif prop_type == 'object' and 'properties' in prop_schema:
                         nested_prefix = f"{prefix}.{prop_key}" if prefix else prop_key
@@ -3447,16 +3498,16 @@ def save_plugin_config():
                             nested_dict = parent.get(prop_key) if parent is not None and isinstance(parent, dict) else None
                         else:
                             nested_dict = config_dict.get(prop_key)
-                        
+
                         if isinstance(nested_dict, dict):
                             fix_array_structures(nested_dict, prop_schema['properties'], nested_prefix)
-            
+
             # Also ensure array fields that are None get converted to empty arrays
             def ensure_array_defaults(config_dict, schema_props, prefix=''):
                 """Recursively ensure array fields have defaults if None"""
                 for prop_key, prop_schema in schema_props.items():
                     prop_type = prop_schema.get('type')
-                    
+
                     if prop_type == 'array':
                         if prefix:
                             parent_parts = prefix.split('.')
@@ -3467,7 +3518,7 @@ def save_plugin_config():
                                 else:
                                     parent = None
                                     break
-                            
+
                             if parent is not None and isinstance(parent, dict):
                                 if prop_key not in parent or parent[prop_key] is None:
                                     default = prop_schema.get('default', [])
@@ -3476,7 +3527,7 @@ def save_plugin_config():
                             if prop_key not in config_dict or config_dict[prop_key] is None:
                                 default = prop_schema.get('default', [])
                                 config_dict[prop_key] = default if default else []
-                    
+
                     elif prop_type == 'object' and 'properties' in prop_schema:
                         nested_prefix = f"{prefix}.{prop_key}" if prefix else prop_key
                         if prefix:
@@ -3491,7 +3542,7 @@ def save_plugin_config():
                             nested_dict = parent.get(prop_key) if parent is not None and isinstance(parent, dict) else None
                         else:
                             nested_dict = config_dict.get(prop_key)
-                        
+
                         if nested_dict is None:
                             if prefix:
                                 parent_parts = prefix.split('.')
@@ -3507,16 +3558,16 @@ def save_plugin_config():
                                 if prop_key not in config_dict:
                                     config_dict[prop_key] = {}
                                 nested_dict = config_dict[prop_key]
-                        
+
                         if isinstance(nested_dict, dict):
                             ensure_array_defaults(nested_dict, prop_schema['properties'], nested_prefix)
-            
+
             if schema and 'properties' in schema:
                 # First, fix any dict structures that should be arrays
                 fix_array_structures(plugin_config, schema['properties'])
                 # Then, ensure None arrays get defaults
                 ensure_array_defaults(plugin_config, schema['properties'])
-        
+
         # Get schema manager instance (for JSON requests)
         schema_mgr = api_v3.schema_manager
         if not schema_mgr:
@@ -3525,12 +3576,12 @@ def save_plugin_config():
                 'Schema manager not initialized',
                 status_code=500
             )
-        
+
         # Load plugin schema using SchemaManager (force refresh to get latest schema)
         # For JSON requests, schema wasn't loaded yet
         if 'application/json' in content_type:
             schema = schema_mgr.load_schema(plugin_id, use_cache=False)
-        
+
         # PRE-PROCESSING: Preserve 'enabled' state if not in request
         # This prevents overwriting the enabled state when saving config from a form that doesn't include the toggle
         if 'enabled' not in plugin_config:
@@ -3554,7 +3605,7 @@ def save_plugin_config():
 
         # Find secret fields (supports nested schemas)
         secret_fields = set()
-        
+
         def find_secret_fields(properties, prefix=''):
             """Recursively find fields marked with x-secret: true"""
             fields = set()
@@ -3568,47 +3619,47 @@ def save_plugin_config():
                 if isinstance(field_props, dict) and field_props.get('type') == 'object' and 'properties' in field_props:
                     fields.update(find_secret_fields(field_props['properties'], full_path))
             return fields
-        
+
         if schema and 'properties' in schema:
             secret_fields = find_secret_fields(schema['properties'])
-        
+
         # Apply defaults from schema to config BEFORE validation
         # This ensures required fields with defaults are present before validation
         # Store preserved enabled value before merge to protect it from defaults
         preserved_enabled = None
         if 'enabled' in plugin_config:
             preserved_enabled = plugin_config['enabled']
-        
+
         if schema:
             defaults = schema_mgr.generate_default_config(plugin_id, use_cache=True)
             plugin_config = schema_mgr.merge_with_defaults(plugin_config, defaults)
-        
+
         # Ensure enabled state is preserved after defaults merge
         # Defaults should not overwrite an explicitly preserved enabled value
         if preserved_enabled is not None:
             # Restore preserved value if it was changed by defaults merge
             if plugin_config.get('enabled') != preserved_enabled:
                 plugin_config['enabled'] = preserved_enabled
-        
+
         # Normalize config data: convert string numbers to integers/floats where schema expects numbers
         # This handles form data which sends everything as strings
         def normalize_config_values(config, schema_props, prefix=''):
             """Recursively normalize config values based on schema types"""
             if not isinstance(config, dict) or not isinstance(schema_props, dict):
                 return config
-            
+
             normalized = {}
             for key, value in config.items():
                 field_path = f"{prefix}.{key}" if prefix else key
-                
+
                 if key not in schema_props:
                     # Field not in schema, keep as-is (will be caught by additionalProperties check if needed)
                     normalized[key] = value
                     continue
-                
+
                 prop_schema = schema_props[key]
                 prop_type = prop_schema.get('type')
-                
+
                 # Handle union types (e.g., ["integer", "null"])
                 if isinstance(prop_type, list):
                     # Check if null is allowed and value is empty/null
@@ -3623,7 +3674,7 @@ def save_plugin_config():
                             if value_stripped == '' or value_stripped.lower() in ('null', 'none', 'undefined'):
                                 normalized[key] = None
                                 continue
-                    
+
                     # Try to normalize based on non-null types in the union
                     # Check integer first (more specific than number)
                     if 'integer' in prop_type:
@@ -3642,7 +3693,7 @@ def save_plugin_config():
                         elif isinstance(value, (int, float)):
                             normalized[key] = int(value)
                             continue
-                    
+
                     # Check number (less specific, but handles floats)
                     if 'number' in prop_type:
                         if isinstance(value, str):
@@ -3660,13 +3711,13 @@ def save_plugin_config():
                         elif isinstance(value, (int, float)):
                             normalized[key] = float(value)
                             continue
-                    
+
                     # Check boolean
                     if 'boolean' in prop_type:
                         if isinstance(value, str):
                             normalized[key] = value.strip().lower() in ('true', '1', 'on', 'yes')
                             continue
-                    
+
                     # If no conversion worked and null is allowed, try to set to None
                     # This handles cases where the value is an empty string or can't be converted
                     if 'null' in prop_type:
@@ -3679,13 +3730,13 @@ def save_plugin_config():
                         if value is None:
                             normalized[key] = None
                             continue
-                    
+
                     # If no conversion worked, keep original value (will fail validation, but that's expected)
                     # Log a warning for debugging
                     logger.warning(f"Could not normalize field {field_path}: value={repr(value)}, type={type(value)}, schema_type={prop_type}")
                     normalized[key] = value
                     continue
-                
+
                 if isinstance(value, dict) and prop_type == 'object' and 'properties' in prop_schema:
                     # Recursively normalize nested objects
                     normalized[key] = normalize_config_values(value, prop_schema['properties'], field_path)
@@ -3693,7 +3744,7 @@ def save_plugin_config():
                     # Normalize array items
                     items_schema = prop_schema['items']
                     item_type = items_schema.get('type')
-                    
+
                     # Handle union types in array items
                     if isinstance(item_type, list):
                         normalized_array = []
@@ -3703,7 +3754,7 @@ def save_plugin_config():
                                 if v is None or v == '' or (isinstance(v, str) and v.lower() in ('null', 'none')):
                                     normalized_array.append(None)
                                     continue
-                            
+
                             # Try to normalize based on non-null types
                             if 'integer' in item_type:
                                 if isinstance(v, str):
@@ -3725,7 +3776,7 @@ def save_plugin_config():
                                 elif isinstance(v, (int, float)):
                                     normalized_array.append(float(v))
                                     continue
-                            
+
                             # If no conversion worked, keep original value
                             normalized_array.append(v)
                         normalized[key] = normalized_array
@@ -3794,24 +3845,24 @@ def save_plugin_config():
                         normalized[key] = value
                 else:
                     normalized[key] = value
-            
+
             return normalized
-        
+
         # Normalize config before validation
         if schema and 'properties' in schema:
             plugin_config = normalize_config_values(plugin_config, schema['properties'])
-        
+
         # Filter config to only include schema-defined fields (important when additionalProperties is false)
         # Use enhanced schema with core properties to ensure core properties are preserved during filtering
         if schema and 'properties' in schema:
             enhanced_schema_for_filtering = _enhance_schema_with_core_properties(schema)
             plugin_config = _filter_config_by_schema(plugin_config, enhanced_schema_for_filtering)
-        
+
         # Debug logging for union type fields (temporary)
         if 'rotation_settings' in plugin_config and 'random_seed' in plugin_config.get('rotation_settings', {}):
             seed_value = plugin_config['rotation_settings']['random_seed']
             logger.debug(f"After normalization, random_seed value: {repr(seed_value)}, type: {type(seed_value)}")
-        
+
         # Validate configuration against schema before saving
         if schema:
             # Log what we're validating for debugging
@@ -3820,21 +3871,21 @@ def save_plugin_config():
             logger.info(f"Validating config for {plugin_id}")
             logger.info(f"Config keys being validated: {list(plugin_config.keys())}")
             logger.info(f"Full config: {plugin_config}")
-            
+
             # Get enhanced schema keys (including injected core properties)
             # We need to create an enhanced schema to get the actual allowed keys
             import copy
             enhanced_schema = copy.deepcopy(schema)
             if "properties" not in enhanced_schema:
                 enhanced_schema["properties"] = {}
-            
+
             # Core properties that are always injected during validation
             core_properties = ["enabled", "display_duration", "live_priority"]
             for prop_name in core_properties:
                 if prop_name not in enhanced_schema["properties"]:
                     # Add placeholder to get the full list of allowed keys
                     enhanced_schema["properties"][prop_name] = {"type": "any"}
-            
+
             is_valid, validation_errors = schema_mgr.validate_config_against_schema(
                 plugin_config, schema, plugin_id
             )
@@ -3844,14 +3895,14 @@ def save_plugin_config():
                 logger.error(f"Validation errors: {validation_errors}")
                 logger.error(f"Config that failed: {plugin_config}")
                 logger.error(f"Schema properties: {list(enhanced_schema.get('properties', {}).keys())}")
-                
+
                 # Also print to console for immediate visibility
                 import json
                 print(f"[ERROR] Config validation failed for {plugin_id}")
                 print(f"[ERROR] Validation errors: {validation_errors}")
                 print(f"[ERROR] Config keys: {list(plugin_config.keys())}")
                 print(f"[ERROR] Schema property keys: {list(enhanced_schema.get('properties', {}).keys())}")
-                
+
                 # Log raw form data if this was a form submission
                 if 'application/json' not in (request.content_type or ''):
                     form_data = request.form.to_dict()
@@ -3880,10 +3931,10 @@ def save_plugin_config():
             """Recursively separate secret fields from regular config"""
             regular = {}
             secrets = {}
-            
+
             for key, value in config.items():
                 full_path = f"{prefix}.{key}" if prefix else key
-                
+
                 if isinstance(value, dict):
                     # Recursively handle nested dicts
                     nested_regular, nested_secrets = separate_secrets(value, secrets_set, full_path)
@@ -3895,9 +3946,9 @@ def save_plugin_config():
                     secrets[key] = value
                 else:
                     regular[key] = value
-            
+
             return regular, secrets
-        
+
         regular_config, secrets_config = separate_secrets(plugin_config, secret_fields)
 
         # Get current configs
@@ -3907,14 +3958,14 @@ def save_plugin_config():
         # Deep merge plugin configuration in main config (preserves nested structures)
         if plugin_id not in current_config:
             current_config[plugin_id] = {}
-        
+
         # Debug logging for live_priority before merge
         if plugin_id == 'football-scoreboard':
             print(f"[DEBUG] Before merge - current NFL live_priority: {current_config[plugin_id].get('nfl', {}).get('live_priority')}")
             print(f"[DEBUG] Before merge - regular_config NFL live_priority: {regular_config.get('nfl', {}).get('live_priority')}")
-        
+
         current_config[plugin_id] = deep_merge(current_config[plugin_id], regular_config)
-        
+
         # Debug logging for live_priority after merge
         if plugin_id == 'football-scoreboard':
             print(f"[DEBUG] After merge - NFL live_priority: {current_config[plugin_id].get('nfl', {}).get('live_priority')}")
@@ -3959,15 +4010,15 @@ def save_plugin_config():
                     plugin_full_config = merged_config.get(plugin_id, {})
                     if hasattr(plugin_instance, 'on_config_change'):
                         plugin_instance.on_config_change(plugin_full_config)
-                    
+
                     # Update plugin state manager and call lifecycle methods based on enabled state
                     # This ensures the plugin state is synchronized with the config
                     enabled = plugin_full_config.get('enabled', plugin_instance.enabled)
-                    
+
                     # Update state manager if available
                     if api_v3.plugin_state_manager:
                         api_v3.plugin_state_manager.set_plugin_enabled(plugin_id, enabled)
-                    
+
                     # Call lifecycle methods to ensure plugin state matches config
                     try:
                         if enabled:
@@ -4020,10 +4071,10 @@ def get_plugin_schema():
         schema_mgr = api_v3.schema_manager
         if not schema_mgr:
             return jsonify({'status': 'error', 'message': 'Schema manager not initialized'}), 500
-        
+
         # Load schema using SchemaManager (uses caching)
         schema = schema_mgr.load_schema(plugin_id, use_cache=True)
-        
+
         if schema:
             return jsonify({'status': 'success', 'data': {'schema': schema}})
 
@@ -4066,26 +4117,26 @@ def reset_plugin_config():
         data = request.get_json() or {}
         plugin_id = data.get('plugin_id')
         preserve_secrets = data.get('preserve_secrets', True)
-        
+
         if not plugin_id:
             return jsonify({'status': 'error', 'message': 'plugin_id required'}), 400
-        
+
         # Get schema manager instance
         schema_mgr = api_v3.schema_manager
         if not schema_mgr:
             return jsonify({'status': 'error', 'message': 'Schema manager not initialized'}), 500
-        
+
         # Generate defaults from schema
         defaults = schema_mgr.generate_default_config(plugin_id, use_cache=True)
-        
+
         # Get current configs
         current_config = api_v3.config_manager.load_config()
         current_secrets = api_v3.config_manager.get_raw_file_content('secrets')
-        
+
         # Load schema to identify secret fields
         schema = schema_mgr.load_schema(plugin_id, use_cache=True)
         secret_fields = set()
-        
+
         def find_secret_fields(properties, prefix=''):
             """Recursively find fields marked with x-secret: true"""
             fields = set()
@@ -4098,10 +4149,10 @@ def reset_plugin_config():
                 if isinstance(field_props, dict) and field_props.get('type') == 'object' and 'properties' in field_props:
                     fields.update(find_secret_fields(field_props['properties'], full_path))
             return fields
-        
+
         if schema and 'properties' in schema:
             secret_fields = find_secret_fields(schema['properties'])
-        
+
         # Separate defaults into regular and secret configs
         def separate_secrets(config, secrets_set, prefix=''):
             """Recursively separate secret fields from regular config"""
@@ -4120,12 +4171,12 @@ def reset_plugin_config():
                 else:
                     regular[key] = value
             return regular, secrets
-        
+
         default_regular, default_secrets = separate_secrets(defaults, secret_fields)
-        
+
         # Update main config with defaults
         current_config[plugin_id] = default_regular
-        
+
         # Update secrets config (preserve existing secrets if preserve_secrets=True)
         if preserve_secrets:
             # Keep existing secrets for this plugin
@@ -4140,12 +4191,12 @@ def reset_plugin_config():
         else:
             # Replace all secrets with defaults
             current_secrets[plugin_id] = default_secrets
-        
+
         # Save updated configs
         api_v3.config_manager.save_config(current_config)
         if default_secrets or not preserve_secrets:
             api_v3.config_manager.save_raw_file_content('secrets', current_secrets)
-        
+
         # Notify plugin of config change if loaded
         try:
             if api_v3.plugin_manager:
@@ -4157,7 +4208,7 @@ def reset_plugin_config():
                         plugin_instance.on_config_change(plugin_full_config)
         except Exception as hook_err:
             print(f"Warning: on_config_change failed for {plugin_id}: {hook_err}")
-        
+
         return jsonify({
             'status': 'success',
             'message': f'Plugin {plugin_id} configuration reset to defaults',
@@ -4178,63 +4229,63 @@ def execute_plugin_action():
         plugin_id = data.get('plugin_id')
         action_id = data.get('action_id')
         action_params = data.get('params', {})
-        
+
         if not plugin_id or not action_id:
             return jsonify({'status': 'error', 'message': 'plugin_id and action_id required'}), 400
-        
+
         # Get plugin directory
         if api_v3.plugin_manager:
             plugin_dir = api_v3.plugin_manager.get_plugin_directory(plugin_id)
         else:
             plugin_dir = PROJECT_ROOT / 'plugins' / plugin_id
-        
+
         if not plugin_dir or not Path(plugin_dir).exists():
             return jsonify({'status': 'error', 'message': f'Plugin {plugin_id} not found'}), 404
-        
+
         # Load manifest to get action definition
         manifest_path = Path(plugin_dir) / 'manifest.json'
         if not manifest_path.exists():
             return jsonify({'status': 'error', 'message': 'Plugin manifest not found'}), 404
-        
+
         with open(manifest_path, 'r', encoding='utf-8') as f:
             manifest = json.load(f)
-        
+
         web_ui_actions = manifest.get('web_ui_actions', [])
         action_def = None
         for action in web_ui_actions:
             if action.get('id') == action_id:
                 action_def = action
                 break
-        
+
         if not action_def:
             return jsonify({'status': 'error', 'message': f'Action {action_id} not found in plugin manifest'}), 404
-        
+
         # Set LEDMATRIX_ROOT environment variable
         env = os.environ.copy()
         env['LEDMATRIX_ROOT'] = str(PROJECT_ROOT)
-        
+
         # Execute action based on type
         action_type = action_def.get('type', 'script')
-        
+
         if action_type == 'script':
             # Execute a Python script
             script_path = action_def.get('script')
             if not script_path:
                 return jsonify({'status': 'error', 'message': 'Script path not defined for action'}), 400
-            
+
             script_file = Path(plugin_dir) / script_path
             if not script_file.exists():
                 return jsonify({'status': 'error', 'message': f'Script not found: {script_path}'}), 404
-            
+
             # Handle multi-step actions (like Spotify OAuth)
             step = action_params.get('step')
-            
+
             if step == '2' and action_params.get('redirect_url'):
                 # Step 2: Complete authentication with redirect URL
                 redirect_url = action_params.get('redirect_url')
                 import tempfile
                 import json as json_lib
-                
+
                 redirect_url_escaped = json_lib.dumps(redirect_url)
                 with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as wrapper:
                     wrapper.write(f'''import sys
@@ -4261,7 +4312,7 @@ print(stdout)
 sys.exit(proc.returncode)
 ''')
                     wrapper_path = wrapper.name
-                
+
                 try:
                     result = subprocess.run(
                         ['python3', wrapper_path],
@@ -4271,7 +4322,7 @@ sys.exit(proc.returncode)
                         env=env
                     )
                     os.unlink(wrapper_path)
-                    
+
                     if result.returncode == 0:
                         return jsonify({
                             'status': 'success',
@@ -4294,7 +4345,7 @@ sys.exit(proc.returncode)
                         # Pass params as JSON via stdin
                         import tempfile
                         import json as json_lib
-                        
+
                         params_json = json_lib.dumps(action_params)
                         with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as wrapper:
                             wrapper.write(f'''import sys
@@ -4322,7 +4373,7 @@ print(stdout)
 sys.exit(proc.returncode)
 ''')
                             wrapper_path = wrapper.name
-                        
+
                         try:
                             result = subprocess.run(
                                 ['python3', wrapper_path],
@@ -4332,7 +4383,7 @@ sys.exit(proc.returncode)
                                 env=env
                             )
                             os.unlink(wrapper_path)
-                            
+
                             # Try to parse output as JSON
                             try:
                                 output_data = json.loads(result.stdout)
@@ -4370,14 +4421,14 @@ sys.exit(proc.returncode)
                             # Import script as module to get auth URL
                             import sys
                             import importlib.util
-                            
+
                             spec = importlib.util.spec_from_file_location("plugin_action", script_file)
                             action_module = importlib.util.module_from_spec(spec)
                             sys.modules["plugin_action"] = action_module
-                            
+
                             try:
                                 spec.loader.exec_module(action_module)
-                                
+
                                 # Try to get auth URL using common patterns
                                 auth_url = None
                                 if hasattr(action_module, 'get_auth_url'):
@@ -4396,7 +4447,7 @@ sys.exit(proc.returncode)
                                             open_browser=False
                                         )
                                         auth_url = sp_oauth.get_authorize_url()
-                                
+
                                 if auth_url:
                                     return jsonify({
                                         'status': 'success',
@@ -4427,7 +4478,7 @@ sys.exit(proc.returncode)
                                 timeout=60,
                                 env=env
                             )
-                            
+
                             # Try to parse output as JSON
                             try:
                                 import json as json_module
@@ -4454,14 +4505,14 @@ sys.exit(proc.returncode)
                                         'message': action_def.get('error_message', 'Action failed'),
                                         'output': result.stdout + result.stderr
                                     }), 400
-        
+
         elif action_type == 'endpoint':
             # Call a plugin-defined HTTP endpoint (future feature)
             return jsonify({'status': 'error', 'message': 'Endpoint actions not yet implemented'}), 501
-        
+
         else:
             return jsonify({'status': 'error', 'message': f'Unknown action type: {action_type}'}), 400
-            
+
     except subprocess.TimeoutExpired:
         return jsonify({'status': 'error', 'message': 'Action timed out'}), 408
     except Exception as e:
@@ -4477,30 +4528,30 @@ def authenticate_spotify():
     try:
         data = request.get_json() or {}
         redirect_url = data.get('redirect_url', '').strip()
-        
+
         # Get plugin directory
         plugin_id = 'ledmatrix-music'
         if api_v3.plugin_manager:
             plugin_dir = api_v3.plugin_manager.get_plugin_directory(plugin_id)
         else:
             plugin_dir = PROJECT_ROOT / 'plugins' / plugin_id
-        
+
         if not plugin_dir or not Path(plugin_dir).exists():
             return jsonify({'status': 'error', 'message': f'Plugin {plugin_id} not found'}), 404
-        
+
         auth_script = Path(plugin_dir) / 'authenticate_spotify.py'
         if not auth_script.exists():
             return jsonify({'status': 'error', 'message': 'Authentication script not found'}), 404
-        
+
         # Set LEDMATRIX_ROOT environment variable
         env = os.environ.copy()
         env['LEDMATRIX_ROOT'] = str(PROJECT_ROOT)
-        
+
         if redirect_url:
             # Step 2: Complete authentication with redirect URL
             # Create a wrapper script that provides the redirect URL as input
             import tempfile
-            
+
             # Create a wrapper script that provides the redirect URL
             import json
             redirect_url_escaped = json.dumps(redirect_url)  # Properly escape the URL
@@ -4529,7 +4580,7 @@ print(stdout)
 sys.exit(proc.returncode)
 ''')
                 wrapper_path = wrapper.name
-            
+
             try:
                 result = subprocess.run(
                     ['python3', wrapper_path],
@@ -4539,7 +4590,7 @@ sys.exit(proc.returncode)
                     env=env
                 )
                 os.unlink(wrapper_path)
-                
+
                 if result.returncode == 0:
                     return jsonify({
                         'status': 'success',
@@ -4561,18 +4612,18 @@ sys.exit(proc.returncode)
             # Import the script's functions directly to get the auth URL
             import sys
             import importlib.util
-            
+
             # Load the authentication script as a module
             spec = importlib.util.spec_from_file_location("auth_spotify", auth_script)
             auth_module = importlib.util.module_from_spec(spec)
             sys.modules["auth_spotify"] = auth_module
-            
+
             # Set LEDMATRIX_ROOT before loading
             os.environ['LEDMATRIX_ROOT'] = str(PROJECT_ROOT)
-            
+
             try:
                 spec.loader.exec_module(auth_module)
-                
+
                 # Get credentials and create OAuth object
                 client_id, client_secret, redirect_uri = auth_module.load_spotify_credentials()
                 if not all([client_id, client_secret, redirect_uri]):
@@ -4580,7 +4631,7 @@ sys.exit(proc.returncode)
                         'status': 'error',
                         'message': 'Could not load Spotify credentials. Please check config/config_secrets.json.'
                     }), 400
-                
+
                 from spotipy.oauth2 import SpotifyOAuth
                 sp_oauth = SpotifyOAuth(
                     client_id=client_id,
@@ -4590,9 +4641,9 @@ sys.exit(proc.returncode)
                     cache_path=auth_module.SPOTIFY_AUTH_CACHE_PATH,
                     open_browser=False
                 )
-                
+
                 auth_url = sp_oauth.get_authorize_url()
-                
+
                 return jsonify({
                     'status': 'success',
                     'message': 'Authorization URL generated',
@@ -4607,7 +4658,7 @@ sys.exit(proc.returncode)
                     'status': 'error',
                     'message': f'Error generating authorization URL: {str(e)}'
                 }), 500
-                
+
     except Exception as e:
         import traceback
         error_details = traceback.format_exc()
@@ -4625,18 +4676,18 @@ def authenticate_ytm():
             plugin_dir = api_v3.plugin_manager.get_plugin_directory(plugin_id)
         else:
             plugin_dir = PROJECT_ROOT / 'plugins' / plugin_id
-        
+
         if not plugin_dir or not Path(plugin_dir).exists():
             return jsonify({'status': 'error', 'message': f'Plugin {plugin_id} not found'}), 404
-        
+
         auth_script = Path(plugin_dir) / 'authenticate_ytm.py'
         if not auth_script.exists():
             return jsonify({'status': 'error', 'message': 'Authentication script not found'}), 404
-        
+
         # Set LEDMATRIX_ROOT environment variable
         env = os.environ.copy()
         env['LEDMATRIX_ROOT'] = str(PROJECT_ROOT)
-        
+
         # Run the authentication script
         result = subprocess.run(
             ['python3', str(auth_script)],
@@ -4645,7 +4696,7 @@ def authenticate_ytm():
             timeout=60,
             env=env
         )
-        
+
         if result.returncode == 0:
             return jsonify({
                 'status': 'success',
@@ -4658,7 +4709,7 @@ def authenticate_ytm():
                 'message': 'YouTube Music authentication failed',
                 'output': result.stdout + result.stderr
             }), 400
-            
+
     except subprocess.TimeoutExpired:
         return jsonify({'status': 'error', 'message': 'Authentication timed out'}), 408
     except Exception as e:
@@ -4682,25 +4733,25 @@ def get_fonts_catalog():
             # Cache not available, continue without caching
             get_cached = None
             set_cached = None
-        
+
         # Try to import freetype, but continue without it if unavailable
         try:
             import freetype
             freetype_available = True
         except ImportError:
             freetype_available = False
-        
+
         # Scan assets/fonts directory for actual font files
         fonts_dir = PROJECT_ROOT / "assets" / "fonts"
         catalog = {}
-        
+
         if fonts_dir.exists() and fonts_dir.is_dir():
             for filename in os.listdir(fonts_dir):
                 if filename.endswith(('.ttf', '.otf', '.bdf')):
                     filepath = fonts_dir / filename
                     # Generate family name from filename (without extension)
                     family_name = os.path.splitext(filename)[0]
-                    
+
                     # Try to get font metadata using freetype (for TTF/OTF)
                     metadata = {}
                     if filename.endswith(('.ttf', '.otf')) and freetype_available:
@@ -4721,7 +4772,7 @@ def get_fonts_catalog():
                         except Exception:
                             # If freetype fails, use filename-based name
                             pass
-                    
+
                     # Store relative path from project root
                     relative_path = str(filepath.relative_to(PROJECT_ROOT))
                     catalog[family_name] = {
@@ -4729,14 +4780,14 @@ def get_fonts_catalog():
                         'type': 'ttf' if filename.endswith('.ttf') else 'otf' if filename.endswith('.otf') else 'bdf',
                         'metadata': metadata if metadata else None
                     }
-        
+
         # Cache the result (5 minute TTL) if available
         if set_cached:
             try:
                 set_cached('fonts_catalog', catalog, ttl_seconds=300)
             except Exception:
                 pass  # Cache write failed, but continue
-        
+
         return jsonify({'status': 'success', 'data': {'catalog': catalog}})
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)}), 500
@@ -4798,11 +4849,11 @@ def upload_font():
     try:
         if 'font_file' not in request.files:
             return jsonify({'status': 'error', 'message': 'No font file provided'}), 400
-        
+
         font_file = request.files['font_file']
         if font_file.filename == '':
             return jsonify({'status': 'error', 'message': 'No file selected'}), 400
-        
+
         # Validate filename
         is_valid, error_msg = validate_file_upload(
             font_file.filename,
@@ -4841,22 +4892,22 @@ def upload_plugin_asset():
         plugin_id = request.form.get('plugin_id')
         if not plugin_id:
             return jsonify({'status': 'error', 'message': 'plugin_id is required'}), 400
-        
+
         if 'files' not in request.files:
             return jsonify({'status': 'error', 'message': 'No files provided'}), 400
-        
+
         files = request.files.getlist('files')
         if not files or all(not f.filename for f in files):
             return jsonify({'status': 'error', 'message': 'No files provided'}), 400
-        
+
         # Validate file count
         if len(files) > 10:
             return jsonify({'status': 'error', 'message': 'Maximum 10 files per upload'}), 400
-        
+
         # Setup plugin assets directory
         assets_dir = PROJECT_ROOT / 'assets' / 'plugins' / plugin_id / 'uploads'
         assets_dir.mkdir(parents=True, exist_ok=True)
-        
+
         # Load metadata file
         metadata_file = assets_dir / '.metadata.json'
         if metadata_file.exists():
@@ -4864,47 +4915,47 @@ def upload_plugin_asset():
                 metadata = json.load(f)
         else:
             metadata = {}
-        
+
         uploaded_files = []
         total_size = 0
         max_size_per_file = 5 * 1024 * 1024  # 5MB
         max_total_size = 50 * 1024 * 1024  # 50MB
-        
+
         # Calculate current total size
         for entry in metadata.values():
             if 'size' in entry:
                 total_size += entry.get('size', 0)
-        
+
         for file in files:
             if not file.filename:
                 continue
-            
+
             # Validate file type
             allowed_extensions = ['.png', '.jpg', '.jpeg', '.bmp', '.gif']
             file_ext = '.' + file.filename.lower().split('.')[-1]
             if file_ext not in allowed_extensions:
                 return jsonify({
-                    'status': 'error', 
+                    'status': 'error',
                     'message': f'Invalid file type: {file_ext}. Allowed: {allowed_extensions}'
                 }), 400
-            
+
             # Read file to check size and validate
             file.seek(0, os.SEEK_END)
             file_size = file.tell()
             file.seek(0)
-            
+
             if file_size > max_size_per_file:
                 return jsonify({
                     'status': 'error',
                     'message': f'File {file.filename} exceeds 5MB limit'
                 }), 400
-            
+
             if total_size + file_size > max_total_size:
                 return jsonify({
                     'status': 'error',
                     'message': f'Upload would exceed 50MB total storage limit'
                 }), 400
-            
+
             # Validate file is actually an image (check magic bytes)
             file_content = file.read(8)
             file.seek(0)
@@ -4917,35 +4968,35 @@ def upload_plugin_asset():
                 is_valid_image = True
             elif file_content[:6] in [b'GIF87a', b'GIF89a']:  # GIF
                 is_valid_image = True
-            
+
             if not is_valid_image:
                 return jsonify({
                     'status': 'error',
                     'message': f'File {file.filename} is not a valid image file'
                 }), 400
-            
+
             # Generate unique filename
             timestamp = int(time.time())
             file_hash = hashlib.md5(file_content + file.filename.encode()).hexdigest()[:8]
             safe_filename = f"image_{timestamp}_{file_hash}{file_ext}"
             file_path = assets_dir / safe_filename
-            
+
             # Ensure filename is unique
             counter = 1
             while file_path.exists():
                 safe_filename = f"image_{timestamp}_{file_hash}_{counter}{file_ext}"
                 file_path = assets_dir / safe_filename
                 counter += 1
-            
+
             # Save file
             file.save(str(file_path))
-            
+
             # Make file readable
             os.chmod(file_path, 0o644)
-            
+
             # Generate unique ID
             image_id = str(uuid.uuid4())
-            
+
             # Store metadata
             relative_path = f"assets/plugins/{plugin_id}/uploads/{safe_filename}"
             metadata[image_id] = {
@@ -4956,7 +5007,7 @@ def upload_plugin_asset():
                 'uploaded_at': datetime.utcnow().isoformat() + 'Z',
                 'original_filename': file.filename
             }
-            
+
             uploaded_files.append({
                 'id': image_id,
                 'filename': safe_filename,
@@ -4964,19 +5015,19 @@ def upload_plugin_asset():
                 'size': file_size,
                 'uploaded_at': metadata[image_id]['uploaded_at']
             })
-            
+
             total_size += file_size
-        
+
         # Save metadata
         with open(metadata_file, 'w') as f:
             json.dump(metadata, f, indent=2)
-        
+
         return jsonify({
             'status': 'success',
             'uploaded_files': uploaded_files,
             'total_files': len(metadata)
         })
-        
+
     except Exception as e:
         import traceback
         return jsonify({'status': 'error', 'message': str(e), 'traceback': traceback.format_exc()}), 500
@@ -4987,50 +5038,50 @@ def upload_of_the_day_json():
     try:
         if 'files' not in request.files:
             return jsonify({'status': 'error', 'message': 'No files provided'}), 400
-        
+
         files = request.files.getlist('files')
         if not files or all(not f.filename for f in files):
             return jsonify({'status': 'error', 'message': 'No files provided'}), 400
-        
+
         # Get plugin directory
         plugin_id = 'ledmatrix-of-the-day'
         if api_v3.plugin_manager:
             plugin_dir = api_v3.plugin_manager.get_plugin_directory(plugin_id)
         else:
             plugin_dir = PROJECT_ROOT / 'plugins' / plugin_id
-        
+
         if not plugin_dir or not Path(plugin_dir).exists():
             return jsonify({'status': 'error', 'message': f'Plugin {plugin_id} not found'}), 404
-        
+
         # Setup of_the_day directory
         data_dir = Path(plugin_dir) / 'of_the_day'
         data_dir.mkdir(parents=True, exist_ok=True)
-        
+
         uploaded_files = []
         max_size_per_file = 5 * 1024 * 1024  # 5MB
-        
+
         for file in files:
             if not file.filename:
                 continue
-            
+
             # Validate file extension
             if not file.filename.lower().endswith('.json'):
                 return jsonify({
                     'status': 'error',
                     'message': f'File {file.filename} must be a JSON file (.json)'
                 }), 400
-            
+
             # Read and validate file size
             file.seek(0, os.SEEK_END)
             file_size = file.tell()
             file.seek(0)
-            
+
             if file_size > max_size_per_file:
                 return jsonify({
                     'status': 'error',
                     'message': f'File {file.filename} exceeds 5MB limit'
                 }), 400
-            
+
             # Read and validate JSON content
             try:
                 file_content = file.read().decode('utf-8')
@@ -5045,14 +5096,14 @@ def upload_of_the_day_json():
                     'status': 'error',
                     'message': f'File {file.filename} is not valid UTF-8 text'
                 }), 400
-            
+
             # Validate JSON structure (must be object with day number keys)
             if not isinstance(json_data, dict):
                 return jsonify({
                     'status': 'error',
                     'message': f'JSON in {file.filename} must be an object with day numbers (1-365) as keys'
                 }), 400
-            
+
             # Check if keys are valid day numbers
             for key in json_data.keys():
                 try:
@@ -5067,7 +5118,7 @@ def upload_of_the_day_json():
                         'status': 'error',
                         'message': f'Invalid key "{key}" in {file.filename}: must be a day number (1-365)'
                     }), 400
-            
+
             # Generate safe filename from original (preserve user's filename)
             original_filename = file.filename
             safe_filename = original_filename.lower().replace(' ', '_')
@@ -5075,9 +5126,9 @@ def upload_of_the_day_json():
             safe_filename = ''.join(c for c in safe_filename if c.isalnum() or c in '._-')
             if not safe_filename.endswith('.json'):
                 safe_filename += '.json'
-            
+
             file_path = data_dir / safe_filename
-            
+
             # If file exists, add counter
             counter = 1
             base_name = safe_filename.replace('.json', '')
@@ -5085,18 +5136,18 @@ def upload_of_the_day_json():
                 safe_filename = f"{base_name}_{counter}.json"
                 file_path = data_dir / safe_filename
                 counter += 1
-            
+
             # Save file
             with open(file_path, 'w', encoding='utf-8') as f:
                 json.dump(json_data, f, indent=2, ensure_ascii=False)
-            
+
             # Make file readable
             os.chmod(file_path, 0o644)
-            
+
             # Extract category name from filename (remove .json extension)
             category_name = safe_filename.replace('.json', '')
             display_name = category_name.replace('_', ' ').title()
-            
+
             # Update plugin config to add category
             try:
                 sys.path.insert(0, str(plugin_dir))
@@ -5105,10 +5156,10 @@ def upload_of_the_day_json():
             except Exception as e:
                 print(f"Warning: Could not update config: {e}")
                 # Continue anyway - file is uploaded
-            
+
             # Generate file ID (use category name as ID for simplicity)
             file_id = category_name
-            
+
             uploaded_files.append({
                 'id': file_id,
                 'filename': safe_filename,
@@ -5120,13 +5171,13 @@ def upload_of_the_day_json():
                 'display_name': display_name,
                 'entry_count': len(json_data)
             })
-        
+
         return jsonify({
             'status': 'success',
             'uploaded_files': uploaded_files,
             'total_files': len(uploaded_files)
         })
-        
+
     except Exception as e:
         import traceback
         return jsonify({'status': 'error', 'message': str(e), 'traceback': traceback.format_exc()}), 500
@@ -5137,30 +5188,30 @@ def delete_of_the_day_json():
     try:
         data = request.get_json() or {}
         file_id = data.get('file_id')  # This is the category_name
-        
+
         if not file_id:
             return jsonify({'status': 'error', 'message': 'file_id is required'}), 400
-        
+
         # Get plugin directory
         plugin_id = 'ledmatrix-of-the-day'
         if api_v3.plugin_manager:
             plugin_dir = api_v3.plugin_manager.get_plugin_directory(plugin_id)
         else:
             plugin_dir = PROJECT_ROOT / 'plugins' / plugin_id
-        
+
         if not plugin_dir or not Path(plugin_dir).exists():
             return jsonify({'status': 'error', 'message': f'Plugin {plugin_id} not found'}), 404
-        
+
         data_dir = Path(plugin_dir) / 'of_the_day'
         filename = f"{file_id}.json"
         file_path = data_dir / filename
-        
+
         if not file_path.exists():
             return jsonify({'status': 'error', 'message': f'File {filename} not found'}), 404
-        
+
         # Delete file
         file_path.unlink()
-        
+
         # Update config to remove category
         try:
             sys.path.insert(0, str(plugin_dir))
@@ -5168,12 +5219,12 @@ def delete_of_the_day_json():
             remove_category_from_config(file_id)
         except Exception as e:
             print(f"Warning: Could not update config: {e}")
-        
+
         return jsonify({
             'status': 'success',
             'message': f'File {filename} deleted successfully'
         })
-        
+
     except Exception as e:
         import traceback
         return jsonify({'status': 'error', 'message': str(e), 'traceback': traceback.format_exc()}), 500
@@ -5187,22 +5238,22 @@ def serve_plugin_static(plugin_id, file_path):
             plugin_dir = api_v3.plugin_manager.get_plugin_directory(plugin_id)
         else:
             plugin_dir = PROJECT_ROOT / 'plugins' / plugin_id
-        
+
         if not plugin_dir or not Path(plugin_dir).exists():
             return jsonify({'status': 'error', 'message': f'Plugin {plugin_id} not found'}), 404
-        
+
         # Resolve file path (prevent directory traversal)
         plugin_dir = Path(plugin_dir).resolve()
         requested_file = (plugin_dir / file_path).resolve()
-        
+
         # Security check: ensure file is within plugin directory
         if not str(requested_file).startswith(str(plugin_dir)):
             return jsonify({'status': 'error', 'message': 'Invalid file path'}), 403
-        
+
         # Check if file exists
         if not requested_file.exists() or not requested_file.is_file():
             return jsonify({'status': 'error', 'message': 'File not found'}), 404
-        
+
         # Determine content type
         content_type = 'text/plain'
         if file_path.endswith('.html'):
@@ -5213,13 +5264,13 @@ def serve_plugin_static(plugin_id, file_path):
             content_type = 'text/css'
         elif file_path.endswith('.json'):
             content_type = 'application/json'
-        
+
         # Read and return file
         with open(requested_file, 'r', encoding='utf-8') as f:
             content = f.read()
-        
+
         return Response(content, mimetype=content_type)
-        
+
     except Exception as e:
         import traceback
         return jsonify({'status': 'error', 'message': str(e), 'traceback': traceback.format_exc()}), 500
@@ -5230,23 +5281,23 @@ def upload_calendar_credentials():
     try:
         if 'file' not in request.files:
             return jsonify({'status': 'error', 'message': 'No file provided'}), 400
-        
+
         file = request.files['file']
         if not file or not file.filename:
             return jsonify({'status': 'error', 'message': 'No file provided'}), 400
-        
+
         # Validate file extension
         if not file.filename.lower().endswith('.json'):
             return jsonify({'status': 'error', 'message': 'File must be a JSON file (.json)'}), 400
-        
+
         # Validate file size (max 1MB for credentials)
         file.seek(0, os.SEEK_END)
         file_size = file.tell()
         file.seek(0)
-        
+
         if file_size > 1024 * 1024:  # 1MB
             return jsonify({'status': 'error', 'message': 'File exceeds 1MB limit'}), 400
-        
+
         # Validate it's valid JSON
         try:
             file_content = file.read()
@@ -5254,53 +5305,53 @@ def upload_calendar_credentials():
             json.loads(file_content)
         except json.JSONDecodeError:
             return jsonify({'status': 'error', 'message': 'File is not valid JSON'}), 400
-        
+
         # Validate it looks like Google OAuth credentials
         try:
             file.seek(0)
             creds_data = json.loads(file.read())
             file.seek(0)
-            
+
             # Check for required Google OAuth fields
             if 'installed' not in creds_data and 'web' not in creds_data:
                 return jsonify({
-                    'status': 'error', 
+                    'status': 'error',
                     'message': 'File does not appear to be a valid Google OAuth credentials file'
                 }), 400
         except Exception:
             pass  # Continue even if validation fails
-        
+
         # Get plugin directory
         plugin_id = 'calendar'
         if api_v3.plugin_manager:
             plugin_dir = api_v3.plugin_manager.get_plugin_directory(plugin_id)
         else:
             plugin_dir = PROJECT_ROOT / 'plugins' / plugin_id
-        
+
         if not plugin_dir or not Path(plugin_dir).exists():
             return jsonify({'status': 'error', 'message': f'Plugin {plugin_id} not found'}), 404
-        
+
         # Save file to plugin directory
         credentials_path = Path(plugin_dir) / 'credentials.json'
-        
+
         # Backup existing file if it exists
         if credentials_path.exists():
             backup_path = Path(plugin_dir) / f'credentials.json.backup.{int(time.time())}'
             import shutil
             shutil.copy2(credentials_path, backup_path)
-        
+
         # Save new file
         file.save(str(credentials_path))
-        
+
         # Set proper permissions
         os.chmod(credentials_path, 0o600)  # Read/write for owner only
-        
+
         return jsonify({
             'status': 'success',
             'message': 'Credentials file uploaded successfully',
             'path': str(credentials_path)
         })
-        
+
     except Exception as e:
         import traceback
         error_details = traceback.format_exc()
@@ -5315,38 +5366,38 @@ def delete_plugin_asset():
         data = request.get_json()
         plugin_id = data.get('plugin_id')
         image_id = data.get('image_id')
-        
+
         if not plugin_id or not image_id:
             return jsonify({'status': 'error', 'message': 'plugin_id and image_id are required'}), 400
-        
+
         # Get asset directory
         assets_dir = PROJECT_ROOT / 'assets' / 'plugins' / plugin_id / 'uploads'
         metadata_file = assets_dir / '.metadata.json'
-        
+
         if not metadata_file.exists():
             return jsonify({'status': 'error', 'message': 'Metadata file not found'}), 404
-        
+
         # Load metadata
         with open(metadata_file, 'r') as f:
             metadata = json.load(f)
-        
+
         if image_id not in metadata:
             return jsonify({'status': 'error', 'message': 'Image not found'}), 404
-        
+
         # Delete file
         file_path = PROJECT_ROOT / metadata[image_id]['path']
         if file_path.exists():
             file_path.unlink()
-        
+
         # Remove from metadata
         del metadata[image_id]
-        
+
         # Save metadata
         with open(metadata_file, 'w') as f:
             json.dump(metadata, f, indent=2)
-        
+
         return jsonify({'status': 'success', 'message': 'Image deleted successfully'})
-        
+
     except Exception as e:
         import traceback
         return jsonify({'status': 'error', 'message': str(e), 'traceback': traceback.format_exc()}), 500
@@ -5358,23 +5409,23 @@ def list_plugin_assets():
         plugin_id = request.args.get('plugin_id')
         if not plugin_id:
             return jsonify({'status': 'error', 'message': 'plugin_id is required'}), 400
-        
+
         # Get asset directory
         assets_dir = PROJECT_ROOT / 'assets' / 'plugins' / plugin_id / 'uploads'
         metadata_file = assets_dir / '.metadata.json'
-        
+
         if not metadata_file.exists():
             return jsonify({'status': 'success', 'data': {'assets': []}})
-        
+
         # Load metadata
         with open(metadata_file, 'r') as f:
             metadata = json.load(f)
-        
+
         # Convert to list
         assets = list(metadata.values())
-        
+
         return jsonify({'status': 'success', 'data': {'assets': assets}})
-        
+
     except Exception as e:
         import traceback
         return jsonify({'status': 'error', 'message': str(e), 'traceback': traceback.format_exc()}), 500
@@ -5399,7 +5450,7 @@ def get_logs():
             text=True,
             timeout=5
         )
-        
+
         if result.returncode == 0:
             logs_text = result.stdout.strip()
             return jsonify({
@@ -5413,7 +5464,7 @@ def get_logs():
                 'status': 'error',
                 'message': f'Failed to get logs: {result.stderr}'
             }), 500
-            
+
     except subprocess.TimeoutExpired:
         return jsonify({
             'status': 'error',
@@ -5431,13 +5482,13 @@ def get_wifi_status():
     """Get current WiFi connection status"""
     try:
         from src.wifi_manager import WiFiManager
-        
+
         wifi_manager = WiFiManager()
         status = wifi_manager.get_wifi_status()
-        
+
         # Get auto-enable setting from config
         auto_enable_ap = wifi_manager.config.get("auto_enable_ap_mode", True)  # Default: True (safe due to grace period)
-        
+
         return jsonify({
             'status': 'success',
             'data': {
@@ -5458,22 +5509,22 @@ def get_wifi_status():
 @api_v3.route('/wifi/scan', methods=['GET'])
 def scan_wifi_networks():
     """Scan for available WiFi networks
-    
+
     If AP mode is active, it will be temporarily disabled during scanning
     and automatically re-enabled afterward. Users connected to the AP will
     be briefly disconnected during this process.
     """
     try:
         from src.wifi_manager import WiFiManager
-        
+
         wifi_manager = WiFiManager()
-        
+
         # Check if AP mode is active before scanning (for user notification)
         ap_was_active = wifi_manager._is_ap_mode_active()
-        
+
         # Perform the scan (this will handle AP mode disabling/enabling internally)
         networks = wifi_manager.scan_networks()
-        
+
         # Convert to dict format
         networks_data = [
             {
@@ -5484,12 +5535,12 @@ def scan_wifi_networks():
             }
             for net in networks
         ]
-        
+
         response_data = {
             'status': 'success',
             'data': networks_data
         }
-        
+
         # Inform user if AP mode was temporarily disabled
         if ap_was_active:
             response_data['message'] = (
@@ -5497,11 +5548,11 @@ def scan_wifi_networks():
                 'Note: AP mode was temporarily disabled during scanning and has been re-enabled. '
                 'If you were connected to the setup network, you may need to reconnect.'
             )
-        
+
         return jsonify(response_data)
     except Exception as e:
         error_message = f'Error scanning WiFi networks: {str(e)}'
-        
+
         # Provide more specific error messages for common issues
         error_str = str(e).lower()
         if 'permission' in error_str or 'sudo' in error_str:
@@ -5521,7 +5572,7 @@ def scan_wifi_networks():
                 'WiFi scanning tools are not available. '
                 'Please ensure NetworkManager (nmcli) or iwlist is installed.'
             )
-        
+
         return jsonify({
             'status': 'error',
             'message': error_message
@@ -5532,33 +5583,33 @@ def connect_wifi():
     """Connect to a WiFi network"""
     try:
         from src.wifi_manager import WiFiManager
-        
+
         data = request.get_json()
         if not data:
             return jsonify({
                 'status': 'error',
                 'message': 'Request body is required'
             }), 400
-        
+
         if 'ssid' not in data:
             return jsonify({
                 'status': 'error',
                 'message': 'SSID is required'
             }), 400
-        
+
         ssid = data['ssid']
         if not ssid or not ssid.strip():
             return jsonify({
                 'status': 'error',
                 'message': 'SSID cannot be empty'
             }), 400
-        
+
         ssid = ssid.strip()
         password = data.get('password', '') or ''
-        
+
         wifi_manager = WiFiManager()
         success, message = wifi_manager.connect_to_network(ssid, password)
-        
+
         if success:
             return jsonify({
                 'status': 'success',
@@ -5584,10 +5635,10 @@ def disconnect_wifi():
     """Disconnect from the current WiFi network"""
     try:
         from src.wifi_manager import WiFiManager
-        
+
         wifi_manager = WiFiManager()
         success, message = wifi_manager.disconnect_from_network()
-        
+
         if success:
             return jsonify({
                 'status': 'success',
@@ -5613,10 +5664,10 @@ def enable_ap_mode():
     """Enable access point mode"""
     try:
         from src.wifi_manager import WiFiManager
-        
+
         wifi_manager = WiFiManager()
         success, message = wifi_manager.enable_ap_mode()
-        
+
         if success:
             return jsonify({
                 'status': 'success',
@@ -5638,10 +5689,10 @@ def disable_ap_mode():
     """Disable access point mode"""
     try:
         from src.wifi_manager import WiFiManager
-        
+
         wifi_manager = WiFiManager()
         success, message = wifi_manager.disable_ap_mode()
-        
+
         if success:
             return jsonify({
                 'status': 'success',
@@ -5663,10 +5714,10 @@ def get_auto_enable_ap_mode():
     """Get auto-enable AP mode setting"""
     try:
         from src.wifi_manager import WiFiManager
-        
+
         wifi_manager = WiFiManager()
         auto_enable = wifi_manager.config.get("auto_enable_ap_mode", True)  # Default: True (safe due to grace period)
-        
+
         return jsonify({
             'status': 'success',
             'data': {
@@ -5684,20 +5735,20 @@ def set_auto_enable_ap_mode():
     """Set auto-enable AP mode setting"""
     try:
         from src.wifi_manager import WiFiManager
-        
+
         data = request.get_json()
         if data is None or 'auto_enable_ap_mode' not in data:
             return jsonify({
                 'status': 'error',
                 'message': 'auto_enable_ap_mode is required'
             }), 400
-        
+
         auto_enable = bool(data['auto_enable_ap_mode'])
-        
+
         wifi_manager = WiFiManager()
         wifi_manager.config["auto_enable_ap_mode"] = auto_enable
         wifi_manager._save_config()
-        
+
         return jsonify({
             'status': 'success',
             'message': f'Auto-enable AP mode set to {auto_enable}',
@@ -5719,10 +5770,10 @@ def list_cache_files():
             # Initialize cache manager if not already initialized
             from src.cache_manager import CacheManager
             api_v3.cache_manager = CacheManager()
-        
+
         cache_files = api_v3.cache_manager.list_cache_files()
         cache_dir = api_v3.cache_manager.get_cache_dir()
-        
+
         return jsonify({
             'status': 'success',
             'data': {
@@ -5746,16 +5797,16 @@ def delete_cache_file():
             # Initialize cache manager if not already initialized
             from src.cache_manager import CacheManager
             api_v3.cache_manager = CacheManager()
-        
+
         data = request.get_json()
         if not data or 'key' not in data:
             return jsonify({'status': 'error', 'message': 'cache key is required'}), 400
-        
+
         cache_key = data['key']
-        
+
         # Delete the cache file
         api_v3.cache_manager.clear_cache(cache_key)
-        
+
         return jsonify({
             'status': 'success',
             'message': f'Cache file for key "{cache_key}" deleted successfully'

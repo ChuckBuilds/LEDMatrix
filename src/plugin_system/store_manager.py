@@ -52,6 +52,8 @@ class PluginStoreManager:
         self.cache_timeout = 3600  # 1 hour cache timeout
         self.registry_cache_timeout = 300  # 5 minutes for registry cache
         self.github_token = self._load_github_token()
+        self._token_validation_cache = {}  # Cache for token validation results: {token: (is_valid, timestamp, error_message)}
+        self._token_validation_cache_timeout = 300  # 5 minutes cache for token validation
 
         # Ensure plugins directory exists
         self.plugins_dir.mkdir(exist_ok=True)
@@ -74,6 +76,83 @@ class PluginStoreManager:
         except Exception as e:
             self.logger.debug(f"Could not load GitHub token: {e}")
         return None
+
+    def _validate_github_token(self, token: str) -> tuple[bool, Optional[str]]:
+        """
+        Validate a GitHub token by making a lightweight API call.
+        
+        Args:
+            token: GitHub personal access token to validate
+            
+        Returns:
+            Tuple of (is_valid, error_message)
+            - is_valid: True if token is valid, False otherwise
+            - error_message: None if valid, error description if invalid
+        """
+        if not token:
+            return (False, "No token provided")
+        
+        # Check cache first
+        cache_key = token[:10]  # Use first 10 chars as cache key for privacy
+        if cache_key in self._token_validation_cache:
+            cached_valid, cached_time, cached_error = self._token_validation_cache[cache_key]
+            if time.time() - cached_time < self._token_validation_cache_timeout:
+                return (cached_valid, cached_error)
+        
+        # Validate token by making a lightweight API call to /user endpoint
+        try:
+            api_url = "https://api.github.com/user"
+            headers = {
+                'Accept': 'application/vnd.github.v3+json',
+                'User-Agent': 'LEDMatrix-Plugin-Manager/1.0',
+                'Authorization': f'token {token}'
+            }
+            
+            response = requests.get(api_url, headers=headers, timeout=5)
+            
+            if response.status_code == 200:
+                # Token is valid
+                result = (True, None)
+                self._token_validation_cache[cache_key] = (True, time.time(), None)
+                return result
+            elif response.status_code == 401:
+                # Token is invalid or expired
+                error_msg = "Token is invalid or expired"
+                result = (False, error_msg)
+                self._token_validation_cache[cache_key] = (False, time.time(), error_msg)
+                return result
+            elif response.status_code == 403:
+                # Rate limit or forbidden (but token might be valid)
+                # Check if it's a rate limit issue
+                if 'rate limit' in response.text.lower():
+                    error_msg = "Rate limit exceeded"
+                else:
+                    error_msg = "Token lacks required permissions"
+                result = (False, error_msg)
+                self._token_validation_cache[cache_key] = (False, time.time(), error_msg)
+                return result
+            else:
+                # Other error
+                error_msg = f"GitHub API error: {response.status_code}"
+                result = (False, error_msg)
+                self._token_validation_cache[cache_key] = (False, time.time(), error_msg)
+                return result
+                
+        except requests.exceptions.Timeout:
+            error_msg = "GitHub API request timed out"
+            result = (False, error_msg)
+            # Don't cache timeout errors
+            return result
+        except requests.exceptions.RequestException as e:
+            error_msg = f"Network error: {str(e)}"
+            result = (False, error_msg)
+            # Don't cache network errors
+            return result
+        except Exception as e:
+            error_msg = f"Unexpected error: {str(e)}"
+            result = (False, error_msg)
+            # Don't cache unexpected errors
+            return result
 
     @staticmethod
     def _iso_to_date(iso_timestamp: str) -> str:
