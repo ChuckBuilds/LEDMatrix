@@ -1512,6 +1512,43 @@ function runUpdateAllPlugins() {
         });
 }
 
+// Initialize on-demand modal setup (runs unconditionally since modal is in base.html)
+function initializeOnDemandModal() {
+    const closeOnDemandModalBtn = document.getElementById('close-on-demand-modal');
+    const cancelOnDemandBtn = document.getElementById('cancel-on-demand');
+    const onDemandForm = document.getElementById('on-demand-form');
+    const onDemandModal = document.getElementById('on-demand-modal');
+    
+    if (closeOnDemandModalBtn && !closeOnDemandModalBtn.dataset.initialized) {
+        closeOnDemandModalBtn.replaceWith(closeOnDemandModalBtn.cloneNode(true));
+        const newBtn = document.getElementById('close-on-demand-modal');
+        if (newBtn) {
+            newBtn.dataset.initialized = 'true';
+            newBtn.addEventListener('click', closeOnDemandModal);
+        }
+    }
+    if (cancelOnDemandBtn && !cancelOnDemandBtn.dataset.initialized) {
+        cancelOnDemandBtn.replaceWith(cancelOnDemandBtn.cloneNode(true));
+        const newBtn = document.getElementById('cancel-on-demand');
+        if (newBtn) {
+            newBtn.dataset.initialized = 'true';
+            newBtn.addEventListener('click', closeOnDemandModal);
+        }
+    }
+    if (onDemandForm && !onDemandForm.dataset.initialized) {
+        onDemandForm.replaceWith(onDemandForm.cloneNode(true));
+        const newForm = document.getElementById('on-demand-form');
+        if (newForm) {
+            newForm.dataset.initialized = 'true';
+            newForm.addEventListener('submit', submitOnDemandRequest);
+        }
+    }
+    if (onDemandModal && !onDemandModal.dataset.initialized) {
+        onDemandModal.dataset.initialized = 'true';
+        onDemandModal.onclick = closeOnDemandModalOnBackdrop;
+    }
+}
+
 // Store the real implementation and replace the stub
 window.__openOnDemandModalImpl = function(pluginId) {
     const plugin = findInstalledPlugin(pluginId);
@@ -1531,6 +1568,9 @@ window.__openOnDemandModalImpl = function(pluginId) {
 
     currentOnDemandPluginId = pluginId;
 
+    // Ensure modal is initialized
+    initializeOnDemandModal();
+
     const modal = document.getElementById('on-demand-modal');
     const modeSelect = document.getElementById('on-demand-mode');
     const modeHint = document.getElementById('on-demand-mode-hint');
@@ -1540,7 +1580,15 @@ window.__openOnDemandModalImpl = function(pluginId) {
     const modalTitle = document.getElementById('on-demand-modal-title');
 
     if (!modal || !modeSelect || !modeHint || !durationInput || !pinnedCheckbox || !startServiceCheckbox || !modalTitle) {
-        console.error('On-demand modal elements not found');
+        console.error('On-demand modal elements not found', {
+            modal: !!modal,
+            modeSelect: !!modeSelect,
+            modeHint: !!modeHint,
+            durationInput: !!durationInput,
+            pinnedCheckbox: !!pinnedCheckbox,
+            startServiceCheckbox: !!startServiceCheckbox,
+            modalTitle: !!modalTitle
+        });
         return;
     }
 
@@ -5864,6 +5912,18 @@ if (_PLUGIN_DEBUG_EARLY) {
 if (window.checkGitHubAuthStatus && document.getElementById('github-auth-warning')) {
     console.log('[EARLY] Checking GitHub auth status immediately on script load...');
     window.checkGitHubAuthStatus();
+}
+
+// Initialize on-demand modal immediately since it's in base.html
+if (typeof initializeOnDemandModal === 'function') {
+    // Run immediately and also after DOM is ready
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', initializeOnDemandModal);
+    } else {
+        initializeOnDemandModal();
+    }
+    // Also try after a short delay to ensure elements are available
+    setTimeout(initializeOnDemandModal, 100);
 }
 
 setTimeout(function() {
