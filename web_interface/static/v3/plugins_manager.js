@@ -1551,8 +1551,11 @@ function initializeOnDemandModal() {
 
 // Store the real implementation and replace the stub
 window.__openOnDemandModalImpl = function(pluginId) {
+    console.log('[__openOnDemandModalImpl] Called with pluginId:', pluginId);
     const plugin = findInstalledPlugin(pluginId);
+    console.log('[__openOnDemandModalImpl] Found plugin:', plugin ? plugin.id : 'NOT FOUND');
     if (!plugin) {
+        console.warn('[__openOnDemandModalImpl] Plugin not found, installedPlugins:', window.installedPlugins?.length || 0);
         if (typeof showNotification === 'function') {
             showNotification(`Plugin ${pluginId} not found`, 'error');
         }
@@ -1560,6 +1563,7 @@ window.__openOnDemandModalImpl = function(pluginId) {
     }
 
     if (!plugin.enabled) {
+        console.log('[__openOnDemandModalImpl] Plugin is disabled');
         if (typeof showNotification === 'function') {
             showNotification('Enable the plugin before running it on-demand.', 'error');
         }
@@ -1567,8 +1571,10 @@ window.__openOnDemandModalImpl = function(pluginId) {
     }
 
     currentOnDemandPluginId = pluginId;
+    console.log('[__openOnDemandModalImpl] Setting currentOnDemandPluginId to:', pluginId);
 
     // Ensure modal is initialized
+    console.log('[__openOnDemandModalImpl] Initializing modal...');
     initializeOnDemandModal();
 
     const modal = document.getElementById('on-demand-modal');
@@ -1578,6 +1584,16 @@ window.__openOnDemandModalImpl = function(pluginId) {
     const pinnedCheckbox = document.getElementById('on-demand-pinned');
     const startServiceCheckbox = document.getElementById('on-demand-start-service');
     const modalTitle = document.getElementById('on-demand-modal-title');
+
+    console.log('[__openOnDemandModalImpl] Modal elements check:', {
+        modal: !!modal,
+        modeSelect: !!modeSelect,
+        modeHint: !!modeHint,
+        durationInput: !!durationInput,
+        pinnedCheckbox: !!pinnedCheckbox,
+        startServiceCheckbox: !!startServiceCheckbox,
+        modalTitle: !!modalTitle
+    });
 
     if (!modal || !modeSelect || !modeHint || !durationInput || !pinnedCheckbox || !startServiceCheckbox || !modalTitle) {
         console.error('On-demand modal elements not found', {
@@ -1591,6 +1607,8 @@ window.__openOnDemandModalImpl = function(pluginId) {
         });
         return;
     }
+    
+    console.log('[__openOnDemandModalImpl] All elements found, opening modal...');
 
     modalTitle.textContent = `Run ${resolvePluginDisplayName(pluginId)} On-Demand`;
     modeSelect.innerHTML = '';
