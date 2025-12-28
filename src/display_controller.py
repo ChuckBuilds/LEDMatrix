@@ -1028,7 +1028,7 @@ class DisplayController:
         return plugin_id
 
     def _activate_on_demand(self, request: Dict[str, Any]) -> None:
-        """Activate on-demand mode for a specific plugin display by restarting with filter."""
+        """Activate on-demand mode for a specific plugin display."""
         plugin_id = request.get('plugin_id')
         mode = request.get('mode')
         resolved_mode = self._resolve_mode_for_plugin(plugin_id, mode)
@@ -1049,12 +1049,6 @@ class DisplayController:
             self._set_on_demand_error("unknown-plugin")
             return
 
-        # Validate plugin exists and is available
-        if resolved_plugin_id not in self.plugin_display_modes:
-            logger.error("On-demand plugin '%s' not found in plugin display modes", resolved_plugin_id)
-            self._set_on_demand_error("unknown-plugin")
-            return
-
         duration = request.get('duration')
         if duration is not None:
             try:
@@ -1066,31 +1060,37 @@ class DisplayController:
                 duration = None
 
         pinned = bool(request.get('pinned', False))
+        now = time.time()
 
-        # Update state before restart
-        self.on_demand_status = 'restarting'
+        # Save current rotation state for restoration when on-demand ends
+        if self.available_modes:
+            self.rotation_resume_index = self.current_mode_index
+        else:
+            self.rotation_resume_index = None
+
+        # Switch to on-demand mode immediately
+        if resolved_mode in self.available_modes:
+            self.current_mode_index = self.available_modes.index(resolved_mode)
+        else:
+            # Mode not in available_modes, try to find it
+            logger.warning("On-demand mode '%s' not in available_modes, attempting to switch anyway", resolved_mode)
+
+        self.on_demand_active = True
+        self.on_demand_mode = resolved_mode
+        self.on_demand_plugin_id = resolved_plugin_id
+        self.on_demand_duration = duration
+        self.on_demand_requested_at = now
+        self.on_demand_expires_at = (now + duration) if duration else None
+        self.on_demand_pinned = pinned
+        self.on_demand_status = 'active'
         self.on_demand_last_error = None
-        self.on_demand_last_event = 'restarting'
+        self.on_demand_last_event = 'started'
+        self.on_demand_schedule_override = True
+        self.force_change = True
+        self.current_display_mode = resolved_mode
+        logger.info("✓ ON-DEMAND MODE ACTIVATED: Plugin '%s', Mode '%s' (pinned=%s, duration=%s)", 
+                   resolved_plugin_id, resolved_mode, pinned, duration if duration else 'unlimited')
         self._publish_on_demand_state()
-
-        # Restart with on-demand filter
-        logger.info("Activating on-demand mode '%s' for plugin '%s' - restarting display controller", 
-                   resolved_mode, resolved_plugin_id)
-        success = self._restart_with_on_demand_filter(
-            plugin_id=resolved_plugin_id,
-            mode=resolved_mode,
-            duration=duration,
-            pinned=pinned
-        )
-
-        if not success:
-            logger.error("Failed to restart display controller for on-demand mode")
-            self._set_on_demand_error("restart-failed")
-            return
-
-        # If we get here, restart was initiated (process will exit)
-        # Note: The restarted process will read the on-demand config from cache
-        # and set the appropriate state during initialization
 
     def _clear_on_demand(self, reason: Optional[str] = None) -> None:
         """Clear on-demand mode and resume normal rotation by restarting without filter."""
