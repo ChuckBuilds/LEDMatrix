@@ -2765,22 +2765,51 @@ def list_plugin_store():
 
 @api_v3.route('/plugins/store/github-status', methods=['GET'])
 def get_github_auth_status():
-    """Check if GitHub authentication is configured"""
+    """Check if GitHub authentication is configured and validate token"""
     try:
         if not api_v3.plugin_store_manager:
             return jsonify({'status': 'error', 'message': 'Plugin store manager not initialized'}), 500
         
-        # Check if GitHub token is configured
-        has_token = api_v3.plugin_store_manager.github_token is not None and len(api_v3.plugin_store_manager.github_token) > 0
+        token = api_v3.plugin_store_manager.github_token
         
-        return jsonify({
-            'status': 'success',
-            'data': {
-                'authenticated': has_token,
-                'rate_limit': 5000 if has_token else 60,
-                'message': 'GitHub API authenticated' if has_token else 'No GitHub token configured'
-            }
-        })
+        # Check if GitHub token is configured
+        if not token or len(token) == 0:
+            return jsonify({
+                'status': 'success',
+                'data': {
+                    'token_status': 'none',
+                    'authenticated': False,
+                    'rate_limit': 60,
+                    'message': 'No GitHub token configured',
+                    'error': None
+                }
+            })
+        
+        # Validate the token
+        is_valid, error_message = api_v3.plugin_store_manager._validate_github_token(token)
+        
+        if is_valid:
+            return jsonify({
+                'status': 'success',
+                'data': {
+                    'token_status': 'valid',
+                    'authenticated': True,
+                    'rate_limit': 5000,
+                    'message': 'GitHub API authenticated',
+                    'error': None
+                }
+            })
+        else:
+            return jsonify({
+                'status': 'success',
+                'data': {
+                    'token_status': 'invalid',
+                    'authenticated': False,
+                    'rate_limit': 60,
+                    'message': f'GitHub token is invalid: {error_message}' if error_message else 'GitHub token is invalid',
+                    'error': error_message
+                }
+            })
     except Exception as e:
         import traceback
         error_details = traceback.format_exc()

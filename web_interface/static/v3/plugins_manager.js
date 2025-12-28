@@ -4851,8 +4851,29 @@ window.saveGithubToken = function() {
                 // Small delay to ensure backend has reloaded the token, then refresh status
                 setTimeout(() => {
                     checkGitHubAuthStatus().then(() => {
-                        // Hide the settings panel after status check completes
-                        toggleGithubTokenSettings();
+                        // Collapse the settings panel content instead of hiding the entire panel
+                        // This keeps the panel accessible for future token management
+                        const tokenContent = document.getElementById('github-token-content');
+                        const tokenIconCollapse = document.getElementById('github-token-icon-collapse');
+                        const toggleTokenCollapseBtn = document.getElementById('toggle-github-token-collapse');
+                        
+                        if (tokenContent) {
+                            tokenContent.style.display = 'none';
+                            tokenContent.classList.add('hidden');
+                        }
+                        
+                        if (tokenIconCollapse) {
+                            tokenIconCollapse.classList.remove('fa-chevron-up');
+                            tokenIconCollapse.classList.add('fa-chevron-down');
+                        }
+                        
+                        if (toggleTokenCollapseBtn) {
+                            const span = toggleTokenCollapseBtn.querySelector('span');
+                            if (span) span.textContent = 'Expand';
+                        }
+                        
+                        // Keep the settings panel itself visible but collapsed
+                        // Don't hide the entire panel - user should be able to expand it later
                     });
                 }, 300);
             } else {
@@ -4874,7 +4895,7 @@ window.saveGithubToken = function() {
 }
 
 // GitHub Authentication Status
-// Only shows the warning banner if no GitHub token is configured
+// Shows warning banner only when token is missing or invalid
 // The token itself is never exposed to the frontend for security
 // Returns a Promise so it can be awaited
 function checkGitHubAuthStatus() {
@@ -4883,35 +4904,74 @@ function checkGitHubAuthStatus() {
         .then(data => {
             if (data.status === 'success') {
                 const authData = data.data;
+                const tokenStatus = authData.token_status || (authData.authenticated ? 'valid' : 'none');
+                const warning = document.getElementById('github-auth-warning');
+                const settings = document.getElementById('github-token-settings');
+                const rateLimit = document.getElementById('rate-limit-count');
 
-                // Only show the banner if no GitHub token is configured
-                if (!authData.authenticated) {
+                // Show warning only when token is missing ('none') or invalid ('invalid')
+                if (tokenStatus === 'none' || tokenStatus === 'invalid') {
                     // Check if user has dismissed the warning (stored in session storage)
                     const dismissed = sessionStorage.getItem('github-auth-warning-dismissed');
                     if (!dismissed) {
-                        const warning = document.getElementById('github-auth-warning');
-                        const rateLimit = document.getElementById('rate-limit-count');
-
                         if (warning && rateLimit) {
                             rateLimit.textContent = authData.rate_limit;
+                            
+                            // Update warning message for invalid tokens
+                            if (tokenStatus === 'invalid' && authData.error) {
+                                const warningText = warning.querySelector('p.text-sm.text-yellow-700');
+                                if (warningText) {
+                                    // Preserve the structure but update the message
+                                    const errorMsg = authData.message || authData.error;
+                                    warningText.innerHTML = `<strong>Token Invalid:</strong> ${errorMsg}. Please update your GitHub token to increase API rate limits to 5,000 requests/hour.`;
+                                }
+                            }
+                            // For 'none' status, use the default message from HTML template
+                            
                             warning.classList.remove('hidden');
-                            console.log('GitHub token not configured - showing API limit warning');
+                            console.log(`GitHub token status: ${tokenStatus} - showing API limit warning`);
                         }
                     }
-                } else {
-                    // Token is configured - hide both warning and settings
-                    const warning = document.getElementById('github-auth-warning');
-                    const settings = document.getElementById('github-token-settings');
                     
+                    // Ensure settings panel is accessible when token is missing or invalid
+                    // Panel can be opened via "Configure Token" link in warning
+                    // Don't force it to be visible, but don't prevent it from being shown
+                } else if (tokenStatus === 'valid') {
+                    // Token is valid - hide warning and ensure settings panel is accessible but collapsed
                     if (warning) {
                         warning.classList.add('hidden');
-                        console.log('GitHub token is configured - API limit warning hidden');
+                        console.log('GitHub token is valid - hiding API limit warning');
                     }
                     
+                    // Make settings panel visible but collapsed (accessible for token management)
                     if (settings) {
-                        settings.classList.add('hidden');
-                        console.log('GitHub token is configured - hiding settings panel');
+                        // Remove hidden class from panel itself - make it visible
+                        settings.classList.remove('hidden');
+                        
+                        // Ensure the content inside is collapsed
+                        const tokenContent = document.getElementById('github-token-content');
+                        if (tokenContent) {
+                            // Collapse the content
+                            tokenContent.style.display = 'none';
+                            tokenContent.classList.add('hidden');
+                        }
+                        
+                        // Update collapse button state
+                        const tokenIconCollapse = document.getElementById('github-token-icon-collapse');
+                        if (tokenIconCollapse) {
+                            tokenIconCollapse.classList.remove('fa-chevron-up');
+                            tokenIconCollapse.classList.add('fa-chevron-down');
+                        }
+                        
+                        const toggleTokenCollapseBtn = document.getElementById('toggle-github-token-collapse');
+                        if (toggleTokenCollapseBtn) {
+                            const span = toggleTokenCollapseBtn.querySelector('span');
+                            if (span) span.textContent = 'Expand';
+                        }
                     }
+                    
+                    // Clear dismissal flag when token becomes valid
+                    sessionStorage.removeItem('github-auth-warning-dismissed');
                 }
             }
         })
