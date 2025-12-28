@@ -750,8 +750,11 @@ class DisplayController:
             return
 
         request_id = request.get('request_id')
+        logger.debug("Polling on-demand: request_id=%s, current_on_demand_request_id=%s", 
+                    request_id, self.on_demand_request_id)
         if not request_id or request_id == self.on_demand_request_id:
-            logger.debug("On-demand request %s already processed or invalid", request_id)
+            logger.debug("On-demand request %s already processed or invalid (current=%s)", 
+                        request_id, self.on_demand_request_id)
             return
 
         action = request.get('action')
