@@ -1707,7 +1707,10 @@ function closeOnDemandModal() {
 
 function submitOnDemandRequest(event) {
     event.preventDefault();
+    console.log('[submitOnDemandRequest] Form submitted, currentOnDemandPluginId:', currentOnDemandPluginId);
+    
     if (!currentOnDemandPluginId) {
+        console.error('[submitOnDemandRequest] No plugin ID set');
         if (typeof showNotification === 'function') {
             showNotification('Select a plugin before starting on-demand mode.', 'error');
         }
@@ -1716,8 +1719,11 @@ function submitOnDemandRequest(event) {
 
     const form = document.getElementById('on-demand-form');
     if (!form) {
+        console.error('[submitOnDemandRequest] Form not found');
         return;
     }
+    
+    console.log('[submitOnDemandRequest] Form found, processing...');
 
     const formData = new FormData(form);
     const mode = formData.get('mode');
@@ -1739,6 +1745,7 @@ function submitOnDemandRequest(event) {
         }
     }
 
+    console.log('[submitOnDemandRequest] Payload:', payload);
     markOnDemandLoading();
 
     fetch('/api/v3/display/on-demand/start', {
@@ -1748,8 +1755,12 @@ function submitOnDemandRequest(event) {
         },
         body: JSON.stringify(payload)
     })
-        .then(response => response.json())
+        .then(response => {
+            console.log('[submitOnDemandRequest] Response status:', response.status);
+            return response.json();
+        })
         .then(result => {
+            console.log('[submitOnDemandRequest] Response data:', result);
             if (result.status === 'success') {
                 if (typeof showNotification === 'function') {
                     const pluginName = resolvePluginDisplayName(currentOnDemandPluginId);
@@ -1758,13 +1769,14 @@ function submitOnDemandRequest(event) {
                 closeOnDemandModal();
                 setTimeout(() => loadOnDemandStatus(true), 700);
             } else {
+                console.error('[submitOnDemandRequest] Request failed:', result);
                 if (typeof showNotification === 'function') {
                     showNotification(result.message || 'Failed to start on-demand mode', 'error');
                 }
             }
         })
         .catch(error => {
-            console.error('Error starting on-demand mode:', error);
+            console.error('[submitOnDemandRequest] Error starting on-demand mode:', error);
             if (typeof showNotification === 'function') {
                 showNotification('Error starting on-demand mode: ' + error.message, 'error');
             }
