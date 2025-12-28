@@ -949,7 +949,7 @@ class DisplayController:
             self._save_rotation_state()
             
             # Clear on-demand configuration from cache
-            self.cache_manager.delete('display_on_demand_config')
+            self.cache_manager.clear_cache('display_on_demand_config')
             
             # Check if running as service
             if self._is_running_as_service():
