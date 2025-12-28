@@ -4026,33 +4026,61 @@ function setupCollapsibleSections() {
     }
     
     // Toggle GitHub Token Settings section
-    const toggleTokenCollapseBtn = document.getElementById('toggle-github-token-collapse');
-    const tokenContent = document.getElementById('github-token-content');
-    const tokenIconCollapse = document.getElementById('github-token-icon-collapse');
-    
-    if (toggleTokenCollapseBtn && tokenContent) {
-        toggleTokenCollapseBtn.addEventListener('click', function(e) {
+    // Use a named function so we can re-attach it if needed
+    window.toggleGithubTokenContent = function(e) {
+        if (e) {
             e.stopPropagation(); // Prevent triggering the close button
-            // Check current state using both class and style
-            const isHidden = tokenContent.style.display === 'none' || 
-                            tokenContent.classList.contains('hidden') ||
-                            (tokenContent.style.display === '' && window.getComputedStyle(tokenContent).display === 'none');
-            if (isHidden) {
-                // Show content using both methods
-                tokenContent.style.display = 'block';
-                tokenContent.classList.remove('hidden');
+            e.preventDefault();
+        }
+        
+        const tokenContent = document.getElementById('github-token-content');
+        const tokenIconCollapse = document.getElementById('github-token-icon-collapse');
+        const toggleTokenCollapseBtn = document.getElementById('toggle-github-token-collapse');
+        
+        if (!tokenContent || !toggleTokenCollapseBtn) {
+            console.warn('GitHub token content or button not found');
+            return;
+        }
+        
+        // Check current state using both class and computed style
+        const hasHiddenClass = tokenContent.classList.contains('hidden');
+        const hasDisplayNone = tokenContent.style.display === 'none';
+        const computedDisplay = window.getComputedStyle(tokenContent).display;
+        const isHidden = hasHiddenClass || hasDisplayNone || computedDisplay === 'none';
+        
+        if (isHidden) {
+            // Show content using both methods
+            tokenContent.style.display = 'block';
+            tokenContent.classList.remove('hidden');
+            if (tokenIconCollapse) {
                 tokenIconCollapse.classList.remove('fa-chevron-down');
                 tokenIconCollapse.classList.add('fa-chevron-up');
-                toggleTokenCollapseBtn.querySelector('span').textContent = 'Collapse';
-            } else {
-                // Hide content using both methods
-                tokenContent.style.display = 'none';
-                tokenContent.classList.add('hidden');
+            }
+            const span = toggleTokenCollapseBtn.querySelector('span');
+            if (span) span.textContent = 'Collapse';
+            console.log('GitHub token content expanded');
+        } else {
+            // Hide content using both methods
+            tokenContent.style.display = 'none';
+            tokenContent.classList.add('hidden');
+            if (tokenIconCollapse) {
                 tokenIconCollapse.classList.remove('fa-chevron-up');
                 tokenIconCollapse.classList.add('fa-chevron-down');
-                toggleTokenCollapseBtn.querySelector('span').textContent = 'Expand';
             }
-        });
+            const span = toggleTokenCollapseBtn.querySelector('span');
+            if (span) span.textContent = 'Expand';
+            console.log('GitHub token content collapsed');
+        }
+    };
+    
+    // Attach event listener
+    const toggleTokenCollapseBtn = document.getElementById('toggle-github-token-collapse');
+    if (toggleTokenCollapseBtn) {
+        // Remove any existing listeners by cloning the button
+        const newBtn = toggleTokenCollapseBtn.cloneNode(true);
+        toggleTokenCollapseBtn.parentNode.replaceChild(newBtn, toggleTokenCollapseBtn);
+        // Attach listener to the new button
+        newBtn.addEventListener('click', window.toggleGithubTokenContent);
     }
 }
 
@@ -4888,6 +4916,17 @@ window.saveGithubToken = function() {
                         if (toggleTokenCollapseBtn) {
                             const span = toggleTokenCollapseBtn.querySelector('span');
                             if (span) span.textContent = 'Expand';
+                            
+                            // Ensure event listener is attached (re-attach if needed)
+                            if (window.toggleGithubTokenContent) {
+                                // Remove old listener by cloning and replacing
+                                const parent = toggleTokenCollapseBtn.parentNode;
+                                const newBtn = toggleTokenCollapseBtn.cloneNode(true);
+                                parent.replaceChild(newBtn, toggleTokenCollapseBtn);
+                                // Re-attach listener to the new button
+                                newBtn.addEventListener('click', window.toggleGithubTokenContent);
+                                console.log('Re-attached GitHub token collapse button listener');
+                            }
                         }
                         
                         // Keep the settings panel itself visible but collapsed
