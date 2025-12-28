@@ -4056,11 +4056,10 @@ function setupCollapsibleSections() {
             return;
         }
         
-        // Check current state using both class and computed style
+        // Check current state - primarily use hidden class, fallback to computed style
         const hasHiddenClass = tokenContent.classList.contains('hidden');
-        const hasDisplayNone = tokenContent.style.display === 'none';
         const computedDisplay = window.getComputedStyle(tokenContent).display;
-        const isHidden = hasHiddenClass || hasDisplayNone || computedDisplay === 'none';
+        const isHidden = hasHiddenClass || computedDisplay === 'none';
         
         if (isHidden) {
             // Show content - remove inline display to defer to CSS classes
@@ -4721,10 +4720,10 @@ window.openGithubTokenSettings = function() {
         settings.classList.remove('hidden');
         settings.style.display = '';
         
-        // Expand the content when opening
-        if (tokenContent) {
-            tokenContent.style.display = 'block';
-            tokenContent.classList.remove('hidden');
+                        // Expand the content when opening
+                        if (tokenContent) {
+                            tokenContent.style.removeProperty('display');
+                            tokenContent.classList.remove('hidden');
             
             // Update collapse button state
             const tokenIconCollapse = document.getElementById('github-token-icon-collapse');
@@ -4989,8 +4988,8 @@ function checkGitHubAuthStatus() {
                         // Always collapse the content when token is valid (user must click expand)
                         const tokenContent = document.getElementById('github-token-content');
                         if (tokenContent) {
-                            // Collapse the content using both methods
-                            tokenContent.style.display = 'none';
+                            // Collapse the content - remove inline display, use hidden class
+                            tokenContent.style.removeProperty('display');
                             tokenContent.classList.add('hidden');
                         }
                         
