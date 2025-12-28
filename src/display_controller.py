@@ -768,7 +768,6 @@ class DisplayController:
                    request_id, self.on_demand_request_id, processed_request_id)
 
         action = request.get('action')
-        action = request.get('action')
         logger.info("Received on-demand request %s: %s (plugin_id=%s, mode=%s)", 
                    request_id, action, request.get('plugin_id'), request.get('mode'))
         
