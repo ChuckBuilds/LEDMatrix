@@ -4240,28 +4240,67 @@ window.installPlugin = function(pluginId, branch = null) {
 }
 
 function setupCollapsibleSections() {
+    console.log('[setupCollapsibleSections] Setting up collapsible sections...');
+    
     // Toggle Installed Plugins section
     const toggleInstalledBtn = document.getElementById('toggle-installed-plugins');
     const installedContent = document.getElementById('installed-plugins-content');
     const installedIcon = document.getElementById('installed-plugins-icon');
     
+    console.log('[setupCollapsibleSections] Installed plugins elements:', {
+        button: !!toggleInstalledBtn,
+        content: !!installedContent,
+        icon: !!installedIcon
+    });
+    
     if (toggleInstalledBtn && installedContent) {
-        toggleInstalledBtn.addEventListener('click', function() {
-            const isHidden = installedContent.style.display === 'none' || installedContent.classList.contains('hidden');
-            if (isHidden) {
-                installedContent.style.display = 'block';
-                installedContent.classList.remove('hidden');
-                installedIcon.classList.remove('fa-chevron-down');
-                installedIcon.classList.add('fa-chevron-up');
-                toggleInstalledBtn.querySelector('span').textContent = 'Collapse';
-            } else {
-                installedContent.style.display = 'none';
-                installedContent.classList.add('hidden');
-                installedIcon.classList.remove('fa-chevron-up');
-                installedIcon.classList.add('fa-chevron-down');
-                toggleInstalledBtn.querySelector('span').textContent = 'Expand';
-            }
-        });
+        // Clone button to remove any existing listeners
+        const parent = toggleInstalledBtn.parentNode;
+        if (parent) {
+            const newBtn = toggleInstalledBtn.cloneNode(true);
+            parent.replaceChild(newBtn, toggleInstalledBtn);
+            
+            newBtn.addEventListener('click', function(e) {
+                e.stopPropagation();
+                e.preventDefault();
+                console.log('[setupCollapsibleSections] Installed plugins toggle clicked');
+                
+                const content = document.getElementById('installed-plugins-content');
+                const icon = document.getElementById('installed-plugins-icon');
+                const btn = document.getElementById('toggle-installed-plugins');
+                
+                if (!content || !btn) return;
+                
+                const hasHiddenClass = content.classList.contains('hidden');
+                const hasBlockClass = content.classList.contains('block');
+                const computedDisplay = window.getComputedStyle(content).display;
+                
+                if (hasHiddenClass || computedDisplay === 'none') {
+                    // Show content - remove hidden, add block, remove inline display
+                    content.classList.remove('hidden');
+                    content.classList.add('block');
+                    content.style.removeProperty('display');
+                    if (icon) {
+                        icon.classList.remove('fa-chevron-down');
+                        icon.classList.add('fa-chevron-up');
+                    }
+                    const span = btn.querySelector('span');
+                    if (span) span.textContent = 'Collapse';
+                } else {
+                    // Hide content - add hidden, remove block, set display none
+                    content.classList.add('hidden');
+                    content.classList.remove('block');
+                    content.style.display = 'none';
+                    if (icon) {
+                        icon.classList.remove('fa-chevron-up');
+                        icon.classList.add('fa-chevron-down');
+                    }
+                    const span = btn.querySelector('span');
+                    if (span) span.textContent = 'Expand';
+                }
+            });
+            console.log('[setupCollapsibleSections] Installed plugins handler attached');
+        }
     }
     
     // Toggle Plugin Store section
@@ -4269,29 +4308,68 @@ function setupCollapsibleSections() {
     const storeContent = document.getElementById('plugin-store-content');
     const storeIcon = document.getElementById('plugin-store-icon');
     
+    console.log('[setupCollapsibleSections] Plugin store elements:', {
+        button: !!toggleStoreBtn,
+        content: !!storeContent,
+        icon: !!storeIcon
+    });
+    
     if (toggleStoreBtn && storeContent) {
-        toggleStoreBtn.addEventListener('click', function() {
-            const isHidden = storeContent.style.display === 'none' || storeContent.classList.contains('hidden');
-            if (isHidden) {
-                storeContent.style.display = 'block';
-                storeContent.classList.remove('hidden');
-                storeIcon.classList.remove('fa-chevron-down');
-                storeIcon.classList.add('fa-chevron-up');
-                toggleStoreBtn.querySelector('span').textContent = 'Collapse';
-            } else {
-                storeContent.style.display = 'none';
-                storeContent.classList.add('hidden');
-                storeIcon.classList.remove('fa-chevron-up');
-                storeIcon.classList.add('fa-chevron-down');
-                toggleStoreBtn.querySelector('span').textContent = 'Expand';
-            }
-        });
+        // Clone button to remove any existing listeners
+        const parent = toggleStoreBtn.parentNode;
+        if (parent) {
+            const newBtn = toggleStoreBtn.cloneNode(true);
+            parent.replaceChild(newBtn, toggleStoreBtn);
+            
+            newBtn.addEventListener('click', function(e) {
+                e.stopPropagation();
+                e.preventDefault();
+                console.log('[setupCollapsibleSections] Plugin store toggle clicked');
+                
+                const content = document.getElementById('plugin-store-content');
+                const icon = document.getElementById('plugin-store-icon');
+                const btn = document.getElementById('toggle-plugin-store');
+                
+                if (!content || !btn) return;
+                
+                const hasHiddenClass = content.classList.contains('hidden');
+                const hasBlockClass = content.classList.contains('block');
+                const computedDisplay = window.getComputedStyle(content).display;
+                
+                if (hasHiddenClass || computedDisplay === 'none') {
+                    // Show content - remove hidden, add block, remove inline display
+                    content.classList.remove('hidden');
+                    content.classList.add('block');
+                    content.style.removeProperty('display');
+                    if (icon) {
+                        icon.classList.remove('fa-chevron-down');
+                        icon.classList.add('fa-chevron-up');
+                    }
+                    const span = btn.querySelector('span');
+                    if (span) span.textContent = 'Collapse';
+                } else {
+                    // Hide content - add hidden, remove block, set display none
+                    content.classList.add('hidden');
+                    content.classList.remove('block');
+                    content.style.display = 'none';
+                    if (icon) {
+                        icon.classList.remove('fa-chevron-up');
+                        icon.classList.add('fa-chevron-down');
+                    }
+                    const span = btn.querySelector('span');
+                    if (span) span.textContent = 'Expand';
+                }
+            });
+            console.log('[setupCollapsibleSections] Plugin store handler attached');
+        }
     }
     
     // Functions are now defined outside IIFE, just attach the handler
     if (window.attachGithubTokenCollapseHandler) {
         window.attachGithubTokenCollapseHandler();
     }
+    
+    console.log('[setupCollapsibleSections] Collapsible sections setup complete');
 }
 
 function loadSavedRepositories() {
@@ -4378,27 +4456,68 @@ window.removeSavedRepository = function(repoUrl) {
 }
 
 function setupGitHubInstallHandlers() {
+    console.log('[setupGitHubInstallHandlers] Setting up GitHub install handlers...');
+    
     // Toggle GitHub install section visibility
     const toggleBtn = document.getElementById('toggle-github-install');
     const installSection = document.getElementById('github-install-section');
     const icon = document.getElementById('github-install-icon');
     
+    console.log('[setupGitHubInstallHandlers] Elements found:', {
+        button: !!toggleBtn,
+        section: !!installSection,
+        icon: !!icon
+    });
+    
     if (toggleBtn && installSection) {
-        toggleBtn.addEventListener('click', function() {
-            const isHidden = installSection.classList.contains('hidden');
-            if (isHidden) {
-                installSection.classList.remove('hidden');
-                icon.classList.remove('fa-chevron-down');
-                icon.classList.add('fa-chevron-up');
-                toggleBtn.querySelector('span').textContent = 'Hide';
-            } else {
-                installSection.classList.add('hidden');
-                icon.classList.remove('fa-chevron-up');
-                icon.classList.add('fa-chevron-down');
-                toggleBtn.querySelector('span').textContent = 'Show';
-            }
-        });
+        // Clone button to remove any existing listeners
+        const parent = toggleBtn.parentNode;
+        if (parent) {
+            const newBtn = toggleBtn.cloneNode(true);
+            parent.replaceChild(newBtn, toggleBtn);
+            
+            newBtn.addEventListener('click', function(e) {
+                e.stopPropagation();
+                e.preventDefault();
+                console.log('[setupGitHubInstallHandlers] GitHub install toggle clicked');
+                
+                const section = document.getElementById('github-install-section');
+                const iconEl = document.getElementById('github-install-icon');
+                const btn = document.getElementById('toggle-github-install');
+                
+                if (!section || !btn) return;
+                
+                const hasHiddenClass = section.classList.contains('hidden');
+                const computedDisplay = window.getComputedStyle(section).display;
+                
+                if (hasHiddenClass || computedDisplay === 'none') {
+                    // Show section - remove hidden, ensure visible
+                    section.classList.remove('hidden');
+                    section.style.removeProperty('display');
+                    if (iconEl) {
+                        iconEl.classList.remove('fa-chevron-down');
+                        iconEl.classList.add('fa-chevron-up');
+                    }
+                    const span = btn.querySelector('span');
+                    if (span) span.textContent = 'Hide';
+                } else {
+                    // Hide section - add hidden, set display none
+                    section.classList.add('hidden');
+                    section.style.display = 'none';
+                    if (iconEl) {
+                        iconEl.classList.remove('fa-chevron-up');
+                        iconEl.classList.add('fa-chevron-down');
+                    }
+                    const span = btn.querySelector('span');
+                    if (span) span.textContent = 'Show';
+                }
+            });
+            console.log('[setupGitHubInstallHandlers] Handler attached');
+        }
+    } else {
+        console.warn('[setupGitHubInstallHandlers] Required elements not found');
     }
+}
     
     // Install single plugin from URL
     const installBtn = document.getElementById('install-plugin-from-url');
