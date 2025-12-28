@@ -449,6 +449,215 @@ if (_PLUGIN_DEBUG_EARLY) {
     }
 }
 
+// GitHub Token Collapse Handler - Define early so it's available before IIFE
+console.log('[DEFINE] Defining attachGithubTokenCollapseHandler function...');
+window.attachGithubTokenCollapseHandler = function() {
+    console.log('[attachGithubTokenCollapseHandler] Starting...');
+    const toggleTokenCollapseBtn = document.getElementById('toggle-github-token-collapse');
+    console.log('[attachGithubTokenCollapseHandler] Button found:', !!toggleTokenCollapseBtn);
+    if (!toggleTokenCollapseBtn) {
+        console.warn('[attachGithubTokenCollapseHandler] GitHub token collapse button not found');
+        return;
+    }
+    
+    console.log('[attachGithubTokenCollapseHandler] Checking toggleGithubTokenContent...', {
+        exists: typeof window.toggleGithubTokenContent
+    });
+    if (!window.toggleGithubTokenContent) {
+        console.warn('[attachGithubTokenCollapseHandler] toggleGithubTokenContent function not defined');
+        return;
+    }
+    
+    // Remove any existing listeners by cloning the button
+    const parent = toggleTokenCollapseBtn.parentNode;
+    if (!parent) {
+        console.warn('[attachGithubTokenCollapseHandler] Button parent not found');
+        return;
+    }
+    
+    const newBtn = toggleTokenCollapseBtn.cloneNode(true);
+    parent.replaceChild(newBtn, toggleTokenCollapseBtn);
+    
+    // Attach listener to the new button
+    newBtn.addEventListener('click', function(e) {
+        console.log('[attachGithubTokenCollapseHandler] Button clicked, calling toggleGithubTokenContent');
+        window.toggleGithubTokenContent(e);
+    });
+    
+    console.log('[attachGithubTokenCollapseHandler] Handler attached to button:', newBtn.id);
+};
+
+// Toggle GitHub Token Settings section
+console.log('[DEFINE] Defining toggleGithubTokenContent function...');
+window.toggleGithubTokenContent = function(e) {
+    console.log('[toggleGithubTokenContent] called', e);
+    
+    if (e) {
+        e.stopPropagation();
+        e.preventDefault();
+    }
+    
+    const tokenContent = document.getElementById('github-token-content');
+    const tokenIconCollapse = document.getElementById('github-token-icon-collapse');
+    const toggleTokenCollapseBtn = document.getElementById('toggle-github-token-collapse');
+    
+    console.log('[toggleGithubTokenContent] Elements found:', {
+        tokenContent: !!tokenContent,
+        tokenIconCollapse: !!tokenIconCollapse,
+        toggleTokenCollapseBtn: !!toggleTokenCollapseBtn
+    });
+    
+    if (!tokenContent || !toggleTokenCollapseBtn) {
+        console.warn('[toggleGithubTokenContent] GitHub token content or button not found');
+        return;
+    }
+    
+    const hasHiddenClass = tokenContent.classList.contains('hidden');
+    const computedDisplay = window.getComputedStyle(tokenContent).display;
+    
+    console.log('[toggleGithubTokenContent] Current state:', {
+        hasHiddenClass,
+        computedDisplay,
+        buttonText: toggleTokenCollapseBtn.querySelector('span')?.textContent
+    });
+    
+    if (hasHiddenClass || computedDisplay === 'none') {
+        // Show content - remove hidden class, add block class, remove inline display
+        tokenContent.classList.remove('hidden');
+        tokenContent.classList.add('block');
+        tokenContent.style.removeProperty('display');
+        if (tokenIconCollapse) {
+            tokenIconCollapse.classList.remove('fa-chevron-down');
+            tokenIconCollapse.classList.add('fa-chevron-up');
+        }
+        const span = toggleTokenCollapseBtn.querySelector('span');
+        if (span) span.textContent = 'Collapse';
+        console.log('[toggleGithubTokenContent] Content shown - removed hidden, added block');
+    } else {
+        // Hide content - add hidden class, remove block class, ensure display is none
+        tokenContent.classList.add('hidden');
+        tokenContent.classList.remove('block');
+        tokenContent.style.display = 'none';
+        if (tokenIconCollapse) {
+            tokenIconCollapse.classList.remove('fa-chevron-up');
+            tokenIconCollapse.classList.add('fa-chevron-down');
+        }
+        const span = toggleTokenCollapseBtn.querySelector('span');
+        if (span) span.textContent = 'Expand';
+        console.log('[toggleGithubTokenContent] Content hidden - added hidden, removed block, set display:none');
+    }
+};
+
+// GitHub Authentication Status - Define early so it's available in IIFE
+// Shows warning banner only when token is missing or invalid
+// The token itself is never exposed to the frontend for security
+// Returns a Promise so it can be awaited
+console.log('[DEFINE] Defining checkGitHubAuthStatus function...');
+window.checkGitHubAuthStatus = function checkGitHubAuthStatus() {
+    console.log('[checkGitHubAuthStatus] Starting...');
+    return fetch('/api/v3/plugins/store/github-status')
+        .then(response => {
+            console.log('checkGitHubAuthStatus: Response status:', response.status);
+            return response.json();
+        })
+        .then(data => {
+            console.log('checkGitHubAuthStatus: Data received:', data);
+            if (data.status === 'success') {
+                const authData = data.data;
+                const tokenStatus = authData.token_status || (authData.authenticated ? 'valid' : 'none');
+                console.log('checkGitHubAuthStatus: Token status:', tokenStatus);
+                const warning = document.getElementById('github-auth-warning');
+                const settings = document.getElementById('github-token-settings');
+                const rateLimit = document.getElementById('rate-limit-count');
+                console.log('checkGitHubAuthStatus: Elements found:', {
+                    warning: !!warning,
+                    settings: !!settings,
+                    rateLimit: !!rateLimit
+                });
+
+                // Show warning only when token is missing ('none') or invalid ('invalid')
+                if (tokenStatus === 'none' || tokenStatus === 'invalid') {
+                    // Check if user has dismissed the warning (stored in session storage)
+                    const dismissed = sessionStorage.getItem('github-auth-warning-dismissed');
+                    if (!dismissed) {
+                        if (warning && rateLimit) {
+                            rateLimit.textContent = authData.rate_limit;
+                            
+                            // Update warning message for invalid tokens
+                            if (tokenStatus === 'invalid' && authData.error) {
+                                const warningText = warning.querySelector('p.text-sm.text-yellow-700');
+                                if (warningText) {
+                                    // Preserve the structure but update the message
+                                    const errorMsg = authData.message || authData.error;
+                                    warningText.innerHTML = `<strong>Token Invalid:</strong> ${errorMsg}. Please update your GitHub token to increase API rate limits to 5,000 requests/hour.`;
+                                }
+                            }
+                            // For 'none' status, use the default message from HTML template
+                            
+                            // Show warning using both classList and style.display
+                            warning.classList.remove('hidden');
+                            warning.style.display = '';
+                            console.log(`GitHub token status: ${tokenStatus} - showing API limit warning`);
+                        }
+                    }
+                    
+                    // Ensure settings panel is accessible when token is missing or invalid
+                    // Panel can be opened via "Configure Token" link in warning
+                    // Don't force it to be visible, but don't prevent it from being shown
+                } else if (tokenStatus === 'valid') {
+                    // Token is valid - hide warning and ensure settings panel is visible but collapsed
+                    if (warning) {
+                        // Hide warning using both classList and style.display
+                        warning.classList.add('hidden');
+                        warning.style.display = 'none';
+                        console.log('GitHub token is valid - hiding API limit warning');
+                    }
+                    
+                    // Make settings panel visible but collapsed (accessible for token management)
+                    if (settings) {
+                        // Remove hidden class from panel itself - make it visible using both methods
+                        settings.classList.remove('hidden');
+                        settings.style.display = '';
+                        
+                        // Always collapse the content when token is valid (user must click expand)
+                        const tokenContent = document.getElementById('github-token-content');
+                        if (tokenContent) {
+                            // Collapse the content - add hidden, remove block, set display none
+                            tokenContent.classList.add('hidden');
+                            tokenContent.classList.remove('block');
+                            tokenContent.style.display = 'none';
+                        }
+                        
+                        // Update collapse button state to show "Expand"
+                        const tokenIconCollapse = document.getElementById('github-token-icon-collapse');
+                        if (tokenIconCollapse) {
+                            tokenIconCollapse.classList.remove('fa-chevron-up');
+                            tokenIconCollapse.classList.add('fa-chevron-down');
+                        }
+                        
+                        const toggleTokenCollapseBtn = document.getElementById('toggle-github-token-collapse');
+                        if (toggleTokenCollapseBtn) {
+                            const span = toggleTokenCollapseBtn.querySelector('span');
+                            if (span) span.textContent = 'Expand';
+                            
+                            // Ensure event listener is attached
+                            if (window.attachGithubTokenCollapseHandler) {
+                                window.attachGithubTokenCollapseHandler();
+                            }
+                        }
+                    }
+                    
+                    // Clear dismissal flag when token becomes valid
+                    sessionStorage.removeItem('github-auth-warning-dismissed');
+                }
+            }
+        })
+        .catch(error => {
+            console.error('Error checking GitHub auth status:', error);
+            console.error('Error stack:', error.stack || 'No stack trace');
+        });
+};
+
 (function() {
     'use strict';
 
@@ -566,6 +775,13 @@ window.initPluginsPage = function() {
     
     window.pluginManager.initializing = true;
     window.__pluginDomReady = true;
+    
+    // Check GitHub auth status immediately (don't wait for full initialization)
+    // This can run in parallel with other initialization
+    if (window.checkGitHubAuthStatus) {
+        console.log('[INIT] Checking GitHub auth status immediately...');
+        window.checkGitHubAuthStatus();
+    }
     
     // If we fetched data before the DOM existed, render it now
     if (window.__pendingInstalledPlugins) {
@@ -706,17 +922,33 @@ function initializePluginPageWhenReady() {
 let pluginsInitialized = false;
 
 function initializePlugins() {
+    console.log('[initializePlugins] Called, pluginsInitialized:', pluginsInitialized);
     // Guard against multiple initializations
     if (pluginsInitialized) {
+        console.log('[initializePlugins] Already initialized, skipping');
         pluginLog('[INIT] Plugins already initialized, skipping');
         return;
     }
     pluginsInitialized = true;
     
+    console.log('[initializePlugins] Starting initialization...');
     pluginLog('[INIT] Initializing plugins...');
 
     // Check GitHub authentication status
-    checkGitHubAuthStatus();
+    console.log('[INIT] Checking for checkGitHubAuthStatus function...', {
+        exists: typeof window.checkGitHubAuthStatus,
+        type: typeof window.checkGitHubAuthStatus
+    });
+    if (window.checkGitHubAuthStatus) {
+        console.log('[INIT] Calling checkGitHubAuthStatus...');
+        try {
+            window.checkGitHubAuthStatus();
+        } catch (error) {
+            console.error('[INIT] Error calling checkGitHubAuthStatus:', error);
+        }
+    } else {
+        console.warn('[INIT] checkGitHubAuthStatus not available yet');
+    }
 
     // Load both installed plugins and plugin store
     loadInstalledPlugins();
@@ -3826,6 +4058,37 @@ function searchPluginStore(fetchCommitInfo = true) {
                 } catch (e) {
                     console.warn('Could not update store count:', e);
                 }
+                
+                // Ensure GitHub token collapse handler is attached after store is rendered
+                // The button might not exist until the store content is loaded
+                console.log('[STORE] Checking for attachGithubTokenCollapseHandler...', {
+                    exists: typeof window.attachGithubTokenCollapseHandler,
+                    checkGitHubAuthStatus: typeof window.checkGitHubAuthStatus
+                });
+                if (window.attachGithubTokenCollapseHandler) {
+                    // Use requestAnimationFrame for faster execution (runs on next frame, ~16ms)
+                    requestAnimationFrame(() => {
+                        console.log('[STORE] Re-attaching GitHub token collapse handler after store render');
+                        try {
+                            window.attachGithubTokenCollapseHandler();
+                        } catch (error) {
+                            console.error('[STORE] Error attaching collapse handler:', error);
+                        }
+                        // Also check auth status to update UI (already checked earlier, but refresh to be sure)
+                        if (window.checkGitHubAuthStatus) {
+                            console.log('[STORE] Refreshing GitHub auth status after store render...');
+                            try {
+                                window.checkGitHubAuthStatus();
+                            } catch (error) {
+                                console.error('[STORE] Error calling checkGitHubAuthStatus:', error);
+                            }
+                        } else {
+                            console.warn('[STORE] checkGitHubAuthStatus not available');
+                        }
+                    });
+                } else {
+                    console.warn('[STORE] attachGithubTokenCollapseHandler not available');
+                }
             } else {
                 showError('Failed to search plugin store: ' + data.message);
                 try {
@@ -3977,78 +4240,17 @@ window.installPlugin = function(pluginId, branch = null) {
 }
 
 function setupCollapsibleSections() {
-    // Toggle Installed Plugins section
-    const toggleInstalledBtn = document.getElementById('toggle-installed-plugins');
-    const installedContent = document.getElementById('installed-plugins-content');
-    const installedIcon = document.getElementById('installed-plugins-icon');
+    console.log('[setupCollapsibleSections] Setting up collapsible sections...');
     
-    if (toggleInstalledBtn && installedContent) {
-        toggleInstalledBtn.addEventListener('click', function() {
-            const isHidden = installedContent.style.display === 'none' || installedContent.classList.contains('hidden');
-            if (isHidden) {
-                installedContent.style.display = 'block';
-                installedContent.classList.remove('hidden');
-                installedIcon.classList.remove('fa-chevron-down');
-                installedIcon.classList.add('fa-chevron-up');
-                toggleInstalledBtn.querySelector('span').textContent = 'Collapse';
-            } else {
-                installedContent.style.display = 'none';
-                installedContent.classList.add('hidden');
-                installedIcon.classList.remove('fa-chevron-up');
-                installedIcon.classList.add('fa-chevron-down');
-                toggleInstalledBtn.querySelector('span').textContent = 'Expand';
-            }
-        });
+    // Installed Plugins and Plugin Store sections no longer have collapse buttons
+    // They are always visible
+    
+    // Functions are now defined outside IIFE, just attach the handler
+    if (window.attachGithubTokenCollapseHandler) {
+        window.attachGithubTokenCollapseHandler();
     }
     
-    // Toggle Plugin Store section
-    const toggleStoreBtn = document.getElementById('toggle-plugin-store');
-    const storeContent = document.getElementById('plugin-store-content');
-    const storeIcon = document.getElementById('plugin-store-icon');
-    
-    if (toggleStoreBtn && storeContent) {
-        toggleStoreBtn.addEventListener('click', function() {
-            const isHidden = storeContent.style.display === 'none' || storeContent.classList.contains('hidden');
-            if (isHidden) {
-                storeContent.style.display = 'block';
-                storeContent.classList.remove('hidden');
-                storeIcon.classList.remove('fa-chevron-down');
-                storeIcon.classList.add('fa-chevron-up');
-                toggleStoreBtn.querySelector('span').textContent = 'Collapse';
-            } else {
-                storeContent.style.display = 'none';
-                storeContent.classList.add('hidden');
-                storeIcon.classList.remove('fa-chevron-up');
-                storeIcon.classList.add('fa-chevron-down');
-                toggleStoreBtn.querySelector('span').textContent = 'Expand';
-            }
-        });
-    }
-    
-    // Toggle GitHub Token Settings section
-    const toggleTokenCollapseBtn = document.getElementById('toggle-github-token-collapse');
-    const tokenContent = document.getElementById('github-token-content');
-    const tokenIconCollapse = document.getElementById('github-token-icon-collapse');
-    
-    if (toggleTokenCollapseBtn && tokenContent) {
-        toggleTokenCollapseBtn.addEventListener('click', function(e) {
-            e.stopPropagation(); // Prevent triggering the close button
-            const isHidden = tokenContent.style.display === 'none' || tokenContent.classList.contains('hidden');
-            if (isHidden) {
-                tokenContent.style.display = 'block';
-                tokenContent.classList.remove('hidden');
-                tokenIconCollapse.classList.remove('fa-chevron-down');
-                tokenIconCollapse.classList.add('fa-chevron-up');
-                toggleTokenCollapseBtn.querySelector('span').textContent = 'Collapse';
-            } else {
-                tokenContent.style.display = 'none';
-                tokenContent.classList.add('hidden');
-                tokenIconCollapse.classList.remove('fa-chevron-up');
-                tokenIconCollapse.classList.add('fa-chevron-down');
-                toggleTokenCollapseBtn.querySelector('span').textContent = 'Expand';
-            }
-        });
-    }
+    console.log('[setupCollapsibleSections] Collapsible sections setup complete');
 }
 
 function loadSavedRepositories() {
@@ -4135,26 +4337,66 @@ window.removeSavedRepository = function(repoUrl) {
 }
 
 function setupGitHubInstallHandlers() {
+    console.log('[setupGitHubInstallHandlers] Setting up GitHub install handlers...');
+    
     // Toggle GitHub install section visibility
     const toggleBtn = document.getElementById('toggle-github-install');
     const installSection = document.getElementById('github-install-section');
     const icon = document.getElementById('github-install-icon');
     
+    console.log('[setupGitHubInstallHandlers] Elements found:', {
+        button: !!toggleBtn,
+        section: !!installSection,
+        icon: !!icon
+    });
+    
     if (toggleBtn && installSection) {
-        toggleBtn.addEventListener('click', function() {
-            const isHidden = installSection.classList.contains('hidden');
-            if (isHidden) {
-                installSection.classList.remove('hidden');
-                icon.classList.remove('fa-chevron-down');
-                icon.classList.add('fa-chevron-up');
-                toggleBtn.querySelector('span').textContent = 'Hide';
-            } else {
-                installSection.classList.add('hidden');
-                icon.classList.remove('fa-chevron-up');
-                icon.classList.add('fa-chevron-down');
-                toggleBtn.querySelector('span').textContent = 'Show';
-            }
-        });
+        // Clone button to remove any existing listeners
+        const parent = toggleBtn.parentNode;
+        if (parent) {
+            const newBtn = toggleBtn.cloneNode(true);
+            parent.replaceChild(newBtn, toggleBtn);
+            
+            newBtn.addEventListener('click', function(e) {
+                e.stopPropagation();
+                e.preventDefault();
+                console.log('[setupGitHubInstallHandlers] GitHub install toggle clicked');
+                
+                const section = document.getElementById('github-install-section');
+                const iconEl = document.getElementById('github-install-icon');
+                const btn = document.getElementById('toggle-github-install');
+                
+                if (!section || !btn) return;
+                
+                const hasHiddenClass = section.classList.contains('hidden');
+                const computedDisplay = window.getComputedStyle(section).display;
+                
+                if (hasHiddenClass || computedDisplay === 'none') {
+                    // Show section - remove hidden, ensure visible
+                    section.classList.remove('hidden');
+                    section.style.removeProperty('display');
+                    if (iconEl) {
+                        iconEl.classList.remove('fa-chevron-down');
+                        iconEl.classList.add('fa-chevron-up');
+                    }
+                    const span = btn.querySelector('span');
+                    if (span) span.textContent = 'Hide';
+                } else {
+                    // Hide section - add hidden, set display none
+                    section.classList.add('hidden');
+                    section.style.display = 'none';
+                    if (iconEl) {
+                        iconEl.classList.remove('fa-chevron-up');
+                        iconEl.classList.add('fa-chevron-down');
+                    }
+                    const span = btn.querySelector('span');
+                    if (span) span.textContent = 'Show';
+                }
+            });
+            console.log('[setupGitHubInstallHandlers] Handler attached');
+        }
+    } else {
+        console.warn('[setupGitHubInstallHandlers] Required elements not found');
     }
     
     // Install single plugin from URL
@@ -4669,30 +4911,46 @@ function togglePasswordVisibility(fieldId) {
 }
 
 // GitHub Token Configuration Functions
-window.toggleGithubTokenSettings = function() {
+// Open GitHub Token Settings panel (only opens, doesn't close)
+// Used when user clicks "Configure Token" link
+window.openGithubTokenSettings = function() {
     const settings = document.getElementById('github-token-settings');
     const warning = document.getElementById('github-auth-warning');
+    const tokenContent = document.getElementById('github-token-content');
+    
     if (settings) {
-        // Remove inline style if present to avoid conflicts
-        if (settings.style.display !== undefined) {
-            settings.style.display = '';
+        // Show settings panel using both methods
+        settings.classList.remove('hidden');
+        settings.style.display = '';
+        
+                        // Expand the content when opening
+                        if (tokenContent) {
+                            tokenContent.style.removeProperty('display');
+                            tokenContent.classList.remove('hidden');
+            
+            // Update collapse button state
+            const tokenIconCollapse = document.getElementById('github-token-icon-collapse');
+            const toggleTokenCollapseBtn = document.getElementById('toggle-github-token-collapse');
+            if (tokenIconCollapse) {
+                tokenIconCollapse.classList.remove('fa-chevron-down');
+                tokenIconCollapse.classList.add('fa-chevron-up');
+            }
+            if (toggleTokenCollapseBtn) {
+                const span = toggleTokenCollapseBtn.querySelector('span');
+                if (span) span.textContent = 'Collapse';
+            }
         }
-        // Toggle Tailwind hidden class
-        settings.classList.toggle('hidden');
         
-        const isOpening = !settings.classList.contains('hidden');
-        
-        // When opening settings, hide the warning banner (they're now combined)
-        if (isOpening && warning) {
+        // When opening settings, hide the warning banner
+        if (warning) {
             warning.classList.add('hidden');
+            warning.style.display = 'none';
             // Clear any dismissal state since user is actively configuring
             sessionStorage.removeItem('github-auth-warning-dismissed');
         }
         
         // Load token when opening the panel
-        if (isOpening) {
-            loadGithubToken();
-        }
+        loadGithubToken();
     }
 }
 
@@ -4845,13 +5103,17 @@ window.saveGithubToken = function() {
                 // Clear input field for security (user can reload if needed)
                 input.value = '';
                 
-                // Refresh GitHub auth status to update UI (this will hide warning and settings)
-                checkGitHubAuthStatus();
+                // Clear the dismissal flag so warning can properly hide/show based on token status
+                sessionStorage.removeItem('github-auth-warning-dismissed');
                 
-                // Hide the settings panel after successful save
+                // Small delay to ensure backend has reloaded the token, then refresh status
+                // checkGitHubAuthStatus() will handle collapsing the panel automatically
+                // Reduced delay from 300ms to 100ms - backend should reload quickly
                 setTimeout(() => {
-                    toggleGithubTokenSettings();
-                }, 1500);
+                    if (window.checkGitHubAuthStatus) {
+                        window.checkGitHubAuthStatus();
+                    }
+                }, 100);
             } else {
                 throw new Error(data.message || 'Failed to save token');
             }
@@ -4870,60 +5132,18 @@ window.saveGithubToken = function() {
         });
 }
 
-// GitHub Authentication Status
-// Only shows the warning banner if no GitHub token is configured
-// The token itself is never exposed to the frontend for security
-function checkGitHubAuthStatus() {
-    fetch('/api/v3/plugins/store/github-status')
-        .then(response => response.json())
-        .then(data => {
-            if (data.status === 'success') {
-                const authData = data.data;
-
-                // Only show the banner if no GitHub token is configured
-                if (!authData.authenticated) {
-                    // Check if user has dismissed the warning (stored in session storage)
-                    const dismissed = sessionStorage.getItem('github-auth-warning-dismissed');
-                    if (!dismissed) {
-                        const warning = document.getElementById('github-auth-warning');
-                        const rateLimit = document.getElementById('rate-limit-count');
-
-                        if (warning && rateLimit) {
-                            rateLimit.textContent = authData.rate_limit;
-                            warning.classList.remove('hidden');
-                            console.log('GitHub token not configured - showing API limit warning');
-                        }
-                    }
-                } else {
-                    // Token is configured - hide both warning and settings
-                    const warning = document.getElementById('github-auth-warning');
-                    const settings = document.getElementById('github-token-settings');
-                    
-                    if (warning) {
-                        warning.classList.add('hidden');
-                        console.log('GitHub token is configured - API limit warning hidden');
-                    }
-                    
-                    if (settings) {
-                        settings.classList.add('hidden');
-                        console.log('GitHub token is configured - hiding settings panel');
-                    }
-                }
-            }
-        })
-        .catch(error => {
-            console.error('Error checking GitHub auth status:', error);
-        });
-}
 
 window.dismissGithubWarning = function() {
     const warning = document.getElementById('github-auth-warning');
     const settings = document.getElementById('github-token-settings');
     if (warning) {
+        // Hide warning using both classList and style.display
         warning.classList.add('hidden');
+        warning.style.display = 'none';
         // Also hide settings if it's open (since they're combined now)
         if (settings && !settings.classList.contains('hidden')) {
             settings.classList.add('hidden');
+            settings.style.display = 'none';
         }
         // Remember dismissal for this session
         sessionStorage.setItem('github-auth-warning-dismissed', 'true');
@@ -5637,6 +5857,12 @@ if (_PLUGIN_DEBUG_EARLY) {
         loadInstalledPlugins: typeof window.loadInstalledPlugins,
         searchPluginStore: typeof window.searchPluginStore
     });
+}
+
+// Check GitHub auth status immediately if elements exist (don't wait for full initialization)
+if (window.checkGitHubAuthStatus && document.getElementById('github-auth-warning')) {
+    console.log('[EARLY] Checking GitHub auth status immediately on script load...');
+    window.checkGitHubAuthStatus();
 }
 
 setTimeout(function() {
