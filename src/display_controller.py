@@ -751,13 +751,17 @@ class DisplayController:
 
         request_id = request.get('request_id')
         if not request_id or request_id == self.on_demand_request_id:
+            logger.debug("On-demand request %s already processed or invalid", request_id)
             return
 
         action = request.get('action')
-        logger.info("Received on-demand request %s: %s", request_id, action)
+        logger.info("Received on-demand request %s: %s (plugin_id=%s, mode=%s)", 
+                   request_id, action, request.get('plugin_id'), request.get('mode'))
         if action == 'start':
+            logger.info("Processing on-demand start request for plugin: %s", request.get('plugin_id'))
             self._activate_on_demand(request)
         elif action == 'stop':
+            logger.info("Processing on-demand stop request")
             self._clear_on_demand(reason='requested-stop')
         else:
             logger.warning("Unknown on-demand action: %s", action)
@@ -823,7 +827,9 @@ class DisplayController:
             self.cache_manager.set('display_on_demand_config', on_demand_config, ttl=3600)
             
             # Check if running as service
-            if self._is_running_as_service():
+            is_service = self._is_running_as_service()
+            logger.info("Checking if running as service: %s", is_service)
+            if is_service:
                 logger.info("Restarting display service with on-demand filter for plugin '%s'", plugin_id)
                 # Use systemctl to restart with environment variable
                 import subprocess
@@ -837,13 +843,15 @@ class DisplayController:
                     # Write plugin ID to a file that the service can read
                     project_root = Path(__file__).parent.parent.parent.resolve()
                     env_file = project_root / "config" / "on_demand_env.conf"
+                    logger.info("Writing on-demand env file to: %s", env_file)
                     try:
                         with open(env_file, 'w', encoding='utf-8') as f:
                             f.write(f"LEDMATRIX_ON_DEMAND_PLUGIN={plugin_id}\n")
-                        logger.debug("Wrote on-demand plugin ID to %s", env_file)
+                        logger.info("Successfully wrote on-demand plugin ID to %s", env_file)
                     except (OSError, PermissionError) as e:
                         logger.warning("Could not write on-demand env file: %s", e)
                         # Fall back to systemctl set-environment
+                        logger.info("Falling back to systemctl set-environment")
                         subprocess.run(
                             ['sudo', 'systemctl', 'set-environment', f'LEDMATRIX_ON_DEMAND_PLUGIN={plugin_id}'],
                             check=False,  # Don't fail if this doesn't work
@@ -851,6 +859,7 @@ class DisplayController:
                         )
                     
                     # Restart the service
+                    logger.info("Executing: sudo systemctl restart ledmatrix")
                     result = subprocess.run(
                         ['sudo', 'systemctl', 'restart', 'ledmatrix'],
                         check=True,
@@ -858,7 +867,11 @@ class DisplayController:
                         capture_output=True,
                         text=True
                     )
-                    logger.info("Display service restart initiated successfully")
+                    logger.info("Display service restart initiated successfully (returncode=%d)", result.returncode)
+                    if result.stdout:
+                        logger.debug("systemctl restart stdout: %s", result.stdout)
+                    if result.stderr:
+                        logger.debug("systemctl restart stderr: %s", result.stderr)
                     return True
                 except subprocess.CalledProcessError as e:
                     logger.error("Failed to restart display service: returncode=%d, stderr=%s", 
