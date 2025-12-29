@@ -99,6 +99,17 @@ class DisplayController:
             except (OSError, PermissionError, ValueError) as e:
                 logger.debug("Could not read on-demand env file: %s", e)
         
+        # Also check cache for pending on-demand requests (for immediate activation)
+        if not on_demand_plugin_id:
+            try:
+                on_demand_request = self.cache_manager.get('display_on_demand_request', max_age=3600)
+                if on_demand_request and on_demand_request.get('action') == 'start':
+                    on_demand_plugin_id = on_demand_request.get('plugin_id')
+                    if on_demand_plugin_id:
+                        logger.info("On-demand request found in cache: filtering to plugin '%s' only", on_demand_plugin_id)
+            except (OSError, RuntimeError, ValueError, TypeError) as e:
+                logger.debug("Could not check cache for on-demand request: %s", e)
+        
         if on_demand_plugin_id:
             logger.info("On-demand mode detected: filtering to plugin '%s' only", on_demand_plugin_id)
         
