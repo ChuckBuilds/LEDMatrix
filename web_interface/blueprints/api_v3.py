@@ -1254,6 +1254,17 @@ def start_on_demand_display():
 
         # Check if display service is running (or will be started)
         service_status = _get_display_service_status()
+        service_was_running = service_status.get('active', False)
+        
+        # Stop the display service first to ensure clean state (mimics manual stop)
+        if service_was_running:
+            import time as time_module
+            print(f"Stopping display service before starting on-demand mode...")
+            stop_result = _stop_display_service()
+            # Wait a brief moment for the service to fully stop
+            time_module.sleep(1.5)
+            print(f"Display service stopped, now starting with on-demand request...")
+
         if not service_status.get('active') and not start_service:
             return jsonify({
                 'status': 'error',
@@ -1272,10 +1283,8 @@ def start_on_demand_display():
                     'service_result': service_result
                 }), 500
             
-            # If service was already running, the display controller will poll the request
-            # and restart with the on-demand filter. If service was just started, it will
-            # read the request during initialization or when it polls.
-            # Note: The display controller's _activate_on_demand() will handle the restart
+            # Service was restarted (or started fresh) with on-demand request in cache
+            # The display controller will read the request during initialization or when it polls
 
         response_data = {
             'request_id': request_id,
