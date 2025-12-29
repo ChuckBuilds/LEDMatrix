@@ -3546,37 +3546,109 @@ window.closePluginConfigModal = function() {
 
 // Generic Plugin Action Handler
 window.executePluginAction = function(actionId, actionIndex, pluginIdParam = null) {
-    // Get plugin ID from parameter, currentPluginConfig, or try to find from context
-    let pluginId = pluginIdParam || currentPluginConfig?.pluginId;
+    console.log('[DEBUG] executePluginAction called - actionId:', actionId, 'actionIndex:', actionIndex, 'pluginIdParam:', pluginIdParam);
     
-    // If still no pluginId, try to find it from the button's context or Alpine.js
-    if (!pluginId) {
-        // Try to get from Alpine.js context if we're in a plugin tab
-        if (window.Alpine && document.querySelector('[x-data*="plugin"]')) {
-            const pluginTab = document.querySelector(`[x-show*="activeTab === plugin.id"]`);
-            if (pluginTab) {
-                const pluginData = Alpine.$data(pluginTab.closest('[x-data]'));
-                if (pluginData && pluginData.plugin) {
-                    pluginId = pluginData.plugin.id;
-                }
+    // Construct button ID first (we have actionId and actionIndex)
+    const actionIdFull = `action-${actionId}-${actionIndex}`;
+    const statusId = `action-status-${actionId}-${actionIndex}`;
+    const btn = document.getElementById(actionIdFull);
+    const statusDiv = document.getElementById(statusId);
+    
+    // Get plugin ID from multiple sources with comprehensive fallback logic
+    let pluginId = pluginIdParam;
+    
+    // Fallback 1: Try to get from button's data-plugin-id attribute
+    if (!pluginId && btn) {
+        pluginId = btn.getAttribute('data-plugin-id');
+        if (pluginId) {
+            console.log('[DEBUG] Got pluginId from button data attribute:', pluginId);
+        }
+    }
+    
+    // Fallback 2: Try to get from closest parent with data-plugin-id
+    if (!pluginId && btn) {
+        const parentWithPluginId = btn.closest('[data-plugin-id]');
+        if (parentWithPluginId) {
+            pluginId = parentWithPluginId.getAttribute('data-plugin-id');
+            if (pluginId) {
+                console.log('[DEBUG] Got pluginId from parent element:', pluginId);
             }
         }
     }
     
+    // Fallback 3: Try to get from plugin-config-container or plugin-config-tab
+    if (!pluginId && btn) {
+        const container = btn.closest('.plugin-config-container, .plugin-config-tab, [id^="plugin-config-"]');
+        if (container) {
+            // Try data-plugin-id first
+            pluginId = container.getAttribute('data-plugin-id');
+            if (!pluginId) {
+                // Try to extract from ID like "plugin-config-{pluginId}"
+                const idMatch = container.id.match(/plugin-config-(.+)/);
+                if (idMatch) {
+                    pluginId = idMatch[1];
+                }
+            }
+            if (pluginId) {
+                console.log('[DEBUG] Got pluginId from container:', pluginId);
+            }
+        }
+    }
+    
+    // Fallback 4: Try to get from currentPluginConfig
     if (!pluginId) {
-        console.error('No plugin ID available. actionId:', actionId, 'actionIndex:', actionIndex);
+        pluginId = currentPluginConfig?.pluginId;
+        if (pluginId) {
+            console.log('[DEBUG] Got pluginId from currentPluginConfig:', pluginId);
+        }
+    }
+    
+    // Fallback 5: Try to get from Alpine.js context (activeTab)
+    if (!pluginId && window.Alpine) {
+        try {
+            const appElement = document.querySelector('[x-data="app()"]');
+            if (appElement && appElement._x_dataStack && appElement._x_dataStack[0]) {
+                const appData = appElement._x_dataStack[0];
+                if (appData.activeTab && appData.activeTab !== 'overview' && appData.activeTab !== 'plugins' && appData.activeTab !== 'wifi') {
+                    pluginId = appData.activeTab;
+                    console.log('[DEBUG] Got pluginId from Alpine activeTab:', pluginId);
+                }
+            }
+        } catch (e) {
+            console.warn('[DEBUG] Error accessing Alpine context:', e);
+        }
+    }
+    
+    // Fallback 6: Try to find from plugin tab elements
+    if (!pluginId) {
+        const pluginTab = document.querySelector('[x-show*="activeTab === plugin.id"]');
+        if (pluginTab && window.Alpine) {
+            try {
+                const pluginData = Alpine.$data(pluginTab.closest('[x-data]'));
+                if (pluginData && pluginData.plugin) {
+                    pluginId = pluginData.plugin.id;
+                    if (pluginId) {
+                        console.log('[DEBUG] Got pluginId from Alpine plugin data:', pluginId);
+                    }
+                }
+            } catch (e) {
+                console.warn('[DEBUG] Error accessing Alpine plugin data:', e);
+            }
+        }
+    }
+    
+    // Final check - if still no pluginId, show error
+    if (!pluginId) {
+        console.error('No plugin ID available after all fallbacks. actionId:', actionId, 'actionIndex:', actionIndex);
+        console.error('[DEBUG] Button found:', !!btn);
+        console.error('[DEBUG] currentPluginConfig:', currentPluginConfig);
         if (typeof showNotification === 'function') {
             showNotification('Unable to determine plugin ID. Please refresh the page.', 'error');
         }
         return;
     }
     
-    console.log('[DEBUG] executePluginAction - pluginId:', pluginId, 'actionId:', actionId, 'actionIndex:', actionIndex);
-    
-    const actionIdFull = `action-${actionId}-${actionIndex}`;
-    const statusId = `action-status-${actionId}-${actionIndex}`;
-    const btn = document.getElementById(actionIdFull);
-    const statusDiv = document.getElementById(statusId);
+    console.log('[DEBUG] executePluginAction - Final pluginId:', pluginId, 'actionId:', actionId, 'actionIndex:', actionIndex);
     
     if (!btn || !statusDiv) {
         console.error(`Action elements not found: ${actionIdFull}`);

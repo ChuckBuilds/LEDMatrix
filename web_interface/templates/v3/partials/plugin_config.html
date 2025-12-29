@@ -286,7 +286,9 @@
             <div class="flex flex-wrap gap-2">
                 {% for action in web_ui_actions %}
                 <button type="button"
-                        onclick="executePluginAction('{{ plugin.id }}', '{{ action.id }}')"
+                        onclick="executePluginAction('{{ action.id }}', {{ loop.index0 }}, '{{ plugin.id }}')"
+                        data-plugin-id="{{ plugin.id }}"
+                        data-action-id="{{ action.id }}"
                         class="px-4 py-2 text-sm bg-indigo-600 hover:bg-indigo-700 text-white rounded-md flex items-center gap-2 transition-colors">
                     {% if action.icon %}<i class="{{ action.icon }}"></i>{% endif %}
                     {{ action.label or action.id }}
