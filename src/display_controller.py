@@ -1076,6 +1076,18 @@ class DisplayController:
         pinned = bool(request.get('pinned', False))
         now = time.time()
 
+        # Clear the display and reset state before activating on-demand
+        # This ensures a clean transition, similar to stopping the display first
+        logger.info("Preparing for on-demand activation: clearing display and resetting state")
+        try:
+            self.display_manager.clear()
+            self.display_manager.update_display()
+        except Exception as e:
+            logger.warning("Error clearing display before on-demand activation: %s", e)
+        
+        # Reset any dynamic mode state
+        self._active_dynamic_mode = None
+        
         # Save current rotation state for restoration when on-demand ends
         if self.available_modes:
             self.rotation_resume_index = self.current_mode_index
