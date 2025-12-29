@@ -764,21 +764,34 @@ class DisplayController:
         if not request_id:
             return
         
-        # Check if this request was already processed (using instance variable)
+        action = request.get('action')
+        
+        # For stop requests, always process them (don't check processed_id)
+        # This allows stopping even if the same stop request was sent before
+        if action == 'stop':
+            logger.info("Received on-demand stop request %s", request_id)
+            # Mark as processed to prevent duplicate processing in same polling cycle
+            if request_id != self.on_demand_request_id:
+                self.cache_manager.set('display_on_demand_processed_id', request_id, ttl=3600)
+                self.on_demand_request_id = request_id
+                self._clear_on_demand(reason='requested-stop')
+            else:
+                logger.debug("Stop request %s already processed in this cycle", request_id)
+            return
+        
+        # For start requests, check if already processed
         if request_id == self.on_demand_request_id:
-            logger.debug("On-demand request %s already processed (instance check)", request_id)
+            logger.debug("On-demand start request %s already processed (instance check)", request_id)
             return
         
         # Also check persistent processed_id (for restart scenarios)
         processed_request_id = self.cache_manager.get('display_on_demand_processed_id', max_age=3600)
         if request_id == processed_request_id:
-            logger.debug("On-demand request %s already processed (persisted check: %s)", request_id, processed_request_id)
+            logger.debug("On-demand start request %s already processed (persisted check)", request_id)
             return
         
         logger.info("Polling on-demand: request_id=%s, current_on_demand_request_id=%s, processed_id=%s", 
                    request_id, self.on_demand_request_id, processed_request_id)
-
-        action = request.get('action')
         logger.info("Received on-demand request %s: %s (plugin_id=%s, mode=%s)", 
                    request_id, action, request.get('plugin_id'), request.get('mode'))
         
@@ -789,9 +802,6 @@ class DisplayController:
         if action == 'start':
             logger.info("Processing on-demand start request for plugin: %s", request.get('plugin_id'))
             self._activate_on_demand(request)
-        elif action == 'stop':
-            logger.info("Processing on-demand stop request")
-            self._clear_on_demand(reason='requested-stop')
         else:
             logger.warning("Unknown on-demand action: %s", action)
 
