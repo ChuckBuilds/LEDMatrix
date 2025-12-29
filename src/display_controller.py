@@ -255,10 +255,10 @@ class DisplayController:
             loaded_count = 0
             with ThreadPoolExecutor(max_workers=4) as executor:
                 # Submit all enabled plugins for loading
+                # Use enabled_plugins list (already filtered for on-demand mode if applicable)
                 future_to_plugin = {
                     executor.submit(load_single_plugin, plugin_id): plugin_id
-                    for plugin_id in discovered_plugins
-                    if self.config.get(plugin_id, {}).get('enabled', False)
+                    for plugin_id in enabled_plugins
                 }
                 
                 # Process results as they complete
