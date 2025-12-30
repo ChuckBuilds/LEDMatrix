@@ -438,27 +438,7 @@ class ConfigManager:
             path_obj = Path(path_to_save)
             ensure_directory_permissions(path_obj.parent, get_config_dir_mode())
             
-            # Check if file exists and is writable before attempting write
-            if path_obj.exists():
-                if not os.access(path_obj, os.W_OK):
-                    import stat
-                    file_stat = path_obj.stat()
-                    current_mode = stat.filemode(file_stat.st_mode)
-                    try:
-                        import pwd
-                        file_owner = pwd.getpwuid(file_stat.st_uid).pw_name
-                    except (ImportError, KeyError):
-                        file_owner = f"UID {file_stat.st_uid}"
-                    
-                    error_msg = (
-                        f"Cannot write to {file_type} configuration file {os.path.abspath(path_to_save)}. "
-                        f"File is owned by {file_owner} with permissions {current_mode}. "
-                        f"To fix, run: sudo chown $USER:$(id -gn) {path_to_save} && sudo chmod 664 {path_to_save}"
-                    )
-                    self.logger.error(error_msg)
-                    raise PermissionError(error_msg)
-            
-            # Write the file
+            # Write the file - let the actual write operation determine if it succeeds
             with open(path_to_save, 'w') as f:
                 json.dump(data, f, indent=4)
             
@@ -490,8 +470,38 @@ class ConfigManager:
                     )
 
         except PermissionError as e:
-            # PermissionError already has detailed message from our check above
-            error_msg = str(e) if str(e) else f"Error writing {file_type} configuration to file {os.path.abspath(path_to_save)}"
+            # Provide helpful error message with fix instructions
+            import stat
+            try:
+                import pwd
+                if path_obj.exists():
+                    file_stat = path_obj.stat()
+                    current_mode = stat.filemode(file_stat.st_mode)
+                    try:
+                        file_owner = pwd.getpwuid(file_stat.st_uid).pw_name
+                    except (ImportError, KeyError):
+                        file_owner = f"UID {file_stat.st_uid}"
+                    error_msg = (
+                        f"Cannot write to {file_type} configuration file {os.path.abspath(path_to_save)}. "
+                        f"File is owned by {file_owner} with permissions {current_mode}. "
+                        f"To fix, run: sudo chown $USER:$(id -gn) {path_to_save} && sudo chmod 664 {path_to_save}"
+                    )
+                else:
+                    # File doesn't exist - check directory permissions
+                    dir_stat = path_obj.parent.stat()
+                    dir_mode = stat.filemode(dir_stat.st_mode)
+                    try:
+                        dir_owner = pwd.getpwuid(dir_stat.st_uid).pw_name
+                    except (ImportError, KeyError):
+                        dir_owner = f"UID {dir_stat.st_uid}"
+                    error_msg = (
+                        f"Cannot create {file_type} configuration file {os.path.abspath(path_to_save)}. "
+                        f"Directory is owned by {dir_owner} with permissions {dir_mode}. "
+                        f"To fix, run: sudo chown $USER:$(id -gn) {path_obj.parent} && sudo chmod 775 {path_obj.parent}"
+                    )
+            except Exception:
+                # Fallback to generic message if we can't get file info
+                error_msg = f"Error writing {file_type} configuration to file {os.path.abspath(path_to_save)}: {str(e)}"
             self.logger.error(error_msg, exc_info=True)
             raise ConfigError(error_msg, config_path=path_to_save) from e
         except (IOError, OSError) as e:
