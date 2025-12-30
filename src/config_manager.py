@@ -489,8 +489,13 @@ class ConfigManager:
                         f"The file on disk is valid, but in-memory config may be stale."
                     )
 
-        except (IOError, OSError, PermissionError) as e:
-            error_msg = f"Error writing {file_type} configuration to file {os.path.abspath(path_to_save)}"
+        except PermissionError as e:
+            # PermissionError already has detailed message from our check above
+            error_msg = str(e) if str(e) else f"Error writing {file_type} configuration to file {os.path.abspath(path_to_save)}"
+            self.logger.error(error_msg, exc_info=True)
+            raise ConfigError(error_msg, config_path=path_to_save) from e
+        except (IOError, OSError) as e:
+            error_msg = f"Error writing {file_type} configuration to file {os.path.abspath(path_to_save)}: {str(e)}"
             self.logger.error(error_msg, exc_info=True)
             raise ConfigError(error_msg, config_path=path_to_save) from e
         except Exception as e:
