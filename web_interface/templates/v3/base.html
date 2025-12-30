@@ -2758,12 +2758,12 @@
                                 }
                             }
                             
-                            // Get x-widget from schema (source of truth) or prop (fallback)
-                            // Also check prop object directly - it should have x-widget if schema was loaded correctly
-                            const xWidgetFromSchema = schemaProp ? (schemaProp['x-widget'] || schemaProp['x_widget']) : null;
+                            // Get x-widget from prop FIRST (should have it if schema loaded correctly), then schema lookup
+                            // The prop object should already have x-widget from schema.properties[key]
                             const xWidgetFromProp = prop['x-widget'] || prop['x_widget'] || prop.xWidget;
-                            // For top-level images, also check if prop itself has the attribute (should be passed from schema)
-                            const xWidget = xWidgetFromSchema || xWidgetFromProp || (fullKey === 'images' && prop['x-widget'] === 'file-upload' ? 'file-upload' : null);
+                            const xWidgetFromSchema = schemaProp ? (schemaProp['x-widget'] || schemaProp['x_widget']) : null;
+                            // Use prop first (most direct), then schema lookup as fallback
+                            const xWidget = xWidgetFromProp || xWidgetFromSchema;
                             
                             // Debug logging for ALL array fields to diagnose
                             console.log('[DEBUG] Array field check:', fullKey, {
