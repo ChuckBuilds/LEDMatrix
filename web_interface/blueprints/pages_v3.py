@@ -336,6 +336,40 @@ def _load_plugin_config_partial(plugin_id):
             full_config = pages_v3.config_manager.load_config()
             config = full_config.get(plugin_id, {})
         
+        # Load uploaded images from metadata file if images field exists in schema
+        # This ensures uploaded images appear even if config hasn't been saved yet
+        schema_path_temp = Path(pages_v3.plugin_manager.plugins_dir) / plugin_id / "config_schema.json"
+        if schema_path_temp.exists():
+            try:
+                with open(schema_path_temp, 'r', encoding='utf-8') as f:
+                    temp_schema = json.load(f)
+                    # Check if schema has an images field with x-widget: file-upload
+                    if (temp_schema.get('properties', {}).get('images', {}).get('x-widget') == 'file-upload' or
+                        temp_schema.get('properties', {}).get('images', {}).get('x_widget') == 'file-upload'):
+                        # Load metadata file
+                        from pathlib import Path as PathLib
+                        PROJECT_ROOT = PathLib(__file__).parent.parent.parent
+                        metadata_file = PROJECT_ROOT / 'assets' / 'plugins' / plugin_id / 'uploads' / '.metadata.json'
+                        if metadata_file.exists():
+                            try:
+                                with open(metadata_file, 'r', encoding='utf-8') as mf:
+                                    metadata = json.load(mf)
+                                    # Convert metadata dict to list of image objects
+                                    images_from_metadata = list(metadata.values())
+                                    # Only use metadata images if config doesn't have images or config images is empty
+                                    if not config.get('images') or len(config.get('images', [])) == 0:
+                                        config['images'] = images_from_metadata
+                                    else:
+                                        # Merge: add metadata images that aren't already in config
+                                        config_image_ids = {img.get('id') for img in config.get('images', []) if img.get('id')}
+                                        new_images = [img for img in images_from_metadata if img.get('id') not in config_image_ids]
+                                        if new_images:
+                                            config['images'] = config.get('images', []) + new_images
+                            except Exception as e:
+                                print(f"Warning: Could not load metadata for {plugin_id}: {e}")
+            except Exception:
+                pass  # Will load schema properly below
+        
         # Get plugin schema
         schema = {}
         schema_path = Path(pages_v3.plugin_manager.plugins_dir) / plugin_id / "config_schema.json"
