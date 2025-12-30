@@ -5319,56 +5319,6 @@ def serve_plugin_static(plugin_id, file_path):
         import traceback
         return jsonify({'status': 'error', 'message': str(e), 'traceback': traceback.format_exc()}), 500
 
-@api_v3.route('/assets/plugins/<plugin_id>/uploads/<path:filename>', methods=['GET'])
-def serve_plugin_asset(plugin_id, filename):
-    """Serve uploaded asset files from assets/plugins/{plugin_id}/uploads/"""
-    try:
-        # Build the asset directory path
-        assets_dir = PROJECT_ROOT / 'assets' / 'plugins' / plugin_id / 'uploads'
-        assets_dir = assets_dir.resolve()
-        
-        # Security check: ensure the assets directory exists and is within PROJECT_ROOT
-        if not assets_dir.exists() or not assets_dir.is_dir():
-            return jsonify({'status': 'error', 'message': 'Asset directory not found'}), 404
-        
-        # Ensure we're serving from within the assets directory (prevent directory traversal)
-        if not str(assets_dir).startswith(str(PROJECT_ROOT.resolve())):
-            return jsonify({'status': 'error', 'message': 'Invalid asset path'}), 403
-        
-        # Resolve the requested file path
-        requested_file = (assets_dir / filename).resolve()
-        
-        # Security check: ensure file is within the assets directory
-        if not str(requested_file).startswith(str(assets_dir)):
-            return jsonify({'status': 'error', 'message': 'Invalid file path'}), 403
-        
-        # Check if file exists
-        if not requested_file.exists() or not requested_file.is_file():
-            return jsonify({'status': 'error', 'message': 'File not found'}), 404
-        
-        # Determine content type based on file extension
-        content_type = 'application/octet-stream'
-        if filename.lower().endswith(('.png', '.jpg', '.jpeg')):
-            content_type = 'image/jpeg' if filename.lower().endswith(('.jpg', '.jpeg')) else 'image/png'
-        elif filename.lower().endswith('.gif'):
-            content_type = 'image/gif'
-        elif filename.lower().endswith('.bmp'):
-            content_type = 'image/bmp'
-        elif filename.lower().endswith('.webp'):
-            content_type = 'image/webp'
-        elif filename.lower().endswith('.svg'):
-            content_type = 'image/svg+xml'
-        elif filename.lower().endswith('.json'):
-            content_type = 'application/json'
-        elif filename.lower().endswith('.txt'):
-            content_type = 'text/plain'
-        
-        # Use send_from_directory to serve the file
-        return send_from_directory(str(assets_dir), filename, mimetype=content_type)
-        
-    except Exception as e:
-        import traceback
-        return jsonify({'status': 'error', 'message': str(e), 'traceback': traceback.format_exc()}), 500
 
 @api_v3.route('/plugins/calendar/upload-credentials', methods=['POST'])
 def upload_calendar_credentials():
