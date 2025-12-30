@@ -2719,8 +2719,13 @@
                             // ALWAYS check schema first as source of truth, then fall back to prop
                             let schemaProp = getSchemaProperty(schema, fullKey);
                             
-                            // Special fallback: ALWAYS try direct schema navigation for image_config.images
-                            // This ensures we catch it even if getSchemaProperty fails
+                            // Special check for top-level 'images' field (flattened schema)
+                            if (!schemaProp && fullKey === 'images' && schema && schema.properties && schema.properties.images) {
+                                schemaProp = schema.properties.images;
+                                console.log('[DEBUG] ✅ Found top-level images via direct schema access');
+                            }
+                            
+                            // Special fallback: ALWAYS try direct schema navigation for image_config.images (backward compat)
                             if (fullKey === 'image_config.images' && schema && schema.properties) {
                                 const imgConfigProp = schema.properties.image_config;
                                 if (imgConfigProp && imgConfigProp.properties && imgConfigProp.properties.images) {
@@ -2754,14 +2759,20 @@
                             }
                             
                             // Get x-widget from schema (source of truth) or prop (fallback)
+                            // Also check prop object directly - it should have x-widget if schema was loaded correctly
                             const xWidgetFromSchema = schemaProp ? (schemaProp['x-widget'] || schemaProp['x_widget']) : null;
                             const xWidgetFromProp = prop['x-widget'] || prop['x_widget'] || prop.xWidget;
-                            const xWidget = xWidgetFromSchema || xWidgetFromProp;
+                            // For top-level images, also check if prop itself has the attribute (should be passed from schema)
+                            const xWidget = xWidgetFromSchema || xWidgetFromProp || (fullKey === 'images' && prop['x-widget'] === 'file-upload' ? 'file-upload' : null);
                             
                             // Debug logging for ALL array fields to diagnose
                             console.log('[DEBUG] Array field check:', fullKey, {
                                 'prop keys': Object.keys(prop),
                                 'prop.x-widget': prop['x-widget'],
+                                'prop.x_widget': prop['x_widget'],
+                                'prop.xWidget': prop.xWidget,
+                                'hasOwnProperty(x-widget)': prop.hasOwnProperty('x-widget'),
+                                'x-widget in prop': 'x-widget' in prop,
                                 'schemaProp found': !!schemaProp,
                                 'schemaProp keys': schemaProp ? Object.keys(schemaProp) : null,
                                 'schemaProp.x-widget': schemaProp ? schemaProp['x-widget'] : null,
@@ -2770,7 +2781,9 @@
                                 'final xWidget': xWidget,
                                 'will render file-upload?': xWidget === 'file-upload',
                                 'schema exists': !!schema,
-                                'schema.properties exists': !!(schema && schema.properties)
+                                'schema.properties exists': !!(schema && schema.properties),
+                                'schema.properties.images exists': !!(schema && schema.properties && schema.properties.images),
+                                'schema.properties.images.x-widget': (schema && schema.properties && schema.properties.images) ? schema.properties.images['x-widget'] : null
                             });
                             
                             if (xWidget === 'file-upload') {
