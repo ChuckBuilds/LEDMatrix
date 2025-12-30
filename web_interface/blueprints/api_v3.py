@@ -1,4 +1,4 @@
-from flask import Blueprint, request, jsonify, Response
+from flask import Blueprint, request, jsonify, Response, send_from_directory
 import json
 import os
 import sys
@@ -5323,8 +5323,6 @@ def serve_plugin_static(plugin_id, file_path):
 def serve_plugin_asset(plugin_id, filename):
     """Serve uploaded asset files from assets/plugins/{plugin_id}/uploads/"""
     try:
-        from flask import send_from_directory
-        
         # Build the asset directory path
         assets_dir = PROJECT_ROOT / 'assets' / 'plugins' / plugin_id / 'uploads'
         assets_dir = assets_dir.resolve()
