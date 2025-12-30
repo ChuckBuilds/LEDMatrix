@@ -438,19 +438,52 @@ class ConfigManager:
             path_obj = Path(path_to_save)
             ensure_directory_permissions(path_obj.parent, get_config_dir_mode())
             
-            # Write the file - let the actual write operation determine if it succeeds
-            with open(path_to_save, 'w') as f:
-                json.dump(data, f, indent=4)
+            # Use atomic write: write to temp file first, then move atomically
+            # This works even if the existing file isn't writable (as long as directory is writable)
+            import tempfile
+            file_mode = get_config_file_mode(path_obj)
             
-            # Set proper file permissions after writing
+            # Create temp file in same directory to ensure atomic move works
+            temp_fd, temp_path = tempfile.mkstemp(
+                suffix='.json',
+                dir=str(path_obj.parent),
+                text=True
+            )
+            
             try:
-                ensure_file_permissions(path_obj, get_config_file_mode(path_obj))
-            except OSError as perm_error:
-                # If we can't set permissions but file was written, log warning but don't fail
-                self.logger.warning(
-                    f"File {path_to_save} was written successfully but could not set permissions: {perm_error}. "
-                    f"This may cause issues if the file needs to be accessible by other users."
-                )
+                # Write to temp file
+                with os.fdopen(temp_fd, 'w', encoding='utf-8') as f:
+                    json.dump(data, f, indent=4)
+                    f.flush()
+                    os.fsync(f.fileno())
+                
+                # Set permissions on temp file before moving
+                try:
+                    os.chmod(temp_path, file_mode)
+                except OSError:
+                    pass  # Non-critical if chmod fails
+                
+                # Atomically move temp file to final location
+                # This works even if target file exists and isn't writable
+                os.replace(temp_path, str(path_obj))
+                temp_path = None  # Mark as moved so we don't try to clean it up
+                
+                # Ensure final file has correct permissions
+                try:
+                    ensure_file_permissions(path_obj, file_mode)
+                except OSError as perm_error:
+                    # If we can't set permissions but file was written, log warning but don't fail
+                    self.logger.warning(
+                        f"File {path_to_save} was written successfully but could not set permissions: {perm_error}. "
+                        f"This may cause issues if the file needs to be accessible by other users."
+                    )
+            finally:
+                # Clean up temp file if it still exists (move failed)
+                if temp_path and os.path.exists(temp_path):
+                    try:
+                        os.remove(temp_path)
+                    except OSError:
+                        pass
             
             self.logger.info(f"{file_type.capitalize()} configuration successfully saved to {os.path.abspath(path_to_save)}")
             
