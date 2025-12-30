@@ -2872,7 +2872,9 @@ function generateFormFromSchema(schema, config, webUiActions = []) {
                             </div>
                             <button type="button" 
                                     id="${actionId}"
-                                    onclick="executePluginAction('${action.id}', ${index})" 
+                                    onclick="executePluginAction('${action.id}', ${index}, '${window.currentPluginConfig?.pluginId || ''}')" 
+                                    data-plugin-id="${window.currentPluginConfig?.pluginId || ''}"
+                                    data-action-id="${action.id}"
                                     class="btn ${colors.btn} text-white px-4 py-2 rounded-md whitespace-nowrap">
                                 ${action.icon ? `<i class="${action.icon} mr-2"></i>` : ''}${action.button_text || action.title || 'Execute'}
                             </button>
@@ -3196,7 +3198,9 @@ function generateSimpleConfigForm(config, webUiActions = []) {
                             </div>
                             <button type="button" 
                                     id="${actionId}"
-                                    onclick="executePluginAction('${action.id}', ${index})" 
+                                    onclick="executePluginAction('${action.id}', ${index}, '${window.currentPluginConfig?.pluginId || ''}')" 
+                                    data-plugin-id="${window.currentPluginConfig?.pluginId || ''}"
+                                    data-action-id="${action.id}"
                                     class="btn ${colors.btn} text-white px-4 py-2 rounded-md">
                                 ${action.icon ? `<i class="${action.icon} mr-2"></i>` : ''}${action.button_text || action.title || 'Execute'}
                             </button>
@@ -3619,21 +3623,49 @@ window.executePluginAction = function(actionId, actionIndex, pluginIdParam = nul
         }
     }
     
-    // Fallback 6: Try to find from plugin tab elements
-    if (!pluginId) {
-        const pluginTab = document.querySelector('[x-show*="activeTab === plugin.id"]');
-        if (pluginTab && window.Alpine) {
-            try {
-                const pluginData = Alpine.$data(pluginTab.closest('[x-data]'));
-                if (pluginData && pluginData.plugin) {
-                    pluginId = pluginData.plugin.id;
-                    if (pluginId) {
-                        console.log('[DEBUG] Got pluginId from Alpine plugin data:', pluginId);
+    // Fallback 6: Try to find from plugin tab elements (scoped to button context)
+    if (!pluginId && btn) {
+        try {
+            // Search within the button's Alpine.js context (closest x-data element)
+            const buttonContext = btn.closest('[x-data]');
+            if (buttonContext) {
+                const pluginTab = buttonContext.querySelector('[x-show*="activeTab === plugin.id"]');
+                if (pluginTab && window.Alpine) {
+                    try {
+                        const pluginData = Alpine.$data(buttonContext);
+                        if (pluginData && pluginData.plugin) {
+                            pluginId = pluginData.plugin.id;
+                            if (pluginId) {
+                                console.log('[DEBUG] Got pluginId from Alpine plugin data (scoped to button context):', pluginId);
+                            }
+                        }
+                    } catch (e) {
+                        console.warn('[DEBUG] Error accessing Alpine plugin data:', e);
                     }
                 }
-            } catch (e) {
-                console.warn('[DEBUG] Error accessing Alpine plugin data:', e);
             }
+            // If not found in button context, try container element
+            if (!pluginId) {
+                const container = btn.closest('.plugin-config-container, .plugin-config-tab, [id^="plugin-config-"]');
+                if (container) {
+                    const containerContext = container.querySelector('[x-show*="activeTab === plugin.id"]');
+                    if (containerContext && window.Alpine) {
+                        try {
+                            const containerData = Alpine.$data(container.closest('[x-data]'));
+                            if (containerData && containerData.plugin) {
+                                pluginId = containerData.plugin.id;
+                                if (pluginId) {
+                                    console.log('[DEBUG] Got pluginId from Alpine plugin data (scoped to container):', pluginId);
+                                }
+                            }
+                        } catch (e) {
+                            console.warn('[DEBUG] Error accessing Alpine plugin data from container:', e);
+                        }
+                    }
+                }
+            }
+        } catch (e) {
+            console.warn('[DEBUG] Error in fallback 6 DOM lookup:', e);
         }
     }
     
