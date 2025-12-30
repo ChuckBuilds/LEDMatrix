@@ -2533,14 +2533,23 @@
                         if (!schemaObj || !schemaObj.properties) return null;
                         const keys = keyPath.split('.');
                         let current = schemaObj.properties;
-                        for (const k of keys) {
-                            if (current && current[k]) {
-                                if (current[k].properties) {
-                                    current = current[k].properties;
-                                } else {
-                                    return current[k];
-                                }
+                        for (let i = 0; i < keys.length; i++) {
+                            const k = keys[i];
+                            if (!current || !current[k]) {
+                                return null;
+                            }
+                            
+                            const prop = current[k];
+                            // If this is the last key, return the property
+                            if (i === keys.length - 1) {
+                                return prop;
+                            }
+                            
+                            // If this property has nested properties, navigate deeper
+                            if (prop && typeof prop === 'object' && prop.properties) {
+                                current = prop.properties;
                             } else {
+                                // Can't navigate deeper
                                 return null;
                             }
                         }
@@ -2714,14 +2723,37 @@
                             const xWidgetFromSchema = schemaProp ? (schemaProp['x-widget'] || schemaProp['x_widget']) : null;
                             const xWidget = xWidgetFromProp || xWidgetFromSchema;
                             
-                            // Debug logging
-                            if (xWidget || xWidgetFromProp || xWidgetFromSchema) {
-                                console.log('[DEBUG] Array field', fullKey, 'x-widget from prop:', xWidgetFromProp, 'x-widget from schema:', xWidgetFromSchema, 'final x-widget:', xWidget);
+                            // Debug logging for ALL array fields to diagnose
+                            console.log('[DEBUG] Array field check:', fullKey, {
+                                'prop keys': Object.keys(prop),
+                                'prop.x-widget': prop['x-widget'],
+                                'prop.x_widget': prop['x_widget'],
+                                'schemaProp found': !!schemaProp,
+                                'schemaProp.x-widget': schemaProp ? schemaProp['x-widget'] : null,
+                                'xWidgetFromProp': xWidgetFromProp,
+                                'xWidgetFromSchema': xWidgetFromSchema,
+                                'final xWidget': xWidget,
+                                'will render file-upload?': xWidget === 'file-upload'
+                            });
+                            
+                            // Special fallback: if schemaProp lookup failed but we know this should be file-upload,
+                            // try direct schema navigation for image_config.images
+                            let finalSchemaProp = schemaProp;
+                            if (!finalSchemaProp && fullKey === 'image_config.images' && schema && schema.properties) {
+                                const imgConfigProp = schema.properties.image_config;
+                                if (imgConfigProp && imgConfigProp.properties && imgConfigProp.properties.images) {
+                                    finalSchemaProp = imgConfigProp.properties.images;
+                                    console.log('[DEBUG] ✅ Found schema property via direct lookup for', fullKey);
+                                }
                             }
                             
-                            if (xWidget === 'file-upload') {
-                                // Get upload config from prop or schema
-                                const uploadConfig = prop['x-upload-config'] || prop['x_upload_config'] || schemaProp?.['x-upload-config'] || schemaProp?.['x_upload_config'] || {};
+                            // Update xWidget check with finalSchemaProp
+                            const finalXWidgetFromSchema = finalSchemaProp ? (finalSchemaProp['x-widget'] || finalSchemaProp['x_widget']) : null;
+                            const finalXWidget = xWidgetFromProp || finalXWidgetFromSchema;
+                            
+                            if (finalXWidget === 'file-upload') {
+                                // Get upload config from prop or finalSchemaProp
+                                const uploadConfig = prop['x-upload-config'] || prop['x_upload_config'] || finalSchemaProp?.['x-upload-config'] || finalSchemaProp?.['x_upload_config'] || {};
                                 console.log('[DEBUG] ✅ Detected file-upload widget for', fullKey, 'with config:', uploadConfig);
                                 // Use the file upload widget from plugins.html
                                 // We'll need to call a function that exists in the global scope
