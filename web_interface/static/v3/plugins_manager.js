@@ -2161,6 +2161,8 @@ function generatePluginConfigForm(pluginId, config) {
                     schema: schemaData.data.schema,
                     webUiActions: webUiActions
                 };
+                // Also assign to window for global access in template interpolations
+                window.currentPluginConfig = currentPluginConfig;
                 // Also update state
                 currentPluginConfigState.schema = schemaData.data.schema;
                 console.log('[DEBUG] Calling generateFormFromSchema...');
@@ -2168,12 +2170,16 @@ function generatePluginConfigForm(pluginId, config) {
             } else {
                 // Fallback to simple form if no schema
                 currentPluginConfig = { pluginId: pluginId, schema: null, webUiActions: webUiActions };
+                // Also assign to window for global access in template interpolations
+                window.currentPluginConfig = currentPluginConfig;
                 return generateSimpleConfigForm(config, webUiActions);
             }
         })
         .catch(error => {
             console.error('Error loading schema:', error);
             currentPluginConfig = { pluginId: pluginId, schema: null, webUiActions: [] };
+            // Also assign to window for global access in template interpolations
+            window.currentPluginConfig = currentPluginConfig;
             return generateSimpleConfigForm(config, []);
         });
 }
