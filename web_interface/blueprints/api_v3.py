@@ -3979,15 +3979,42 @@ def save_plugin_config():
             # Save secrets file
             try:
                 api_v3.config_manager.save_raw_file_content('secrets', current_secrets)
+            except PermissionError as e:
+                # Log the error with more details
+                import logging
+                import os
+                logger = logging.getLogger(__name__)
+                secrets_path = api_v3.config_manager.secrets_path
+                secrets_dir = os.path.dirname(secrets_path) if secrets_path else None
+                
+                # Check permissions
+                dir_readable = os.access(secrets_dir, os.R_OK) if secrets_dir and os.path.exists(secrets_dir) else False
+                dir_writable = os.access(secrets_dir, os.W_OK) if secrets_dir and os.path.exists(secrets_dir) else False
+                file_writable = os.access(secrets_path, os.W_OK) if secrets_path and os.path.exists(secrets_path) else False
+                
+                logger.error(
+                    f"Permission error saving secrets config for {plugin_id}: {e}\n"
+                    f"Secrets path: {secrets_path}\n"
+                    f"Directory readable: {dir_readable}, writable: {dir_writable}\n"
+                    f"File writable: {file_writable}",
+                    exc_info=True
+                )
+                return error_response(
+                    ErrorCode.CONFIG_SAVE_FAILED,
+                    f"Failed to save secrets configuration: Permission denied. Check file permissions on {secrets_path}",
+                    status_code=500
+                )
             except Exception as e:
                 # Log the error but don't fail the entire config save
                 import logging
+                import os
                 logger = logging.getLogger(__name__)
+                secrets_path = api_v3.config_manager.secrets_path
                 logger.error(f"Error saving secrets config for {plugin_id}: {e}", exc_info=True)
-                # Return error response
+                # Return error response with more context
                 return error_response(
                     ErrorCode.CONFIG_SAVE_FAILED,
-                    f"Failed to save secrets configuration: {str(e)}",
+                    f"Failed to save secrets configuration: {str(e)} (config_path={secrets_path})",
                     status_code=500
                 )
 
@@ -4225,13 +4252,30 @@ def reset_plugin_config():
 def execute_plugin_action():
     """Execute a plugin-defined action (e.g., authentication)"""
     try:
-        data = request.get_json() or {}
+        # Try to get JSON data, with better error handling
+        try:
+            data = request.get_json(force=True) or {}
+        except Exception as e:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.error(f"Error parsing JSON in execute_plugin_action: {e}")
+            return jsonify({
+                'status': 'error', 
+                'message': f'Invalid JSON in request: {str(e)}',
+                'content_type': request.content_type,
+                'data': request.data.decode('utf-8', errors='ignore')[:200]
+            }), 400
+        
         plugin_id = data.get('plugin_id')
         action_id = data.get('action_id')
         action_params = data.get('params', {})
 
         if not plugin_id or not action_id:
-            return jsonify({'status': 'error', 'message': 'plugin_id and action_id required'}), 400
+            return jsonify({
+                'status': 'error', 
+                'message': 'plugin_id and action_id required',
+                'received': {'plugin_id': plugin_id, 'action_id': action_id, 'has_params': bool(action_params)}
+            }), 400
 
         # Get plugin directory
         if api_v3.plugin_manager:
@@ -4339,16 +4383,16 @@ sys.exit(proc.returncode)
                     if os.path.exists(wrapper_path):
                         os.unlink(wrapper_path)
                     return jsonify({'status': 'error', 'message': 'Action timed out'}), 408
-                else:
-                    # Regular script execution - pass params via stdin if provided
-                    if action_params:
-                        # Pass params as JSON via stdin
-                        import tempfile
-                        import json as json_lib
+            else:
+                # Regular script execution - pass params via stdin if provided
+                if action_params:
+                    # Pass params as JSON via stdin
+                    import tempfile
+                    import json as json_lib
 
-                        params_json = json_lib.dumps(action_params)
-                        with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as wrapper:
-                            wrapper.write(f'''import sys
+                    params_json = json_lib.dumps(action_params)
+                    with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as wrapper:
+                        wrapper.write(f'''import sys
 import subprocess
 import os
 import json
@@ -4372,139 +4416,139 @@ stdout, _ = proc.communicate(input=json.dumps(params), timeout=120)
 print(stdout)
 sys.exit(proc.returncode)
 ''')
-                            wrapper_path = wrapper.name
+                        wrapper_path = wrapper.name
 
+                    try:
+                        result = subprocess.run(
+                            ['python3', wrapper_path],
+                            capture_output=True,
+                            text=True,
+                            timeout=120,
+                            env=env
+                        )
+                        os.unlink(wrapper_path)
+
+                        # Try to parse output as JSON
                         try:
-                            result = subprocess.run(
-                                ['python3', wrapper_path],
-                                capture_output=True,
-                                text=True,
-                                timeout=120,
-                                env=env
-                            )
-                            os.unlink(wrapper_path)
-
-                            # Try to parse output as JSON
-                            try:
-                                output_data = json.loads(result.stdout)
-                                if result.returncode == 0:
-                                    return jsonify(output_data)
-                                else:
-                                    return jsonify({
-                                        'status': 'error',
-                                        'message': output_data.get('message', action_def.get('error_message', 'Action failed')),
-                                        'output': result.stdout + result.stderr
-                                    }), 400
-                            except json.JSONDecodeError:
-                                # Output is not JSON, return as text
-                                if result.returncode == 0:
-                                    return jsonify({
-                                        'status': 'success',
-                                        'message': action_def.get('success_message', 'Action completed successfully'),
-                                        'output': result.stdout
-                                    })
-                                else:
-                                    return jsonify({
-                                        'status': 'error',
-                                        'message': action_def.get('error_message', 'Action failed'),
-                                        'output': result.stdout + result.stderr
-                                    }), 400
-                        except subprocess.TimeoutExpired:
-                            if os.path.exists(wrapper_path):
-                                os.unlink(wrapper_path)
-                            return jsonify({'status': 'error', 'message': 'Action timed out'}), 408
-                    else:
-                        # No params - check for OAuth flow first, then run script normally
-                        # Step 1: Get initial data (like auth URL)
-                        # For OAuth flows, we might need to import the script as a module
-                        if action_def.get('oauth_flow'):
-                            # Import script as module to get auth URL
-                            import sys
-                            import importlib.util
-
-                            spec = importlib.util.spec_from_file_location("plugin_action", script_file)
-                            action_module = importlib.util.module_from_spec(spec)
-                            sys.modules["plugin_action"] = action_module
-
-                            try:
-                                spec.loader.exec_module(action_module)
-
-                                # Try to get auth URL using common patterns
-                                auth_url = None
-                                if hasattr(action_module, 'get_auth_url'):
-                                    auth_url = action_module.get_auth_url()
-                                elif hasattr(action_module, 'load_spotify_credentials'):
-                                    # Spotify-specific pattern
-                                    client_id, client_secret, redirect_uri = action_module.load_spotify_credentials()
-                                    if all([client_id, client_secret, redirect_uri]):
-                                        from spotipy.oauth2 import SpotifyOAuth
-                                        sp_oauth = SpotifyOAuth(
-                                            client_id=client_id,
-                                            client_secret=client_secret,
-                                            redirect_uri=redirect_uri,
-                                            scope=getattr(action_module, 'SCOPE', ''),
-                                            cache_path=getattr(action_module, 'SPOTIFY_AUTH_CACHE_PATH', None),
-                                            open_browser=False
-                                        )
-                                        auth_url = sp_oauth.get_authorize_url()
-
-                                if auth_url:
-                                    return jsonify({
-                                        'status': 'success',
-                                        'message': action_def.get('step1_message', 'Authorization URL generated'),
-                                        'auth_url': auth_url,
-                                        'requires_step2': True
-                                    })
-                                else:
-                                    return jsonify({
-                                        'status': 'error',
-                                        'message': 'Could not generate authorization URL'
-                                    }), 400
-                            except Exception as e:
-                                import traceback
-                                error_details = traceback.format_exc()
-                                print(f"Error executing action step 1: {e}")
-                                print(error_details)
+                            output_data = json.loads(result.stdout)
+                            if result.returncode == 0:
+                                return jsonify(output_data)
+                            else:
                                 return jsonify({
                                     'status': 'error',
-                                    'message': f'Error executing action: {str(e)}'
-                                }), 500
-                        else:
-                            # Simple script execution
-                            result = subprocess.run(
-                                ['python3', str(script_file)],
-                                capture_output=True,
-                                text=True,
-                                timeout=60,
-                                env=env
-                            )
+                                    'message': output_data.get('message', action_def.get('error_message', 'Action failed')),
+                                    'output': result.stdout + result.stderr
+                                }), 400
+                        except json.JSONDecodeError:
+                            # Output is not JSON, return as text
+                            if result.returncode == 0:
+                                return jsonify({
+                                    'status': 'success',
+                                    'message': action_def.get('success_message', 'Action completed successfully'),
+                                    'output': result.stdout
+                                })
+                            else:
+                                return jsonify({
+                                    'status': 'error',
+                                    'message': action_def.get('error_message', 'Action failed'),
+                                    'output': result.stdout + result.stderr
+                                }), 400
+                    except subprocess.TimeoutExpired:
+                        if os.path.exists(wrapper_path):
+                            os.unlink(wrapper_path)
+                        return jsonify({'status': 'error', 'message': 'Action timed out'}), 408
+                else:
+                    # No params - check for OAuth flow first, then run script normally
+                    # Step 1: Get initial data (like auth URL)
+                    # For OAuth flows, we might need to import the script as a module
+                    if action_def.get('oauth_flow'):
+                        # Import script as module to get auth URL
+                        import sys
+                        import importlib.util
 
-                            # Try to parse output as JSON
-                            try:
-                                import json as json_module
-                                output_data = json_module.loads(result.stdout)
-                                if result.returncode == 0:
-                                    return jsonify(output_data)
-                                else:
-                                    return jsonify({
-                                        'status': 'error',
-                                        'message': output_data.get('message', action_def.get('error_message', 'Action failed')),
-                                        'output': result.stdout + result.stderr
-                                    }), 400
-                            except json.JSONDecodeError:
-                                # Output is not JSON, return as text
-                                if result.returncode == 0:
-                                    return jsonify({
-                                        'status': 'success',
-                                        'message': action_def.get('success_message', 'Action completed successfully'),
-                                        'output': result.stdout
-                                    })
-                                else:
-                                    return jsonify({
-                                        'status': 'error',
-                                        'message': action_def.get('error_message', 'Action failed'),
-                                        'output': result.stdout + result.stderr
-                                    }), 400
+                        spec = importlib.util.spec_from_file_location("plugin_action", script_file)
+                        action_module = importlib.util.module_from_spec(spec)
+                        sys.modules["plugin_action"] = action_module
+
+                        try:
+                            spec.loader.exec_module(action_module)
+
+                            # Try to get auth URL using common patterns
+                            auth_url = None
+                            if hasattr(action_module, 'get_auth_url'):
+                                auth_url = action_module.get_auth_url()
+                            elif hasattr(action_module, 'load_spotify_credentials'):
+                                # Spotify-specific pattern
+                                client_id, client_secret, redirect_uri = action_module.load_spotify_credentials()
+                                if all([client_id, client_secret, redirect_uri]):
+                                    from spotipy.oauth2 import SpotifyOAuth
+                                    sp_oauth = SpotifyOAuth(
+                                        client_id=client_id,
+                                        client_secret=client_secret,
+                                        redirect_uri=redirect_uri,
+                                        scope=getattr(action_module, 'SCOPE', ''),
+                                        cache_path=getattr(action_module, 'SPOTIFY_AUTH_CACHE_PATH', None),
+                                        open_browser=False
+                                    )
+                                    auth_url = sp_oauth.get_authorize_url()
+
+                            if auth_url:
+                                return jsonify({
+                                    'status': 'success',
+                                    'message': action_def.get('step1_message', 'Authorization URL generated'),
+                                    'auth_url': auth_url,
+                                    'requires_step2': True
+                                })
+                            else:
+                                return jsonify({
+                                    'status': 'error',
+                                    'message': 'Could not generate authorization URL'
+                                }), 400
+                        except Exception as e:
+                            import traceback
+                            error_details = traceback.format_exc()
+                            print(f"Error executing action step 1: {e}")
+                            print(error_details)
+                            return jsonify({
+                                'status': 'error',
+                                'message': f'Error executing action: {str(e)}'
+                            }), 500
+                    else:
+                        # Simple script execution
+                        result = subprocess.run(
+                            ['python3', str(script_file)],
+                            capture_output=True,
+                            text=True,
+                            timeout=60,
+                            env=env
+                        )
+
+                        # Try to parse output as JSON
+                        try:
+                            import json as json_module
+                            output_data = json_module.loads(result.stdout)
+                            if result.returncode == 0:
+                                return jsonify(output_data)
+                            else:
+                                return jsonify({
+                                    'status': 'error',
+                                    'message': output_data.get('message', action_def.get('error_message', 'Action failed')),
+                                    'output': result.stdout + result.stderr
+                                }), 400
+                        except json.JSONDecodeError:
+                            # Output is not JSON, return as text
+                            if result.returncode == 0:
+                                return jsonify({
+                                    'status': 'success',
+                                    'message': action_def.get('success_message', 'Action completed successfully'),
+                                    'output': result.stdout
+                                })
+                            else:
+                                return jsonify({
+                                    'status': 'error',
+                                    'message': action_def.get('error_message', 'Action failed'),
+                                    'output': result.stdout + result.stderr
+                                }), 400
 
         elif action_type == 'endpoint':
             # Call a plugin-defined HTTP endpoint (future feature)

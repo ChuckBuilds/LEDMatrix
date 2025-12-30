@@ -438,11 +438,52 @@ class ConfigManager:
             path_obj = Path(path_to_save)
             ensure_directory_permissions(path_obj.parent, get_config_dir_mode())
             
-            with open(path_to_save, 'w') as f:
-                json.dump(data, f, indent=4)
+            # Use atomic write: write to temp file first, then move atomically
+            # This works even if the existing file isn't writable (as long as directory is writable)
+            import tempfile
+            file_mode = get_config_file_mode(path_obj)
             
-            # Set proper file permissions after writing
-            ensure_file_permissions(path_obj, get_config_file_mode(path_obj))
+            # Create temp file in same directory to ensure atomic move works
+            temp_fd, temp_path = tempfile.mkstemp(
+                suffix='.json',
+                dir=str(path_obj.parent),
+                text=True
+            )
+            
+            try:
+                # Write to temp file
+                with os.fdopen(temp_fd, 'w', encoding='utf-8') as f:
+                    json.dump(data, f, indent=4)
+                    f.flush()
+                    os.fsync(f.fileno())
+                
+                # Set permissions on temp file before moving
+                try:
+                    os.chmod(temp_path, file_mode)
+                except OSError:
+                    pass  # Non-critical if chmod fails
+                
+                # Atomically move temp file to final location
+                # This works even if target file exists and isn't writable
+                os.replace(temp_path, str(path_obj))
+                temp_path = None  # Mark as moved so we don't try to clean it up
+                
+                # Ensure final file has correct permissions
+                try:
+                    ensure_file_permissions(path_obj, file_mode)
+                except OSError as perm_error:
+                    # If we can't set permissions but file was written, log warning but don't fail
+                    self.logger.warning(
+                        f"File {path_to_save} was written successfully but could not set permissions: {perm_error}. "
+                        f"This may cause issues if the file needs to be accessible by other users."
+                    )
+            finally:
+                # Clean up temp file if it still exists (move failed)
+                if temp_path and os.path.exists(temp_path):
+                    try:
+                        os.remove(temp_path)
+                    except OSError:
+                        pass
             
             self.logger.info(f"{file_type.capitalize()} configuration successfully saved to {os.path.abspath(path_to_save)}")
             
@@ -461,8 +502,43 @@ class ConfigManager:
                         f"The file on disk is valid, but in-memory config may be stale."
                     )
 
-        except (IOError, OSError, PermissionError) as e:
-            error_msg = f"Error writing {file_type} configuration to file {os.path.abspath(path_to_save)}"
+        except PermissionError as e:
+            # Provide helpful error message with fix instructions
+            import stat
+            try:
+                import pwd
+                if path_obj.exists():
+                    file_stat = path_obj.stat()
+                    current_mode = stat.filemode(file_stat.st_mode)
+                    try:
+                        file_owner = pwd.getpwuid(file_stat.st_uid).pw_name
+                    except (ImportError, KeyError):
+                        file_owner = f"UID {file_stat.st_uid}"
+                    error_msg = (
+                        f"Cannot write to {file_type} configuration file {os.path.abspath(path_to_save)}. "
+                        f"File is owned by {file_owner} with permissions {current_mode}. "
+                        f"To fix, run: sudo chown $USER:$(id -gn) {path_to_save} && sudo chmod 664 {path_to_save}"
+                    )
+                else:
+                    # File doesn't exist - check directory permissions
+                    dir_stat = path_obj.parent.stat()
+                    dir_mode = stat.filemode(dir_stat.st_mode)
+                    try:
+                        dir_owner = pwd.getpwuid(dir_stat.st_uid).pw_name
+                    except (ImportError, KeyError):
+                        dir_owner = f"UID {dir_stat.st_uid}"
+                    error_msg = (
+                        f"Cannot create {file_type} configuration file {os.path.abspath(path_to_save)}. "
+                        f"Directory is owned by {dir_owner} with permissions {dir_mode}. "
+                        f"To fix, run: sudo chown $USER:$(id -gn) {path_obj.parent} && sudo chmod 775 {path_obj.parent}"
+                    )
+            except Exception:
+                # Fallback to generic message if we can't get file info
+                error_msg = f"Error writing {file_type} configuration to file {os.path.abspath(path_to_save)}: {str(e)}"
+            self.logger.error(error_msg, exc_info=True)
+            raise ConfigError(error_msg, config_path=path_to_save) from e
+        except (IOError, OSError) as e:
+            error_msg = f"Error writing {file_type} configuration to file {os.path.abspath(path_to_save)}: {str(e)}"
             self.logger.error(error_msg, exc_info=True)
             raise ConfigError(error_msg, config_path=path_to_save) from e
         except Exception as e:

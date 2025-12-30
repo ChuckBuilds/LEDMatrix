@@ -283,14 +283,64 @@
         {% if web_ui_actions %}
         <div class="mt-6 pt-4 border-t border-gray-200">
             <h3 class="text-md font-medium text-gray-900 mb-3">Plugin Actions</h3>
-            <div class="flex flex-wrap gap-2">
+            {% if web_ui_actions[0].section_description %}
+            <p class="text-sm text-gray-600 mb-4">{{ web_ui_actions[0].section_description }}</p>
+            {% endif %}
+            <div class="space-y-3">
                 {% for action in web_ui_actions %}
-                <button type="button"
-                        onclick="executePluginAction('{{ plugin.id }}', '{{ action.id }}')"
-                        class="px-4 py-2 text-sm bg-indigo-600 hover:bg-indigo-700 text-white rounded-md flex items-center gap-2 transition-colors">
-                    {% if action.icon %}<i class="{{ action.icon }}"></i>{% endif %}
-                    {{ action.label or action.id }}
-                </button>
+                {% set action_id = "action-" ~ action.id ~ "-" ~ loop.index0 %}
+                {% set status_id = "action-status-" ~ action.id ~ "-" ~ loop.index0 %}
+                {% set bg_color = action.color or 'blue' %}
+                {% if bg_color == 'green' %}
+                    {% set bg_class = 'bg-green-50' %}
+                    {% set border_class = 'border-green-200' %}
+                    {% set text_class = 'text-green-900' %}
+                    {% set text_light_class = 'text-green-700' %}
+                    {% set btn_class = 'bg-green-600 hover:bg-green-700' %}
+                {% elif bg_color == 'red' %}
+                    {% set bg_class = 'bg-red-50' %}
+                    {% set border_class = 'border-red-200' %}
+                    {% set text_class = 'text-red-900' %}
+                    {% set text_light_class = 'text-red-700' %}
+                    {% set btn_class = 'bg-red-600 hover:bg-red-700' %}
+                {% elif bg_color == 'yellow' %}
+                    {% set bg_class = 'bg-yellow-50' %}
+                    {% set border_class = 'border-yellow-200' %}
+                    {% set text_class = 'text-yellow-900' %}
+                    {% set text_light_class = 'text-yellow-700' %}
+                    {% set btn_class = 'bg-yellow-600 hover:bg-yellow-700' %}
+                {% elif bg_color == 'purple' %}
+                    {% set bg_class = 'bg-purple-50' %}
+                    {% set border_class = 'border-purple-200' %}
+                    {% set text_class = 'text-purple-900' %}
+                    {% set text_light_class = 'text-purple-700' %}
+                    {% set btn_class = 'bg-purple-600 hover:bg-purple-700' %}
+                {% else %}
+                    {% set bg_class = 'bg-blue-50' %}
+                    {% set border_class = 'border-blue-200' %}
+                    {% set text_class = 'text-blue-900' %}
+                    {% set text_light_class = 'text-blue-700' %}
+                    {% set btn_class = 'bg-blue-600 hover:bg-blue-700' %}
+                {% endif %}
+                <div class="{{ bg_class }} border {{ border_class }} rounded-lg p-4">
+                    <div class="flex items-center justify-between">
+                        <div class="flex-1">
+                            <h4 class="font-medium {{ text_class }} mb-1">
+                                {% if action.icon %}<i class="{{ action.icon }} mr-2"></i>{% endif %}{{ action.title or action.id }}
+                            </h4>
+                            <p class="text-sm {{ text_light_class }}">{{ action.description or '' }}</p>
+                        </div>
+                        <button type="button"
+                                id="{{ action_id }}"
+                                onclick="executePluginAction('{{ action.id }}', {{ loop.index0 }}, '{{ plugin.id }}')"
+                                data-plugin-id="{{ plugin.id }}"
+                                data-action-id="{{ action.id }}"
+                                class="btn {{ btn_class }} text-white px-4 py-2 rounded-md whitespace-nowrap">
+                            {% if action.icon %}<i class="{{ action.icon }} mr-2"></i>{% endif %}{{ action.button_text or action.title or action.id }}
+                        </button>
+                    </div>
+                    <div id="{{ status_id }}" class="mt-3 hidden"></div>
+                </div>
                 {% endfor %}
             </div>
         </div>

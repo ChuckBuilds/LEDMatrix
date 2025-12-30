@@ -2872,6 +2872,8 @@
                             const statusId = `action-status-${action.id}-${index}`;
                             const bgColor = action.color || 'blue';
                             const colors = colorMap[bgColor] || colorMap['blue'];
+                            // Ensure pluginId is valid for template interpolation
+                            const safePluginId = pluginId || '';
                             
                             formHtml += `
                                     <div class="${colors.bg} border ${colors.border} rounded-lg p-4">
@@ -2884,7 +2886,9 @@
                                             </div>
                                             <button type="button" 
                                                     id="${actionId}"
-                                                    onclick="executePluginAction('${action.id}', ${index}, '${pluginId}')" 
+                                                    onclick="executePluginAction('${action.id}', ${index}, '${safePluginId}')" 
+                                                    data-plugin-id="${safePluginId}"
+                                                    data-action-id="${action.id}"
                                                     class="btn ${colors.btn} text-white px-4 py-2 rounded-md whitespace-nowrap">
                                                 ${action.icon ? `<i class="${action.icon} mr-2"></i>` : ''}${action.button_text || action.title || 'Execute'}
                                             </button>
@@ -2924,6 +2928,8 @@
                             const statusId = `action-status-${action.id}-${index}`;
                             const bgColor = action.color || 'blue';
                             const colors = colorMap[bgColor] || colorMap['blue'];
+                            // Ensure pluginId is valid for template interpolation
+                            const safePluginId = pluginId || '';
                             actionsHtml += `
                                     <div class="${colors.bg} border ${colors.border} rounded-lg p-4">
                                         <div class="flex items-center justify-between">
@@ -2935,7 +2941,9 @@
                                             </div>
                                             <button type="button" 
                                                     id="${actionId}"
-                                                    onclick="executePluginAction('${action.id}', ${index}, '${pluginId}')" 
+                                                    onclick="executePluginAction('${action.id}', ${index}, '${safePluginId}')" 
+                                                    data-plugin-id="${safePluginId}"
+                                                    data-action-id="${action.id}"
                                                     class="btn ${colors.btn} text-white px-4 py-2 rounded-md">
                                                 ${action.icon ? `<i class="${action.icon} mr-2"></i>` : ''}${action.button_text || action.title || 'Execute'}
                                             </button>
