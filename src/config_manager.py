@@ -438,11 +438,39 @@ class ConfigManager:
             path_obj = Path(path_to_save)
             ensure_directory_permissions(path_obj.parent, get_config_dir_mode())
             
+            # Check if file exists and is writable before attempting write
+            if path_obj.exists():
+                if not os.access(path_obj, os.W_OK):
+                    import stat
+                    file_stat = path_obj.stat()
+                    current_mode = stat.filemode(file_stat.st_mode)
+                    try:
+                        import pwd
+                        file_owner = pwd.getpwuid(file_stat.st_uid).pw_name
+                    except (ImportError, KeyError):
+                        file_owner = f"UID {file_stat.st_uid}"
+                    
+                    error_msg = (
+                        f"Cannot write to {file_type} configuration file {os.path.abspath(path_to_save)}. "
+                        f"File is owned by {file_owner} with permissions {current_mode}. "
+                        f"To fix, run: sudo chown $USER:$(id -gn) {path_to_save} && sudo chmod 664 {path_to_save}"
+                    )
+                    self.logger.error(error_msg)
+                    raise PermissionError(error_msg)
+            
+            # Write the file
             with open(path_to_save, 'w') as f:
                 json.dump(data, f, indent=4)
             
             # Set proper file permissions after writing
-            ensure_file_permissions(path_obj, get_config_file_mode(path_obj))
+            try:
+                ensure_file_permissions(path_obj, get_config_file_mode(path_obj))
+            except OSError as perm_error:
+                # If we can't set permissions but file was written, log warning but don't fail
+                self.logger.warning(
+                    f"File {path_to_save} was written successfully but could not set permissions: {perm_error}. "
+                    f"This may cause issues if the file needs to be accessible by other users."
+                )
             
             self.logger.info(f"{file_type.capitalize()} configuration successfully saved to {os.path.abspath(path_to_save)}")
             
