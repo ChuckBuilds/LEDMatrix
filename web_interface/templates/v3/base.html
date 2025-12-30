@@ -2509,17 +2509,66 @@
                     // Only log once per plugin to avoid spam (Alpine.js may call this multiple times during rendering)
                     if (!this._configFormLogged || this._configFormLogged !== pluginId) {
                         console.log('[DEBUG] generateConfigForm called for', pluginId, 'with', webUiActions?.length || 0, 'actions');
+                        // Debug: Check if image_config.images has x-widget in schema
+                        if (schema && schema.properties && schema.properties.image_config) {
+                            const imgConfig = schema.properties.image_config;
+                            if (imgConfig.properties && imgConfig.properties.images) {
+                                const imagesProp = imgConfig.properties.images;
+                                console.log('[DEBUG] Schema check - image_config.images:', {
+                                    type: imagesProp.type,
+                                    'x-widget': imagesProp['x-widget'],
+                                    'has x-widget': 'x-widget' in imagesProp,
+                                    keys: Object.keys(imagesProp)
+                                });
+                            }
+                        }
                         this._configFormLogged = pluginId;
                     }
                     if (!schema || !schema.properties) {
                         return this.generateSimpleConfigForm(config, webUiActions, pluginId);
                     }
 
+                    // Helper function to get schema property by full key path
+                    const getSchemaProperty = (schemaObj, keyPath) => {
+                        if (!schemaObj || !schemaObj.properties) return null;
+                        const keys = keyPath.split('.');
+                        let current = schemaObj.properties;
+                        for (const k of keys) {
+                            if (current && current[k]) {
+                                if (current[k].properties) {
+                                    current = current[k].properties;
+                                } else {
+                                    return current[k];
+                                }
+                            } else {
+                                return null;
+                            }
+                        }
+                        return null;
+                    };
+                    
                     const generateFieldHtml = (key, prop, value, prefix = '') => {
                         const fullKey = prefix ? `${prefix}.${key}` : key;
                         const label = prop.title || key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
                         const description = prop.description || '';
                         let html = '';
+                        
+                        // Debug: Log property structure for arrays to help diagnose file-upload widget issues
+                        if (prop.type === 'array') {
+                            // Also check schema directly as fallback
+                            const schemaProp = getSchemaProperty(schema, fullKey);
+                            const xWidgetFromSchema = schemaProp ? (schemaProp['x-widget'] || schemaProp['x_widget']) : null;
+                            
+                            console.log('[DEBUG generateFieldHtml] Array property:', fullKey, {
+                                'prop.x-widget': prop['x-widget'],
+                                'prop.x_widget': prop['x_widget'],
+                                'schema.x-widget': xWidgetFromSchema,
+                                'hasOwnProperty(x-widget)': prop.hasOwnProperty('x-widget'),
+                                'x-widget in prop': 'x-widget' in prop,
+                                'all prop keys': Object.keys(prop),
+                                'schemaProp keys': schemaProp ? Object.keys(schemaProp) : 'null'
+                            });
+                        }
 
                         // Handle nested objects
                         if (prop.type === 'object' && prop.properties) {
@@ -2575,6 +2624,12 @@
                                 const nestedValue = hasValue ? nestedConfig[nestedKey] : 
                                     (nestedProp.default !== undefined ? nestedProp.default : 
                                      (isNestedObject ? {} : (nestedProp.type === 'array' ? [] : (nestedProp.type === 'boolean' ? false : ''))));
+                                
+                                // Debug logging for file-upload widgets
+                                if (nestedProp.type === 'array' && (nestedProp['x-widget'] === 'file-upload' || nestedProp['x_widget'] === 'file-upload')) {
+                                    console.log('[DEBUG] Found file-upload widget in nested property:', nestedKey, 'fullKey:', fullKey + '.' + nestedKey, 'prop:', nestedProp);
+                                }
+                                
                                 html += generateFieldHtml(nestedKey, nestedProp, nestedValue, fullKey);
                             });
                             
@@ -2652,10 +2707,24 @@
                             }
                         } else if (prop.type === 'array') {
                             // Check if this is a file upload widget
-                            if (prop['x-widget'] === 'file-upload') {
+                            // Try multiple ways to access x-widget property (handles nested properties)
+                            // Also check schema directly as fallback
+                            const schemaProp = getSchemaProperty(schema, fullKey);
+                            const xWidgetFromProp = prop['x-widget'] || prop['x_widget'] || prop.xWidget;
+                            const xWidgetFromSchema = schemaProp ? (schemaProp['x-widget'] || schemaProp['x_widget']) : null;
+                            const xWidget = xWidgetFromProp || xWidgetFromSchema;
+                            
+                            // Debug logging
+                            if (xWidget || xWidgetFromProp || xWidgetFromSchema) {
+                                console.log('[DEBUG] Array field', fullKey, 'x-widget from prop:', xWidgetFromProp, 'x-widget from schema:', xWidgetFromSchema, 'final x-widget:', xWidget);
+                            }
+                            
+                            if (xWidget === 'file-upload') {
+                                // Get upload config from prop or schema
+                                const uploadConfig = prop['x-upload-config'] || prop['x_upload_config'] || schemaProp?.['x-upload-config'] || schemaProp?.['x_upload_config'] || {};
+                                console.log('[DEBUG] ✅ Detected file-upload widget for', fullKey, 'with config:', uploadConfig);
                                 // Use the file upload widget from plugins.html
                                 // We'll need to call a function that exists in the global scope
-                                const uploadConfig = prop['x-upload-config'] || {};
                                 const maxFiles = uploadConfig.max_files || 10;
                                 const allowedTypes = uploadConfig.allowed_types || ['image/png', 'image/jpeg', 'image/bmp', 'image/gif'];
                                 const maxSizeMB = uploadConfig.max_size_mb || 5;
