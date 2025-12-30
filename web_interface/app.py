@@ -155,14 +155,30 @@ def serve_plugin_asset(plugin_id, filename):
             return jsonify({'status': 'error', 'message': 'Asset directory not found'}), 404
         
         # Ensure we're serving from within the assets directory (prevent directory traversal)
-        if not str(assets_dir).startswith(str(project_root.resolve())):
+        # Use proper path resolution instead of string prefix matching to prevent bypasses
+        assets_dir_resolved = assets_dir.resolve()
+        project_root_resolved = project_root.resolve()
+        
+        # Check that assets_dir is actually within project_root using commonpath
+        try:
+            common_path = os.path.commonpath([str(assets_dir_resolved), str(project_root_resolved)])
+            if common_path != str(project_root_resolved):
+                return jsonify({'status': 'error', 'message': 'Invalid asset path'}), 403
+        except ValueError:
+            # commonpath raises ValueError if paths are on different drives (Windows)
             return jsonify({'status': 'error', 'message': 'Invalid asset path'}), 403
         
         # Resolve the requested file path
         requested_file = (assets_dir / filename).resolve()
         
-        # Security check: ensure file is within the assets directory
-        if not str(requested_file).startswith(str(assets_dir)):
+        # Security check: ensure file is within the assets directory using proper path comparison
+        # Use commonpath to ensure assets_dir is a true parent of requested_file
+        try:
+            common_path = os.path.commonpath([str(requested_file), str(assets_dir_resolved)])
+            if common_path != str(assets_dir_resolved):
+                return jsonify({'status': 'error', 'message': 'Invalid file path'}), 403
+        except ValueError:
+            # commonpath raises ValueError if paths are on different drives (Windows)
             return jsonify({'status': 'error', 'message': 'Invalid file path'}), 403
         
         # Check if file exists
