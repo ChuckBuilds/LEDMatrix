@@ -58,16 +58,107 @@
                    {% if field_type == 'integer' %}step="1"{% else %}step="any"{% endif %}
                    class="form-input w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 bg-white text-black placeholder:text-gray-500">
             
-            {# Array of strings (comma-separated) #}
+            {# Array - check if it's a file upload widget #}
             {% elif field_type == 'array' %}
-            {% set array_value = value if value is not none else (prop.default if prop.default is defined else []) %}
-            <input type="text" 
-                   id="{{ field_id }}"
-                   name="{{ full_key }}" 
-                   value="{{ array_value|join(', ') if array_value is iterable and array_value is not string else '' }}"
-                   placeholder="Enter values separated by commas"
-                   class="form-input w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 bg-white text-black placeholder:text-gray-500">
-            <p class="text-xs text-gray-400 mt-1">Separate multiple values with commas</p>
+            {% set x_widget = prop.get('x-widget') or prop.get('x_widget') %}
+            {% if x_widget == 'file-upload' %}
+                {# File upload widget for arrays #}
+                {% set upload_config = prop.get('x-upload-config') or {} %}
+                {% set max_files = upload_config.get('max_files', 10) %}
+                {% set allowed_types = upload_config.get('allowed_types', ['image/png', 'image/jpeg', 'image/bmp', 'image/gif']) %}
+                {% set max_size_mb = upload_config.get('max_size_mb', 5) %}
+                {% set plugin_id_from_config = upload_config.get('plugin_id', plugin_id) %}
+                {% set array_value = value if value is not none and value is iterable and value is not string else (prop.default if prop.default is defined and prop.default is iterable and prop.default is not string else []) %}
+                
+                <div id="{{ field_id }}_upload_widget" class="mt-1">
+                    <!-- File Upload Drop Zone -->
+                    <div id="{{ field_id }}_drop_zone" 
+                         class="border-2 border-dashed border-gray-300 rounded-lg p-6 text-center hover:border-blue-400 transition-colors cursor-pointer"
+                         ondrop="window.handleFileDrop(event, this.dataset.fieldId)" 
+                         ondragover="event.preventDefault()" 
+                         data-field-id="{{ field_id }}"
+                         onclick="document.getElementById('{{ field_id }}_file_input').click()">
+                        <input type="file" 
+                               id="{{ field_id }}_file_input" 
+                               multiple 
+                               accept="{{ allowed_types|join(',') }}"
+                               style="display: none;"
+                               data-field-id="{{ field_id }}"
+                               onchange="window.handleFileSelect(event, this.dataset.fieldId)">
+                        <i class="fas fa-cloud-upload-alt text-3xl text-gray-400 mb-2"></i>
+                        <p class="text-sm text-gray-600">Drag and drop images here or click to browse</p>
+                        <p class="text-xs text-gray-500 mt-1">Max {{ max_files }} files, {{ max_size_mb }}MB each (PNG, JPG, GIF, BMP)</p>
+                    </div>
+                    
+                    <!-- Uploaded Images List -->
+                    <div id="{{ field_id }}_image_list" class="mt-4 space-y-2">
+                        {% for img in array_value %}
+                        {% set img_id = img.get('id', loop.index0) %}
+                        {% set img_schedule = img.get('schedule', {}) %}
+                        {% set has_schedule = img_schedule.get('enabled', false) and img_schedule.get('mode') and img_schedule.get('mode') != 'always' %}
+                        <div id="img_{{ img_id|string|replace('.', '_')|replace('-', '_') }}" class="bg-gray-50 p-3 rounded-lg border border-gray-200">
+                            <div class="flex items-center justify-between mb-2">
+                                <div class="flex items-center space-x-3 flex-1">
+                                    <img src="/{{ img.get('path', '') }}" 
+                                         alt="{{ img.get('filename', '') }}" 
+                                         class="w-16 h-16 object-cover rounded"
+                                         onerror="this.style.display='none'; this.nextElementSibling.style.display='block';">
+                                    <div style="display:none;" class="w-16 h-16 bg-gray-200 rounded flex items-center justify-center">
+                                        <i class="fas fa-image text-gray-400"></i>
+                                    </div>
+                                    <div class="flex-1 min-w-0">
+                                        <p class="text-sm font-medium text-gray-900 truncate">{{ img.get('original_filename') or img.get('filename', 'Image') }}</p>
+                                        <p class="text-xs text-gray-500">
+                                            {% if img.get('size') %}{{ (img.get('size') / 1024)|round }} KB{% endif %}
+                                            {% if img.get('uploaded_at') %} • {{ img.get('uploaded_at') }}{% endif %}
+                                        </p>
+                                        {% if has_schedule %}
+                                        <p class="text-xs text-blue-600 mt-1">
+                                            <i class="fas fa-clock mr-1"></i>Scheduled
+                                        </p>
+                                        {% endif %}
+                                    </div>
+                                </div>
+                                <div class="flex items-center space-x-2 ml-4">
+                                    <button type="button" 
+                                            data-field-id="{{ field_id }}"
+                                            data-image-id="{{ img_id }}"
+                                            data-image-idx="{{ loop.index0 }}"
+                                            onclick="window.openImageSchedule(this.dataset.fieldId, this.dataset.imageId || null, parseInt(this.dataset.imageIdx))"
+                                            class="text-blue-600 hover:text-blue-800 p-2" 
+                                            title="Schedule this image">
+                                        <i class="fas fa-calendar-alt"></i>
+                                    </button>
+                                    <button type="button" 
+                                            data-field-id="{{ field_id }}"
+                                            data-image-id="{{ img_id }}"
+                                            data-plugin-id="{{ plugin_id_from_config }}"
+                                            onclick="window.deleteUploadedImage(this.dataset.fieldId, this.dataset.imageId, this.dataset.pluginId)"
+                                            class="text-red-600 hover:text-red-800 p-2"
+                                            title="Delete image">
+                                        <i class="fas fa-trash"></i>
+                                    </button>
+                                </div>
+                            </div>
+                            <div id="schedule_{{ img_id|string|replace('.', '_')|replace('-', '_') }}" class="hidden mt-3 pt-3 border-t border-gray-300"></div>
+                        </div>
+                        {% endfor %}
+                    </div>
+                    
+                    <!-- Hidden input to store image data -->
+                    <input type="hidden" id="{{ field_id }}_images_data" name="{{ full_key }}" value='{{ array_value|tojson|safe }}'>
+                </div>
+            {% else %}
+                {# Regular array input (comma-separated) #}
+                {% set array_value = value if value is not none else (prop.default if prop.default is defined else []) %}
+                <input type="text" 
+                       id="{{ field_id }}"
+                       name="{{ full_key }}" 
+                       value="{{ array_value|join(', ') if array_value is iterable and array_value is not string else '' }}"
+                       placeholder="Enter values separated by commas"
+                       class="form-input w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 bg-white text-black placeholder:text-gray-500">
+                <p class="text-xs text-gray-400 mt-1">Separate multiple values with commas</p>
+            {% endif %}
             
             {# Text input (default) #}
             {% else %}
