@@ -2715,81 +2715,56 @@
                                 html += helpText;
                             }
                         } else if (prop.type === 'array') {
-                            // Check if this is a file upload widget
-                            // ALWAYS check schema first as source of truth, then fall back to prop
-                            let schemaProp = getSchemaProperty(schema, fullKey);
+                            // AGGRESSIVE file upload widget detection
+                            // For 'images' field in static-image plugin, always check schema directly
+                            let isFileUpload = false;
+                            let uploadConfig = {};
                             
-                            // Special check for top-level 'images' field (flattened schema)
-                            if (!schemaProp && fullKey === 'images' && schema && schema.properties && schema.properties.images) {
-                                schemaProp = schema.properties.images;
-                                console.log('[DEBUG] ✅ Found top-level images via direct schema access');
-                            }
-                            
-                            // Special fallback: ALWAYS try direct schema navigation for image_config.images (backward compat)
-                            if (fullKey === 'image_config.images' && schema && schema.properties) {
-                                const imgConfigProp = schema.properties.image_config;
-                                if (imgConfigProp && imgConfigProp.properties && imgConfigProp.properties.images) {
-                                    const directImagesProp = imgConfigProp.properties.images;
-                                    // Use direct lookup if it has x-widget, even if getSchemaProperty found something
-                                    if (directImagesProp['x-widget'] === 'file-upload' || directImagesProp['x_widget'] === 'file-upload') {
-                                        schemaProp = directImagesProp;
-                                        console.log('[DEBUG] ✅ Using direct schema lookup for image_config.images');
-                                    }
+                            // Direct check: if this is the 'images' field and schema has it with x-widget
+                            if (fullKey === 'images' && schema && schema.properties && schema.properties.images) {
+                                const imagesSchema = schema.properties.images;
+                                if (imagesSchema['x-widget'] === 'file-upload' || imagesSchema['x_widget'] === 'file-upload') {
+                                    isFileUpload = true;
+                                    uploadConfig = imagesSchema['x-upload-config'] || imagesSchema['x_upload_config'] || {};
+                                    console.log('[DEBUG] ✅ Direct detection: images field has file-upload widget', uploadConfig);
                                 }
                             }
                             
-                            // Also try general direct lookup if getSchemaProperty failed
-                            if (!schemaProp && schema && schema.properties) {
-                                const keys = fullKey.split('.');
-                                let current = schema.properties;
-                                for (let i = 0; i < keys.length; i++) {
-                                    if (current && current[keys[i]]) {
-                                        if (i === keys.length - 1) {
-                                            schemaProp = current[keys[i]];
-                                            break;
-                                        } else if (current[keys[i]].properties) {
-                                            current = current[keys[i]].properties;
-                                        } else {
-                                            break;
-                                        }
-                                    } else {
-                                        break;
-                                    }
+                            // Fallback: check prop object (should have x-widget if schema loaded correctly)
+                            if (!isFileUpload) {
+                                const xWidgetFromProp = prop['x-widget'] || prop['x_widget'] || prop.xWidget;
+                                if (xWidgetFromProp === 'file-upload') {
+                                    isFileUpload = true;
+                                    uploadConfig = prop['x-upload-config'] || prop['x_upload_config'] || {};
+                                    console.log('[DEBUG] ✅ Detection via prop object');
                                 }
                             }
                             
-                            // Get x-widget from prop FIRST (should have it if schema loaded correctly), then schema lookup
-                            // The prop object should already have x-widget from schema.properties[key]
-                            const xWidgetFromProp = prop['x-widget'] || prop['x_widget'] || prop.xWidget;
-                            const xWidgetFromSchema = schemaProp ? (schemaProp['x-widget'] || schemaProp['x_widget']) : null;
-                            // Use prop first (most direct), then schema lookup as fallback
-                            const xWidget = xWidgetFromProp || xWidgetFromSchema;
+                            // Fallback: schema property lookup
+                            if (!isFileUpload) {
+                                let schemaProp = getSchemaProperty(schema, fullKey);
+                                if (!schemaProp && fullKey === 'images' && schema && schema.properties && schema.properties.images) {
+                                    schemaProp = schema.properties.images;
+                                }
+                                const xWidgetFromSchema = schemaProp ? (schemaProp['x-widget'] || schemaProp['x_widget']) : null;
+                                if (xWidgetFromSchema === 'file-upload') {
+                                    isFileUpload = true;
+                                    uploadConfig = schemaProp['x-upload-config'] || schemaProp['x_upload_config'] || {};
+                                    console.log('[DEBUG] ✅ Detection via schema lookup');
+                                }
+                            }
                             
                             // Debug logging for ALL array fields to diagnose
                             console.log('[DEBUG] Array field check:', fullKey, {
+                                'isFileUpload': isFileUpload,
                                 'prop keys': Object.keys(prop),
                                 'prop.x-widget': prop['x-widget'],
-                                'prop.x_widget': prop['x_widget'],
-                                'prop.xWidget': prop.xWidget,
-                                'hasOwnProperty(x-widget)': prop.hasOwnProperty('x-widget'),
-                                'x-widget in prop': 'x-widget' in prop,
-                                'schemaProp found': !!schemaProp,
-                                'schemaProp keys': schemaProp ? Object.keys(schemaProp) : null,
-                                'schemaProp.x-widget': schemaProp ? schemaProp['x-widget'] : null,
-                                'xWidgetFromSchema': xWidgetFromSchema,
-                                'xWidgetFromProp': xWidgetFromProp,
-                                'final xWidget': xWidget,
-                                'will render file-upload?': xWidget === 'file-upload',
-                                'schema exists': !!schema,
-                                'schema.properties exists': !!(schema && schema.properties),
                                 'schema.properties.images exists': !!(schema && schema.properties && schema.properties.images),
-                                'schema.properties.images.x-widget': (schema && schema.properties && schema.properties.images) ? schema.properties.images['x-widget'] : null
+                                'schema.properties.images.x-widget': (schema && schema.properties && schema.properties.images) ? schema.properties.images['x-widget'] : null,
+                                'uploadConfig': uploadConfig
                             });
                             
-                            if (xWidget === 'file-upload') {
-                                // Get upload config from schemaProp (preferred) or prop (fallback)
-                                const uploadConfig = (schemaProp && (schemaProp['x-upload-config'] || schemaProp['x_upload_config'])) || 
-                                                    prop['x-upload-config'] || prop['x_upload_config'] || {};
+                            if (isFileUpload) {
                                 console.log('[DEBUG] ✅ Rendering file-upload widget for', fullKey, 'with config:', uploadConfig);
                                 // Use the file upload widget from plugins.html
                                 // We'll need to call a function that exists in the global scope
