@@ -347,9 +347,9 @@ def _load_plugin_config_partial(plugin_id):
                     if (temp_schema.get('properties', {}).get('images', {}).get('x-widget') == 'file-upload' or
                         temp_schema.get('properties', {}).get('images', {}).get('x_widget') == 'file-upload'):
                         # Load metadata file
-                        from pathlib import Path as PathLib
-                        PROJECT_ROOT = PathLib(__file__).parent.parent.parent
-                        metadata_file = PROJECT_ROOT / 'assets' / 'plugins' / plugin_id / 'uploads' / '.metadata.json'
+                        # Get PROJECT_ROOT relative to this file
+                        project_root = Path(__file__).parent.parent.parent
+                        metadata_file = project_root / 'assets' / 'plugins' / plugin_id / 'uploads' / '.metadata.json'
                         if metadata_file.exists():
                             try:
                                 with open(metadata_file, 'r', encoding='utf-8') as mf:
