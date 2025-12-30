@@ -3979,15 +3979,42 @@ def save_plugin_config():
             # Save secrets file
             try:
                 api_v3.config_manager.save_raw_file_content('secrets', current_secrets)
+            except PermissionError as e:
+                # Log the error with more details
+                import logging
+                import os
+                logger = logging.getLogger(__name__)
+                secrets_path = api_v3.config_manager.secrets_path
+                secrets_dir = os.path.dirname(secrets_path) if secrets_path else None
+                
+                # Check permissions
+                dir_readable = os.access(secrets_dir, os.R_OK) if secrets_dir and os.path.exists(secrets_dir) else False
+                dir_writable = os.access(secrets_dir, os.W_OK) if secrets_dir and os.path.exists(secrets_dir) else False
+                file_writable = os.access(secrets_path, os.W_OK) if secrets_path and os.path.exists(secrets_path) else False
+                
+                logger.error(
+                    f"Permission error saving secrets config for {plugin_id}: {e}\n"
+                    f"Secrets path: {secrets_path}\n"
+                    f"Directory readable: {dir_readable}, writable: {dir_writable}\n"
+                    f"File writable: {file_writable}",
+                    exc_info=True
+                )
+                return error_response(
+                    ErrorCode.CONFIG_SAVE_FAILED,
+                    f"Failed to save secrets configuration: Permission denied. Check file permissions on {secrets_path}",
+                    status_code=500
+                )
             except Exception as e:
                 # Log the error but don't fail the entire config save
                 import logging
+                import os
                 logger = logging.getLogger(__name__)
+                secrets_path = api_v3.config_manager.secrets_path
                 logger.error(f"Error saving secrets config for {plugin_id}: {e}", exc_info=True)
-                # Return error response
+                # Return error response with more context
                 return error_response(
                     ErrorCode.CONFIG_SAVE_FAILED,
-                    f"Failed to save secrets configuration: {str(e)}",
+                    f"Failed to save secrets configuration: {str(e)} (config_path={secrets_path})",
                     status_code=500
                 )
 
