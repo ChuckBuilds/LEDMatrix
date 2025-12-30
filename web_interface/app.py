@@ -206,8 +206,23 @@ def serve_plugin_asset(plugin_id, filename):
         return send_from_directory(str(assets_dir), filename, mimetype=content_type)
         
     except Exception as e:
+        # Log the exception with full traceback server-side
         import traceback
-        return jsonify({'status': 'error', 'message': str(e), 'traceback': traceback.format_exc()}), 500
+        app.logger.exception('Error serving plugin asset file')
+        
+        # Return generic error message to client (avoid leaking internal details)
+        # Only include detailed error information when in debug mode
+        if app.debug:
+            return jsonify({
+                'status': 'error',
+                'message': str(e),
+                'traceback': traceback.format_exc()
+            }), 500
+        else:
+            return jsonify({
+                'status': 'error',
+                'message': 'Internal server error'
+            }), 500
 
 # Helper function to check if AP mode is active
 def is_ap_mode_active():
