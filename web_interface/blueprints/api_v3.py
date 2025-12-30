@@ -4225,13 +4225,30 @@ def reset_plugin_config():
 def execute_plugin_action():
     """Execute a plugin-defined action (e.g., authentication)"""
     try:
-        data = request.get_json() or {}
+        # Try to get JSON data, with better error handling
+        try:
+            data = request.get_json(force=True) or {}
+        except Exception as e:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.error(f"Error parsing JSON in execute_plugin_action: {e}")
+            return jsonify({
+                'status': 'error', 
+                'message': f'Invalid JSON in request: {str(e)}',
+                'content_type': request.content_type,
+                'data': request.data.decode('utf-8', errors='ignore')[:200]
+            }), 400
+        
         plugin_id = data.get('plugin_id')
         action_id = data.get('action_id')
         action_params = data.get('params', {})
 
         if not plugin_id or not action_id:
-            return jsonify({'status': 'error', 'message': 'plugin_id and action_id required'}), 400
+            return jsonify({
+                'status': 'error', 
+                'message': 'plugin_id and action_id required',
+                'received': {'plugin_id': plugin_id, 'action_id': action_id, 'has_params': bool(action_params)}
+            }), 400
 
         # Get plugin directory
         if api_v3.plugin_manager:
