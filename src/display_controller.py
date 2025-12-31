@@ -705,9 +705,33 @@ class DisplayController:
 
     def _resolve_mode_for_plugin(self, plugin_id: Optional[str], mode: Optional[str]) -> Optional[str]:
         """Resolve the display mode to use for on-demand activation."""
+        # If mode is provided, check if it's actually a valid mode or just the plugin_id
         if mode:
+            # If mode matches plugin_id, it's likely the plugin_id was sent as mode
+            # Try to resolve it to an actual display mode
+            if plugin_id and mode == plugin_id:
+                # Mode is the plugin_id, resolve to first available display mode
+                if plugin_id in self.plugin_display_modes:
+                    modes = self.plugin_display_modes.get(plugin_id, [])
+                    if modes:
+                        logger.debug("Resolving mode '%s' (plugin_id) to first display mode: %s", mode, modes[0])
+                        return modes[0]
+            # Check if mode is a valid display mode
+            elif mode in self.plugin_modes:
+                return mode
+            # Mode provided but not valid - might be plugin_id, try to resolve
+            elif plugin_id and plugin_id in self.plugin_display_modes:
+                modes = self.plugin_display_modes.get(plugin_id, [])
+                if modes and mode in modes:
+                    return mode
+                elif modes:
+                    logger.warning("Mode '%s' not found for plugin '%s', using first available: %s", 
+                                 mode, plugin_id, modes[0])
+                    return modes[0]
+            # Mode doesn't match anything, return as-is (will fail validation later)
             return mode
 
+        # No mode provided, resolve from plugin_id
         if plugin_id and plugin_id in self.plugin_display_modes:
             modes = self.plugin_display_modes.get(plugin_id, [])
             if modes:
