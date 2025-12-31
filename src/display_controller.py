@@ -89,6 +89,8 @@ class DisplayController:
         self.plugin_display_modes: Dict[str, List[str]] = {}
         self.on_demand_active = False
         self.on_demand_mode: Optional[str] = None
+        self.on_demand_modes: List[str] = []  # All modes for the on-demand plugin
+        self.on_demand_mode_index: int = 0  # Current index in on-demand modes rotation
         self.on_demand_plugin_id: Optional[str] = None
         self.on_demand_duration: Optional[float] = None
         self.on_demand_requested_at: Optional[float] = None
@@ -640,6 +642,8 @@ class DisplayController:
         self.on_demand_last_event = None
         self.on_demand_active = False
         self.on_demand_mode = None
+        self.on_demand_modes = []
+        self.on_demand_mode_index = 0
         self.on_demand_plugin_id = None
         self.on_demand_duration = None
         self.on_demand_requested_at = None
@@ -781,8 +785,50 @@ class DisplayController:
         if resolved_mode in self.available_modes:
             self.current_mode_index = self.available_modes.index(resolved_mode)
 
+        # Get all modes for this plugin
+        plugin_modes = self.plugin_display_modes.get(resolved_plugin_id, [])
+        if not plugin_modes:
+            # Fallback: find all modes that belong to this plugin
+            plugin_modes = [mode for mode, pid in self.mode_to_plugin_id.items() if pid == resolved_plugin_id]
+        
+        # Filter to only include modes that exist in plugin_modes
+        available_plugin_modes = [m for m in plugin_modes if m in self.plugin_modes]
+        
+        if not available_plugin_modes:
+            logger.error("No valid display modes found for plugin '%s'", resolved_plugin_id)
+            self._set_on_demand_error("no-modes")
+            return
+        
+        # Prioritize live modes if they exist and have content
+        live_modes = [m for m in available_plugin_modes if m.endswith('_live')]
+        other_modes = [m for m in available_plugin_modes if not m.endswith('_live')]
+        
+        # Check if live modes have content
+        live_with_content = []
+        for live_mode in live_modes:
+            plugin_instance = self.plugin_modes.get(live_mode)
+            if plugin_instance and hasattr(plugin_instance, 'has_live_content'):
+                try:
+                    if plugin_instance.has_live_content():
+                        live_with_content.append(live_mode)
+                except Exception:
+                    pass
+        
+        # Build mode list: live modes with content first, then other modes, then live modes without content
+        if live_with_content:
+            ordered_modes = live_with_content + other_modes + [m for m in live_modes if m not in live_with_content]
+        else:
+            # No live content, skip live modes
+            ordered_modes = other_modes
+        
+        if not ordered_modes:
+            # Only live modes available but no content - use them anyway
+            ordered_modes = live_modes
+        
         self.on_demand_active = True
-        self.on_demand_mode = resolved_mode
+        self.on_demand_mode = resolved_mode  # Keep for backward compatibility
+        self.on_demand_modes = ordered_modes
+        self.on_demand_mode_index = 0
         self.on_demand_plugin_id = resolved_plugin_id
         self.on_demand_duration = duration
         self.on_demand_requested_at = now
@@ -801,8 +847,13 @@ class DisplayController:
         except Exception as e:
             logger.warning("Failed to clear display during on-demand activation: %s", e)
         
-        self.current_display_mode = resolved_mode
-        logger.info("Activated on-demand mode '%s' for plugin '%s'", resolved_mode, resolved_plugin_id)
+        # Start with first mode (or resolved_mode if it's in the list)
+        if resolved_mode in ordered_modes:
+            self.on_demand_mode_index = ordered_modes.index(resolved_mode)
+        self.current_display_mode = ordered_modes[self.on_demand_mode_index]
+        logger.info("Activated on-demand for plugin '%s' with %d modes: %s (starting at index %d: %s)", 
+                   resolved_plugin_id, len(ordered_modes), ordered_modes, 
+                   self.on_demand_mode_index, self.current_display_mode)
         self._publish_on_demand_state()
         
         # Store config for initialization filtering (allows plugin filtering on restart)
@@ -829,6 +880,8 @@ class DisplayController:
 
         self.on_demand_active = False
         self.on_demand_mode = None
+        self.on_demand_modes = []
+        self.on_demand_mode_index = 0
         self.on_demand_plugin_id = None
         self.on_demand_duration = None
         self.on_demand_requested_at = None
@@ -1014,11 +1067,20 @@ class DisplayController:
                         except ValueError:
                             pass
 
-                if self.on_demand_active and self.on_demand_mode:
-                    active_mode = self.on_demand_mode
-                    if self.current_display_mode != active_mode:
-                        self.current_display_mode = active_mode
-                        self.force_change = True
+                if self.on_demand_active and self.on_demand_modes:
+                    # Rotate through on-demand plugin modes
+                    if self.on_demand_mode_index < len(self.on_demand_modes):
+                        active_mode = self.on_demand_modes[self.on_demand_mode_index]
+                        if self.current_display_mode != active_mode:
+                            self.current_display_mode = active_mode
+                            self.force_change = True
+                    else:
+                        # Reset to first mode if index is out of bounds
+                        self.on_demand_mode_index = 0
+                        active_mode = self.on_demand_modes[0] if self.on_demand_modes else self.current_display_mode
+                        if self.current_display_mode != active_mode:
+                            self.current_display_mode = active_mode
+                            self.force_change = True
                 else:
                     active_mode = self.current_display_mode
 
@@ -1108,12 +1170,18 @@ class DisplayController:
                         display_result = False
                         display_failed_due_to_exception = True  # Mark that this was an exception, not just no content
                 
-                # If display() returned False, skip to next mode immediately (unless on-demand)
+                # If display() returned False, skip to next mode immediately
                 if not display_result:
                     if self.on_demand_active:
-                        # Stay on on-demand mode even if no content - show "waiting" message
-                        logger.info("No content for on-demand mode %s, staying on mode", active_mode)
-                        self._sleep_with_plugin_updates(5)
+                        # Skip to next on-demand mode if no content
+                        logger.info("No content for on-demand mode %s, skipping to next mode", active_mode)
+                        # Move to next mode in rotation
+                        self.on_demand_mode_index = (self.on_demand_mode_index + 1) % len(self.on_demand_modes)
+                        next_mode = self.on_demand_modes[self.on_demand_mode_index]
+                        logger.info("Rotating to next on-demand mode: %s (index %d/%d)", 
+                                   next_mode, self.on_demand_mode_index, len(self.on_demand_modes))
+                        self.current_display_mode = next_mode
+                        self.force_change = True
                         self._publish_on_demand_state()
                         continue
                     else:
@@ -1478,7 +1546,13 @@ class DisplayController:
                 
                 # Move to next mode
                 if self.on_demand_active:
-                    # Stay on the same mode while on-demand is active
+                    # Rotate to next on-demand mode
+                    self.on_demand_mode_index = (self.on_demand_mode_index + 1) % len(self.on_demand_modes)
+                    next_mode = self.on_demand_modes[self.on_demand_mode_index]
+                    logger.info("Rotating to next on-demand mode: %s (index %d/%d)", 
+                               next_mode, self.on_demand_mode_index, len(self.on_demand_modes))
+                    self.current_display_mode = next_mode
+                    self.force_change = True
                     self._publish_on_demand_state()
                     continue
 
