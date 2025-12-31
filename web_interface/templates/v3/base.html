@@ -2027,10 +2027,7 @@
                         });
                 },
                 runOnDemand() {
-                    if (!plugin.enabled) {
-                        this.notify('Enable the plugin before running it on-demand.', 'warning');
-                        return;
-                    }
+                    // Note: On-demand can work with disabled plugins - the backend will temporarily enable them
                     if (typeof window.openOnDemandModal === 'function') {
                         window.openOnDemandModal(plugin.id);
                     } else {

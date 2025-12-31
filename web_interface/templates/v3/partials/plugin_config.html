@@ -213,8 +213,7 @@
                     <div class="flex flex-wrap gap-2">
                         <button type="button"
                                 onclick="runPluginOnDemand('{{ plugin.id }}')"
-                                {% if not plugin.enabled %}disabled{% endif %}
-                                class="px-3 py-2 text-sm bg-green-600 hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-md flex items-center gap-2 transition-colors">
+                                class="px-3 py-2 text-sm bg-green-600 hover:bg-green-700 text-white rounded-md flex items-center gap-2 transition-colors">
                             <i class="fas fa-play-circle"></i>
                             <span>Run On-Demand</span>
                         </button>
@@ -226,7 +225,7 @@
                         </button>
                     </div>
                     {% if not plugin.enabled %}
-                    <p class="text-xs text-amber-600">Enable this plugin before launching on-demand.</p>
+                    <p class="text-xs text-amber-600">Plugin is disabled, but on-demand will temporarily enable it.</p>
                     {% endif %}
                 </div>
             </div>

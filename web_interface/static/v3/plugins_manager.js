@@ -1562,12 +1562,10 @@ window.__openOnDemandModalImpl = function(pluginId) {
         return;
     }
 
+    // Note: On-demand can work with disabled plugins - the backend will temporarily enable them
+    // We still log it for debugging but don't block the modal
     if (!plugin.enabled) {
-        console.log('[__openOnDemandModalImpl] Plugin is disabled');
-        if (typeof showNotification === 'function') {
-            showNotification('Enable the plugin before running it on-demand.', 'error');
-        }
-        return;
+        console.log('[__openOnDemandModalImpl] Plugin is disabled, but on-demand will temporarily enable it');
     }
 
     currentOnDemandPluginId = pluginId;

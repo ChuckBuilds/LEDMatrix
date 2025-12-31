@@ -1228,14 +1228,14 @@ def start_on_demand_display():
                 if not resolved_plugin:
                     return jsonify({'status': 'error', 'message': f'Mode {resolved_mode} not found'}), 404
 
+        # Note: On-demand can work with disabled plugins - the display controller
+        # will temporarily enable them during initialization if needed
+        # We don't block the request here, but log it for debugging
         if api_v3.config_manager and resolved_plugin:
             config = api_v3.config_manager.load_config()
             plugin_config = config.get(resolved_plugin, {})
             if 'enabled' in plugin_config and not plugin_config.get('enabled', False):
-                return jsonify({
-                    'status': 'error',
-                    'message': f'Plugin {resolved_plugin} is disabled in configuration'
-                }), 400
+                logger.info("On-demand request for disabled plugin '%s' - will be temporarily enabled", resolved_plugin)
 
         # Set the on-demand request in cache FIRST (before starting service)
         # This ensures the request is available when the service starts/restarts
