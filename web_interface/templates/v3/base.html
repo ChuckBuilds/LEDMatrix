@@ -2509,17 +2509,75 @@
                     // Only log once per plugin to avoid spam (Alpine.js may call this multiple times during rendering)
                     if (!this._configFormLogged || this._configFormLogged !== pluginId) {
                         console.log('[DEBUG] generateConfigForm called for', pluginId, 'with', webUiActions?.length || 0, 'actions');
+                        // Debug: Check if image_config.images has x-widget in schema
+                        if (schema && schema.properties && schema.properties.image_config) {
+                            const imgConfig = schema.properties.image_config;
+                            if (imgConfig.properties && imgConfig.properties.images) {
+                                const imagesProp = imgConfig.properties.images;
+                                console.log('[DEBUG] Schema check - image_config.images:', {
+                                    type: imagesProp.type,
+                                    'x-widget': imagesProp['x-widget'],
+                                    'has x-widget': 'x-widget' in imagesProp,
+                                    keys: Object.keys(imagesProp)
+                                });
+                            }
+                        }
                         this._configFormLogged = pluginId;
                     }
                     if (!schema || !schema.properties) {
                         return this.generateSimpleConfigForm(config, webUiActions, pluginId);
                     }
 
+                    // Helper function to get schema property by full key path
+                    const getSchemaProperty = (schemaObj, keyPath) => {
+                        if (!schemaObj || !schemaObj.properties) return null;
+                        const keys = keyPath.split('.');
+                        let current = schemaObj.properties;
+                        for (let i = 0; i < keys.length; i++) {
+                            const k = keys[i];
+                            if (!current || !current[k]) {
+                                return null;
+                            }
+                            
+                            const prop = current[k];
+                            // If this is the last key, return the property
+                            if (i === keys.length - 1) {
+                                return prop;
+                            }
+                            
+                            // If this property has nested properties, navigate deeper
+                            if (prop && typeof prop === 'object' && prop.properties) {
+                                current = prop.properties;
+                            } else {
+                                // Can't navigate deeper
+                                return null;
+                            }
+                        }
+                        return null;
+                    };
+                    
                     const generateFieldHtml = (key, prop, value, prefix = '') => {
                         const fullKey = prefix ? `${prefix}.${key}` : key;
                         const label = prop.title || key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
                         const description = prop.description || '';
                         let html = '';
+                        
+                        // Debug: Log property structure for arrays to help diagnose file-upload widget issues
+                        if (prop.type === 'array') {
+                            // Also check schema directly as fallback
+                            const schemaProp = getSchemaProperty(schema, fullKey);
+                            const xWidgetFromSchema = schemaProp ? (schemaProp['x-widget'] || schemaProp['x_widget']) : null;
+                            
+                            console.log('[DEBUG generateFieldHtml] Array property:', fullKey, {
+                                'prop.x-widget': prop['x-widget'],
+                                'prop.x_widget': prop['x_widget'],
+                                'schema.x-widget': xWidgetFromSchema,
+                                'hasOwnProperty(x-widget)': prop.hasOwnProperty('x-widget'),
+                                'x-widget in prop': 'x-widget' in prop,
+                                'all prop keys': Object.keys(prop),
+                                'schemaProp keys': schemaProp ? Object.keys(schemaProp) : 'null'
+                            });
+                        }
 
                         // Handle nested objects
                         if (prop.type === 'object' && prop.properties) {
@@ -2575,6 +2633,12 @@
                                 const nestedValue = hasValue ? nestedConfig[nestedKey] : 
                                     (nestedProp.default !== undefined ? nestedProp.default : 
                                      (isNestedObject ? {} : (nestedProp.type === 'array' ? [] : (nestedProp.type === 'boolean' ? false : ''))));
+                                
+                                // Debug logging for file-upload widgets
+                                if (nestedProp.type === 'array' && (nestedProp['x-widget'] === 'file-upload' || nestedProp['x_widget'] === 'file-upload')) {
+                                    console.log('[DEBUG] Found file-upload widget in nested property:', nestedKey, 'fullKey:', fullKey + '.' + nestedKey, 'prop:', nestedProp);
+                                }
+                                
                                 html += generateFieldHtml(nestedKey, nestedProp, nestedValue, fullKey);
                             });
                             
@@ -2651,11 +2715,59 @@
                                 html += helpText;
                             }
                         } else if (prop.type === 'array') {
-                            // Check if this is a file upload widget
-                            if (prop['x-widget'] === 'file-upload') {
+                            // AGGRESSIVE file upload widget detection
+                            // For 'images' field in static-image plugin, always check schema directly
+                            let isFileUpload = false;
+                            let uploadConfig = {};
+                            
+                            // Direct check: if this is the 'images' field and schema has it with x-widget
+                            if (fullKey === 'images' && schema && schema.properties && schema.properties.images) {
+                                const imagesSchema = schema.properties.images;
+                                if (imagesSchema['x-widget'] === 'file-upload' || imagesSchema['x_widget'] === 'file-upload') {
+                                    isFileUpload = true;
+                                    uploadConfig = imagesSchema['x-upload-config'] || imagesSchema['x_upload_config'] || {};
+                                    console.log('[DEBUG] ✅ Direct detection: images field has file-upload widget', uploadConfig);
+                                }
+                            }
+                            
+                            // Fallback: check prop object (should have x-widget if schema loaded correctly)
+                            if (!isFileUpload) {
+                                const xWidgetFromProp = prop['x-widget'] || prop['x_widget'] || prop.xWidget;
+                                if (xWidgetFromProp === 'file-upload') {
+                                    isFileUpload = true;
+                                    uploadConfig = prop['x-upload-config'] || prop['x_upload_config'] || {};
+                                    console.log('[DEBUG] ✅ Detection via prop object');
+                                }
+                            }
+                            
+                            // Fallback: schema property lookup
+                            if (!isFileUpload) {
+                                let schemaProp = getSchemaProperty(schema, fullKey);
+                                if (!schemaProp && fullKey === 'images' && schema && schema.properties && schema.properties.images) {
+                                    schemaProp = schema.properties.images;
+                                }
+                                const xWidgetFromSchema = schemaProp ? (schemaProp['x-widget'] || schemaProp['x_widget']) : null;
+                                if (xWidgetFromSchema === 'file-upload') {
+                                    isFileUpload = true;
+                                    uploadConfig = schemaProp['x-upload-config'] || schemaProp['x_upload_config'] || {};
+                                    console.log('[DEBUG] ✅ Detection via schema lookup');
+                                }
+                            }
+                            
+                            // Debug logging for ALL array fields to diagnose
+                            console.log('[DEBUG] Array field check:', fullKey, {
+                                'isFileUpload': isFileUpload,
+                                'prop keys': Object.keys(prop),
+                                'prop.x-widget': prop['x-widget'],
+                                'schema.properties.images exists': !!(schema && schema.properties && schema.properties.images),
+                                'schema.properties.images.x-widget': (schema && schema.properties && schema.properties.images) ? schema.properties.images['x-widget'] : null,
+                                'uploadConfig': uploadConfig
+                            });
+                            
+                            if (isFileUpload) {
+                                console.log('[DEBUG] ✅ Rendering file-upload widget for', fullKey, 'with config:', uploadConfig);
                                 // Use the file upload widget from plugins.html
                                 // We'll need to call a function that exists in the global scope
-                                const uploadConfig = prop['x-upload-config'] || {};
                                 const maxFiles = uploadConfig.max_files || 10;
                                 const allowedTypes = uploadConfig.allowed_types || ['image/png', 'image/jpeg', 'image/bmp', 'image/gif'];
                                 const maxSizeMB = uploadConfig.max_size_mb || 5;

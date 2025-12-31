@@ -1,4 +1,4 @@
-from flask import Blueprint, request, jsonify, Response
+from flask import Blueprint, request, jsonify, Response, send_from_directory
 import json
 import os
 import sys
@@ -5318,6 +5318,7 @@ def serve_plugin_static(plugin_id, file_path):
     except Exception as e:
         import traceback
         return jsonify({'status': 'error', 'message': str(e), 'traceback': traceback.format_exc()}), 500
+
 
 @api_v3.route('/plugins/calendar/upload-credentials', methods=['POST'])
 def upload_calendar_credentials():
