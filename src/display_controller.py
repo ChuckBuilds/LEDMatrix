@@ -676,11 +676,15 @@ class DisplayController:
         # This allows stopping even if the same stop request was sent before
         if action == 'stop':
             logger.info("Received on-demand stop request %s", request_id)
-            if request_id != self.on_demand_request_id:
+            # Always process stop requests, even if same request_id (user might click multiple times)
+            if self.on_demand_active:
                 self.on_demand_request_id = request_id
                 self._clear_on_demand(reason='requested-stop')
+                logger.info("On-demand mode cleared, resuming normal rotation")
             else:
-                logger.debug("Stop request %s already processed in this cycle", request_id)
+                logger.debug("Stop request %s received but on-demand is not active", request_id)
+                # Still update request_id to acknowledge the request
+                self.on_demand_request_id = request_id
             return
         
         # For start requests, check if already processed
@@ -898,14 +902,21 @@ class DisplayController:
         if self.rotation_resume_index is not None and self.available_modes:
             self.current_mode_index = self.rotation_resume_index % len(self.available_modes)
             self.current_display_mode = self.available_modes[self.current_mode_index]
+            logger.info("Resuming rotation from saved index %d: mode '%s'", 
+                       self.rotation_resume_index, self.current_display_mode)
         elif self.available_modes:
-            # Default to first mode
+            # Default to first mode if no resume index
             self.current_mode_index = self.current_mode_index % len(self.available_modes)
             self.current_display_mode = self.available_modes[self.current_mode_index]
+            logger.info("Resuming rotation to mode '%s' (index %d)", 
+                       self.current_display_mode, self.current_mode_index)
+        else:
+            logger.warning("No available modes to resume rotation to")
 
         self.rotation_resume_index = None
         self.force_change = True
-        logger.info("Cleared on-demand mode (reason=%s), resuming rotation", reason)
+        logger.info("✓ ON-DEMAND MODE CLEARED (reason=%s), resuming normal rotation to mode: %s", 
+                   reason, self.current_display_mode)
         self._publish_on_demand_state()
 
     def _check_on_demand_expiration(self) -> None:
