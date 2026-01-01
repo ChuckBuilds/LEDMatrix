@@ -128,7 +128,7 @@ LEDMatrix uses a plugin-based architecture where all display functionality (exce
 
 The easiest way to discover and install plugins is through the **Plugin Store** in the LEDMatrix web interface:
 
-1. Open the web interface (`http://your-pi-ip:5001`)
+1. Open the web interface (`http://your-pi-ip:5000`)
 2. Navigate to the **Plugin Manager** tab
 3. Browse available plugins in the Plugin Store
 4. Click **Install** on any plugin you want
@@ -254,7 +254,7 @@ These are not required and you can probably rig up something basic with stuff yo
 # Preparing the Raspberry Pi
 1. Create RPI Image on a Micro-SD card (I use 16gb because I have it, size is not too important but I would use 8gb or more) using [Raspberry Pi Imager](https://www.raspberrypi.com/software/)
 2. Choose your Raspberry Pi (3B+ in my case) 
-3. For Operating System (OS), choose "Other", then choose Raspbian OS (Legacy, 64-bit) Lite  (This needs to be Debian Bookworm not Debian Trixie! Packages are broken on Trixie as of 10/2/25. I will try to get working as soon as requirements are met!) 
+3. For Operating System (OS), choose "Other", then choose Raspbian OS (64-bit) Lite 
 ![image](https://github.com/user-attachments/assets/e8e2e806-18a8-4175-9c25-0cefaae438ea)
 4. For Storage, choose your micro-sd card
 ![image](https://github.com/user-attachments/assets/05580e0a-86d5-4613-aadc-93207365c38f)
@@ -303,99 +303,6 @@ This single script installs services, dependencies, configures permissions and s
 
 </details>
 
-<details>
-
-<summary>Outdated Installation Steps left for reference</summary>
-
-
------------------------------------------------------------------------------------
------ OLD STEPS (left for manual review, you don't need to run these if you run the First Time Install Script) -----
-4. Install dependencies:
-```bash
-sudo pip3 install --break-system-packages -r requirements.txt
-```
---break-system-packages allows us to install without a virtual environment
-
-
-5. Install rpi-rgb-led-matrix dependencies:
-```bash
-cd rpi-rgb-led-matrix-master
-```
-```bash
-sudo make build-python PYTHON=$(which python3)
-```
-```bash
-cd bindings/python
-sudo python3 setup.py install
-```
-Test it with:
-```bash
-python3 -c 'from rgbmatrix import RGBMatrix, RGBMatrixOptions; print("Success!")'
-```
-
-## Important: Sound Module Configuration
-
-1. Remove unnecessary services that might interfere with the LED matrix:
-```bash
-sudo apt-get remove bluez bluez-firmware pi-bluetooth triggerhappy pigpio
-```
-
-2. Blacklist the sound module:
-```bash
-cat <<EOF | sudo tee /etc/modprobe.d/blacklist-rgb-matrix.conf
-blacklist snd_bcm2835
-EOF
-```
-
-then execute
-
-```bash
-sudo update-initramfs -u
-```
-
-3. Reboot:
-```bash
-sudo reboot
-```
-
-## Performance Optimization
-
-To reduce flickering and improve display quality:
-
-1. Edit `/boot/firmware/cmdline.txt`:
-```bash
-sudo nano /boot/firmware/cmdline.txt
-```
-
-2. Add `isolcpus=3` at the end of the line
-
-3. Ctrl + X to exit, Y to save, Enter to Confirm
-
-4. Edit /boot/firmware/config.txt  with
-```bash
-sudo nano /boot/firmware/config.txt
-```  
-
-6. Edit the `dtparam=audio=on` section to `dtparam=audio=off`
-
-7. Ctrl + X to exit, Y to save, Enter to Confirm
-
-8. Save and reboot:
-```bash
-sudo reboot
-```
-## Configuration
-
-### Initial Setup
-
-1. **First-time setup**: (First Time Script should do this for you) Copy the template to create your config:
-   ```bash
-   cp config/config.template.json config/config.json
-   ```
-
-</details>
-
-
 
 ## Configuration
 
@@ -415,7 +322,7 @@ The system uses a template-based configuration approach to avoid Git conflicts d
    ```bash
    sudo nano config/config.json
    ```
-or edit via web interface at http://ledpi:5001
+or edit via web interface at http://ledpi:5000
 
 3. **Having Issues?**: Run the First Time Script again:
   ```bash
@@ -993,7 +900,7 @@ sudo ./stop_display.sh
 
 ## Web Interface Installation (V2)
 
-The LEDMatrix system includes Web Interface V2 that runs on port 5001 and provides real-time display preview, configuration management, and on-demand display controls.
+The LEDMatrix system includes Web Interface V2 that runs on port 5000 and provides real-time display preview, configuration management, and on-demand display controls.
 
 ### Installing the Web Interface Service
 
@@ -1032,7 +939,7 @@ The web interface can be configured to start automatically with the main display
 
 Once installed, you can access the web interface at:
 ```
-http://your-pi-ip:5001
+http://your-pi-ip:5000
 ```
 
 ### Managing the Web Interface Service
@@ -1075,10 +982,10 @@ sudo systemctl enable ledmatrix-web.service
 3. Check logs for errors: `journalctl -u ledmatrix-web.service -f`
 4. Ensure `web_display_autostart` is set to `true` in `config/config.json`
 
-**Port 5001 Not Accessible:**
+**Port 5000 Not Accessible:**
 1. Check if the service is running on the correct port
-2. Verify firewall settings allow access to port 5001
-3. Check if another service is using port 5001
+2. Verify firewall settings allow access to port 5000
+3. Check if another service is using port 5000
 
 **Service Fails to Start:**
 1. Check Python dependencies are installed

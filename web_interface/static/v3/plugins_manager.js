@@ -2286,6 +2286,8 @@ function generatePluginConfigForm(pluginId, config) {
                     schema: schemaData.data.schema,
                     webUiActions: webUiActions
                 };
+                // Also assign to window for global access in template interpolations
+                window.currentPluginConfig = currentPluginConfig;
                 // Also update state
                 currentPluginConfigState.schema = schemaData.data.schema;
                 console.log('[DEBUG] Calling generateFormFromSchema...');
@@ -2293,12 +2295,16 @@ function generatePluginConfigForm(pluginId, config) {
             } else {
                 // Fallback to simple form if no schema
                 currentPluginConfig = { pluginId: pluginId, schema: null, webUiActions: webUiActions };
+                // Also assign to window for global access in template interpolations
+                window.currentPluginConfig = currentPluginConfig;
                 return generateSimpleConfigForm(config, webUiActions);
             }
         })
         .catch(error => {
             console.error('Error loading schema:', error);
             currentPluginConfig = { pluginId: pluginId, schema: null, webUiActions: [] };
+            // Also assign to window for global access in template interpolations
+            window.currentPluginConfig = currentPluginConfig;
             return generateSimpleConfigForm(config, []);
         });
 }
@@ -2997,7 +3003,9 @@ function generateFormFromSchema(schema, config, webUiActions = []) {
                             </div>
                             <button type="button" 
                                     id="${actionId}"
-                                    onclick="executePluginAction('${action.id}', ${index})" 
+                                    onclick="executePluginAction('${action.id}', ${index}, '${window.currentPluginConfig?.pluginId || ''}')" 
+                                    data-plugin-id="${window.currentPluginConfig?.pluginId || ''}"
+                                    data-action-id="${action.id}"
                                     class="btn ${colors.btn} text-white px-4 py-2 rounded-md whitespace-nowrap">
                                 ${action.icon ? `<i class="${action.icon} mr-2"></i>` : ''}${action.button_text || action.title || 'Execute'}
                             </button>
@@ -3321,7 +3329,9 @@ function generateSimpleConfigForm(config, webUiActions = []) {
                             </div>
                             <button type="button" 
                                     id="${actionId}"
-                                    onclick="executePluginAction('${action.id}', ${index})" 
+                                    onclick="executePluginAction('${action.id}', ${index}, '${window.currentPluginConfig?.pluginId || ''}')" 
+                                    data-plugin-id="${window.currentPluginConfig?.pluginId || ''}"
+                                    data-action-id="${action.id}"
                                     class="btn ${colors.btn} text-white px-4 py-2 rounded-md">
                                 ${action.icon ? `<i class="${action.icon} mr-2"></i>` : ''}${action.button_text || action.title || 'Execute'}
                             </button>
@@ -3671,37 +3681,137 @@ window.closePluginConfigModal = function() {
 
 // Generic Plugin Action Handler
 window.executePluginAction = function(actionId, actionIndex, pluginIdParam = null) {
-    // Get plugin ID from parameter, currentPluginConfig, or try to find from context
-    let pluginId = pluginIdParam || currentPluginConfig?.pluginId;
+    console.log('[DEBUG] executePluginAction called - actionId:', actionId, 'actionIndex:', actionIndex, 'pluginIdParam:', pluginIdParam);
     
-    // If still no pluginId, try to find it from the button's context or Alpine.js
-    if (!pluginId) {
-        // Try to get from Alpine.js context if we're in a plugin tab
-        if (window.Alpine && document.querySelector('[x-data*="plugin"]')) {
-            const pluginTab = document.querySelector(`[x-show*="activeTab === plugin.id"]`);
-            if (pluginTab) {
-                const pluginData = Alpine.$data(pluginTab.closest('[x-data]'));
-                if (pluginData && pluginData.plugin) {
-                    pluginId = pluginData.plugin.id;
-                }
+    // Construct button ID first (we have actionId and actionIndex)
+    const actionIdFull = `action-${actionId}-${actionIndex}`;
+    const statusId = `action-status-${actionId}-${actionIndex}`;
+    const btn = document.getElementById(actionIdFull);
+    const statusDiv = document.getElementById(statusId);
+    
+    // Get plugin ID from multiple sources with comprehensive fallback logic
+    let pluginId = pluginIdParam;
+    
+    // Fallback 1: Try to get from button's data-plugin-id attribute
+    if (!pluginId && btn) {
+        pluginId = btn.getAttribute('data-plugin-id');
+        if (pluginId) {
+            console.log('[DEBUG] Got pluginId from button data attribute:', pluginId);
+        }
+    }
+    
+    // Fallback 2: Try to get from closest parent with data-plugin-id
+    if (!pluginId && btn) {
+        const parentWithPluginId = btn.closest('[data-plugin-id]');
+        if (parentWithPluginId) {
+            pluginId = parentWithPluginId.getAttribute('data-plugin-id');
+            if (pluginId) {
+                console.log('[DEBUG] Got pluginId from parent element:', pluginId);
             }
         }
     }
     
+    // Fallback 3: Try to get from plugin-config-container or plugin-config-tab
+    if (!pluginId && btn) {
+        const container = btn.closest('.plugin-config-container, .plugin-config-tab, [id^="plugin-config-"]');
+        if (container) {
+            // Try data-plugin-id first
+            pluginId = container.getAttribute('data-plugin-id');
+            if (!pluginId) {
+                // Try to extract from ID like "plugin-config-{pluginId}"
+                const idMatch = container.id.match(/plugin-config-(.+)/);
+                if (idMatch) {
+                    pluginId = idMatch[1];
+                }
+            }
+            if (pluginId) {
+                console.log('[DEBUG] Got pluginId from container:', pluginId);
+            }
+        }
+    }
+    
+    // Fallback 4: Try to get from currentPluginConfig
     if (!pluginId) {
-        console.error('No plugin ID available. actionId:', actionId, 'actionIndex:', actionIndex);
+        pluginId = currentPluginConfig?.pluginId;
+        if (pluginId) {
+            console.log('[DEBUG] Got pluginId from currentPluginConfig:', pluginId);
+        }
+    }
+    
+    // Fallback 5: Try to get from Alpine.js context (activeTab)
+    if (!pluginId && window.Alpine) {
+        try {
+            const appElement = document.querySelector('[x-data="app()"]');
+            if (appElement && appElement._x_dataStack && appElement._x_dataStack[0]) {
+                const appData = appElement._x_dataStack[0];
+                if (appData.activeTab && appData.activeTab !== 'overview' && appData.activeTab !== 'plugins' && appData.activeTab !== 'wifi') {
+                    pluginId = appData.activeTab;
+                    console.log('[DEBUG] Got pluginId from Alpine activeTab:', pluginId);
+                }
+            }
+        } catch (e) {
+            console.warn('[DEBUG] Error accessing Alpine context:', e);
+        }
+    }
+    
+    // Fallback 6: Try to find from plugin tab elements (scoped to button context)
+    if (!pluginId && btn) {
+        try {
+            // Search within the button's Alpine.js context (closest x-data element)
+            const buttonContext = btn.closest('[x-data]');
+            if (buttonContext) {
+                const pluginTab = buttonContext.querySelector('[x-show*="activeTab === plugin.id"]');
+                if (pluginTab && window.Alpine) {
+                    try {
+                        const pluginData = Alpine.$data(buttonContext);
+                        if (pluginData && pluginData.plugin) {
+                            pluginId = pluginData.plugin.id;
+                            if (pluginId) {
+                                console.log('[DEBUG] Got pluginId from Alpine plugin data (scoped to button context):', pluginId);
+                            }
+                        }
+                    } catch (e) {
+                        console.warn('[DEBUG] Error accessing Alpine plugin data:', e);
+                    }
+                }
+            }
+            // If not found in button context, try container element
+            if (!pluginId) {
+                const container = btn.closest('.plugin-config-container, .plugin-config-tab, [id^="plugin-config-"]');
+                if (container) {
+                    const containerContext = container.querySelector('[x-show*="activeTab === plugin.id"]');
+                    if (containerContext && window.Alpine) {
+                        try {
+                            const containerData = Alpine.$data(container.closest('[x-data]'));
+                            if (containerData && containerData.plugin) {
+                                pluginId = containerData.plugin.id;
+                                if (pluginId) {
+                                    console.log('[DEBUG] Got pluginId from Alpine plugin data (scoped to container):', pluginId);
+                                }
+                            }
+                        } catch (e) {
+                            console.warn('[DEBUG] Error accessing Alpine plugin data from container:', e);
+                        }
+                    }
+                }
+            }
+        } catch (e) {
+            console.warn('[DEBUG] Error in fallback 6 DOM lookup:', e);
+        }
+    }
+    
+    // Final check - if still no pluginId, show error
+    if (!pluginId) {
+        console.error('No plugin ID available after all fallbacks. actionId:', actionId, 'actionIndex:', actionIndex);
+        console.error('[DEBUG] Button found:', !!btn);
+        console.error('[DEBUG] currentPluginConfig:', currentPluginConfig);
         if (typeof showNotification === 'function') {
             showNotification('Unable to determine plugin ID. Please refresh the page.', 'error');
         }
         return;
     }
     
-    console.log('[DEBUG] executePluginAction - pluginId:', pluginId, 'actionId:', actionId, 'actionIndex:', actionIndex);
-    
-    const actionIdFull = `action-${actionId}-${actionIndex}`;
-    const statusId = `action-status-${actionId}-${actionIndex}`;
-    const btn = document.getElementById(actionIdFull);
-    const statusDiv = document.getElementById(statusId);
+    console.log('[DEBUG] executePluginAction - Final pluginId:', pluginId, 'actionId:', actionId, 'actionIndex:', actionIndex);
     
     if (!btn || !statusDiv) {
         console.error(`Action elements not found: ${actionIdFull}`);
@@ -4365,58 +4475,17 @@ window.installPlugin = function(pluginId, branch = null) {
 }
 
 function setupCollapsibleSections() {
-    // Toggle Installed Plugins section
-    const toggleInstalledBtn = document.getElementById('toggle-installed-plugins');
-    const installedContent = document.getElementById('installed-plugins-content');
-    const installedIcon = document.getElementById('installed-plugins-icon');
+    console.log('[setupCollapsibleSections] Setting up collapsible sections...');
     
-    if (toggleInstalledBtn && installedContent) {
-        toggleInstalledBtn.addEventListener('click', function() {
-            const isHidden = installedContent.style.display === 'none' || installedContent.classList.contains('hidden');
-            if (isHidden) {
-                installedContent.style.display = 'block';
-                installedContent.classList.remove('hidden');
-                installedIcon.classList.remove('fa-chevron-down');
-                installedIcon.classList.add('fa-chevron-up');
-                toggleInstalledBtn.querySelector('span').textContent = 'Collapse';
-            } else {
-                installedContent.style.display = 'none';
-                installedContent.classList.add('hidden');
-                installedIcon.classList.remove('fa-chevron-up');
-                installedIcon.classList.add('fa-chevron-down');
-                toggleInstalledBtn.querySelector('span').textContent = 'Expand';
-            }
-        });
-    }
-    
-    // Toggle Plugin Store section
-    const toggleStoreBtn = document.getElementById('toggle-plugin-store');
-    const storeContent = document.getElementById('plugin-store-content');
-    const storeIcon = document.getElementById('plugin-store-icon');
-    
-    if (toggleStoreBtn && storeContent) {
-        toggleStoreBtn.addEventListener('click', function() {
-            const isHidden = storeContent.style.display === 'none' || storeContent.classList.contains('hidden');
-            if (isHidden) {
-                storeContent.style.display = 'block';
-                storeContent.classList.remove('hidden');
-                storeIcon.classList.remove('fa-chevron-down');
-                storeIcon.classList.add('fa-chevron-up');
-                toggleStoreBtn.querySelector('span').textContent = 'Collapse';
-            } else {
-                storeContent.style.display = 'none';
-                storeContent.classList.add('hidden');
-                storeIcon.classList.remove('fa-chevron-up');
-                storeIcon.classList.add('fa-chevron-down');
-                toggleStoreBtn.querySelector('span').textContent = 'Expand';
-            }
-        });
-    }
+    // Installed Plugins and Plugin Store sections no longer have collapse buttons
+    // They are always visible
     
     // Functions are now defined outside IIFE, just attach the handler
     if (window.attachGithubTokenCollapseHandler) {
         window.attachGithubTokenCollapseHandler();
     }
+    
+    console.log('[setupCollapsibleSections] Collapsible sections setup complete');
 }
 
 function loadSavedRepositories() {
@@ -4503,26 +4572,66 @@ window.removeSavedRepository = function(repoUrl) {
 }
 
 function setupGitHubInstallHandlers() {
+    console.log('[setupGitHubInstallHandlers] Setting up GitHub install handlers...');
+    
     // Toggle GitHub install section visibility
     const toggleBtn = document.getElementById('toggle-github-install');
     const installSection = document.getElementById('github-install-section');
     const icon = document.getElementById('github-install-icon');
     
+    console.log('[setupGitHubInstallHandlers] Elements found:', {
+        button: !!toggleBtn,
+        section: !!installSection,
+        icon: !!icon
+    });
+    
     if (toggleBtn && installSection) {
-        toggleBtn.addEventListener('click', function() {
-            const isHidden = installSection.classList.contains('hidden');
-            if (isHidden) {
-                installSection.classList.remove('hidden');
-                icon.classList.remove('fa-chevron-down');
-                icon.classList.add('fa-chevron-up');
-                toggleBtn.querySelector('span').textContent = 'Hide';
-            } else {
-                installSection.classList.add('hidden');
-                icon.classList.remove('fa-chevron-up');
-                icon.classList.add('fa-chevron-down');
-                toggleBtn.querySelector('span').textContent = 'Show';
-            }
-        });
+        // Clone button to remove any existing listeners
+        const parent = toggleBtn.parentNode;
+        if (parent) {
+            const newBtn = toggleBtn.cloneNode(true);
+            parent.replaceChild(newBtn, toggleBtn);
+            
+            newBtn.addEventListener('click', function(e) {
+                e.stopPropagation();
+                e.preventDefault();
+                console.log('[setupGitHubInstallHandlers] GitHub install toggle clicked');
+                
+                const section = document.getElementById('github-install-section');
+                const iconEl = document.getElementById('github-install-icon');
+                const btn = document.getElementById('toggle-github-install');
+                
+                if (!section || !btn) return;
+                
+                const hasHiddenClass = section.classList.contains('hidden');
+                const computedDisplay = window.getComputedStyle(section).display;
+                
+                if (hasHiddenClass || computedDisplay === 'none') {
+                    // Show section - remove hidden, ensure visible
+                    section.classList.remove('hidden');
+                    section.style.removeProperty('display');
+                    if (iconEl) {
+                        iconEl.classList.remove('fa-chevron-down');
+                        iconEl.classList.add('fa-chevron-up');
+                    }
+                    const span = btn.querySelector('span');
+                    if (span) span.textContent = 'Hide';
+                } else {
+                    // Hide section - add hidden, set display none
+                    section.classList.add('hidden');
+                    section.style.display = 'none';
+                    if (iconEl) {
+                        iconEl.classList.remove('fa-chevron-up');
+                        iconEl.classList.add('fa-chevron-down');
+                    }
+                    const span = btn.querySelector('span');
+                    if (span) span.textContent = 'Show';
+                }
+            });
+            console.log('[setupGitHubInstallHandlers] Handler attached');
+        }
+    } else {
+        console.warn('[setupGitHubInstallHandlers] Required elements not found');
     }
     
     // Install single plugin from URL
