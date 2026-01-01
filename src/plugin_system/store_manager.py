@@ -125,12 +125,16 @@ class PluginStoreManager:
                 # Rate limit or forbidden (but token might be valid)
                 # Check if it's a rate limit issue
                 if 'rate limit' in response.text.lower():
+                    # Rate limit: return error but don't cache (rate limits are temporary)
                     error_msg = "Rate limit exceeded"
+                    result = (False, error_msg)
+                    return result
                 else:
+                    # Token lacks permissions: cache the result (permissions don't change)
                     error_msg = "Token lacks required permissions"
-                result = (False, error_msg)
-                self._token_validation_cache[cache_key] = (False, time.time(), error_msg)
-                return result
+                    result = (False, error_msg)
+                    self._token_validation_cache[cache_key] = (False, time.time(), error_msg)
+                    return result
             else:
                 # Other error
                 error_msg = f"GitHub API error: {response.status_code}"
