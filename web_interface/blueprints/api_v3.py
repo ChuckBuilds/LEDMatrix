@@ -6,8 +6,11 @@ import subprocess
 import time
 import hashlib
 import uuid
+import logging
 from datetime import datetime
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 # Import new infrastructure
 from src.web_interface.api_helpers import success_response, error_response, validate_request_json
@@ -634,7 +637,7 @@ def save_main_config():
         logging.error(error_msg)
         return error_response(
             ErrorCode.CONFIG_SAVE_FAILED,
-            f"Error saving configuration: {str(e)}",
+            f"Error saving configuration: {e}",
             details=traceback.format_exc(),
             status_code=500
         )
@@ -1228,24 +1231,20 @@ def start_on_demand_display():
                 if not resolved_plugin:
                     return jsonify({'status': 'error', 'message': f'Mode {resolved_mode} not found'}), 404
 
+        # Note: On-demand can work with disabled plugins - the display controller
+        # will temporarily enable them during initialization if needed
+        # We don't block the request here, but log it for debugging
         if api_v3.config_manager and resolved_plugin:
             config = api_v3.config_manager.load_config()
             plugin_config = config.get(resolved_plugin, {})
             if 'enabled' in plugin_config and not plugin_config.get('enabled', False):
-                return jsonify({
-                    'status': 'error',
-                    'message': f'Plugin {resolved_plugin} is disabled in configuration'
-                }), 400
+                logger.info(
+                    "On-demand request for disabled plugin '%s' - will be temporarily enabled",
+                    resolved_plugin,
+                )
 
-        # Check if display service is running (or will be started)
-        service_status = _get_display_service_status()
-        if not service_status.get('active') and not start_service:
-            return jsonify({
-                'status': 'error',
-                'message': 'Display service is not running. Please start the display service or enable "Start Service" option.',
-                'service_status': service_status
-            }), 400
-
+        # Set the on-demand request in cache FIRST (before starting service)
+        # This ensures the request is available when the service starts/restarts
         cache = _ensure_cache_manager()
         request_id = data.get('request_id') or str(uuid.uuid4())
         request_payload = {
@@ -1259,6 +1258,26 @@ def start_on_demand_display():
         }
         cache.set('display_on_demand_request', request_payload)
 
+        # Check if display service is running (or will be started)
+        service_status = _get_display_service_status()
+        service_was_running = service_status.get('active', False)
+        
+        # Stop the display service first to ensure clean state when we will restart it
+        if service_was_running and start_service:
+            import time as time_module
+            print("Stopping display service before starting on-demand mode...")
+            _stop_display_service()
+            # Wait a brief moment for the service to fully stop
+            time_module.sleep(1.5)
+            print("Display service stopped, now starting with on-demand request...")
+
+        if not service_status.get('active') and not start_service:
+            return jsonify({
+                'status': 'error',
+                'message': 'Display service is not running. Please start the display service or enable "Start Service" option.',
+                'service_status': service_status
+            }), 400
+
         service_result = None
         if start_service:
             service_result = _ensure_display_service_running()
@@ -1269,6 +1288,9 @@ def start_on_demand_display():
                     'message': 'Failed to start display service. Please check service logs or start it manually.',
                     'service_result': service_result
                 }), 500
+            
+            # Service was restarted (or started fresh) with on-demand request in cache
+            # The display controller will read the request during initialization or when it polls
 
         response_data = {
             'request_id': request_id,
@@ -1293,6 +1315,8 @@ def stop_on_demand_display():
         data = request.get_json(silent=True) or {}
         stop_service = data.get('stop_service', False)
 
+        # Set the stop request in cache FIRST
+        # The display controller will poll this and restart without the on-demand filter
         cache = _ensure_cache_manager()
         request_id = data.get('request_id') or str(uuid.uuid4())
         request_payload = {
@@ -1301,7 +1325,10 @@ def stop_on_demand_display():
             'timestamp': time.time()
         }
         cache.set('display_on_demand_request', request_payload)
-
+        
+        # Note: The display controller's _clear_on_demand() will handle the restart
+        # to restore normal operation with all plugins
+        
         service_result = None
         if stop_service:
             service_result = _stop_display_service()
@@ -2769,9 +2796,9 @@ def get_github_auth_status():
     try:
         if not api_v3.plugin_store_manager:
             return jsonify({'status': 'error', 'message': 'Plugin store manager not initialized'}), 500
-
+        
         token = api_v3.plugin_store_manager.github_token
-
+        
         # Check if GitHub token is configured
         if not token or len(token) == 0:
             return jsonify({
@@ -2784,10 +2811,10 @@ def get_github_auth_status():
                     'error': None
                 }
             })
-
+        
         # Validate the token
         is_valid, error_message = api_v3.plugin_store_manager._validate_github_token(token)
-
+        
         if is_valid:
             return jsonify({
                 'status': 'success',
@@ -2946,17 +2973,17 @@ def _get_schema_property(schema, key_path):
 def _is_field_required(key_path, schema):
     """
     Check if a field is required according to the schema.
-
+    
     Args:
         key_path: Dot-separated path like "mqtt.username"
         schema: The JSON schema dict
-
+    
     Returns:
         True if field is required, False otherwise
     """
     if not schema or 'properties' not in schema:
         return False
-
+    
     parts = key_path.split('.')
     if len(parts) == 1:
         # Top-level field
@@ -2966,12 +2993,12 @@ def _is_field_required(key_path, schema):
         # Nested field - navigate to parent object
         parent_path = '.'.join(parts[:-1])
         field_name = parts[-1]
-
+        
         # Get parent property
         parent_prop = _get_schema_property(schema, parent_path)
         if not parent_prop or 'properties' not in parent_prop:
             return False
-
+        
         # Check if field is required in parent
         required = parent_prop.get('required', [])
         return field_name in required
@@ -3116,7 +3143,7 @@ def _set_nested_value(config, key_path, value):
     # Skip setting if value is the sentinel
     if value is _SKIP_FIELD:
         return
-
+    
     parts = key_path.split('.')
     current = config
 
@@ -3320,7 +3347,7 @@ def save_plugin_config():
                 # Only set if not skipped
                 if parsed_value is not _SKIP_FIELD:
                     _set_nested_value(plugin_config, base_path, parsed_value)
-
+            
             # Process remaining (non-indexed) fields
             # Skip any base paths that were processed as indexed arrays
             for key, value in form_data.items():
@@ -3340,7 +3367,7 @@ def save_plugin_config():
                         # Use helper to set nested values correctly (skips if _SKIP_FIELD)
                         if parsed_value is not _SKIP_FIELD:
                             _set_nested_value(plugin_config, key, parsed_value)
-
+            
             # Post-process: Fix array fields that might have been incorrectly structured
             # This handles cases where array fields are stored as dicts (e.g., from indexed form fields)
             def fix_array_structures(config_dict, schema_props, prefix=''):

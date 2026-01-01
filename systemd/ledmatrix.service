@@ -12,6 +12,11 @@ RestartSec=10
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=ledmatrix
+# Support for on-demand plugin filtering via environment variable
+# The environment variable LEDMATRIX_ON_DEMAND_PLUGIN can be set via:
+# sudo systemctl set-environment LEDMATRIX_ON_DEMAND_PLUGIN=<plugin_id>
+# Or by using an EnvironmentFile (see below)
+# EnvironmentFile=__PROJECT_ROOT_DIR__/config/on_demand_env.conf
 
 [Install]
 WantedBy=multi-user.target 

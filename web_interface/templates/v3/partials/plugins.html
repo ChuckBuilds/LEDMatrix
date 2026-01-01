@@ -330,75 +330,7 @@
     </div>
 </div>
 
-<!-- On-Demand Modal -->
-<div id="on-demand-modal" class="fixed inset-0 modal-backdrop flex items-center justify-center z-50" style="display: none;">
-    <div class="modal-content p-6 w-full max-w-md bg-white rounded-lg shadow-lg">
-        <div class="flex justify-between items-center mb-4">
-            <h3 id="on-demand-modal-title" class="text-lg font-semibold">Run Plugin On-Demand</h3>
-            <button id="close-on-demand-modal" class="text-gray-400 hover:text-gray-600">
-                <i class="fas fa-times"></i>
-            </button>
-        </div>
-        <!-- Service Status Alert -->
-        <div id="on-demand-service-warning" class="hidden mb-4 p-3 bg-yellow-50 border border-yellow-200 rounded-md">
-            <div class="flex items-start">
-                <i class="fas fa-exclamation-triangle text-yellow-600 mt-0.5 mr-2"></i>
-                <div class="flex-1">
-                    <p class="text-sm font-medium text-yellow-800">Display service is not running</p>
-                    <p class="text-xs text-yellow-700 mt-1">
-                        The on-demand request will be queued but won't display until the service starts.
-                        Enable "Start display service" below to automatically start it.
-                    </p>
-                </div>
-            </div>
-        </div>
-        
-        <form id="on-demand-form" class="space-y-4">
-            <div>
-                <label for="on-demand-mode" class="block text-sm font-medium text-gray-700 mb-1">Display Mode</label>
-                <select id="on-demand-mode" name="mode"
-                        class="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500">
-                </select>
-                <p id="on-demand-mode-hint" class="text-xs text-gray-500 mt-1"></p>
-            </div>
-            <div>
-                <label for="on-demand-duration" class="block text-sm font-medium text-gray-700 mb-1">
-                    Duration (seconds, optional)
-                </label>
-                <input type="number" min="0" id="on-demand-duration" name="duration"
-                       class="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
-                       placeholder="Leave blank to use plugin default">
-                <p class="text-xs text-gray-500 mt-1">
-                    Use 0 or leave empty to keep the plugin running until stopped manually.
-                </p>
-            </div>
-            <div class="flex items-center">
-                <input id="on-demand-pinned" name="pinned" type="checkbox"
-                       class="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded">
-                <label for="on-demand-pinned" class="ml-2 block text-sm text-gray-700">
-                    Pin plugin to prevent rotation until stopped
-                </label>
-            </div>
-            <div class="flex items-center">
-                <input id="on-demand-start-service" name="start_service" type="checkbox" checked
-                       class="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded">
-                <label for="on-demand-start-service" class="ml-2 block text-sm text-gray-700">
-                    Start display service if it is not running
-                </label>
-            </div>
-            <div class="flex justify-end gap-3 pt-3">
-                <button type="button" id="cancel-on-demand"
-                        class="px-4 py-2 text-sm bg-gray-200 hover:bg-gray-300 text-gray-700 rounded-md">
-                    Cancel
-                </button>
-                <button type="submit"
-                        class="px-4 py-2 text-sm bg-green-600 hover:bg-green-700 text-white rounded-md font-semibold">
-                    Start On-Demand
-                </button>
-            </div>
-        </form>
-    </div>
-</div>
+<!-- On-Demand Modal moved to base.html so it's always available -->
 
 <style>
 /* View toggle button styles */

@@ -587,9 +587,22 @@ window.checkGitHubAuthStatus = function checkGitHubAuthStatus() {
                             if (tokenStatus === 'invalid' && authData.error) {
                                 const warningText = warning.querySelector('p.text-sm.text-yellow-700');
                                 if (warningText) {
-                                    // Preserve the structure but update the message
-                                    const errorMsg = authData.message || authData.error;
-                                    warningText.innerHTML = `<strong>Token Invalid:</strong> ${errorMsg}. Please update your GitHub token to increase API rate limits to 5,000 requests/hour.`;
+                                    // Clear existing content
+                                    warningText.textContent = '';
+                                    
+                                    // Create safe error message with fallback
+                                    const errorMsg = (authData.message || authData.error || 'Unknown error').toString();
+                                    
+                                    // Create <strong> element for "Token Invalid:" label
+                                    const strong = document.createElement('strong');
+                                    strong.textContent = 'Token Invalid:';
+                                    
+                                    // Create text node for error message and suffix
+                                    const errorText = document.createTextNode(` ${errorMsg}. Please update your GitHub token to increase API rate limits to 5,000 requests/hour.`);
+                                    
+                                    // Append elements safely (no innerHTML)
+                                    warningText.appendChild(strong);
+                                    warningText.appendChild(errorText);
                                 }
                             }
                             // For 'none' status, use the default message from HTML template
@@ -1512,24 +1525,68 @@ function runUpdateAllPlugins() {
         });
 }
 
+// Initialize on-demand modal setup (runs unconditionally since modal is in base.html)
+function initializeOnDemandModal() {
+    const closeOnDemandModalBtn = document.getElementById('close-on-demand-modal');
+    const cancelOnDemandBtn = document.getElementById('cancel-on-demand');
+    const onDemandForm = document.getElementById('on-demand-form');
+    const onDemandModal = document.getElementById('on-demand-modal');
+    
+    if (closeOnDemandModalBtn && !closeOnDemandModalBtn.dataset.initialized) {
+        closeOnDemandModalBtn.replaceWith(closeOnDemandModalBtn.cloneNode(true));
+        const newBtn = document.getElementById('close-on-demand-modal');
+        if (newBtn) {
+            newBtn.dataset.initialized = 'true';
+            newBtn.addEventListener('click', closeOnDemandModal);
+        }
+    }
+    if (cancelOnDemandBtn && !cancelOnDemandBtn.dataset.initialized) {
+        cancelOnDemandBtn.replaceWith(cancelOnDemandBtn.cloneNode(true));
+        const newBtn = document.getElementById('cancel-on-demand');
+        if (newBtn) {
+            newBtn.dataset.initialized = 'true';
+            newBtn.addEventListener('click', closeOnDemandModal);
+        }
+    }
+    if (onDemandForm && !onDemandForm.dataset.initialized) {
+        onDemandForm.replaceWith(onDemandForm.cloneNode(true));
+        const newForm = document.getElementById('on-demand-form');
+        if (newForm) {
+            newForm.dataset.initialized = 'true';
+            newForm.addEventListener('submit', submitOnDemandRequest);
+        }
+    }
+    if (onDemandModal && !onDemandModal.dataset.initialized) {
+        onDemandModal.dataset.initialized = 'true';
+        onDemandModal.onclick = closeOnDemandModalOnBackdrop;
+    }
+}
+
 // Store the real implementation and replace the stub
 window.__openOnDemandModalImpl = function(pluginId) {
+    console.log('[__openOnDemandModalImpl] Called with pluginId:', pluginId);
     const plugin = findInstalledPlugin(pluginId);
+    console.log('[__openOnDemandModalImpl] Found plugin:', plugin ? plugin.id : 'NOT FOUND');
     if (!plugin) {
+        console.warn('[__openOnDemandModalImpl] Plugin not found, installedPlugins:', window.installedPlugins?.length || 0);
         if (typeof showNotification === 'function') {
             showNotification(`Plugin ${pluginId} not found`, 'error');
         }
         return;
     }
 
+    // Note: On-demand can work with disabled plugins - the backend will temporarily enable them
+    // We still log it for debugging but don't block the modal
     if (!plugin.enabled) {
-        if (typeof showNotification === 'function') {
-            showNotification('Enable the plugin before running it on-demand.', 'error');
-        }
-        return;
+        console.log('[__openOnDemandModalImpl] Plugin is disabled, but on-demand will temporarily enable it');
     }
 
     currentOnDemandPluginId = pluginId;
+    console.log('[__openOnDemandModalImpl] Setting currentOnDemandPluginId to:', pluginId);
+
+    // Ensure modal is initialized
+    console.log('[__openOnDemandModalImpl] Initializing modal...');
+    initializeOnDemandModal();
 
     const modal = document.getElementById('on-demand-modal');
     const modeSelect = document.getElementById('on-demand-mode');
@@ -1539,10 +1596,30 @@ window.__openOnDemandModalImpl = function(pluginId) {
     const startServiceCheckbox = document.getElementById('on-demand-start-service');
     const modalTitle = document.getElementById('on-demand-modal-title');
 
+    console.log('[__openOnDemandModalImpl] Modal elements check:', {
+        modal: !!modal,
+        modeSelect: !!modeSelect,
+        modeHint: !!modeHint,
+        durationInput: !!durationInput,
+        pinnedCheckbox: !!pinnedCheckbox,
+        startServiceCheckbox: !!startServiceCheckbox,
+        modalTitle: !!modalTitle
+    });
+
     if (!modal || !modeSelect || !modeHint || !durationInput || !pinnedCheckbox || !startServiceCheckbox || !modalTitle) {
-        console.error('On-demand modal elements not found');
+        console.error('On-demand modal elements not found', {
+            modal: !!modal,
+            modeSelect: !!modeSelect,
+            modeHint: !!modeHint,
+            durationInput: !!durationInput,
+            pinnedCheckbox: !!pinnedCheckbox,
+            startServiceCheckbox: !!startServiceCheckbox,
+            modalTitle: !!modalTitle
+        });
         return;
     }
+    
+    console.log('[__openOnDemandModalImpl] All elements found, opening modal...');
 
     modalTitle.textContent = `Run ${resolvePluginDisplayName(pluginId)} On-Demand`;
     modeSelect.innerHTML = '';
@@ -1589,7 +1666,43 @@ window.__openOnDemandModalImpl = function(pluginId) {
             console.error('Error checking service status:', error);
         });
 
-    modal.style.display = 'flex';
+    console.log('[__openOnDemandModalImpl] Setting modal display to flex');
+    // Force modal to be visible and properly positioned
+    // Remove all inline styles that might interfere
+    modal.removeAttribute('style');
+    // Set explicit positioning to ensure it's visible
+    modal.style.cssText = 'position: fixed !important; top: 0 !important; left: 0 !important; right: 0 !important; bottom: 0 !important; display: flex !important; visibility: visible !important; opacity: 1 !important; z-index: 9999 !important; margin: 0 !important; padding: 0 !important;';
+    
+    // Ensure modal content is centered
+    const modalContent = modal.querySelector('.modal-content');
+    if (modalContent) {
+        modalContent.style.margin = 'auto';
+        modalContent.style.maxHeight = '90vh';
+        modalContent.style.overflowY = 'auto';
+    }
+    
+    // Scroll to top of page to ensure modal is visible
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+    
+    // Force a reflow to ensure styles are applied
+    modal.offsetHeight;
+    console.log('[__openOnDemandModalImpl] Modal display set, should be visible now. Modal element:', modal);
+    console.log('[__openOnDemandModalImpl] Modal computed styles:', {
+        display: window.getComputedStyle(modal).display,
+        visibility: window.getComputedStyle(modal).visibility,
+        opacity: window.getComputedStyle(modal).opacity,
+        zIndex: window.getComputedStyle(modal).zIndex,
+        position: window.getComputedStyle(modal).position
+    });
+    // Also check if modal is actually in the viewport
+    const rect = modal.getBoundingClientRect();
+    console.log('[__openOnDemandModalImpl] Modal bounding rect:', {
+        top: rect.top,
+        left: rect.left,
+        width: rect.width,
+        height: rect.height,
+        visible: rect.width > 0 && rect.height > 0
+    });
 };
 
 // Replace the stub with the real implementation
@@ -1605,7 +1718,10 @@ function closeOnDemandModal() {
 
 function submitOnDemandRequest(event) {
     event.preventDefault();
+    console.log('[submitOnDemandRequest] Form submitted, currentOnDemandPluginId:', currentOnDemandPluginId);
+    
     if (!currentOnDemandPluginId) {
+        console.error('[submitOnDemandRequest] No plugin ID set');
         if (typeof showNotification === 'function') {
             showNotification('Select a plugin before starting on-demand mode.', 'error');
         }
@@ -1614,8 +1730,11 @@ function submitOnDemandRequest(event) {
 
     const form = document.getElementById('on-demand-form');
     if (!form) {
+        console.error('[submitOnDemandRequest] Form not found');
         return;
     }
+    
+    console.log('[submitOnDemandRequest] Form found, processing...');
 
     const formData = new FormData(form);
     const mode = formData.get('mode');
@@ -1637,6 +1756,7 @@ function submitOnDemandRequest(event) {
         }
     }
 
+    console.log('[submitOnDemandRequest] Payload:', payload);
     markOnDemandLoading();
 
     fetch('/api/v3/display/on-demand/start', {
@@ -1646,8 +1766,12 @@ function submitOnDemandRequest(event) {
         },
         body: JSON.stringify(payload)
     })
-        .then(response => response.json())
+        .then(response => {
+            console.log('[submitOnDemandRequest] Response status:', response.status);
+            return response.json();
+        })
         .then(result => {
+            console.log('[submitOnDemandRequest] Response data:', result);
             if (result.status === 'success') {
                 if (typeof showNotification === 'function') {
                     const pluginName = resolvePluginDisplayName(currentOnDemandPluginId);
@@ -1656,13 +1780,14 @@ function submitOnDemandRequest(event) {
                 closeOnDemandModal();
                 setTimeout(() => loadOnDemandStatus(true), 700);
             } else {
+                console.error('[submitOnDemandRequest] Request failed:', result);
                 if (typeof showNotification === 'function') {
                     showNotification(result.message || 'Failed to start on-demand mode', 'error');
                 }
             }
         })
         .catch(error => {
-            console.error('Error starting on-demand mode:', error);
+            console.error('[submitOnDemandRequest] Error starting on-demand mode:', error);
             if (typeof showNotification === 'function') {
                 showNotification('Error starting on-demand mode: ' + error.message, 'error');
             }
@@ -5973,6 +6098,18 @@ if (_PLUGIN_DEBUG_EARLY) {
 if (window.checkGitHubAuthStatus && document.getElementById('github-auth-warning')) {
     console.log('[EARLY] Checking GitHub auth status immediately on script load...');
     window.checkGitHubAuthStatus();
+}
+
+// Initialize on-demand modal immediately since it's in base.html
+if (typeof initializeOnDemandModal === 'function') {
+    // Run immediately and also after DOM is ready
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', initializeOnDemandModal);
+    } else {
+        initializeOnDemandModal();
+    }
+    // Also try after a short delay to ensure elements are available
+    setTimeout(initializeOnDemandModal, 100);
 }
 
 setTimeout(function() {
