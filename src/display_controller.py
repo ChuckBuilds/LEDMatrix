@@ -1192,20 +1192,28 @@ class DisplayController:
                     if self.on_demand_active:
                         # Skip to next on-demand mode if no content
                         logger.info("No content for on-demand mode %s, skipping to next mode", active_mode)
+                        
                         # Guard against empty on_demand_modes to prevent ZeroDivisionError
-                        if not self.on_demand_modes:
-                            logger.warning("On-demand active but no modes available, clearing on-demand mode")
-                            self._clear_on_demand(reason='no-modes-available')
-                            # Fall through to normal rotation
-                        else:
-                            # Move to next mode in rotation
-                            self.on_demand_mode_index = (self.on_demand_mode_index + 1) % len(self.on_demand_modes)
-                            next_mode = self.on_demand_modes[self.on_demand_mode_index]
+                        if not self.on_demand_modes or len(self.on_demand_modes) == 0:
+                            logger.warning("On-demand active but no modes configured, skipping rotation")
+                            logger.debug("on_demand_modes is empty, cannot rotate to next mode")
+                            # Skip rotation and continue to next iteration
+                            continue
+                        
+                        # Move to next mode in rotation (only if on_demand_modes is non-empty)
+                        self.on_demand_mode_index = (self.on_demand_mode_index + 1) % len(self.on_demand_modes)
+                        next_mode = self.on_demand_modes[self.on_demand_mode_index]
+                        
+                        # Only log when next_mode is valid
+                        if next_mode:
                             logger.info("Rotating to next on-demand mode: %s (index %d/%d)", 
                                        next_mode, self.on_demand_mode_index, len(self.on_demand_modes))
                             self.current_display_mode = next_mode
                             self.force_change = True
                             self._publish_on_demand_state()
+                            continue
+                        else:
+                            logger.warning("Next on-demand mode is invalid, skipping rotation")
                             continue
                     else:
                         logger.info("No content to display for %s, skipping to next mode", active_mode)
