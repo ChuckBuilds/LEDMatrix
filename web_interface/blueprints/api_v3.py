@@ -634,7 +634,7 @@ def save_main_config():
         logging.error(error_msg)
         return error_response(
             ErrorCode.CONFIG_SAVE_FAILED,
-            f"Error saving configuration: {str(e)}",
+            f"Error saving configuration: {e}",
             details=traceback.format_exc(),
             status_code=500
         )
