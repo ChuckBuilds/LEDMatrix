@@ -1078,20 +1078,26 @@ class DisplayController:
                         except ValueError:
                             pass
 
-                if self.on_demand_active and self.on_demand_modes:
-                    # Rotate through on-demand plugin modes
-                    if self.on_demand_mode_index < len(self.on_demand_modes):
-                        active_mode = self.on_demand_modes[self.on_demand_mode_index]
-                        if self.current_display_mode != active_mode:
-                            self.current_display_mode = active_mode
-                            self.force_change = True
+                if self.on_demand_active:
+                    # Guard against empty on_demand_modes
+                    if not self.on_demand_modes:
+                        logger.warning("On-demand active but no modes available, clearing on-demand mode")
+                        self._clear_on_demand(reason='no-modes-available')
+                        active_mode = self.current_display_mode
                     else:
-                        # Reset to first mode if index is out of bounds
-                        self.on_demand_mode_index = 0
-                        active_mode = self.on_demand_modes[0] if self.on_demand_modes else self.current_display_mode
-                        if self.current_display_mode != active_mode:
-                            self.current_display_mode = active_mode
-                            self.force_change = True
+                        # Rotate through on-demand plugin modes
+                        if self.on_demand_mode_index < len(self.on_demand_modes):
+                            active_mode = self.on_demand_modes[self.on_demand_mode_index]
+                            if self.current_display_mode != active_mode:
+                                self.current_display_mode = active_mode
+                                self.force_change = True
+                        else:
+                            # Reset to first mode if index is out of bounds
+                            self.on_demand_mode_index = 0
+                            active_mode = self.on_demand_modes[0]
+                            if self.current_display_mode != active_mode:
+                                self.current_display_mode = active_mode
+                                self.force_change = True
                 else:
                     active_mode = self.current_display_mode
 
@@ -1186,15 +1192,21 @@ class DisplayController:
                     if self.on_demand_active:
                         # Skip to next on-demand mode if no content
                         logger.info("No content for on-demand mode %s, skipping to next mode", active_mode)
-                        # Move to next mode in rotation
-                        self.on_demand_mode_index = (self.on_demand_mode_index + 1) % len(self.on_demand_modes)
-                        next_mode = self.on_demand_modes[self.on_demand_mode_index]
-                        logger.info("Rotating to next on-demand mode: %s (index %d/%d)", 
-                                   next_mode, self.on_demand_mode_index, len(self.on_demand_modes))
-                        self.current_display_mode = next_mode
-                        self.force_change = True
-                        self._publish_on_demand_state()
-                        continue
+                        # Guard against empty on_demand_modes to prevent ZeroDivisionError
+                        if not self.on_demand_modes:
+                            logger.warning("On-demand active but no modes available, clearing on-demand mode")
+                            self._clear_on_demand(reason='no-modes-available')
+                            # Fall through to normal rotation
+                        else:
+                            # Move to next mode in rotation
+                            self.on_demand_mode_index = (self.on_demand_mode_index + 1) % len(self.on_demand_modes)
+                            next_mode = self.on_demand_modes[self.on_demand_mode_index]
+                            logger.info("Rotating to next on-demand mode: %s (index %d/%d)", 
+                                       next_mode, self.on_demand_mode_index, len(self.on_demand_modes))
+                            self.current_display_mode = next_mode
+                            self.force_change = True
+                            self._publish_on_demand_state()
+                            continue
                     else:
                         logger.info("No content to display for %s, skipping to next mode", active_mode)
                         # Don't clear display when immediately moving to next mode - this causes black flashes
@@ -1557,15 +1569,21 @@ class DisplayController:
                 
                 # Move to next mode
                 if self.on_demand_active:
-                    # Rotate to next on-demand mode
-                    self.on_demand_mode_index = (self.on_demand_mode_index + 1) % len(self.on_demand_modes)
-                    next_mode = self.on_demand_modes[self.on_demand_mode_index]
-                    logger.info("Rotating to next on-demand mode: %s (index %d/%d)", 
-                               next_mode, self.on_demand_mode_index, len(self.on_demand_modes))
-                    self.current_display_mode = next_mode
-                    self.force_change = True
-                    self._publish_on_demand_state()
-                    continue
+                    # Guard against empty on_demand_modes to prevent ZeroDivisionError
+                    if not self.on_demand_modes:
+                        logger.warning("On-demand active but no modes available, clearing on-demand mode")
+                        self._clear_on_demand(reason='no-modes-available')
+                        # Fall through to normal rotation
+                    else:
+                        # Rotate to next on-demand mode
+                        self.on_demand_mode_index = (self.on_demand_mode_index + 1) % len(self.on_demand_modes)
+                        next_mode = self.on_demand_modes[self.on_demand_mode_index]
+                        logger.info("Rotating to next on-demand mode: %s (index %d/%d)", 
+                                   next_mode, self.on_demand_mode_index, len(self.on_demand_modes))
+                        self.current_display_mode = next_mode
+                        self.force_change = True
+                        self._publish_on_demand_state()
+                        continue
 
                 # Check for live priority - don't rotate if current plugin has live content
                 should_rotate = True
