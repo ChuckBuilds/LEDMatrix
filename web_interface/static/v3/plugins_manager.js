@@ -587,9 +587,22 @@ window.checkGitHubAuthStatus = function checkGitHubAuthStatus() {
                             if (tokenStatus === 'invalid' && authData.error) {
                                 const warningText = warning.querySelector('p.text-sm.text-yellow-700');
                                 if (warningText) {
-                                    // Preserve the structure but update the message
-                                    const errorMsg = authData.message || authData.error;
-                                    warningText.innerHTML = `<strong>Token Invalid:</strong> ${errorMsg}. Please update your GitHub token to increase API rate limits to 5,000 requests/hour.`;
+                                    // Clear existing content
+                                    warningText.textContent = '';
+                                    
+                                    // Create safe error message with fallback
+                                    const errorMsg = (authData.message || authData.error || 'Unknown error').toString();
+                                    
+                                    // Create <strong> element for "Token Invalid:" label
+                                    const strong = document.createElement('strong');
+                                    strong.textContent = 'Token Invalid:';
+                                    
+                                    // Create text node for error message and suffix
+                                    const errorText = document.createTextNode(` ${errorMsg}. Please update your GitHub token to increase API rate limits to 5,000 requests/hour.`);
+                                    
+                                    // Append elements safely (no innerHTML)
+                                    warningText.appendChild(strong);
+                                    warningText.appendChild(errorText);
                                 }
                             }
                             // For 'none' status, use the default message from HTML template
