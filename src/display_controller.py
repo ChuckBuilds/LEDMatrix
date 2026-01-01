@@ -294,6 +294,10 @@ class DisplayController:
             logger.info("Plugin system initialized in %.3f seconds", time.time() - plugin_time)
             logger.info("Total available modes: %d", len(self.available_modes))
             logger.info("Available modes: %s", self.available_modes)
+            
+            # If on-demand mode was restored from cache, populate on_demand_modes now that plugins are loaded
+            if self.on_demand_active and self.on_demand_plugin_id:
+                self._populate_on_demand_modes_from_plugin()
 
         except Exception:  # pylint: disable=broad-except
             logger.exception("Plugin system initialization failed")
@@ -745,6 +749,67 @@ class DisplayController:
             if modes:
                 return modes[0]
         return plugin_id
+
+    def _populate_on_demand_modes_from_plugin(self) -> None:
+        """
+        Populate on_demand_modes from the on-demand plugin's display modes.
+        Called after plugin loading completes when on-demand state is restored from cache.
+        """
+        if not self.on_demand_active or not self.on_demand_plugin_id:
+            return
+        
+        plugin_id = self.on_demand_plugin_id
+        
+        # Get all modes for this plugin
+        plugin_modes = self.plugin_display_modes.get(plugin_id, [])
+        if not plugin_modes:
+            # Fallback: find all modes that belong to this plugin
+            plugin_modes = [mode for mode, pid in self.mode_to_plugin_id.items() if pid == plugin_id]
+        
+        # Filter to only include modes that exist in plugin_modes
+        available_plugin_modes = [m for m in plugin_modes if m in self.plugin_modes]
+        
+        if not available_plugin_modes:
+            logger.warning("No valid display modes found for on-demand plugin '%s' after restoration", plugin_id)
+            self.on_demand_modes = []
+            return
+        
+        # Prioritize live modes if they exist and have content
+        live_modes = [m for m in available_plugin_modes if m.endswith('_live')]
+        other_modes = [m for m in available_plugin_modes if not m.endswith('_live')]
+        
+        # Check if live modes have content
+        live_with_content = []
+        for live_mode in live_modes:
+            plugin_instance = self.plugin_modes.get(live_mode)
+            if plugin_instance and hasattr(plugin_instance, 'has_live_content'):
+                try:
+                    if plugin_instance.has_live_content():
+                        live_with_content.append(live_mode)
+                except Exception:
+                    pass
+        
+        # Build mode list: live modes with content first, then other modes, then live modes without content
+        if live_with_content:
+            ordered_modes = live_with_content + other_modes + [m for m in live_modes if m not in live_with_content]
+        else:
+            # No live content, skip live modes
+            ordered_modes = other_modes
+        
+        if not ordered_modes:
+            # Only live modes available but no content - use them anyway
+            ordered_modes = live_modes
+        
+        self.on_demand_modes = ordered_modes
+        # Set index to match the restored mode if available, otherwise start at 0
+        if self.on_demand_mode and self.on_demand_mode in ordered_modes:
+            self.on_demand_mode_index = ordered_modes.index(self.on_demand_mode)
+        else:
+            self.on_demand_mode_index = 0
+        
+        logger.info("Populated on-demand modes for plugin '%s': %s (starting at index %d: %s)", 
+                   plugin_id, ordered_modes, self.on_demand_mode_index, 
+                   ordered_modes[self.on_demand_mode_index] if ordered_modes else 'N/A')
 
     def _activate_on_demand(self, request: Dict[str, Any]) -> None:
         """Activate on-demand mode for a specific plugin display."""
