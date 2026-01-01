@@ -94,16 +94,18 @@ The on-demand feature uses several cache keys to manage state. Understanding the
 3. Click "Delete" for each one
 4. Restart the display service: `sudo systemctl restart ledmatrix`
 
-### Scenario 2: Infinite Restart Loop
+### Scenario 2: On-Demand Mode Switching Issues
 **Symptoms**:
-- Display keeps restarting repeatedly
-- Logs show "Activating on-demand mode... restarting display controller" in a loop
+- On-demand mode not switching to requested plugin
+- Logs show "Processing on-demand start request for plugin" but no "Activated on-demand for plugin" message
+- Display stuck in previous mode instead of switching immediately
 
 **Solution**: Clear these keys:
-- `display_on_demand_request` - Stops the restart trigger
+- `display_on_demand_request` - Stops any pending request
 - `display_on_demand_processed_id` - Allows new requests to be processed
+- `display_on_demand_state` - Clears any stale state
 
-**How to Clear**: Same as Scenario 1, but focus on `display_on_demand_request` first
+**How to Clear**: Same as Scenario 1, but focus on `display_on_demand_request` first. Note that on-demand now switches modes immediately without restarting the service.
 
 ### Scenario 3: On-Demand Not Activating
 **Symptoms**:
