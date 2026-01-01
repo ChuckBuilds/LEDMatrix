@@ -6,8 +6,11 @@ import subprocess
 import time
 import hashlib
 import uuid
+import logging
 from datetime import datetime
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 # Import new infrastructure
 from src.web_interface.api_helpers import success_response, error_response, validate_request_json
@@ -1235,7 +1238,10 @@ def start_on_demand_display():
             config = api_v3.config_manager.load_config()
             plugin_config = config.get(resolved_plugin, {})
             if 'enabled' in plugin_config and not plugin_config.get('enabled', False):
-                logger.info("On-demand request for disabled plugin '%s' - will be temporarily enabled", resolved_plugin)
+                logger.info(
+                    "On-demand request for disabled plugin '%s' - will be temporarily enabled",
+                    resolved_plugin,
+                )
 
         # Set the on-demand request in cache FIRST (before starting service)
         # This ensures the request is available when the service starts/restarts
@@ -1256,14 +1262,14 @@ def start_on_demand_display():
         service_status = _get_display_service_status()
         service_was_running = service_status.get('active', False)
         
-        # Stop the display service first to ensure clean state (mimics manual stop)
-        if service_was_running:
+        # Stop the display service first to ensure clean state when we will restart it
+        if service_was_running and start_service:
             import time as time_module
-            print(f"Stopping display service before starting on-demand mode...")
-            stop_result = _stop_display_service()
+            print("Stopping display service before starting on-demand mode...")
+            _stop_display_service()
             # Wait a brief moment for the service to fully stop
             time_module.sleep(1.5)
-            print(f"Display service stopped, now starting with on-demand request...")
+            print("Display service stopped, now starting with on-demand request...")
 
         if not service_status.get('active') and not start_service:
             return jsonify({
