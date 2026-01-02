@@ -4681,14 +4681,28 @@ function setupGitHubInstallHandlers() {
     const pluginUrlInput = document.getElementById('github-plugin-url');
     const pluginStatusDiv = document.getElementById('github-plugin-status');
     
+    console.log('[setupGitHubInstallHandlers] Install button elements:', {
+        installBtn: !!installBtn,
+        pluginUrlInput: !!pluginUrlInput,
+        pluginStatusDiv: !!pluginStatusDiv
+    });
+    
     if (installBtn && pluginUrlInput) {
         // Clone button to remove any existing listeners (prevents duplicate handlers)
         const parent = installBtn.parentNode;
         if (parent) {
             const newBtn = installBtn.cloneNode(true);
+            // Ensure button type is set to prevent form submission
+            newBtn.type = 'button';
             parent.replaceChild(newBtn, installBtn);
             
-            newBtn.addEventListener('click', function() {
+            console.log('[setupGitHubInstallHandlers] Install button cloned and replaced, type:', newBtn.type);
+            
+            newBtn.addEventListener('click', function(e) {
+                e.preventDefault();
+                e.stopPropagation();
+                console.log('[setupGitHubInstallHandlers] Install button clicked!');
+                
                 const repoUrl = pluginUrlInput.value.trim();
                 if (!repoUrl) {
                     if (pluginStatusDiv) {
@@ -4755,9 +4769,15 @@ function setupGitHubInstallHandlers() {
             // Allow Enter key to trigger install
             pluginUrlInput.addEventListener('keypress', function(e) {
                 if (e.key === 'Enter') {
+                    e.preventDefault();
+                    console.log('[setupGitHubInstallHandlers] Enter key pressed, triggering install');
                     newBtn.click();
                 }
             });
+            
+            console.log('[setupGitHubInstallHandlers] Install button handler attached successfully');
+        } else {
+            console.error('[setupGitHubInstallHandlers] Install button parent not found!');
         }
     } else {
         console.warn('[setupGitHubInstallHandlers] Install button or URL input not found:', {
