@@ -284,6 +284,18 @@ window.__pluginDomReady = window.__pluginDomReady || false;
                 event.preventDefault();
                 event.stopPropagation();
                 window.configurePlugin(pluginId);
+            } else if (action === 'update' && window.updatePlugin) {
+                event.preventDefault();
+                event.stopPropagation();
+                console.log('[DEBUG update fallback] Updating plugin:', pluginId);
+                window.updatePlugin(pluginId);
+            } else if (action === 'uninstall' && window.uninstallPlugin) {
+                event.preventDefault();
+                event.stopPropagation();
+                console.log('[DEBUG uninstall fallback] Uninstalling plugin:', pluginId);
+                if (confirm(`Are you sure you want to uninstall ${pluginId}?`)) {
+                    window.uninstallPlugin(pluginId);
+                }
             }
         }
     };
