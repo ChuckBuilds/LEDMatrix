@@ -4613,6 +4613,133 @@ window.removeSavedRepository = function(repoUrl) {
     });
 }
 
+// Separate function to attach install button handler (can be called multiple times)
+function attachInstallButtonHandler() {
+    const installBtn = document.getElementById('install-plugin-from-url');
+    const pluginUrlInput = document.getElementById('github-plugin-url');
+    const pluginStatusDiv = document.getElementById('github-plugin-status');
+    
+    console.log('[attachInstallButtonHandler] Looking for install button elements:', {
+        installBtn: !!installBtn,
+        pluginUrlInput: !!pluginUrlInput,
+        pluginStatusDiv: !!pluginStatusDiv
+    });
+    
+    if (installBtn && pluginUrlInput) {
+        // Check if handler already attached (prevent duplicates)
+        if (installBtn.hasAttribute('data-handler-attached')) {
+            console.log('[attachInstallButtonHandler] Handler already attached, skipping');
+            return;
+        }
+        
+        // Clone button to remove any existing listeners (prevents duplicate handlers)
+        const parent = installBtn.parentNode;
+        if (parent) {
+            const newBtn = installBtn.cloneNode(true);
+            // Ensure button type is set to prevent form submission
+            newBtn.type = 'button';
+            // Mark as having handler attached
+            newBtn.setAttribute('data-handler-attached', 'true');
+            parent.replaceChild(newBtn, installBtn);
+            
+            console.log('[attachInstallButtonHandler] Install button cloned and replaced, type:', newBtn.type);
+            
+            newBtn.addEventListener('click', function(e) {
+                e.preventDefault();
+                e.stopPropagation();
+                console.log('[attachInstallButtonHandler] Install button clicked!');
+                
+                const repoUrl = pluginUrlInput.value.trim();
+                if (!repoUrl) {
+                    if (pluginStatusDiv) {
+                        pluginStatusDiv.innerHTML = '<span class="text-red-600"><i class="fas fa-exclamation-circle mr-1"></i>Please enter a GitHub URL</span>';
+                    }
+                    return;
+                }
+                
+                if (!repoUrl.includes('github.com')) {
+                    if (pluginStatusDiv) {
+                        pluginStatusDiv.innerHTML = '<span class="text-red-600"><i class="fas fa-exclamation-circle mr-1"></i>Please enter a valid GitHub URL</span>';
+                    }
+                    return;
+                }
+                
+                newBtn.disabled = true;
+                newBtn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>Installing...';
+                if (pluginStatusDiv) {
+                    pluginStatusDiv.innerHTML = '<span class="text-blue-600"><i class="fas fa-spinner fa-spin mr-1"></i>Installing plugin...</span>';
+                }
+                
+                const branch = document.getElementById('plugin-branch-input')?.value?.trim() || null;
+                const requestBody = { repo_url: repoUrl };
+                if (branch) {
+                    requestBody.branch = branch;
+                }
+                
+                console.log('[attachInstallButtonHandler] Sending install request:', requestBody);
+                
+                fetch('/api/v3/plugins/install-from-url', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(requestBody)
+                })
+                .then(response => {
+                    console.log('[attachInstallButtonHandler] Response status:', response.status);
+                    return response.json();
+                })
+                .then(data => {
+                    console.log('[attachInstallButtonHandler] Response data:', data);
+                    if (data.status === 'success') {
+                        if (pluginStatusDiv) {
+                            pluginStatusDiv.innerHTML = `<span class="text-green-600"><i class="fas fa-check-circle mr-1"></i>Successfully installed: ${data.plugin_id}</span>`;
+                        }
+                        pluginUrlInput.value = '';
+                        
+                        // Refresh installed plugins list
+                        setTimeout(() => {
+                            loadInstalledPlugins();
+                        }, 1000);
+                    } else {
+                        if (pluginStatusDiv) {
+                            pluginStatusDiv.innerHTML = `<span class="text-red-600"><i class="fas fa-times-circle mr-1"></i>${data.message || 'Installation failed'}</span>`;
+                        }
+                    }
+                })
+                .catch(error => {
+                    console.error('[attachInstallButtonHandler] Error:', error);
+                    if (pluginStatusDiv) {
+                        pluginStatusDiv.innerHTML = `<span class="text-red-600"><i class="fas fa-times-circle mr-1"></i>Error: ${error.message}</span>`;
+                    }
+                })
+                .finally(() => {
+                    newBtn.disabled = false;
+                    newBtn.innerHTML = '<i class="fas fa-download mr-2"></i>Install';
+                });
+            });
+            
+            // Allow Enter key to trigger install
+            pluginUrlInput.addEventListener('keypress', function(e) {
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                    console.log('[attachInstallButtonHandler] Enter key pressed, triggering install');
+                    newBtn.click();
+                }
+            });
+            
+            console.log('[attachInstallButtonHandler] Install button handler attached successfully');
+        } else {
+            console.error('[attachInstallButtonHandler] Install button parent not found!');
+        }
+    } else {
+        console.warn('[attachInstallButtonHandler] Install button or URL input not found:', {
+            installBtn: !!installBtn,
+            pluginUrlInput: !!pluginUrlInput
+        });
+    }
+}
+
 function setupGitHubInstallHandlers() {
     console.log('[setupGitHubInstallHandlers] Setting up GitHub install handlers...');
     
@@ -4658,6 +4785,11 @@ function setupGitHubInstallHandlers() {
                     }
                     const span = btn.querySelector('span');
                     if (span) span.textContent = 'Hide';
+                    
+                    // Re-attach install button handler when section is shown (in case elements weren't ready before)
+                    setTimeout(() => {
+                        attachInstallButtonHandler();
+                    }, 100);
                 } else {
                     // Hide section - add hidden, set display none
                     section.classList.add('hidden');
@@ -4676,115 +4808,8 @@ function setupGitHubInstallHandlers() {
         console.warn('[setupGitHubInstallHandlers] Required elements not found');
     }
     
-    // Install single plugin from URL
-    const installBtn = document.getElementById('install-plugin-from-url');
-    const pluginUrlInput = document.getElementById('github-plugin-url');
-    const pluginStatusDiv = document.getElementById('github-plugin-status');
-    
-    console.log('[setupGitHubInstallHandlers] Install button elements:', {
-        installBtn: !!installBtn,
-        pluginUrlInput: !!pluginUrlInput,
-        pluginStatusDiv: !!pluginStatusDiv
-    });
-    
-    if (installBtn && pluginUrlInput) {
-        // Clone button to remove any existing listeners (prevents duplicate handlers)
-        const parent = installBtn.parentNode;
-        if (parent) {
-            const newBtn = installBtn.cloneNode(true);
-            // Ensure button type is set to prevent form submission
-            newBtn.type = 'button';
-            parent.replaceChild(newBtn, installBtn);
-            
-            console.log('[setupGitHubInstallHandlers] Install button cloned and replaced, type:', newBtn.type);
-            
-            newBtn.addEventListener('click', function(e) {
-                e.preventDefault();
-                e.stopPropagation();
-                console.log('[setupGitHubInstallHandlers] Install button clicked!');
-                
-                const repoUrl = pluginUrlInput.value.trim();
-                if (!repoUrl) {
-                    if (pluginStatusDiv) {
-                        pluginStatusDiv.innerHTML = '<span class="text-red-600"><i class="fas fa-exclamation-circle mr-1"></i>Please enter a GitHub URL</span>';
-                    }
-                    return;
-                }
-                
-                if (!repoUrl.includes('github.com')) {
-                    if (pluginStatusDiv) {
-                        pluginStatusDiv.innerHTML = '<span class="text-red-600"><i class="fas fa-exclamation-circle mr-1"></i>Please enter a valid GitHub URL</span>';
-                    }
-                    return;
-                }
-                
-                newBtn.disabled = true;
-                newBtn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>Installing...';
-                if (pluginStatusDiv) {
-                    pluginStatusDiv.innerHTML = '<span class="text-blue-600"><i class="fas fa-spinner fa-spin mr-1"></i>Installing plugin...</span>';
-                }
-                
-                const branch = document.getElementById('plugin-branch-input')?.value?.trim() || null;
-                const requestBody = { repo_url: repoUrl };
-                if (branch) {
-                    requestBody.branch = branch;
-                }
-                
-                fetch('/api/v3/plugins/install-from-url', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify(requestBody)
-                })
-                .then(response => response.json())
-                .then(data => {
-                    if (data.status === 'success') {
-                        if (pluginStatusDiv) {
-                            pluginStatusDiv.innerHTML = `<span class="text-green-600"><i class="fas fa-check-circle mr-1"></i>Successfully installed: ${data.plugin_id}</span>`;
-                        }
-                        pluginUrlInput.value = '';
-                        
-                        // Refresh installed plugins list
-                        setTimeout(() => {
-                            loadInstalledPlugins();
-                        }, 1000);
-                    } else {
-                        if (pluginStatusDiv) {
-                            pluginStatusDiv.innerHTML = `<span class="text-red-600"><i class="fas fa-times-circle mr-1"></i>${data.message || 'Installation failed'}</span>`;
-                        }
-                    }
-                })
-                .catch(error => {
-                    if (pluginStatusDiv) {
-                        pluginStatusDiv.innerHTML = `<span class="text-red-600"><i class="fas fa-times-circle mr-1"></i>Error: ${error.message}</span>`;
-                    }
-                })
-                .finally(() => {
-                    newBtn.disabled = false;
-                    newBtn.innerHTML = '<i class="fas fa-download mr-2"></i>Install';
-                });
-            });
-            
-            // Allow Enter key to trigger install
-            pluginUrlInput.addEventListener('keypress', function(e) {
-                if (e.key === 'Enter') {
-                    e.preventDefault();
-                    console.log('[setupGitHubInstallHandlers] Enter key pressed, triggering install');
-                    newBtn.click();
-                }
-            });
-            
-            console.log('[setupGitHubInstallHandlers] Install button handler attached successfully');
-        } else {
-            console.error('[setupGitHubInstallHandlers] Install button parent not found!');
-        }
-    } else {
-        console.warn('[setupGitHubInstallHandlers] Install button or URL input not found:', {
-            installBtn: !!installBtn,
-            pluginUrlInput: !!pluginUrlInput
-        });
-    }
+    // Install single plugin from URL - use separate function so we can re-call it
+    attachInstallButtonHandler();
     
     // Load registry from URL
     const loadRegistryBtn = document.getElementById('load-registry-from-url');
