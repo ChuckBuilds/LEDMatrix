@@ -4628,7 +4628,7 @@ window.removeSavedRepository = function(repoUrl) {
 
 // Separate function to attach install button handler (can be called multiple times)
 function attachInstallButtonHandler() {
-    console.log('[attachInstallButtonHandler] FUNCTION CALLED');
+    console.log('[attachInstallButtonHandler] ===== FUNCTION CALLED =====');
     const installBtn = document.getElementById('install-plugin-from-url');
     const pluginUrlInput = document.getElementById('github-plugin-url');
     const pluginStatusDiv = document.getElementById('github-plugin-status');
@@ -4755,7 +4755,7 @@ function attachInstallButtonHandler() {
 }
 
 function setupGitHubInstallHandlers() {
-    console.log('[setupGitHubInstallHandlers] FUNCTION CALLED - Setting up GitHub install handlers...');
+    console.log('[setupGitHubInstallHandlers] ===== FUNCTION CALLED ===== Setting up GitHub install handlers...');
     
     // Toggle GitHub install section visibility
     const toggleBtn = document.getElementById('toggle-github-install');
