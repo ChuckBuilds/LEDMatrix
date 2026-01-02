@@ -548,6 +548,116 @@ window.toggleGithubTokenContent = function(e) {
     }
 };
 
+// Simple standalone handler for GitHub plugin installation
+// Defined early and globally to ensure it's always available
+console.log('[DEFINE] Defining handleGitHubPluginInstall function...');
+window.handleGitHubPluginInstall = function() {
+    console.log('[handleGitHubPluginInstall] Function called!');
+    
+    const urlInput = document.getElementById('github-plugin-url');
+    const statusDiv = document.getElementById('github-plugin-status');
+    const branchInput = document.getElementById('plugin-branch-input');
+    const installBtn = document.getElementById('install-plugin-from-url');
+    
+    if (!urlInput) {
+        console.error('[handleGitHubPluginInstall] URL input not found');
+        alert('Error: Could not find URL input field');
+        return;
+    }
+    
+    const repoUrl = urlInput.value.trim();
+    console.log('[handleGitHubPluginInstall] Repo URL:', repoUrl);
+    
+    if (!repoUrl) {
+        if (statusDiv) {
+            statusDiv.innerHTML = '<span class="text-red-600"><i class="fas fa-exclamation-circle mr-1"></i>Please enter a GitHub URL</span>';
+        }
+        return;
+    }
+    
+    if (!repoUrl.includes('github.com')) {
+        if (statusDiv) {
+            statusDiv.innerHTML = '<span class="text-red-600"><i class="fas fa-exclamation-circle mr-1"></i>Please enter a valid GitHub URL</span>';
+        }
+        return;
+    }
+    
+    // Disable button and show loading
+    if (installBtn) {
+        installBtn.disabled = true;
+        installBtn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>Installing...';
+    }
+    if (statusDiv) {
+        statusDiv.innerHTML = '<span class="text-blue-600"><i class="fas fa-spinner fa-spin mr-1"></i>Installing plugin...</span>';
+    }
+    
+    const branch = branchInput?.value?.trim() || null;
+    const requestBody = { repo_url: repoUrl };
+    if (branch) {
+        requestBody.branch = branch;
+    }
+    
+    console.log('[handleGitHubPluginInstall] Sending request:', requestBody);
+    
+    fetch('/api/v3/plugins/install-from-url', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(requestBody)
+    })
+    .then(response => {
+        console.log('[handleGitHubPluginInstall] Response status:', response.status);
+        return response.json();
+    })
+    .then(data => {
+        console.log('[handleGitHubPluginInstall] Response data:', data);
+        if (data.status === 'success') {
+            if (statusDiv) {
+                statusDiv.innerHTML = `<span class="text-green-600"><i class="fas fa-check-circle mr-1"></i>Successfully installed: ${data.plugin_id}</span>`;
+            }
+            urlInput.value = '';
+            
+            // Show notification if available
+            if (typeof showNotification === 'function') {
+                showNotification(`Plugin ${data.plugin_id} installed successfully`, 'success');
+            }
+            
+            // Refresh installed plugins list if function available
+            setTimeout(() => {
+                if (typeof loadInstalledPlugins === 'function') {
+                    loadInstalledPlugins();
+                } else if (typeof window.loadInstalledPlugins === 'function') {
+                    window.loadInstalledPlugins();
+                }
+            }, 1000);
+        } else {
+            if (statusDiv) {
+                statusDiv.innerHTML = `<span class="text-red-600"><i class="fas fa-times-circle mr-1"></i>${data.message || 'Installation failed'}</span>`;
+            }
+            if (typeof showNotification === 'function') {
+                showNotification(data.message || 'Installation failed', 'error');
+            }
+        }
+    })
+    .catch(error => {
+        console.error('[handleGitHubPluginInstall] Error:', error);
+        if (statusDiv) {
+            statusDiv.innerHTML = `<span class="text-red-600"><i class="fas fa-times-circle mr-1"></i>Error: ${error.message}</span>`;
+        }
+        if (typeof showNotification === 'function') {
+            showNotification('Error installing plugin: ' + error.message, 'error');
+        }
+    })
+    .finally(() => {
+        if (installBtn) {
+            installBtn.disabled = false;
+            installBtn.innerHTML = '<i class="fas fa-download mr-2"></i>Install';
+        }
+    });
+};
+console.log('[DEFINE] handleGitHubPluginInstall defined and ready');
+
 // GitHub Authentication Status - Define early so it's available in IIFE
 // Shows warning banner only when token is missing or invalid
 // The token itself is never exposed to the frontend for security
