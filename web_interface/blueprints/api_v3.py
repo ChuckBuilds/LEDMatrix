@@ -2259,9 +2259,18 @@ def update_plugin():
             if not plugin_path_dir.exists():
                 error_msg += ': Plugin not found'
             else:
-                plugin_info = api_v3.plugin_store_manager.get_plugin_info(plugin_id)
-                if not plugin_info:
-                    error_msg += ': Plugin not found in registry'
+                # Check if it's a git repo (could be installed from URL, not in registry)
+                git_info = api_v3.plugin_store_manager._get_local_git_info(plugin_path_dir)
+                if git_info:
+                    # It's a git repo, so update should have worked - provide generic error
+                    error_msg += ': Update failed (check logs for details)'
+                else:
+                    # Not a git repo, check if it's in registry
+                    plugin_info = api_v3.plugin_store_manager.get_plugin_info(plugin_id)
+                    if not plugin_info:
+                        error_msg += ': Plugin not found in registry and not a git repository'
+                    else:
+                        error_msg += ': Update failed (check logs for details)'
 
             if api_v3.operation_history:
                 api_v3.operation_history.record_operation(
