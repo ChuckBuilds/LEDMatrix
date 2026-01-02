@@ -6155,6 +6155,15 @@ if (typeof loadInstalledPlugins !== 'undefined') {
 if (typeof renderInstalledPlugins !== 'undefined') {
     window.renderInstalledPlugins = renderInstalledPlugins;
 }
+// Expose GitHub install handlers for debugging and manual testing
+if (typeof setupGitHubInstallHandlers !== 'undefined') {
+    window.setupGitHubInstallHandlers = setupGitHubInstallHandlers;
+    console.log('[GLOBAL] setupGitHubInstallHandlers exposed to window');
+}
+if (typeof attachInstallButtonHandler !== 'undefined') {
+    window.attachInstallButtonHandler = attachInstallButtonHandler;
+    console.log('[GLOBAL] attachInstallButtonHandler exposed to window');
+}
 // searchPluginStore is now exposed inside the IIFE after its definition
 
 // Verify critical functions are available
