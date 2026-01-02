@@ -935,11 +935,17 @@ function initializePluginPageWhenReady() {
 let pluginsInitialized = false;
 
 function initializePlugins() {
-    console.log('[initializePlugins] Called, pluginsInitialized:', pluginsInitialized);
+    console.log('[initializePlugins] FUNCTION CALLED, pluginsInitialized:', pluginsInitialized);
     // Guard against multiple initializations
     if (pluginsInitialized) {
-        console.log('[initializePlugins] Already initialized, skipping');
-        pluginLog('[INIT] Plugins already initialized, skipping');
+        console.log('[initializePlugins] Already initialized, skipping (but still setting up handlers)');
+        // Still set up handlers even if already initialized (in case page was HTMX swapped)
+        console.log('[initializePlugins] Force setting up GitHub handlers anyway...');
+        if (typeof setupGitHubInstallHandlers === 'function') {
+            setupGitHubInstallHandlers();
+        } else {
+            console.error('[initializePlugins] setupGitHubInstallHandlers not found!');
+        }
         return;
     }
     pluginsInitialized = true;
@@ -981,7 +987,14 @@ function initializePlugins() {
     }
     
     // Setup GitHub installation handlers
-    setupGitHubInstallHandlers();
+    console.log('[initializePlugins] About to call setupGitHubInstallHandlers...');
+    if (typeof setupGitHubInstallHandlers === 'function') {
+        console.log('[initializePlugins] setupGitHubInstallHandlers is a function, calling it...');
+        setupGitHubInstallHandlers();
+        console.log('[initializePlugins] setupGitHubInstallHandlers called');
+    } else {
+        console.error('[initializePlugins] ERROR: setupGitHubInstallHandlers is not a function! Type:', typeof setupGitHubInstallHandlers);
+    }
     
     // Setup collapsible section handlers
     setupCollapsibleSections();
