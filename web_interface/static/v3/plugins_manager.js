@@ -6208,5 +6208,15 @@ setTimeout(function() {
     } else {
         console.log('installed-plugins-grid not found yet, will retry via event listeners');
     }
+    
+    // Also try to attach install button handler after a delay (fallback)
+    setTimeout(() => {
+        if (typeof window.attachInstallButtonHandler === 'function') {
+            console.log('[FALLBACK] Attempting to attach install button handler...');
+            window.attachInstallButtonHandler();
+        } else {
+            console.warn('[FALLBACK] attachInstallButtonHandler not available on window');
+        }
+    }, 500);
 }, 200);
 
