@@ -4615,6 +4615,7 @@ window.removeSavedRepository = function(repoUrl) {
 
 // Separate function to attach install button handler (can be called multiple times)
 function attachInstallButtonHandler() {
+    console.log('[attachInstallButtonHandler] FUNCTION CALLED');
     const installBtn = document.getElementById('install-plugin-from-url');
     const pluginUrlInput = document.getElementById('github-plugin-url');
     const pluginStatusDiv = document.getElementById('github-plugin-status');
@@ -4741,7 +4742,7 @@ function attachInstallButtonHandler() {
 }
 
 function setupGitHubInstallHandlers() {
-    console.log('[setupGitHubInstallHandlers] Setting up GitHub install handlers...');
+    console.log('[setupGitHubInstallHandlers] FUNCTION CALLED - Setting up GitHub install handlers...');
     
     // Toggle GitHub install section visibility
     const toggleBtn = document.getElementById('toggle-github-install');
@@ -4787,7 +4788,9 @@ function setupGitHubInstallHandlers() {
                     if (span) span.textContent = 'Hide';
                     
                     // Re-attach install button handler when section is shown (in case elements weren't ready before)
+                    console.log('[setupGitHubInstallHandlers] Section shown, will re-attach install button handler in 100ms');
                     setTimeout(() => {
+                        console.log('[setupGitHubInstallHandlers] Re-attaching install button handler now');
                         attachInstallButtonHandler();
                     }, 100);
                 } else {
@@ -4809,7 +4812,9 @@ function setupGitHubInstallHandlers() {
     }
     
     // Install single plugin from URL - use separate function so we can re-call it
+    console.log('[setupGitHubInstallHandlers] About to call attachInstallButtonHandler...');
     attachInstallButtonHandler();
+    console.log('[setupGitHubInstallHandlers] Called attachInstallButtonHandler');
     
     // Load registry from URL
     const loadRegistryBtn = document.getElementById('load-registry-from-url');
