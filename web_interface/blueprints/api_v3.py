@@ -2179,12 +2179,23 @@ def update_plugin():
                 current_commit = git_info_before.get('sha')
                 current_branch = git_info_before.get('branch')
 
+        # Check if plugin is a git repo first (for better error messages)
+        plugin_path_dir = Path(api_v3.plugin_store_manager.plugins_dir) / plugin_id
+        is_git_repo = False
+        if plugin_path_dir.exists():
+            git_info = api_v3.plugin_store_manager._get_local_git_info(plugin_path_dir)
+            is_git_repo = git_info is not None
+            if is_git_repo:
+                print(f"[UPDATE] Plugin {plugin_id} is a git repository, will update via git pull")
+        
         remote_info = api_v3.plugin_store_manager.get_plugin_info(plugin_id, fetch_latest_from_github=True)
         remote_commit = remote_info.get('last_commit_sha') if remote_info else None
         remote_branch = remote_info.get('branch') if remote_info else None
 
         # Update the plugin
+        print(f"[UPDATE] Attempting to update plugin {plugin_id}...")
         success = api_v3.plugin_store_manager.update_plugin(plugin_id)
+        print(f"[UPDATE] Update result for {plugin_id}: {success}")
 
         if success:
             updated_last_updated = current_last_updated

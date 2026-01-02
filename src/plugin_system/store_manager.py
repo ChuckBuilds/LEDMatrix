@@ -1616,7 +1616,9 @@ class PluginStoreManager:
 
                 except subprocess.CalledProcessError as git_error:
                     error_output = git_error.stderr or git_error.stdout or "Unknown error"
-                    self.logger.warning(f"Git update failed for {plugin_id}: {error_output}")
+                    self.logger.error(f"Git update failed for {plugin_id}: {error_output}")
+                    self.logger.error(f"Git command that failed: {' '.join(git_error.cmd) if hasattr(git_error, 'cmd') else 'unknown'}")
+                    self.logger.error(f"Return code: {git_error.returncode}")
                     # Check if it's a merge conflict or local changes issue
                     if "would be overwritten" in error_output or "local changes" in error_output.lower():
                         self.logger.warning(f"Plugin {plugin_id} has local changes that prevent update. Consider committing or stashing changes manually.")
