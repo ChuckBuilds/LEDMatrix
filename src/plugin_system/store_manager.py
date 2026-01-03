@@ -1641,13 +1641,58 @@ class PluginStoreManager:
                     self.logger.warning(f"Git update timed out for {plugin_id}")
                     return False
             
-            # Not a git repository - try registry-based update
+            # Not a git repository - try to get repo URL from git config if it exists
+            # (in case .git directory was removed but remote URL is still in config)
+            repo_url = None
+            try:
+                remote_url_result = subprocess.run(
+                    ['git', '-C', str(plugin_path), 'config', '--get', 'remote.origin.url'],
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
+                    check=False
+                )
+                if remote_url_result.returncode == 0:
+                    repo_url = remote_url_result.stdout.strip()
+                    self.logger.info(f"Found git remote URL for {plugin_id}: {repo_url}")
+            except Exception as e:
+                self.logger.debug(f"Could not get git remote URL: {e}")
+            
+            # Try registry-based update
             self.logger.info(f"Plugin {plugin_id} is not a git repository, checking registry...")
             self.fetch_registry(force_refresh=True)
             plugin_info_remote = self.get_plugin_info(plugin_id, fetch_latest_from_github=True)
+            
+            # If not in registry but we have a repo URL, try reinstalling from that URL
+            if not plugin_info_remote and repo_url:
+                self.logger.info(f"Plugin {plugin_id} not in registry but has git remote URL. Reinstalling from {repo_url} to enable updates...")
+                try:
+                    # Get current branch if possible
+                    branch_result = subprocess.run(
+                        ['git', '-C', str(plugin_path), 'rev-parse', '--abbrev-ref', 'HEAD'],
+                        capture_output=True,
+                        text=True,
+                        timeout=10,
+                        check=False
+                    )
+                    branch = branch_result.stdout.strip() if branch_result.returncode == 0 else None
+                    if branch == 'HEAD' or not branch:
+                        branch = 'main'
+                    
+                    # Reinstall from URL
+                    result = self.install_from_url(repo_url, plugin_id=plugin_id, branch=branch)
+                    if result.get('success'):
+                        self.logger.info(f"Successfully reinstalled {plugin_id} from {repo_url} as git repository")
+                        return True
+                    else:
+                        self.logger.warning(f"Failed to reinstall {plugin_id} from {repo_url}: {result.get('error')}")
+                except Exception as e:
+                    self.logger.error(f"Error reinstalling {plugin_id} from URL: {e}")
+            
             if not plugin_info_remote:
                 self.logger.warning(f"Plugin {plugin_id} not found in registry and not a git repository; cannot update automatically")
-                self.logger.warning(f"Plugin may have been installed via ZIP download. Try reinstalling from GitHub URL to enable updates.")
+                if not repo_url:
+                    self.logger.warning(f"Plugin may have been installed via ZIP download. Try reinstalling from GitHub URL to enable updates.")
                 return False
 
             repo_url = plugin_info_remote.get('repo')
