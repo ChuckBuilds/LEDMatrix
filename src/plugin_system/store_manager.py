@@ -1628,10 +1628,12 @@ class PluginStoreManager:
                     return False
             
             # Not a git repository - try registry-based update
+            self.logger.info(f"Plugin {plugin_id} is not a git repository, checking registry...")
             self.fetch_registry(force_refresh=True)
             plugin_info_remote = self.get_plugin_info(plugin_id, fetch_latest_from_github=True)
             if not plugin_info_remote:
                 self.logger.warning(f"Plugin {plugin_id} not found in registry and not a git repository; cannot update automatically")
+                self.logger.warning(f"Plugin may have been installed via ZIP download. Try reinstalling from GitHub URL to enable updates.")
                 return False
 
             repo_url = plugin_info_remote.get('repo')
