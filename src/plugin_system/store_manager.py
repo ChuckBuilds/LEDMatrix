@@ -1575,9 +1575,39 @@ class PluginStoreManager:
                     if checkout_result.returncode != 0:
                         self.logger.warning(f"Git checkout to {local_branch} failed for {plugin_id}: {checkout_result.stderr or checkout_result.stdout}. Will still attempt pull.")
 
-                    # Check for local changes and stash them if needed
-                    # Use --untracked-files=no to skip untracked files check (much faster)
+                    # Check for local changes and untracked files that might conflict
+                    # First, check for untracked files that would be overwritten
                     try:
+                        # Check for untracked files
+                        untracked_result = subprocess.run(
+                            ['git', '-C', str(plugin_path), 'status', '--porcelain', '--untracked-files=all'],
+                            capture_output=True,
+                            text=True,
+                            timeout=30,
+                            check=False
+                        )
+                        untracked_files = []
+                        if untracked_result.returncode == 0:
+                            for line in untracked_result.stdout.strip().split('\n'):
+                                if line.startswith('??'):
+                                    # Untracked file
+                                    file_path = line[3:].strip()
+                                    untracked_files.append(file_path)
+                        
+                        # Remove marker files that are safe to delete (they'll be regenerated)
+                        safe_to_remove = ['.dependencies_installed']
+                        removed_files = []
+                        for file_name in safe_to_remove:
+                            file_path = plugin_path / file_name
+                            if file_path.exists() and file_name in untracked_files:
+                                try:
+                                    file_path.unlink()
+                                    removed_files.append(file_name)
+                                    self.logger.info(f"Removed marker file {file_name} from {plugin_id} before update")
+                                except Exception as e:
+                                    self.logger.warning(f"Could not remove {file_name} from {plugin_id}: {e}")
+                        
+                        # Check for tracked file changes
                         status_result = subprocess.run(
                             ['git', '-C', str(plugin_path), 'status', '--porcelain', '--untracked-files=no'],
                             capture_output=True,
@@ -1586,6 +1616,12 @@ class PluginStoreManager:
                             check=False
                         )
                         has_changes = bool(status_result.stdout.strip())
+                        
+                        # If there are remaining untracked files (not safe to remove), stash them
+                        remaining_untracked = [f for f in untracked_files if f not in removed_files]
+                        if remaining_untracked:
+                            self.logger.info(f"Found {len(remaining_untracked)} untracked files in {plugin_id}, will stash them")
+                            has_changes = True
                     except subprocess.TimeoutExpired:
                         # If status check times out, assume there might be changes and proceed
                         self.logger.warning(f"Git status check timed out for {plugin_id}, proceeding with update")
@@ -1596,8 +1632,9 @@ class PluginStoreManager:
                     if has_changes:
                         self.logger.info(f"Stashing local changes in {plugin_id} before update")
                         try:
+                            # Use -u to include untracked files in stash
                             stash_result = subprocess.run(
-                                ['git', '-C', str(plugin_path), 'stash', 'push', '-m', f'LEDMatrix auto-stash before update {plugin_id}'],
+                                ['git', '-C', str(plugin_path), 'stash', 'push', '-u', '-m', f'LEDMatrix auto-stash before update {plugin_id}'],
                                 capture_output=True,
                                 text=True,
                                 timeout=30,
@@ -1605,7 +1642,7 @@ class PluginStoreManager:
                             )
                             if stash_result.returncode == 0:
                                 stash_info = " (local changes were stashed)"
-                                self.logger.info(f"Stashed local changes for {plugin_id}")
+                                self.logger.info(f"Stashed local changes (including untracked files) for {plugin_id}")
                             else:
                                 self.logger.warning(f"Failed to stash local changes for {plugin_id}: {stash_result.stderr}")
                         except subprocess.TimeoutExpired:
