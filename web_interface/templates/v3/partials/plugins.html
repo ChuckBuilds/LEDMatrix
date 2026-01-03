@@ -221,7 +221,9 @@
                             <input type="text" id="github-plugin-url" 
                                    placeholder="https://github.com/user/ledmatrix-plugin-name" 
                                    class="flex-1 px-3 py-2 text-sm border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500">
-                            <button id="install-plugin-from-url" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm rounded-md whitespace-nowrap">
+                            <button type="button" id="install-plugin-from-url" 
+                                    onclick="if(window.handleGitHubPluginInstall){window.handleGitHubPluginInstall()}else{alert('Function not loaded yet, please refresh the page')}"
+                                    class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm rounded-md whitespace-nowrap">
                                 <i class="fas fa-download mr-2"></i>Install
                             </button>
                         </div>

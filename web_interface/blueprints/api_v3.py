@@ -2179,12 +2179,23 @@ def update_plugin():
                 current_commit = git_info_before.get('sha')
                 current_branch = git_info_before.get('branch')
 
+        # Check if plugin is a git repo first (for better error messages)
+        plugin_path_dir = Path(api_v3.plugin_store_manager.plugins_dir) / plugin_id
+        is_git_repo = False
+        if plugin_path_dir.exists():
+            git_info = api_v3.plugin_store_manager._get_local_git_info(plugin_path_dir)
+            is_git_repo = git_info is not None
+            if is_git_repo:
+                print(f"[UPDATE] Plugin {plugin_id} is a git repository, will update via git pull")
+        
         remote_info = api_v3.plugin_store_manager.get_plugin_info(plugin_id, fetch_latest_from_github=True)
         remote_commit = remote_info.get('last_commit_sha') if remote_info else None
         remote_branch = remote_info.get('branch') if remote_info else None
 
         # Update the plugin
+        print(f"[UPDATE] Attempting to update plugin {plugin_id}...")
         success = api_v3.plugin_store_manager.update_plugin(plugin_id)
+        print(f"[UPDATE] Update result for {plugin_id}: {success}")
 
         if success:
             updated_last_updated = current_last_updated
@@ -2259,9 +2270,18 @@ def update_plugin():
             if not plugin_path_dir.exists():
                 error_msg += ': Plugin not found'
             else:
-                plugin_info = api_v3.plugin_store_manager.get_plugin_info(plugin_id)
-                if not plugin_info:
-                    error_msg += ': Plugin not found in registry'
+                # Check if it's a git repo (could be installed from URL, not in registry)
+                git_info = api_v3.plugin_store_manager._get_local_git_info(plugin_path_dir)
+                if git_info:
+                    # It's a git repo, so update should have worked - provide generic error
+                    error_msg += ': Update failed (check logs for details)'
+                else:
+                    # Not a git repo, check if it's in registry
+                    plugin_info = api_v3.plugin_store_manager.get_plugin_info(plugin_id)
+                    if not plugin_info:
+                        error_msg += ': Plugin not found in registry and not a git repository'
+                    else:
+                        error_msg += ': Update failed (check logs for details)'
 
             if api_v3.operation_history:
                 api_v3.operation_history.record_operation(
@@ -2271,6 +2291,11 @@ def update_plugin():
                     error=error_msg
                 )
 
+            import traceback
+            error_details = traceback.format_exc()
+            print(f"[UPDATE] Update failed for {plugin_id}: {error_msg}")
+            print(f"[UPDATE] Traceback: {error_details}")
+            
             return error_response(
                 ErrorCode.PLUGIN_UPDATE_FAILED,
                 error_msg,
@@ -2278,6 +2303,11 @@ def update_plugin():
             )
 
     except Exception as e:
+        import traceback
+        error_details = traceback.format_exc()
+        print(f"[UPDATE] Exception in update_plugin endpoint: {str(e)}")
+        print(f"[UPDATE] Traceback: {error_details}")
+        
         from src.web_interface.errors import WebInterfaceError
         error = WebInterfaceError.from_exception(e, ErrorCode.PLUGIN_UPDATE_FAILED)
         if api_v3.operation_history:
