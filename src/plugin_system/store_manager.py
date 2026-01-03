@@ -1479,13 +1479,18 @@ class PluginStoreManager:
                 self.logger.info(f"Updating {plugin_id} via git pull (local branch: {local_branch})...")
                 try:
                     # Fetch latest changes first to get all remote branch info
-                    subprocess.run(
+                    # If fetch fails, we'll still try to pull (might work with existing remote refs)
+                    fetch_result = subprocess.run(
                         ['git', '-C', str(plugin_path), 'fetch', 'origin'],
                         capture_output=True,
                         text=True,
                         timeout=60,
-                        check=True
+                        check=False
                     )
+                    if fetch_result.returncode != 0:
+                        self.logger.warning(f"Git fetch failed for {plugin_id}: {fetch_result.stderr or fetch_result.stdout}. Will still attempt pull.")
+                    else:
+                        self.logger.debug(f"Successfully fetched remote changes for {plugin_id}")
 
                     # Determine which remote branch to pull from
                     # Strategy: Use what the local branch is tracking, or find the best match
@@ -1560,13 +1565,15 @@ class PluginStoreManager:
                         self.logger.info(f"Falling back to local branch name {local_branch} for pull")
                     
                     # Ensure we're on the local branch
-                    subprocess.run(
+                    checkout_result = subprocess.run(
                         ['git', '-C', str(plugin_path), 'checkout', local_branch],
                         capture_output=True,
                         text=True,
                         timeout=30,
-                        check=True
+                        check=False
                     )
+                    if checkout_result.returncode != 0:
+                        self.logger.warning(f"Git checkout to {local_branch} failed for {plugin_id}: {checkout_result.stderr or checkout_result.stdout}. Will still attempt pull.")
 
                     # Check for local changes and stash them if needed
                     # Use --untracked-files=no to skip untracked files check (much faster)
@@ -1605,6 +1612,7 @@ class PluginStoreManager:
                             self.logger.warning(f"Stash operation timed out for {plugin_id}, proceeding with pull")
 
                     # Pull from the determined remote branch
+                    self.logger.info(f"Pulling from origin/{remote_pull_branch} for {plugin_id}...")
                     pull_result = subprocess.run(
                         ['git', '-C', str(plugin_path), 'pull', 'origin', remote_pull_branch],
                         capture_output=True,
@@ -1630,12 +1638,25 @@ class PluginStoreManager:
 
                 except subprocess.CalledProcessError as git_error:
                     error_output = git_error.stderr or git_error.stdout or "Unknown error"
-                    self.logger.error(f"Git update failed for {plugin_id}: {error_output}")
-                    self.logger.error(f"Git command that failed: {' '.join(git_error.cmd) if hasattr(git_error, 'cmd') else 'unknown'}")
+                    cmd_str = ' '.join(git_error.cmd) if hasattr(git_error, 'cmd') else 'unknown'
+                    self.logger.error(f"Git update failed for {plugin_id}")
+                    self.logger.error(f"Command: {cmd_str}")
                     self.logger.error(f"Return code: {git_error.returncode}")
-                    # Check if it's a merge conflict or local changes issue
-                    if "would be overwritten" in error_output or "local changes" in error_output.lower():
+                    self.logger.error(f"Error output: {error_output}")
+                    
+                    # Check for specific error conditions
+                    error_lower = error_output.lower()
+                    if "would be overwritten" in error_output or "local changes" in error_lower:
                         self.logger.warning(f"Plugin {plugin_id} has local changes that prevent update. Consider committing or stashing changes manually.")
+                    elif "refusing to merge unrelated histories" in error_lower:
+                        self.logger.error(f"Plugin {plugin_id} has unrelated git histories. Plugin may need to be reinstalled.")
+                    elif "authentication" in error_lower or "permission denied" in error_lower:
+                        self.logger.error(f"Authentication failed for {plugin_id}. Check git credentials or repository permissions.")
+                    elif "not found" in error_lower or "does not exist" in error_lower:
+                        self.logger.error(f"Remote branch or repository not found for {plugin_id}. Check repository URL and branch name.")
+                    elif "merge conflict" in error_lower or "conflict" in error_lower:
+                        self.logger.error(f"Merge conflict detected for {plugin_id}. Resolve conflicts manually or reinstall plugin.")
+                    
                     return False
                 except subprocess.TimeoutExpired:
                     self.logger.warning(f"Git update timed out for {plugin_id}")
