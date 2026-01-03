@@ -974,7 +974,7 @@ class PluginStoreManager:
                 }
             
             # Validate manifest has required fields
-            required_fields = ['id', 'name', 'class_name', 'compatible_versions']
+            required_fields = ['id', 'name', 'class_name']
             missing_fields = [field for field in required_fields if field not in manifest]
             if missing_fields:
                 return {
@@ -982,7 +982,7 @@ class PluginStoreManager:
                     'error': f'Manifest missing required fields: {", ".join(missing_fields)}'
                 }
             
-            # Validate version fields consistency
+            # Validate version fields consistency (warnings only, not required)
             validation_errors = self._validate_manifest_version_fields(manifest)
             if validation_errors:
                 self.logger.warning(f"Manifest version field validation warnings for {plugin_id}: {', '.join(validation_errors)}")
