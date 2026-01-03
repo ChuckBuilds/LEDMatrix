@@ -800,17 +800,10 @@ To get these credentials:
 
 
 ------------------------------------------------------------------------------------
-## Before Running the Display
-- To allow the script to properly access fonts, you need to set the correct permissions on your home directory:
-  ```bash
-  sudo chmod o+x /home/ledpi
-  ```
-- Replace ledpi with your actual username, if different.
-You can confirm your username by executing:
-`whoami`
-
 
 ## Running the Display
+
+I recommend using the web-ui to control the Display but you can also run the following commands via ssh:
 
 From the project root directory:
 ```bash
@@ -827,7 +820,7 @@ This will start the display cycle but only stays active as long as your ssh sess
 
 
 ## Run on Startup Automatically with Systemd Service Installation
-
+The first time install will handle this:
 The LEDMatrix can be installed as a systemd service to run automatically at boot and be managed easily. The service runs as root to ensure proper hardware timing access for the LED matrix.
 
 ### Installing the Service (this is included in the first_time_install.sh)
@@ -898,9 +891,9 @@ sudo ./stop_display.sh
 </details>
 -----------------------------------------------------------------------------------
 
-## Web Interface Installation (V2)
-
-The LEDMatrix system includes Web Interface V2 that runs on port 5000 and provides real-time display preview, configuration management, and on-demand display controls.
+## Web Interface Installation
+The first time install will handle this:
+The LEDMatrix system includes Web Interface that runs on port 5000 and provides real-time display preview, configuration management, and on-demand display controls.
 
 ### Installing the Web Interface Service
 
@@ -1202,28 +1195,6 @@ Granting passwordless `sudo` access, even for specific commands, has security im
 For `display_controller.py` and `stop_display.sh`, ensure their file permissions restrict write access to only trusted users, preventing unauthorized modification of these scripts which run with elevated privileges.
 
 </details>
-
-
-## Web Interface V2 (simplified quick start)
-
-### 1) Run the helper (does the above and starts the server):
-```
-python3 start_web_v2.py
-```
-
-### 2) Start the web UI v2
-```
-python web_interface_v2.py
-```
-
-### 3) Autostart (recommended)
-Set `"web_display_autostart": true` in `config/config.json`.
-Ensure your systemd service calls `start_web_conditionally.py` (installed by `install_service.sh`).
-
-### 4) Permissions (optional but recommended)
-- Add the service user to `systemd-journal` for viewing logs without sudo.
-- Configure passwordless sudo for actions (start/stop service, reboot, shutdown) if desired.
-    - Required for web Ui actions, look in the section above for the commands to run (chmod +x scripts/install/configure_web_sudo.sh & sudo ./scripts/install/configure_web_sudo.sh)
 
 
 
