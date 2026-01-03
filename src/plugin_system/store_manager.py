@@ -1338,6 +1338,16 @@ class PluginStoreManager:
             if branch == 'HEAD':
                 branch = ''
 
+            # Get remote URL
+            remote_url_result = subprocess.run(
+                ['git', '-C', str(plugin_path), 'config', '--get', 'remote.origin.url'],
+                capture_output=True,
+                text=True,
+                timeout=10,
+                check=False
+            )
+            remote_url = remote_url_result.stdout.strip() if remote_url_result.returncode == 0 else None
+
             # Get commit date in ISO format
             date_result = subprocess.run(
                 ['git', '-C', str(plugin_path), 'log', '-1', '--format=%cI', 'HEAD'],
@@ -1353,6 +1363,10 @@ class PluginStoreManager:
                 'short_sha': sha[:7] if sha else '',
                 'branch': branch
             }
+            
+            # Add remote URL if available
+            if remote_url:
+                result['remote_url'] = remote_url
 
             # Add commit date if available
             if commit_date_iso:
