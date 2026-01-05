@@ -4839,7 +4839,7 @@
             newRow.innerHTML = `
                 <td class="px-4 py-3 whitespace-nowrap">
                     <input type="text" 
-                           name="${fullKey}[${newIndex}].name"
+                           name="${fullKey}.${newIndex}.name"
                            value=""
                            class="block w-full px-2 py-1 border border-gray-300 rounded text-sm"
                            placeholder="Feed Name"
@@ -4847,7 +4847,7 @@
                 </td>
                 <td class="px-4 py-3 whitespace-nowrap">
                     <input type="url" 
-                           name="${fullKey}[${newIndex}].url"
+                           name="${fullKey}.${newIndex}.url"
                            value=""
                            class="block w-full px-2 py-1 border border-gray-300 rounded text-sm"
                            placeholder="https://example.com/feed"
@@ -4859,7 +4859,7 @@
                                id="${fieldId}_logo_${newIndex}"
                                accept="image/png,image/jpeg,image/bmp"
                                style="display: none;"
-                               onchange="handleCustomFeedLogoUpload(event, '${fieldId}', ${newIndex}, 'ledmatrix-news')">
+                               onchange="handleCustomFeedLogoUpload(event, '${fieldId}', ${newIndex}, 'ledmatrix-news', '${fullKey}')">
                         <button type="button" 
                                 onclick="document.getElementById('${fieldId}_logo_${newIndex}').click()"
                                 class="px-2 py-1 text-xs bg-gray-200 hover:bg-gray-300 rounded">
@@ -4870,8 +4870,9 @@
                 </td>
                 <td class="px-4 py-3 whitespace-nowrap text-center">
                     <input type="checkbox" 
-                           name="${fullKey}[${newIndex}].enabled"
+                           name="${fullKey}.${newIndex}.enabled"
                            checked
+                           value="true"
                            class="h-4 w-4 text-blue-600">
                 </td>
                 <td class="px-4 py-3 whitespace-nowrap text-center">
@@ -4898,14 +4899,20 @@
                     r.querySelectorAll('input, button').forEach(input => {
                         const name = input.getAttribute('name');
                         if (name) {
-                            input.setAttribute('name', name.replace(/\[\d+\]/, `[${index}]`));
+                            // Replace pattern like "feeds.custom_feeds.0.name" with "feeds.custom_feeds.1.name"
+                            input.setAttribute('name', name.replace(/\.\d+\./, `.${index}.`));
                         }
                         const id = input.id;
                         if (id && id.includes('_logo_')) {
                             const newId = id.replace(/_logo_\d+/, `_logo_${index}`);
                             input.id = newId;
-                            if (input.onclick) {
-                                input.setAttribute('onclick', input.getAttribute('onclick').replace(/\d+/, index));
+                            const onclick = input.getAttribute('onclick');
+                            if (onclick) {
+                                input.setAttribute('onclick', onclick.replace(/,\s*\d+\s*,/, `, ${index},`));
+                            }
+                            const onchange = input.getAttribute('onchange');
+                            if (onchange) {
+                                input.setAttribute('onchange', onchange.replace(/,\s*\d+\s*,/, `, ${index},`));
                             }
                         }
                     });
@@ -4913,7 +4920,7 @@
             }
         }
         
-        function handleCustomFeedLogoUpload(event, fieldId, index, pluginId) {
+        function handleCustomFeedLogoUpload(event, fieldId, index, pluginId, fullKey) {
             const file = event.target.files[0];
             if (!file) return;
             
@@ -4932,21 +4939,26 @@
                     const row = document.querySelector(`#${fieldId}_tbody tr[data-index="${index}"]`);
                     if (row) {
                         const logoCell = row.querySelector('td:nth-child(3)');
+                        const existingPathInput = logoCell.querySelector('input[name*=".logo.path"]');
+                        const existingIdInput = logoCell.querySelector('input[name*=".logo.id"]');
+                        const pathName = existingPathInput ? existingPathInput.name : `${fullKey}.${index}.logo.path`;
+                        const idName = existingIdInput ? existingIdInput.name : `${fullKey}.${index}.logo.id`;
+                        
                         logoCell.innerHTML = `
                             <div class="flex items-center space-x-2">
                                 <input type="file" 
                                        id="${fieldId}_logo_${index}"
                                        accept="image/png,image/jpeg,image/bmp"
                                        style="display: none;"
-                                       onchange="handleCustomFeedLogoUpload(event, '${fieldId}', ${index}, '${pluginId}')">
+                                       onchange="handleCustomFeedLogoUpload(event, '${fieldId}', ${index}, '${pluginId}', '${fullKey}')">
                                 <button type="button" 
                                         onclick="document.getElementById('${fieldId}_logo_${index}').click()"
                                         class="px-2 py-1 text-xs bg-gray-200 hover:bg-gray-300 rounded">
                                     <i class="fas fa-upload mr-1"></i> Upload
                                 </button>
                                 <img src="/${uploadedFile.path}" alt="Logo" class="w-8 h-8 object-cover rounded border" id="${fieldId}_logo_preview_${index}">
-                                <input type="hidden" name="${logoCell.querySelector('input[name*=".logo.path"]')?.name || `feeds.custom_feeds[${index}].logo.path`}" value="${uploadedFile.path}">
-                                <input type="hidden" name="${logoCell.querySelector('input[name*=".logo.id"]')?.name || `feeds.custom_feeds[${index}].logo.id`}" value="${uploadedFile.id}">
+                                <input type="hidden" name="${pathName}" value="${uploadedFile.path}">
+                                <input type="hidden" name="${idName}" value="${uploadedFile.id}">
                             </div>
                         `;
                     }
