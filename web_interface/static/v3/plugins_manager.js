@@ -3437,7 +3437,6 @@ window.updateKeyValuePairData = function(fieldId, fullKey) {
     
     hiddenInput.value = JSON.stringify(pairs);
 };
-    const itemsContainer = document.getElementById(fieldId + '_items');
     const hiddenInput = document.getElementById(fieldId + '_data');
     if (!itemsContainer || !hiddenInput) return;
     
