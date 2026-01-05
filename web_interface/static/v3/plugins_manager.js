@@ -3439,7 +3439,9 @@ window.updateKeyValuePairData = function(fieldId, fullKey) {
 };
 
 // Functions to handle array-of-objects
-window.addArrayObjectItem = function(fieldId, fullKey, maxItems) {
+// Define these at the top level (outside any IIFE) to ensure they're always available
+if (typeof window !== 'undefined') {
+    window.addArrayObjectItem = function(fieldId, fullKey, maxItems) {
     const itemsContainer = document.getElementById(fieldId + '_items');
     const hiddenInput = document.getElementById(fieldId + '_data');
     if (!itemsContainer || !hiddenInput) return;
@@ -3472,7 +3474,7 @@ window.addArrayObjectItem = function(fieldId, fullKey, maxItems) {
     const newIndex = currentItems.length;
     const itemHtml = renderArrayObjectItem(fieldId, fullKey, itemsSchema.properties, {}, newIndex, itemsSchema);
     itemsContainer.insertAdjacentHTML('beforeend', itemHtml);
-    updateArrayObjectData(fieldId);
+    window.updateArrayObjectData(fieldId);
     
     // Update add button state
     const addButton = itemsContainer.nextElementSibling;
@@ -3481,9 +3483,9 @@ window.addArrayObjectItem = function(fieldId, fullKey, maxItems) {
         addButton.style.opacity = '0.5';
         addButton.style.cursor = 'not-allowed';
     }
-};
+    };
 
-window.removeArrayObjectItem = function(fieldId, index) {
+    window.removeArrayObjectItem = function(fieldId, index) {
     const itemsContainer = document.getElementById(fieldId + '_items');
     if (!itemsContainer) return;
     
@@ -3512,7 +3514,7 @@ window.removeArrayObjectItem = function(fieldId, index) {
                 }
             });
         });
-        updateArrayObjectData(fieldId);
+        window.updateArrayObjectData(fieldId);
         
         // Update add button state
         const addButton = itemsContainer.nextElementSibling;
@@ -3525,9 +3527,9 @@ window.removeArrayObjectItem = function(fieldId, index) {
             }
         }
     }
-};
+    };
 
-window.updateArrayObjectData = function(fieldId) {
+    window.updateArrayObjectData = function(fieldId) {
     const itemsContainer = document.getElementById(fieldId + '_items');
     const hiddenInput = document.getElementById(fieldId + '_data');
     if (!itemsContainer || !hiddenInput) return;
@@ -3572,18 +3574,19 @@ window.updateArrayObjectData = function(fieldId) {
     hiddenInput.value = JSON.stringify(items);
 };
 
-window.handleArrayObjectFileUpload = function(event, fieldId, itemIndex, propKey, pluginId) {
-    // TODO: Implement file upload handling for array object items
-    // This is a placeholder - file upload in nested objects needs special handling
-    console.log('File upload for array object item:', { fieldId, itemIndex, propKey, pluginId });
-    updateArrayObjectData(fieldId);
-};
+    window.handleArrayObjectFileUpload = function(event, fieldId, itemIndex, propKey, pluginId) {
+        // TODO: Implement file upload handling for array object items
+        // This is a placeholder - file upload in nested objects needs special handling
+        console.log('File upload for array object item:', { fieldId, itemIndex, propKey, pluginId });
+        window.updateArrayObjectData(fieldId);
+    };
 
-window.removeArrayObjectFile = function(fieldId, itemIndex, propKey) {
-    // TODO: Implement file removal for array object items
-    console.log('File removal for array object item:', { fieldId, itemIndex, propKey });
-    updateArrayObjectData(fieldId);
-};
+    window.removeArrayObjectFile = function(fieldId, itemIndex, propKey) {
+        // TODO: Implement file removal for array object items
+        console.log('File removal for array object item:', { fieldId, itemIndex, propKey });
+        window.updateArrayObjectData(fieldId);
+    };
+}
 
 // Function to toggle nested sections
 window.toggleNestedSection = function(sectionId, event) {
