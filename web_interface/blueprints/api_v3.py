@@ -3635,6 +3635,19 @@ def save_plugin_config():
                 if 'feeds' in plugin_config and 'custom_feeds' in plugin_config.get('feeds', {}):
                     custom_feeds = plugin_config['feeds']['custom_feeds']
                     logger.debug(f"After fix_array_structures: custom_feeds type={type(custom_feeds)}, value={custom_feeds}")
+                
+                # Force fix for feeds.custom_feeds if it's still a dict (fallback)
+                if 'feeds' in plugin_config:
+                    feeds_config = plugin_config.get('feeds', {})
+                    if 'custom_feeds' in feeds_config and isinstance(feeds_config['custom_feeds'], dict):
+                        custom_feeds_dict = feeds_config['custom_feeds']
+                        # Check if all keys are numeric
+                        keys = list(custom_feeds_dict.keys())
+                        if keys and all(str(k).isdigit() for k in keys):
+                            # Convert to array
+                            sorted_keys = sorted(keys, key=lambda x: int(str(x)))
+                            feeds_config['custom_feeds'] = [custom_feeds_dict[k] for k in sorted_keys]
+                            logger.info(f"Force-converted feeds.custom_feeds from dict to array: {len(feeds_config['custom_feeds'])} items")
 
         # Get schema manager instance (for JSON requests)
         schema_mgr = api_v3.schema_manager
