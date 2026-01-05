@@ -2222,15 +2222,16 @@ function handlePluginConfigSubmit(e) {
     
     // Process form data with type conversion (using dot notation for nested fields)
     for (const [key, value] of formData.entries()) {
-        // Check if this is a patternProperties hidden input (contains JSON data)
+        // Check if this is a patternProperties or array-of-objects hidden input (contains JSON data)
         if (key.endsWith('_data') || key.includes('_data')) {
             try {
                 const baseKey = key.replace(/_data$/, '');
                 const jsonValue = JSON.parse(value);
-                if (typeof jsonValue === 'object' && !Array.isArray(jsonValue)) {
+                // Handle both objects (patternProperties) and arrays (array-of-objects)
+                if (typeof jsonValue === 'object') {
                     flatConfig[baseKey] = jsonValue;
-                    console.log(`PatternProperties field ${baseKey}: parsed JSON object`, jsonValue);
-                    continue; // Skip normal processing for patternProperties
+                    console.log(`JSON data field ${baseKey}: parsed ${Array.isArray(jsonValue) ? 'array' : 'object'}`, jsonValue);
+                    continue; // Skip normal processing for JSON data fields
                 }
             } catch (e) {
                 // Not valid JSON, continue with normal processing
@@ -2464,6 +2465,113 @@ function flattenConfig(obj, prefix = '') {
 }
 
 // Generate field HTML for a single property (used recursively)
+// Helper function to render a single item in an array of objects
+function renderArrayObjectItem(fieldId, fullKey, itemProperties, itemValue, index, itemsSchema) {
+    const item = itemValue || {};
+    const itemId = `${fieldId}_item_${index}`;
+    let html = `<div class="border border-gray-300 rounded-lg p-4 bg-gray-50 array-object-item" data-index="${index}">`;
+    
+    // Render each property of the object
+    const propertyOrder = itemsSchema['x-propertyOrder'] || Object.keys(itemProperties);
+    propertyOrder.forEach(propKey => {
+        if (!itemProperties[propKey]) return;
+        
+        const propSchema = itemProperties[propKey];
+        const propValue = item[propKey] !== undefined ? item[propKey] : propSchema.default;
+        const propLabel = propSchema.title || propKey.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+        const propDescription = propSchema.description || '';
+        const propFullKey = `${fullKey}[${index}].${propKey}`;
+        
+        html += `<div class="mb-3">`;
+        
+        // Handle file-upload widget (for logo field)
+        if (propSchema['x-widget'] === 'file-upload') {
+            html += `<label class="block text-sm font-medium text-gray-700 mb-1">${escapeHtml(propLabel)}</label>`;
+            if (propDescription) {
+                html += `<p class="text-xs text-gray-500 mb-2">${escapeHtml(propDescription)}</p>`;
+            }
+            const uploadConfig = propSchema['x-upload-config'] || {};
+            const pluginId = uploadConfig.plugin_id || (typeof currentPluginConfig !== 'undefined' ? currentPluginConfig?.pluginId : null) || (typeof window.currentPluginConfig !== 'undefined' ? window.currentPluginConfig?.pluginId : null) || 'ledmatrix-news';
+            const logoValue = propValue || {};
+            
+            html += `
+                <div class="file-upload-widget-inline">
+                    <input type="file" 
+                           id="${itemId}_logo_file" 
+                           accept="${(uploadConfig.allowed_types || ['image/png', 'image/jpeg', 'image/bmp']).join(',')}"
+                           style="display: none;"
+                           onchange="handleArrayObjectFileUpload(event, '${fieldId}', ${index}, '${propKey}', '${pluginId}')">
+                    <button type="button" 
+                            onclick="document.getElementById('${itemId}_logo_file').click()"
+                            class="px-3 py-2 text-sm bg-gray-200 hover:bg-gray-300 text-gray-700 rounded-md transition-colors">
+                        <i class="fas fa-upload mr-1"></i> Upload Logo
+                    </button>
+            `;
+            
+            if (logoValue.path) {
+                html += `
+                    <div class="mt-2 flex items-center space-x-2">
+                        <img src="/${logoValue.path}" alt="Logo" class="w-16 h-16 object-cover rounded border">
+                        <button type="button" 
+                                onclick="removeArrayObjectFile('${fieldId}', ${index}, '${propKey}')"
+                                class="text-red-600 hover:text-red-800">
+                            <i class="fas fa-trash"></i> Remove
+                        </button>
+                    </div>
+                `;
+            }
+            
+            html += `</div>`;
+        } else if (propSchema.type === 'boolean') {
+            // Boolean checkbox
+            html += `
+                <label class="flex items-center">
+                    <input type="checkbox" 
+                           id="${itemId}_${propKey}"
+                           name="${itemId}_${propKey}"
+                           data-prop-key="${propKey}"
+                           class="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+                           ${propValue ? 'checked' : ''}
+                           onchange="updateArrayObjectData('${fieldId}')">
+                    <span class="ml-2 text-sm text-gray-700">${escapeHtml(propLabel)}</span>
+                </label>
+            `;
+        } else {
+            // Regular text/string input
+            html += `
+                <label for="${itemId}_${propKey}" class="block text-sm font-medium text-gray-700 mb-1">
+                    ${escapeHtml(propLabel)}
+                </label>
+            `;
+            if (propDescription) {
+                html += `<p class="text-xs text-gray-500 mb-1">${escapeHtml(propDescription)}</p>`;
+            }
+            html += `
+                <input type="${propSchema.format === 'uri' ? 'url' : 'text'}" 
+                       id="${itemId}_${propKey}"
+                       name="${itemId}_${propKey}"
+                       data-prop-key="${propKey}"
+                       class="block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm bg-white text-black"
+                       value="${escapeHtml(propValue || '')}"
+                       placeholder="${propSchema.format === 'uri' ? 'https://example.com/feed' : ''}"
+                       onchange="updateArrayObjectData('${fieldId}')">
+            `;
+        }
+        
+        html += `</div>`;
+    });
+    
+    html += `
+        <button type="button" 
+                onclick="removeArrayObjectItem('${fieldId}', ${index})"
+                class="mt-2 px-3 py-2 text-sm text-red-600 hover:text-red-800 hover:bg-red-50 rounded-md transition-colors">
+            <i class="fas fa-trash mr-1"></i> Remove Feed
+        </button>
+    </div>`;
+    
+    return html;
+}
+
 function generateFieldHtml(key, prop, value, prefix = '') {
     const fullKey = prefix ? `${prefix}.${key}` : key;
     const label = prop.title || key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
@@ -2907,6 +3015,36 @@ function generateFieldHtml(key, prop, value, prefix = '') {
                 `;
             });
             html += `</div>`;
+        } else if (prop.items && prop.items.type === 'object' && prop.items.properties) {
+            // Array of objects widget (like custom_feeds with name, url, enabled, logo)
+            console.log(`[DEBUG] ✅ Detected array-of-objects widget for ${fullKey}`);
+            const fieldId = fullKey.replace(/\./g, '_');
+            const itemsSchema = prop.items;
+            const itemProperties = itemsSchema.properties || {};
+            const maxItems = prop.maxItems || 50;
+            const currentItems = Array.isArray(value) ? value : [];
+            
+            html += `
+                <div class="array-of-objects-container mt-1">
+                    <div id="${fieldId}_items" class="space-y-4">
+            `;
+            
+            // Render existing items
+            currentItems.forEach((item, index) => {
+                html += renderArrayObjectItem(fieldId, fullKey, itemProperties, item, index, itemsSchema);
+            });
+            
+            html += `
+                    </div>
+                    <button type="button" 
+                            onclick="addArrayObjectItem('${fieldId}', '${fullKey}', ${maxItems})"
+                            class="mt-3 px-4 py-2 text-sm bg-blue-600 hover:bg-blue-700 text-white rounded-md transition-colors"
+                            ${currentItems.length >= maxItems ? 'disabled style="opacity: 0.5; cursor: not-allowed;"' : ''}>
+                        <i class="fas fa-plus mr-1"></i> Add Feed
+                    </button>
+                    <input type="hidden" id="${fieldId}_data" name="${fullKey}_data" value='${JSON.stringify(currentItems).replace(/'/g, "&#39;")}'>
+                </div>
+            `;
         } else {
             // Regular array input
             console.log(`[DEBUG] ❌ NOT a file upload widget for ${fullKey}, using regular array input`);
@@ -3294,6 +3432,153 @@ window.updateKeyValuePairData = function(fieldId, fullKey) {
     });
     
     hiddenInput.value = JSON.stringify(pairs);
+};
+
+// Functions to handle array-of-objects
+window.addArrayObjectItem = function(fieldId, fullKey, maxItems) {
+    const itemsContainer = document.getElementById(fieldId + '_items');
+    const hiddenInput = document.getElementById(fieldId + '_data');
+    if (!itemsContainer || !hiddenInput) return;
+    
+    const currentItems = itemsContainer.querySelectorAll('.array-object-item');
+    if (currentItems.length >= maxItems) {
+        alert(`Maximum ${maxItems} items allowed`);
+        return;
+    }
+    
+    // Get schema for item properties from the hidden input's data attribute or currentPluginConfig
+    const schema = (typeof currentPluginConfig !== 'undefined' && currentPluginConfig?.schema) || (typeof window.currentPluginConfig !== 'undefined' && window.currentPluginConfig?.schema);
+    if (!schema) return;
+    
+    // Navigate to the items schema
+    const keys = fullKey.split('.');
+    let itemsSchema = schema.properties;
+    for (const key of keys) {
+        if (itemsSchema && itemsSchema[key]) {
+            itemsSchema = itemsSchema[key];
+            if (itemsSchema.type === 'array' && itemsSchema.items) {
+                itemsSchema = itemsSchema.items;
+                break;
+            }
+        }
+    }
+    
+    if (!itemsSchema || !itemsSchema.properties) return;
+    
+    const newIndex = currentItems.length;
+    const itemHtml = renderArrayObjectItem(fieldId, fullKey, itemsSchema.properties, {}, newIndex, itemsSchema);
+    itemsContainer.insertAdjacentHTML('beforeend', itemHtml);
+    updateArrayObjectData(fieldId);
+    
+    // Update add button state
+    const addButton = itemsContainer.nextElementSibling;
+    if (addButton && currentItems.length + 1 >= maxItems) {
+        addButton.disabled = true;
+        addButton.style.opacity = '0.5';
+        addButton.style.cursor = 'not-allowed';
+    }
+};
+
+window.removeArrayObjectItem = function(fieldId, index) {
+    const itemsContainer = document.getElementById(fieldId + '_items');
+    if (!itemsContainer) return;
+    
+    const item = itemsContainer.querySelector(`.array-object-item[data-index="${index}"]`);
+    if (item) {
+        item.remove();
+        // Re-index remaining items
+        const remainingItems = itemsContainer.querySelectorAll('.array-object-item');
+        remainingItems.forEach((itemEl, newIndex) => {
+            itemEl.setAttribute('data-index', newIndex);
+            // Update all inputs within this item - need to update name/id attributes
+            itemEl.querySelectorAll('input, select, textarea').forEach(input => {
+                const name = input.getAttribute('name') || input.id;
+                if (name) {
+                    // Update name/id attribute with new index
+                    const newName = name.replace(/\[\d+\]/, `[${newIndex}]`);
+                    if (input.getAttribute('name')) input.setAttribute('name', newName);
+                    if (input.id) input.id = input.id.replace(/\d+/, newIndex);
+                }
+            });
+            // Update button onclick attributes
+            itemEl.querySelectorAll('button[onclick]').forEach(button => {
+                const onclick = button.getAttribute('onclick');
+                if (onclick) {
+                    button.setAttribute('onclick', onclick.replace(/\d+/, newIndex));
+                }
+            });
+        });
+        updateArrayObjectData(fieldId);
+        
+        // Update add button state
+        const addButton = itemsContainer.nextElementSibling;
+        if (addButton) {
+            const maxItems = parseInt(addButton.getAttribute('onclick').match(/\d+/)[0]);
+            if (remainingItems.length < maxItems) {
+                addButton.disabled = false;
+                addButton.style.opacity = '1';
+                addButton.style.cursor = 'pointer';
+            }
+        }
+    }
+};
+
+window.updateArrayObjectData = function(fieldId) {
+    const itemsContainer = document.getElementById(fieldId + '_items');
+    const hiddenInput = document.getElementById(fieldId + '_data');
+    if (!itemsContainer || !hiddenInput) return;
+    
+    const items = [];
+    const itemElements = itemsContainer.querySelectorAll('.array-object-item');
+    
+    itemElements.forEach((itemEl, index) => {
+        const item = {};
+        // Get all text inputs in this item
+        itemEl.querySelectorAll('input[type="text"], input[type="url"], input[type="number"]').forEach(input => {
+            const propKey = input.getAttribute('data-prop-key');
+            if (propKey && propKey !== 'logo_file') {
+                item[propKey] = input.value.trim();
+            }
+        });
+        // Handle checkboxes
+        itemEl.querySelectorAll('input[type="checkbox"]').forEach(checkbox => {
+            const propKey = checkbox.getAttribute('data-prop-key');
+            if (propKey) {
+                item[propKey] = checkbox.checked;
+            }
+        });
+        // Handle file upload data (stored in data attributes)
+        itemEl.querySelectorAll('[data-file-data]').forEach(fileEl => {
+            const fileData = fileEl.getAttribute('data-file-data');
+            if (fileData) {
+                try {
+                    const data = JSON.parse(fileData);
+                    const propKey = fileEl.getAttribute('data-prop-key');
+                    if (propKey) {
+                        item[propKey] = data;
+                    }
+                } catch (e) {
+                    console.error('Error parsing file data:', e);
+                }
+            }
+        });
+        items.push(item);
+    });
+    
+    hiddenInput.value = JSON.stringify(items);
+};
+
+window.handleArrayObjectFileUpload = function(event, fieldId, itemIndex, propKey, pluginId) {
+    // TODO: Implement file upload handling for array object items
+    // This is a placeholder - file upload in nested objects needs special handling
+    console.log('File upload for array object item:', { fieldId, itemIndex, propKey, pluginId });
+    updateArrayObjectData(fieldId);
+};
+
+window.removeArrayObjectFile = function(fieldId, itemIndex, propKey) {
+    // TODO: Implement file removal for array object items
+    console.log('File removal for array object item:', { fieldId, itemIndex, propKey });
+    updateArrayObjectData(fieldId);
 };
 
 // Function to toggle nested sections
