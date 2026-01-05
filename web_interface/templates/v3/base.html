@@ -4820,6 +4820,147 @@
     <!-- Legacy plugins_manager.js (for backward compatibility during migration) -->
     <script src="{{ url_for('static', filename='v3/plugins_manager.js') }}?v=20250104i" defer></script>
     
+    <!-- Custom feeds table helper functions -->
+    <script>
+        function addCustomFeedRow(fieldId, fullKey, maxItems) {
+            const tbody = document.getElementById(fieldId + '_tbody');
+            if (!tbody) return;
+            
+            const currentRows = tbody.querySelectorAll('.custom-feed-row');
+            if (currentRows.length >= maxItems) {
+                alert(`Maximum ${maxItems} feeds allowed`);
+                return;
+            }
+            
+            const newIndex = currentRows.length;
+            const newRow = document.createElement('tr');
+            newRow.className = 'custom-feed-row';
+            newRow.setAttribute('data-index', newIndex);
+            newRow.innerHTML = `
+                <td class="px-4 py-3 whitespace-nowrap">
+                    <input type="text" 
+                           name="${fullKey}[${newIndex}].name"
+                           value=""
+                           class="block w-full px-2 py-1 border border-gray-300 rounded text-sm"
+                           placeholder="Feed Name"
+                           required>
+                </td>
+                <td class="px-4 py-3 whitespace-nowrap">
+                    <input type="url" 
+                           name="${fullKey}[${newIndex}].url"
+                           value=""
+                           class="block w-full px-2 py-1 border border-gray-300 rounded text-sm"
+                           placeholder="https://example.com/feed"
+                           required>
+                </td>
+                <td class="px-4 py-3 whitespace-nowrap">
+                    <div class="flex items-center space-x-2">
+                        <input type="file" 
+                               id="${fieldId}_logo_${newIndex}"
+                               accept="image/png,image/jpeg,image/bmp"
+                               style="display: none;"
+                               onchange="handleCustomFeedLogoUpload(event, '${fieldId}', ${newIndex}, 'ledmatrix-news')">
+                        <button type="button" 
+                                onclick="document.getElementById('${fieldId}_logo_${newIndex}').click()"
+                                class="px-2 py-1 text-xs bg-gray-200 hover:bg-gray-300 rounded">
+                            <i class="fas fa-upload mr-1"></i> Upload
+                        </button>
+                        <span class="text-xs text-gray-400">No logo</span>
+                    </div>
+                </td>
+                <td class="px-4 py-3 whitespace-nowrap text-center">
+                    <input type="checkbox" 
+                           name="${fullKey}[${newIndex}].enabled"
+                           checked
+                           class="h-4 w-4 text-blue-600">
+                </td>
+                <td class="px-4 py-3 whitespace-nowrap text-center">
+                    <button type="button" 
+                            onclick="removeCustomFeedRow(this)"
+                            class="text-red-600 hover:text-red-800 px-2 py-1">
+                        <i class="fas fa-trash"></i>
+                    </button>
+                </td>
+            `;
+            tbody.appendChild(newRow);
+        }
+        
+        function removeCustomFeedRow(button) {
+            const row = button.closest('tr');
+            if (row && confirm('Remove this feed?')) {
+                row.remove();
+                // Re-index remaining rows
+                const tbody = row.parentElement;
+                const rows = tbody.querySelectorAll('.custom-feed-row');
+                rows.forEach((r, index) => {
+                    r.setAttribute('data-index', index);
+                    // Update all input names with new index
+                    r.querySelectorAll('input, button').forEach(input => {
+                        const name = input.getAttribute('name');
+                        if (name) {
+                            input.setAttribute('name', name.replace(/\[\d+\]/, `[${index}]`));
+                        }
+                        const id = input.id;
+                        if (id && id.includes('_logo_')) {
+                            const newId = id.replace(/_logo_\d+/, `_logo_${index}`);
+                            input.id = newId;
+                            if (input.onclick) {
+                                input.setAttribute('onclick', input.getAttribute('onclick').replace(/\d+/, index));
+                            }
+                        }
+                    });
+                });
+            }
+        }
+        
+        function handleCustomFeedLogoUpload(event, fieldId, index, pluginId) {
+            const file = event.target.files[0];
+            if (!file) return;
+            
+            const formData = new FormData();
+            formData.append('file', file);
+            formData.append('plugin_id', pluginId);
+            
+            fetch('/api/v3/plugins/assets/upload', {
+                method: 'POST',
+                body: formData
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.status === 'success' && data.data && data.data.files && data.data.files.length > 0) {
+                    const uploadedFile = data.data.files[0];
+                    const row = document.querySelector(`#${fieldId}_tbody tr[data-index="${index}"]`);
+                    if (row) {
+                        const logoCell = row.querySelector('td:nth-child(3)');
+                        logoCell.innerHTML = `
+                            <div class="flex items-center space-x-2">
+                                <input type="file" 
+                                       id="${fieldId}_logo_${index}"
+                                       accept="image/png,image/jpeg,image/bmp"
+                                       style="display: none;"
+                                       onchange="handleCustomFeedLogoUpload(event, '${fieldId}', ${index}, '${pluginId}')">
+                                <button type="button" 
+                                        onclick="document.getElementById('${fieldId}_logo_${index}').click()"
+                                        class="px-2 py-1 text-xs bg-gray-200 hover:bg-gray-300 rounded">
+                                    <i class="fas fa-upload mr-1"></i> Upload
+                                </button>
+                                <img src="/${uploadedFile.path}" alt="Logo" class="w-8 h-8 object-cover rounded border" id="${fieldId}_logo_preview_${index}">
+                                <input type="hidden" name="${logoCell.querySelector('input[name*=".logo.path"]')?.name || `feeds.custom_feeds[${index}].logo.path`}" value="${uploadedFile.path}">
+                                <input type="hidden" name="${logoCell.querySelector('input[name*=".logo.id"]')?.name || `feeds.custom_feeds[${index}].logo.id`}" value="${uploadedFile.id}">
+                            </div>
+                        `;
+                    }
+                } else {
+                    alert('Upload failed: ' + (data.message || 'Unknown error'));
+                }
+            })
+            .catch(error => {
+                console.error('Upload error:', error);
+                alert('Upload failed: ' + error.message);
+            });
+        }
+    </script>
+    
     <!-- On-Demand Modal (moved here from plugins.html so it's always available) -->
     <div id="on-demand-modal" class="fixed inset-0 modal-backdrop flex items-center justify-center z-50" style="display: none;">
         <div class="modal-content p-6 w-full max-w-md bg-white rounded-lg shadow-lg">
