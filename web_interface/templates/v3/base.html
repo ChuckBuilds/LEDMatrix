@@ -4888,10 +4888,15 @@
         
         function removeCustomFeedRow(button) {
             const row = button.closest('tr');
-            if (row && confirm('Remove this feed?')) {
-                row.remove();
-                // Re-index remaining rows
+            if (!row) return;
+            
+            if (confirm('Remove this feed?')) {
                 const tbody = row.parentElement;
+                if (!tbody) return;
+                
+                row.remove();
+                
+                // Re-index remaining rows
                 const rows = tbody.querySelectorAll('.custom-feed-row');
                 rows.forEach((r, index) => {
                     r.setAttribute('data-index', index);

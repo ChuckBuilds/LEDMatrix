@@ -3486,9 +3486,9 @@ def save_plugin_config():
                                 # If it's a dict with numeric string keys, convert to array
                                 if isinstance(current_value, dict) and not isinstance(current_value, list):
                                     try:
-                                        keys = [k for k in current_value.keys()]
-                                        if all(k.isdigit() for k in keys):
-                                            sorted_keys = sorted(keys, key=int)
+                                        keys = list(current_value.keys())
+                                        if keys and all(str(k).isdigit() for k in keys):
+                                            sorted_keys = sorted(keys, key=lambda x: int(str(x)))
                                             array_value = [current_value[k] for k in sorted_keys]
                                             # Convert array elements to correct types based on schema
                                             items_schema = prop_schema.get('items', {})
@@ -3509,7 +3509,10 @@ def save_plugin_config():
                                                 array_value = converted_array
                                             config_dict[prop_key] = array_value
                                             current_value = array_value  # Update for length check below
-                                    except (ValueError, KeyError, TypeError):
+                                    except (ValueError, KeyError, TypeError) as e:
+                                        import logging
+                                        logger = logging.getLogger(__name__)
+                                        logger.debug(f"Failed to convert {prop_key} to array: {e}")
                                         pass
 
                                 # If it's an array, ensure correct types and check minItems
@@ -3621,9 +3624,17 @@ def save_plugin_config():
 
             if schema and 'properties' in schema:
                 # First, fix any dict structures that should be arrays
+                # This must be called BEFORE validation to convert dicts with numeric keys to arrays
                 fix_array_structures(plugin_config, schema['properties'])
                 # Then, ensure None arrays get defaults
                 ensure_array_defaults(plugin_config, schema['properties'])
+                
+                # Debug: Log the structure after fixing
+                import logging
+                logger = logging.getLogger(__name__)
+                if 'feeds' in plugin_config and 'custom_feeds' in plugin_config.get('feeds', {}):
+                    custom_feeds = plugin_config['feeds']['custom_feeds']
+                    logger.debug(f"After fix_array_structures: custom_feeds type={type(custom_feeds)}, value={custom_feeds}")
 
         # Get schema manager instance (for JSON requests)
         schema_mgr = api_v3.schema_manager
