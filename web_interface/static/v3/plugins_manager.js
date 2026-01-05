@@ -3437,11 +3437,6 @@ window.updateKeyValuePairData = function(fieldId, fullKey) {
     
     hiddenInput.value = JSON.stringify(pairs);
 };
-
-// Functions to handle array-of-objects
-// Define these at the top level (outside any IIFE) to ensure they're always available
-if (typeof window !== 'undefined') {
-    window.addArrayObjectItem = function(fieldId, fullKey, maxItems) {
     const itemsContainer = document.getElementById(fieldId + '_items');
     const hiddenInput = document.getElementById(fieldId + '_data');
     if (!itemsContainer || !hiddenInput) return;
