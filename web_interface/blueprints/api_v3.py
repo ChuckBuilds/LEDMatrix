@@ -606,6 +606,9 @@ def save_main_config():
                        'auto_load_enabled', 'development_mode',
                        'plugins_directory']:
                 continue
+            # Skip display settings that are already handled above (they're in nested structure)
+            if key in display_fields:
+                continue
             # For any remaining keys (including plugin keys), use deep merge to preserve existing settings
             if key in current_config and isinstance(current_config[key], dict) and isinstance(data[key], dict):
                 # Deep merge to preserve existing settings
