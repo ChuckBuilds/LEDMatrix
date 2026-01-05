@@ -2873,21 +2873,55 @@ function generateFieldHtml(key, prop, value, prefix = '') {
             <input type="number" id="${fullKey}" name="${fullKey}" value="${fieldValue}" ${min} ${max} ${step} class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm bg-white text-black placeholder:text-gray-500">
         `;
     } else if (prop.type === 'array') {
-        // Check if this is a file upload widget - try multiple ways to access x-widget
-        const hasXWidget = prop.hasOwnProperty('x-widget');
-        const xWidgetValue = prop['x-widget'];
-        const xWidgetValue2 = prop['x-widget'] || prop['x_widget'] || prop.xWidget;
-        
-        console.log(`[DEBUG] Array field ${fullKey}:`, {
-            type: prop.type,
-            hasXWidget: hasXWidget,
-            'x-widget': xWidgetValue,
-            'x-widget (alt)': xWidgetValue2,
-            'x-upload-config': prop['x-upload-config'],
-            propKeys: Object.keys(prop),
-            propString: JSON.stringify(prop),
-            value: value
-        });
+        // Check if this is an array of objects FIRST (before other checks)
+        if (prop.items && prop.items.type === 'object' && prop.items.properties) {
+            // Array of objects widget (like custom_feeds with name, url, enabled, logo)
+            console.log(`[DEBUG] ✅ Detected array-of-objects widget for ${fullKey}`);
+            const fieldId = fullKey.replace(/\./g, '_');
+            const itemsSchema = prop.items;
+            const itemProperties = itemsSchema.properties || {};
+            const maxItems = prop.maxItems || 50;
+            const currentItems = Array.isArray(value) ? value : [];
+            
+            html += `
+                <div class="array-of-objects-container mt-1">
+                    <div id="${fieldId}_items" class="space-y-4">
+            `;
+            
+            // Render existing items
+            currentItems.forEach((item, index) => {
+                html += renderArrayObjectItem(fieldId, fullKey, itemProperties, item, index, itemsSchema);
+            });
+            
+            html += `
+                    </div>
+                    <button type="button" 
+                            onclick="addArrayObjectItem('${fieldId}', '${fullKey}', ${maxItems})"
+                            class="mt-3 px-4 py-2 text-sm bg-blue-600 hover:bg-blue-700 text-white rounded-md transition-colors"
+                            ${currentItems.length >= maxItems ? 'disabled style="opacity: 0.5; cursor: not-allowed;"' : ''}>
+                        <i class="fas fa-plus mr-1"></i> Add Feed
+                    </button>
+                    <input type="hidden" id="${fieldId}_data" name="${fullKey}_data" value='${JSON.stringify(currentItems).replace(/'/g, "&#39;")}'>
+                </div>
+            `;
+        } else {
+            // Check if this is a file upload widget - try multiple ways to access x-widget
+            const hasXWidget = prop.hasOwnProperty('x-widget');
+            const xWidgetValue = prop['x-widget'];
+            const xWidgetValue2 = prop['x-widget'] || prop['x_widget'] || prop.xWidget;
+            
+            console.log(`[DEBUG] Array field ${fullKey}:`, {
+                type: prop.type,
+                hasItems: !!prop.items,
+                itemsType: prop.items?.type,
+                itemsHasProperties: !!prop.items?.properties,
+                hasXWidget: hasXWidget,
+                'x-widget': xWidgetValue,
+                'x-widget (alt)': xWidgetValue2,
+                'x-upload-config': prop['x-upload-config'],
+                propKeys: Object.keys(prop),
+                value: value
+            });
         
         // Check for file-upload widget - be more defensive
         if (xWidgetValue === 'file-upload' || xWidgetValue2 === 'file-upload') {
