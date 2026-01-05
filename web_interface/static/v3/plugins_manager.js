@@ -6414,6 +6414,184 @@ window.updateImageScheduleDay = function(fieldId, imageId, imageIdx, day) {
 
 })(); // End IIFE
 
+// Functions to handle array-of-objects
+// Define these at the top level (outside any IIFE) to ensure they're always available
+if (typeof window !== 'undefined') {
+    window.addArrayObjectItem = function(fieldId, fullKey, maxItems) {
+        const itemsContainer = document.getElementById(fieldId + '_items');
+        const hiddenInput = document.getElementById(fieldId + '_data');
+        if (!itemsContainer || !hiddenInput) return;
+        
+        const currentItems = itemsContainer.querySelectorAll('.array-object-item');
+        if (currentItems.length >= maxItems) {
+            alert(`Maximum ${maxItems} items allowed`);
+            return;
+        }
+        
+        // Get schema for item properties from the hidden input's data attribute or currentPluginConfig
+        const schema = (typeof currentPluginConfig !== 'undefined' && currentPluginConfig?.schema) || (typeof window.currentPluginConfig !== 'undefined' && window.currentPluginConfig?.schema);
+        if (!schema) return;
+        
+        // Navigate to the items schema
+        const keys = fullKey.split('.');
+        let itemsSchema = schema.properties;
+        for (const key of keys) {
+            if (itemsSchema && itemsSchema[key]) {
+                itemsSchema = itemsSchema[key];
+                if (itemsSchema.type === 'array' && itemsSchema.items) {
+                    itemsSchema = itemsSchema.items;
+                    break;
+                }
+            }
+        }
+        
+        if (!itemsSchema || !itemsSchema.properties) return;
+        
+        const newIndex = currentItems.length;
+        // Use renderArrayObjectItem if available, otherwise create basic HTML
+        let itemHtml = '';
+        if (typeof renderArrayObjectItem === 'function') {
+            itemHtml = renderArrayObjectItem(fieldId, fullKey, itemsSchema.properties, {}, newIndex, itemsSchema);
+        } else {
+            // Fallback: create basic HTML structure
+            itemHtml = `<div class="border border-gray-300 rounded-lg p-4 bg-gray-50 array-object-item" data-index="${newIndex}">`;
+            Object.keys(itemsSchema.properties || {}).forEach(propKey => {
+                const propSchema = itemsSchema.properties[propKey];
+                const propLabel = propSchema.title || propKey.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+                itemHtml += `<div class="mb-3"><label class="block text-sm font-medium text-gray-700 mb-1">${propLabel}</label>`;
+                if (propSchema.type === 'boolean') {
+                    itemHtml += `<input type="checkbox" data-prop-key="${propKey}" class="h-4 w-4 text-blue-600" onchange="window.updateArrayObjectData('${fieldId}')">`;
+                } else {
+                    itemHtml += `<input type="text" data-prop-key="${propKey}" class="block w-full px-3 py-2 border border-gray-300 rounded-md" onchange="window.updateArrayObjectData('${fieldId}')">`;
+                }
+                itemHtml += `</div>`;
+            });
+            itemHtml += `<button type="button" onclick="window.removeArrayObjectItem('${fieldId}', ${newIndex})" class="mt-2 px-3 py-2 text-red-600 hover:text-red-800">Remove</button></div>`;
+        }
+        itemsContainer.insertAdjacentHTML('beforeend', itemHtml);
+        window.updateArrayObjectData(fieldId);
+        
+        // Update add button state
+        const addButton = itemsContainer.nextElementSibling;
+        if (addButton && currentItems.length + 1 >= maxItems) {
+            addButton.disabled = true;
+            addButton.style.opacity = '0.5';
+            addButton.style.cursor = 'not-allowed';
+        }
+    };
+
+    window.removeArrayObjectItem = function(fieldId, index) {
+        const itemsContainer = document.getElementById(fieldId + '_items');
+        if (!itemsContainer) return;
+        
+        const item = itemsContainer.querySelector(`.array-object-item[data-index="${index}"]`);
+        if (item) {
+            item.remove();
+            // Re-index remaining items
+            const remainingItems = itemsContainer.querySelectorAll('.array-object-item');
+            remainingItems.forEach((itemEl, newIndex) => {
+                itemEl.setAttribute('data-index', newIndex);
+                // Update all inputs within this item - need to update name/id attributes
+                itemEl.querySelectorAll('input, select, textarea').forEach(input => {
+                    const name = input.getAttribute('name') || input.id;
+                    if (name) {
+                        // Update name/id attribute with new index
+                        const newName = name.replace(/\[\d+\]/, `[${newIndex}]`);
+                        if (input.getAttribute('name')) input.setAttribute('name', newName);
+                        if (input.id) input.id = input.id.replace(/\d+/, newIndex);
+                    }
+                });
+                // Update button onclick attributes
+                itemEl.querySelectorAll('button[onclick]').forEach(button => {
+                    const onclick = button.getAttribute('onclick');
+                    if (onclick) {
+                        button.setAttribute('onclick', onclick.replace(/\d+/, newIndex));
+                    }
+                });
+            });
+            window.updateArrayObjectData(fieldId);
+            
+            // Update add button state
+            const addButton = itemsContainer.nextElementSibling;
+            if (addButton) {
+                const maxItems = parseInt(addButton.getAttribute('onclick').match(/\d+/)[0]);
+                if (remainingItems.length < maxItems) {
+                    addButton.disabled = false;
+                    addButton.style.opacity = '1';
+                    addButton.style.cursor = 'pointer';
+                }
+            }
+        }
+    };
+
+    window.updateArrayObjectData = function(fieldId) {
+        const itemsContainer = document.getElementById(fieldId + '_items');
+        const hiddenInput = document.getElementById(fieldId + '_data');
+        if (!itemsContainer || !hiddenInput) return;
+        
+        const items = [];
+        const itemElements = itemsContainer.querySelectorAll('.array-object-item');
+        
+        itemElements.forEach((itemEl, index) => {
+            const item = {};
+            // Get all text inputs in this item
+            itemEl.querySelectorAll('input[type="text"], input[type="url"], input[type="number"]').forEach(input => {
+                const propKey = input.getAttribute('data-prop-key');
+                if (propKey && propKey !== 'logo_file') {
+                    item[propKey] = input.value.trim();
+                }
+            });
+            // Handle checkboxes
+            itemEl.querySelectorAll('input[type="checkbox"]').forEach(checkbox => {
+                const propKey = checkbox.getAttribute('data-prop-key');
+                if (propKey) {
+                    item[propKey] = checkbox.checked;
+                }
+            });
+            // Handle file upload data (stored in data attributes)
+            itemEl.querySelectorAll('[data-file-data]').forEach(fileEl => {
+                const fileData = fileEl.getAttribute('data-file-data');
+                if (fileData) {
+                    try {
+                        const data = JSON.parse(fileData);
+                        const propKey = fileEl.getAttribute('data-prop-key');
+                        if (propKey) {
+                            item[propKey] = data;
+                        }
+                    } catch (e) {
+                        console.error('Error parsing file data:', e);
+                    }
+                }
+            });
+            items.push(item);
+        });
+        
+        hiddenInput.value = JSON.stringify(items);
+    };
+
+    window.handleArrayObjectFileUpload = function(event, fieldId, itemIndex, propKey, pluginId) {
+        // TODO: Implement file upload handling for array object items
+        // This is a placeholder - file upload in nested objects needs special handling
+        console.log('File upload for array object item:', { fieldId, itemIndex, propKey, pluginId });
+        window.updateArrayObjectData(fieldId);
+    };
+
+    window.removeArrayObjectFile = function(fieldId, itemIndex, propKey) {
+        // TODO: Implement file removal for array object items
+        // This is a placeholder - file removal in nested objects needs special handling
+        console.log('File removal for array object item:', { fieldId, itemIndex, propKey });
+        window.updateArrayObjectData(fieldId);
+    };
+    
+    console.log('[ARRAY-OBJECTS] Functions defined on window:', {
+        addArrayObjectItem: typeof window.addArrayObjectItem,
+        removeArrayObjectItem: typeof window.removeArrayObjectItem,
+        updateArrayObjectData: typeof window.updateArrayObjectData,
+        handleArrayObjectFileUpload: typeof window.handleArrayObjectFileUpload,
+        removeArrayObjectFile: typeof window.removeArrayObjectFile
+    });
+}
+
 // Make currentPluginConfig globally accessible (outside IIFE)
 window.currentPluginConfig = null;
 
