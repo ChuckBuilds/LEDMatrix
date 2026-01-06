@@ -58,7 +58,7 @@
                    {% if field_type == 'integer' %}step="1"{% else %}step="any"{% endif %}
                    class="form-input w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 bg-white text-black placeholder:text-gray-500">
             
-            {# Array - check for file upload widget first (to avoid breaking static-image plugin), then array of objects #}
+            {# Array - check for file upload widget first (to avoid breaking static-image plugin), then checkbox-group, then array of objects #}
             {% elif field_type == 'array' %}
             {% set x_widget = prop.get('x-widget') or prop.get('x_widget') %}
             {% if x_widget == 'file-upload' %}
@@ -151,6 +151,30 @@
                     
                     <!-- Hidden input to store image data -->
                     <input type="hidden" id="{{ field_id }}_images_data" name="{{ full_key }}" value='{{ array_value|tojson|safe }}'>
+                </div>
+            {% elif x_widget == 'checkbox-group' %}
+                {# Checkbox group widget for multi-select arrays with enum items #}
+                {% set array_value = value if value is not none and value is iterable and value is not string else (prop.default if prop.default is defined and prop.default is iterable and prop.default is not string else []) %}
+                {% set items_schema = prop.get('items') or {} %}
+                {% set enum_items = items_schema.get('enum') or [] %}
+                {% set x_options = prop.get('x-options') or {} %}
+                {% set labels = x_options.get('labels') or {} %}
+                
+                <div class="mt-1 space-y-2">
+                    {% for option in enum_items %}
+                    {% set is_checked = option in array_value %}
+                    {% set option_label = labels.get(option, option|replace('_', ' ')|title) %}
+                    {% set checkbox_id = (field_id ~ '_' ~ option)|replace('.', '_')|replace(' ', '_') %}
+                    <label class="flex items-center cursor-pointer">
+                        <input type="checkbox" 
+                               id="{{ checkbox_id }}"
+                               name="{{ full_key }}[]" 
+                               value="{{ option }}"
+                               {% if is_checked %}checked{% endif %}
+                               class="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded">
+                        <span class="ml-2 text-sm text-gray-700">{{ option_label }}</span>
+                    </label>
+                    {% endfor %}
                 </div>
             {% else %}
                 {# Check if it's an array of objects (like custom_feeds) - use simple table interface #}
