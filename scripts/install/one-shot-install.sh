@@ -122,6 +122,8 @@ check_disk_space() {
     
     # Check available space in MB
     AVAILABLE_SPACE=$(df -m / | awk 'NR==2{print $4}' || echo "0")
+    # Ensure AVAILABLE_SPACE has a default value if empty (handles unexpected df output)
+    AVAILABLE_SPACE=${AVAILABLE_SPACE:-0}
     
     if [ "$AVAILABLE_SPACE" -lt 500 ]; then
         print_error "Insufficient disk space: ${AVAILABLE_SPACE}MB available (need at least 500MB)"
