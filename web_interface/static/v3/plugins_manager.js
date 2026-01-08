@@ -5364,45 +5364,9 @@ function showError(message) {
     `;
 }
 
-// Plugin configuration form submission
-document.addEventListener('submit', function(e) {
-    if (e.target.id === 'plugin-config-form') {
-        e.preventDefault();
-
-        const formData = new FormData(e.target);
-        const config = {};
-        const schema = currentPluginConfig?.schema;
-
-        // Convert form data to config object
-        // Note: 'enabled' is managed separately via the header toggle, not through this form
-        for (let [key, value] of formData.entries()) {
-            // Skip enabled - it's managed separately via the header toggle
-            if (key === 'enabled') continue;
-
-            // Check if this field is an array type in the schema
-            if (schema?.properties?.[key]?.type === 'array') {
-                // Convert comma-separated string to array
-                const arrayValue = value.split(',').map(item => item.trim()).filter(item => item.length > 0);
-                config[key] = arrayValue;
-                console.log(`Array field ${key}: "${value}" -> `, arrayValue);
-            } else if (key === 'display_duration' || schema?.properties?.[key]?.type === 'integer') {
-                config[key] = parseInt(value);
-            } else if (schema?.properties?.[key]?.type === 'number') {
-                config[key] = parseFloat(value);
-            } else if (schema?.properties?.[key]?.type === 'boolean') {
-                config[key] = value === 'true' || value === true;
-            } else {
-                config[key] = value;
-            }
-        }
-
-        console.log('Final config to save:', config);
-        console.log('Schema loaded:', schema ? 'Yes' : 'No');
-
-        // Save the configuration
-        savePluginConfiguration(currentPluginConfig.pluginId, config);
-    }
-});
+// Plugin configuration form submission is handled by handlePluginConfigSubmit
+// which is attached directly to the form. The document-level listener has been removed
+// to avoid duplicate submissions and to ensure proper handling of _data fields.
 
 function savePluginConfiguration(pluginId, config) {
     // Update the plugin configuration in the backend
