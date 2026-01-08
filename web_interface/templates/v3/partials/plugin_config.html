@@ -177,95 +177,105 @@
                     {% endfor %}
                 </div>
             {% else %}
-                {# Check if it's an array of objects (like custom_feeds) - use simple table interface #}
+                {# Check for custom-feeds widget first #}
                 {% set items_schema = prop.get('items') or {} %}
-                {% set is_array_of_objects = items_schema.get('type') == 'object' and items_schema.get('properties') %}
-                {% if is_array_of_objects %}
-                    {# Simple table-based interface for custom feeds #}
+                {% if x_widget == 'custom-feeds' %}
+                    {# Custom feeds table interface - widget-specific implementation #}
+                    {# Validate that required fields exist in schema #}
                     {% set item_properties = items_schema.get('properties', {}) %}
-                    {% set max_items = prop.get('maxItems', 50) %}
-                    {% set array_value = value if value is not none and value is iterable and value is not string else (prop.default if prop.default is defined and prop.default is iterable and prop.default is not string else []) %}
-                    
-                    <div class="custom-feeds-table-container mt-1">
-                        <table class="min-w-full divide-y divide-gray-200 border border-gray-300 rounded-lg">
-                            <thead class="bg-gray-50">
-                                <tr>
-                                    <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Name</th>
-                                    <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">URL</th>
-                                    <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Logo</th>
-                                    <th class="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">Enabled</th>
-                                    <th class="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
-                                </tr>
-                            </thead>
-                            <tbody id="{{ field_id }}_tbody" class="bg-white divide-y divide-gray-200">
-                                {% for item in array_value %}
-                                {% set item_index = loop.index0 %}
-                                <tr class="custom-feed-row" data-index="{{ item_index }}">
-                                    <td class="px-4 py-3 whitespace-nowrap">
-                                        <input type="text" 
-                                               name="{{ full_key }}.{{ item_index }}.name"
-                                               value="{{ item.get('name', '') }}"
-                                               class="block w-full px-2 py-1 border border-gray-300 rounded text-sm"
-                                               placeholder="Feed Name"
-                                               required>
-                                    </td>
-                                    <td class="px-4 py-3 whitespace-nowrap">
-                                        <input type="url" 
-                                               name="{{ full_key }}.{{ item_index }}.url"
-                                               value="{{ item.get('url', '') }}"
-                                               class="block w-full px-2 py-1 border border-gray-300 rounded text-sm"
-                                               placeholder="https://example.com/feed"
-                                               required>
-                                    </td>
-                                    <td class="px-4 py-3 whitespace-nowrap">
-                                        {% set logo_value = item.get('logo') or {} %}
-                                        {% set logo_path = logo_value.get('path', '') %}
-                                        <div class="flex items-center space-x-2">
-                                            <input type="file" 
-                                                   id="{{ field_id }}_logo_{{ item_index }}"
-                                                   accept="image/png,image/jpeg,image/bmp"
-                                                   style="display: none;"
-                                                   onchange="handleCustomFeedLogoUpload(event, '{{ field_id }}', {{ item_index }}, '{{ plugin_id }}', '{{ full_key }}')">
+                    {% if not (item_properties.get('name') and item_properties.get('url')) %}
+                        {# Fallback to generic if schema doesn't match expected structure #}
+                        <p class="text-xs text-amber-600 mt-1">
+                            <i class="fas fa-exclamation-triangle mr-1"></i>
+                            Custom feeds widget requires 'name' and 'url' properties in items schema.
+                        </p>
+                    {% else %}
+                        {% set max_items = prop.get('maxItems', 50) %}
+                        {% set array_value = value if value is not none and value is iterable and value is not string else (prop.default if prop.default is defined and prop.default is iterable and prop.default is not string else []) %}
+                        
+                        <div class="custom-feeds-table-container mt-1">
+                            <table class="min-w-full divide-y divide-gray-200 border border-gray-300 rounded-lg">
+                                <thead class="bg-gray-50">
+                                    <tr>
+                                        <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Name</th>
+                                        <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">URL</th>
+                                        <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Logo</th>
+                                        <th class="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">Enabled</th>
+                                        <th class="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="{{ field_id }}_tbody" class="bg-white divide-y divide-gray-200">
+                                    {% for item in array_value %}
+                                    {% set item_index = loop.index0 %}
+                                    <tr class="custom-feed-row" data-index="{{ item_index }}">
+                                        <td class="px-4 py-3 whitespace-nowrap">
+                                            <input type="text" 
+                                                   name="{{ full_key }}.{{ item_index }}.name"
+                                                   value="{{ item.get('name', '') }}"
+                                                   class="block w-full px-2 py-1 border border-gray-300 rounded text-sm"
+                                                   placeholder="Feed Name"
+                                                   required>
+                                        </td>
+                                        <td class="px-4 py-3 whitespace-nowrap">
+                                            <input type="url" 
+                                                   name="{{ full_key }}.{{ item_index }}.url"
+                                                   value="{{ item.get('url', '') }}"
+                                                   class="block w-full px-2 py-1 border border-gray-300 rounded text-sm"
+                                                   placeholder="https://example.com/feed"
+                                                   required>
+                                        </td>
+                                        <td class="px-4 py-3 whitespace-nowrap">
+                                            {% set logo_value = item.get('logo') or {} %}
+                                            {% set logo_path = logo_value.get('path', '') %}
+                                            <div class="flex items-center space-x-2">
+                                                <input type="file" 
+                                                       id="{{ field_id }}_logo_{{ item_index }}"
+                                                       accept="image/png,image/jpeg,image/bmp"
+                                                       style="display: none;"
+                                                       onchange="handleCustomFeedLogoUpload(event, '{{ field_id }}', {{ item_index }}, '{{ plugin_id }}', '{{ full_key }}')">
+                                                <button type="button" 
+                                                        onclick="document.getElementById('{{ field_id }}_logo_{{ item_index }}').click()"
+                                                        class="px-2 py-1 text-xs bg-gray-200 hover:bg-gray-300 rounded">
+                                                    <i class="fas fa-upload mr-1"></i> Upload
+                                                </button>
+                                                {% if logo_path %}
+                                                <img src="/{{ logo_path }}" alt="Logo" class="w-8 h-8 object-cover rounded border" id="{{ field_id }}_logo_preview_{{ item_index }}">
+                                                <input type="hidden" name="{{ full_key }}.{{ item_index }}.logo.path" value="{{ logo_path }}">
+                                                <input type="hidden" name="{{ full_key }}.{{ item_index }}.logo.id" value="{{ logo_value.get('id', '') }}">
+                                                {% else %}
+                                                <span class="text-xs text-gray-400">No logo</span>
+                                                {% endif %}
+                                            </div>
+                                        </td>
+                                        <td class="px-4 py-3 whitespace-nowrap text-center">
+                                            <input type="checkbox" 
+                                                   name="{{ full_key }}.{{ item_index }}.enabled"
+                                                   {% if item.get('enabled', true) %}checked{% endif %}
+                                                   value="true"
+                                                   class="h-4 w-4 text-blue-600">
+                                        </td>
+                                        <td class="px-4 py-3 whitespace-nowrap text-center">
                                             <button type="button" 
-                                                    onclick="document.getElementById('{{ field_id }}_logo_{{ item_index }}').click()"
-                                                    class="px-2 py-1 text-xs bg-gray-200 hover:bg-gray-300 rounded">
-                                                <i class="fas fa-upload mr-1"></i> Upload
+                                                    onclick="removeCustomFeedRow(this)"
+                                                    class="text-red-600 hover:text-red-800 px-2 py-1">
+                                                <i class="fas fa-trash"></i>
                                             </button>
-                                            {% if logo_path %}
-                                            <img src="/{{ logo_path }}" alt="Logo" class="w-8 h-8 object-cover rounded border" id="{{ field_id }}_logo_preview_{{ item_index }}">
-                                            <input type="hidden" name="{{ full_key }}.{{ item_index }}.logo.path" value="{{ logo_path }}">
-                                            <input type="hidden" name="{{ full_key }}.{{ item_index }}.logo.id" value="{{ logo_value.get('id', '') }}">
-                                            {% else %}
-                                            <span class="text-xs text-gray-400">No logo</span>
-                                            {% endif %}
-                                        </div>
-                                    </td>
-                                    <td class="px-4 py-3 whitespace-nowrap text-center">
-                                        <input type="checkbox" 
-                                               name="{{ full_key }}.{{ item_index }}.enabled"
-                                               {% if item.get('enabled', true) %}checked{% endif %}
-                                               value="true"
-                                               class="h-4 w-4 text-blue-600">
-                                    </td>
-                                    <td class="px-4 py-3 whitespace-nowrap text-center">
-                                        <button type="button" 
-                                                onclick="removeCustomFeedRow(this)"
-                                                class="text-red-600 hover:text-red-800 px-2 py-1">
-                                            <i class="fas fa-trash"></i>
-                                        </button>
-                                    </td>
-                                </tr>
-                                {% endfor %}
-                            </tbody>
-                        </table>
-                        <button type="button" 
-                                onclick="addCustomFeedRow('{{ field_id }}', '{{ full_key }}', {{ max_items }})"
-                                class="mt-3 px-4 py-2 text-sm bg-blue-600 hover:bg-blue-700 text-white rounded-md"
-                                {% if array_value|length >= max_items %}disabled style="opacity: 0.5;"{% endif %}>
-                            <i class="fas fa-plus mr-1"></i> Add Feed
-                        </button>
-                    </div>
+                                        </td>
+                                    </tr>
+                                    {% endfor %}
+                                </tbody>
+                            </table>
+                            <button type="button" 
+                                    onclick="addCustomFeedRow('{{ field_id }}', '{{ full_key }}', {{ max_items }})"
+                                    class="mt-3 px-4 py-2 text-sm bg-blue-600 hover:bg-blue-700 text-white rounded-md"
+                                    {% if array_value|length >= max_items %}disabled style="opacity: 0.5;"{% endif %}>
+                                <i class="fas fa-plus mr-1"></i> Add Feed
+                            </button>
+                        </div>
+                    {% endif %}
                 {% else %}
+                    {# Generic array-of-objects would go here if needed in the future #}
+                    {# For now, fall back to regular array input (comma-separated) #}
                     {# Regular array input (comma-separated) #}
                     {% set array_value = value if value is not none else (prop.default if prop.default is defined else []) %}
                     <input type="text" 
