@@ -4857,7 +4857,7 @@
                     <div class="flex items-center space-x-2">
                         <input type="file" 
                                id="${fieldId}_logo_${newIndex}"
-                               accept="image/png,image/jpeg,image/bmp"
+                               accept="image/png,image/jpeg,image/bmp,image/gif"
                                style="display: none;"
                                onchange="handleCustomFeedLogoUpload(event, '${fieldId}', ${newIndex}, 'ledmatrix-news', '${fullKey}')">
                         <button type="button" 
@@ -4983,7 +4983,7 @@
                         const fileInput = document.createElement('input');
                         fileInput.type = 'file';
                         fileInput.id = `${fieldId}_logo_${index}`;
-                        fileInput.accept = 'image/png,image/jpeg,image/bmp';
+                        fileInput.accept = 'image/png,image/jpeg,image/bmp,image/gif';
                         fileInput.style.display = 'none';
                         fileInput.setAttribute('onchange', `handleCustomFeedLogoUpload(event, '${fieldId}', ${index}, '${pluginId}', '${fullKey}')`);
                         
