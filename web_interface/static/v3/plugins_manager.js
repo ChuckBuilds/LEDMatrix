@@ -6671,13 +6671,16 @@ if (typeof window !== 'undefined') {
         window.updateArrayObjectData(fieldId);
     };
     
-    console.log('[ARRAY-OBJECTS] Functions defined on window:', {
-        addArrayObjectItem: typeof window.addArrayObjectItem,
-        removeArrayObjectItem: typeof window.removeArrayObjectItem,
-        updateArrayObjectData: typeof window.updateArrayObjectData,
-        handleArrayObjectFileUpload: typeof window.handleArrayObjectFileUpload,
-        removeArrayObjectFile: typeof window.removeArrayObjectFile
-    });
+    // Debug logging (only if pluginDebug is enabled)
+    if (_PLUGIN_DEBUG_EARLY) {
+        console.log('[ARRAY-OBJECTS] Functions defined on window:', {
+            addArrayObjectItem: typeof window.addArrayObjectItem,
+            removeArrayObjectItem: typeof window.removeArrayObjectItem,
+            updateArrayObjectData: typeof window.updateArrayObjectData,
+            handleArrayObjectFileUpload: typeof window.handleArrayObjectFileUpload,
+            removeArrayObjectFile: typeof window.removeArrayObjectFile
+        });
+    }
 }
 
 // Make currentPluginConfig globally accessible (outside IIFE)
