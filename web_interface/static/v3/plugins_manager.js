@@ -3079,12 +3079,16 @@ function generateFieldHtml(key, prop, value, prefix = '') {
                     html += `<div class="border border-gray-300 rounded-lg p-4 bg-gray-50 array-object-item" data-index="${index}">`;
                     Object.keys(itemProperties || {}).forEach(propKey => {
                         const propSchema = itemProperties[propKey];
+                        const propValue = item[propKey] !== undefined ? item[propKey] : propSchema.default;
                         const propLabel = propSchema.title || propKey.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
                         html += `<div class="mb-3"><label class="block text-sm font-medium text-gray-700 mb-1">${propLabel}</label>`;
                         if (propSchema.type === 'boolean') {
-                            html += `<input type="checkbox" data-prop-key="${propKey}" class="h-4 w-4 text-blue-600" onchange="window.updateArrayObjectData('${fieldId}')">`;
+                            const checked = propValue ? 'checked' : '';
+                            html += `<input type="checkbox" data-prop-key="${propKey}" ${checked} class="h-4 w-4 text-blue-600" onchange="window.updateArrayObjectData('${fieldId}')">`;
                         } else {
-                            html += `<input type="text" data-prop-key="${propKey}" class="block w-full px-3 py-2 border border-gray-300 rounded-md" onchange="window.updateArrayObjectData('${fieldId}')">`;
+                            // Escape HTML to prevent XSS
+                            const escapedValue = typeof propValue === 'string' ? propValue.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;') : (propValue || '');
+                            html += `<input type="text" data-prop-key="${propKey}" value="${escapedValue}" class="block w-full px-3 py-2 border border-gray-300 rounded-md" onchange="window.updateArrayObjectData('${fieldId}')">`;
                         }
                         html += `</div>`;
                     });
@@ -6471,15 +6475,21 @@ if (typeof window !== 'undefined') {
             itemHtml = window.renderArrayObjectItem(fieldId, fullKey, itemsSchema.properties, {}, newIndex, itemsSchema);
         } else {
             // Fallback: create basic HTML structure
+            // Note: newItem is {} for newly added items, so this will use schema defaults
+            const newItem = {};
             itemHtml = `<div class="border border-gray-300 rounded-lg p-4 bg-gray-50 array-object-item" data-index="${newIndex}">`;
             Object.keys(itemsSchema.properties || {}).forEach(propKey => {
                 const propSchema = itemsSchema.properties[propKey];
+                const propValue = newItem[propKey] !== undefined ? newItem[propKey] : propSchema.default;
                 const propLabel = propSchema.title || propKey.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
                 itemHtml += `<div class="mb-3"><label class="block text-sm font-medium text-gray-700 mb-1">${propLabel}</label>`;
                 if (propSchema.type === 'boolean') {
-                    itemHtml += `<input type="checkbox" data-prop-key="${propKey}" class="h-4 w-4 text-blue-600" onchange="window.updateArrayObjectData('${fieldId}')">`;
+                    const checked = propValue ? 'checked' : '';
+                    itemHtml += `<input type="checkbox" data-prop-key="${propKey}" ${checked} class="h-4 w-4 text-blue-600" onchange="window.updateArrayObjectData('${fieldId}')">`;
                 } else {
-                    itemHtml += `<input type="text" data-prop-key="${propKey}" class="block w-full px-3 py-2 border border-gray-300 rounded-md" onchange="window.updateArrayObjectData('${fieldId}')">`;
+                    // Escape HTML to prevent XSS
+                    const escapedValue = typeof propValue === 'string' ? propValue.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;') : (propValue || '');
+                    itemHtml += `<input type="text" data-prop-key="${propKey}" value="${escapedValue}" class="block w-full px-3 py-2 border border-gray-300 rounded-md" onchange="window.updateArrayObjectData('${fieldId}')">`;
                 }
                 itemHtml += `</div>`;
             });
