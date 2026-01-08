@@ -248,6 +248,7 @@
                                             </div>
                                         </td>
                                         <td class="px-4 py-3 whitespace-nowrap text-center">
+                                            <input type="hidden" name="{{ full_key }}.{{ item_index }}.enabled" value="false">
                                             <input type="checkbox" 
                                                    name="{{ full_key }}.{{ item_index }}.enabled"
                                                    {% if item.get('enabled', true) %}checked{% endif %}
