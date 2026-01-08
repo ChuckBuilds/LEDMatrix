@@ -4949,23 +4949,59 @@
                         const pathName = existingPathInput ? existingPathInput.name : `${fullKey}.${index}.logo.path`;
                         const idName = existingIdInput ? existingIdInput.name : `${fullKey}.${index}.logo.id`;
                         
-                        logoCell.innerHTML = `
-                            <div class="flex items-center space-x-2">
-                                <input type="file" 
-                                       id="${fieldId}_logo_${index}"
-                                       accept="image/png,image/jpeg,image/bmp"
-                                       style="display: none;"
-                                       onchange="handleCustomFeedLogoUpload(event, '${fieldId}', ${index}, '${pluginId}', '${fullKey}')">
-                                <button type="button" 
-                                        onclick="document.getElementById('${fieldId}_logo_${index}').click()"
-                                        class="px-2 py-1 text-xs bg-gray-200 hover:bg-gray-300 rounded">
-                                    <i class="fas fa-upload mr-1"></i> Upload
-                                </button>
-                                <img src="/${uploadedFile.path}" alt="Logo" class="w-8 h-8 object-cover rounded border" id="${fieldId}_logo_preview_${index}">
-                                <input type="hidden" name="${pathName}" value="${uploadedFile.path}">
-                                <input type="hidden" name="${idName}" value="${uploadedFile.id}">
-                            </div>
-                        `;
+                        // Clear logoCell and build DOM safely to prevent XSS
+                        logoCell.textContent = ''; // Clear existing content
+                        
+                        // Create container div
+                        const container = document.createElement('div');
+                        container.className = 'flex items-center space-x-2';
+                        
+                        // Create file input
+                        const fileInput = document.createElement('input');
+                        fileInput.type = 'file';
+                        fileInput.id = `${fieldId}_logo_${index}`;
+                        fileInput.accept = 'image/png,image/jpeg,image/bmp';
+                        fileInput.style.display = 'none';
+                        fileInput.setAttribute('onchange', `handleCustomFeedLogoUpload(event, '${fieldId}', ${index}, '${pluginId}', '${fullKey}')`);
+                        
+                        // Create upload button
+                        const uploadButton = document.createElement('button');
+                        uploadButton.type = 'button';
+                        uploadButton.className = 'px-2 py-1 text-xs bg-gray-200 hover:bg-gray-300 rounded';
+                        uploadButton.setAttribute('onclick', `document.getElementById('${fieldId}_logo_${index}').click()`);
+                        const uploadIcon = document.createElement('i');
+                        uploadIcon.className = 'fas fa-upload mr-1';
+                        uploadButton.appendChild(uploadIcon);
+                        uploadButton.appendChild(document.createTextNode(' Upload'));
+                        
+                        // Create img element - set src via setAttribute to prevent XSS
+                        const img = document.createElement('img');
+                        img.setAttribute('src', `/${uploadedFile.path}`);
+                        img.setAttribute('alt', 'Logo');
+                        img.className = 'w-8 h-8 object-cover rounded border';
+                        img.id = `${fieldId}_logo_preview_${index}`;
+                        
+                        // Create hidden input for path - set value via setAttribute to prevent XSS
+                        const pathInput = document.createElement('input');
+                        pathInput.type = 'hidden';
+                        pathInput.setAttribute('name', pathName);
+                        pathInput.setAttribute('value', uploadedFile.path);
+                        
+                        // Create hidden input for id - set value via setAttribute to prevent XSS
+                        const idInput = document.createElement('input');
+                        idInput.type = 'hidden';
+                        idInput.setAttribute('name', idName);
+                        idInput.setAttribute('value', String(uploadedFile.id)); // Ensure it's a string
+                        
+                        // Append all elements to container
+                        container.appendChild(fileInput);
+                        container.appendChild(uploadButton);
+                        container.appendChild(img);
+                        container.appendChild(pathInput);
+                        container.appendChild(idInput);
+                        
+                        // Append container to logoCell
+                        logoCell.appendChild(container);
                     }
                 } else {
                     alert('Upload failed: ' + (data.message || 'Unknown error'));
