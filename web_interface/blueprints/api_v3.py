@@ -3357,8 +3357,6 @@ def save_plugin_config():
                     # Combine values into comma-separated string for consistent parsing
                     combined_value = ', '.join(str(v) for v in values if v)
                     form_data[base_path] = combined_value
-                    import logging
-                    logger = logging.getLogger(__name__)
                     logger.debug(f"Processed bracket notation array field {base_path}: {values} -> {combined_value}")
 
             # Second pass: detect and combine array index fields (e.g., "text_color.0", "text_color.1" -> "text_color" as array)
@@ -3397,8 +3395,6 @@ def save_plugin_config():
                 # Parse as array using schema
                 parsed_value = _parse_form_value_with_schema(combined_value, base_path, schema)
                 # Debug logging
-                import logging
-                logger = logging.getLogger(__name__)
                 logger.debug(f"Combined indexed array field {base_path}: {values} -> {combined_value} -> {parsed_value}")
                 # Only set if not skipped
                 if parsed_value is not _SKIP_FIELD:
@@ -3417,8 +3413,6 @@ def save_plugin_config():
                         if schema:
                             prop = _get_schema_property(schema, key)
                             if prop and prop.get('type') == 'array':
-                                import logging
-                                logger = logging.getLogger(__name__)
                                 logger.debug(f"Array field {key}: form value='{value}' -> parsed={parsed_value}")
                         # Use helper to set nested values correctly (skips if _SKIP_FIELD)
                         if parsed_value is not _SKIP_FIELD:
@@ -3536,8 +3530,6 @@ def save_plugin_config():
                                             config_dict[prop_key] = array_value
                                             current_value = array_value  # Update for length check below
                                     except (ValueError, KeyError, TypeError) as e:
-                                        import logging
-                                        logger = logging.getLogger(__name__)
                                         logger.debug(f"Failed to convert {prop_key} to array: {e}")
                                         pass
 
@@ -3656,8 +3648,6 @@ def save_plugin_config():
                 ensure_array_defaults(plugin_config, schema['properties'])
                 
                 # Debug: Log the structure after fixing
-                import logging
-                logger = logging.getLogger(__name__)
                 if 'feeds' in plugin_config and 'custom_feeds' in plugin_config.get('feeds', {}):
                     custom_feeds = plugin_config['feeds']['custom_feeds']
                     logger.debug(f"After fix_array_structures: custom_feeds type={type(custom_feeds)}, value={custom_feeds}")
@@ -3973,8 +3963,6 @@ def save_plugin_config():
         # Validate configuration against schema before saving
         if schema:
             # Log what we're validating for debugging
-            import logging
-            logger = logging.getLogger(__name__)
             logger.info(f"Validating config for {plugin_id}")
             logger.info(f"Config keys being validated: {list(plugin_config.keys())}")
             logger.info(f"Full config: {plugin_config}")
@@ -4088,9 +4076,7 @@ def save_plugin_config():
                 api_v3.config_manager.save_raw_file_content('secrets', current_secrets)
             except PermissionError as e:
                 # Log the error with more details
-                import logging
                 import os
-                logger = logging.getLogger(__name__)
                 secrets_path = api_v3.config_manager.secrets_path
                 secrets_dir = os.path.dirname(secrets_path) if secrets_path else None
                 
@@ -4113,9 +4099,7 @@ def save_plugin_config():
                 )
             except Exception as e:
                 # Log the error but don't fail the entire config save
-                import logging
                 import os
-                logger = logging.getLogger(__name__)
                 secrets_path = api_v3.config_manager.secrets_path
                 logger.error(f"Error saving secrets config for {plugin_id}: {e}", exc_info=True)
                 # Return error response with more context
