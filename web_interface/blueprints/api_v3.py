@@ -3335,7 +3335,33 @@ def save_plugin_config():
             # Form fields can use dot notation for nested values (e.g., "transition.type")
             form_data = request.form.to_dict()
 
-            # First pass: detect and combine array index fields (e.g., "text_color.0", "text_color.1" -> "text_color" as array)
+            # First pass: handle bracket notation array fields (e.g., "field_name[]" from checkbox-group)
+            # These fields use getlist() to preserve all values, then replace in form_data
+            bracket_array_fields = {}  # Maps base field path to list of values
+            for key in request.form.keys():
+                # Check if key ends with "[]" (bracket notation for array fields)
+                if key.endswith('[]'):
+                    base_path = key[:-2]  # Remove "[]" suffix
+                    values = request.form.getlist(key)
+                    if values:
+                        bracket_array_fields[base_path] = values
+                        # Remove the bracket notation key from form_data if present
+                        if key in form_data:
+                            del form_data[key]
+            
+            # Process bracket notation fields and add to form_data as comma-separated strings
+            for base_path, values in bracket_array_fields.items():
+                # Get schema property to verify it's an array
+                base_prop = _get_schema_property(schema, base_path)
+                if base_prop and base_prop.get('type') == 'array':
+                    # Combine values into comma-separated string for consistent parsing
+                    combined_value = ', '.join(str(v) for v in values if v)
+                    form_data[base_path] = combined_value
+                    import logging
+                    logger = logging.getLogger(__name__)
+                    logger.debug(f"Processed bracket notation array field {base_path}: {values} -> {combined_value}")
+
+            # Second pass: detect and combine array index fields (e.g., "text_color.0", "text_color.1" -> "text_color" as array)
             # This handles cases where forms send array fields as indexed inputs
             array_fields = {}  # Maps base field path to list of (index, value) tuples
             processed_keys = set()

@@ -6467,8 +6467,9 @@ window.updateImageScheduleDay = function(fieldId, imageId, imageIdx, day) {
     window.updateImageList(fieldId, currentImages);
 }
 
-// Expose renderArrayObjectItem to window for use by window.addArrayObjectItem
+// Expose renderArrayObjectItem and getSchemaProperty to window for use by global functions
 window.renderArrayObjectItem = renderArrayObjectItem;
+window.getSchemaProperty = getSchemaProperty;
 
 })(); // End IIFE
 
@@ -6491,7 +6492,7 @@ if (typeof window !== 'undefined') {
         if (!schema) return;
         
         // Use getSchemaProperty to properly handle nested schemas (e.g., news.custom_feeds)
-        const arraySchema = getSchemaProperty(schema, fullKey);
+        const arraySchema = window.getSchemaProperty(schema, fullKey);
         if (!arraySchema || arraySchema.type !== 'array' || !arraySchema.items) {
             return;
         }
