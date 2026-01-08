@@ -58,7 +58,7 @@
                    {% if field_type == 'integer' %}step="1"{% else %}step="any"{% endif %}
                    class="form-input w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 bg-white text-black placeholder:text-gray-500">
             
-            {# Array - check if it's a file upload widget #}
+            {# Array - check for file upload widget first (to avoid breaking static-image plugin), then checkbox-group, then array of objects #}
             {% elif field_type == 'array' %}
             {% set x_widget = prop.get('x-widget') or prop.get('x_widget') %}
             {% if x_widget == 'file-upload' %}
@@ -152,16 +152,148 @@
                     <!-- Hidden input to store image data -->
                     <input type="hidden" id="{{ field_id }}_images_data" name="{{ full_key }}" value='{{ array_value|tojson|safe }}'>
                 </div>
+            {% elif x_widget == 'checkbox-group' %}
+                {# Checkbox group widget for multi-select arrays with enum items #}
+                {% set array_value = value if value is not none and value is iterable and value is not string else (prop.default if prop.default is defined and prop.default is iterable and prop.default is not string else []) %}
+                {% set items_schema = prop.get('items') or {} %}
+                {% set enum_items = items_schema.get('enum') or [] %}
+                {% set x_options = prop.get('x-options') or {} %}
+                {% set labels = x_options.get('labels') or {} %}
+                
+                <div class="mt-1 space-y-2">
+                    {% for option in enum_items %}
+                    {% set is_checked = option in array_value %}
+                    {% set option_label = labels.get(option, option|replace('_', ' ')|title) %}
+                    {% set checkbox_id = (field_id ~ '_' ~ option)|replace('.', '_')|replace(' ', '_') %}
+                    <label class="flex items-center cursor-pointer">
+                        <input type="checkbox" 
+                               id="{{ checkbox_id }}"
+                               data-checkbox-group="{{ field_id }}"
+                               data-option-value="{{ option }}"
+                               value="{{ option }}"
+                               {% if is_checked %}checked{% endif %}
+                               onchange="updateCheckboxGroupData('{{ field_id }}')"
+                               class="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded">
+                        <span class="ml-2 text-sm text-gray-700">{{ option_label }}</span>
+                    </label>
+                    {% endfor %}
+                </div>
+                {# Hidden input to store selected values as JSON array (like array-of-objects pattern) #}
+                <input type="hidden" id="{{ field_id }}_data" name="{{ full_key }}_data" value='{{ array_value|tojson|safe }}'>
             {% else %}
-                {# Regular array input (comma-separated) #}
-                {% set array_value = value if value is not none else (prop.default if prop.default is defined else []) %}
-                <input type="text" 
-                       id="{{ field_id }}"
-                       name="{{ full_key }}" 
-                       value="{{ array_value|join(', ') if array_value is iterable and array_value is not string else '' }}"
-                       placeholder="Enter values separated by commas"
-                       class="form-input w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 bg-white text-black placeholder:text-gray-500">
-                <p class="text-xs text-gray-400 mt-1">Separate multiple values with commas</p>
+                {# Check for custom-feeds widget first #}
+                {% set items_schema = prop.get('items') or {} %}
+                {% if x_widget == 'custom-feeds' %}
+                    {# Custom feeds table interface - widget-specific implementation #}
+                    {# Validate that required fields exist in schema #}
+                    {% set item_properties = items_schema.get('properties', {}) %}
+                    {% if not (item_properties.get('name') and item_properties.get('url')) %}
+                        {# Fallback to generic if schema doesn't match expected structure #}
+                        <p class="text-xs text-amber-600 mt-1">
+                            <i class="fas fa-exclamation-triangle mr-1"></i>
+                            Custom feeds widget requires 'name' and 'url' properties in items schema.
+                        </p>
+                    {% else %}
+                        {% set max_items = prop.get('maxItems', 50) %}
+                        {% set array_value = value if value is not none and value is iterable and value is not string else (prop.default if prop.default is defined and prop.default is iterable and prop.default is not string else []) %}
+                        
+                        <div class="custom-feeds-table-container mt-1">
+                            <table class="min-w-full divide-y divide-gray-200 border border-gray-300 rounded-lg">
+                                <thead class="bg-gray-50">
+                                    <tr>
+                                        <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Name</th>
+                                        <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">URL</th>
+                                        <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Logo</th>
+                                        <th class="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">Enabled</th>
+                                        <th class="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="{{ field_id }}_tbody" class="bg-white divide-y divide-gray-200">
+                                    {% for item in array_value %}
+                                    {% set item_index = loop.index0 %}
+                                    <tr class="custom-feed-row" data-index="{{ item_index }}">
+                                        <td class="px-4 py-3 whitespace-nowrap">
+                                            <input type="text" 
+                                                   name="{{ full_key }}.{{ item_index }}.name"
+                                                   value="{{ item.get('name', '') }}"
+                                                   class="block w-full px-2 py-1 border border-gray-300 rounded text-sm"
+                                                   placeholder="Feed Name"
+                                                   required>
+                                        </td>
+                                        <td class="px-4 py-3 whitespace-nowrap">
+                                            <input type="url" 
+                                                   name="{{ full_key }}.{{ item_index }}.url"
+                                                   value="{{ item.get('url', '') }}"
+                                                   class="block w-full px-2 py-1 border border-gray-300 rounded text-sm"
+                                                   placeholder="https://example.com/feed"
+                                                   required>
+                                        </td>
+                                        <td class="px-4 py-3 whitespace-nowrap">
+                                            {% set logo_value = item.get('logo') or {} %}
+                                            {% set logo_path = logo_value.get('path', '') %}
+                                            <div class="flex items-center space-x-2">
+                                                <input type="file" 
+                                                       id="{{ field_id }}_logo_{{ item_index }}"
+                                                       accept="image/png,image/jpeg,image/bmp,image/gif"
+                                                       style="display: none;"
+                                                       disabled
+                                                       aria-disabled="true">
+                                                <button type="button" 
+                                                        disabled
+                                                        aria-disabled="true"
+                                                        class="px-2 py-1 text-xs bg-gray-200 text-gray-400 rounded cursor-not-allowed opacity-50"
+                                                        title="Logo upload for custom feeds is not yet implemented">
+                                                    <i class="fas fa-upload mr-1"></i> Upload
+                                                </button>
+                                                {% if logo_path %}
+                                                <img src="/{{ logo_path }}" alt="Logo" class="w-8 h-8 object-cover rounded border" id="{{ field_id }}_logo_preview_{{ item_index }}">
+                                                <input type="hidden" name="{{ full_key }}.{{ item_index }}.logo.path" value="{{ logo_path }}">
+                                                <input type="hidden" name="{{ full_key }}.{{ item_index }}.logo.id" value="{{ logo_value.get('id', '') }}">
+                                                {% else %}
+                                                <span class="text-xs text-gray-400">No logo</span>
+                                                {% endif %}
+                                            </div>
+                                        </td>
+                                        <td class="px-4 py-3 whitespace-nowrap text-center">
+                                            <input type="hidden" name="{{ full_key }}.{{ item_index }}.enabled" value="false">
+                                            <input type="checkbox" 
+                                                   name="{{ full_key }}.{{ item_index }}.enabled"
+                                                   {% if item.get('enabled', true) %}checked{% endif %}
+                                                   value="true"
+                                                   class="h-4 w-4 text-blue-600">
+                                        </td>
+                                        <td class="px-4 py-3 whitespace-nowrap text-center">
+                                            <button type="button" 
+                                                    onclick="removeCustomFeedRow(this)"
+                                                    class="text-red-600 hover:text-red-800 px-2 py-1">
+                                                <i class="fas fa-trash"></i>
+                                            </button>
+                                        </td>
+                                    </tr>
+                                    {% endfor %}
+                                </tbody>
+                            </table>
+                            <button type="button" 
+                                    onclick="addCustomFeedRow('{{ field_id }}', '{{ full_key }}', {{ max_items }})"
+                                    class="mt-3 px-4 py-2 text-sm bg-blue-600 hover:bg-blue-700 text-white rounded-md"
+                                    {% if array_value|length >= max_items %}disabled style="opacity: 0.5;"{% endif %}>
+                                <i class="fas fa-plus mr-1"></i> Add Feed
+                            </button>
+                        </div>
+                    {% endif %}
+                {% else %}
+                    {# Generic array-of-objects would go here if needed in the future #}
+                    {# For now, fall back to regular array input (comma-separated) #}
+                    {# Regular array input (comma-separated) #}
+                    {% set array_value = value if value is not none else (prop.default if prop.default is defined else []) %}
+                    <input type="text" 
+                           id="{{ field_id }}"
+                           name="{{ full_key }}" 
+                           value="{{ array_value|join(', ') if array_value is iterable and array_value is not string else '' }}"
+                           placeholder="Enter values separated by commas"
+                           class="form-input w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 bg-white text-black placeholder:text-gray-500">
+                    <p class="text-xs text-gray-400 mt-1">Separate multiple values with commas</p>
+                {% endif %}
             {% endif %}
             
             {# Text input (default) #}

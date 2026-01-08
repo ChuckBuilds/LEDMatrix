@@ -275,12 +275,36 @@ These are not required and you can probably rig up something basic with stuff yo
 
 # System Setup & Installation
 
-1. Open PowerShell and ssh into your Raspberry Pi with ledpi@ledpi (or Username@Hostname)
+## Quick Install (Recommended)
+
+SSH into your Raspberry Pi and paste this single command:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/ChuckBuilds/LEDMatrix/main/scripts/install/one-shot-install.sh | bash
+```
+
+This one-shot installer will automatically:
+- Check system prerequisites (network, disk space, sudo access)
+- Install required system packages (git, python3, build tools, etc.)
+- Clone or update the LEDMatrix repository
+- Run the complete first-time installation script
+
+The installation process typically takes 10-30 minutes depending on your internet connection and Pi model. All errors are reported explicitly with actionable fixes.
+
+**Note:** The script is safe to run multiple times and will handle existing installations gracefully.
+
+<details>
+
+<summary>Manual Installation (Alternative)</summary>
+
+If you prefer to install manually or the one-shot installer doesn't work for your setup:
+
+1. SSH into your Raspberry Pi:
 ```bash
 ssh ledpi@ledpi
 ```
 
-2. Update repositories, upgrade raspberry pi OS, install git
+2. Update repositories, upgrade Raspberry Pi OS, and install prerequisites:
 ```bash
 sudo apt update && sudo apt upgrade -y
 sudo apt install -y git python3-pip cython3 build-essential python3-dev python3-pillow scons
@@ -292,14 +316,15 @@ git clone https://github.com/ChuckBuilds/LEDMatrix.git
 cd LEDMatrix
 ```
 
-4. First-time installation (recommended)
-
+4. Run the first-time installation script:
 ```bash
 chmod +x first_time_install.sh
 sudo bash ./first_time_install.sh
 ```
 
 This single script installs services, dependencies, configures permissions and sudoers, and validates the setup.
+
+</details>
 
 </details>
 
