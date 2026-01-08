@@ -2874,57 +2874,26 @@ function generateFieldHtml(key, prop, value, prefix = '') {
             <input type="number" id="${fullKey}" name="${fullKey}" value="${fieldValue}" ${min} ${max} ${step} class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm bg-white text-black placeholder:text-gray-500">
         `;
     } else if (prop.type === 'array') {
-        // Check if this is an array of objects FIRST (before other checks)
-        if (prop.items && prop.items.type === 'object' && prop.items.properties) {
-            // Array of objects widget (like custom_feeds with name, url, enabled, logo)
-            console.log(`[DEBUG] ✅ Detected array-of-objects widget for ${fullKey}`);
-            const fieldId = fullKey.replace(/\./g, '_');
-            const itemsSchema = prop.items;
-            const itemProperties = itemsSchema.properties || {};
-            const maxItems = prop.maxItems || 50;
-            const currentItems = Array.isArray(value) ? value : [];
-            
-            html += `
-                <div class="array-of-objects-container mt-1">
-                    <div id="${fieldId}_items" class="space-y-4">
-            `;
-            
-            // Render existing items
-            currentItems.forEach((item, index) => {
-                html += renderArrayObjectItem(fieldId, fullKey, itemProperties, item, index, itemsSchema);
-            });
-            
-            html += `
-                    </div>
-                    <button type="button" 
-                            onclick="addArrayObjectItem('${fieldId}', '${fullKey}', ${maxItems})"
-                            class="mt-3 px-4 py-2 text-sm bg-blue-600 hover:bg-blue-700 text-white rounded-md transition-colors"
-                            ${currentItems.length >= maxItems ? 'disabled style="opacity: 0.5; cursor: not-allowed;"' : ''}>
-                        <i class="fas fa-plus mr-1"></i> Add Feed
-                    </button>
-                    <input type="hidden" id="${fieldId}_data" name="${fullKey}_data" value='${JSON.stringify(currentItems).replace(/'/g, "&#39;")}'>
-                </div>
-            `;
-        } else {
-            // Check if this is a file upload widget - try multiple ways to access x-widget
-            const hasXWidget = prop.hasOwnProperty('x-widget');
-            const xWidgetValue = prop['x-widget'];
-            const xWidgetValue2 = prop['x-widget'] || prop['x_widget'] || prop.xWidget;
-            
-            console.log(`[DEBUG] Array field ${fullKey}:`, {
-                type: prop.type,
-                hasItems: !!prop.items,
-                itemsType: prop.items?.type,
-                itemsHasProperties: !!prop.items?.properties,
-                hasXWidget: hasXWidget,
-                'x-widget': xWidgetValue,
-                'x-widget (alt)': xWidgetValue2,
-                'x-upload-config': prop['x-upload-config'],
-                propKeys: Object.keys(prop),
-                value: value
-            });
+        // Array - check for file upload widget first (to avoid breaking static-image plugin), 
+        // then checkbox-group, then custom-feeds, then array of objects
+        const hasXWidget = prop.hasOwnProperty('x-widget');
+        const xWidgetValue = prop['x-widget'];
+        const xWidgetValue2 = prop['x-widget'] || prop['x_widget'] || prop.xWidget;
         
-        // Check for file-upload widget - be more defensive
+        console.log(`[DEBUG] Array field ${fullKey}:`, {
+            type: prop.type,
+            hasItems: !!prop.items,
+            itemsType: prop.items?.type,
+            itemsHasProperties: !!prop.items?.properties,
+            hasXWidget: hasXWidget,
+            'x-widget': xWidgetValue,
+            'x-widget (alt)': xWidgetValue2,
+            'x-upload-config': prop['x-upload-config'],
+            propKeys: Object.keys(prop),
+            value: value
+        });
+        
+        // Check for file-upload widget FIRST (to avoid breaking static-image plugin)
         if (xWidgetValue === 'file-upload' || xWidgetValue2 === 'file-upload') {
             console.log(`[DEBUG] ✅ Detected file-upload widget for ${fullKey} - rendering upload zone`);
             const uploadConfig = prop['x-upload-config'] || {};
@@ -3050,9 +3019,93 @@ function generateFieldHtml(key, prop, value, prefix = '') {
                 `;
             });
             html += `</div>`;
+        } else if (xWidgetValue === 'custom-feeds' || xWidgetValue2 === 'custom-feeds') {
+            // Custom feeds widget - check schema validation first
+            const itemsSchema = prop.items || {};
+            const itemProperties = itemsSchema.properties || {};
+            if (!itemProperties.name || !itemProperties.url) {
+                // Schema doesn't match expected structure - fallback to regular array input
+                console.log(`[DEBUG] ⚠️ Custom feeds widget requires 'name' and 'url' properties for ${fullKey}, using regular array input`);
+                let arrayValue = '';
+                if (value === null || value === undefined) {
+                    arrayValue = Array.isArray(prop.default) ? prop.default.join(', ') : '';
+                } else if (Array.isArray(value)) {
+                    arrayValue = value.join(', ');
+                } else {
+                    arrayValue = '';
+                }
+                html += `
+                    <input type="text" id="${fullKey}" name="${fullKey}" value="${arrayValue}" placeholder="Enter values separated by commas" class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm bg-white text-black placeholder:text-gray-500">
+                    <p class="text-sm text-gray-600 mt-1">Enter values separated by commas</p>
+                `;
+            } else {
+                // Custom feeds table interface - widget-specific implementation
+                // Note: This is handled by the template, but we include it here for consistency
+                // The template renders the custom feeds table, so JS-rendered forms should match
+                console.log(`[DEBUG] ✅ Detected custom-feeds widget for ${fullKey} - note: custom feeds table is typically rendered server-side`);
+                let arrayValue = '';
+                if (value === null || value === undefined) {
+                    arrayValue = Array.isArray(prop.default) ? prop.default.join(', ') : '';
+                } else if (Array.isArray(value)) {
+                    arrayValue = value.join(', ');
+                } else {
+                    arrayValue = '';
+                }
+                html += `
+                    <input type="text" id="${fullKey}" name="${fullKey}" value="${arrayValue}" placeholder="Enter values separated by commas" class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm bg-white text-black placeholder:text-gray-500">
+                    <p class="text-sm text-gray-600 mt-1">Enter values separated by commas (custom feeds table rendered server-side)</p>
+                `;
+            }
+        } else if (prop.items && prop.items.type === 'object' && prop.items.properties) {
+            // Array of objects widget (generic fallback - like custom_feeds with name, url, enabled, logo)
+            console.log(`[DEBUG] ✅ Detected array-of-objects widget for ${fullKey}`);
+            const fieldId = fullKey.replace(/\./g, '_');
+            const itemsSchema = prop.items;
+            const itemProperties = itemsSchema.properties || {};
+            const maxItems = prop.maxItems || 50;
+            const currentItems = Array.isArray(value) ? value : [];
+            
+            html += `
+                <div class="array-of-objects-container mt-1">
+                    <div id="${fieldId}_items" class="space-y-4">
+            `;
+            
+            // Render existing items
+            currentItems.forEach((item, index) => {
+                if (typeof window.renderArrayObjectItem === 'function') {
+                    html += window.renderArrayObjectItem(fieldId, fullKey, itemProperties, item, index, itemsSchema);
+                } else {
+                    // Fallback: create basic HTML structure
+                    html += `<div class="border border-gray-300 rounded-lg p-4 bg-gray-50 array-object-item" data-index="${index}">`;
+                    Object.keys(itemProperties || {}).forEach(propKey => {
+                        const propSchema = itemProperties[propKey];
+                        const propLabel = propSchema.title || propKey.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+                        html += `<div class="mb-3"><label class="block text-sm font-medium text-gray-700 mb-1">${propLabel}</label>`;
+                        if (propSchema.type === 'boolean') {
+                            html += `<input type="checkbox" data-prop-key="${propKey}" class="h-4 w-4 text-blue-600" onchange="window.updateArrayObjectData('${fieldId}')">`;
+                        } else {
+                            html += `<input type="text" data-prop-key="${propKey}" class="block w-full px-3 py-2 border border-gray-300 rounded-md" onchange="window.updateArrayObjectData('${fieldId}')">`;
+                        }
+                        html += `</div>`;
+                    });
+                    html += `<button type="button" onclick="window.removeArrayObjectItem('${fieldId}', ${index})" class="mt-2 px-3 py-2 text-red-600 hover:text-red-800">Remove</button></div>`;
+                }
+            });
+            
+            html += `
+                    </div>
+                    <button type="button" 
+                            onclick="window.addArrayObjectItem('${fieldId}', '${fullKey}', ${maxItems})"
+                            class="mt-3 px-4 py-2 text-sm bg-blue-600 hover:bg-blue-700 text-white rounded-md transition-colors"
+                            ${currentItems.length >= maxItems ? 'disabled style="opacity: 0.5; cursor: not-allowed;"' : ''}>
+                        <i class="fas fa-plus mr-1"></i> Add Item
+                    </button>
+                    <input type="hidden" id="${fieldId}_data" name="${fullKey}_data" value='${JSON.stringify(currentItems).replace(/'/g, "&#39;")}'>
+                </div>
+            `;
         } else {
-            // Regular array input
-            console.log(`[DEBUG] ❌ NOT a file upload widget for ${fullKey}, using regular array input`);
+            // Regular array input (comma-separated)
+            console.log(`[DEBUG] ❌ No special widget detected for ${fullKey}, using regular array input`);
             // Handle null/undefined values - use default if available
             let arrayValue = '';
             if (value === null || value === undefined) {
