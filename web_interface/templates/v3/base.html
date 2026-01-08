@@ -4920,6 +4920,29 @@
                                 input.setAttribute('onchange', onchange.replace(/,\s*\d+\s*,/, `, ${index},`));
                             }
                         }
+                        // Update button onclick handlers that reference file input IDs with _logo_<num>
+                        // Check for buttons (not just inputs) and update onclick if it contains _logo_ references
+                        if (input.tagName === 'BUTTON') {
+                            const onclick = input.getAttribute('onclick');
+                            if (onclick) {
+                                let updatedOnclick = onclick;
+                                // Replace getElementById('..._logo_<num>') with getElementById('..._logo_<newIndex>')
+                                updatedOnclick = updatedOnclick.replace(
+                                    /getElementById\(['"]([^'"]*_logo_)\d+['"]\)/g,
+                                    `getElementById('$1${index}')`
+                                );
+                                // Also handle patterns like _logo_<num> in other contexts
+                                updatedOnclick = updatedOnclick.replace(
+                                    /(['"])([^'"]*_logo_)\d+(['"])/g,
+                                    `$1$2${index}$3`
+                                );
+                                // Update function call parameters (handleCustomFeedLogoUpload, removeCustomFeedRow, etc.)
+                                updatedOnclick = updatedOnclick.replace(/,\s*\d+\s*,/g, `, ${index},`);
+                                if (updatedOnclick !== onclick) {
+                                    input.setAttribute('onclick', updatedOnclick);
+                                }
+                            }
+                        }
                     });
                 });
             }
