@@ -3638,8 +3638,8 @@ def save_plugin_config():
                 
                 # Force fix for feeds.custom_feeds if it's still a dict (fallback)
                 if 'feeds' in plugin_config:
-                    feeds_config = plugin_config.get('feeds', {})
-                    if 'custom_feeds' in feeds_config and isinstance(feeds_config['custom_feeds'], dict):
+                    feeds_config = plugin_config.get('feeds') or {}
+                    if feeds_config and 'custom_feeds' in feeds_config and isinstance(feeds_config['custom_feeds'], dict):
                         custom_feeds_dict = feeds_config['custom_feeds']
                         # Check if all keys are numeric
                         keys = list(custom_feeds_dict.keys())
