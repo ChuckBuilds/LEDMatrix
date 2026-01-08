@@ -2243,6 +2243,12 @@ function handlePluginConfigSubmit(e) {
             continue;
         }
         
+        // Skip array-of-objects per-item inputs (they're handled by the hidden _data input)
+        // Pattern: feeds_item_0_name, feeds_item_1_url, etc.
+        if (key.includes('_item_') && /_item_\d+_/.test(key)) {
+            continue;
+        }
+        
         // Try to get schema property - handle both dot notation and underscore notation
         let propSchema = getSchemaPropertyType(schema, key);
         let actualKey = key;
@@ -2529,7 +2535,6 @@ function renderArrayObjectItem(fieldId, fullKey, itemProperties, itemValue, inde
                 <label class="flex items-center">
                     <input type="checkbox" 
                            id="${itemId}_${propKey}"
-                           name="${itemId}_${propKey}"
                            data-prop-key="${propKey}"
                            class="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
                            ${propValue ? 'checked' : ''}
@@ -2550,7 +2555,6 @@ function renderArrayObjectItem(fieldId, fullKey, itemProperties, itemValue, inde
             html += `
                 <input type="${propSchema.format === 'uri' ? 'url' : 'text'}" 
                        id="${itemId}_${propKey}"
-                       name="${itemId}_${propKey}"
                        data-prop-key="${propKey}"
                        class="block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm bg-white text-black"
                        value="${escapeHtml(propValue || '')}"
@@ -2995,30 +2999,36 @@ function generateFieldHtml(key, prop, value, prefix = '') {
             `;
         } else if (xWidgetValue === 'checkbox-group' || xWidgetValue2 === 'checkbox-group') {
             // Checkbox group widget for multi-select arrays with enum items
+            // Use _data hidden input pattern to serialize selected values correctly
             console.log(`[DEBUG] ✅ Detected checkbox-group widget for ${fullKey} - rendering checkboxes`);
             const arrayValue = Array.isArray(value) ? value : (prop.default || []);
             const enumItems = prop.items && prop.items.enum ? prop.items.enum : [];
             const xOptions = prop['x-options'] || {};
             const labels = xOptions.labels || {};
+            const fieldId = fullKey.replace(/\./g, '_');
             
             html += `<div class="mt-1 space-y-2">`;
-            enumItems.forEach((option, index) => {
+            enumItems.forEach((option) => {
                 const isChecked = arrayValue.includes(option);
                 const label = labels[option] || option.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
-                const checkboxId = `${fullKey.replace(/\./g, '_')}_${option}`;
+                const checkboxId = `${fieldId}_${option}`;
                 html += `
                     <label class="flex items-center">
                         <input type="checkbox" 
                                id="${checkboxId}" 
-                               name="${fullKey}.${index}" 
+                               data-checkbox-group="${fieldId}"
+                               data-option-value="${option}"
                                value="${option}" 
                                ${isChecked ? 'checked' : ''} 
+                               onchange="updateCheckboxGroupData('${fieldId}')"
                                class="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded">
                         <span class="ml-2 text-sm text-gray-700">${label}</span>
                     </label>
                 `;
             });
             html += `</div>`;
+            // Hidden input to store selected values as JSON array (like array-of-objects pattern)
+            html += `<input type="hidden" id="${fieldId}_data" name="${fullKey}_data" value='${JSON.stringify(arrayValue).replace(/'/g, "&#39;")}'>`;
         } else if (xWidgetValue === 'custom-feeds' || xWidgetValue2 === 'custom-feeds') {
             // Custom feeds widget - check schema validation first
             const itemsSchema = prop.items || {};
@@ -6454,9 +6464,14 @@ if (typeof window !== 'undefined') {
             return;
         }
         
-        // Get schema for item properties from the hidden input's data attribute or currentPluginConfig
-        const schema = (typeof currentPluginConfig !== 'undefined' && currentPluginConfig?.schema) || (typeof window.currentPluginConfig !== 'undefined' && window.currentPluginConfig?.schema);
-        if (!schema) return;
+        // Get schema for item properties - ensure currentPluginConfig is available
+        // Try window.currentPluginConfig first (most reliable), then currentPluginConfig
+        const schema = (typeof window.currentPluginConfig !== 'undefined' && window.currentPluginConfig?.schema) || 
+                       (typeof currentPluginConfig !== 'undefined' && currentPluginConfig?.schema);
+        if (!schema) {
+            console.error('addArrayObjectItem: Schema not available. currentPluginConfig may not be set.');
+            return;
+        }
         
         // Use getSchemaProperty to properly handle nested schemas (e.g., news.custom_feeds)
         const arraySchema = window.getSchemaProperty(schema, fullKey);
@@ -6484,9 +6499,11 @@ if (typeof window !== 'undefined') {
                 itemHtml += `<div class="mb-3"><label class="block text-sm font-medium text-gray-700 mb-1">${propLabel}</label>`;
                 if (propSchema.type === 'boolean') {
                     const checked = propValue ? 'checked' : '';
+                    // No name attribute - rely solely on _data field to prevent key leakage
                     itemHtml += `<input type="checkbox" data-prop-key="${propKey}" ${checked} class="h-4 w-4 text-blue-600" onchange="window.updateArrayObjectData('${fieldId}')">`;
                 } else {
                     // Escape HTML to prevent XSS
+                    // No name attribute - rely solely on _data field to prevent key leakage
                     const escapedValue = typeof propValue === 'string' ? propValue.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;') : (propValue || '');
                     itemHtml += `<input type="text" data-prop-key="${propKey}" value="${escapedValue}" class="block w-full px-3 py-2 border border-gray-300 rounded-md" onchange="window.updateArrayObjectData('${fieldId}')">`;
                 }
@@ -6591,16 +6608,47 @@ if (typeof window !== 'undefined') {
         const hiddenInput = document.getElementById(fieldId + '_data');
         if (!itemsContainer || !hiddenInput) return;
         
+        // Get schema for type coercion
+        const schema = (typeof currentPluginConfig !== 'undefined' && currentPluginConfig?.schema) || (typeof window.currentPluginConfig !== 'undefined' && window.currentPluginConfig?.schema);
+        // Extract fullKey from hidden input name (e.g., "feeds_data" -> "feeds")
+        const fullKey = hiddenInput.getAttribute('name').replace(/_data$/, '');
+        let itemsSchema = null;
+        if (schema && typeof window.getSchemaProperty === 'function') {
+            const arraySchema = window.getSchemaProperty(schema, fullKey);
+            if (arraySchema && arraySchema.type === 'array' && arraySchema.items && arraySchema.items.properties) {
+                itemsSchema = arraySchema.items;
+            }
+        }
+        
         const items = [];
         const itemElements = itemsContainer.querySelectorAll('.array-object-item');
         
         itemElements.forEach((itemEl, index) => {
             const item = {};
+            const itemProperties = itemsSchema ? itemsSchema.properties : {};
+            
             // Get all text inputs in this item
             itemEl.querySelectorAll('input[type="text"], input[type="url"], input[type="number"]').forEach(input => {
                 const propKey = input.getAttribute('data-prop-key');
                 if (propKey && propKey !== 'logo_file') {
-                    item[propKey] = input.value.trim();
+                    let value = input.value.trim();
+                    
+                    // Type coercion based on schema
+                    if (itemsSchema && itemProperties[propKey]) {
+                        const propSchema = itemProperties[propKey];
+                        const propType = propSchema.type;
+                        
+                        if (propType === 'integer') {
+                            const numValue = parseInt(value, 10);
+                            value = isNaN(numValue) ? value : numValue;
+                        } else if (propType === 'number') {
+                            const numValue = parseFloat(value);
+                            value = isNaN(numValue) ? value : numValue;
+                        }
+                        // string and other types keep as-is
+                    }
+                    
+                    item[propKey] = value;
                 }
             });
             // Handle checkboxes
@@ -6629,6 +6677,24 @@ if (typeof window !== 'undefined') {
         });
         
         hiddenInput.value = JSON.stringify(items);
+    };
+
+    window.updateCheckboxGroupData = function(fieldId) {
+        // Update hidden _data input with currently checked values
+        const hiddenInput = document.getElementById(fieldId + '_data');
+        if (!hiddenInput) return;
+        
+        const checkboxes = document.querySelectorAll(`input[type="checkbox"][data-checkbox-group="${fieldId}"]`);
+        const selectedValues = [];
+        
+        checkboxes.forEach(checkbox => {
+            if (checkbox.checked) {
+                const optionValue = checkbox.getAttribute('data-option-value') || checkbox.value;
+                selectedValues.push(optionValue);
+            }
+        });
+        
+        hiddenInput.value = JSON.stringify(selectedValues);
     };
 
     window.handleArrayObjectFileUpload = function(event, fieldId, itemIndex, propKey, pluginId) {

@@ -168,14 +168,18 @@
                     <label class="flex items-center cursor-pointer">
                         <input type="checkbox" 
                                id="{{ checkbox_id }}"
-                               name="{{ full_key }}.{{ loop.index0 }}" 
+                               data-checkbox-group="{{ field_id }}"
+                               data-option-value="{{ option }}"
                                value="{{ option }}"
                                {% if is_checked %}checked{% endif %}
+                               onchange="updateCheckboxGroupData('{{ field_id }}')"
                                class="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded">
                         <span class="ml-2 text-sm text-gray-700">{{ option_label }}</span>
                     </label>
                     {% endfor %}
                 </div>
+                {# Hidden input to store selected values as JSON array (like array-of-objects pattern) #}
+                <input type="hidden" id="{{ field_id }}_data" name="{{ full_key }}_data" value='{{ array_value|tojson|safe }}'>
             {% else %}
                 {# Check for custom-feeds widget first #}
                 {% set items_schema = prop.get('items') or {} %}
