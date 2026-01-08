@@ -343,14 +343,16 @@ main() {
     echo ""
     
     # Execute with proper error handling
+    # Temporarily disable errexit to capture exit code instead of exiting immediately
+    set +e
     # Use sudo if we're not root, otherwise run directly
     if [ "$EUID" -eq 0 ]; then
         bash ./first_time_install.sh
     else
         sudo bash ./first_time_install.sh
     fi
-    
     INSTALL_EXIT_CODE=$?
+    set -e  # Re-enable errexit
     
     if [ $INSTALL_EXIT_CODE -eq 0 ]; then
         echo ""

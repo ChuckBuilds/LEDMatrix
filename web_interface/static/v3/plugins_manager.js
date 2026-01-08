@@ -2485,6 +2485,10 @@ function renderArrayObjectItem(fieldId, fullKey, itemProperties, itemValue, inde
         html += `<div class="mb-3">`;
         
         // Handle file-upload widget (for logo field)
+        // NOTE: File upload for array-of-objects items is not yet implemented.
+        // The widget is disabled to prevent silent failures when users try to upload files.
+        // TODO: Implement handleArrayObjectFileUpload and removeArrayObjectFile with proper
+        // endpoint support and [data-file-data] attribute updates before enabling this widget.
         if (propSchema['x-widget'] === 'file-upload') {
             html += `<label class="block text-sm font-medium text-gray-700 mb-1">${escapeHtml(propLabel)}</label>`;
             if (propDescription) {
@@ -2494,29 +2498,26 @@ function renderArrayObjectItem(fieldId, fullKey, itemProperties, itemValue, inde
             const pluginId = uploadConfig.plugin_id || (typeof currentPluginConfig !== 'undefined' ? currentPluginConfig?.pluginId : null) || (typeof window.currentPluginConfig !== 'undefined' ? window.currentPluginConfig?.pluginId : null) || 'ledmatrix-news';
             const logoValue = propValue || {};
             
-            html += `
-                <div class="file-upload-widget-inline">
-                    <input type="file" 
-                           id="${itemId}_logo_file" 
-                           accept="${(uploadConfig.allowed_types || ['image/png', 'image/jpeg', 'image/bmp']).join(',')}"
-                           style="display: none;"
-                           onchange="handleArrayObjectFileUpload(event, '${fieldId}', ${index}, '${propKey}', '${pluginId}')">
-                    <button type="button" 
-                            onclick="document.getElementById('${itemId}_logo_file').click()"
-                            class="px-3 py-2 text-sm bg-gray-200 hover:bg-gray-300 text-gray-700 rounded-md transition-colors">
-                        <i class="fas fa-upload mr-1"></i> Upload Logo
-                    </button>
-            `;
-            
+            // Display existing logo if present, but disable upload functionality
             if (logoValue.path) {
                 html += `
-                    <div class="mt-2 flex items-center space-x-2">
-                        <img src="/${logoValue.path}" alt="Logo" class="w-16 h-16 object-cover rounded border">
+                    <div class="file-upload-widget-inline">
+                        <div class="mt-2 flex items-center space-x-2">
+                            <img src="/${logoValue.path}" alt="Logo" class="w-16 h-16 object-cover rounded border">
+                            <span class="text-sm text-gray-500 italic">File upload not yet available for array items</span>
+                        </div>
+                    </div>
+                `;
+            } else {
+                html += `
+                    <div class="file-upload-widget-inline">
                         <button type="button" 
-                                onclick="removeArrayObjectFile('${fieldId}', ${index}, '${propKey}')"
-                                class="text-red-600 hover:text-red-800">
-                            <i class="fas fa-trash"></i> Remove
+                                disabled
+                                class="px-3 py-2 text-sm bg-gray-200 text-gray-400 rounded-md cursor-not-allowed opacity-50"
+                                title="File upload for array items is not yet implemented">
+                            <i class="fas fa-upload mr-1"></i> Upload Logo (Not Available)
                         </button>
+                        <p class="text-xs text-gray-500 mt-1 italic">File upload functionality for array items is coming soon</p>
                     </div>
                 `;
             }
@@ -6433,19 +6434,13 @@ if (typeof window !== 'undefined') {
         const schema = (typeof currentPluginConfig !== 'undefined' && currentPluginConfig?.schema) || (typeof window.currentPluginConfig !== 'undefined' && window.currentPluginConfig?.schema);
         if (!schema) return;
         
-        // Navigate to the items schema
-        const keys = fullKey.split('.');
-        let itemsSchema = schema.properties;
-        for (const key of keys) {
-            if (itemsSchema && itemsSchema[key]) {
-                itemsSchema = itemsSchema[key];
-                if (itemsSchema.type === 'array' && itemsSchema.items) {
-                    itemsSchema = itemsSchema.items;
-                    break;
-                }
-            }
+        // Use getSchemaProperty to properly handle nested schemas (e.g., news.custom_feeds)
+        const arraySchema = getSchemaProperty(schema, fullKey);
+        if (!arraySchema || arraySchema.type !== 'array' || !arraySchema.items) {
+            return;
         }
         
+        const itemsSchema = arraySchema.items;
         if (!itemsSchema || !itemsSchema.properties) return;
         
         const newIndex = currentItems.length;
@@ -6489,24 +6484,55 @@ if (typeof window !== 'undefined') {
         if (item) {
             item.remove();
             // Re-index remaining items
+            // Use data-index for index storage - no need to encode index in onclick strings or IDs
             const remainingItems = itemsContainer.querySelectorAll('.array-object-item');
             remainingItems.forEach((itemEl, newIndex) => {
                 itemEl.setAttribute('data-index', newIndex);
-                // Update all inputs within this item - need to update name/id attributes
+                // Update all inputs within this item - only update index in array bracket notation
                 itemEl.querySelectorAll('input, select, textarea').forEach(input => {
-                    const name = input.getAttribute('name') || input.id;
+                    const name = input.getAttribute('name');
+                    const id = input.id;
                     if (name) {
-                        // Update name/id attribute with new index
-                        const newName = name.replace(/\[\d+\]/, `[${newIndex}]`);
-                        if (input.getAttribute('name')) input.setAttribute('name', newName);
-                        if (input.id) input.id = input.id.replace(/\d+/, newIndex);
+                        // Only replace index in bracket notation like [0], [1], etc.
+                        // Match pattern: field_name[index] but not field_name123
+                        const newName = name.replace(/\[(\d+)\]/, `[${newIndex}]`);
+                        input.setAttribute('name', newName);
+                    }
+                    if (id) {
+                        // Only update index in specific patterns like _item_0, _item_1
+                        // Match pattern: _item_<digits> but be careful not to break other numeric IDs
+                        const newId = id.replace(/_item_(\d+)/, `_item_${newIndex}`);
+                        input.id = newId;
                     }
                 });
-                // Update button onclick attributes
+                // Update button onclick attributes - only update the index parameter
+                // Since we use data-index for tracking, we can compute index from closest('.array-object-item')
+                // For now, update onclick strings but be more careful with the regex
                 itemEl.querySelectorAll('button[onclick]').forEach(button => {
                     const onclick = button.getAttribute('onclick');
                     if (onclick) {
-                        button.setAttribute('onclick', onclick.replace(/\d+/, newIndex));
+                        // Match patterns like:
+                        // removeArrayObjectItem('fieldId', 0)
+                        // handleArrayObjectFileUpload(event, 'fieldId', 0, 'propKey', 'pluginId')
+                        // removeArrayObjectFile('fieldId', 0, 'propKey')
+                        // Only replace the numeric index parameter (second or third argument depending on function)
+                        let newOnclick = onclick;
+                        // For removeArrayObjectItem('fieldId', index) - second param
+                        newOnclick = newOnclick.replace(
+                            /removeArrayObjectItem\s*\(\s*['"]([^'"]+)['"]\s*,\s*\d+\s*\)/g,
+                            `removeArrayObjectItem('$1', ${newIndex})`
+                        );
+                        // For handleArrayObjectFileUpload(event, 'fieldId', index, ...) - third param
+                        newOnclick = newOnclick.replace(
+                            /handleArrayObjectFileUpload\s*\(\s*event\s*,\s*['"]([^'"]+)['"]\s*,\s*\d+\s*,/g,
+                            `handleArrayObjectFileUpload(event, '$1', ${newIndex},`
+                        );
+                        // For removeArrayObjectFile('fieldId', index, ...) - second param
+                        newOnclick = newOnclick.replace(
+                            /removeArrayObjectFile\s*\(\s*['"]([^'"]+)['"]\s*,\s*\d+\s*,/g,
+                            `removeArrayObjectFile('$1', ${newIndex},`
+                        );
+                        button.setAttribute('onclick', newOnclick);
                     }
                 });
             });
@@ -6514,12 +6540,17 @@ if (typeof window !== 'undefined') {
             
             // Update add button state
             const addButton = itemsContainer.nextElementSibling;
-            if (addButton) {
-                const maxItems = parseInt(addButton.getAttribute('onclick').match(/\d+/)[0]);
-                if (remainingItems.length < maxItems) {
-                    addButton.disabled = false;
-                    addButton.style.opacity = '1';
-                    addButton.style.cursor = 'pointer';
+            if (addButton && addButton.getAttribute('onclick')) {
+                // Extract maxItems from onclick attribute more safely
+                // Pattern: addArrayObjectItem('fieldId', 'fullKey', maxItems)
+                const onclickMatch = addButton.getAttribute('onclick').match(/addArrayObjectItem\s*\([^,]+,\s*[^,]+,\s*(\d+)\)/);
+                if (onclickMatch && onclickMatch[1]) {
+                    const maxItems = parseInt(onclickMatch[1]);
+                    if (remainingItems.length < maxItems) {
+                        addButton.disabled = false;
+                        addButton.style.opacity = '1';
+                        addButton.style.cursor = 'pointer';
+                    }
                 }
             }
         }
