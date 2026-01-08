@@ -6414,6 +6414,9 @@ window.updateImageScheduleDay = function(fieldId, imageId, imageIdx, day) {
     window.updateImageList(fieldId, currentImages);
 }
 
+// Expose renderArrayObjectItem to window for use by window.addArrayObjectItem
+window.renderArrayObjectItem = renderArrayObjectItem;
+
 })(); // End IIFE
 
 // Functions to handle array-of-objects
@@ -6446,8 +6449,8 @@ if (typeof window !== 'undefined') {
         const newIndex = currentItems.length;
         // Use renderArrayObjectItem if available, otherwise create basic HTML
         let itemHtml = '';
-        if (typeof renderArrayObjectItem === 'function') {
-            itemHtml = renderArrayObjectItem(fieldId, fullKey, itemsSchema.properties, {}, newIndex, itemsSchema);
+        if (typeof window.renderArrayObjectItem === 'function') {
+            itemHtml = window.renderArrayObjectItem(fieldId, fullKey, itemsSchema.properties, {}, newIndex, itemsSchema);
         } else {
             // Fallback: create basic HTML structure
             itemHtml = `<div class="border border-gray-300 rounded-lg p-4 bg-gray-50 array-object-item" data-index="${newIndex}">`;
