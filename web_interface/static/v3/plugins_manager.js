@@ -3002,7 +3002,7 @@ function generateFieldHtml(key, prop, value, prefix = '') {
             const labels = xOptions.labels || {};
             
             html += `<div class="mt-1 space-y-2">`;
-            enumItems.forEach(option => {
+            enumItems.forEach((option, index) => {
                 const isChecked = arrayValue.includes(option);
                 const label = labels[option] || option.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
                 const checkboxId = `${fullKey.replace(/\./g, '_')}_${option}`;
@@ -3010,7 +3010,7 @@ function generateFieldHtml(key, prop, value, prefix = '') {
                     <label class="flex items-center">
                         <input type="checkbox" 
                                id="${checkboxId}" 
-                               name="${fullKey}[]" 
+                               name="${fullKey}.${index}" 
                                value="${option}" 
                                ${isChecked ? 'checked' : ''} 
                                class="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded">

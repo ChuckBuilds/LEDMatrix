@@ -168,7 +168,7 @@
                     <label class="flex items-center cursor-pointer">
                         <input type="checkbox" 
                                id="{{ checkbox_id }}"
-                               name="{{ full_key }}[]" 
+                               name="{{ full_key }}.{{ loop.index0 }}" 
                                value="{{ option }}"
                                {% if is_checked %}checked{% endif %}
                                class="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded">
