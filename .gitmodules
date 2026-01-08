@@ -61,9 +61,6 @@
 [submodule "plugins/ledmatrix-of-the-day"]
 	path = plugins/ledmatrix-of-the-day
 	url = https://github.com/ChuckBuilds/ledmatrix-of-the-day.git
-[submodule "plugins/7-segment-clock"]
-	path = plugins/7-segment-clock
-	url = https://github.com/ChuckBuilds/ledmatrix-7-segment-clock
 [submodule "plugins/youtube-stats"]
 	path = plugins/youtube-stats
 	url = https://github.com/ChuckBuilds/ledmatrix-youtube-stats.git
