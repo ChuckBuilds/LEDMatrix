@@ -2223,7 +2223,8 @@ function handlePluginConfigSubmit(e) {
     // Process form data with type conversion (using dot notation for nested fields)
     for (const [key, value] of formData.entries()) {
         // Check if this is a patternProperties or array-of-objects hidden input (contains JSON data)
-        if (key.endsWith('_data') || key.includes('_data')) {
+        // Only match keys ending with '_data' to avoid false positives like 'meta_data_field'
+        if (key.endsWith('_data')) {
             try {
                 const baseKey = key.replace(/_data$/, '');
                 const jsonValue = JSON.parse(value);
