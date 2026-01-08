@@ -3012,18 +3012,18 @@ function generateFieldHtml(key, prop, value, prefix = '') {
             enumItems.forEach((option) => {
                 const isChecked = arrayValue.includes(option);
                 const label = labels[option] || option.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
-                const checkboxId = `${fieldId}_${option}`;
+                const checkboxId = `${fieldId}_${escapeHtml(option)}`;
                 html += `
                     <label class="flex items-center">
                         <input type="checkbox" 
                                id="${checkboxId}" 
                                data-checkbox-group="${fieldId}"
-                               data-option-value="${option}"
-                               value="${option}" 
+                               data-option-value="${escapeHtml(option)}"
+                               value="${escapeHtml(option)}" 
                                ${isChecked ? 'checked' : ''} 
                                onchange="updateCheckboxGroupData('${fieldId}')"
                                class="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded">
-                        <span class="ml-2 text-sm text-gray-700">${label}</span>
+                        <span class="ml-2 text-sm text-gray-700">${escapeHtml(label)}</span>
                     </label>
                 `;
             });
@@ -3092,7 +3092,7 @@ function generateFieldHtml(key, prop, value, prefix = '') {
                         const propSchema = itemProperties[propKey];
                         const propValue = item[propKey] !== undefined ? item[propKey] : propSchema.default;
                         const propLabel = propSchema.title || propKey.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
-                        html += `<div class="mb-3"><label class="block text-sm font-medium text-gray-700 mb-1">${propLabel}</label>`;
+                        html += `<div class="mb-3"><label class="block text-sm font-medium text-gray-700 mb-1">${escapeHtml(propLabel)}</label>`;
                         if (propSchema.type === 'boolean') {
                             const checked = propValue ? 'checked' : '';
                             html += `<input type="checkbox" data-prop-key="${propKey}" ${checked} class="h-4 w-4 text-blue-600" onchange="window.updateArrayObjectData('${fieldId}')">`;
@@ -6497,7 +6497,7 @@ if (typeof window !== 'undefined') {
                 const propSchema = itemsSchema.properties[propKey];
                 const propValue = newItem[propKey] !== undefined ? newItem[propKey] : propSchema.default;
                 const propLabel = propSchema.title || propKey.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
-                itemHtml += `<div class="mb-3"><label class="block text-sm font-medium text-gray-700 mb-1">${propLabel}</label>`;
+                itemHtml += `<div class="mb-3"><label class="block text-sm font-medium text-gray-700 mb-1">${escapeHtml(propLabel)}</label>`;
                 if (propSchema.type === 'boolean') {
                     const checked = propValue ? 'checked' : '';
                     // No name attribute - rely solely on _data field to prevent key leakage
