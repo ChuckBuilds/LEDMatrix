@@ -270,18 +270,35 @@ main() {
     set +e
     
     # Fix /tmp permissions before running (ensure APT can write temp files)
+    # /tmp should have permissions 1777 (sticky bit + world writable)
+    CURRENT_STEP="Fixing /tmp permissions"
     if [ "$EUID" -eq 0 ]; then
-        chmod 1777 /tmp 2>/dev/null || true
+        # Check and fix /tmp permissions
+        TMP_PERMS=$(stat -c '%a' /tmp 2>/dev/null || echo "unknown")
+        if [ "$TMP_PERMS" != "1777" ]; then
+            print_warning "/tmp has incorrect permissions ($TMP_PERMS), fixing to 1777..."
+            chmod 1777 /tmp 2>/dev/null || {
+                print_error "Failed to fix /tmp permissions. Continuing anyway..."
+            }
+        fi
         export TMPDIR=/tmp
         # Run in non-interactive mode with ASSUME_YES (both -y flag and env var for safety)
         export LEDMATRIX_ASSUME_YES=1
         bash ./first_time_install.sh -y
     else
-        sudo chmod 1777 /tmp 2>/dev/null || true
+        # Check and fix /tmp permissions
+        TMP_PERMS=$(stat -c '%a' /tmp 2>/dev/null || echo "unknown")
+        if [ "$TMP_PERMS" != "1777" ]; then
+            print_warning "/tmp has incorrect permissions ($TMP_PERMS), fixing to 1777..."
+            sudo chmod 1777 /tmp 2>/dev/null || {
+                print_error "Failed to fix /tmp permissions. Continuing anyway..."
+            }
+        fi
         export TMPDIR=/tmp
         # Pass both -y flag AND environment variable for non-interactive mode
         # This ensures it works even if the script re-executes itself with sudo
-        sudo -E env TMPDIR=/tmp LEDMATRIX_ASSUME_YES=1 bash ./first_time_install.sh -y
+        # Also ensure stdin is properly handled for non-interactive mode
+        sudo -E env TMPDIR=/tmp LEDMATRIX_ASSUME_YES=1 bash ./first_time_install.sh -y </dev/null
     fi
     INSTALL_EXIT_CODE=$?
     set -e  # Re-enable errexit

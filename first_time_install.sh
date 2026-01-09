@@ -239,11 +239,20 @@ echo ""
 if [ "$ASSUME_YES" = "1" ]; then
     echo "Non-interactive mode: proceeding with installation."
 else
-    read -p "Do you want to proceed with the installation? (y/N): " -n 1 -r
-    echo
-    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-        echo "Installation cancelled."
-        exit 0
+    # Check if stdin is available (not running via pipe/curl)
+    if [ -t 0 ]; then
+        read -p "Do you want to proceed with the installation? (y/N): " -n 1 -r
+        echo
+        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+            echo "Installation cancelled."
+            exit 0
+        fi
+    else
+        # Non-interactive mode but ASSUME_YES not set - exit with error
+        echo "✗ Non-interactive mode detected but ASSUME_YES not set." >&2
+        echo "  Please run with -y flag or set LEDMATRIX_ASSUME_YES=1" >&2
+        echo "  Example: sudo ./first_time_install.sh -y" >&2
+        exit 1
     fi
 fi
 
