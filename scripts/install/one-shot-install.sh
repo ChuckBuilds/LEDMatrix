@@ -172,9 +172,11 @@ check_sudo() {
 }
 
 # Fix /tmp permissions if needed (common issue when running via curl | bash)
+# Note: /tmp permission fixing is now done inline before running first_time_install.sh
+# This function is kept for backward compatibility but not actively used
 fix_tmp_permissions() {
     CURRENT_STEP="TMP directory check"
-    # Check if /tmp is writable
+    # Only fix if /tmp is actually not writable (don't preemptively fix)
     if [ ! -w /tmp ]; then
         print_warning "/tmp is not writable, attempting to fix..."
         if [ "$EUID" -eq 0 ]; then
@@ -205,7 +207,8 @@ main() {
     check_network
     check_disk_space
     check_sudo
-    fix_tmp_permissions
+    # Note: /tmp permissions are checked and fixed inline before running first_time_install.sh
+    # (only if actually wrong, not preemptively)
     
     # Determine repository location
     REPO_DIR="${HOME}/LEDMatrix"
@@ -269,32 +272,27 @@ main() {
     # Temporarily disable errexit to capture exit code instead of exiting immediately
     set +e
     
-    # Fix /tmp permissions before running (ensure APT can write temp files)
-    # /tmp should have permissions 1777 (sticky bit + world writable)
-    CURRENT_STEP="Fixing /tmp permissions"
-    if [ "$EUID" -eq 0 ]; then
-        # Check and fix /tmp permissions
-        TMP_PERMS=$(stat -c '%a' /tmp 2>/dev/null || echo "unknown")
-        if [ "$TMP_PERMS" != "1777" ]; then
-            print_warning "/tmp has incorrect permissions ($TMP_PERMS), fixing to 1777..."
-            chmod 1777 /tmp 2>/dev/null || {
-                print_error "Failed to fix /tmp permissions. Continuing anyway..."
-            }
+    # Check /tmp permissions - only fix if actually wrong (common in automated scenarios)
+    # When running manually, /tmp usually has correct permissions (1777)
+    TMP_PERMS=$(stat -c '%a' /tmp 2>/dev/null || echo "unknown")
+    if [ "$TMP_PERMS" != "1777" ] && [ "$TMP_PERMS" != "unknown" ]; then
+        CURRENT_STEP="Fixing /tmp permissions"
+        print_warning "/tmp has incorrect permissions ($TMP_PERMS), fixing to 1777..."
+        if [ "$EUID" -eq 0 ]; then
+            chmod 1777 /tmp 2>/dev/null || print_warning "Failed to fix /tmp permissions, continuing anyway..."
+        else
+            sudo chmod 1777 /tmp 2>/dev/null || print_warning "Failed to fix /tmp permissions, continuing anyway..."
         fi
-        export TMPDIR=/tmp
+    fi
+    
+    # Execute main installation script with non-interactive mode
+    CURRENT_STEP="Main installation"
+    export TMPDIR=/tmp
+    if [ "$EUID" -eq 0 ]; then
         # Run in non-interactive mode with ASSUME_YES (both -y flag and env var for safety)
         export LEDMATRIX_ASSUME_YES=1
         bash ./first_time_install.sh -y
     else
-        # Check and fix /tmp permissions
-        TMP_PERMS=$(stat -c '%a' /tmp 2>/dev/null || echo "unknown")
-        if [ "$TMP_PERMS" != "1777" ]; then
-            print_warning "/tmp has incorrect permissions ($TMP_PERMS), fixing to 1777..."
-            sudo chmod 1777 /tmp 2>/dev/null || {
-                print_error "Failed to fix /tmp permissions. Continuing anyway..."
-            }
-        fi
-        export TMPDIR=/tmp
         # Pass both -y flag AND environment variable for non-interactive mode
         # This ensures it works even if the script re-executes itself with sudo
         # Also ensure stdin is properly handled for non-interactive mode
