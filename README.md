@@ -29,20 +29,6 @@
 
 -----------------------------------------------------------------------------------
 
-## ⚠️ Breaking Changes
-
-**Important for users upgrading from older versions:**
-
-Script paths have been reorganized. If you have automation, cron jobs, or custom tooling that references old script paths, you **must** update them. See the [Migration Guide](MIGRATION_GUIDE.md) for details.
-
-**Quick Reference:**
-- Installation scripts moved: `install_service.sh` → `scripts/install/install_service.sh`
-- Permission scripts moved: `fix_cache_permissions.sh` → `scripts/fix_perms/fix_cache_permissions.sh`
-
-**Full migration instructions:** See [MIGRATION_GUIDE.md](MIGRATION_GUIDE.md)
-
------------------------------------------------------------------------------------
-
 ## Core Features
 
 <details>
@@ -339,7 +325,7 @@ This single script installs services, dependencies, configures permissions and s
 
 ### Initial Setup
 
-The system uses a template-based configuration approach to avoid Git conflicts during updates:
+Edit the project via the web interface at http://ledpi:5000  or for manual control:
 
 1. **First-time setup**: The previous "First_time_install.sh" script should've already copied the template to create your config.json:
 
@@ -347,20 +333,13 @@ The system uses a template-based configuration approach to avoid Git conflicts d
    ```bash
    sudo nano config/config.json
    ```
-or edit via web interface at http://ledpi:5000
+or 
 
 3. **Having Issues?**: Run the First Time Script again:
   ```bash
   sudo ./first_time_install.sh
   ```
 
-
-### API Keys and Secrets
-
-For sensitive settings like API keys:
-1. Copy the secrets template: `cp config/config_secrets.template.json config/config_secrets.json`
-2. Edit `config/config_secrets.json` with your API keys via `sudo nano config/config_secrets.json`
-3. Ctrl + X to exit, Y to overwrite, Enter to Confirm
 
 ### Automatic Configuration Migration
 
