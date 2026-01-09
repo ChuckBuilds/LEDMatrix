@@ -45,14 +45,32 @@ if [ ${#MISSING_PACKAGES[@]} -gt 0 ]; then
         echo "  - $pkg"
     done
     echo ""
-    read -p "Install these packages now? (y/N): " -n 1 -r
-    echo ""
-    if [[ $REPLY =~ ^[Yy]$ ]]; then
+    
+    # Check for non-interactive mode (ASSUME_YES or LEDMATRIX_ASSUME_YES)
+    ASSUME_YES=${ASSUME_YES:-${LEDMATRIX_ASSUME_YES:-0}}
+    if [ "$ASSUME_YES" = "1" ]; then
+        echo "Non-interactive mode: installing required packages..."
+        sudo apt update
+        sudo apt install -y "${MISSING_PACKAGES[@]}"
+        echo "✓ Packages installed"
+    elif [ ! -t 0 ]; then
+        # Non-interactive mode detected (no TTY) but ASSUME_YES not set
+        echo "⚠ Non-interactive mode detected but ASSUME_YES not set."
+        echo "  Installing packages automatically (required for WiFi setup)..."
         sudo apt update
         sudo apt install -y "${MISSING_PACKAGES[@]}"
         echo "✓ Packages installed"
     else
-        echo "⚠ Skipping package installation. WiFi setup may not work correctly."
+        # Interactive mode - ask user
+        read -p "Install these packages now? (y/N): " -n 1 -r
+        echo ""
+        if [[ $REPLY =~ ^[Yy]$ ]]; then
+            sudo apt update
+            sudo apt install -y "${MISSING_PACKAGES[@]}"
+            echo "✓ Packages installed"
+        else
+            echo "⚠ Skipping package installation. WiFi setup may not work correctly."
+        fi
     fi
 fi
 
@@ -142,13 +160,19 @@ if [ "$WIFI_CONNECTED" = false ] && [ "$ETHERNET_CONNECTED" = false ]; then
     echo "  2. Or connect via Ethernet cable"
     echo "  3. Or proceed with installation - you can connect to LEDMatrix-Setup AP after reboot"
     echo ""
-    if [ -z "${ASSUME_YES:-}" ] && [ -z "${LEDMATRIX_ASSUME_YES:-}" ]; then
+    # Check for non-interactive mode (ASSUME_YES or LEDMATRIX_ASSUME_YES)
+    ASSUME_YES=${ASSUME_YES:-${LEDMATRIX_ASSUME_YES:-0}}
+    if [ "$ASSUME_YES" != "1" ] && [ -t 0 ]; then
+        # Interactive mode - ask user
         read -p "Continue with WiFi monitor installation? (y/N): " -n 1 -r
         echo ""
         if [[ ! $REPLY =~ ^[Yy]$ ]]; then
             echo "Installation cancelled. Connect to WiFi/Ethernet and run this script again."
             exit 0
         fi
+    else
+        # Non-interactive mode - proceed automatically
+        echo "Non-interactive mode: proceeding with WiFi monitor installation..."
     fi
 fi
 
