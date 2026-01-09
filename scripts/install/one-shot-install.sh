@@ -273,13 +273,15 @@ main() {
     if [ "$EUID" -eq 0 ]; then
         chmod 1777 /tmp 2>/dev/null || true
         export TMPDIR=/tmp
-        # Run in non-interactive mode with ASSUME_YES
+        # Run in non-interactive mode with ASSUME_YES (both -y flag and env var for safety)
+        export LEDMATRIX_ASSUME_YES=1
         bash ./first_time_install.sh -y
     else
         sudo chmod 1777 /tmp 2>/dev/null || true
         export TMPDIR=/tmp
-        # Pass environment variable for non-interactive mode and preserve TMPDIR
-        sudo -E env TMPDIR=/tmp LEDMATRIX_ASSUME_YES=1 bash ./first_time_install.sh
+        # Pass both -y flag AND environment variable for non-interactive mode
+        # This ensures it works even if the script re-executes itself with sudo
+        sudo -E env TMPDIR=/tmp LEDMATRIX_ASSUME_YES=1 bash ./first_time_install.sh -y
     fi
     INSTALL_EXIT_CODE=$?
     set -e  # Re-enable errexit
