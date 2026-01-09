@@ -29,6 +29,7 @@ on_error() {
     echo "  - Verify sudo access: sudo -v" >&2
     echo "  - Check disk space: df -h /" >&2
     echo "  - If APT lock error: sudo dpkg --configure -a" >&2
+    echo "  - If /tmp permission error: sudo chmod 1777 /tmp" >&2
     echo "  - Wait a few minutes and try again" >&2
     echo "" >&2
     echo "This script is safe to run multiple times. You can re-run it to continue." >&2
@@ -105,10 +106,7 @@ check_network() {
     
     print_error "No internet connectivity detected"
     echo ""
-    echo "Please ensure your Raspberry Pi is connected to the internet:"
-    echo "  1. Check WiFi/Ethernet connection"
-    echo "  2. Test manually: ping -c1 8.8.8.8"
-    echo "  3. Then re-run this installation script"
+    echo "Please ensure your Raspberry Pi is connected to the internet and try again."
     exit 1
 }
 
@@ -140,48 +138,16 @@ check_disk_space() {
     fi
 }
 
-# Check for curl or wget, install if missing
-ensure_download_tool() {
-    CURRENT_STEP="Download tool check"
-    if command -v curl >/dev/null 2>&1; then
-        print_success "curl is available"
-        return 0
-    fi
-    
-    if command -v wget >/dev/null 2>&1; then
-        print_success "wget is available"
-        return 0
-    fi
-    
-    print_warning "Neither curl nor wget found, installing curl..."
-    
-    # Try to install curl (may fail if not sudo, but we'll check sudo next)
-    if command -v apt-get >/dev/null 2>&1; then
-        print_step "Installing curl..."
-        if [ "$EUID" -eq 0 ]; then
-            retry apt-get update
-            retry apt-get install -y curl
-            print_success "curl installed successfully"
-        else
-            print_error "Need sudo to install curl. Please run: sudo apt-get update && sudo apt-get install -y curl"
-            echo "Then re-run this installation script."
-            exit 1
-        fi
-    else
-        print_error "Cannot install curl: apt-get not available"
-        exit 1
-    fi
-}
-
-# Check and elevate to sudo if needed
+# Ensure sudo access
 check_sudo() {
-    CURRENT_STEP="Privilege check"
+    CURRENT_STEP="Sudo access check"
+    print_step "Checking sudo access..."
+    
+    # Check if running as root
     if [ "$EUID" -eq 0 ]; then
-        print_success "Running with root privileges"
+        print_success "Running as root"
         return 0
     fi
-    
-    print_warning "Script needs administrator privileges"
     
     # Check if sudo is available
     if ! command -v sudo >/dev/null 2>&1; then
@@ -205,19 +171,22 @@ check_sudo() {
     print_success "Sudo access confirmed"
 }
 
-# Check if running on Raspberry Pi (warning only, don't fail)
-check_raspberry_pi() {
-    CURRENT_STEP="Hardware check"
-    if [ -r /proc/device-tree/model ]; then
-        DEVICE_MODEL=$(tr -d '\0' </proc/device-tree/model)
-        if [[ "$DEVICE_MODEL" == *"Raspberry Pi"* ]]; then
-            print_success "Detected Raspberry Pi: $DEVICE_MODEL"
+# Fix /tmp permissions if needed (common issue when running via curl | bash)
+fix_tmp_permissions() {
+    CURRENT_STEP="TMP directory check"
+    # Check if /tmp is writable
+    if [ ! -w /tmp ]; then
+        print_warning "/tmp is not writable, attempting to fix..."
+        if [ "$EUID" -eq 0 ]; then
+            chmod 1777 /tmp 2>/dev/null || true
         else
-            print_warning "Not running on Raspberry Pi hardware: $DEVICE_MODEL"
-            print_warning "LED matrix functionality requires Raspberry Pi hardware"
+            sudo chmod 1777 /tmp 2>/dev/null || true
         fi
-    else
-        print_warning "Could not detect device model (continuing anyway)"
+    fi
+    
+    # Ensure TMPDIR is set correctly
+    if [ -z "${TMPDIR:-}" ] || [ ! -w "${TMPDIR:-/tmp}" ]; then
+        export TMPDIR=/tmp
     fi
 }
 
@@ -226,84 +195,36 @@ main() {
     print_step "LED Matrix One-Shot Installation"
     
     echo "This script will:"
-    echo "  1. Check system prerequisites"
-    echo "  2. Install required system packages"
-    echo "  3. Clone or update the LEDMatrix repository"
-    echo "  4. Run the full installation script"
+    echo "  1. Check prerequisites (network, disk space, sudo)"
+    echo "  2. Install system dependencies (git, python3, build tools)"
+    echo "  3. Clone the LEDMatrix repository"
+    echo "  4. Run the first-time installation script"
     echo ""
     
-    # Prerequisites checks
+    # Check prerequisites
     check_network
     check_disk_space
-    check_raspberry_pi
-    ensure_download_tool
     check_sudo
+    fix_tmp_permissions
     
-    # Install system prerequisites
-    CURRENT_STEP="System package installation"
-    print_step "Installing system prerequisites..."
-    
-    # Update package list
-    print_success "Updating package list..."
-    if [ "$EUID" -eq 0 ]; then
-        retry apt-get update
-    else
-        retry sudo apt-get update
-    fi
-    
-    # Install required packages
-    PACKAGES=(
-        "git"
-        "python3-pip"
-        "cython3"
-        "build-essential"
-        "python3-dev"
-        "python3-pillow"
-        "scons"
-    )
-    
-    print_success "Installing required packages..."
-    for pkg in "${PACKAGES[@]}"; do
-        print_success "Installing $pkg..."
-        if [ "$EUID" -eq 0 ]; then
-            retry apt-get install -y "$pkg"
-        else
-            retry sudo apt-get install -y "$pkg"
-        fi
-    done
-    
-    # Repository cloning/updating
-    CURRENT_STEP="Repository setup"
-    print_step "Setting up LEDMatrix repository..."
-    
-    REPO_DIR="$HOME/LEDMatrix"
+    # Determine repository location
+    REPO_DIR="${HOME}/LEDMatrix"
     REPO_URL="https://github.com/ChuckBuilds/LEDMatrix.git"
     
+    CURRENT_STEP="Repository setup"
+    print_step "Setting up repository..."
+    
+    # Check if directory exists and handle accordingly
     if [ -d "$REPO_DIR" ]; then
-        print_warning "Directory $REPO_DIR already exists"
-        
-        # Check if it's a valid git repository
         if [ -d "$REPO_DIR/.git" ]; then
-            print_success "Valid git repository found, updating..."
+            print_warning "Repository already exists at $REPO_DIR"
+            print_warning "Pulling latest changes..."
             cd "$REPO_DIR"
-            
-            # Check if we can pull (may fail if there are local changes)
-            if git fetch >/dev/null 2>&1 && git status >/dev/null 2>&1; then
-                # Check for local modifications
-                if [ -z "$(git status --porcelain)" ]; then
-                    print_success "Pulling latest changes..."
-                    retry git pull || print_warning "Could not pull latest changes (continuing with existing code)"
-                else
-                    print_warning "Repository has local modifications, skipping pull"
-                    print_warning "Using existing repository state"
-                fi
+            if git pull origin main >/dev/null 2>&1; then
+                print_success "Repository updated successfully"
             else
-                print_warning "Git repository appears corrupted or has issues"
-                print_warning "Attempting to re-clone..."
-                cd "$HOME"
-                rm -rf "$REPO_DIR"
-                print_success "Cloning fresh repository..."
-                retry git clone "$REPO_URL" "$REPO_DIR"
+                print_warning "Git pull failed, but continuing with existing repository"
+                print_warning "You may have local changes or the repository may be on a different branch"
             fi
         else
             print_warning "Directory exists but is not a git repository"
@@ -344,14 +265,21 @@ main() {
     print_success "Starting main installation (this may take 10-30 minutes)..."
     echo ""
     
-    # Execute with proper error handling
+    # Execute with proper error handling and non-interactive mode
     # Temporarily disable errexit to capture exit code instead of exiting immediately
     set +e
-    # Use sudo if we're not root, otherwise run directly
+    
+    # Fix /tmp permissions before running (ensure APT can write temp files)
     if [ "$EUID" -eq 0 ]; then
-        bash ./first_time_install.sh
+        chmod 1777 /tmp 2>/dev/null || true
+        export TMPDIR=/tmp
+        # Run in non-interactive mode with ASSUME_YES
+        bash ./first_time_install.sh -y
     else
-        sudo bash ./first_time_install.sh
+        sudo chmod 1777 /tmp 2>/dev/null || true
+        export TMPDIR=/tmp
+        # Pass environment variable for non-interactive mode and preserve TMPDIR
+        sudo -E env TMPDIR=/tmp LEDMATRIX_ASSUME_YES=1 bash ./first_time_install.sh
     fi
     INSTALL_EXIT_CODE=$?
     set -e  # Re-enable errexit
