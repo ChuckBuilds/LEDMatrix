@@ -240,13 +240,10 @@
                                                        id="{{ field_id }}_logo_{{ item_index }}"
                                                        accept="image/png,image/jpeg,image/bmp,image/gif"
                                                        style="display: none;"
-                                                       disabled
-                                                       aria-disabled="true">
+                                                       onchange="handleCustomFeedLogoUpload(event, '{{ field_id }}', {{ item_index }}, '{{ plugin_id }}', '{{ full_key }}')">
                                                 <button type="button" 
-                                                        disabled
-                                                        aria-disabled="true"
-                                                        class="px-2 py-1 text-xs bg-gray-200 text-gray-400 rounded cursor-not-allowed opacity-50"
-                                                        title="Logo upload for custom feeds is not yet implemented">
+                                                        onclick="document.getElementById('{{ field_id }}_logo_{{ item_index }}').click()"
+                                                        class="px-2 py-1 text-xs bg-gray-200 hover:bg-gray-300 rounded">
                                                     <i class="fas fa-upload mr-1"></i> Upload
                                                 </button>
                                                 {% if logo_path %}
