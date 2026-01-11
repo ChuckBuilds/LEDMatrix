@@ -6476,6 +6476,7 @@ window.updateImageScheduleDay = function(fieldId, imageId, imageIdx, day) {
 window.renderArrayObjectItem = renderArrayObjectItem;
 window.getSchemaProperty = getSchemaProperty;
 window.escapeHtml = escapeHtml;
+window.escapeAttribute = escapeAttribute;
 
 })(); // End IIFE
 
