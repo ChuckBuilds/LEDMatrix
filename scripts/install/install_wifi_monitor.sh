@@ -49,13 +49,19 @@ if [ ${#MISSING_PACKAGES[@]} -gt 0 ]; then
     # Install packages automatically (no prompt)
     # Use apt directly if running as root, otherwise use sudo
     if [ "$EUID" -eq 0 ]; then
-        apt update
-        apt install -y "${MISSING_PACKAGES[@]}"
+        apt update || echo "⚠ apt update failed, continuing anyway..."
+        apt install -y "${MISSING_PACKAGES[@]}" || {
+            echo "⚠ Package installation failed, but continuing with WiFi monitor setup"
+            echo "  You may need to install packages manually: apt install -y ${MISSING_PACKAGES[*]}"
+        }
     else
-        sudo apt update
-        sudo apt install -y "${MISSING_PACKAGES[@]}"
+        sudo apt update || echo "⚠ apt update failed, continuing anyway..."
+        sudo apt install -y "${MISSING_PACKAGES[@]}" || {
+            echo "⚠ Package installation failed, but continuing with WiFi monitor setup"
+            echo "  You may need to install packages manually: sudo apt install -y ${MISSING_PACKAGES[*]}"
+        }
     fi
-    echo "✓ Packages installed"
+    echo "✓ Package installation completed"
 fi
 
 # Create service file with correct paths
@@ -83,7 +89,11 @@ WantedBy=multi-user.target
 EOF
 )
 
-echo "$SERVICE_FILE_CONTENT" | sudo tee /etc/systemd/system/ledmatrix-wifi-monitor.service > /dev/null
+if [ "$EUID" -eq 0 ]; then
+    echo "$SERVICE_FILE_CONTENT" | tee /etc/systemd/system/ledmatrix-wifi-monitor.service > /dev/null
+else
+    echo "$SERVICE_FILE_CONTENT" | sudo tee /etc/systemd/system/ledmatrix-wifi-monitor.service > /dev/null
+fi
 
 # Check WiFi connection status before enabling service
 echo ""
@@ -151,23 +161,45 @@ fi
 # Reload systemd
 echo ""
 echo "Reloading systemd..."
-sudo systemctl daemon-reload
+if [ "$EUID" -eq 0 ]; then
+    systemctl daemon-reload
+else
+    sudo systemctl daemon-reload
+fi
 
 # Enable and start the service
 echo "Enabling WiFi monitor service to start on boot..."
-sudo systemctl enable ledmatrix-wifi-monitor.service
+if [ "$EUID" -eq 0 ]; then
+    systemctl enable ledmatrix-wifi-monitor.service
+else
+    sudo systemctl enable ledmatrix-wifi-monitor.service
+fi
 
 echo "Starting WiFi monitor service..."
-sudo systemctl start ledmatrix-wifi-monitor.service
+if [ "$EUID" -eq 0 ]; then
+    systemctl start ledmatrix-wifi-monitor.service || echo "⚠ Failed to start service (may start on reboot)"
+else
+    sudo systemctl start ledmatrix-wifi-monitor.service || echo "⚠ Failed to start service (may start on reboot)"
+fi
 
 # Check service status
 echo ""
 echo "Checking service status..."
-if sudo systemctl is-active --quiet ledmatrix-wifi-monitor.service; then
+if [ "$EUID" -eq 0 ]; then
+    SYSTEMCTL_CMD="systemctl"
+else
+    SYSTEMCTL_CMD="sudo systemctl"
+fi
+
+if $SYSTEMCTL_CMD is-active --quiet ledmatrix-wifi-monitor.service 2>/dev/null; then
     echo "✓ WiFi monitor service is running"
 else
     echo "⚠ WiFi monitor service failed to start. Check logs with:"
-    echo "  sudo journalctl -u ledmatrix-wifi-monitor -n 50"
+    if [ "$EUID" -eq 0 ]; then
+        echo "  journalctl -u ledmatrix-wifi-monitor -n 50"
+    else
+        echo "  sudo journalctl -u ledmatrix-wifi-monitor -n 50"
+    fi
 fi
 
 echo ""
