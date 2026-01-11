@@ -29,26 +29,11 @@
 
 -----------------------------------------------------------------------------------
 
-## ⚠️ Breaking Changes
-
-**Important for users upgrading from older versions:**
-
-Script paths have been reorganized. If you have automation, cron jobs, or custom tooling that references old script paths, you **must** update them. See the [Migration Guide](MIGRATION_GUIDE.md) for details.
-
-**Quick Reference:**
-- Installation scripts moved: `install_service.sh` → `scripts/install/install_service.sh`
-- Permission scripts moved: `fix_cache_permissions.sh` → `scripts/fix_perms/fix_cache_permissions.sh`
-
-**Full migration instructions:** See [MIGRATION_GUIDE.md](MIGRATION_GUIDE.md)
-
------------------------------------------------------------------------------------
-
 ## Core Features
 
 <details>
 <summary>Core Features</summary>
-## Core Features
-Modular, rotating Displays that can be individually enabled or disabled per the user's needs with some configuration around display durations, teams, stocks, weather, timezones, and more. Displays include:
+The following plugins are available inside of the LEDMatrix project. These modular, rotating Displays that can be individually enabled or disabled per the user's needs with some configuration around display durations, teams, stocks, weather, timezones, and more. Displays include:
 
 ### Time and Weather
 - Real-time clock display (2x 64x32 Displays 4mm Pixel Pitch)
@@ -115,51 +100,9 @@ The system supports live, recent, and upcoming game information for multiple spo
 - Youtube Subscriber Count Display (2x 64x32 Displays 4mm Pixel Pitch)
 ![DSC01376](https://github.com/user-attachments/assets/7ea5f42d-afce-422f-aa97-6b2a179aa7d2)
 
-- Font testing Display (not in rotation)
 </details>
 
 -----------------------------------------------------------------------------------
-
-## Plugins
-
-LEDMatrix uses a plugin-based architecture where all display functionality (except the core calendar) is implemented as plugins. All managers that were previously built into the core system are now available as plugins through the Plugin Store.
-
-### Plugin Store
-
-The easiest way to discover and install plugins is through the **Plugin Store** in the LEDMatrix web interface:
-
-1. Open the web interface (`http://your-pi-ip:5000`)
-2. Navigate to the **Plugin Manager** tab
-3. Browse available plugins in the Plugin Store
-4. Click **Install** on any plugin you want
-5. Configure and enable plugins through the web UI
-
-### Installing 3rd-Party Plugins
-
-You can also install plugins directly from GitHub repositories:
-
-- **Single Plugin**: Install from any GitHub repository URL
-- **Registry/Monorepo**: Install multiple plugins from a single repository
-
-See the [Plugin Store documentation](https://github.com/ChuckBuilds/ledmatrix-plugins) for detailed installation instructions.
-
-For plugin development, check out the [Hello World Plugin](https://github.com/ChuckBuilds/ledmatrix-hello-world) repository as a starter template.
-
-## ⚠️ Breaking Changes
-
-**Important for users upgrading from older versions:**
-
-1. **Script Path Reorganization**: Installation scripts have been moved to `scripts/install/`:
-   - `./install_service.sh` → `./scripts/install/install_service.sh`
-   - `./install_web_service.sh` → `./scripts/install/install_web_service.sh`
-   - `./configure_web_sudo.sh` → `./scripts/install/configure_web_sudo.sh`
-   
-   If you have automation, cron jobs, or custom tooling that references these scripts, you **must** update them to use the new paths. See the [Migration Guide](MIGRATION_GUIDE.md) for complete details.
-
-2. **Built-in Managers Deprecated**: The built-in managers (hockey, football, stocks, etc.) are now deprecated and have been moved to the plugin system. **You must install replacement plugins from the Plugin Store** in the web interface instead. The plugin system provides the same functionality with better maintainability and extensibility.
-
------------------------------------------------------------------------------------
-
 ## Hardware
 
 <details>
@@ -168,7 +111,9 @@ For plugin development, check out the [Hello World Plugin](https://github.com/Ch
 
 ### Raspberry Pi
 - **Raspberry Pi 3B or 4 (NOT RPi 5!)**  
-  [Amazon Affiliate Link – Raspberry Pi 4 4GB](https://amzn.to/4dJixuX)
+  [Amazon Affiliate Link – Raspberry Pi 4 4GB RAM](https://amzn.to/4dJixuX)
+  [Amazon Affiliate Link – Raspberry Pi 4 8GB RAM](https://amzn.to/4qbqY7F)
+
 
 ### RGB Matrix Bonnet / HAT
 - [Adafruit RGB Matrix Bonnet/HAT](https://www.adafruit.com/product/3211) – supports one “chain” of horizontally connected displays  
@@ -177,7 +122,7 @@ For plugin development, check out the [Hello World Plugin](https://github.com/Ch
 - [Seengreat Matrix Adapter Board](https://amzn.to/3KsnT3j) – single-chain LED Matrix *(use `regular` as hardware mapping)*  
 
 ### LED Matrix Panels  
-(2x in a chain recommended)
+(2x in a horizontal chain is recommended)
 - [Adafruit 64×32](https://www.adafruit.com/product/2278) – designed for 128×32 but works with dynamic scaling on many displays (pixel pitch is user preference)
 - [Waveshare 64×32](https://amzn.to/3Kw55jK) - Does not require E addressable pad
 - [Waveshare 92×46](https://amzn.to/4pQdezE) – higher resolution, requires soldering the **E addressable pad** on the [Adafruit RGB Bonnet](https://www.adafruit.com/product/3211) to “8” **OR** toggling the DIP switch on the Adafruit Triple LED Matrix Bonnet *(no soldering required!)*  
@@ -185,7 +130,7 @@ For plugin development, check out the [Hello World Plugin](https://github.com/Ch
 
 ### Power Supply
 - [5V 4A DC Power Supply](https://www.adafruit.com/product/658) (good for 2 -3 displays, depending on brightness and pixel density, you'll need higher amperage for more)
-- [5V 10AM DC Power Supply](https://amzn.to/3IKlYqe) (good for 6-8 displays, depending on brightness and pixel density)
+- [5V 10A DC Power Supply](https://amzn.to/3IKlYqe) (good for 6-8 displays, depending on brightness and pixel density)
 
 ## Optional but recommended mod for Adafruit RGB Matrix Bonnet
 - By soldering a jumper between pins 4 and 18, you can run a specialized command for polling the matrix display. This provides better brightness, less flicker, and better color.
@@ -339,7 +284,7 @@ This single script installs services, dependencies, configures permissions and s
 
 ### Initial Setup
 
-The system uses a template-based configuration approach to avoid Git conflicts during updates:
+Edit the project via the web interface at http://ledpi:5000  or for manual control:
 
 1. **First-time setup**: The previous "First_time_install.sh" script should've already copied the template to create your config.json:
 
@@ -347,20 +292,13 @@ The system uses a template-based configuration approach to avoid Git conflicts d
    ```bash
    sudo nano config/config.json
    ```
-or edit via web interface at http://ledpi:5000
+or 
 
 3. **Having Issues?**: Run the First Time Script again:
   ```bash
   sudo ./first_time_install.sh
   ```
 
-
-### API Keys and Secrets
-
-For sensitive settings like API keys:
-1. Copy the secrets template: `cp config/config_secrets.template.json config/config_secrets.json`
-2. Edit `config/config_secrets.json` with your API keys via `sudo nano config/config_secrets.json`
-3. Ctrl + X to exit, Y to overwrite, Enter to Confirm
 
 ### Automatic Configuration Migration
 
@@ -378,7 +316,7 @@ Everything is configured via `config/config.json` and `config/config_secrets.jso
 ------------------------------------------------------------------------------------
 
 ## Running the Display
-
+<details>
 I recommend using the web-ui to control the Display but you can also run the following commands via ssh:
 
 From the project root directory:
@@ -386,7 +324,7 @@ From the project root directory:
 sudo python3 display_controller.py
 ```
 This will start the display cycle but only stays active as long as your ssh session is active.
-
+</details>
 
 -----------------------------------------------------------------------------------
 
@@ -394,13 +332,12 @@ This will start the display cycle but only stays active as long as your ssh sess
 
 <summary>Run on Startup Automatically with Systemd Service Installation</summary>
 
-
 ## Run on Startup Automatically with Systemd Service Installation
 The first time install will handle this:
 The LEDMatrix can be installed as a systemd service to run automatically at boot and be managed easily. The service runs as root to ensure proper hardware timing access for the LED matrix.
 
 ### Installing the Service (this is included in the first_time_install.sh)
-
+<details>
 1. Make the install script executable:
 ```bash
 chmod +x scripts/install/install_service.sh
@@ -416,9 +353,10 @@ The script will:
 - Install the service file with the correct paths
 - Enable the service to start on boot
 - Start the service immediately
+</details>
 
 ### Managing the Service
-
+<details>
 The following commands are available to manage the service:
 
 ```bash
@@ -441,11 +379,11 @@ sudo systemctl disable ledmatrix.service
 sudo systemctl enable ledmatrix.service
 ```
 </details>
+</details>
 
 <details>
 
 <summary>Convenience Scripts</summary>
-
 
 ### Convenience Scripts
 
@@ -564,6 +502,45 @@ sudo systemctl enable ledmatrix-web.service
 
 -----------------------------------------------------------------------------------
 
+## Plugins
+<details>
+LEDMatrix uses a plugin-based architecture where all display functionality (except the core calendar) is implemented as plugins. All managers that were previously built into the core system are now available as plugins through the Plugin Store.
+
+### Plugin Store
+
+The easiest way to discover and install plugins is through the **Plugin Store** in the LEDMatrix web interface:
+
+1. Open the web interface (`http://your-pi-ip:5000`)
+2. Navigate to the **Plugin Manager** tab
+3. Browse available plugins in the Plugin Store
+4. Click **Install** on any plugin you want
+5. Configure and enable plugins through the web UI
+
+### Installing 3rd-Party Plugins
+
+You can also install plugins directly from GitHub repositories:
+
+- **Single Plugin**: Install from any GitHub repository URL
+- **Registry/Monorepo**: Install multiple plugins from a single repository
+
+See the [Plugin Store documentation](https://github.com/ChuckBuilds/ledmatrix-plugins) for detailed installation instructions.
+
+For plugin development, check out the [Hello World Plugin](https://github.com/ChuckBuilds/ledmatrix-hello-world) repository as a starter template.
+
+## ⚠️ Breaking Changes
+
+**Important for users upgrading from older versions:**
+
+1. **Script Path Reorganization**: Installation scripts have been moved to `scripts/install/`:
+   - `./install_service.sh` → `./scripts/install/install_service.sh`
+   - `./install_web_service.sh` → `./scripts/install/install_web_service.sh`
+   - `./configure_web_sudo.sh` → `./scripts/install/configure_web_sudo.sh`
+   
+   If you have automation, cron jobs, or custom tooling that references these scripts, you **must** update them to use the new paths. See the [Migration Guide](MIGRATION_GUIDE.md) for complete details.
+
+2. **Built-in Managers Deprecated**: The built-in managers (hockey, football, stocks, etc.) are now deprecated and have been moved to the plugin system. **You must install replacement plugins from the Plugin Store** in the web interface instead. The plugin system provides the same functionality with better maintainability and extensibility.
+</details>
+-----------------------------------------------------------------------------------
 
 ## Information
 
