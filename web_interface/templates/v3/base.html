@@ -5071,6 +5071,8 @@
                         // Append container to logoCell
                         logoCell.appendChild(container);
                     }
+                    // Allow re-uploading the same file (change event won't fire otherwise)
+                    event.target.value = '';
                 } else {
                     alert('Upload failed: ' + (data.message || 'Unknown error'));
                 }
