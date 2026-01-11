@@ -2475,7 +2475,7 @@ function flattenConfig(obj, prefix = '') {
 // Helper function to render a single item in an array of objects
 function renderArrayObjectItem(fieldId, fullKey, itemProperties, itemValue, index, itemsSchema) {
     const item = itemValue || {};
-    const itemId = `${fieldId}_item_${index}`;
+    const itemId = `${escapeAttribute(fieldId)}_item_${index}`;
     let html = `<div class="border border-gray-300 rounded-lg p-4 bg-gray-50 array-object-item" data-index="${index}">`;
     
     // Render each property of the object
@@ -2502,28 +2502,31 @@ function renderArrayObjectItem(fieldId, fullKey, itemProperties, itemValue, inde
                 html += `<p class="text-xs text-gray-500 mb-2">${escapeHtml(propDescription)}</p>`;
             }
             const uploadConfig = propSchema['x-upload-config'] || {};
-            const pluginId = uploadConfig.plugin_id || (typeof currentPluginConfig !== 'undefined' ? currentPluginConfig?.pluginId : null) || (typeof window.currentPluginConfig !== 'undefined' ? window.currentPluginConfig?.pluginId : null) || 'ledmatrix-news';
+            // Remove hardcoded fallback - require explicit pluginId to avoid surprising defaults
+            const pluginId = uploadConfig.plugin_id || (typeof currentPluginConfig !== 'undefined' ? currentPluginConfig?.pluginId : null) || (typeof window.currentPluginConfig !== 'undefined' ? window.currentPluginConfig?.pluginId : null) || null;
             const logoValue = propValue || {};
             
             // Display existing logo if present, but disable upload functionality
             // Store file metadata in data-file-data attribute for serialization
             if (logoValue.path) {
-                const fileDataJson = JSON.stringify(logoValue).replace(/'/g, "&#39;").replace(/"/g, "&quot;");
+                // Use base64 encoding for JSON in data attributes to safely handle all characters
+                const fileDataJson = JSON.stringify(logoValue);
+                const fileDataBase64 = btoa(unescape(encodeURIComponent(fileDataJson)));
                 html += `
-                    <div class="file-upload-widget-inline" data-file-data='${fileDataJson}' data-prop-key="${propKey}">
+                    <div class="file-upload-widget-inline" data-file-data="${escapeAttribute(fileDataBase64)}" data-prop-key="${escapeAttribute(propKey)}">
                         <div class="mt-2 flex items-center space-x-2">
-                            <img src="/${escapeHtml(logoValue.path)}" alt="Logo" class="w-16 h-16 object-cover rounded border">
+                            <img src="/${escapeAttribute(logoValue.path.replace(/^\/+/, ''))}" alt="Logo" class="w-16 h-16 object-cover rounded border">
                             <span class="text-sm text-gray-500 italic">File upload not yet available for array items</span>
                         </div>
                     </div>
                 `;
             } else {
                 html += `
-                    <div class="file-upload-widget-inline" data-prop-key="${propKey}">
+                    <div class="file-upload-widget-inline" data-prop-key="${escapeAttribute(propKey)}">
                         <button type="button" 
                                 disabled
                                 class="px-3 py-2 text-sm bg-gray-200 text-gray-400 rounded-md cursor-not-allowed opacity-50"
-                                title="File upload for array items is not yet implemented">
+                                title="${escapeAttribute('File upload for array items is not yet implemented')}">
                             <i class="fas fa-upload mr-1"></i> Upload Logo (Not Available)
                         </button>
                         <p class="text-xs text-gray-500 mt-1 italic">File upload functionality for array items is coming soon</p>
@@ -2537,32 +2540,33 @@ function renderArrayObjectItem(fieldId, fullKey, itemProperties, itemValue, inde
             html += `
                 <label class="flex items-center">
                     <input type="checkbox" 
-                           id="${itemId}_${propKey}"
-                           data-prop-key="${propKey}"
+                           id="${escapeAttribute(itemId)}_${escapeAttribute(propKey)}"
+                           data-prop-key="${escapeAttribute(propKey)}"
                            class="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
                            ${propValue ? 'checked' : ''}
-                           onchange="updateArrayObjectData('${fieldId}')">
+                           onchange="updateArrayObjectData('${escapeAttribute(fieldId)}')">
                     <span class="ml-2 text-sm text-gray-700">${escapeHtml(propLabel)}</span>
                 </label>
             `;
         } else {
             // Regular text/string input
             html += `
-                <label for="${itemId}_${propKey}" class="block text-sm font-medium text-gray-700 mb-1">
+                <label for="${escapeAttribute(itemId)}_${escapeAttribute(propKey)}" class="block text-sm font-medium text-gray-700 mb-1">
                     ${escapeHtml(propLabel)}
                 </label>
             `;
             if (propDescription) {
                 html += `<p class="text-xs text-gray-500 mb-1">${escapeHtml(propDescription)}</p>`;
             }
+            const placeholder = propSchema.format === 'uri' ? 'https://example.com/feed' : '';
             html += `
                 <input type="${propSchema.format === 'uri' ? 'url' : 'text'}" 
-                       id="${itemId}_${propKey}"
-                       data-prop-key="${propKey}"
+                       id="${escapeAttribute(itemId)}_${escapeAttribute(propKey)}"
+                       data-prop-key="${escapeAttribute(propKey)}"
                        class="block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm bg-white text-black"
-                       value="${escapeHtml(propValue || '')}"
-                       placeholder="${propSchema.format === 'uri' ? 'https://example.com/feed' : ''}"
-                       onchange="updateArrayObjectData('${fieldId}')">
+                       value="${escapeAttribute(propValue || '')}"
+                       placeholder="${escapeAttribute(placeholder)}"
+                       onchange="updateArrayObjectData('${escapeAttribute(fieldId)}')">
             `;
         }
         
@@ -2573,7 +2577,7 @@ function renderArrayObjectItem(fieldId, fullKey, itemProperties, itemValue, inde
     const removeLabel = itemsSchema['x-removeLabel'] || 'Remove item';
     html += `
         <button type="button" 
-                onclick="removeArrayObjectItem('${fieldId}', ${index})"
+                onclick="removeArrayObjectItem('${escapeAttribute(fieldId)}', ${index})"
                 class="mt-2 px-3 py-2 text-sm text-red-600 hover:text-red-800 hover:bg-red-50 rounded-md transition-colors">
             <i class="fas fa-trash mr-1"></i> ${escapeHtml(removeLabel)}
         </button>
@@ -5448,6 +5452,21 @@ function escapeHtml(text) {
     return div.innerHTML;
 }
 
+// Utility function to escape text for use in HTML attributes
+// Escapes quotes, ampersands, and other special characters that could break attributes
+function escapeAttribute(text) {
+    if (text == null) {
+        return '';
+    }
+    const str = String(text);
+    return str
+        .replace(/&/g, '&amp;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
+}
+
 // Format date for display
 function formatDate(dateString) {
     if (!dateString) return 'Unknown';
@@ -6668,18 +6687,20 @@ if (typeof window !== 'undefined') {
                     item[propKey] = checkbox.checked;
                 }
             });
-            // Handle file upload data (stored in data attributes)
+            // Handle file upload data (stored in data attributes as base64-encoded JSON)
             itemEl.querySelectorAll('[data-file-data]').forEach(fileEl => {
-                const fileData = fileEl.getAttribute('data-file-data');
-                if (fileData) {
+                const fileDataBase64 = fileEl.getAttribute('data-file-data');
+                if (fileDataBase64) {
                     try {
-                        const data = JSON.parse(fileData);
+                        // Decode base64 to JSON string, then parse
+                        const fileDataJson = decodeURIComponent(escape(atob(fileDataBase64)));
+                        const data = JSON.parse(fileDataJson);
                         const propKey = fileEl.getAttribute('data-prop-key');
                         if (propKey) {
                             item[propKey] = data;
                         }
                     } catch (e) {
-                        console.error('Error parsing file data:', e);
+                        console.error('Error parsing file data (base64):', e);
                     }
                 }
             });
