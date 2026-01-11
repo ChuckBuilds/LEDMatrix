@@ -4872,17 +4872,19 @@
             fileInput.id = `${fieldId}_logo_${newIndex}`;
             fileInput.accept = 'image/png,image/jpeg,image/bmp,image/gif';
             fileInput.style.display = 'none';
-            // Use addEventListener instead of string-based onchange to prevent injection
+            fileInput.dataset.index = String(newIndex);
+            // Use addEventListener with dataset index to allow reindexing
             fileInput.addEventListener('change', function(e) {
-                handleCustomFeedLogoUpload(e, fieldId, newIndex, pluginId, fullKey);
+                const idx = parseInt(e.target.dataset.index || '0', 10);
+                handleCustomFeedLogoUpload(e, fieldId, idx, pluginId, fullKey);
             });
             
             const uploadButton = document.createElement('button');
             uploadButton.type = 'button';
             uploadButton.className = 'px-2 py-1 text-xs bg-gray-200 hover:bg-gray-300 rounded';
-            // Use addEventListener instead of string-based onclick to prevent injection
+            // Use fileInput directly instead of getElementById for reindexing compatibility
             uploadButton.addEventListener('click', function() {
-                document.getElementById(`${fieldId}_logo_${newIndex}`).click();
+                fileInput.click();
             });
             const uploadIcon = document.createElement('i');
             uploadIcon.className = 'fas fa-upload mr-1';
@@ -4946,6 +4948,7 @@
                 // Re-index remaining rows
                 const rows = tbody.querySelectorAll('.custom-feed-row');
                 rows.forEach((r, index) => {
+                    const oldIndex = r.getAttribute('data-index');
                     r.setAttribute('data-index', index);
                     // Update all input names with new index
                     r.querySelectorAll('input, button').forEach(input => {
@@ -4955,40 +4958,15 @@
                             input.setAttribute('name', name.replace(/\.\d+\./, `.${index}.`));
                         }
                         const id = input.id;
-                        if (id && id.includes('_logo_')) {
-                            const newId = id.replace(/_logo_\d+/, `_logo_${index}`);
-                            input.id = newId;
-                            const onclick = input.getAttribute('onclick');
-                            if (onclick) {
-                                input.setAttribute('onclick', onclick.replace(/,\s*\d+\s*,/, `, ${index},`));
-                            }
-                            const onchange = input.getAttribute('onchange');
-                            if (onchange) {
-                                input.setAttribute('onchange', onchange.replace(/,\s*\d+\s*,/, `, ${index},`));
-                            }
+                        if (id) {
+                            // Keep IDs aligned after reindex (supports both _logo_<n> and _logo_preview_<n>)
+                            input.id = id
+                                .replace(/_logo_preview_\d+$/, `_logo_preview_${index}`)
+                                .replace(/_logo_\d+$/, `_logo_${index}`);
                         }
-                        // Update button onclick handlers that reference file input IDs with _logo_<num>
-                        // Check for buttons (not just inputs) and update onclick if it contains _logo_ references
-                        if (input.tagName === 'BUTTON') {
-                            const onclick = input.getAttribute('onclick');
-                            if (onclick) {
-                                let updatedOnclick = onclick;
-                                // Replace getElementById('..._logo_<num>') with getElementById('..._logo_<newIndex>')
-                                updatedOnclick = updatedOnclick.replace(
-                                    /getElementById\(['"]([^'"]*_logo_)\d+['"]\)/g,
-                                    `getElementById('$1${index}')`
-                                );
-                                // Also handle patterns like _logo_<num> in other contexts
-                                updatedOnclick = updatedOnclick.replace(
-                                    /(['"])([^'"]*_logo_)\d+(['"])/g,
-                                    `$1$2${index}$3`
-                                );
-                                // Update function call parameters (handleCustomFeedLogoUpload, removeCustomFeedRow, etc.)
-                                updatedOnclick = updatedOnclick.replace(/,\s*\d+\s*,/g, `, ${index},`);
-                                if (updatedOnclick !== onclick) {
-                                    input.setAttribute('onclick', updatedOnclick);
-                                }
-                            }
+                        // Keep dataset index aligned so event handlers remain correct after reindex
+                        if (input.dataset && 'index' in input.dataset) {
+                            input.dataset.index = String(index);
                         }
                     });
                 });
@@ -5028,7 +5006,7 @@
                         const idName = existingIdInput ? existingIdInput.name : `${fullKey}.${index}.logo.id`;
                         
                         // Normalize path: remove leading slashes, then add single leading slash
-                        const normalizedPath = uploadedFile.path.replace(/^\/+/, '');
+                        const normalizedPath = String(uploadedFile.path || '').replace(/^\/+/, '');
                         const imageSrc = '/' + normalizedPath;
                         
                         // Clear logoCell and build DOM safely to prevent XSS
@@ -5044,18 +5022,20 @@
                         fileInput.id = `${fieldId}_logo_${index}`;
                         fileInput.accept = 'image/png,image/jpeg,image/bmp,image/gif';
                         fileInput.style.display = 'none';
-                        // Use addEventListener instead of string-based onchange to prevent injection
+                        fileInput.dataset.index = String(index);
+                        // Use addEventListener with dataset index to allow reindexing
                         fileInput.addEventListener('change', function(e) {
-                            handleCustomFeedLogoUpload(e, fieldId, index, pluginId, fullKey);
+                            const idx = parseInt(e.target.dataset.index || '0', 10);
+                            handleCustomFeedLogoUpload(e, fieldId, idx, pluginId, fullKey);
                         });
                         
                         // Create upload button
                         const uploadButton = document.createElement('button');
                         uploadButton.type = 'button';
                         uploadButton.className = 'px-2 py-1 text-xs bg-gray-200 hover:bg-gray-300 rounded';
-                        // Use addEventListener instead of string-based onclick to prevent injection
+                        // Use fileInput directly instead of getElementById for reindexing compatibility
                         uploadButton.addEventListener('click', function() {
-                            document.getElementById(`${fieldId}_logo_${index}`).click();
+                            fileInput.click();
                         });
                         const uploadIcon = document.createElement('i');
                         uploadIcon.className = 'fas fa-upload mr-1';
@@ -5073,7 +5053,7 @@
                         const pathInput = document.createElement('input');
                         pathInput.type = 'hidden';
                         pathInput.name = pathName;
-                        pathInput.value = uploadedFile.path;
+                        pathInput.value = imageSrc;
                         
                         // Create hidden input for id - set value via property to prevent XSS
                         const idInput = document.createElement('input');
