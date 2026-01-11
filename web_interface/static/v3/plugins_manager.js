@@ -6453,9 +6453,10 @@ window.updateImageScheduleDay = function(fieldId, imageId, imageIdx, day) {
     window.updateImageList(fieldId, currentImages);
 }
 
-// Expose renderArrayObjectItem and getSchemaProperty to window for use by global functions
+// Expose renderArrayObjectItem, getSchemaProperty, and escapeHtml to window for use by global functions
 window.renderArrayObjectItem = renderArrayObjectItem;
 window.getSchemaProperty = getSchemaProperty;
+window.escapeHtml = escapeHtml;
 
 })(); // End IIFE
 
