@@ -982,7 +982,8 @@ if [ -f "$PROJECT_ROOT_DIR/scripts/install/install_wifi_monitor.sh" ]; then
     
     if [ ! -f "/etc/systemd/system/ledmatrix-wifi-monitor.service" ] || [ "$NEEDS_UPDATE" = true ]; then
         echo "Installing/updating WiFi monitor service..."
-        bash "$PROJECT_ROOT_DIR/scripts/install/install_wifi_monitor.sh"
+        # Pass ASSUME_YES to ensure non-interactive mode
+        ASSUME_YES="$ASSUME_YES" LEDMATRIX_ASSUME_YES="$ASSUME_YES" bash "$PROJECT_ROOT_DIR/scripts/install/install_wifi_monitor.sh"
     
     # Harden service file permissions (if service was created)
     if [ -f "/etc/systemd/system/ledmatrix-wifi-monitor.service" ]; then

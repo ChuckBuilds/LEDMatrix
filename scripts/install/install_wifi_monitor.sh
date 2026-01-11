@@ -47,18 +47,19 @@ if [ ${#MISSING_PACKAGES[@]} -gt 0 ]; then
     echo ""
     
     # Check for non-interactive mode (ASSUME_YES or LEDMATRIX_ASSUME_YES)
+    # If called from installation script, always install packages automatically
     ASSUME_YES=${ASSUME_YES:-${LEDMATRIX_ASSUME_YES:-0}}
-    if [ "$ASSUME_YES" = "1" ]; then
-        echo "Non-interactive mode: installing required packages..."
-        sudo apt update
-        sudo apt install -y "${MISSING_PACKAGES[@]}"
-        echo "✓ Packages installed"
-    elif [ ! -t 0 ]; then
-        # Non-interactive mode detected (no TTY) but ASSUME_YES not set
-        echo "⚠ Non-interactive mode detected but ASSUME_YES not set."
-        echo "  Installing packages automatically (required for WiFi setup)..."
-        sudo apt update
-        sudo apt install -y "${MISSING_PACKAGES[@]}"
+    if [ "$ASSUME_YES" = "1" ] || [ ! -t 0 ]; then
+        # Non-interactive mode - install packages automatically
+        # Use apt directly if running as root, otherwise use sudo
+        echo "Installing required packages automatically..."
+        if [ "$EUID" -eq 0 ]; then
+            apt update
+            apt install -y "${MISSING_PACKAGES[@]}"
+        else
+            sudo apt update
+            sudo apt install -y "${MISSING_PACKAGES[@]}"
+        fi
         echo "✓ Packages installed"
     else
         # Interactive mode - ask user
