@@ -982,29 +982,38 @@ if [ -f "$PROJECT_ROOT_DIR/scripts/install/install_wifi_monitor.sh" ]; then
     
     if [ ! -f "/etc/systemd/system/ledmatrix-wifi-monitor.service" ] || [ "$NEEDS_UPDATE" = true ]; then
         echo "Installing/updating WiFi monitor service..."
-        # Pass ASSUME_YES to ensure non-interactive mode
-        ASSUME_YES="$ASSUME_YES" LEDMATRIX_ASSUME_YES="$ASSUME_YES" bash "$PROJECT_ROOT_DIR/scripts/install/install_wifi_monitor.sh"
+        # Run install script but don't fail installation if it errors (WiFi monitor is optional)
+        if bash "$PROJECT_ROOT_DIR/scripts/install/install_wifi_monitor.sh"; then
+            echo "✓ WiFi monitor service installation completed"
+        else
+            INSTALL_EXIT_CODE=$?
+            echo "⚠ WiFi monitor service installation returned exit code $INSTALL_EXIT_CODE"
+            echo "  Continuing installation - WiFi monitor is optional and can be installed later"
+        fi
+    fi
     
     # Harden service file permissions (if service was created)
     if [ -f "/etc/systemd/system/ledmatrix-wifi-monitor.service" ]; then
         chown root:root "/etc/systemd/system/ledmatrix-wifi-monitor.service" || true
         chmod 644 "/etc/systemd/system/ledmatrix-wifi-monitor.service" || true
         systemctl daemon-reload || true
-    fi
-    
-    # Check if service was installed successfully
-    if systemctl list-unit-files | grep -q "ledmatrix-wifi-monitor.service"; then
-        echo "✓ WiFi monitor service installed"
         
-        # Check if service is running
-        if systemctl is-active --quiet ledmatrix-wifi-monitor.service 2>/dev/null; then
-            echo "✓ WiFi monitor service is running"
+        # Check if service was installed successfully
+        if systemctl list-unit-files | grep -q "ledmatrix-wifi-monitor.service"; then
+            echo "✓ WiFi monitor service installed"
+            
+            # Check if service is running
+            if systemctl is-active --quiet ledmatrix-wifi-monitor.service 2>/dev/null; then
+                echo "✓ WiFi monitor service is running"
+            else
+                echo "⚠ WiFi monitor service installed but not running (may need required packages)"
+            fi
         else
-            echo "⚠ WiFi monitor service installed but not running (may need required packages)"
+            echo "⚠ WiFi monitor service file exists but not registered with systemd"
         fi
     else
-        echo "⚠ WiFi monitor service installation may have failed"
-    fi
+        echo "⚠ WiFi monitor service file not created (installation may have failed)"
+        echo "  You can install it later by running: sudo ./scripts/install/install_wifi_monitor.sh"
     fi
 else
     echo "⚠ install_wifi_monitor.sh not found; skipping WiFi monitor installation"
