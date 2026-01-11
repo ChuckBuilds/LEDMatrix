@@ -3021,6 +3021,7 @@ function generateFieldHtml(key, prop, value, prefix = '') {
                     <label class="flex items-center">
                         <input type="checkbox" 
                                id="${checkboxId}" 
+                               name="${fullKey}[]"
                                data-checkbox-group="${fieldId}"
                                data-option-value="${escapeHtml(option)}"
                                value="${escapeHtml(option)}" 
