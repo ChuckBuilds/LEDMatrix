@@ -180,6 +180,9 @@
                 </div>
                 {# Hidden input to store selected values as JSON array (like array-of-objects pattern) #}
                 <input type="hidden" id="{{ field_id }}_data" name="{{ full_key }}_data" value='{{ array_value|tojson|safe }}'>
+                {# Sentinel hidden input with bracket notation to allow clearing array to [] when all unchecked #}
+                {# This ensures the field is always submitted, even when all checkboxes are unchecked #}
+                <input type="hidden" name="{{ full_key }}[]" value="">
             {% else %}
                 {# Check for custom-feeds widget first #}
                 {% set items_schema = prop.get('items') or {} %}

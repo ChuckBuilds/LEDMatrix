@@ -3034,6 +3034,9 @@ function generateFieldHtml(key, prop, value, prefix = '') {
             html += `</div>`;
             // Hidden input to store selected values as JSON array (like array-of-objects pattern)
             html += `<input type="hidden" id="${fieldId}_data" name="${fullKey}_data" value='${JSON.stringify(arrayValue).replace(/'/g, "&#39;")}'>`;
+            // Sentinel hidden input with bracket notation to allow clearing array to [] when all unchecked
+            // This ensures the field is always submitted, even when all checkboxes are unchecked
+            html += `<input type="hidden" name="${fullKey}[]" value="">`;
         } else if (xWidgetValue === 'custom-feeds' || xWidgetValue2 === 'custom-feeds') {
             // Custom feeds widget - check schema validation first
             const itemsSchema = prop.items || {};
