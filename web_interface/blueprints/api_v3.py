@@ -3337,25 +3337,34 @@ def save_plugin_config():
 
             # First pass: handle bracket notation array fields (e.g., "field_name[]" from checkbox-group)
             # These fields use getlist() to preserve all values, then replace in form_data
+            # Sentinel empty value ("") allows clearing array to [] when all checkboxes unchecked
             bracket_array_fields = {}  # Maps base field path to list of values
             for key in request.form.keys():
                 # Check if key ends with "[]" (bracket notation for array fields)
                 if key.endswith('[]'):
                     base_path = key[:-2]  # Remove "[]" suffix
                     values = request.form.getlist(key)
-                    if values:
-                        bracket_array_fields[base_path] = values
-                        # Remove the bracket notation key from form_data if present
-                        if key in form_data:
-                            del form_data[key]
+                    # Filter out sentinel empty string - if only sentinel present, array should be []
+                    # If sentinel + values present, use the actual values
+                    filtered_values = [v for v in values if v and v.strip()]
+                    # If no non-empty values but key exists, it means all checkboxes unchecked (empty array)
+                    bracket_array_fields[base_path] = filtered_values
+                    # Remove the bracket notation key from form_data if present
+                    if key in form_data:
+                        del form_data[key]
             
-            # Process bracket notation fields and add to form_data as comma-separated strings
+            # Process bracket notation fields and add to form_data as JSON strings
+            # Use JSON encoding instead of comma-join to handle values containing commas
+            import json
             for base_path, values in bracket_array_fields.items():
                 # Get schema property to verify it's an array
                 base_prop = _get_schema_property(schema, base_path)
                 if base_prop and base_prop.get('type') == 'array':
-                    # Combine values into comma-separated string for consistent parsing
-                    combined_value = ', '.join(str(v) for v in values if v)
+                    # Filter out empty values and sentinel empty strings
+                    filtered_values = [v for v in values if v and v.strip()]
+                    # Encode as JSON array string (handles values with commas correctly)
+                    # Empty array (all unchecked) is represented as "[]"
+                    combined_value = json.dumps(filtered_values)
                     form_data[base_path] = combined_value
                     logger.debug(f"Processed bracket notation array field {base_path}: {values} -> {combined_value}")
 

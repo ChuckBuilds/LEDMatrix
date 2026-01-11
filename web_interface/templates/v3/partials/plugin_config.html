@@ -168,6 +168,7 @@
                     <label class="flex items-center cursor-pointer">
                         <input type="checkbox" 
                                id="{{ checkbox_id }}"
+                               name="{{ full_key }}[]"
                                data-checkbox-group="{{ field_id }}"
                                data-option-value="{{ option }}"
                                value="{{ option }}"
@@ -179,7 +180,10 @@
                     {% endfor %}
                 </div>
                 {# Hidden input to store selected values as JSON array (like array-of-objects pattern) #}
-                <input type="hidden" id="{{ field_id }}_data" name="{{ full_key }}_data" value='{{ array_value|tojson|safe }}'>
+                <input type="hidden" id="{{ field_id }}_data" name="{{ full_key }}_data" value='{{ (array_value|tojson|safe)|replace("'", "&#39;") }}'>
+                {# Sentinel hidden input with bracket notation to allow clearing array to [] when all unchecked #}
+                {# This ensures the field is always submitted, even when all checkboxes are unchecked #}
+                <input type="hidden" name="{{ full_key }}[]" value="">
             {% else %}
                 {# Check for custom-feeds widget first #}
                 {% set items_schema = prop.get('items') or {} %}
@@ -236,13 +240,10 @@
                                                        id="{{ field_id }}_logo_{{ item_index }}"
                                                        accept="image/png,image/jpeg,image/bmp,image/gif"
                                                        style="display: none;"
-                                                       disabled
-                                                       aria-disabled="true">
+                                                       onchange="handleCustomFeedLogoUpload(event, '{{ field_id }}', {{ item_index }}, '{{ plugin_id }}', '{{ full_key }}')">
                                                 <button type="button" 
-                                                        disabled
-                                                        aria-disabled="true"
-                                                        class="px-2 py-1 text-xs bg-gray-200 text-gray-400 rounded cursor-not-allowed opacity-50"
-                                                        title="Logo upload for custom feeds is not yet implemented">
+                                                        onclick="document.getElementById('{{ field_id }}_logo_{{ item_index }}').click()"
+                                                        class="px-2 py-1 text-xs bg-gray-200 hover:bg-gray-300 rounded">
                                                     <i class="fas fa-upload mr-1"></i> Upload
                                                 </button>
                                                 {% if logo_path %}
@@ -274,7 +275,7 @@
                                 </tbody>
                             </table>
                             <button type="button" 
-                                    onclick="addCustomFeedRow('{{ field_id }}', '{{ full_key }}', {{ max_items }})"
+                                    onclick="addCustomFeedRow('{{ field_id }}', '{{ full_key }}', {{ max_items }}, '{{ plugin_id }}')"
                                     class="mt-3 px-4 py-2 text-sm bg-blue-600 hover:bg-blue-700 text-white rounded-md"
                                     {% if array_value|length >= max_items %}disabled style="opacity: 0.5;"{% endif %}>
                                 <i class="fas fa-plus mr-1"></i> Add Feed
