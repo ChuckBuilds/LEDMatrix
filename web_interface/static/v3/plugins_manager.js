@@ -2506,18 +2506,20 @@ function renderArrayObjectItem(fieldId, fullKey, itemProperties, itemValue, inde
             const logoValue = propValue || {};
             
             // Display existing logo if present, but disable upload functionality
+            // Store file metadata in data-file-data attribute for serialization
             if (logoValue.path) {
+                const fileDataJson = JSON.stringify(logoValue).replace(/'/g, "&#39;").replace(/"/g, "&quot;");
                 html += `
-                    <div class="file-upload-widget-inline">
+                    <div class="file-upload-widget-inline" data-file-data='${fileDataJson}' data-prop-key="${propKey}">
                         <div class="mt-2 flex items-center space-x-2">
-                            <img src="/${logoValue.path}" alt="Logo" class="w-16 h-16 object-cover rounded border">
+                            <img src="/${escapeHtml(logoValue.path)}" alt="Logo" class="w-16 h-16 object-cover rounded border">
                             <span class="text-sm text-gray-500 italic">File upload not yet available for array items</span>
                         </div>
                     </div>
                 `;
             } else {
                 html += `
-                    <div class="file-upload-widget-inline">
+                    <div class="file-upload-widget-inline" data-prop-key="${propKey}">
                         <button type="button" 
                                 disabled
                                 class="px-3 py-2 text-sm bg-gray-200 text-gray-400 rounded-md cursor-not-allowed opacity-50"
@@ -2567,11 +2569,13 @@ function renderArrayObjectItem(fieldId, fullKey, itemProperties, itemValue, inde
         html += `</div>`;
     });
     
+    // Use schema-driven label for remove button, fallback to generic "Remove item"
+    const removeLabel = itemsSchema['x-removeLabel'] || 'Remove item';
     html += `
         <button type="button" 
                 onclick="removeArrayObjectItem('${fieldId}', ${index})"
                 class="mt-2 px-3 py-2 text-sm text-red-600 hover:text-red-800 hover:bg-red-50 rounded-md transition-colors">
-            <i class="fas fa-trash mr-1"></i> Remove Feed
+            <i class="fas fa-trash mr-1"></i> ${escapeHtml(removeLabel)}
         </button>
     </div>`;
     

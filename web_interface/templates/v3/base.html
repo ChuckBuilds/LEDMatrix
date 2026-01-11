@@ -4822,7 +4822,7 @@
     
     <!-- Custom feeds table helper functions -->
     <script>
-        function addCustomFeedRow(fieldId, fullKey, maxItems) {
+        function addCustomFeedRow(fieldId, fullKey, maxItems, pluginId) {
             const tbody = document.getElementById(fieldId + '_tbody');
             if (!tbody) return;
             
@@ -4859,7 +4859,7 @@
                                id="${fieldId}_logo_${newIndex}"
                                accept="image/png,image/jpeg,image/bmp,image/gif"
                                style="display: none;"
-                               onchange="handleCustomFeedLogoUpload(event, '${fieldId}', ${newIndex}, 'ledmatrix-news', '${fullKey}')">
+                               onchange="handleCustomFeedLogoUpload(event, '${fieldId}', ${newIndex}, '${pluginId}', '${fullKey}')">
                         <button type="button" 
                                 onclick="document.getElementById('${fieldId}_logo_${newIndex}').click()"
                                 class="px-2 py-1 text-xs bg-gray-200 hover:bg-gray-300 rounded">
@@ -4869,7 +4869,6 @@
                     </div>
                 </td>
                 <td class="px-4 py-3 whitespace-nowrap text-center">
-                    <input type="hidden" name="${fullKey}.${newIndex}.enabled" value="false">
                     <input type="checkbox" 
                            name="${fullKey}.${newIndex}.enabled"
                            checked

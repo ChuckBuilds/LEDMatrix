@@ -68,13 +68,17 @@ fi
 echo ""
 
 echo "8. Latest installation log:"
-LOG_FILE=$(ls -t /home/ledpi/LEDMatrix/logs/first_time_install_*.log 2>/dev/null | head -1)
+# Determine project root directory (parent of scripts/install/)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
+LOG_DIR="$PROJECT_ROOT_DIR/logs"
+LOG_FILE=$(ls -t "$LOG_DIR"/first_time_install_*.log 2>/dev/null | head -1)
 if [ -n "$LOG_FILE" ]; then
     echo "   Found: $LOG_FILE"
     echo "   Last 30 lines:"
     tail -30 "$LOG_FILE" | sed 's/^/   /'
 else
-    echo "   No log files found in /home/ledpi/LEDMatrix/logs/"
+    echo "   No log files found in $LOG_DIR/"
 fi
 echo ""
 
