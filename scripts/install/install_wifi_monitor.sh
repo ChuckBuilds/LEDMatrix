@@ -40,39 +40,22 @@ if ! command -v nmcli >/dev/null 2>&1 && ! command -v iwlist >/dev/null 2>&1; th
 fi
 
 if [ ${#MISSING_PACKAGES[@]} -gt 0 ]; then
-    echo "⚠ The following packages are required for WiFi setup:"
+    echo "Installing required packages for WiFi setup:"
     for pkg in "${MISSING_PACKAGES[@]}"; do
         echo "  - $pkg"
     done
     echo ""
     
-    # Check for non-interactive mode (ASSUME_YES or LEDMATRIX_ASSUME_YES)
-    # If called from installation script, always install packages automatically
-    ASSUME_YES=${ASSUME_YES:-${LEDMATRIX_ASSUME_YES:-0}}
-    if [ "$ASSUME_YES" = "1" ] || [ ! -t 0 ]; then
-        # Non-interactive mode - install packages automatically
-        # Use apt directly if running as root, otherwise use sudo
-        echo "Installing required packages automatically..."
-        if [ "$EUID" -eq 0 ]; then
-            apt update
-            apt install -y "${MISSING_PACKAGES[@]}"
-        else
-            sudo apt update
-            sudo apt install -y "${MISSING_PACKAGES[@]}"
-        fi
-        echo "✓ Packages installed"
+    # Install packages automatically (no prompt)
+    # Use apt directly if running as root, otherwise use sudo
+    if [ "$EUID" -eq 0 ]; then
+        apt update
+        apt install -y "${MISSING_PACKAGES[@]}"
     else
-        # Interactive mode - ask user
-        read -p "Install these packages now? (y/N): " -n 1 -r
-        echo ""
-        if [[ $REPLY =~ ^[Yy]$ ]]; then
-            sudo apt update
-            sudo apt install -y "${MISSING_PACKAGES[@]}"
-            echo "✓ Packages installed"
-        else
-            echo "⚠ Skipping package installation. WiFi setup may not work correctly."
-        fi
+        sudo apt update
+        sudo apt install -y "${MISSING_PACKAGES[@]}"
     fi
+    echo "✓ Packages installed"
 fi
 
 # Create service file with correct paths
@@ -161,20 +144,8 @@ if [ "$WIFI_CONNECTED" = false ] && [ "$ETHERNET_CONNECTED" = false ]; then
     echo "  2. Or connect via Ethernet cable"
     echo "  3. Or proceed with installation - you can connect to LEDMatrix-Setup AP after reboot"
     echo ""
-    # Check for non-interactive mode (ASSUME_YES or LEDMATRIX_ASSUME_YES)
-    ASSUME_YES=${ASSUME_YES:-${LEDMATRIX_ASSUME_YES:-0}}
-    if [ "$ASSUME_YES" != "1" ] && [ -t 0 ]; then
-        # Interactive mode - ask user
-        read -p "Continue with WiFi monitor installation? (y/N): " -n 1 -r
-        echo ""
-        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-            echo "Installation cancelled. Connect to WiFi/Ethernet and run this script again."
-            exit 0
-        fi
-    else
-        # Non-interactive mode - proceed automatically
-        echo "Non-interactive mode: proceeding with WiFi monitor installation..."
-    fi
+    echo "Proceeding with WiFi monitor installation..."
+    echo "  (WiFi monitor will enable AP mode if no network connection is detected)"
 fi
 
 # Reload systemd
