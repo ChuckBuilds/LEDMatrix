@@ -229,8 +229,8 @@ main() {
     fi
     
     # Install git and curl (needed for cloning and the script itself)
-    if ! command -v git >/dev/null 2>&1; then
-        print_warning "git not found, installing..."
+    if ! command -v git >/dev/null 2>&1 || ! command -v curl >/dev/null 2>&1; then
+        print_warning "git or curl not found, installing..."
         if [ "$EUID" -eq 0 ]; then
             retry apt-get install -y git curl
         else
@@ -238,7 +238,7 @@ main() {
         fi
         print_success "git and curl installed"
     else
-        print_success "git already installed"
+        print_success "git and curl already installed"
     fi
     
     # Determine repository location
@@ -373,9 +373,17 @@ main() {
         echo "Next steps:"
         echo "  1. Configure your settings: sudo nano $REPO_DIR/config/config.json"
         if command -v hostname >/dev/null 2>&1; then
-            IP_ADDRESS=$(hostname -I 2>/dev/null | awk '{print $1}' || echo "")
-            if [ -n "$IP_ADDRESS" ] && [ "$IP_ADDRESS" != "127.0.0.1" ]; then
-                echo "  2. Or use the web interface: http://$IP_ADDRESS:5000"
+            # Get first usable IP address (filter out loopback, IPv6 loopback, and link-local)
+            IP_ADDRESS=$(hostname -I 2>/dev/null | awk '{for(i=1;i<=NF;i++){ip=$i; if(ip!="127.0.0.1" && ip!="::1" && substr(ip,1,5)!="fe80:"){print ip; exit}}}' || echo "")
+            if [ -n "$IP_ADDRESS" ]; then
+                # Check if IPv6 address (contains colons but no periods)
+                if [[ "$IP_ADDRESS" =~ .*:.* ]] && [[ ! "$IP_ADDRESS" =~ .*\..* ]]; then
+                    # IPv6 addresses need brackets in URLs
+                    echo "  2. Or use the web interface: http://[$IP_ADDRESS]:5000"
+                else
+                    # IPv4 address
+                    echo "  2. Or use the web interface: http://$IP_ADDRESS:5000"
+                fi
             else
                 echo "  2. Or use the web interface: http://<your-pi-ip>:5000"
             fi

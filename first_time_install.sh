@@ -1408,15 +1408,15 @@ if command -v hostname >/dev/null 2>&1; then
     # Get IP addresses and filter out empty lines
     IPS=$(hostname -I 2>/dev/null || echo "")
     if [ -n "$IPS" ]; then
-        # Use a more reliable method to process IPs
-        FOUND_IPS=0
-        for ip in $IPS; do
-            # Filter out loopback and empty strings
-            if [ -n "$ip" ] && [ "$ip" != "127.0.0.1" ] && [ "$ip" != "::1" ]; then
-                echo "  - $ip"
-                FOUND_IPS=1
-            fi
-        done
+            # Use a more reliable method to process IPs
+            FOUND_IPS=0
+            for ip in $IPS; do
+                # Filter out loopback, empty strings, and IPv6 link-local addresses (fe80:)
+                if [ -n "$ip" ] && [ "$ip" != "127.0.0.1" ] && [ "$ip" != "::1" ] && ! [[ "$ip" =~ ^fe80: ]]; then
+                    echo "  - $ip"
+                    FOUND_IPS=1
+                fi
+            done
         if [ "$FOUND_IPS" -eq 0 ]; then
             echo "  ⚠ No non-loopback IP addresses found"
         fi
