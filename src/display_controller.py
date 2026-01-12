@@ -250,7 +250,16 @@ class DisplayController:
                         # Get plugin instance and manifest
                         plugin_instance = self.plugin_manager.get_plugin(plugin_id)
                         manifest = self.plugin_manager.plugin_manifests.get(plugin_id, {})
-                        display_modes = manifest.get('display_modes', [plugin_id])
+                        
+                        # Prefer plugin's modes attribute if available (dynamic based on enabled leagues)
+                        # Fall back to manifest display_modes if plugin doesn't provide modes
+                        if plugin_instance and hasattr(plugin_instance, 'modes') and plugin_instance.modes:
+                            display_modes = list(plugin_instance.modes)
+                            logger.debug("Using plugin.modes for %s: %s", plugin_id, display_modes)
+                        else:
+                            display_modes = manifest.get('display_modes', [plugin_id])
+                            logger.debug("Using manifest display_modes for %s: %s", plugin_id, display_modes)
+                        
                         if isinstance(display_modes, list) and display_modes:
                             self.plugin_display_modes[plugin_id] = list(display_modes)
                         else:
