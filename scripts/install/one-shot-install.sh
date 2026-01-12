@@ -264,15 +264,24 @@ main() {
                 CURRENT_BRANCH="main"
             fi
             
-            # Try to pull from current branch, fallback to main, then master
+            # Try to safely update current branch first (fast-forward only to avoid unintended merges)
             PULL_SUCCESS=false
-            for branch in "$CURRENT_BRANCH" "main" "master"; do
-                if git pull origin "$branch" >/dev/null 2>&1; then
-                    print_success "Repository updated successfully (branch: $branch)"
-                    PULL_SUCCESS=true
-                    break
-                fi
-            done
+            if git pull --ff-only origin "$CURRENT_BRANCH" >/dev/null 2>&1; then
+                print_success "Repository updated successfully (branch: $CURRENT_BRANCH)"
+                PULL_SUCCESS=true
+            else
+                # Current branch pull failed, check if other branches exist on remote
+                # Fetch (don't merge) to verify remote branches exist
+                for branch in "main" "master"; do
+                    if [ "$branch" != "$CURRENT_BRANCH" ]; then
+                        if git fetch origin "$branch" >/dev/null 2>&1; then
+                            print_warning "Current branch ($CURRENT_BRANCH) could not be updated, but remote branch '$branch' exists"
+                            print_warning "Consider switching branches or resolving conflicts"
+                            break
+                        fi
+                    fi
+                done
+            fi
             
             if [ "$PULL_SUCCESS" = false ]; then
                 print_warning "Git pull failed, but continuing with existing repository"
