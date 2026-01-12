@@ -136,9 +136,12 @@ class ScrollHelper:
             return self.cached_image
         
         # Calculate total width needed
+        # Sum of all item widths
         total_width = sum(img.width for img in content_items)
+        # Add item gaps between items (not after last item)
         total_width += item_gap * (len(content_items) - 1)
-        total_width += element_gap * (len(content_items) * 2 - 1)
+        # Add element_gap after each item (matches positioning logic)
+        total_width += element_gap * len(content_items)
         
         # Add initial gap before first item
         total_width += self.display_width
@@ -162,7 +165,20 @@ class ScrollHelper:
         self.cached_image = full_image
         # Convert to numpy array for fast operations
         self.cached_array = np.array(full_image)
-        self.total_scroll_width = total_width
+        
+        # Use actual image width instead of calculated width to ensure accuracy
+        # This fixes cases where width calculation doesn't match actual positioning
+        actual_image_width = full_image.width
+        self.total_scroll_width = actual_image_width
+        
+        # Log if there's a mismatch (indicating a bug in width calculation)
+        if actual_image_width != total_width:
+            self.logger.warning(
+                "Width calculation mismatch: calculated=%dpx, actual=%dpx (diff=%dpx). "
+                "Using actual width for scroll calculations.",
+                total_width, actual_image_width, abs(actual_image_width - total_width)
+            )
+        
         self.scroll_position = 0.0
         self.total_distance_scrolled = 0.0
         self.scroll_complete = False
@@ -184,7 +200,11 @@ class ScrollHelper:
             self.duration_buffer,
         )
         
-        self.logger.debug(f"Created scrolling image: {total_width}x{self.display_height}")
+        self.logger.info(
+            "Created scrolling image: %dx%dpx (total_scroll_width=%dpx, %d items, item_gap=%d, element_gap=%d)",
+            actual_image_width, self.display_height, self.total_scroll_width,
+            len(content_items), item_gap, element_gap
+        )
         return full_image
     
     def update_scroll_position(self) -> None:
@@ -248,11 +268,17 @@ class ScrollHelper:
         if is_complete:
             # Only log completion once to avoid spam
             if not self.scroll_complete:
-                elapsed = current_time - self.scroll_start_time
+                elapsed = current_time - (self.scroll_start_time or current_time)
+                scroll_percent = (self.total_distance_scrolled / required_total_distance * 100) if required_total_distance > 0 else 0.0
+                position_percent = (self.scroll_position / self.total_scroll_width * 100) if self.total_scroll_width > 0 else 0.0
                 self.logger.info(
-                    "Scroll cycle COMPLETE: scrolled %.0f/%d px (elapsed %.2fs, target %.2fs)",
+                    "Scroll cycle COMPLETE: scrolled %.0f/%d px (%.1f%%, position=%.0f/%.0f px, %.1f%%) - elapsed %.2fs, target %.2fs",
                     self.total_distance_scrolled,
                     required_total_distance,
+                    scroll_percent,
+                    self.scroll_position,
+                    self.total_scroll_width,
+                    position_percent,
                     elapsed,
                     self.calculated_duration,
                 )
@@ -261,6 +287,7 @@ class ScrollHelper:
             # Clamp position to prevent wrap when complete
             if self.scroll_position >= self.total_scroll_width:
                 self.scroll_position = self.total_scroll_width - 1
+                self.logger.debug("Clamped scroll position to %d (max=%d)", self.scroll_position, self.total_scroll_width - 1)
         else:
             self.scroll_complete = False
             

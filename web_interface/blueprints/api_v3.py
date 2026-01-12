@@ -3353,7 +3353,7 @@ def save_plugin_config():
                     if key in form_data:
                         del form_data[key]
             
-            # Process bracket notation fields and add to form_data as JSON strings
+            # Process bracket notation fields and set directly in plugin_config
             # Use JSON encoding instead of comma-join to handle values containing commas
             import json
             for base_path, values in bracket_array_fields.items():
@@ -3362,11 +3362,13 @@ def save_plugin_config():
                 if base_prop and base_prop.get('type') == 'array':
                     # Filter out empty values and sentinel empty strings
                     filtered_values = [v for v in values if v and v.strip()]
-                    # Encode as JSON array string (handles values with commas correctly)
-                    # Empty array (all unchecked) is represented as "[]"
-                    combined_value = json.dumps(filtered_values)
-                    form_data[base_path] = combined_value
-                    logger.debug(f"Processed bracket notation array field {base_path}: {values} -> {combined_value}")
+                    # Set directly in plugin_config (values are already strings, no need to parse)
+                    # Empty array (all unchecked) is represented as []
+                    _set_nested_value(plugin_config, base_path, filtered_values)
+                    logger.debug(f"Processed bracket notation array field {base_path}: {values} -> {filtered_values}")
+                    # Remove from form_data to avoid double processing
+                    if base_path in form_data:
+                        del form_data[base_path]
 
             # Second pass: detect and combine array index fields (e.g., "text_color.0", "text_color.1" -> "text_color" as array)
             # This handles cases where forms send array fields as indexed inputs
