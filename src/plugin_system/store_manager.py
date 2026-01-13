@@ -838,7 +838,7 @@ class PluginStoreManager:
                     # Update plugin_id to match manifest for rest of function
                     plugin_id = manifest_plugin_id
 
-                required_fields = ['id', 'name', 'class_name', 'version', 'display_modes']
+                required_fields = ['id', 'name', 'class_name', 'display_modes']
                 missing = [field for field in required_fields if field not in manifest]
 
                 manifest_modified = False
@@ -976,7 +976,7 @@ class PluginStoreManager:
                 }
             
             # Validate manifest has required fields
-            required_fields = ['id', 'name', 'class_name', 'version', 'display_modes']
+            required_fields = ['id', 'name', 'class_name', 'display_modes']
             missing_fields = [field for field in required_fields if field not in manifest]
             if missing_fields:
                 return {
