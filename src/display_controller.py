@@ -1466,8 +1466,9 @@ class DisplayController:
                             has_enable_scrolling = hasattr(manager_to_display, 'enable_scrolling')
                             enable_scrolling_value = getattr(manager_to_display, 'enable_scrolling', False)
                             needs_high_fps = has_enable_scrolling and enable_scrolling_value
-                            logger.debug(
-                                "FPS check - has_enable_scrolling: %s, enable_scrolling_value: %s, needs_high_fps: %s",
+                            logger.info(
+                                "FPS check for %s - has_enable_scrolling: %s, enable_scrolling_value: %s, needs_high_fps: %s",
+                                active_mode,
                                 has_enable_scrolling,
                                 enable_scrolling_value,
                                 needs_high_fps,
