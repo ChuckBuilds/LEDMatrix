@@ -2477,7 +2477,10 @@ function flattenConfig(obj, prefix = '') {
 function renderArrayObjectItem(fieldId, fullKey, itemProperties, itemValue, index, itemsSchema) {
     const item = itemValue || {};
     const itemId = `${escapeAttribute(fieldId)}_item_${index}`;
-    let html = `<div class="border border-gray-300 rounded-lg p-4 bg-gray-50 array-object-item" data-index="${index}">`;
+    // Store original item data in data attribute to preserve non-editable properties after reindexing
+    const itemDataJson = JSON.stringify(item);
+    const itemDataBase64 = btoa(unescape(encodeURIComponent(itemDataJson)));
+    let html = `<div id="${itemId}" class="border border-gray-300 rounded-lg p-4 bg-gray-50 array-object-item" data-index="${index}" data-item-data="${escapeAttribute(itemDataBase64)}">`;
     
     // Render each property of the object
     const propertyOrder = itemsSchema['x-propertyOrder'] || Object.keys(itemProperties);
@@ -2538,12 +2541,6 @@ function renderArrayObjectItem(fieldId, fullKey, itemProperties, itemValue, inde
             html += `
                 <label class="flex items-center">
                     <input type="checkbox" 
-<<<<<<< HEAD
-                           id="${itemId}_${propKey}"
-                           name="${itemId}_${propKey}"
-                           data-prop-key="${propKey}"
-                           class="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
-                           ${propValue ? 'checked' : ''}
                            id="${escapeAttribute(itemId)}_${escapeAttribute(propKey)}"
                            data-prop-key="${escapeAttribute(propKey)}"
                            class="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
@@ -2891,7 +2888,6 @@ function generateFieldHtml(key, prop, value, prefix = '') {
             <input type="number" id="${fullKey}" name="${fullKey}" value="${fieldValue}" ${min} ${max} ${step} class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm bg-white text-black placeholder:text-gray-500">
         `;
     } else if (prop.type === 'array') {
-<<<<<<< HEAD
         // Check if this is an array of objects FIRST (before other checks)
         if (prop.items && prop.items.type === 'object' && prop.items.properties) {
             // Array of objects widget (like custom_feeds with name, url, enabled, logo)
@@ -2924,7 +2920,8 @@ function generateFieldHtml(key, prop, value, prefix = '') {
                 </div>
             `;
         } else {
-            // Check if this is a file upload widget - try multiple ways to access x-widget
+            // Array - check for file upload widget first (to avoid breaking static-image plugin), 
+            // then checkbox-group, then custom-feeds
             const hasXWidget = prop.hasOwnProperty('x-widget');
             const xWidgetValue = prop['x-widget'];
             const xWidgetValue2 = prop['x-widget'] || prop['x_widget'] || prop.xWidget;
@@ -2942,27 +2939,8 @@ function generateFieldHtml(key, prop, value, prefix = '') {
                 value: value
             });
         
-        // Array - check for file upload widget first (to avoid breaking static-image plugin), 
-        // then checkbox-group, then custom-feeds, then array of objects
-        const hasXWidget = prop.hasOwnProperty('x-widget');
-        const xWidgetValue = prop['x-widget'];
-        const xWidgetValue2 = prop['x-widget'] || prop['x_widget'] || prop.xWidget;
-        
-        console.log(`[DEBUG] Array field ${fullKey}:`, {
-            type: prop.type,
-            hasItems: !!prop.items,
-            itemsType: prop.items?.type,
-            itemsHasProperties: !!prop.items?.properties,
-            hasXWidget: hasXWidget,
-            'x-widget': xWidgetValue,
-            'x-widget (alt)': xWidgetValue2,
-            'x-upload-config': prop['x-upload-config'],
-            propKeys: Object.keys(prop),
-            value: value
-        });
-        
-        // Check for file-upload widget FIRST (to avoid breaking static-image plugin)
-        if (xWidgetValue === 'file-upload' || xWidgetValue2 === 'file-upload') {
+            // Check for file-upload widget FIRST (to avoid breaking static-image plugin)
+            if (xWidgetValue === 'file-upload' || xWidgetValue2 === 'file-upload') {
             console.log(`[DEBUG] ✅ Detected file-upload widget for ${fullKey} - rendering upload zone`);
             const uploadConfig = prop['x-upload-config'] || {};
             const pluginId = uploadConfig.plugin_id || currentPluginConfig?.pluginId || 'static-image';
@@ -3134,57 +3112,6 @@ function generateFieldHtml(key, prop, value, prefix = '') {
                     <p class="text-sm text-gray-600 mt-1">Enter values separated by commas (custom feeds table rendered server-side)</p>
                 `;
             }
-        } else if (prop.items && prop.items.type === 'object' && prop.items.properties) {
-            // Array of objects widget (generic fallback - like custom_feeds with name, url, enabled, logo)
-            console.log(`[DEBUG] ✅ Detected array-of-objects widget for ${fullKey}`);
-            const fieldId = fullKey.replace(/\./g, '_');
-            const itemsSchema = prop.items;
-            const itemProperties = itemsSchema.properties || {};
-            const maxItems = prop.maxItems || 50;
-            const currentItems = Array.isArray(value) ? value : [];
-            
-            html += `
-                <div class="array-of-objects-container mt-1">
-                    <div id="${fieldId}_items" class="space-y-4">
-            `;
-            
-            // Render existing items
-            currentItems.forEach((item, index) => {
-                if (typeof window.renderArrayObjectItem === 'function') {
-                    html += window.renderArrayObjectItem(fieldId, fullKey, itemProperties, item, index, itemsSchema);
-                } else {
-                    // Fallback: create basic HTML structure
-                    html += `<div class="border border-gray-300 rounded-lg p-4 bg-gray-50 array-object-item" data-index="${index}">`;
-                    Object.keys(itemProperties || {}).forEach(propKey => {
-                        const propSchema = itemProperties[propKey];
-                        const propValue = item[propKey] !== undefined ? item[propKey] : propSchema.default;
-                        const propLabel = propSchema.title || propKey.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
-                        html += `<div class="mb-3"><label class="block text-sm font-medium text-gray-700 mb-1">${escapeHtml(propLabel)}</label>`;
-                        if (propSchema.type === 'boolean') {
-                            const checked = propValue ? 'checked' : '';
-                            html += `<input type="checkbox" data-prop-key="${propKey}" ${checked} class="h-4 w-4 text-blue-600" onchange="window.updateArrayObjectData('${fieldId}')">`;
-                        } else {
-                            // Escape HTML to prevent XSS
-                            const escapedValue = typeof propValue === 'string' ? propValue.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;') : (propValue || '');
-                            html += `<input type="text" data-prop-key="${propKey}" value="${escapedValue}" class="block w-full px-3 py-2 border border-gray-300 rounded-md" onchange="window.updateArrayObjectData('${fieldId}')">`;
-                        }
-                        html += `</div>`;
-                    });
-                    html += `<button type="button" onclick="window.removeArrayObjectItem('${fieldId}', ${index})" class="mt-2 px-3 py-2 text-red-600 hover:text-red-800">Remove</button></div>`;
-                }
-            });
-            
-            html += `
-                    </div>
-                    <button type="button" 
-                            onclick="window.addArrayObjectItem('${fieldId}', '${fullKey}', ${maxItems})"
-                            class="mt-3 px-4 py-2 text-sm bg-blue-600 hover:bg-blue-700 text-white rounded-md transition-colors"
-                            ${currentItems.length >= maxItems ? 'disabled style="opacity: 0.5; cursor: not-allowed;"' : ''}>
-                        <i class="fas fa-plus mr-1"></i> Add Item
-                    </button>
-                    <input type="hidden" id="${fieldId}_data" name="${fullKey}_data" value='${JSON.stringify(currentItems).replace(/'/g, "&#39;")}'>
-                </div>
-            `;
         } else {
             // Regular array input (comma-separated)
             console.log(`[DEBUG] ❌ No special widget detected for ${fullKey}, using regular array input`);
@@ -3630,6 +3557,9 @@ window.removeArrayObjectItem = function(fieldId, index) {
         const remainingItems = itemsContainer.querySelectorAll('.array-object-item');
         remainingItems.forEach((itemEl, newIndex) => {
             itemEl.setAttribute('data-index', newIndex);
+            // Update the id attribute to match new index (used by file upload selectors)
+            const newItemId = `${fieldId}_item_${newIndex}`;
+            itemEl.id = newItemId;
             // Update all inputs within this item - need to update name/id attributes
             itemEl.querySelectorAll('input, select, textarea').forEach(input => {
                 const name = input.getAttribute('name') || input.id;
@@ -3683,8 +3613,27 @@ window.updateArrayObjectData = function(fieldId) {
     const itemElements = itemsContainer.querySelectorAll('.array-object-item');
     
     itemElements.forEach((itemEl, index) => {
-        // Start with existing item data to preserve non-editable properties
-        const existingItem = (index < existingItems.length && existingItems[index]) ? existingItems[index] : {};
+        // Start with original item data from data attribute to preserve non-editable properties
+        // This avoids index-based corruption after deletions/reindexing
+        let existingItem = {};
+        const itemDataBase64 = itemEl.getAttribute('data-item-data');
+        if (itemDataBase64) {
+            try {
+                const itemDataJson = decodeURIComponent(escape(atob(itemDataBase64)));
+                existingItem = JSON.parse(itemDataJson);
+            } catch (e) {
+                console.error('Error parsing item data from data attribute:', e);
+                // Fallback to index-based lookup if data attribute is missing/corrupt
+                if (index < existingItems.length && existingItems[index]) {
+                    existingItem = existingItems[index];
+                }
+            }
+        } else {
+            // Fallback to index-based lookup if data attribute is missing
+            if (index < existingItems.length && existingItems[index]) {
+                existingItem = existingItems[index];
+            }
+        }
         const item = Object.assign({}, existingItem); // Copy existing item
         
         // Get all text inputs in this item and overlay their values
@@ -3719,6 +3668,15 @@ window.updateArrayObjectData = function(fieldId) {
             }
         });
         items.push(item);
+        
+        // Update data-item-data attribute with the merged item to keep it in sync
+        try {
+            const itemDataJson = JSON.stringify(item);
+            const itemDataBase64 = btoa(unescape(encodeURIComponent(itemDataJson)));
+            itemEl.setAttribute('data-item-data', itemDataBase64);
+        } catch (e) {
+            console.error('Error updating data-item-data attribute:', e);
+        }
     });
     
     hiddenInput.value = JSON.stringify(items);
@@ -3738,14 +3696,18 @@ window.handleArrayObjectFileUpload = async function(event, fieldId, itemIndex, p
     // Validate file type
     const allowedTypes = ['image/png', 'image/jpeg', 'image/jpg', 'image/bmp'];
     if (!allowedTypes.includes(file.type)) {
-        showNotification(`File ${file.name} is not a valid image type`, 'error');
+        if (typeof showNotification === 'function') {
+            showNotification(`File ${file.name} is not a valid image type`, 'error');
+        }
         return;
     }
     
     // Validate file size (5MB default)
     const maxSizeMB = 5;
     if (file.size > maxSizeMB * 1024 * 1024) {
-        showNotification(`File ${file.name} exceeds ${maxSizeMB}MB limit`, 'error');
+        if (typeof showNotification === 'function') {
+            showNotification(`File ${file.name} exceeds ${maxSizeMB}MB limit`, 'error');
+        }
         return;
     }
     
@@ -3795,13 +3757,19 @@ window.handleArrayObjectFileUpload = async function(event, fieldId, itemIndex, p
             // Update the hidden input with the new file data
             updateArrayObjectData(fieldId);
             
-            showNotification('Logo uploaded successfully', 'success');
+            if (typeof showNotification === 'function') {
+                showNotification('Logo uploaded successfully', 'success');
+            }
         } else {
-            showNotification(`Upload failed: ${data.message || 'Unknown error'}`, 'error');
+            if (typeof showNotification === 'function') {
+                showNotification(`Upload failed: ${data.message || 'Unknown error'}`, 'error');
+            }
         }
     } catch (error) {
         console.error('Upload error:', error);
-        showNotification(`Upload error: ${error.message}`, 'error');
+        if (typeof showNotification === 'function') {
+            showNotification(`Upload error: ${error.message}`, 'error');
+        }
     }
     
     // Clear file input
@@ -3828,7 +3796,9 @@ window.removeArrayObjectFile = function(fieldId, itemIndex, propKey) {
     // Update the hidden input to remove the file data
     updateArrayObjectData(fieldId);
     
-    showNotification('Logo removed', 'success');
+    if (typeof showNotification === 'function') {
+        showNotification('Logo removed', 'success');
+    }
 };
 
 // Function to toggle nested sections

@@ -65,8 +65,13 @@ retry() {
     local delay_seconds=5
     local status
     while true; do
-        "$@"
-        status=$?
+        # Run command in a context that disables errexit so we can capture exit code
+        # This prevents errexit from triggering before status=$? runs
+        if ! "$@"; then
+            status=$?
+        else
+            status=0
+        fi
         if [ $status -eq 0 ]; then
             return 0
         fi
