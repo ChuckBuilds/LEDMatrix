@@ -138,7 +138,7 @@ The system supports live, recent, and upcoming game information for multiple spo
 (2x in a horizontal chain is recommended)
 - [Adafruit 64×32](https://www.adafruit.com/product/2278) – designed for 128×32 but works with dynamic scaling on many displays (pixel pitch is user preference)
 - [Waveshare 64×32](https://amzn.to/3Kw55jK) - Does not require E addressable pad
-- [Waveshare 92×46](https://amzn.to/4pQdezE) – higher resolution, requires soldering the **E addressable pad** on the [Adafruit RGB Bonnet](https://www.adafruit.com/product/3211) to “8” **OR** toggling the DIP switch on the Adafruit Triple LED Matrix Bonnet *(no soldering required!)*  
+- [Waveshare 92×46](https://amzn.to/4bydNcv) – higher resolution, requires soldering the **E addressable pad** on the [Adafruit RGB Bonnet](https://www.adafruit.com/product/3211) to “8” **OR** toggling the DIP switch on the Adafruit Triple LED Matrix Bonnet *(no soldering required!)*  
   > Amazon Affiliate Link – ChuckBuilds receives a small commission on purchases  
 
 ### Power Supply
