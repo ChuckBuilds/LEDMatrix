@@ -1466,8 +1466,9 @@ class DisplayController:
                             has_enable_scrolling = hasattr(manager_to_display, 'enable_scrolling')
                             enable_scrolling_value = getattr(manager_to_display, 'enable_scrolling', False)
                             needs_high_fps = has_enable_scrolling and enable_scrolling_value
-                            logger.debug(
-                                "FPS check - has_enable_scrolling: %s, enable_scrolling_value: %s, needs_high_fps: %s",
+                            logger.info(
+                                "FPS check for %s - has_enable_scrolling: %s, enable_scrolling_value: %s, needs_high_fps: %s",
+                                active_mode,
                                 has_enable_scrolling,
                                 enable_scrolling_value,
                                 needs_high_fps,
@@ -1513,6 +1514,12 @@ class DisplayController:
                         if needs_high_fps:
                             # Ultra-smooth FPS for scrolling plugins (8ms = 125 FPS)
                             display_interval = 0.008
+                            logger.info(
+                                "Entering high-FPS loop for %s with display_interval=%.3fs (%.1f FPS)",
+                                active_mode,
+                                display_interval,
+                                1.0 / display_interval
+                            )
 
                             while True:
                                 try:
@@ -1556,6 +1563,11 @@ class DisplayController:
                         else:
                             # Normal FPS for other plugins (1 second)
                             display_interval = 1.0
+                            logger.info(
+                                "Entering normal FPS loop for %s with display_interval=%.3fs",
+                                active_mode,
+                                display_interval
+                            )
 
                             while True:
                                 time.sleep(display_interval)
