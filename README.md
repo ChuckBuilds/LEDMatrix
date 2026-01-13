@@ -1,4 +1,17 @@
 # LEDMatrix
+## Welcome to LEDMatrix! 
+Welcome to the LEDMatrix Project! This open-source project enables you to run an information-rich display on a Raspberry Pi connected to an LED RGB Matrix panel. Whether you want to see your calendar, weather forecasts, sports scores, stock prices, or any other information at a glance, LEDMatrix brings it all together.
+
+### About This Project
+
+LEDMatrix is a constantly evolving project that I'm building to create a customizable information display. The project is designed to be modular and extensible, with a plugin-based architecture that makes it easy to add new features and displays.
+
+**This project is open source and supports third-party plugin development.** I believe that great projects get better when more people are involved, and I'm excited to see what the community can build together. Whether you want to contribute to the core project, develop your own plugins, or just use and enjoy LEDMatrix, you're welcome here!
+
+### A Note from the ChuckBuilds
+I'm very new to all of this and am *heavily* relying on AI development tools to create this project. This means I'm learning as I go, and I'm grateful for your patience and feedback as the project continues to evolve and improve.
+
+I'm trying to be open to constructive criticism and support, as long as it's a realistic ask and aligns with my priorities on this project. If you have ideas for improvements, find bugs, or want to add features to the base project, please don't hesitate to reach out on Discord or submit a pull request. Similarly, if you want to develop a plugin of your own, please do so! I'd love to see what you create.
 
 
 ### Setup video and feature walkthrough on Youtube (Outdated but still useful) : 
@@ -11,21 +24,15 @@
 - Check out the write-up on my website: https://www.chuck-builds.com/led-matrix/
 - Stay in touch on Instagram: https://www.instagram.com/ChuckBuilds/
 - Want to chat? Reach out on the ChuckBuilds Discord: https://discord.com/invite/uW36dVAtcT
-- Feeling Generous? Buy Me a Coffee : https://buymeacoffee.com/chuckbuilds              
+- Feeling Generous? Consider sponsoring this project or sending a donation (these AI credits aren't cheap!)          
 
 -----------------------------------------------------------------------------------
 
 ### Special Thanks to:
-- Hzeller @ [GitHub](https://github.com/hzeller/rpi-rgb-led-matrix) for his groundwork on controlling an LED Matrix from the Raspberry Pi
-- Basmilius @ [GitHub](https://github.com/basmilius/weather-icons/) for his free and extensive weather icons
-- nvstly @ [GitHub](https://github.com/nvstly/icons) for their Stock and Crypto Icons
-- ESPN for their sports API
-- Yahoo Finance for their Stock API
-- OpenWeatherMap for their Free Weather API
-- Randomwire @ https://www.thingiverse.com/thing:5169867 for their 4mm Pixel Pitch LED Matrix Stand 
-
-
-
+- [Hzeller](https://github.com/hzeller/rpi-rgb-led-matrix) for his groundwork on controlling an LED Matrix from the Raspberry Pi
+- [Cursor](https://cursor.com/home) for making this project possible
+- [CodeRabbit](https://github.com/coderabbitai) for fixing my PR's
+- Everyone involved in this project for their patience, input, and support
 
 -----------------------------------------------------------------------------------
 
@@ -197,22 +204,65 @@ These are not required and you can probably rig up something basic with stuff yo
 <summary>Preparing the Raspberry Pi</summary>
 
 # Preparing the Raspberry Pi
-1. Create RPI Image on a Micro-SD card (I use 16gb because I have it, size is not too important but I would use 8gb or more) using [Raspberry Pi Imager](https://www.raspberrypi.com/software/)
-2. Choose your Raspberry Pi (3B+ in my case) 
-3. For Operating System (OS), choose "Other", then choose Raspbian OS (64-bit) Lite 
-![image](https://github.com/user-attachments/assets/e8e2e806-18a8-4175-9c25-0cefaae438ea)
-4. For Storage, choose your micro-sd card
-![image](https://github.com/user-attachments/assets/05580e0a-86d5-4613-aadc-93207365c38f)
-5. Press Next then Edit Settings
-![image](https://github.com/user-attachments/assets/b392a2c9-6bf4-47d5-84b7-63a5f793a1df)
-6. Inside the OS Customization Settings, choose a name for your device. I use "ledpi". Choose a password, enter your WiFi information, and set your timezone.
-![image](https://github.com/user-attachments/assets/0c250e3e-ab3c-4f3c-ba60-6884121ab176)
-7. Under the Services Tab, make sure that SSH is enabled. I recommend using password authentication for ease of use - it is the password you just chose above.
-![image](https://github.com/user-attachments/assets/1d78d872-7bb1-466e-afb6-0ca26288673b)
-8. Then Click "Save" and Agree to Overwrite the Micro-SD card.
+
+> [!IMPORTANT]  
+> It is required to use the **NEW** Raspberry Pi Imager tool, if your tool doesn't look like my screenshots be sure to go update it.
+
+1. Create RPI Image on a Micro-SD card (I use whatever I have laying around, size is not too important but I would use 8gb or more) using [Raspberry Pi Imager](https://www.raspberrypi.com/software/)
+
+2. Choose your Raspberry Pi (3B+ in my case)
+
+<img width="512" height="361" alt="Step 1 rpi" src="https://github.com/user-attachments/assets/4d42961c-97f3-46d6-8e3f-b4ac04615ec7" />
+
+3. For Operating System (OS), choose "Other"
+
+<img width="512" height="361" alt="Step 2 Other " src="https://github.com/user-attachments/assets/166a22e8-8067-48df-9f80-50c91f573356" />
+
+5. Then choose Raspbian OS (64-bit) Lite (Trixie)
+
+<img width="512" height="361" alt="Step 4 Trixie Lite 64" src="https://github.com/user-attachments/assets/3b8590ce-b810-4dfe-9253-26e0d4f8ed1e" />
+
+6. For Storage, choose your micro-sd card
+
+> [!WARNING]  
+> Make sure it's the correct drive! Data will be erased!
+
+<img width="512" height="361" alt="Step 5 Select storage" src="https://github.com/user-attachments/assets/d2840c6b-2a07-45a4-bfd4-2a73ee790e87" />
+
+7. Choose the hostname of the device. This will be often used to access the web-ui and will be the name of the device on your network. I recommend "ledpi".
+
+<img width="512" height="361" alt="Step 6 name storage" src="https://github.com/user-attachments/assets/e782ef1e-49c6-4483-9791-96f34c27235d" />
+
+8. Choose your timezone and keyboard layout.
+
+<img width="512" height="361" alt="Step 7 Choose Timezone" src="https://github.com/user-attachments/assets/6cf38b5a-ec72-42af-93b8-e6f5b0874fa6" />
+
+9. Set your username and password. This is your "root" password and is important, make sure you remember it! We will use it to access the Raspberry Pi via SSH.
+
+<img width="512" height="361" alt="Step 8 set password for root" src="https://github.com/user-attachments/assets/5a3f9eb2-b2fd-4db3-8c51-490fff091fd4" />
+
+10. (Optional) Choose your Wi-fi network and enter wifi password. This can be changed in the future. This is also optional if you are going to connect it via ethermet.
+
+<img width="512" height="361" alt="Step 9 choose network" src="https://github.com/user-attachments/assets/0ac9c69b-d29c-454f-a6ed-ffdaa778729d" />
+
+11. Enable SSH and opt for "Use Password Authentication". You can use public key auth if you know how but for the sake of new folks, let's use the password that we chose in Step 9.
+
+<img width="512" height="361" alt="Step 10 enable Ssh and choose password authentication" src="https://github.com/user-attachments/assets/a2df9994-8be5-4785-9f4c-a2888edb5c78" />
+
+12. Disable Raspberry Pi Connect. It's a VPN / Remote Connection tool built into Raspberry Pi, it seems like there might be a subscription? Not sure but I am not using it.
+
+<img width="512" height="361" alt="step 11 disable RPI connect" src="https://github.com/user-attachments/assets/63808069-b620-49db-a102-76e2b75ad055" />
+
+13. Double check your settings then confirm by clicking "Write".
+
+<img width="512" height="361" alt="step 12 write to disk" src="https://github.com/user-attachments/assets/77a0d193-2953-4c52-971c-3069f55ac70e" />
+
+14. Final warning to be SURE that you have the correct micro-sd card inserted and selected as all data on the drive will be erased.
+
+<img width="512" height="361" alt="Step 13 be very sure you are using the right drive" src="https://github.com/user-attachments/assets/9a46447e-3be6-4838-9114-27415869a3c6" />
+
+You're done with preparing the Operating System. Once the Raspberry Pi Imager has finished writing to the micro-sd card it will let you know it is safe to eject. Eject the micro-sd card and plug it into the Raspberry Pi and turn it on.
 </details>
-
-
 
 <details>
 
@@ -220,9 +270,22 @@ These are not required and you can probably rig up something basic with stuff yo
 
 # System Setup & Installation
 
+Once your Raspberry Pi has turned on and connected to your wifi (check your router's dhcp leases) or just give it a few minutes after plugging it in. We will connect via ssh.
+
+Secure Shell (SSH) is a way to connect to the device and execute commands. On Windows, I recommend using Powershell. On MacOS or Linux, I recommend using Terminal.
+
+1. SSH into your Raspberry Pi:
+```bash
+ssh ledpi@ledpi
+```
+The format "username@hostname" is coincidentally the same for this project (which is fine) but if you changed the username, hostname, or your router's DNS doesn't recognize the hostname you would use "username@ipaddress". You can skip the username and just enter "ssh hostname" or "ssh ipaddress" and it will prompt you for a username.
+
 ## Quick Install (Recommended)
 
-SSH into your Raspberry Pi and paste this single command:
+Paste this single command into SSH using <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>V</kbd> on Windows or <kbd>Shift</kbd>+<kbd>Command</kbd>+<kbd>V</kbd> on Mac.
+
+> [!TIP]
+> Terminal can be funky about pasting with just <kbd>Ctrl</kbd>+<kbd>V</kbd>, by right click -> paste  or using <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>V</kbd> you will be able to paste without additional unwanted characters.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/ChuckBuilds/LEDMatrix/main/scripts/install/one-shot-install.sh | bash
@@ -238,8 +301,10 @@ The installation process typically takes 10-30 minutes depending on your interne
 
 **Note:** The script is safe to run multiple times and will handle existing installations gracefully.
 
-<details>
 
+
+
+<details>
 <summary>Manual Installation (Alternative)</summary>
 
 If you prefer to install manually or the one-shot installer doesn't work for your setup:
@@ -284,20 +349,21 @@ This single script installs services, dependencies, configures permissions and s
 
 ### Initial Setup
 
-Edit the project via the web interface at http://ledpi:5000  or for manual control:
+For most settings I recommend using the web interface:
+Edit the project via the web interface at http://[IP ADDRESS or HOSTNAME]:5000 or http://ledpi:5000 .
 
-1. **First-time setup**: The previous "First_time_install.sh" script should've already copied the template to create your config.json:
+If you need to manually edit your config file, you can follow the steps below:
+<details>
+<summary>Manual Config.json editing </summary>
 
-2. **Edit your configuration**: 
+  1. **First-time setup**:
+     The previous "First_time_install.sh" script should've already copied the template to create your config.json:
+
+  2. **Edit your configuration**: 
    ```bash
    sudo nano config/config.json
    ```
-or 
-
-3. **Having Issues?**: Run the First Time Script again:
-  ```bash
-  sudo ./first_time_install.sh
-  ```
+</details>
 
 
 ### Automatic Configuration Migration
@@ -308,36 +374,353 @@ The system automatically handles configuration updates:
 - **Backup protection**: Creates a backup of your current config before applying updates
 - **No conflicts**: Your custom settings are preserved while new options are added
 
-Everything is configured via `config/config.json` and `config/config_secrets.json`. The `config.json` file is not tracked by Git to prevent conflicts during updates.
+Everything is configured via `config/config.json` and `config/config_secrets.json` and are not tracked by Git to prevent conflicts during updates.
 
 </details>
 
 
-------------------------------------------------------------------------------------
-
 ## Running the Display
-<details>
-I recommend using the web-ui to control the Display but you can also run the following commands via ssh:
 
-From the project root directory:
+<details>
+<summary>Recommended: Use Web UI Quick Actions</summary>
+
+I recommend using the web-ui "Quick Actions" to control the Display.
+
+<img width="2009" height="201" alt="image" src="https://github.com/user-attachments/assets/49e4db32-05f7-43b4-b7dd-7be7aa28994c" />
+
+</details>
+
+
+## Plugins
+
+<details>
+LEDMatrix uses a plugin-based architecture where all display functionality (except the core calendar) is implemented as plugins. All managers that were previously built into the core system are now available as plugins through the Plugin Store.
+
+### Plugin Store
+See the [Plugin Store documentation](https://github.com/ChuckBuilds/ledmatrix-plugins) for detailed installation instructions.
+
+The easiest way to discover and install plugins is through the **Plugin Store** in the LEDMatrix web interface:
+
+1. Open the web interface (`http://your-pi-ip:5000`)
+2. Navigate to the **Plugin Manager** tab
+3. Browse available plugins in the Plugin Store
+4. Click **Install** on any plugin you want
+5. Configure and enable plugins through the web UI
+
+### Installing 3rd-Party Plugins
+
+You can also install plugins directly from GitHub repositories:
+
+- **Single Plugin**: Install from any GitHub repository URL
+- **Registry/Monorepo**: Install multiple plugins from a single repository
+
+See the [Plugin Store documentation](https://github.com/ChuckBuilds/ledmatrix-plugins) for detailed installation instructions.
+
+For plugin development, check out the [Hello World Plugin](https://github.com/ChuckBuilds/ledmatrix-hello-world) repository as a starter template.
+
+2. **Built-in Managers Deprecated**: The built-in managers (hockey, football, stocks, etc.) are now deprecated and have been moved to the plugin system. **You must install replacement plugins from the Plugin Store** in the web interface instead. The plugin system provides the same functionality with better maintainability and extensibility.
+</details>
+
+## Detailed Information
+
+<details>
+
+<summary>Display Settings from RGBLEDMatrix Library</summary>
+
+## Display Settings
+
+If you are copying my exact setup, you can likely leave the defaults alone. However, if you have different hardware or want to customize the display behavior, these settings allow you to fine-tune the LED matrix configuration.
+
+The display settings are located in `config/config.json` under the `"display"` key and are organized into three main sections: `hardware`, `runtime`, and `display_durations`.
+
+### Hardware Configuration (`display.hardware`)
+
+These settings control the physical hardware configuration and how the matrix is driven.
+
+#### Basic Panel Configuration
+
+- **`rows`** (integer, default: 32)
+  - Number of LED rows (vertical pixels) in each panel
+  - Common values: 16, 32, 48, 64
+  - Must match your physical panel configuration
+
+- **`cols`** (integer, default: 64)
+  - Number of LED columns (horizontal pixels) in each panel
+  - Common values: 32, 64, 96, 128
+  - Must match your physical panel configuration
+
+- **`chain_length`** (integer, default: 2)
+  - Number of LED panels chained together horizontally
+  - If you have 2 panels side-by-side, set to 2
+  - If you have 4 panels in a row, set to 4
+  - Total display width = `cols × chain_length`
+
+- **`parallel`** (integer, default: 1)
+  - Number of parallel chains (panels stacked vertically)
+  - Use 1 for a single row of panels
+  - Use 2 if you have panels stacked in two rows
+  - Total display height = `rows × parallel`
+
+#### Brightness and Visual Settings
+
+- **`brightness`** (integer, 0-100, default: 90)
+  - Display brightness level
+  - Lower values (0-50) are dimmer, higher values (50-100) are brighter
+  - Recommended: 70-90 for indoor use, 90-100 for bright environments
+  - Very high brightness may cause distortion or require more power
+
+#### Hardware Mapping
+
+- **`hardware_mapping`** (string, default: "adafruit-hat-pwm")
+  - Specifies which GPIO pin mapping to use for your hardware
+  - **`"adafruit-hat-pwm"`**: Use this for Adafruit RGB Matrix Bonnet/HAT WITH the jumper mod (PWM enabled). This is the recommended setting for Adafruit hardware with the PWM jumper soldered.
+  - **`"adafruit-hat"`**: Use this for Adafruit RGB Matrix Bonnet/HAT WITHOUT the jumper mod (no PWM). Remove `-pwm` from the value if you did not solder the jumper.
+  - **`"regular"`**: Standard GPIO pin mapping for direct GPIO connections (Generic)
+  - **`"regular-pi1"`**: Standard GPIO pin mapping for Raspberry Pi 1 (older hardware or non-standard hat mapping)
+  - Choose the option that matches your specific hardware setup, if aren't sure try them all.
+
+#### PWM (Pulse Width Modulation) Settings
+
+These settings affect color fidelity and smoothness of color transitions:
+
+- **`pwm_bits`** (integer, default: 9)
+  - Number of bits used for PWM (affects color depth)
+  - Higher values (9-11) = more color levels, smoother gradients
+  - Lower values (7-8) = fewer color levels, but may improve stability on some hardware
+  - Range: 1-11, recommended: 9-10
+
+- **`pwm_dither_bits`** (integer, default: 1)
+  - Additional dithering bits for smoother color transitions
+  - Helps reduce color banding in gradients
+  - Higher values (1-2) = smoother gradients but may impact performance
+  - Range: 0-2, recommended: 1
+
+- **`pwm_lsb_nanoseconds`** (integer, default: 130)
+  - Least significant bit timing in nanoseconds
+  - Controls the base timing for PWM signals
+  - Lower values = faster PWM, higher values = slower PWM
+  - Typical range: 100-300 nanoseconds
+  - May need adjustment if you see flickering or color issues
+
+#### Advanced Hardware Settings
+
+- **`scan_mode`** (integer, default: 0)
+  - Panel scan mode (how rows are addressed)
+  - Common values: 0 (progressive), 1 (interlaced)
+  - Most panels use 0, but some require 1
+  - Check your panel datasheet if colors appear incorrect
+
+- **`limit_refresh_rate_hz`** (integer, default: 100)
+  - Maximum refresh rate in Hz (frames per second)
+  - Caps the refresh rate for better stability
+  - Lower values (60-80) = more stable, less CPU usage
+  - Higher values (100-120) = smoother animations, more CPU usage
+  - Recommended: 80-100 for most setups
+
+- **`disable_hardware_pulsing`** (boolean, default: false)
+  - Disables hardware pulsing (usually leave as false)
+  - Set to `true` only if you experience timing issues
+  - Most users should leave this as `false`
+
+- **`inverse_colors`** (boolean, default: false)
+  - Inverts all colors (red becomes cyan, etc.)
+  - Useful if your panel has inverted color channels
+  - Set to `true` only if colors appear inverted
+
+- **`show_refresh_rate`** (boolean, default: false)
+  - Displays the current refresh rate on the matrix (for debugging)
+  - Set to `true` to see FPS on the display
+  - Useful for troubleshooting performance issues
+
+#### Advanced Panel Configuration (Advanced Users Only)
+
+These settings are typically only needed for non-standard panels or custom configurations:
+
+- **`led_rgb_sequence`** (string, default: "RGB")
+  - Color channel order for your LED panel
+  - Common values: "RGB", "RBG", "GRB", "GBR", "BRG", "BGR"
+  - Most panels use "RGB", but some use "GRB" or other orders
+  - Check your panel datasheet if colors appear wrong
+
+- **`pixel_mapper_config`** (string, default: "")
+  - Advanced pixel mapping configuration
+  - Used for custom panel layouts, rotations, or transformations
+  - Examples: "U-mapper", "Rotate:90", "Mirror:H"
+  - Leave empty unless you need custom mapping
+  - See rpi-rgb-led-matrix documentation for full options
+
+- **`row_address_type`** (integer, default: 0)
+  - How rows are addressed on the panel
+  - Most panels use 0 (direct addressing)
+  - Some panels require 1 (AB addressing) or 2 (ABC addressing)
+  - Check your panel datasheet if display appears corrupted
+
+- **`multiplexing`** (integer, default: 0)
+  - Panel multiplexing type
+  - 0 = no multiplexing (standard panels)
+  - Higher values for panels with different multiplexing schemes
+  - Check your panel datasheet for the correct value
+
+### Runtime Configuration (`display.runtime`)
+
+These settings control runtime behavior and GPIO timing:
+
+- **`gpio_slowdown`** (integer, default: 3)
+  - GPIO timing slowdown factor
+  - **Critical setting**: Must match your Raspberry Pi model for stability
+  - **Raspberry Pi 3**: Use 3
+  - **Raspberry Pi 4**: Use 4
+  - **Raspberry Pi 5**: Use 5 (or higher if needed)
+  - **Raspberry Pi Zero/1**: Use 1-2
+  - Incorrect values can cause display corruption, flickering, or system instability
+  - If you experience issues, try adjusting this value up or down by 1
+
+### Display Durations (`display.display_durations`)
+
+Controls how long each display module stays visible in seconds before switching to the next one.
+
+- **`calendar`** (integer, default: 30)
+  - Duration in seconds for the calendar display
+  - Increase for more time to read dates/events
+  - Decrease to cycle through other displays faster
+
+- **Plugin-specific durations**
+  - Each plugin can have its own duration setting
+  - Format: `"<plugin-id>": <seconds>`
+  - Example: `"hockey-scoreboard": 45` shows hockey scores for 45 seconds
+  - Example: `"weather": 20` shows weather for 20 seconds
+  - If a plugin doesn't have a duration here, it uses its default (usually 15 seconds)
+  - You can also set `display_duration` in each plugin's individual configuration
+
+**Tips for Display Durations:**
+- Longer durations (30-60 seconds) = more time to read content, slower cycling
+- Shorter durations (10-20 seconds) = faster cycling, less time per display
+- Balance based on your preference and how much information each display shows
+- For example, if you want more focus on stocks, increase the stock plugin's duration value
+
+### Display Format Settings
+
+- **`use_short_date_format`** (boolean, default: true)
+  - Use short date format (e.g., "Jan 15") instead of long format (e.g., "January 15th")
+  - Set to `false` for longer, more readable dates
+  - Set to `true` to save space and show more information
+
+### Dynamic Duration Settings (`display.dynamic_duration`)
+
+- **`max_duration_seconds`** (integer, optional)
+  - Maximum duration cap for plugins that use dynamic durations
+  - Some plugins can automatically adjust their display time based on content
+  - This setting limits how long they can extend (prevents one display from dominating)
+  - Example: If set to 60, a plugin can extend up to 60 seconds even if it requests longer
+  - Leave unset to use the default cap (typically 90 seconds)
+
+### Example Configuration
+
+```json
+{
+  "display": {
+    "hardware": {
+      "rows": 32,
+      "cols": 64,
+      "chain_length": 2,
+      "parallel": 1,
+      "brightness": 90,
+      "hardware_mapping": "adafruit-hat-pwm",
+      "scan_mode": 0,
+      "pwm_bits": 9,
+      "pwm_dither_bits": 1,
+      "pwm_lsb_nanoseconds": 130,
+      "disable_hardware_pulsing": false,
+      "inverse_colors": false,
+      "show_refresh_rate": false,
+      "limit_refresh_rate_hz": 100
+    },
+    "runtime": {
+      "gpio_slowdown": 4
+    },
+    "display_durations": {
+      "calendar": 30,
+      "hockey-scoreboard": 45,
+      "weather": 20,
+      "stocks": 25
+    },
+    "use_short_date_format": true,
+    "dynamic_duration": {
+      "max_duration_seconds": 60
+    }
+  }
+}
+```
+
+### Troubleshooting Display Settings
+
+**Display is blank or shows garbage:**
+- Check `rows`, `cols`, `chain_length`, and `parallel` match your physical setup
+- Verify `hardware_mapping` matches your HAT/connection type
+- Try adjusting `gpio_slowdown`
+- Ensure your display doesn't need the E-Addressable line
+
+**Colors are wrong or inverted:**
+- Check `led_rgb_sequence` (try "GRB" if "RGB" doesn't work)
+- Try setting `inverse_colors` to `true`
+- Verify `hardware_mapping` is correct for your hardware
+
+**Display flickers or is unstable:**
+- Increase `gpio_slowdown` by 1-2
+- Lower `limit_refresh_rate_hz` to 60-80
+- Check power supply (LED matrices need adequate power)
+
+**Display is too dim or too bright:**
+- Adjust `brightness` (0-100)
+- Very high brightness may require better power supply
+
+**Performance issues:**
+- Lower `limit_refresh_rate_hz`
+- Reduce `pwm_bits` to 8
+- Set `pwm_dither_bits` to 0
+</details>
+
+<details>
+<summary>Manual SSH Commands (for reference)</summary>
+
+The quick actions essentially just execute the following commands on the Pi.
+
+From the project root directory (ex: /home/ledpi/LEDMatrix):
+
 ```bash
 sudo python3 display_controller.py
 ```
+
 This will start the display cycle but only stays active as long as your ssh session is active.
+
+### Convenience Scripts
+
+Two convenience scripts are provided for easy service management:
+
+- `start_display.sh` - Starts the LED matrix display service
+- `stop_display.sh` - Stops the LED matrix display service
+
+Make them executable with:
+```bash
+chmod +x start_display.sh stop_display.sh
+```
+
+Then use them to control the service:
+```bash
+sudo ./start_display.sh
+sudo ./stop_display.sh
+```
+
 </details>
 
------------------------------------------------------------------------------------
-
 <details>
+<summary>Service Installation Details</summary>
 
-<summary>Run on Startup Automatically with Systemd Service Installation</summary>
-
-## Run on Startup Automatically with Systemd Service Installation
 The first time install will handle this:
 The LEDMatrix can be installed as a systemd service to run automatically at boot and be managed easily. The service runs as root to ensure proper hardware timing access for the LED matrix.
 
 ### Installing the Service (this is included in the first_time_install.sh)
-<details>
+
 1. Make the install script executable:
 ```bash
 chmod +x scripts/install/install_service.sh
@@ -353,10 +736,9 @@ The script will:
 - Install the service file with the correct paths
 - Enable the service to start on boot
 - Start the service immediately
-</details>
 
 ### Managing the Service
-<details>
+
 The following commands are available to manage the service:
 
 ```bash
@@ -378,34 +760,12 @@ sudo systemctl disable ledmatrix.service
 # Enable autostart
 sudo systemctl enable ledmatrix.service
 ```
-</details>
+
 </details>
 
 <details>
+<summary>Web Interface Installation Details</summary>
 
-<summary>Convenience Scripts</summary>
-
-### Convenience Scripts
-
-Two convenience scripts are provided for easy service management:
-
-- `start_display.sh` - Starts the LED matrix display service
-- `stop_display.sh` - Stops the LED matrix display service
-
-Make them executable with:
-```bash
-chmod +x start_display.sh stop_display.sh
-```
-
-Then use them to control the service:
-```bash
-sudo ./start_display.sh
-sudo ./stop_display.sh
-```
-</details>
------------------------------------------------------------------------------------
-
-## Web Interface Installation
 The first time install will handle this:
 The LEDMatrix system includes Web Interface that runs on port 5000 and provides real-time display preview, configuration management, and on-demand display controls.
 
@@ -499,78 +859,7 @@ sudo systemctl enable ledmatrix-web.service
 2. Verify the virtual environment is set up correctly
 3. Check file permissions and ownership
 
-
------------------------------------------------------------------------------------
-
-## Plugins
-<details>
-LEDMatrix uses a plugin-based architecture where all display functionality (except the core calendar) is implemented as plugins. All managers that were previously built into the core system are now available as plugins through the Plugin Store.
-
-### Plugin Store
-
-The easiest way to discover and install plugins is through the **Plugin Store** in the LEDMatrix web interface:
-
-1. Open the web interface (`http://your-pi-ip:5000`)
-2. Navigate to the **Plugin Manager** tab
-3. Browse available plugins in the Plugin Store
-4. Click **Install** on any plugin you want
-5. Configure and enable plugins through the web UI
-
-### Installing 3rd-Party Plugins
-
-You can also install plugins directly from GitHub repositories:
-
-- **Single Plugin**: Install from any GitHub repository URL
-- **Registry/Monorepo**: Install multiple plugins from a single repository
-
-See the [Plugin Store documentation](https://github.com/ChuckBuilds/ledmatrix-plugins) for detailed installation instructions.
-
-For plugin development, check out the [Hello World Plugin](https://github.com/ChuckBuilds/ledmatrix-hello-world) repository as a starter template.
-
-## ⚠️ Breaking Changes
-
-**Important for users upgrading from older versions:**
-
-1. **Script Path Reorganization**: Installation scripts have been moved to `scripts/install/`:
-   - `./install_service.sh` → `./scripts/install/install_service.sh`
-   - `./install_web_service.sh` → `./scripts/install/install_web_service.sh`
-   - `./configure_web_sudo.sh` → `./scripts/install/configure_web_sudo.sh`
-   
-   If you have automation, cron jobs, or custom tooling that references these scripts, you **must** update them to use the new paths. See the [Migration Guide](MIGRATION_GUIDE.md) for complete details.
-
-2. **Built-in Managers Deprecated**: The built-in managers (hockey, football, stocks, etc.) are now deprecated and have been moved to the plugin system. **You must install replacement plugins from the Plugin Store** in the web interface instead. The plugin system provides the same functionality with better maintainability and extensibility.
 </details>
------------------------------------------------------------------------------------
-
-## Information
-
-<details>
-
-<summary>Display Settings from RGBLEDMatrix Library</summary>
-
-
-## Display Settings
-If you are copying my setup, you can likely leave this alone. 
-- hardware: Configures how the matrix is driven.
-  - rows, cols, chain_length: Physical panel configuration.
-  - brightness: Display brightness (0–100).
-  - hardware_mapping: Use "adafruit-hat-pwm" for Adafruit bonnet WITH the jumper mod. Remove -pwm if you did not solder the jumper.
-  - pwm_bits, pwm_dither_bits, pwm_lsb_nanoseconds: Affect color fidelity.
-  - limit_refresh_rate_hz: Cap refresh rate for better stability.
-- runtime:
-  - gpio_slowdown: Tweak this depending on your Pi model. Match it to the generation (e.g., Pi 3 → 3, Pi 4 -> 4).
-- display_durations:
-  - Control how long each display module stays visible in seconds. For example, if you want more focus on stocks, increase that value.
-### Modules
-- Each module (weather, stocks, crypto, calendar, etc.) has enabled, update_interval, and often display_format settings.
-- Sports modules also support test_mode, live_update_interval, and favorite_teams.
-- Logos are loaded from the logo_dir path under assets/sports/...
-
-</details>
-
------------------------------------------------------------------------------------
-
-
 
 
 ### If you've read this far — thanks!  
