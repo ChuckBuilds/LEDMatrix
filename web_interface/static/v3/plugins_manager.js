@@ -2229,7 +2229,8 @@ function handlePluginConfigSubmit(e) {
                 const baseKey = key.replace(/_data$/, '');
                 const jsonValue = JSON.parse(value);
                 // Handle both objects (patternProperties) and arrays (array-of-objects)
-                if (typeof jsonValue === 'object') {
+                // Only treat as JSON-backed when it's a non-null object (null is typeof 'object' in JavaScript)
+                if (jsonValue !== null && typeof jsonValue === 'object') {
                     flatConfig[baseKey] = jsonValue;
                     console.log(`JSON data field ${baseKey}: parsed ${Array.isArray(jsonValue) ? 'array' : 'object'}`, jsonValue);
                     continue; // Skip normal processing for JSON data fields

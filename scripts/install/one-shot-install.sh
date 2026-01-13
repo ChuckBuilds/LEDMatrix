@@ -63,11 +63,13 @@ retry() {
     local attempt=1
     local max_attempts=3
     local delay_seconds=5
+    local status
     while true; do
-        if "$@"; then
+        "$@"
+        status=$?
+        if [ $status -eq 0 ]; then
             return 0
         fi
-        local status=$?
         if [ $attempt -ge $max_attempts ]; then
             print_error "Command failed after $attempt attempts: $*"
             return $status
