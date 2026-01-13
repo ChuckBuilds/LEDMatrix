@@ -3716,8 +3716,15 @@ window.handleArrayObjectFileUpload = async function(event, fieldId, itemIndex, p
     const file = event.target.files[0];
     if (!file) return;
     
-    const itemId = `${fieldId}_item_${itemIndex}`;
-    const fileUploadContainer = document.querySelector(`#${itemId} .file-upload-widget-inline`);
+    // Derive item element from event instead of constructing ID (works after reindexing)
+    const itemEl = event.target.closest('.array-object-item');
+    if (!itemEl) {
+        console.error('Array object item element not found');
+        return;
+    }
+    
+    // Find file upload container within the item element
+    const fileUploadContainer = itemEl.querySelector('.file-upload-widget-inline');
     if (!fileUploadContainer) {
         console.error('File upload container not found');
         return;
@@ -3766,6 +3773,25 @@ window.handleArrayObjectFileUpload = async function(event, fieldId, itemIndex, p
             body: formData
         });
         
+        // Check response.ok before parsing JSON to avoid parsing errors on HTTP errors
+        if (!response.ok) {
+            const errorText = await response.text();
+            let errorMessage = `Upload failed: HTTP ${response.status}`;
+            try {
+                const errorData = JSON.parse(errorText);
+                errorMessage = errorData.message || errorMessage;
+            } catch (e) {
+                // If response isn't JSON, use the text or status
+                if (errorText) {
+                    errorMessage = `Upload failed: ${errorText}`;
+                }
+            }
+            if (typeof showNotification === 'function') {
+                showNotification(errorMessage, 'error');
+            }
+            return;
+        }
+        
         const data = await response.json();
         
         if (data.status === 'success' && data.uploaded_files && data.uploaded_files.length > 0) {
@@ -3788,10 +3814,12 @@ window.handleArrayObjectFileUpload = async function(event, fieldId, itemIndex, p
             const escapedPath = escapeAttribute(uploadedFile.path.replace(/^\/+/, ''));
             const escapedFieldId = escapeAttribute(fieldId);
             const escapedPropKey = escapeAttribute(propKey);
+            // Get current item index from data-index attribute for remove button
+            const currentItemIndex = itemEl.getAttribute('data-index') || itemIndex;
             imageContainer.innerHTML = `
                 <img src="/${escapedPath}" alt="Logo" class="w-16 h-16 object-cover rounded border">
                 <button type="button" 
-                        onclick="removeArrayObjectFile('${escapedFieldId}', ${itemIndex}, '${escapedPropKey}')"
+                        onclick="removeArrayObjectFile('${escapedFieldId}', ${currentItemIndex}, '${escapedPropKey}')"
                         class="text-red-600 hover:text-red-800">
                     <i class="fas fa-trash"></i> Remove
                 </button>
