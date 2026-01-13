@@ -1514,6 +1514,12 @@ class DisplayController:
                         if needs_high_fps:
                             # Ultra-smooth FPS for scrolling plugins (8ms = 125 FPS)
                             display_interval = 0.008
+                            logger.info(
+                                "Entering high-FPS loop for %s with display_interval=%.3fs (%.1f FPS)",
+                                active_mode,
+                                display_interval,
+                                1.0 / display_interval
+                            )
 
                             while True:
                                 try:
@@ -1557,6 +1563,11 @@ class DisplayController:
                         else:
                             # Normal FPS for other plugins (1 second)
                             display_interval = 1.0
+                            logger.info(
+                                "Entering normal FPS loop for %s with display_interval=%.3fs",
+                                active_mode,
+                                display_interval
+                            )
 
                             while True:
                                 time.sleep(display_interval)
