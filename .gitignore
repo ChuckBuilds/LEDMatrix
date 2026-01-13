@@ -47,6 +47,7 @@ plugins/*
 !plugins/soccer-scoreboard/
 !plugins/calendar/
 !plugins/mqtt-notifications/
+!plugins/youtube-stats/
 !plugins/olympics-countdown/
 !plugins/ledmatrix-stocks/
 !plugins/ledmatrix-music/

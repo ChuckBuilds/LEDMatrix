@@ -172,9 +172,11 @@ check_sudo() {
 }
 
 # Fix /tmp permissions if needed (common issue when running via curl | bash)
+# Note: /tmp permission fixing is now done inline before running first_time_install.sh
+# This function is kept for backward compatibility but not actively used
 fix_tmp_permissions() {
     CURRENT_STEP="TMP directory check"
-    # Check if /tmp is writable
+    # Only fix if /tmp is actually not writable (don't preemptively fix)
     if [ ! -w /tmp ]; then
         print_warning "/tmp is not writable, attempting to fix..."
         if [ "$EUID" -eq 0 ]; then
@@ -205,7 +207,39 @@ main() {
     check_network
     check_disk_space
     check_sudo
-    fix_tmp_permissions
+    # Note: /tmp permissions are checked and fixed inline before running first_time_install.sh
+    # (only if actually wrong, not preemptively)
+    
+    # Install basic system dependencies needed for cloning
+    CURRENT_STEP="Installing system dependencies"
+    print_step "Installing system dependencies..."
+    
+    # Validate HOME variable
+    if [ -z "${HOME:-}" ]; then
+        print_error "HOME environment variable is not set"
+        echo "Please set HOME or run: export HOME=\$(eval echo ~\$(whoami))"
+        exit 1
+    fi
+    
+    # Update package list first
+    if [ "$EUID" -eq 0 ]; then
+        retry apt-get update -qq
+    else
+        retry sudo apt-get update -qq
+    fi
+    
+    # Install git and curl (needed for cloning and the script itself)
+    if ! command -v git >/dev/null 2>&1 || ! command -v curl >/dev/null 2>&1; then
+        print_warning "git or curl not found, installing..."
+        if [ "$EUID" -eq 0 ]; then
+            retry apt-get install -y git curl
+        else
+            retry sudo apt-get install -y git curl
+        fi
+        print_success "git and curl installed"
+    else
+        print_success "git and curl already installed"
+    fi
     
     # Determine repository location
     REPO_DIR="${HOME}/LEDMatrix"
@@ -219,17 +253,47 @@ main() {
         if [ -d "$REPO_DIR/.git" ]; then
             print_warning "Repository already exists at $REPO_DIR"
             print_warning "Pulling latest changes..."
-            cd "$REPO_DIR"
-            if git pull origin main >/dev/null 2>&1; then
-                print_success "Repository updated successfully"
+            if ! cd "$REPO_DIR"; then
+                print_error "Failed to change to directory: $REPO_DIR"
+                exit 1
+            fi
+            
+            # Detect current branch or try main/master
+            CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "main")
+            if [ "$CURRENT_BRANCH" = "HEAD" ] || [ -z "$CURRENT_BRANCH" ]; then
+                CURRENT_BRANCH="main"
+            fi
+            
+            # Try to safely update current branch first (fast-forward only to avoid unintended merges)
+            PULL_SUCCESS=false
+            if git pull --ff-only origin "$CURRENT_BRANCH" >/dev/null 2>&1; then
+                print_success "Repository updated successfully (branch: $CURRENT_BRANCH)"
+                PULL_SUCCESS=true
             else
+                # Current branch pull failed, check if other branches exist on remote
+                # Fetch (don't merge) to verify remote branches exist
+                for branch in "main" "master"; do
+                    if [ "$branch" != "$CURRENT_BRANCH" ]; then
+                        if git fetch origin "$branch" >/dev/null 2>&1; then
+                            print_warning "Current branch ($CURRENT_BRANCH) could not be updated, but remote branch '$branch' exists"
+                            print_warning "Consider switching branches or resolving conflicts"
+                            break
+                        fi
+                    fi
+                done
+            fi
+            
+            if [ "$PULL_SUCCESS" = false ]; then
                 print_warning "Git pull failed, but continuing with existing repository"
                 print_warning "You may have local changes or the repository may be on a different branch"
             fi
         else
             print_warning "Directory exists but is not a git repository"
             print_warning "Removing and cloning fresh..."
-            cd "$HOME"
+            if ! cd "$HOME"; then
+                print_error "Failed to change to home directory: $HOME"
+                exit 1
+            fi
             rm -rf "$REPO_DIR"
             print_success "Cloning repository..."
             retry git clone "$REPO_URL" "$REPO_DIR"
@@ -251,7 +315,10 @@ main() {
     CURRENT_STEP="Main installation"
     print_step "Running main installation script..."
     
-    cd "$REPO_DIR"
+    if ! cd "$REPO_DIR"; then
+        print_error "Failed to change to repository directory: $REPO_DIR"
+        exit 1
+    fi
     
     # Make sure the script is executable
     chmod +x first_time_install.sh
@@ -269,17 +336,31 @@ main() {
     # Temporarily disable errexit to capture exit code instead of exiting immediately
     set +e
     
-    # Fix /tmp permissions before running (ensure APT can write temp files)
+    # Check /tmp permissions - only fix if actually wrong (common in automated scenarios)
+    # When running manually, /tmp usually has correct permissions (1777)
+    TMP_PERMS=$(stat -c '%a' /tmp 2>/dev/null || echo "unknown")
+    if [ "$TMP_PERMS" != "1777" ] && [ "$TMP_PERMS" != "unknown" ]; then
+        CURRENT_STEP="Fixing /tmp permissions"
+        print_warning "/tmp has incorrect permissions ($TMP_PERMS), fixing to 1777..."
+        if [ "$EUID" -eq 0 ]; then
+            chmod 1777 /tmp 2>/dev/null || print_warning "Failed to fix /tmp permissions, continuing anyway..."
+        else
+            sudo chmod 1777 /tmp 2>/dev/null || print_warning "Failed to fix /tmp permissions, continuing anyway..."
+        fi
+    fi
+    
+    # Execute main installation script with non-interactive mode
+    CURRENT_STEP="Main installation"
+    export TMPDIR=/tmp
     if [ "$EUID" -eq 0 ]; then
-        chmod 1777 /tmp 2>/dev/null || true
-        export TMPDIR=/tmp
-        # Run in non-interactive mode with ASSUME_YES
+        # Run in non-interactive mode with ASSUME_YES (both -y flag and env var for safety)
+        export LEDMATRIX_ASSUME_YES=1
         bash ./first_time_install.sh -y
     else
-        sudo chmod 1777 /tmp 2>/dev/null || true
-        export TMPDIR=/tmp
-        # Pass environment variable for non-interactive mode and preserve TMPDIR
-        sudo -E env TMPDIR=/tmp LEDMATRIX_ASSUME_YES=1 bash ./first_time_install.sh
+        # Pass both -y flag AND environment variable for non-interactive mode
+        # This ensures it works even if the script re-executes itself with sudo
+        # Also ensure stdin is properly handled for non-interactive mode
+        sudo -E env TMPDIR=/tmp LEDMATRIX_ASSUME_YES=1 bash ./first_time_install.sh -y </dev/null
     fi
     INSTALL_EXIT_CODE=$?
     set -e  # Re-enable errexit
@@ -291,7 +372,24 @@ main() {
         echo ""
         echo "Next steps:"
         echo "  1. Configure your settings: sudo nano $REPO_DIR/config/config.json"
-        echo "  2. Or use the web interface: http://$(hostname -I | awk '{print $1}'):5000"
+        if command -v hostname >/dev/null 2>&1; then
+            # Get first usable IP address (filter out loopback, IPv6 loopback, and link-local)
+            IP_ADDRESS=$(hostname -I 2>/dev/null | awk '{for(i=1;i<=NF;i++){ip=$i; if(ip!="127.0.0.1" && ip!="::1" && substr(ip,1,5)!="fe80:"){print ip; exit}}}' || echo "")
+            if [ -n "$IP_ADDRESS" ]; then
+                # Check if IPv6 address (contains colons but no periods)
+                if [[ "$IP_ADDRESS" =~ .*:.* ]] && [[ ! "$IP_ADDRESS" =~ .*\..* ]]; then
+                    # IPv6 addresses need brackets in URLs
+                    echo "  2. Or use the web interface: http://[$IP_ADDRESS]:5000"
+                else
+                    # IPv4 address
+                    echo "  2. Or use the web interface: http://$IP_ADDRESS:5000"
+                fi
+            else
+                echo "  2. Or use the web interface: http://<your-pi-ip>:5000"
+            fi
+        else
+            echo "  2. Or use the web interface: http://<your-pi-ip>:5000"
+        fi
         echo "  3. Start the service: sudo systemctl start ledmatrix.service"
         echo ""
     else

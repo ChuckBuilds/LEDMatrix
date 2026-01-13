@@ -58,115 +58,10 @@
                    {% if field_type == 'integer' %}step="1"{% else %}step="any"{% endif %}
                    class="form-input w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 bg-white text-black placeholder:text-gray-500">
             
-            {# Array - check if it's an array of objects first, then file upload widget #}
+            {# Array - check for file upload widget first (to avoid breaking static-image plugin), then checkbox-group, then array of objects #}
             {% elif field_type == 'array' %}
-            {% set items_schema = prop.get('items') or {} %}
-            {% set is_array_of_objects = items_schema.get('type') == 'object' and items_schema.get('properties') %}
-            {% if is_array_of_objects %}
-                {# Array of objects widget (like custom_feeds with name, url, enabled, logo) #}
-                {% set item_properties = items_schema.get('properties', {}) %}
-                {% set max_items = prop.get('maxItems', 50) %}
-                {% set array_value = value if value is not none and value is iterable and value is not string else (prop.default if prop.default is defined and prop.default is iterable and prop.default is not string else []) %}
-                
-                <div class="array-of-objects-container mt-1">
-                    <div id="{{ field_id }}_items" class="space-y-4">
-                        {% for item in array_value %}
-                        {% set item_index = loop.index0 %}
-                        <div class="border border-gray-300 rounded-lg p-4 bg-gray-50 array-object-item" data-index="{{ item_index }}">
-                            {% for prop_key, prop_schema in item_properties.items() %}
-                            {% set prop_value = item.get(prop_key, prop_schema.get('default')) %}
-                            {% set prop_label = prop_schema.get('title') or prop_key|replace('_', ' ')|title %}
-                            {% set prop_description = prop_schema.get('description') or '' %}
-                            {% set prop_full_key = full_key ~ '[' ~ item_index ~ '].' ~ prop_key %}
-                            {% set prop_field_id = field_id ~ '_item_' ~ item_index ~ '_' ~ prop_key %}
-                            
-                            <div class="mb-3">
-                                {% if prop_schema.get('x-widget') == 'file-upload' %}
-                                    {# File upload widget for logo field #}
-                                    {% set upload_config = prop_schema.get('x-upload-config') or {} %}
-                                    {% set plugin_id_from_config = upload_config.get('plugin_id', plugin_id) %}
-                                    {% set allowed_types = upload_config.get('allowed_types', ['image/png', 'image/jpeg', 'image/bmp']) %}
-                                    
-                                    <label class="block text-sm font-medium text-gray-700 mb-1">{{ prop_label }}</label>
-                                    {% if prop_description %}
-                                    <p class="text-xs text-gray-500 mb-2">{{ prop_description }}</p>
-                                    {% endif %}
-                                    
-                                    <div class="file-upload-widget-inline">
-                                        <input type="file" 
-                                               id="{{ prop_field_id }}_file" 
-                                               accept="{{ allowed_types|join(',') }}"
-                                               style="display: none;"
-                                               onchange="if (typeof window.handleArrayObjectFileUpload === 'function') { window.handleArrayObjectFileUpload(event, '{{ field_id }}', {{ item_index }}, '{{ prop_key }}', '{{ plugin_id_from_config }}'); } else { console.error('handleArrayObjectFileUpload not available'); }">
-                                        <button type="button" 
-                                                onclick="document.getElementById('{{ prop_field_id }}_file').click()"
-                                                class="px-3 py-2 text-sm bg-gray-200 hover:bg-gray-300 text-gray-700 rounded-md transition-colors">
-                                            <i class="fas fa-upload mr-1"></i> Upload Logo
-                                        </button>
-                                        
-                                        {% if prop_value and prop_value.get('path') %}
-                                        <div class="mt-2 flex items-center space-x-2" data-file-data='{{ prop_value|tojson|safe }}' data-prop-key="{{ prop_key }}">
-                                            <img src="/{{ prop_value.get('path') }}" alt="Logo" class="w-16 h-16 object-cover rounded border">
-                                            <button type="button" 
-                                                    onclick="if (typeof window.removeArrayObjectFile === 'function') { window.removeArrayObjectFile('{{ field_id }}', {{ item_index }}, '{{ prop_key }}'); } else { console.error('removeArrayObjectFile not available'); }"
-                                                    class="text-red-600 hover:text-red-800">
-                                                <i class="fas fa-trash"></i> Remove
-                                            </button>
-                                        </div>
-                                        {% endif %}
-                                    </div>
-                                {% elif prop_schema.get('type') == 'boolean' %}
-                                    {# Boolean checkbox #}
-                                    <label class="flex items-center">
-                                        <input type="checkbox" 
-                                               id="{{ prop_field_id }}"
-                                               data-prop-key="{{ prop_key }}"
-                                               class="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
-                                               {% if prop_value %}checked{% endif %}
-                                               onchange="if (typeof window.updateArrayObjectData === 'function') { window.updateArrayObjectData('{{ field_id }}'); }">
-                                        <span class="ml-2 text-sm text-gray-700">{{ prop_label }}</span>
-                                    </label>
-                                {% else %}
-                                    {# Regular text/string input #}
-                                    <label for="{{ prop_field_id }}" class="block text-sm font-medium text-gray-700 mb-1">
-                                        {{ prop_label }}
-                                    </label>
-                                    {% if prop_description %}
-                                    <p class="text-xs text-gray-500 mb-1">{{ prop_description }}</p>
-                                    {% endif %}
-                                    <input type="text" 
-                                           id="{{ prop_field_id }}"
-                                           data-prop-key="{{ prop_key }}"
-                                           class="block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm bg-white text-black"
-                                           value="{{ prop_value if prop_value is not none else '' }}"
-                                           placeholder="{% if prop_schema.get('format') == 'uri' %}https://example.com/feed{% endif %}"
-                                           onchange="updateArrayObjectData('{{ field_id }}')">
-                                {% endif %}
-                            </div>
-                            {% endfor %}
-                            
-                            <div class="flex justify-end mt-2">
-                                <button type="button" 
-                                        onclick="if (typeof window.removeArrayObjectItem === 'function') { window.removeArrayObjectItem('{{ field_id }}', {{ item_index }}); } else { console.error('removeArrayObjectItem not available'); }"
-                                        class="px-3 py-2 text-red-600 hover:text-red-800 hover:bg-red-50 rounded-md transition-colors"
-                                        title="Remove Feed">
-                                    <i class="fas fa-trash mr-1"></i> Remove Feed
-                                </button>
-                            </div>
-                        </div>
-                        {% endfor %}
-                    </div>
-                    
-                    <button type="button" 
-                            onclick="if (typeof window.addArrayObjectItem === 'function') { window.addArrayObjectItem('{{ field_id }}', '{{ full_key }}', {{ max_items }}); } else { console.error('addArrayObjectItem not available'); }"
-                            class="mt-3 px-4 py-2 text-sm bg-blue-600 hover:bg-blue-700 text-white rounded-md transition-colors"
-                            {% if array_value|length >= max_items %}disabled style="opacity: 0.5; cursor: not-allowed;"{% endif %}>
-                        <i class="fas fa-plus mr-1"></i> Add Feed
-                    </button>
-                    
-                    <input type="hidden" id="{{ field_id }}_data" name="{{ full_key }}_data" value='{{ array_value|tojson|safe }}'>
-                </div>
-            {% elif prop.get('x-widget') == 'file-upload' or prop.get('x_widget') == 'file-upload' %}
+            {% set x_widget = prop.get('x-widget') or prop.get('x_widget') %}
+            {% if x_widget == 'file-upload' %}
                 {# File upload widget for arrays #}
                 {% set upload_config = prop.get('x-upload-config') or {} %}
                 {% set max_files = upload_config.get('max_files', 10) %}
@@ -257,16 +152,149 @@
                     <!-- Hidden input to store image data -->
                     <input type="hidden" id="{{ field_id }}_images_data" name="{{ full_key }}" value='{{ array_value|tojson|safe }}'>
                 </div>
+            {% elif x_widget == 'checkbox-group' %}
+                {# Checkbox group widget for multi-select arrays with enum items #}
+                {% set array_value = value if value is not none and value is iterable and value is not string else (prop.default if prop.default is defined and prop.default is iterable and prop.default is not string else []) %}
+                {% set items_schema = prop.get('items') or {} %}
+                {% set enum_items = items_schema.get('enum') or [] %}
+                {% set x_options = prop.get('x-options') or {} %}
+                {% set labels = x_options.get('labels') or {} %}
+                
+                <div class="mt-1 space-y-2">
+                    {% for option in enum_items %}
+                    {% set is_checked = option in array_value %}
+                    {% set option_label = labels.get(option, option|replace('_', ' ')|title) %}
+                    {% set checkbox_id = (field_id ~ '_' ~ option)|replace('.', '_')|replace(' ', '_') %}
+                    <label class="flex items-center cursor-pointer">
+                        <input type="checkbox" 
+                               id="{{ checkbox_id }}"
+                               name="{{ full_key }}[]"
+                               data-checkbox-group="{{ field_id }}"
+                               data-option-value="{{ option }}"
+                               value="{{ option }}"
+                               {% if is_checked %}checked{% endif %}
+                               onchange="updateCheckboxGroupData('{{ field_id }}')"
+                               class="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded">
+                        <span class="ml-2 text-sm text-gray-700">{{ option_label }}</span>
+                    </label>
+                    {% endfor %}
+                </div>
+                {# Hidden input to store selected values as JSON array (like array-of-objects pattern) #}
+                <input type="hidden" id="{{ field_id }}_data" name="{{ full_key }}_data" value='{{ (array_value|tojson|safe)|replace("'", "&#39;") }}'>
+                {# Sentinel hidden input with bracket notation to allow clearing array to [] when all unchecked #}
+                {# This ensures the field is always submitted, even when all checkboxes are unchecked #}
+                <input type="hidden" name="{{ full_key }}[]" value="">
             {% else %}
-                {# Regular array input (comma-separated) #}
-                {% set array_value = value if value is not none else (prop.default if prop.default is defined else []) %}
-                <input type="text" 
-                       id="{{ field_id }}"
-                       name="{{ full_key }}" 
-                       value="{{ array_value|join(', ') if array_value is iterable and array_value is not string else '' }}"
-                       placeholder="Enter values separated by commas"
-                       class="form-input w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 bg-white text-black placeholder:text-gray-500">
-                <p class="text-xs text-gray-400 mt-1">Separate multiple values with commas</p>
+                {# Check for custom-feeds widget first #}
+                {% set items_schema = prop.get('items') or {} %}
+                {% if x_widget == 'custom-feeds' %}
+                    {# Custom feeds table interface - widget-specific implementation #}
+                    {# Validate that required fields exist in schema #}
+                    {% set item_properties = items_schema.get('properties', {}) %}
+                    {% if not (item_properties.get('name') and item_properties.get('url')) %}
+                        {# Fallback to generic if schema doesn't match expected structure #}
+                        <p class="text-xs text-amber-600 mt-1">
+                            <i class="fas fa-exclamation-triangle mr-1"></i>
+                            Custom feeds widget requires 'name' and 'url' properties in items schema.
+                        </p>
+                    {% else %}
+                        {% set max_items = prop.get('maxItems', 50) %}
+                        {% set array_value = value if value is not none and value is iterable and value is not string else (prop.default if prop.default is defined and prop.default is iterable and prop.default is not string else []) %}
+                        
+                        <div class="custom-feeds-table-container mt-1">
+                            <table class="min-w-full divide-y divide-gray-200 border border-gray-300 rounded-lg">
+                                <thead class="bg-gray-50">
+                                    <tr>
+                                        <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Name</th>
+                                        <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">URL</th>
+                                        <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Logo</th>
+                                        <th class="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">Enabled</th>
+                                        <th class="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="{{ field_id }}_tbody" class="bg-white divide-y divide-gray-200">
+                                    {% for item in array_value %}
+                                    {% set item_index = loop.index0 %}
+                                    <tr class="custom-feed-row" data-index="{{ item_index }}">
+                                        <td class="px-4 py-3 whitespace-nowrap">
+                                            <input type="text" 
+                                                   name="{{ full_key }}.{{ item_index }}.name"
+                                                   value="{{ item.get('name', '') }}"
+                                                   class="block w-full px-2 py-1 border border-gray-300 rounded text-sm"
+                                                   placeholder="Feed Name"
+                                                   required>
+                                        </td>
+                                        <td class="px-4 py-3 whitespace-nowrap">
+                                            <input type="url" 
+                                                   name="{{ full_key }}.{{ item_index }}.url"
+                                                   value="{{ item.get('url', '') }}"
+                                                   class="block w-full px-2 py-1 border border-gray-300 rounded text-sm"
+                                                   placeholder="https://example.com/feed"
+                                                   required>
+                                        </td>
+                                        <td class="px-4 py-3 whitespace-nowrap">
+                                            {% set logo_value = item.get('logo') or {} %}
+                                            {% set logo_path = logo_value.get('path', '') %}
+                                            <div class="flex items-center space-x-2">
+                                                <input type="file" 
+                                                       id="{{ field_id }}_logo_{{ item_index }}"
+                                                       accept="image/png,image/jpeg,image/bmp,image/gif"
+                                                       style="display: none;"
+                                                       onchange="handleCustomFeedLogoUpload(event, '{{ field_id }}', {{ item_index }}, '{{ plugin_id }}', '{{ full_key }}')">
+                                                <button type="button" 
+                                                        onclick="document.getElementById('{{ field_id }}_logo_{{ item_index }}').click()"
+                                                        class="px-2 py-1 text-xs bg-gray-200 hover:bg-gray-300 rounded">
+                                                    <i class="fas fa-upload mr-1"></i> Upload
+                                                </button>
+                                                {% if logo_path %}
+                                                <img src="/{{ logo_path }}" alt="Logo" class="w-8 h-8 object-cover rounded border" id="{{ field_id }}_logo_preview_{{ item_index }}">
+                                                <input type="hidden" name="{{ full_key }}.{{ item_index }}.logo.path" value="{{ logo_path }}">
+                                                <input type="hidden" name="{{ full_key }}.{{ item_index }}.logo.id" value="{{ logo_value.get('id', '') }}">
+                                                {% else %}
+                                                <span class="text-xs text-gray-400">No logo</span>
+                                                {% endif %}
+                                            </div>
+                                        </td>
+                                        <td class="px-4 py-3 whitespace-nowrap text-center">
+                                            <input type="hidden" name="{{ full_key }}.{{ item_index }}.enabled" value="false">
+                                            <input type="checkbox" 
+                                                   name="{{ full_key }}.{{ item_index }}.enabled"
+                                                   {% if item.get('enabled', true) %}checked{% endif %}
+                                                   value="true"
+                                                   class="h-4 w-4 text-blue-600">
+                                        </td>
+                                        <td class="px-4 py-3 whitespace-nowrap text-center">
+                                            <button type="button" 
+                                                    onclick="removeCustomFeedRow(this)"
+                                                    class="text-red-600 hover:text-red-800 px-2 py-1">
+                                                <i class="fas fa-trash"></i>
+                                            </button>
+                                        </td>
+                                    </tr>
+                                    {% endfor %}
+                                </tbody>
+                            </table>
+                            <button type="button" 
+                                    onclick="addCustomFeedRow('{{ field_id }}', '{{ full_key }}', {{ max_items }}, '{{ plugin_id }}')"
+                                    class="mt-3 px-4 py-2 text-sm bg-blue-600 hover:bg-blue-700 text-white rounded-md"
+                                    {% if array_value|length >= max_items %}disabled style="opacity: 0.5;"{% endif %}>
+                                <i class="fas fa-plus mr-1"></i> Add Feed
+                            </button>
+                        </div>
+                    {% endif %}
+                {% else %}
+                    {# Generic array-of-objects would go here if needed in the future #}
+                    {# For now, fall back to regular array input (comma-separated) #}
+                    {# Regular array input (comma-separated) #}
+                    {% set array_value = value if value is not none else (prop.default if prop.default is defined else []) %}
+                    <input type="text" 
+                           id="{{ field_id }}"
+                           name="{{ full_key }}" 
+                           value="{{ array_value|join(', ') if array_value is iterable and array_value is not string else '' }}"
+                           placeholder="Enter values separated by commas"
+                           class="form-input w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 bg-white text-black placeholder:text-gray-500">
+                    <p class="text-xs text-gray-400 mt-1">Separate multiple values with commas</p>
+                {% endif %}
             {% endif %}
             
             {# Text input (default) #}

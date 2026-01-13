@@ -3338,7 +3338,42 @@ def save_plugin_config():
             # Form fields can use dot notation for nested values (e.g., "transition.type")
             form_data = request.form.to_dict()
 
-            # First pass: detect and combine array index fields (e.g., "text_color.0", "text_color.1" -> "text_color" as array)
+            # First pass: handle bracket notation array fields (e.g., "field_name[]" from checkbox-group)
+            # These fields use getlist() to preserve all values, then replace in form_data
+            # Sentinel empty value ("") allows clearing array to [] when all checkboxes unchecked
+            bracket_array_fields = {}  # Maps base field path to list of values
+            for key in request.form.keys():
+                # Check if key ends with "[]" (bracket notation for array fields)
+                if key.endswith('[]'):
+                    base_path = key[:-2]  # Remove "[]" suffix
+                    values = request.form.getlist(key)
+                    # Filter out sentinel empty string - if only sentinel present, array should be []
+                    # If sentinel + values present, use the actual values
+                    filtered_values = [v for v in values if v and v.strip()]
+                    # If no non-empty values but key exists, it means all checkboxes unchecked (empty array)
+                    bracket_array_fields[base_path] = filtered_values
+                    # Remove the bracket notation key from form_data if present
+                    if key in form_data:
+                        del form_data[key]
+            
+            # Process bracket notation fields and set directly in plugin_config
+            # Use JSON encoding instead of comma-join to handle values containing commas
+            import json
+            for base_path, values in bracket_array_fields.items():
+                # Get schema property to verify it's an array
+                base_prop = _get_schema_property(schema, base_path)
+                if base_prop and base_prop.get('type') == 'array':
+                    # Filter out empty values and sentinel empty strings
+                    filtered_values = [v for v in values if v and v.strip()]
+                    # Set directly in plugin_config (values are already strings, no need to parse)
+                    # Empty array (all unchecked) is represented as []
+                    _set_nested_value(plugin_config, base_path, filtered_values)
+                    logger.debug(f"Processed bracket notation array field {base_path}: {values} -> {filtered_values}")
+                    # Remove from form_data to avoid double processing
+                    if base_path in form_data:
+                        del form_data[base_path]
+
+            # Second pass: detect and combine array index fields (e.g., "text_color.0", "text_color.1" -> "text_color" as array)
             # This handles cases where forms send array fields as indexed inputs
             array_fields = {}  # Maps base field path to list of (index, value) tuples
             processed_keys = set()
@@ -3374,8 +3409,6 @@ def save_plugin_config():
                 # Parse as array using schema
                 parsed_value = _parse_form_value_with_schema(combined_value, base_path, schema)
                 # Debug logging
-                import logging
-                logger = logging.getLogger(__name__)
                 logger.debug(f"Combined indexed array field {base_path}: {values} -> {combined_value} -> {parsed_value}")
                 # Only set if not skipped
                 if parsed_value is not _SKIP_FIELD:
@@ -3394,8 +3427,6 @@ def save_plugin_config():
                         if schema:
                             prop = _get_schema_property(schema, key)
                             if prop and prop.get('type') == 'array':
-                                import logging
-                                logger = logging.getLogger(__name__)
                                 logger.debug(f"Array field {key}: form value='{value}' -> parsed={parsed_value}")
                         # Use helper to set nested values correctly (skips if _SKIP_FIELD)
                         if parsed_value is not _SKIP_FIELD:
@@ -3489,9 +3520,9 @@ def save_plugin_config():
                                 # If it's a dict with numeric string keys, convert to array
                                 if isinstance(current_value, dict) and not isinstance(current_value, list):
                                     try:
-                                        keys = [k for k in current_value.keys()]
-                                        if all(k.isdigit() for k in keys):
-                                            sorted_keys = sorted(keys, key=int)
+                                        keys = list(current_value.keys())
+                                        if keys and all(str(k).isdigit() for k in keys):
+                                            sorted_keys = sorted(keys, key=lambda x: int(str(x)))
                                             array_value = [current_value[k] for k in sorted_keys]
                                             # Convert array elements to correct types based on schema
                                             items_schema = prop_schema.get('items', {})
@@ -3512,7 +3543,8 @@ def save_plugin_config():
                                                 array_value = converted_array
                                             config_dict[prop_key] = array_value
                                             current_value = array_value  # Update for length check below
-                                    except (ValueError, KeyError, TypeError):
+                                    except (ValueError, KeyError, TypeError) as e:
+                                        logger.debug(f"Failed to convert {prop_key} to array: {e}")
                                         pass
 
                                 # If it's an array, ensure correct types and check minItems
@@ -3624,9 +3656,28 @@ def save_plugin_config():
 
             if schema and 'properties' in schema:
                 # First, fix any dict structures that should be arrays
+                # This must be called BEFORE validation to convert dicts with numeric keys to arrays
                 fix_array_structures(plugin_config, schema['properties'])
                 # Then, ensure None arrays get defaults
                 ensure_array_defaults(plugin_config, schema['properties'])
+                
+                # Debug: Log the structure after fixing
+                if 'feeds' in plugin_config and 'custom_feeds' in plugin_config.get('feeds', {}):
+                    custom_feeds = plugin_config['feeds']['custom_feeds']
+                    logger.debug(f"After fix_array_structures: custom_feeds type={type(custom_feeds)}, value={custom_feeds}")
+                
+                # Force fix for feeds.custom_feeds if it's still a dict (fallback)
+                if 'feeds' in plugin_config:
+                    feeds_config = plugin_config.get('feeds') or {}
+                    if feeds_config and 'custom_feeds' in feeds_config and isinstance(feeds_config['custom_feeds'], dict):
+                        custom_feeds_dict = feeds_config['custom_feeds']
+                        # Check if all keys are numeric
+                        keys = list(custom_feeds_dict.keys())
+                        if keys and all(str(k).isdigit() for k in keys):
+                            # Convert to array
+                            sorted_keys = sorted(keys, key=lambda x: int(str(x)))
+                            feeds_config['custom_feeds'] = [custom_feeds_dict[k] for k in sorted_keys]
+                            logger.info(f"Force-converted feeds.custom_feeds from dict to array: {len(feeds_config['custom_feeds'])} items")
 
         # Get schema manager instance (for JSON requests)
         schema_mgr = api_v3.schema_manager
@@ -3926,8 +3977,6 @@ def save_plugin_config():
         # Validate configuration against schema before saving
         if schema:
             # Log what we're validating for debugging
-            import logging
-            logger = logging.getLogger(__name__)
             logger.info(f"Validating config for {plugin_id}")
             logger.info(f"Config keys being validated: {list(plugin_config.keys())}")
             logger.info(f"Full config: {plugin_config}")
@@ -4041,9 +4090,7 @@ def save_plugin_config():
                 api_v3.config_manager.save_raw_file_content('secrets', current_secrets)
             except PermissionError as e:
                 # Log the error with more details
-                import logging
                 import os
-                logger = logging.getLogger(__name__)
                 secrets_path = api_v3.config_manager.secrets_path
                 secrets_dir = os.path.dirname(secrets_path) if secrets_path else None
                 
@@ -4066,9 +4113,7 @@ def save_plugin_config():
                 )
             except Exception as e:
                 # Log the error but don't fail the entire config save
-                import logging
                 import os
-                logger = logging.getLogger(__name__)
                 secrets_path = api_v3.config_manager.secrets_path
                 logger.error(f"Error saving secrets config for {plugin_id}: {e}", exc_info=True)
                 # Return error response with more context

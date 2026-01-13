@@ -772,7 +772,9 @@ class PluginStoreManager:
         plugin_path = self.plugins_dir / plugin_id
         if plugin_path.exists():
             self.logger.warning(f"Plugin directory already exists: {plugin_id}. Removing it before reinstall.")
-            shutil.rmtree(plugin_path)
+            if not self._safe_remove_directory(plugin_path):
+                self.logger.error(f"Failed to remove existing plugin directory: {plugin_path}")
+                return False
 
         try:
             branch_used = None
@@ -1005,7 +1007,11 @@ class PluginStoreManager:
             final_path = self.plugins_dir / plugin_id
             if final_path.exists():
                 self.logger.warning(f"Plugin {plugin_id} already exists, removing existing copy")
-                shutil.rmtree(final_path)
+                if not self._safe_remove_directory(final_path):
+                    return {
+                        'success': False,
+                        'error': f'Failed to remove existing plugin directory: {final_path}'
+                    }
             
             shutil.move(str(temp_dir), str(final_path))
             temp_dir = None  # Prevent cleanup since we moved it
@@ -1381,6 +1387,73 @@ class PluginStoreManager:
 
         return None
     
+    def _safe_remove_directory(self, path: Path) -> bool:
+        """
+        Safely remove a directory, handling permission errors for __pycache__ directories.
+        
+        This function attempts to remove a directory and handles permission errors
+        gracefully, especially for __pycache__ directories that may have been created
+        by Python with different permissions.
+        
+        Args:
+            path: Path to directory to remove
+            
+        Returns:
+            True if directory was removed successfully, False otherwise
+        """
+        if not path.exists():
+            return True  # Already removed
+        
+        try:
+            # First, try normal removal
+            shutil.rmtree(path)
+            return True
+        except PermissionError as e:
+            # Handle permission errors, especially for __pycache__ directories
+            self.logger.warning(f"Permission error removing {path}: {e}. Attempting to fix permissions...")
+            
+            try:
+                # Try to fix permissions on __pycache__ directories recursively
+                import stat
+                for root, _dirs, files in os.walk(path):
+                    root_path = Path(root)
+                    try:
+                        # Make directory writable (0o777 is acceptable here - temporary before deletion)
+                        os.chmod(root_path, stat.S_IRWXU | stat.S_IRWXG | stat.S_IRWXO)
+                    except (OSError, PermissionError):
+                        pass
+                    
+                    # Fix file permissions
+                    for file in files:
+                        file_path = root_path / file
+                        try:
+                            os.chmod(file_path, stat.S_IRWXU | stat.S_IRWXG | stat.S_IRWXO)
+                        except (OSError, PermissionError):
+                            pass
+                
+                # Try removal again after fixing permissions
+                shutil.rmtree(path)
+                self.logger.info(f"Successfully removed {path} after fixing permissions")
+                return True
+            except Exception as e2:
+                self.logger.exception(f"Failed to remove {path} even after fixing permissions: {e2}")
+                # Last resort: try with ignore_errors
+                try:
+                    shutil.rmtree(path, ignore_errors=True)
+                    # Check if it actually got removed
+                    if not path.exists():
+                        self.logger.warning(f"Removed {path} with ignore_errors=True (some files may remain)")
+                        return True
+                    else:
+                        self.logger.error(f"Could not remove {path} even with ignore_errors")
+                        return False
+                except Exception as e3:
+                    self.logger.exception(f"Final removal attempt failed for {path}: {e3}")
+                    return False
+        except Exception as e:
+            self.logger.exception(f"Unexpected error removing {path}: {e}")
+            return False
+    
     def _find_plugin_path(self, plugin_id: str) -> Optional[Path]:
         """
         Find the plugin path by checking the configured directory and standard plugins directory.
@@ -1432,9 +1505,12 @@ class PluginStoreManager:
         
         try:
             self.logger.info(f"Uninstalling plugin: {plugin_id}")
-            shutil.rmtree(plugin_path)
-            self.logger.info(f"Successfully uninstalled plugin: {plugin_id}")
-            return True
+            if self._safe_remove_directory(plugin_path):
+                self.logger.info(f"Successfully uninstalled plugin: {plugin_id}")
+                return True
+            else:
+                self.logger.error(f"Failed to remove plugin directory: {plugin_path}")
+                return False
         except Exception as e:
             self.logger.error(f"Error uninstalling plugin {plugin_id}: {e}")
             return False

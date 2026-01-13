@@ -239,11 +239,20 @@ echo ""
 if [ "$ASSUME_YES" = "1" ]; then
     echo "Non-interactive mode: proceeding with installation."
 else
-    read -p "Do you want to proceed with the installation? (y/N): " -n 1 -r
-    echo
-    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-        echo "Installation cancelled."
-        exit 0
+    # Check if stdin is available (not running via pipe/curl)
+    if [ -t 0 ]; then
+        read -p "Do you want to proceed with the installation? (y/N): " -n 1 -r
+        echo
+        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+            echo "Installation cancelled."
+            exit 0
+        fi
+    else
+        # Non-interactive mode but ASSUME_YES not set - exit with error
+        echo "✗ Non-interactive mode detected but ASSUME_YES not set." >&2
+        echo "  Please run with -y flag or set LEDMATRIX_ASSUME_YES=1" >&2
+        echo "  Example: sudo ./first_time_install.sh -y" >&2
+        exit 1
     fi
 fi
 
@@ -973,28 +982,38 @@ if [ -f "$PROJECT_ROOT_DIR/scripts/install/install_wifi_monitor.sh" ]; then
     
     if [ ! -f "/etc/systemd/system/ledmatrix-wifi-monitor.service" ] || [ "$NEEDS_UPDATE" = true ]; then
         echo "Installing/updating WiFi monitor service..."
-        bash "$PROJECT_ROOT_DIR/scripts/install/install_wifi_monitor.sh"
+        # Run install script but don't fail installation if it errors (WiFi monitor is optional)
+        if bash "$PROJECT_ROOT_DIR/scripts/install/install_wifi_monitor.sh"; then
+            echo "✓ WiFi monitor service installation completed"
+        else
+            INSTALL_EXIT_CODE=$?
+            echo "⚠ WiFi monitor service installation returned exit code $INSTALL_EXIT_CODE"
+            echo "  Continuing installation - WiFi monitor is optional and can be installed later"
+        fi
+    fi
     
     # Harden service file permissions (if service was created)
     if [ -f "/etc/systemd/system/ledmatrix-wifi-monitor.service" ]; then
         chown root:root "/etc/systemd/system/ledmatrix-wifi-monitor.service" || true
         chmod 644 "/etc/systemd/system/ledmatrix-wifi-monitor.service" || true
         systemctl daemon-reload || true
-    fi
-    
-    # Check if service was installed successfully
-    if systemctl list-unit-files | grep -q "ledmatrix-wifi-monitor.service"; then
-        echo "✓ WiFi monitor service installed"
         
-        # Check if service is running
-        if systemctl is-active --quiet ledmatrix-wifi-monitor.service 2>/dev/null; then
-            echo "✓ WiFi monitor service is running"
+        # Check if service was installed successfully
+        if systemctl list-unit-files | grep -q "ledmatrix-wifi-monitor.service"; then
+            echo "✓ WiFi monitor service installed"
+            
+            # Check if service is running
+            if systemctl is-active --quiet ledmatrix-wifi-monitor.service 2>/dev/null; then
+                echo "✓ WiFi monitor service is running"
+            else
+                echo "⚠ WiFi monitor service installed but not running (may need required packages)"
+            fi
         else
-            echo "⚠ WiFi monitor service installed but not running (may need required packages)"
+            echo "⚠ WiFi monitor service file exists but not registered with systemd"
         fi
     else
-        echo "⚠ WiFi monitor service installation may have failed"
-    fi
+        echo "⚠ WiFi monitor service file not created (installation may have failed)"
+        echo "  You can install it later by running: sudo ./scripts/install/install_wifi_monitor.sh"
     fi
 else
     echo "⚠ install_wifi_monitor.sh not found; skipping WiFi monitor installation"
@@ -1386,13 +1405,21 @@ echo ""
 # Get current IP addresses
 echo "Current IP Addresses:"
 if command -v hostname >/dev/null 2>&1; then
-    IPS=$(hostname -I 2>/dev/null | tr ' ' '\n' | grep -v '^$' || echo "")
+    # Get IP addresses and filter out empty lines
+    IPS=$(hostname -I 2>/dev/null || echo "")
     if [ -n "$IPS" ]; then
-        echo "$IPS" | while read -r ip; do
-            if [ -n "$ip" ]; then
-                echo "  - $ip"
-            fi
-        done
+            # Use a more reliable method to process IPs
+            FOUND_IPS=0
+            for ip in $IPS; do
+                # Filter out loopback, empty strings, and IPv6 link-local addresses (fe80:)
+                if [ -n "$ip" ] && [ "$ip" != "127.0.0.1" ] && [ "$ip" != "::1" ] && ! [[ "$ip" =~ ^fe80: ]]; then
+                    echo "  - $ip"
+                    FOUND_IPS=1
+                fi
+            done
+        if [ "$FOUND_IPS" -eq 0 ]; then
+            echo "  ⚠ No non-loopback IP addresses found"
+        fi
     else
         echo "  ⚠ No IP addresses found"
     fi

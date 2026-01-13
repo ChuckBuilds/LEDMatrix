@@ -1,4 +1,17 @@
 # LEDMatrix
+## Welcome to LEDMatrix! 
+Welcome to the LEDMatrix Project! This open-source project enables you to run an information-rich display on a Raspberry Pi connected to an LED RGB Matrix panel. Whether you want to see your calendar, weather forecasts, sports scores, stock prices, or any other information at a glance, LEDMatrix brings it all together.
+
+### About This Project
+
+LEDMatrix is a constantly evolving project that I'm building to create a customizable information display. The project is designed to be modular and extensible, with a plugin-based architecture that makes it easy to add new features and displays.
+
+**This project is open source and supports third-party plugin development.** I believe that great projects get better when more people are involved, and I'm excited to see what the community can build together. Whether you want to contribute to the core project, develop your own plugins, or just use and enjoy LEDMatrix, you're welcome here!
+
+### A Note from the ChuckBuilds
+I'm very new to all of this and am *heavily* relying on AI development tools to create this project. This means I'm learning as I go, and I'm grateful for your patience and feedback as the project continues to evolve and improve.
+
+I'm trying to be open to constructive criticism and support, as long as it's a realistic ask and aligns with my priorities on this project. If you have ideas for improvements, find bugs, or want to add features to the base project, please don't hesitate to reach out on Discord or submit a pull request. Similarly, if you want to develop a plugin of your own, please do so! I'd love to see what you create.
 
 
 ### Setup video and feature walkthrough on Youtube (Outdated but still useful) : 
@@ -11,35 +24,15 @@
 - Check out the write-up on my website: https://www.chuck-builds.com/led-matrix/
 - Stay in touch on Instagram: https://www.instagram.com/ChuckBuilds/
 - Want to chat? Reach out on the ChuckBuilds Discord: https://discord.com/invite/uW36dVAtcT
-- Feeling Generous? Buy Me a Coffee : https://buymeacoffee.com/chuckbuilds              
+- Feeling Generous? Consider sponsoring this project or sending a donation (these AI credits aren't cheap!)          
 
 -----------------------------------------------------------------------------------
 
 ### Special Thanks to:
-- Hzeller @ [GitHub](https://github.com/hzeller/rpi-rgb-led-matrix) for his groundwork on controlling an LED Matrix from the Raspberry Pi
-- Basmilius @ [GitHub](https://github.com/basmilius/weather-icons/) for his free and extensive weather icons
-- nvstly @ [GitHub](https://github.com/nvstly/icons) for their Stock and Crypto Icons
-- ESPN for their sports API
-- Yahoo Finance for their Stock API
-- OpenWeatherMap for their Free Weather API
-- Randomwire @ https://www.thingiverse.com/thing:5169867 for their 4mm Pixel Pitch LED Matrix Stand 
-
-
-
-
------------------------------------------------------------------------------------
-
-## ⚠️ Breaking Changes
-
-**Important for users upgrading from older versions:**
-
-Script paths have been reorganized. If you have automation, cron jobs, or custom tooling that references old script paths, you **must** update them. See the [Migration Guide](MIGRATION_GUIDE.md) for details.
-
-**Quick Reference:**
-- Installation scripts moved: `install_service.sh` → `scripts/install/install_service.sh`
-- Permission scripts moved: `fix_cache_permissions.sh` → `scripts/fix_perms/fix_cache_permissions.sh`
-
-**Full migration instructions:** See [MIGRATION_GUIDE.md](MIGRATION_GUIDE.md)
+- [Hzeller](https://github.com/hzeller/rpi-rgb-led-matrix) for his groundwork on controlling an LED Matrix from the Raspberry Pi
+- [Cursor](https://cursor.com/home) for making this project possible
+- [CodeRabbit](https://github.com/coderabbitai) for fixing my PR's
+- Everyone involved in this project for their patience, input, and support
 
 -----------------------------------------------------------------------------------
 
@@ -47,8 +40,7 @@ Script paths have been reorganized. If you have automation, cron jobs, or custom
 
 <details>
 <summary>Core Features</summary>
-## Core Features
-Modular, rotating Displays that can be individually enabled or disabled per the user's needs with some configuration around display durations, teams, stocks, weather, timezones, and more. Displays include:
+The following plugins are available inside of the LEDMatrix project. These modular, rotating Displays that can be individually enabled or disabled per the user's needs with some configuration around display durations, teams, stocks, weather, timezones, and more. Displays include:
 
 ### Time and Weather
 - Real-time clock display (2x 64x32 Displays 4mm Pixel Pitch)
@@ -115,60 +107,26 @@ The system supports live, recent, and upcoming game information for multiple spo
 - Youtube Subscriber Count Display (2x 64x32 Displays 4mm Pixel Pitch)
 ![DSC01376](https://github.com/user-attachments/assets/7ea5f42d-afce-422f-aa97-6b2a179aa7d2)
 
-- Font testing Display (not in rotation)
 </details>
 
 -----------------------------------------------------------------------------------
-
-## Plugins
-
-LEDMatrix uses a plugin-based architecture where all display functionality (except the core calendar) is implemented as plugins. All managers that were previously built into the core system are now available as plugins through the Plugin Store.
-
-### Plugin Store
-
-The easiest way to discover and install plugins is through the **Plugin Store** in the LEDMatrix web interface:
-
-1. Open the web interface (`http://your-pi-ip:5000`)
-2. Navigate to the **Plugin Manager** tab
-3. Browse available plugins in the Plugin Store
-4. Click **Install** on any plugin you want
-5. Configure and enable plugins through the web UI
-
-### Installing 3rd-Party Plugins
-
-You can also install plugins directly from GitHub repositories:
-
-- **Single Plugin**: Install from any GitHub repository URL
-- **Registry/Monorepo**: Install multiple plugins from a single repository
-
-See the [Plugin Store documentation](https://github.com/ChuckBuilds/ledmatrix-plugins) for detailed installation instructions.
-
-For plugin development, check out the [Hello World Plugin](https://github.com/ChuckBuilds/ledmatrix-hello-world) repository as a starter template.
-
-## ⚠️ Breaking Changes
-
-**Important for users upgrading from older versions:**
-
-1. **Script Path Reorganization**: Installation scripts have been moved to `scripts/install/`:
-   - `./install_service.sh` → `./scripts/install/install_service.sh`
-   - `./install_web_service.sh` → `./scripts/install/install_web_service.sh`
-   - `./configure_web_sudo.sh` → `./scripts/install/configure_web_sudo.sh`
-   
-   If you have automation, cron jobs, or custom tooling that references these scripts, you **must** update them to use the new paths. See the [Migration Guide](MIGRATION_GUIDE.md) for complete details.
-
-2. **Built-in Managers Deprecated**: The built-in managers (hockey, football, stocks, etc.) are now deprecated and have been moved to the plugin system. **You must install replacement plugins from the Plugin Store** in the web interface instead. The plugin system provides the same functionality with better maintainability and extensibility.
-
------------------------------------------------------------------------------------
-
 ## Hardware
 
 <details>
 <summary>Hardware Requirements</summary>
-## Hardware Requirements
+
+  ## Hardware Requirements
+
+| ⚠️ IMPORTANT |
+| :--- |
+| This project can be finnicky! RGB LED Matrix displays are not built the same or to a high-quality standard. We have seen many displays arrive dead or partially working in our discord. Please purchase from a reputable vendor. |
 
 ### Raspberry Pi
+- Raspberry Pi Zero's don't have enough processing power for this project and the Pi 5 is unsupported due to new GPIO output.
 - **Raspberry Pi 3B or 4 (NOT RPi 5!)**  
-  [Amazon Affiliate Link – Raspberry Pi 4 4GB](https://amzn.to/4dJixuX)
+  [Amazon Affiliate Link – Raspberry Pi 4 4GB RAM](https://amzn.to/4dJixuX)
+  [Amazon Affiliate Link – Raspberry Pi 4 8GB RAM](https://amzn.to/4qbqY7F)
+
 
 ### RGB Matrix Bonnet / HAT
 - [Adafruit RGB Matrix Bonnet/HAT](https://www.adafruit.com/product/3211) – supports one “chain” of horizontally connected displays  
@@ -177,7 +135,7 @@ For plugin development, check out the [Hello World Plugin](https://github.com/Ch
 - [Seengreat Matrix Adapter Board](https://amzn.to/3KsnT3j) – single-chain LED Matrix *(use `regular` as hardware mapping)*  
 
 ### LED Matrix Panels  
-(2x in a chain recommended)
+(2x in a horizontal chain is recommended)
 - [Adafruit 64×32](https://www.adafruit.com/product/2278) – designed for 128×32 but works with dynamic scaling on many displays (pixel pitch is user preference)
 - [Waveshare 64×32](https://amzn.to/3Kw55jK) - Does not require E addressable pad
 - [Waveshare 92×46](https://amzn.to/4pQdezE) – higher resolution, requires soldering the **E addressable pad** on the [Adafruit RGB Bonnet](https://www.adafruit.com/product/3211) to “8” **OR** toggling the DIP switch on the Adafruit Triple LED Matrix Bonnet *(no soldering required!)*  
@@ -185,7 +143,7 @@ For plugin development, check out the [Hello World Plugin](https://github.com/Ch
 
 ### Power Supply
 - [5V 4A DC Power Supply](https://www.adafruit.com/product/658) (good for 2 -3 displays, depending on brightness and pixel density, you'll need higher amperage for more)
-- [5V 10AM DC Power Supply](https://amzn.to/3IKlYqe) (good for 6-8 displays, depending on brightness and pixel density)
+- [5V 10A DC Power Supply](https://amzn.to/3IKlYqe) (good for 6-8 displays, depending on brightness and pixel density)
 
 ## Optional but recommended mod for Adafruit RGB Matrix Bonnet
 - By soldering a jumper between pins 4 and 18, you can run a specialized command for polling the matrix display. This provides better brightness, less flicker, and better color.
@@ -246,28 +204,72 @@ These are not required and you can probably rig up something basic with stuff yo
 -----------------------------------------------------------------------------------
 ## Installation Steps
 
-
 <details>
 
 <summary>Preparing the Raspberry Pi</summary>
 
 # Preparing the Raspberry Pi
-1. Create RPI Image on a Micro-SD card (I use 16gb because I have it, size is not too important but I would use 8gb or more) using [Raspberry Pi Imager](https://www.raspberrypi.com/software/)
-2. Choose your Raspberry Pi (3B+ in my case) 
-3. For Operating System (OS), choose "Other", then choose Raspbian OS (64-bit) Lite 
-![image](https://github.com/user-attachments/assets/e8e2e806-18a8-4175-9c25-0cefaae438ea)
-4. For Storage, choose your micro-sd card
-![image](https://github.com/user-attachments/assets/05580e0a-86d5-4613-aadc-93207365c38f)
-5. Press Next then Edit Settings
-![image](https://github.com/user-attachments/assets/b392a2c9-6bf4-47d5-84b7-63a5f793a1df)
-6. Inside the OS Customization Settings, choose a name for your device. I use "ledpi". Choose a password, enter your WiFi information, and set your timezone.
-![image](https://github.com/user-attachments/assets/0c250e3e-ab3c-4f3c-ba60-6884121ab176)
-7. Under the Services Tab, make sure that SSH is enabled. I recommend using password authentication for ease of use - it is the password you just chose above.
-![image](https://github.com/user-attachments/assets/1d78d872-7bb1-466e-afb6-0ca26288673b)
-8. Then Click "Save" and Agree to Overwrite the Micro-SD card.
+
+| ⚠️ IMPORTANT |
+| :--- |
+| It is required to use the **NEW** Raspberry Pi Imager tool. If your tool doesn't look like my screenshots, be sure to update it. |
+
+1. Create RPI Image on a Micro-SD card (I use whatever I have laying around, size is not too important but I would use 8gb or more) using [Raspberry Pi Imager](https://www.raspberrypi.com/software/)
+
+2. Choose your Raspberry Pi (3B+ in my case)
+
+<img width="512" height="361" alt="Step 1 rpi" src="https://github.com/user-attachments/assets/4d42961c-97f3-46d6-8e3f-b4ac04615ec7" />
+
+3. For Operating System (OS), choose "Other"
+
+<img width="512" height="361" alt="Step 2 Other " src="https://github.com/user-attachments/assets/166a22e8-8067-48df-9f80-50c91f573356" />
+
+5. Then choose Raspbian OS (64-bit) Lite (Trixie)
+
+<img width="512" height="361" alt="Step 4 Trixie Lite 64" src="https://github.com/user-attachments/assets/3b8590ce-b810-4dfe-9253-26e0d4f8ed1e" />
+
+6. For Storage, choose your micro-sd card
+
+| ⚠️ IMPORTANT |
+| :--- |
+| Make sure it's the correct drive! Data will be erased! |
+
+<img width="512" height="361" alt="Step 5 Select storage" src="https://github.com/user-attachments/assets/d2840c6b-2a07-45a4-bfd4-2a73ee790e87" />
+
+7. Choose the hostname of the device. This will be often used to access the web-ui and will be the name of the device on your network. I recommend "ledpi".
+
+<img width="512" height="361" alt="Step 6 name storage" src="https://github.com/user-attachments/assets/e782ef1e-49c6-4483-9791-96f34c27235d" />
+
+8. Choose your timezone and keyboard layout.
+
+<img width="512" height="361" alt="Step 7 Choose Timezone" src="https://github.com/user-attachments/assets/6cf38b5a-ec72-42af-93b8-e6f5b0874fa6" />
+
+9. Set your username and password. This is your "root" password and is important, make sure you remember it! We will use it to access the Raspberry Pi via SSH.
+
+<img width="512" height="361" alt="Step 8 set password for root" src="https://github.com/user-attachments/assets/5a3f9eb2-b2fd-4db3-8c51-490fff091fd4" />
+
+10. (Optional) Choose your Wi-fi network and enter wifi password. This can be changed in the future. This is also optional if you are going to connect it via ethermet.
+
+<img width="512" height="361" alt="Step 9 choose network" src="https://github.com/user-attachments/assets/0ac9c69b-d29c-454f-a6ed-ffdaa778729d" />
+
+11. Enable SSH and opt for "Use Password Authentication". You can use public key auth if you know how but for the sake of new folks, let's use the password that we chose in Step 9.
+
+<img width="512" height="361" alt="Step 10 enable Ssh and choose password authentication" src="https://github.com/user-attachments/assets/a2df9994-8be5-4785-9f4c-a2888edb5c78" />
+
+12. Disable Raspberry Pi Connect. It's a VPN / Remote Connection tool built into Raspberry Pi, it seems like there might be a subscription? Not sure but I am not using it.
+
+<img width="512" height="361" alt="step 11 disable RPI connect" src="https://github.com/user-attachments/assets/63808069-b620-49db-a102-76e2b75ad055" />
+
+13. Double check your settings then confirm by clicking "Write".
+
+<img width="512" height="361" alt="step 12 write to disk" src="https://github.com/user-attachments/assets/77a0d193-2953-4c52-971c-3069f55ac70e" />
+
+14. Final warning to be SURE that you have the correct micro-sd card inserted and selected as all data on the drive will be erased.
+
+<img width="512" height="361" alt="Step 13 be very sure you are using the right drive" src="https://github.com/user-attachments/assets/9a46447e-3be6-4838-9114-27415869a3c6" />
+
+You're done with preparing the Operating System. Once the Raspberry Pi Imager has finished writing to the micro-sd card it will let you know it is safe to eject. Eject the micro-sd card and plug it into the Raspberry Pi and turn it on.
 </details>
-
-
 
 <details>
 
@@ -275,12 +277,51 @@ These are not required and you can probably rig up something basic with stuff yo
 
 # System Setup & Installation
 
-1. Open PowerShell and ssh into your Raspberry Pi with ledpi@ledpi (or Username@Hostname)
+Once your Raspberry Pi has turned on and connected to your wifi (check your router's dhcp leases) or just give it a few minutes after plugging it in. We will connect via ssh.
+
+Secure Shell (SSH) is a way to connect to the device and execute commands. On Windows, I recommend using Powershell. On MacOS or Linux, I recommend using Terminal.
+
+1. SSH into your Raspberry Pi:
+```bash
+ssh ledpi@ledpi
+```
+The format "username@hostname" is coincidentally the same for this project (which is fine) but if you changed the username, hostname, or your router's DNS doesn't recognize the hostname you would use "username@ipaddress". You can skip the username and just enter "ssh hostname" or "ssh ipaddress" and it will prompt you for a username.
+
+## Quick Install (Recommended)
+
+Paste this single command into SSH using <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>V</kbd> on Windows or <kbd>Shift</kbd>+<kbd>Command</kbd>+<kbd>V</kbd> on Mac.
+
+> [!TIP]
+> Terminal can be funky about pasting with just <kbd>Ctrl</kbd>+<kbd>V</kbd>, by right click -> paste  or using <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>V</kbd> you will be able to paste without additional unwanted characters.
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/ChuckBuilds/LEDMatrix/main/scripts/install/one-shot-install.sh | bash
+```
+
+This one-shot installer will automatically:
+- Check system prerequisites (network, disk space, sudo access)
+- Install required system packages (git, python3, build tools, etc.)
+- Clone or update the LEDMatrix repository
+- Run the complete first-time installation script
+
+The installation process typically takes 10-30 minutes depending on your internet connection and Pi model. All errors are reported explicitly with actionable fixes.
+
+**Note:** The script is safe to run multiple times and will handle existing installations gracefully.
+
+
+
+
+<details>
+<summary>Manual Installation (Alternative)</summary>
+
+If you prefer to install manually or the one-shot installer doesn't work for your setup:
+
+1. SSH into your Raspberry Pi:
 ```bash
 ssh ledpi@ledpi
 ```
 
-2. Update repositories, upgrade raspberry pi OS, install git
+2. Update repositories, upgrade Raspberry Pi OS, and install prerequisites:
 ```bash
 sudo apt update && sudo apt upgrade -y
 sudo apt install -y git python3-pip cython3 build-essential python3-dev python3-pillow scons
@@ -292,14 +333,15 @@ git clone https://github.com/ChuckBuilds/LEDMatrix.git
 cd LEDMatrix
 ```
 
-4. First-time installation (recommended)
-
+4. Run the first-time installation script:
 ```bash
 chmod +x first_time_install.sh
 sudo bash ./first_time_install.sh
 ```
 
 This single script installs services, dependencies, configures permissions and sudoers, and validates the setup.
+
+</details>
 
 </details>
 
@@ -314,28 +356,22 @@ This single script installs services, dependencies, configures permissions and s
 
 ### Initial Setup
 
-The system uses a template-based configuration approach to avoid Git conflicts during updates:
+For most settings I recommend using the web interface:
+Edit the project via the web interface at http://[IP ADDRESS or HOSTNAME]:5000 or http://ledpi:5000 .
 
-1. **First-time setup**: The previous "First_time_install.sh" script should've already copied the template to create your config.json:
+If you need to manually edit your config file, you can follow the steps below:
+<details>
+<summary>Manual Config.json editing </summary>
 
-2. **Edit your configuration**: 
+  1. **First-time setup**:
+     The previous "First_time_install.sh" script should've already copied the template to create your config.json:
+
+  2. **Edit your configuration**: 
    ```bash
    sudo nano config/config.json
    ```
-or edit via web interface at http://ledpi:5000
+</details>
 
-3. **Having Issues?**: Run the First Time Script again:
-  ```bash
-  sudo ./first_time_install.sh
-  ```
-
-
-### API Keys and Secrets
-
-For sensitive settings like API keys:
-1. Copy the secrets template: `cp config/config_secrets.template.json config/config_secrets.json`
-2. Edit `config/config_secrets.json` with your API keys via `sudo nano config/config_secrets.json`
-3. Ctrl + X to exit, Y to overwrite, Enter to Confirm
 
 ### Automatic Configuration Migration
 
@@ -345,481 +381,348 @@ The system automatically handles configuration updates:
 - **Backup protection**: Creates a backup of your current config before applying updates
 - **No conflicts**: Your custom settings are preserved while new options are added
 
-Everything is configured via `config/config.json` and `config/config_secrets.json`. The `config.json` file is not tracked by Git to prevent conflicts during updates.
+Everything is configured via `config/config.json` and `config/config_secrets.json` and are not tracked by Git to prevent conflicts during updates.
 
 </details>
 
 
-<details>
-
-<summary>Calendar Display Configuration</summary>
-
-
-## Calendar Display Configuration
-
-The calendar display module shows upcoming events from your Google Calendar. To configure it:
-
-1. In `config/config.json`, add the following section:
-```json
-{
-    "calendar": {
-        "enabled": true,
-        "update_interval": 300,  // Update interval in seconds (default: 300)
-        "max_events": 3,         // Maximum number of events to display
-        "calendars": ["primary"] // List of calendar IDs to display
-    }
-}
-```
-
-2. Set up Google Calendar API access:
-   1. Go to the [Google Cloud Console](https://console.cloud.google.com/)
-   2. Create a new project or select an existing one
-   3. Enable the Google Calendar API
-   4. Create OAuth 2.0 credentials:
-      - Application type: TV and Limited Input Device
-      - Download the credentials file as `credentials.json`
-   5. Place the `credentials.json` file in your project root directory
-
-3. On first run, the application will:
-   - Provide a code to enter at https://www.google.com/device for Google authentication
-   - Request calendar read-only access
-   - Save the authentication token as `token.pickle`
-
-The calendar display will show:
-- Event date and time
-- Event title (wrapped to fit the display)
-- Up to 3 upcoming events (configurable)
-</details>
+## Running the Display
 
 <details>
+<summary>Recommended: Use Web UI Quick Actions</summary>
 
-<summary>Odds Ticker Configuration</summary>
+I recommend using the web-ui "Quick Actions" to control the Display.
 
-## Odds Ticker Configuration
+<img width="2009" height="201" alt="image" src="https://github.com/user-attachments/assets/49e4db32-05f7-43b4-b7dd-7be7aa28994c" />
 
-The odds ticker displays betting odds for upcoming sports games. To configure it:
-
-1. In `config/config.json`, add the following section:
-```json
-{
-    "odds_ticker": {
-        "enabled": true,
-        "enabled_leagues": ["nfl", "nba", "mlb", "ncaa_fb"],
-        "update_interval": 3600,
-        "scroll_speed": 2,
-        "scroll_delay": 0.05,
-        "display_duration": 30
-    }
-}
-```
-
-### Configuration Options
-
-- **`enabled`**: Enable/disable the odds ticker (default: false)
-- **`enabled_leagues`**: Array of leagues to display (options: "nfl", "nba", "mlb", "ncaa_fb")
-- **`update_interval`**: How often to fetch new odds data in seconds (default: 3600)
-- **`scroll_speed`**: Pixels to scroll per update (default: 1)
-- **`scroll_delay`**: Delay between scroll updates in seconds (default: 0.05)
-- **`display_duration`**: How long to show each game in seconds (default: 30)
-
-**How it works:**
-- The ticker intelligently filters games based on the `"show_favorite_teams_only"` setting within each individual sport's configuration block (e.g., `"nfl_scoreboard"`). If set to `true` for a sport, only favorite teams from that sport will appear in the ticker.
-- Games are sorted by the soonest start time.
-
-### Display Format
-
-The odds ticker shows information in this format:
-```
-[12:00 PM] DAL -6.5 ML -200 O/U 47.5 vs NYG ML +175
-```
-
-Where:
-- `[12:00 PM]` - Game time in local timezone
-- `DAL` - Away team abbreviation
-- `-6.5` - Spread for away team (negative = favored)
-- `ML -200` - Money line for away team
-- `O/U 47.5` - Over/under total
-- `vs` - Separator
-- `NYG` - Home team abbreviation
-- `ML +175` - Money line for home team
-
-### Team Logos
-
-The ticker displays team logos alongside the text:
-- Away team logo appears to the left of the text
-- Home team logo appears to the right of the text
-- Logos are automatically resized to fit the display
-
-### Requirements
-
-- ESPN API access for odds data
-- Team logo files in the appropriate directories:
-  - `assets/sports/nfl_logos/`
-  - `assets/sports/nba_logos/`
-  - `assets/sports/mlb_logos/`
-  - `assets/sports/ncaa_logos/`
-
-### Troubleshooting
-
-**No Games Displayed:**
-1. **League Configuration**: Ensure the leagues you want are enabled in their respective config sections
-2. **Favorite Teams**: If `show_favorite_teams_only` is true, ensure you have favorite teams configured
-3. **API Access**: Verify ESPN API is accessible and returning data
-4. **Time Window**: The ticker only shows games in the next 7 days
-
-**No Odds Data:**
-1. **API Timing**: Odds may not be available immediately when games are scheduled
-2. **League Support**: Not all leagues may have odds data available
-3. **API Limits**: ESPN API may have rate limits or temporary issues
-
-**Performance Issues:**
-1. **Reduce scroll_speed**: Try setting it to 1 instead of 2
-2. **Increase scroll_delay**: Try 0.1 instead of 0.05
-3. **Check system resources**: Ensure the Raspberry Pi has adequate resources
-
-### Testing
-
-You can test the odds ticker functionality using:
-```bash
-python test_odds_ticker.py
-```
-
-This will:
-1. Initialize the odds ticker
-2. Fetch upcoming games and odds
-3. Display sample games
-4. Test the scrolling functionality
 </details>
 
 
+## Plugins
+
 <details>
+LEDMatrix uses a plugin-based architecture where all display functionality (except the core calendar) is implemented as plugins. All managers that were previously built into the core system are now available as plugins through the Plugin Store.
 
-<summary>Stocks Configuration</summary>
+### Plugin Store
+See the [Plugin Store documentation](https://github.com/ChuckBuilds/ledmatrix-plugins) for detailed installation instructions.
 
-## Stocks Configuration
+The easiest way to discover and install plugins is through the **Plugin Store** in the LEDMatrix web interface:
 
-The stocks display shows real-time stock and crypto prices in a scrolling ticker format. To configure it:
+1. Open the web interface (`http://your-pi-ip:5000`)
+2. Navigate to the **Plugin Manager** tab
+3. Browse available plugins in the Plugin Store
+4. Click **Install** on any plugin you want
+5. Configure and enable plugins through the web UI
 
-1. In `config/config.json`, add the following section:
-```json
-{
-    "stocks": {
-        "enabled": true,
-        "symbols": ["AAPL", "MSFT", "GOOGL", "TSLA"],
-        "update_interval": 600,
-        "scroll_speed": 1,
-        "scroll_delay": 0.01,
-        "toggle_chart": false
-    }
-}
-```
+### Installing 3rd-Party Plugins
 
-### Configuration Options
+You can also install plugins directly from GitHub repositories:
 
-- **`enabled`**: Enable/disable the stocks display (default: false)
-- **`symbols`**: Array of stock symbols to display (e.g., ["AAPL", "MSFT", "GOOGL"])
-- **`update_interval`**: How often to fetch new stock data in seconds (default: 600)
-- **`scroll_speed`**: Pixels to scroll per update (default: 1)
-- **`scroll_delay`**: Delay between scroll updates in seconds (default: 0.01)
-- **`toggle_chart`**: Enable/disable mini charts in the scrolling ticker (default: false)
+- **Single Plugin**: Install from any GitHub repository URL
+- **Registry/Monorepo**: Install multiple plugins from a single repository
 
-### Display Format
+See the [Plugin Store documentation](https://github.com/ChuckBuilds/ledmatrix-plugins) for detailed installation instructions.
 
-The stocks display shows information in this format:
-```
-[Logo] SYMBOL
-       $PRICE
-       +CHANGE (+PERCENT%)
-```
+For plugin development, check out the [Hello World Plugin](https://github.com/ChuckBuilds/ledmatrix-hello-world) repository as a starter template.
 
-Where:
-- `[Logo]` - Stock/crypto logo (if available)
-- `SYMBOL` - Stock symbol (e.g., AAPL, MSFT)
-- `$PRICE` - Current stock price
-- `+CHANGE` - Price change (green for positive, red for negative)
-- `+PERCENT%` - Percentage change
-
-### Chart Toggle Feature
-
-The `toggle_chart` setting controls whether mini price charts are displayed alongside each stock:
-
-- **`"toggle_chart": true`**: Shows mini line charts on the right side of each stock display
-- **`"toggle_chart": false`**: Shows only text information (symbol, price, change)
-
-When charts are disabled, the text is centered more prominently on the display.
-
-### Crypto Support
-
-The system also supports cryptocurrency symbols. Add crypto symbols to the `symbols` array:
-
-```json
-{
-    "stocks": {
-        "enabled": true,
-        "symbols": ["AAPL", "MSFT", "BTC-USD", "ETH-USD"],
-        "update_interval": 600,
-        "scroll_speed": 1,
-        "scroll_delay": 0.01,
-        "toggle_chart": false
-    }
-}
-```
-
-### Requirements
-
-- Yahoo Finance API access for stock data
-- Stock/crypto logo files in the appropriate directories:
-  - `assets/stocks/ticker_icons/` (for stocks)
-  - `assets/stocks/crypto_icons/` (for cryptocurrencies)
-
-### Troubleshooting
-
-**No Stock Data Displayed:**
-1. **Symbol Format**: Ensure stock symbols are correct (e.g., "AAPL" not "apple")
-2. **API Access**: Verify Yahoo Finance API is accessible
-3. **Market Hours**: Some data may be limited during off-hours
-4. **Symbol Validity**: Check that symbols exist and are actively traded
-
-**Performance Issues:**
-1. **Reduce scroll_speed**: Try setting it to 1 instead of higher values
-2. **Increase scroll_delay**: Try 0.05 instead of 0.01 for smoother scrolling
-3. **Reduce symbols**: Limit the number of symbols to improve performance
-
-### Testing
-
-You can test the stocks functionality using:
-```bash
-python test/test_stock_toggle_chart.py
-```
-
-This will:
-1. Test the toggle_chart functionality
-2. Verify configuration loading
-3. Test cache clearing behavior
-
+2. **Built-in Managers Deprecated**: The built-in managers (hockey, football, stocks, etc.) are now deprecated and have been moved to the plugin system. **You must install replacement plugins from the Plugin Store** in the web interface instead. The plugin system provides the same functionality with better maintainability and extensibility.
 </details>
 
+## Detailed Information
+
 <details>
 
-<summary>Football Configuration</summary>
+<summary>Display Settings from RGBLEDMatrix Library</summary>
 
+## Display Settings
 
-## Football Game-Based Configuration (NFL & NCAA FB)
+If you are copying my exact setup, you can likely leave the defaults alone. However, if you have different hardware or want to customize the display behavior, these settings allow you to fine-tune the LED matrix configuration.
 
-For NFL and NCAA Football, the system now uses a game-based fetch approach instead of time-based windows. This is more practical for football since games are weekly and you want to show specific numbers of games rather than arbitrary time periods.
+The display settings are located in `config/config.json` under the `"display"` key and are organized into three main sections: `hardware`, `runtime`, and `display_durations`.
 
-### Configuration Options
+### Hardware Configuration (`display.hardware`)
 
-Instead of using `past_fetch_days` and `future_fetch_days`, the system now uses:
+These settings control the physical hardware configuration and how the matrix is driven.
 
-- **`fetch_past_games`**: Number of recent games to fetch (default: 1)
-- **`fetch_future_games`**: Number of upcoming games to fetch (default: 1)
+#### Basic Panel Configuration
+
+- **`rows`** (integer, default: 32)
+  - Number of LED rows (vertical pixels) in each panel
+  - Common values: 16, 32, 48, 64
+  - Must match your physical panel configuration
+
+- **`cols`** (integer, default: 64)
+  - Number of LED columns (horizontal pixels) in each panel
+  - Common values: 32, 64, 96, 128
+  - Must match your physical panel configuration
+
+- **`chain_length`** (integer, default: 2)
+  - Number of LED panels chained together horizontally
+  - If you have 2 panels side-by-side, set to 2
+  - If you have 4 panels in a row, set to 4
+  - Total display width = `cols × chain_length`
+
+- **`parallel`** (integer, default: 1)
+  - Number of parallel chains (panels stacked vertically)
+  - Use 1 for a single row of panels
+  - Use 2 if you have panels stacked in two rows
+  - Total display height = `rows × parallel`
+
+#### Brightness and Visual Settings
+
+- **`brightness`** (integer, 0-100, default: 90)
+  - Display brightness level
+  - Lower values (0-50) are dimmer, higher values (50-100) are brighter
+  - Recommended: 70-90 for indoor use, 90-100 for bright environments
+  - Very high brightness may cause distortion or require more power
+
+#### Hardware Mapping
+
+- **`hardware_mapping`** (string, default: "adafruit-hat-pwm")
+  - Specifies which GPIO pin mapping to use for your hardware
+  - **`"adafruit-hat-pwm"`**: Use this for Adafruit RGB Matrix Bonnet/HAT WITH the jumper mod (PWM enabled). This is the recommended setting for Adafruit hardware with the PWM jumper soldered.
+  - **`"adafruit-hat"`**: Use this for Adafruit RGB Matrix Bonnet/HAT WITHOUT the jumper mod (no PWM). Remove `-pwm` from the value if you did not solder the jumper.
+  - **`"regular"`**: Standard GPIO pin mapping for direct GPIO connections (Generic)
+  - **`"regular-pi1"`**: Standard GPIO pin mapping for Raspberry Pi 1 (older hardware or non-standard hat mapping)
+  - Choose the option that matches your specific hardware setup, if aren't sure try them all.
+
+#### PWM (Pulse Width Modulation) Settings
+
+These settings affect color fidelity and smoothness of color transitions:
+
+- **`pwm_bits`** (integer, default: 9)
+  - Number of bits used for PWM (affects color depth)
+  - Higher values (9-11) = more color levels, smoother gradients
+  - Lower values (7-8) = fewer color levels, but may improve stability on some hardware
+  - Range: 1-11, recommended: 9-10
+
+- **`pwm_dither_bits`** (integer, default: 1)
+  - Additional dithering bits for smoother color transitions
+  - Helps reduce color banding in gradients
+  - Higher values (1-2) = smoother gradients but may impact performance
+  - Range: 0-2, recommended: 1
+
+- **`pwm_lsb_nanoseconds`** (integer, default: 130)
+  - Least significant bit timing in nanoseconds
+  - Controls the base timing for PWM signals
+  - Lower values = faster PWM, higher values = slower PWM
+  - Typical range: 100-300 nanoseconds
+  - May need adjustment if you see flickering or color issues
+
+#### Advanced Hardware Settings
+
+- **`scan_mode`** (integer, default: 0)
+  - Panel scan mode (how rows are addressed)
+  - Common values: 0 (progressive), 1 (interlaced)
+  - Most panels use 0, but some require 1
+  - Check your panel datasheet if colors appear incorrect
+
+- **`limit_refresh_rate_hz`** (integer, default: 100)
+  - Maximum refresh rate in Hz (frames per second)
+  - Caps the refresh rate for better stability
+  - Lower values (60-80) = more stable, less CPU usage
+  - Higher values (100-120) = smoother animations, more CPU usage
+  - Recommended: 80-100 for most setups
+
+- **`disable_hardware_pulsing`** (boolean, default: false)
+  - Disables hardware pulsing (usually leave as false)
+  - Set to `true` only if you experience timing issues
+  - Most users should leave this as `false`
+
+- **`inverse_colors`** (boolean, default: false)
+  - Inverts all colors (red becomes cyan, etc.)
+  - Useful if your panel has inverted color channels
+  - Set to `true` only if colors appear inverted
+
+- **`show_refresh_rate`** (boolean, default: false)
+  - Displays the current refresh rate on the matrix (for debugging)
+  - Set to `true` to see FPS on the display
+  - Useful for troubleshooting performance issues
+
+#### Advanced Panel Configuration (Advanced Users Only)
+
+These settings are typically only needed for non-standard panels or custom configurations:
+
+- **`led_rgb_sequence`** (string, default: "RGB")
+  - Color channel order for your LED panel
+  - Common values: "RGB", "RBG", "GRB", "GBR", "BRG", "BGR"
+  - Most panels use "RGB", but some use "GRB" or other orders
+  - Check your panel datasheet if colors appear wrong
+
+- **`pixel_mapper_config`** (string, default: "")
+  - Advanced pixel mapping configuration
+  - Used for custom panel layouts, rotations, or transformations
+  - Examples: "U-mapper", "Rotate:90", "Mirror:H"
+  - Leave empty unless you need custom mapping
+  - See rpi-rgb-led-matrix documentation for full options
+
+- **`row_address_type`** (integer, default: 0)
+  - How rows are addressed on the panel
+  - Most panels use 0 (direct addressing)
+  - Some panels require 1 (AB addressing) or 2 (ABC addressing)
+  - Check your panel datasheet if display appears corrupted
+
+- **`multiplexing`** (integer, default: 0)
+  - Panel multiplexing type
+  - 0 = no multiplexing (standard panels)
+  - Higher values for panels with different multiplexing schemes
+  - Check your panel datasheet for the correct value
+
+### Runtime Configuration (`display.runtime`)
+
+These settings control runtime behavior and GPIO timing:
+
+- **`gpio_slowdown`** (integer, default: 3)
+  - GPIO timing slowdown factor
+  - **Critical setting**: Must match your Raspberry Pi model for stability
+  - **Raspberry Pi 3**: Use 3
+  - **Raspberry Pi 4**: Use 4
+  - **Raspberry Pi 5**: Use 5 (or higher if needed)
+  - **Raspberry Pi Zero/1**: Use 1-2
+  - Incorrect values can cause display corruption, flickering, or system instability
+  - If you experience issues, try adjusting this value up or down by 1
+
+### Display Durations (`display.display_durations`)
+
+Controls how long each display module stays visible in seconds before switching to the next one.
+
+- **`calendar`** (integer, default: 30)
+  - Duration in seconds for the calendar display
+  - Increase for more time to read dates/events
+  - Decrease to cycle through other displays faster
+
+- **Plugin-specific durations**
+  - Each plugin can have its own duration setting
+  - Format: `"<plugin-id>": <seconds>`
+  - Example: `"hockey-scoreboard": 45` shows hockey scores for 45 seconds
+  - Example: `"weather": 20` shows weather for 20 seconds
+  - If a plugin doesn't have a duration here, it uses its default (usually 15 seconds)
+  - You can also set `display_duration` in each plugin's individual configuration
+
+**Tips for Display Durations:**
+- Longer durations (30-60 seconds) = more time to read content, slower cycling
+- Shorter durations (10-20 seconds) = faster cycling, less time per display
+- Balance based on your preference and how much information each display shows
+- For example, if you want more focus on stocks, increase the stock plugin's duration value
+
+### Display Format Settings
+
+- **`use_short_date_format`** (boolean, default: true)
+  - Use short date format (e.g., "Jan 15") instead of long format (e.g., "January 15th")
+  - Set to `false` for longer, more readable dates
+  - Set to `true` to save space and show more information
+
+### Dynamic Duration Settings (`display.dynamic_duration`)
+
+- **`max_duration_seconds`** (integer, optional)
+  - Maximum duration cap for plugins that use dynamic durations
+  - Some plugins can automatically adjust their display time based on content
+  - This setting limits how long they can extend (prevents one display from dominating)
+  - Example: If set to 60, a plugin can extend up to 60 seconds even if it requests longer
+  - Leave unset to use the default cap (typically 90 seconds)
 
 ### Example Configuration
 
 ```json
 {
-    "nfl_scoreboard": {
-        "enabled": true,
-        "fetch_past_games": 1,
-        "fetch_future_games": 1,
-        "favorite_teams": ["TB", "DAL"]
+  "display": {
+    "hardware": {
+      "rows": 32,
+      "cols": 64,
+      "chain_length": 2,
+      "parallel": 1,
+      "brightness": 90,
+      "hardware_mapping": "adafruit-hat-pwm",
+      "scan_mode": 0,
+      "pwm_bits": 9,
+      "pwm_dither_bits": 1,
+      "pwm_lsb_nanoseconds": 130,
+      "disable_hardware_pulsing": false,
+      "inverse_colors": false,
+      "show_refresh_rate": false,
+      "limit_refresh_rate_hz": 100
     },
-    "ncaa_fb_scoreboard": {
-        "enabled": true,
-        "fetch_past_games": 1,
-        "fetch_future_games": 1,
-        "favorite_teams": ["UGA", "AUB"]
+    "runtime": {
+      "gpio_slowdown": 4
+    },
+    "display_durations": {
+      "calendar": 30,
+      "hockey-scoreboard": 45,
+      "weather": 20,
+      "stocks": 25
+    },
+    "use_short_date_format": true,
+    "dynamic_duration": {
+      "max_duration_seconds": 60
     }
+  }
 }
 ```
 
-### How It Works
+### Troubleshooting Display Settings
 
-- **`fetch_past_games: 1`**: Shows the most recent game for your favorite teams
-- **`fetch_future_games: 1`**: Shows the next upcoming game for your favorite teams
-- **`fetch_future_games: 2`**: Shows the next two upcoming games (e.g., Week 1 and Week 2 matchups)
+**Display is blank or shows garbage:**
+- Check `rows`, `cols`, `chain_length`, and `parallel` match your physical setup
+- Verify `hardware_mapping` matches your HAT/connection type
+- Try adjusting `gpio_slowdown`
+- Ensure your display doesn't need the E-Addressable line
 
-### Benefits
+**Colors are wrong or inverted:**
+- Check `led_rgb_sequence` (try "GRB" if "RGB" doesn't work)
+- Try setting `inverse_colors` to `true`
+- Verify `hardware_mapping` is correct for your hardware
 
-1. **Predictable Results**: Always shows exactly the number of games you specify
-2. **Season Flexibility**: Works well both during the season and in the off-season
-3. **Future Planning**: Can show games far in the future (e.g., Week 1 when it's 40 days away)
-4. **Efficient**: Only fetches the games you actually want to see
+**Display flickers or is unstable:**
+- Increase `gpio_slowdown` by 1-2
+- Lower `limit_refresh_rate_hz` to 60-80
+- Check power supply (LED matrices need adequate power)
 
-### Use Cases
+**Display is too dim or too bright:**
+- Adjust `brightness` (0-100)
+- Very high brightness may require better power supply
 
-- **During Season**: `fetch_future_games: 1` shows next week's game
-- **Off-Season**: `fetch_future_games: 1` shows the first scheduled game (even if it's months away)
-- **Planning**: `fetch_future_games: 2` shows the next two matchups for planning purposes
-
+**Performance issues:**
+- Lower `limit_refresh_rate_hz`
+- Reduce `pwm_bits` to 8
+- Set `pwm_dither_bits` to 0
 </details>
-
 
 <details>
+<summary>Manual SSH Commands (for reference)</summary>
 
-<summary> Music Display Configuration </summary>
+The quick actions essentially just execute the following commands on the Pi.
 
-## Music Display Configuration
+From the project root directory (ex: /home/ledpi/LEDMatrix):
 
-The Music Display module shows information about the currently playing track from either Spotify or YouTube Music (via the [YouTube Music Desktop App](https://ytmdesktop.app/) companion server).
-
-**Setup Requirements:**
-
-1.  **Spotify:**
-    *   Requires a Spotify account (for API access).
-    *   You need to register an application on the [Spotify Developer Dashboard](https://developer.spotify.com/dashboard/) to get API credentials.
-        *   Go to the dashboard, log in, and click "Create App".
-        *   Give it a name (e.g., "LEDMatrix Display") and description.
-        *   For the "Redirect URI", enter `http://127.0.0.1:8888/callback` (or another unused port if 8888 is taken). You **must** add this exact URI in your app settings on the Spotify dashboard.
-        *   Note down the `Client ID` and `Client Secret`.
-
-2.  **YouTube Music (YTM):**
-    *   Requires the [YouTube Music Desktop App](https://ytmdesktop.app/) (YTMD) to be installed and running on a computer on the *same network* as the Raspberry Pi.
-    *   In YTMD settings, enable the "Companion Server" under Integration options. Note the URL it provides (usually `http://localhost:9863` if running on the same machine, or `http://<YTMD-Computer-IP>:9863` if running on a different computer).
-
-**`preferred_source` Options:**
-*   `"spotify"`: Only uses Spotify. Ignores YTM.
-*   `"ytm"`: Only uses the YTM Companion Server. Ignores Spotify.
-
-### Spotify Authentication for Music Display
-
-If you are using the Spotify integration to display currently playing music, you will need to authenticate with Spotify. This project uses an authentication flow that requires a one-time setup. Due to how the display controller script may run with specific user permissions (even when using `sudo`), the following steps are crucial:
-
-1.  **Initial Setup & Secrets:**
-    *   Ensure you have your Spotify API Client ID, Client Secret, and Redirect URI.
-    *   The Redirect URI should be set to `http://127.0.0.1:8888/callback` in your Spotify Developer Dashboard.
-    *   Copy `config/config_secrets.template.json` to `config/config_secrets.json`.
-    *   Edit `config/config_secrets.json` and fill in your Spotify credentials under the `"music"` section:
-        ```json
-        {
-          "music": {
-            "SPOTIFY_CLIENT_ID": "YOUR_SPOTIFY_CLIENT_ID",
-            "SPOTIFY_CLIENT_SECRET": "YOUR_SPOTIFY_CLIENT_SECRET",
-            "SPOTIFY_REDIRECT_URI": "http://127.0.0.1:8888/callback"
-          }
-        }
-        ```
-
-2.  **Run the Authentication Script:**
-    *   Execute the authentication script using `sudo`. This is important because it needs to create an authentication cache file (`spotify_auth.json`) that will be owned by root.
-        ```bash
-        sudo python3 src/authenticate_spotify.py
-        ```
-    *   The script will output a URL. Copy this URL and paste it into a web browser on any device.
-    *   Log in to Spotify and authorize the application.
-    *   Your browser will be redirected to a URL starting with `http://127.0.0.1:8888/callback?code=...`. It will likely show an error page like "This site can't be reached" – this is expected.
-    *   Copy the **entire** redirected URL from your browser's address bar.
-    *   Paste this full URL back into the terminal when prompted by the script.
-    *   If successful, it will indicate that token info has been cached.
-
-3.  **Adjust Cache File Permissions:**
-    *   The main display script (`display_controller.py`), even when run with `sudo`, might operate with an effective User ID (e.g., UID 1 for 'daemon') that doesn't have permission to read the `spotify_auth.json` file created by `root` (which has -rw------- permissions by default).
-    *   To allow the display script to read this cache file, change its permissions:
-        ```bash
-        sudo chmod 644 config/spotify_auth.json
-        ```
-    This makes the file readable by all users, including the effective user of the display script.
-
-4.  **Run the Main Application:**
-    *   You should now be able to run your main display controller script using `sudo`:
-        ```bash
-        sudo python3 display_controller.py
-        ```
-    *   The Spotify client should now authenticate successfully using the cached token.
-
-**Why these specific permissions steps?**
-
-The `authenticate_spotify.py` script, when run with `sudo`, creates `config/spotify_auth.json` owned by `root`. If the main `display_controller.py` (also run with `sudo`) effectively runs as a different user (e.g., UID 1/daemon, as observed during troubleshooting), that user won't be able to read the `root`-owned file unless its permissions are relaxed (e.g., to `644`). The `chmod 644` command allows the owner (`root`) to read/write, and everyone else (including the `daemon` user) to read.
-
-### Youtube Music Authentication for Music Display
-
-The system can display currently playing music information from [YouTube Music Desktop (YTMD)](https://ytmdesktop.app/) via its Companion server API.
-
-### YouTube Display Configuration & API Key
-
-The YouTube display module shows channel statistics for a specified YouTube channel. To configure it:
-
-1. In `config/config.json`, add the following section:
-```json
-{
-    "youtube": {
-        "enabled": true,
-        "update_interval": 300  // Update interval in seconds (default: 300)
-    }
-}
-```
-
-2. In `config/config_secrets.json`, add your YouTube API credentials:
-```json
-{
-    "youtube": {
-        "api_key": "YOUR_YOUTUBE_API_KEY",
-        "channel_id": "YOUR_CHANNEL_ID"
-    }
-}
-```
-
-To get these credentials:
-1. Go to the [Google Cloud Console](https://console.cloud.google.com/)
-2. Create a new project or select an existing one
-3. Enable the YouTube Data API v3
-4. Create credentials (API key)
-5. For the channel ID, you can find it in your YouTube channel URL or use the YouTube Data API to look it up
-
-**Setup:**
-
-1.  **Enable Companion Server in YTMD:**
-    *   In the YouTube Music Desktop application, go to `Settings` -> `Integrations`.
-    *   Enable the "Companion Server".
-    *   Note the IP address and Port it's listening on (default is usually `http://localhost:9863`), you'll need to know the local ip address if playing music on a device other than your rpi (probably are).
-
-2.  **Configure `config/config.json`:**
-    *   Update the `music` section in your `config/config.json`:
-        ```json
-        "music": {
-            "enabled": true,
-            "preferred_source": "ytm",
-            "YTM_COMPANION_URL": "http://YOUR_YTMD_IP_ADDRESS:PORT", // e.g., "http://localhost:9863" or "http://192.168.1.100:9863"
-            "POLLING_INTERVAL_SECONDS": 1
-        }
-        ```
-
-3.  **Initial Authentication & Token Storage:**
-    *   The first time you run ` python3 src/authenticate_ytm.py` after enabling YTM, it will attempt to register itself with the YTMD Companion Server.
-    *   You will see log messages in the terminal prompting you to **approve the "LEDMatrixController" application within the YouTube Music Desktop app.** You typically have 30 seconds to do this.
-    *   Once approved, an authentication token is saved to your `config/ytm_auth.json`.
-    *   This ensures the `ledpi` user owns the config directory and file, and has the necessary write permissions.
-
-**Troubleshooting:**
-*   "No authorized companions" in YTMD: Ensure you've approved the `LEDMatrixController` in YTMD settings after the first run.
-*   Connection errors: Double-check the `YTM_COMPANION_URL` in `config.json` matches what YTMD's companion server is set to.
-*   Ensure your firewall (Windows Firewall) allows YTM Desktop app to access local networks.
-
-</details>
-
-
-------------------------------------------------------------------------------------
-
-## Running the Display
-
-I recommend using the web-ui to control the Display but you can also run the following commands via ssh:
-
-From the project root directory:
 ```bash
 sudo python3 display_controller.py
 ```
+
 This will start the display cycle but only stays active as long as your ssh session is active.
 
+### Convenience Scripts
 
------------------------------------------------------------------------------------
+Two convenience scripts are provided for easy service management:
+
+- `start_display.sh` - Starts the LED matrix display service
+- `stop_display.sh` - Stops the LED matrix display service
+
+Make them executable with:
+```bash
+chmod +x start_display.sh stop_display.sh
+```
+
+Then use them to control the service:
+```bash
+sudo ./start_display.sh
+sudo ./stop_display.sh
+```
+
+</details>
 
 <details>
+<summary>Service Installation Details</summary>
 
-<summary>Run on Startup Automatically with Systemd Service Installation</summary>
-
-
-## Run on Startup Automatically with Systemd Service Installation
 The first time install will handle this:
 The LEDMatrix can be installed as a systemd service to run automatically at boot and be managed easily. The service runs as root to ensure proper hardware timing access for the LED matrix.
 
@@ -864,34 +767,12 @@ sudo systemctl disable ledmatrix.service
 # Enable autostart
 sudo systemctl enable ledmatrix.service
 ```
+
 </details>
 
 <details>
+<summary>Web Interface Installation Details</summary>
 
-<summary>Convenience Scripts</summary>
-
-
-### Convenience Scripts
-
-Two convenience scripts are provided for easy service management:
-
-- `start_display.sh` - Starts the LED matrix display service
-- `stop_display.sh` - Stops the LED matrix display service
-
-Make them executable with:
-```bash
-chmod +x start_display.sh stop_display.sh
-```
-
-Then use them to control the service:
-```bash
-sudo ./start_display.sh
-sudo ./stop_display.sh
-```
-</details>
------------------------------------------------------------------------------------
-
-## Web Interface Installation
 The first time install will handle this:
 The LEDMatrix system includes Web Interface that runs on port 5000 and provides real-time display preview, configuration management, and on-demand display controls.
 
@@ -985,231 +866,7 @@ sudo systemctl enable ledmatrix-web.service
 2. Verify the virtual environment is set up correctly
 3. Check file permissions and ownership
 
-
------------------------------------------------------------------------------------
-
-
-## Information
-
-<details>
-
-<summary>Display Settings from RGBLEDMatrix Library</summary>
-
-
-## Display Settings
-If you are copying my setup, you can likely leave this alone. 
-- hardware: Configures how the matrix is driven.
-  - rows, cols, chain_length: Physical panel configuration.
-  - brightness: Display brightness (0–100).
-  - hardware_mapping: Use "adafruit-hat-pwm" for Adafruit bonnet WITH the jumper mod. Remove -pwm if you did not solder the jumper.
-  - pwm_bits, pwm_dither_bits, pwm_lsb_nanoseconds: Affect color fidelity.
-  - limit_refresh_rate_hz: Cap refresh rate for better stability.
-- runtime:
-  - gpio_slowdown: Tweak this depending on your Pi model. Match it to the generation (e.g., Pi 3 → 3, Pi 4 -> 4).
-- display_durations:
-  - Control how long each display module stays visible in seconds. For example, if you want more focus on stocks, increase that value.
-### Modules
-- Each module (weather, stocks, crypto, calendar, etc.) has enabled, update_interval, and often display_format settings.
-- Sports modules also support test_mode, live_update_interval, and favorite_teams.
-- Logos are loaded from the logo_dir path under assets/sports/...
-
 </details>
-
-
-<details>
-
-<summary>Cache Information</summary>
-
-
-### Persistent Caching Setup
-
-The LEDMatrix system uses persistent caching to improve performance and reduce API calls. When running with `sudo`, the system needs a persistent cache directory that survives restarts.
-
-**First-Time Setup:**
-Run the setup script to create a persistent cache directory:
-```bash
-chmod +x setup_cache.sh
-./setup_cache.sh
-```
-
-This will:
-- Create `/var/cache/ledmatrix/` directory
-- Set proper ownership to your user account
-- Set permissions to allow the daemon user (which the system runs as) to write
-- Test writability for both your user and the daemon user
-
-**If You Still See Cache Warnings:**
-If you see warnings about using temporary cache directory, run the permissions fix:
-```bash
-chmod +x scripts/fix_perms/fix_cache_permissions.sh
-sudo ./scripts/fix_perms/fix_cache_permissions.sh
-```
-
-**Manual Setup:**
-If you prefer to set up manually:
-```bash
-sudo mkdir -p /var/cache/ledmatrix
-sudo chown $USER:$USER /var/cache/ledmatrix
-sudo chmod 777 /var/cache/ledmatrix
-```
-
-**Cache Locations (in order of preference):**
-1. `~/.ledmatrix_cache/` (user's home directory) - **Most persistent**
-2. `/var/cache/ledmatrix/` (system cache directory) - **Persistent across restarts**
-3. `/opt/ledmatrix/cache/` (alternative persistent location)
-4. `/tmp/ledmatrix_cache/` (temporary directory) - **NOT persistent**
-
-**Note:** If the system falls back to `/tmp/ledmatrix_cache/`, you'll see a warning message and the cache will not persist across restarts.
-
-
-## Caching System
-
-The LEDMatrix system includes a robust caching mechanism to optimize API calls and reduce network traffic:
-
-### Cache Location
-- Default cache directory: `/tmp/ledmatrix_cache`
-- Cache files are stored with proper permissions (755 for directories, 644 for files)
-- When running as root/sudo, cache ownership is automatically adjusted to the real user
-
-### Cached Data Types
-- Weather data (current conditions and forecasts)
-- Stock prices and market data
-- Stock news headlines
-- ESPN game information
-
-### Cache Behavior
-- Data is cached based on update intervals defined in `config.json`
-- Cache is automatically invalidated when:
-  - Update interval has elapsed
-  - Market is closed (for stock data)
-  - Data has changed significantly
-- Failed API calls fall back to cached data when available
-- Cache files use atomic operations to prevent corruption
-
-### Cache Management
-- Cache files are automatically created and managed
-- No manual intervention required
-- Cache directory is created with proper permissions on first run
-- Temporary files are used for safe updates
-- JSON serialization handles all data types including timestamps
-
-</details>
-
-
-
-<details>
-
-<summary>Date Format Configuration </summary>
-
-## Date Format Configuration
-
-You can customize the date format for upcoming games across all sports displays. The `use_short_date_format` setting in `config/config.json` under the `display` section controls this behavior.
-
-- **`"use_short_date_format": true`**: Displays dates in a short, numerical format (e.g., "8/30").
-- **`"use_short_date_format": false`** (Default): Displays dates in a more descriptive format with an ordinal suffix (e.g., "Aug 30th").
-
-### Example `config.json`
-
-```json
-"display": {
-    "hardware": {
-        ...
-    },
-    "runtime": {
-        ...
-    },
-    "display_durations": {
-        ...
-    },
-    "use_short_date_format": false // Set to true for "8/30" format
-},
-```
-
-</details>
-
-
------------------------------------------------------------------------------------
-
-<details>
-
-<summary>Passwordless Sudo for Web Interface Actions</summary>
-
-## Granting Passwordless Sudo Access for Web Interface Actions
-
-The web interface needs to run certain commands with `sudo` (e.g., `reboot`, `systemctl start/stop/enable/disable ledmatrix.service`, `python display_controller.py`). To avoid needing to enter a password for these actions through the web UI, you can configure the `sudoers` file to allow the user running the Flask application to execute these specific commands without a password.
-
-1. Shortcut to automate the below steps:
-```chmod +x configure_web_sudo.sh```
-then
-```./configure_web_sudo.sh```
-
-
-Manual Method:
-
-**WARNING: Be very careful when editing the `sudoers` file. Incorrect syntax can lock you out of `sudo` access.**
-
-1.  **Identify the user:** Determine which user is running the `web_interface.py` script. Often, this might be the default user like `pi` on a Raspberry Pi, or a dedicated user you've set up.
-
-2.  **Open the sudoers file for editing:**
-    Use the `visudo` command, which locks the sudoers file and checks for syntax errors before saving.
-    ```bash
-    sudo visudo
-    ```
-
-3.  **Add the permission lines:**
-    Scroll to the bottom of the file and add lines similar to the following. Replace `your_flask_user` with the actual username running the Flask application.
-    You'll need to specify the full paths to the commands. You can find these using the `which` command (e.g., `which python`, `which systemctl`, `which reboot`).
-
-    ```sudoers
-    # Allow your_flask_user to run specific commands without a password for the LED Matrix web interface
-    your_flask_user ALL=(ALL) NOPASSWD: /sbin/reboot
-    your_flask_user ALL=(ALL) NOPASSWD: /bin/systemctl start ledmatrix.service
-    your_flask_user ALL=(ALL) NOPASSWD: /bin/systemctl stop ledmatrix.service
-    your_flask_user ALL=(ALL) NOPASSWD: /bin/systemctl enable ledmatrix.service
-    your_flask_user ALL=(ALL) NOPASSWD: /bin/systemctl disable ledmatrix.service
-    your_flask_user ALL=(ALL) NOPASSWD: /usr/bin/python /path/to/your/display_controller.py 
-    your_flask_user ALL=(ALL) NOPASSWD: /bin/bash /path/to/your/stop_display.sh
-    ```
-    *   **Important:**
-        *   Replace `your_flask_user` with the correct username.
-        *   Replace `/path/to/your/display_controller.py` with the absolute path to your `display_controller.py` script.
-        *   Replace `/path/to/your/stop_display.sh` with the absolute path to your `stop_display.sh` script.
-        *   The paths to `python`, `systemctl`, `reboot`, and `bash` might vary slightly depending on your system. Use `which <command>` to find the correct paths if you are unsure. For example, `which python` might output `/usr/bin/python3` - use that full path.
-
-4.  **Save and Exit:**
-    *   If you're in `nano` (common default for `visudo`): `Ctrl+X`, then `Y` to confirm, then `Enter`.
-    *   If you're in `vim`: `Esc`, then `:wq`, then `Enter`.
-
-    `visudo` will check the syntax. If there's an error, it will prompt you to re-edit or quit. **Do not quit without fixing errors if possible.**
-
-5.  **Test:**
-    After saving, try running one of the specified commands as `your_flask_user` using `sudo` from a regular terminal session to ensure it doesn't ask for a password.
-    For example:
-    ```bash
-    sudo -u your_flask_user sudo /sbin/reboot
-    ```
-    (Don't actually reboot if you're not ready, but it should proceed without a password prompt if configured correctly. You can test with a less disruptive command like `sudo -u your_flask_user sudo systemctl status ledmatrix.service`).
-
-**Security Considerations:**
-Granting passwordless `sudo` access, even for specific commands, has security implications. Ensure that the scripts and commands allowed are secure and cannot be easily exploited. The web interface itself should also be secured if it's exposed to untrusted networks.
-For `display_controller.py` and `stop_display.sh`, ensure their file permissions restrict write access to only trusted users, preventing unauthorized modification of these scripts which run with elevated privileges.
-
-</details>
-
-
-
-
-## Final Notes
-- Most configuration is done via config/config.json
-- Refresh intervals for sports/weather/stocks are customizable
-- A caching system reduces API strain and helps ensure the display doesn't hammer external services (and ruin it for everyone)
-- Font files should be placed in assets/fonts/
-- You can test each module individually for debugging
-
-
-##What's Next?
-- Adding MQTT/HomeAssistant integration
-
 
 
 ### If you've read this far — thanks!  
