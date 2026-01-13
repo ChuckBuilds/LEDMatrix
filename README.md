@@ -114,9 +114,15 @@ The system supports live, recent, and upcoming game information for multiple spo
 
 <details>
 <summary>Hardware Requirements</summary>
-## Hardware Requirements
+
+  ## Hardware Requirements
+
+| ⚠️ IMPORTANT |
+| :--- |
+| This project can be finnicky! RGB LED Matrix displays are not built the same or to a high-quality standard. We have seen many displays arrive dead or partially working in our discord. Please purchase from a reputable vendor. |
 
 ### Raspberry Pi
+- Raspberry Pi Zero's don't have enough processing power for this project and the Pi 5 is unsupported due to new GPIO output.
 - **Raspberry Pi 3B or 4 (NOT RPi 5!)**  
   [Amazon Affiliate Link – Raspberry Pi 4 4GB RAM](https://amzn.to/4dJixuX)
   [Amazon Affiliate Link – Raspberry Pi 4 8GB RAM](https://amzn.to/4qbqY7F)
@@ -198,15 +204,15 @@ These are not required and you can probably rig up something basic with stuff yo
 -----------------------------------------------------------------------------------
 ## Installation Steps
 
-
 <details>
 
 <summary>Preparing the Raspberry Pi</summary>
 
 # Preparing the Raspberry Pi
 
-> [!IMPORTANT]  
-> It is required to use the **NEW** Raspberry Pi Imager tool, if your tool doesn't look like my screenshots be sure to go update it.
+| ⚠️ IMPORTANT |
+| :--- |
+| It is required to use the **NEW** Raspberry Pi Imager tool. If your tool doesn't look like my screenshots, be sure to update it. |
 
 1. Create RPI Image on a Micro-SD card (I use whatever I have laying around, size is not too important but I would use 8gb or more) using [Raspberry Pi Imager](https://www.raspberrypi.com/software/)
 
@@ -224,8 +230,9 @@ These are not required and you can probably rig up something basic with stuff yo
 
 6. For Storage, choose your micro-sd card
 
-> [!WARNING]  
-> Make sure it's the correct drive! Data will be erased!
+| ⚠️ IMPORTANT |
+| :--- |
+| Make sure it's the correct drive! Data will be erased! |
 
 <img width="512" height="361" alt="Step 5 Select storage" src="https://github.com/user-attachments/assets/d2840c6b-2a07-45a4-bfd4-2a73ee790e87" />
 
