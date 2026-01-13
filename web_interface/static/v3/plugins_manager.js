@@ -1385,7 +1385,7 @@ function renderInstalledPlugins(plugins) {
                         data-action="configure">
                     <i class="fas fa-cog mr-2"></i>Configure
                 </button>
-                <button class="btn bg-gray-600 hover:bg-gray-700 text-white px-4 py-2 rounded-md text-sm flex-1 font-semibold"
+                <button class="btn bg-yellow-600 hover:bg-yellow-700 text-white px-4 py-2 rounded-md text-sm flex-1 font-semibold"
                         data-plugin-id="${escapedPluginId}"
                         data-action="update">
                     <i class="fas fa-sync mr-2"></i>Update
