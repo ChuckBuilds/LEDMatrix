@@ -2493,9 +2493,10 @@ function renderArrayObjectItem(fieldId, fullKey, itemProperties, itemValue, inde
             const uploadConfig = propSchema['x-upload-config'] || {};
             const pluginId = uploadConfig.plugin_id || (typeof currentPluginConfig !== 'undefined' ? currentPluginConfig?.pluginId : null) || (typeof window.currentPluginConfig !== 'undefined' ? window.currentPluginConfig?.pluginId : null) || 'ledmatrix-news';
             const logoValue = propValue || {};
+            const logoDataJson = logoValue && Object.keys(logoValue).length > 0 ? JSON.stringify(logoValue).replace(/"/g, '&quot;') : '';
             
             html += `
-                <div class="file-upload-widget-inline">
+                <div class="file-upload-widget-inline"${logoDataJson ? ` data-file-data="${logoDataJson}" data-prop-key="${propKey}"` : ''}>
                     <input type="file" 
                            id="${itemId}_logo_file" 
                            accept="${(uploadConfig.allowed_types || ['image/png', 'image/jpeg', 'image/bmp']).join(',')}"
@@ -2510,7 +2511,7 @@ function renderArrayObjectItem(fieldId, fullKey, itemProperties, itemValue, inde
             
             if (logoValue.path) {
                 html += `
-                    <div class="mt-2 flex items-center space-x-2">
+                    <div class="mt-2 flex items-center space-x-2 uploaded-image-container">
                         <img src="/${logoValue.path}" alt="Logo" class="w-16 h-16 object-cover rounded border">
                         <button type="button" 
                                 onclick="removeArrayObjectFile('${fieldId}', ${index}, '${propKey}')"
@@ -3532,12 +3533,26 @@ window.updateArrayObjectData = function(fieldId) {
     const hiddenInput = document.getElementById(fieldId + '_data');
     if (!itemsContainer || !hiddenInput) return;
     
+    // Get existing items from hidden input to preserve non-editable properties
+    let existingItems = [];
+    try {
+        const existingData = hiddenInput.value.trim();
+        if (existingData) {
+            existingItems = JSON.parse(existingData);
+        }
+    } catch (e) {
+        console.error('Error parsing existing items data:', e);
+    }
+    
     const items = [];
     const itemElements = itemsContainer.querySelectorAll('.array-object-item');
     
     itemElements.forEach((itemEl, index) => {
-        const item = {};
-        // Get all text inputs in this item
+        // Start with existing item data to preserve non-editable properties
+        const existingItem = (index < existingItems.length && existingItems[index]) ? existingItems[index] : {};
+        const item = Object.assign({}, existingItem); // Copy existing item
+        
+        // Get all text inputs in this item and overlay their values
         itemEl.querySelectorAll('input[type="text"], input[type="url"], input[type="number"]').forEach(input => {
             const propKey = input.getAttribute('data-prop-key');
             if (propKey && propKey !== 'logo_file') {
@@ -3572,17 +3587,107 @@ window.updateArrayObjectData = function(fieldId) {
     hiddenInput.value = JSON.stringify(items);
 };
 
-window.handleArrayObjectFileUpload = function(event, fieldId, itemIndex, propKey, pluginId) {
-    // TODO: Implement file upload handling for array object items
-    // This is a placeholder - file upload in nested objects needs special handling
-    console.log('File upload for array object item:', { fieldId, itemIndex, propKey, pluginId });
-    updateArrayObjectData(fieldId);
+window.handleArrayObjectFileUpload = async function(event, fieldId, itemIndex, propKey, pluginId) {
+    const file = event.target.files[0];
+    if (!file) return;
+    
+    const itemId = `${fieldId}_item_${itemIndex}`;
+    const fileUploadContainer = document.querySelector(`#${itemId} .file-upload-widget-inline`);
+    if (!fileUploadContainer) {
+        console.error('File upload container not found');
+        return;
+    }
+    
+    // Validate file type
+    const allowedTypes = ['image/png', 'image/jpeg', 'image/jpg', 'image/bmp'];
+    if (!allowedTypes.includes(file.type)) {
+        showNotification(`File ${file.name} is not a valid image type`, 'error');
+        return;
+    }
+    
+    // Validate file size (5MB default)
+    const maxSizeMB = 5;
+    if (file.size > maxSizeMB * 1024 * 1024) {
+        showNotification(`File ${file.name} exceeds ${maxSizeMB}MB limit`, 'error');
+        return;
+    }
+    
+    // Upload file
+    const formData = new FormData();
+    formData.append('plugin_id', pluginId);
+    formData.append('files', file);
+    
+    try {
+        const response = await fetch('/api/v3/plugins/assets/upload', {
+            method: 'POST',
+            body: formData
+        });
+        
+        const data = await response.json();
+        
+        if (data.status === 'success' && data.uploaded_files && data.uploaded_files.length > 0) {
+            const uploadedFile = data.uploaded_files[0];
+            
+            // Store file data in data-file-data attribute on the container
+            const fileData = JSON.stringify(uploadedFile);
+            fileUploadContainer.setAttribute('data-file-data', fileData);
+            fileUploadContainer.setAttribute('data-prop-key', propKey);
+            
+            // Update the display to show the uploaded image
+            const existingImage = fileUploadContainer.querySelector('.uploaded-image-container');
+            if (existingImage) {
+                existingImage.remove();
+            }
+            
+            const imageContainer = document.createElement('div');
+            imageContainer.className = 'mt-2 flex items-center space-x-2 uploaded-image-container';
+            imageContainer.innerHTML = `
+                <img src="/${uploadedFile.path}" alt="Logo" class="w-16 h-16 object-cover rounded border">
+                <button type="button" 
+                        onclick="removeArrayObjectFile('${fieldId}', ${itemIndex}, '${propKey}')"
+                        class="text-red-600 hover:text-red-800">
+                    <i class="fas fa-trash"></i> Remove
+                </button>
+            `;
+            fileUploadContainer.appendChild(imageContainer);
+            
+            // Update the hidden input with the new file data
+            updateArrayObjectData(fieldId);
+            
+            showNotification('Logo uploaded successfully', 'success');
+        } else {
+            showNotification(`Upload failed: ${data.message || 'Unknown error'}`, 'error');
+        }
+    } catch (error) {
+        console.error('Upload error:', error);
+        showNotification(`Upload error: ${error.message}`, 'error');
+    }
+    
+    // Clear file input
+    event.target.value = '';
 };
 
 window.removeArrayObjectFile = function(fieldId, itemIndex, propKey) {
-    // TODO: Implement file removal for array object items
-    console.log('File removal for array object item:', { fieldId, itemIndex, propKey });
+    const itemId = `${fieldId}_item_${itemIndex}`;
+    const fileUploadContainer = document.querySelector(`#${itemId} .file-upload-widget-inline`);
+    if (!fileUploadContainer) {
+        console.error('File upload container not found');
+        return;
+    }
+    
+    // Remove file data from data attribute
+    fileUploadContainer.removeAttribute('data-file-data');
+    
+    // Remove the image display
+    const imageContainer = fileUploadContainer.querySelector('.uploaded-image-container');
+    if (imageContainer) {
+        imageContainer.remove();
+    }
+    
+    // Update the hidden input to remove the file data
     updateArrayObjectData(fieldId);
+    
+    showNotification('Logo removed', 'success');
 };
 
 // Function to toggle nested sections
