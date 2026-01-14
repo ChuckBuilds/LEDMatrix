@@ -2922,7 +2922,7 @@ function generateFieldHtml(key, prop, value, prefix = '') {
                             ${currentItems.length >= maxItems ? 'disabled style="opacity: 0.5; cursor: not-allowed;"' : ''}>
                         <i class="fas fa-plus mr-1"></i> Add Feed
                     </button>
-                    <input type="hidden" id="${fieldId}_data" name="${fullKey}_data" value='${JSON.stringify(currentItems).replace(/'/g, "&#39;")}'>
+                    <input type="hidden" id="${fieldId}_data" name="${fullKey}_data" value="${escapeAttribute(JSON.stringify(currentItems))}">
                 </div>
             `;
         } else {
@@ -3731,7 +3731,7 @@ window.handleArrayObjectFileUpload = async function(event, fieldId, itemIndex, p
     }
     
     // Get upload config from data attribute
-    let uploadConfig = { allowed_types: ['image/png', 'image/jpeg', 'image/bmp'], max_size_mb: 5 };
+    let uploadConfig = { allowed_types: ['image/png', 'image/jpeg', 'image/jpg', 'image/bmp'], max_size_mb: 5 };
     const uploadConfigBase64 = fileUploadContainer.getAttribute('data-upload-config');
     if (uploadConfigBase64) {
         try {
@@ -3743,7 +3743,7 @@ window.handleArrayObjectFileUpload = async function(event, fieldId, itemIndex, p
     }
     
     // Validate file type using uploadConfig
-    const allowedTypes = uploadConfig.allowed_types || ['image/png', 'image/jpeg', 'image/bmp'];
+    const allowedTypes = uploadConfig.allowed_types || ['image/png', 'image/jpeg', 'image/jpg', 'image/bmp'];
     if (!allowedTypes.includes(file.type)) {
         if (typeof showNotification === 'function') {
             showNotification(`File ${file.name} is not a valid image type`, 'error');
@@ -3760,11 +3760,18 @@ window.handleArrayObjectFileUpload = async function(event, fieldId, itemIndex, p
         return;
     }
     
+    // Validate pluginId before upload (fail fast)
+    if (!pluginId || pluginId === 'null' || pluginId === 'undefined' || pluginId.trim() === '') {
+        if (typeof showNotification === 'function') {
+            showNotification('Plugin ID is required for file upload', 'error');
+        }
+        console.error('File upload failed: pluginId is required');
+        return;
+    }
+    
     // Upload file
     const formData = new FormData();
-    if (pluginId) {
-        formData.append('plugin_id', pluginId);
-    }
+    formData.append('plugin_id', pluginId);
     formData.append('files', file);
     
     try {
