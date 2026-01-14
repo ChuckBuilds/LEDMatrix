@@ -3723,10 +3723,10 @@ window.handleArrayObjectFileUpload = async function(event, fieldId, itemIndex, p
         return;
     }
     
-    // Find file upload container within the item element
-    const fileUploadContainer = itemEl.querySelector('.file-upload-widget-inline');
+    // Find file upload container within the item element, scoped to propKey
+    const fileUploadContainer = itemEl.querySelector(`.file-upload-widget-inline[data-prop-key="${propKey}"]`);
     if (!fileUploadContainer) {
-        console.error('File upload container not found');
+        console.error('File upload container not found for propKey:', propKey);
         return;
     }
     
@@ -3761,7 +3761,7 @@ window.handleArrayObjectFileUpload = async function(event, fieldId, itemIndex, p
     }
     
     // Validate pluginId before upload (fail fast)
-    if (!pluginId || pluginId === 'null' || pluginId === 'undefined' || pluginId.trim() === '') {
+    if (!pluginId || pluginId === 'null' || pluginId === 'undefined' || (typeof pluginId === 'string' && pluginId.trim() === '')) {
         if (typeof showNotification === 'function') {
             showNotification('Plugin ID is required for file upload', 'error');
         }
