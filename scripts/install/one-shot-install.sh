@@ -63,11 +63,18 @@ retry() {
     local attempt=1
     local max_attempts=3
     local delay_seconds=5
+    local status
     while true; do
-        if "$@"; then
+        # Run command in a context that disables errexit so we can capture exit code
+        # This prevents errexit from triggering before status=$? runs
+        if ! "$@"; then
+            status=$?
+        else
+            status=0
+        fi
+        if [ $status -eq 0 ]; then
             return 0
         fi
-        local status=$?
         if [ $attempt -ge $max_attempts ]; then
             print_error "Command failed after $attempt attempts: $*"
             return $status
