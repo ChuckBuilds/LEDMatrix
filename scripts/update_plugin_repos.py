@@ -18,8 +18,18 @@ GITHUB_DIR = Path(__file__).parent.parent.parent
 
 def load_workspace_plugins():
     """Load plugin paths from workspace file."""
-    with open(WORKSPACE_FILE, 'r') as f:
-        workspace = json.load(f)
+    try:
+        with open(WORKSPACE_FILE, 'r', encoding='utf-8') as f:
+            workspace = json.load(f)
+    except FileNotFoundError:
+        print(f"Error: Workspace file not found: {WORKSPACE_FILE}")
+        return []
+    except PermissionError as e:
+        print(f"Error: Permission denied reading workspace file {WORKSPACE_FILE}: {e}")
+        return []
+    except json.JSONDecodeError as e:
+        print(f"Error: Invalid JSON in workspace file {WORKSPACE_FILE}: {e}")
+        return []
     
     plugins = []
     for folder in workspace.get('folders', []):
@@ -48,8 +58,12 @@ def update_repo(repo_path):
     
     try:
         # Fetch latest changes
-        result = subprocess.run(['git', 'fetch', 'origin'],
-                              cwd=repo_path, capture_output=True, text=True)
+        fetch_result = subprocess.run(['git', 'fetch', 'origin'],
+                                     cwd=repo_path, capture_output=True, text=True)
+        
+        if fetch_result.returncode != 0:
+            print(f"  ✗  Failed to fetch {repo_path.name}: {fetch_result.stderr.strip()}")
+            return False
         
         # Get current branch
         branch_result = subprocess.run(['git', 'rev-parse', '--abbrev-ref', 'HEAD'],
@@ -57,20 +71,20 @@ def update_repo(repo_path):
         current_branch = branch_result.stdout.strip() if branch_result.returncode == 0 else 'main'
         
         # Pull latest changes
-        result = subprocess.run(['git', 'pull', 'origin', current_branch],
-                              cwd=repo_path, capture_output=True, text=True)
+        pull_result = subprocess.run(['git', 'pull', 'origin', current_branch],
+                                    cwd=repo_path, capture_output=True, text=True)
         
-        if result.returncode == 0:
+        if pull_result.returncode == 0:
             # Check if there were actual updates
-            if 'Already up to date' in result.stdout:
+            if 'Already up to date' in pull_result.stdout:
                 print(f"  ✓  {repo_path.name} is up to date")
             else:
                 print(f"  ✓  Updated {repo_path.name}")
             return True
         else:
-            print(f"  ✗  Failed to update {repo_path.name}: {result.stderr.strip()}")
+            print(f"  ✗  Failed to update {repo_path.name}: {pull_result.stderr.strip()}")
             return False
-    except Exception as e:
+    except (subprocess.SubprocessError, OSError) as e:
         print(f"  ✗  Error updating {repo_path.name}: {e}")
         return False
 

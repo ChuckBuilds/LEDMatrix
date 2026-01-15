@@ -523,12 +523,27 @@
         const maxSizeMB = uploadConfig.max_size_mb || 5;
         const allowedTypes = uploadConfig.allowed_types || ['image/png', 'image/jpeg', 'image/bmp', 'image/gif'];
         
+        // Generate user-friendly extension list from allowedTypes
+        const extensionMap = {
+            'image/png': 'PNG',
+            'image/jpeg': 'JPG',
+            'image/jpg': 'JPG',
+            'image/bmp': 'BMP',
+            'image/gif': 'GIF',
+            'image/webp': 'WEBP'
+        };
+        const extensions = allowedTypes
+            .map(type => extensionMap[type] || type.split('/')[1]?.toUpperCase() || type)
+            .filter((ext, idx, arr) => arr.indexOf(ext) === idx) // Remove duplicates
+            .join(', ');
+        const extensionText = extensions || 'PNG, JPG, GIF, BMP';
+        
         const dropZone = document.getElementById(`${fieldId}_drop_zone`);
         if (dropZone) {
             dropZone.innerHTML = `
                 <i class="fas fa-cloud-upload-alt text-3xl text-gray-400 mb-2"></i>
                 <p class="text-sm text-gray-600">Drag and drop images here or click to browse</p>
-                <p class="text-xs text-gray-500 mt-1">Max ${maxFiles} files, ${maxSizeMB}MB each (PNG, JPG, GIF, BMP)</p>
+                <p class="text-xs text-gray-500 mt-1">Max ${maxFiles} files, ${maxSizeMB}MB each (${extensionText})</p>
             `;
             dropZone.style.pointerEvents = 'auto';
         }
@@ -627,6 +642,7 @@
         };
         
         // Use sanitizedId for all ID references in the schedule HTML
+        // Use data attributes instead of inline handlers to prevent JS injection
         scheduleContainer.innerHTML = `
             <div class="bg-white rounded-lg border border-blue-200 p-4">
                 <h4 class="text-sm font-semibold text-gray-900 mb-3">
@@ -638,8 +654,10 @@
                     <label class="flex items-center">
                         <input type="checkbox" 
                                id="schedule_enabled_${sanitizedId}"
+                               data-field-id="${escapeHtml(fieldId)}"
+                               data-image-id="${sanitizedId}"
+                               data-image-idx="${imageIdx}"
                                ${schedule.enabled ? 'checked' : ''}
-                               onchange="window.toggleImageScheduleEnabled('${fieldId}', '${sanitizedId}', ${imageIdx})"
                                class="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded">
                         <span class="ml-2 text-sm font-medium text-gray-700">Enable schedule for this image</span>
                     </label>
@@ -651,7 +669,9 @@
                     <div>
                         <label class="block text-sm font-medium text-gray-700 mb-2">Schedule Type</label>
                         <select id="schedule_mode_${sanitizedId}"
-                                onchange="window.updateImageScheduleMode('${fieldId}', '${sanitizedId}', ${imageIdx})"
+                                data-field-id="${escapeHtml(fieldId)}"
+                                data-image-id="${sanitizedId}"
+                                data-image-idx="${imageIdx}"
                                 class="block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm">
                             <option value="always" ${schedule.mode === 'always' ? 'selected' : ''}>Always Show (No Schedule)</option>
                             <option value="time_range" ${schedule.mode === 'time_range' ? 'selected' : ''}>Same Time Every Day</option>
@@ -665,16 +685,20 @@
                             <label class="block text-xs font-medium text-gray-700 mb-1">Start Time</label>
                             <input type="time" 
                                    id="schedule_start_${sanitizedId}"
+                                   data-field-id="${escapeHtml(fieldId)}"
+                                   data-image-id="${sanitizedId}"
+                                   data-image-idx="${imageIdx}"
                                    value="${escapeHtml(schedule.start_time || '08:00')}"
-                                   onchange="window.updateImageScheduleTime('${fieldId}', '${sanitizedId}', ${imageIdx})"
                                    class="block w-full px-2 py-1 text-sm border border-gray-300 rounded-md">
                         </div>
                         <div>
                             <label class="block text-xs font-medium text-gray-700 mb-1">End Time</label>
                             <input type="time" 
                                    id="schedule_end_${sanitizedId}"
+                                   data-field-id="${escapeHtml(fieldId)}"
+                                   data-image-id="${sanitizedId}"
+                                   data-image-idx="${imageIdx}"
                                    value="${escapeHtml(schedule.end_time || '18:00')}"
-                                   onchange="window.updateImageScheduleTime('${fieldId}', '${sanitizedId}', ${imageIdx})"
                                    class="block w-full px-2 py-1 text-sm border border-gray-300 rounded-md">
                         </div>
                     </div>
@@ -691,8 +715,11 @@
                                         <label class="flex items-center">
                                             <input type="checkbox"
                                                    id="day_${day}_${sanitizedId}"
+                                                   data-field-id="${escapeHtml(fieldId)}"
+                                                   data-image-id="${sanitizedId}"
+                                                   data-image-idx="${imageIdx}"
+                                                   data-day="${day}"
                                                    ${dayConfig.enabled ? 'checked' : ''}
-                                                   onchange="window.updateImageScheduleDay('${fieldId}', '${sanitizedId}', ${imageIdx}, '${day}')"
                                                    class="h-3 w-3 text-blue-600 focus:ring-blue-500 border-gray-300 rounded">
                                             <span class="ml-2 text-xs font-medium text-gray-700 capitalize">${day}</span>
                                         </label>
@@ -700,14 +727,20 @@
                                     <div class="grid grid-cols-2 gap-2 ml-5" id="day_times_${day}_${sanitizedId}" style="display: ${dayConfig.enabled ? 'grid' : 'none'};">
                                         <input type="time"
                                                id="day_${day}_start_${sanitizedId}"
+                                               data-field-id="${escapeHtml(fieldId)}"
+                                               data-image-id="${sanitizedId}"
+                                               data-image-idx="${imageIdx}"
+                                               data-day="${day}"
                                                value="${escapeHtml(dayConfig.start_time || '08:00')}"
-                                               onchange="window.updateImageScheduleDay('${fieldId}', '${sanitizedId}', ${imageIdx}, '${day}')"
                                                class="text-xs px-2 py-1 border border-gray-300 rounded"
                                                ${!dayConfig.enabled ? 'disabled' : ''}>
                                         <input type="time"
                                                id="day_${day}_end_${sanitizedId}"
+                                               data-field-id="${escapeHtml(fieldId)}"
+                                               data-image-id="${sanitizedId}"
+                                               data-image-idx="${imageIdx}"
+                                               data-day="${day}"
                                                value="${escapeHtml(dayConfig.end_time || '18:00')}"
-                                               onchange="window.updateImageScheduleDay('${fieldId}', '${sanitizedId}', ${imageIdx}, '${day}')"
                                                class="text-xs px-2 py-1 border border-gray-300 rounded"
                                                ${!dayConfig.enabled ? 'disabled' : ''}>
                                     </div>
@@ -719,6 +752,83 @@
                 </div>
             </div>
         `;
+        
+        // Attach event listeners using data attributes (prevents JS injection)
+        const enabledCheckbox = document.getElementById(`schedule_enabled_${sanitizedId}`);
+        if (enabledCheckbox) {
+            enabledCheckbox.addEventListener('change', function() {
+                const fieldId = this.dataset.fieldId;
+                const imageId = this.dataset.imageId;
+                const imageIdx = parseInt(this.dataset.imageIdx, 10);
+                window.toggleImageScheduleEnabled(fieldId, imageId, imageIdx);
+            });
+        }
+        
+        const modeSelect = document.getElementById(`schedule_mode_${sanitizedId}`);
+        if (modeSelect) {
+            modeSelect.addEventListener('change', function() {
+                const fieldId = this.dataset.fieldId;
+                const imageId = this.dataset.imageId;
+                const imageIdx = parseInt(this.dataset.imageIdx, 10);
+                window.updateImageScheduleMode(fieldId, imageId, imageIdx);
+            });
+        }
+        
+        const startInput = document.getElementById(`schedule_start_${sanitizedId}`);
+        if (startInput) {
+            startInput.addEventListener('change', function() {
+                const fieldId = this.dataset.fieldId;
+                const imageId = this.dataset.imageId;
+                const imageIdx = parseInt(this.dataset.imageIdx, 10);
+                window.updateImageScheduleTime(fieldId, imageId, imageIdx);
+            });
+        }
+        
+        const endInput = document.getElementById(`schedule_end_${sanitizedId}`);
+        if (endInput) {
+            endInput.addEventListener('change', function() {
+                const fieldId = this.dataset.fieldId;
+                const imageId = this.dataset.imageId;
+                const imageIdx = parseInt(this.dataset.imageIdx, 10);
+                window.updateImageScheduleTime(fieldId, imageId, imageIdx);
+            });
+        }
+        
+        // Attach listeners for per-day inputs
+        ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'].forEach(day => {
+            const dayCheckbox = document.getElementById(`day_${day}_${sanitizedId}`);
+            if (dayCheckbox) {
+                dayCheckbox.addEventListener('change', function() {
+                    const fieldId = this.dataset.fieldId;
+                    const imageId = this.dataset.imageId;
+                    const imageIdx = parseInt(this.dataset.imageIdx, 10);
+                    const day = this.dataset.day;
+                    window.updateImageScheduleDay(fieldId, imageId, imageIdx, day);
+                });
+            }
+            
+            const dayStartInput = document.getElementById(`day_${day}_start_${sanitizedId}`);
+            if (dayStartInput) {
+                dayStartInput.addEventListener('change', function() {
+                    const fieldId = this.dataset.fieldId;
+                    const imageId = this.dataset.imageId;
+                    const imageIdx = parseInt(this.dataset.imageIdx, 10);
+                    const day = this.dataset.day;
+                    window.updateImageScheduleDay(fieldId, imageId, imageIdx, day);
+                });
+            }
+            
+            const dayEndInput = document.getElementById(`day_${day}_end_${sanitizedId}`);
+            if (dayEndInput) {
+                dayEndInput.addEventListener('change', function() {
+                    const fieldId = this.dataset.fieldId;
+                    const imageId = this.dataset.imageId;
+                    const imageIdx = parseInt(this.dataset.imageIdx, 10);
+                    const day = this.dataset.day;
+                    window.updateImageScheduleDay(fieldId, imageId, imageIdx, day);
+                });
+            }
+        });
     };
 
     /**

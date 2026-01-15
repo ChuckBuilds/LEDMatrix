@@ -355,43 +355,56 @@ window.LEDMatrixWidgets.register('color-picker', {
     
     render: function(container, config, value, options) {
         const fieldId = options.fieldId;
+        // Sanitize fieldId for safe use in DOM IDs and selectors
+        const sanitizeId = (id) => String(id).replace(/[^a-zA-Z0-9_-]/g, '_');
+        const sanitizedFieldId = sanitizeId(fieldId);
+        
         container.innerHTML = `
             <div class="flex items-center space-x-2">
                 <input type="color" 
-                       id="${fieldId}_color" 
+                       id="${sanitizedFieldId}_color" 
                        value="${value || '#000000'}"
                        class="h-10 w-20">
                 <input type="text" 
-                       id="${fieldId}_hex" 
+                       id="${sanitizedFieldId}_hex" 
                        value="${value || '#000000'}"
                        pattern="^#[0-9A-Fa-f]{6}$"
                        class="px-2 py-1 border rounded">
             </div>
         `;
         
-        const colorInput = container.querySelector('input[type="color"]');
-        const hexInput = container.querySelector('input[type="text"]');
+        const colorInput = container.querySelector(`#${sanitizedFieldId}_color`);
+        const hexInput = container.querySelector(`#${sanitizedFieldId}_hex`);
         
-        colorInput.addEventListener('change', (e) => {
-            hexInput.value = e.target.value;
-            this.handlers.onChange(fieldId, e.target.value);
-        });
-        
-        hexInput.addEventListener('change', (e) => {
-            if (/^#[0-9A-Fa-f]{6}$/.test(e.target.value)) {
-                colorInput.value = e.target.value;
+        if (colorInput && hexInput) {
+            colorInput.addEventListener('change', (e) => {
+                hexInput.value = e.target.value;
                 this.handlers.onChange(fieldId, e.target.value);
-            }
-        });
+            });
+            
+            hexInput.addEventListener('change', (e) => {
+                if (/^#[0-9A-Fa-f]{6}$/.test(e.target.value)) {
+                    colorInput.value = e.target.value;
+                    this.handlers.onChange(fieldId, e.target.value);
+                }
+            });
+        }
     },
     
     getValue: function(fieldId) {
-        return document.querySelector(`#${fieldId}_color`).value;
+        // Sanitize fieldId for safe selector use
+        const sanitizeId = (id) => String(id).replace(/[^a-zA-Z0-9_-]/g, '_');
+        const sanitizedFieldId = sanitizeId(fieldId);
+        const colorInput = document.querySelector(`#${sanitizedFieldId}_color`);
+        return colorInput ? colorInput.value : null;
     },
     
     setValue: function(fieldId, value) {
-        const colorInput = document.querySelector(`#${fieldId}_color`);
-        const hexInput = document.querySelector(`#${fieldId}_hex`);
+        // Sanitize fieldId for safe selector use
+        const sanitizeId = (id) => String(id).replace(/[^a-zA-Z0-9_-]/g, '_');
+        const sanitizedFieldId = sanitizeId(fieldId);
+        const colorInput = document.querySelector(`#${sanitizedFieldId}_color`);
+        const hexInput = document.querySelector(`#${sanitizedFieldId}_hex`);
         if (colorInput && hexInput) {
             colorInput.value = value;
             hexInput.value = value;

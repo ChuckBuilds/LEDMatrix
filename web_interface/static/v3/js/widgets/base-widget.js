@@ -171,11 +171,14 @@
          * @param {string} type - Notification type (success, error, info, warning)
          */
         notify(message, type) {
+            // Normalize type to prevent errors when undefined/null
+            const normalizedType = type ? String(type) : 'info';
+            
             const notifyFn = this.getNotificationFunction();
             if (notifyFn) {
-                notifyFn(message, type);
+                notifyFn(message, normalizedType);
             } else {
-                console.log(`[${type.toUpperCase()}] ${message}`);
+                console.log(`[${normalizedType.toUpperCase()}] ${message}`);
             }
         }
     }
