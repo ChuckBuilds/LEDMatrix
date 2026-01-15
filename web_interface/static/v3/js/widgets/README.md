@@ -432,6 +432,10 @@ window.LEDMatrixWidgets.register('slider', {
     
     render: function(container, config, value, options) {
         const fieldId = options.fieldId;
+        // Sanitize fieldId for safe use in DOM IDs and selectors
+        const sanitizeId = (id) => String(id).replace(/[^a-zA-Z0-9_-]/g, '_');
+        const sanitizedFieldId = sanitizeId(fieldId);
+        
         const min = config.minimum || 0;
         const max = config.maximum || 100;
         const step = config.step || 1;
@@ -440,7 +444,7 @@ window.LEDMatrixWidgets.register('slider', {
         container.innerHTML = `
             <div class="slider-widget">
                 <input type="range" 
-                       id="${fieldId}_slider"
+                       id="${sanitizedFieldId}_slider"
                        min="${min}"
                        max="${max}"
                        step="${step}"
@@ -448,29 +452,37 @@ window.LEDMatrixWidgets.register('slider', {
                        class="w-full">
                 <div class="flex justify-between text-xs text-gray-500 mt-1">
                     <span>${min}</span>
-                    <span id="${fieldId}_value">${currentValue}</span>
+                    <span id="${sanitizedFieldId}_value">${currentValue}</span>
                     <span>${max}</span>
                 </div>
             </div>
         `;
         
-        const slider = container.querySelector('input[type="range"]');
-        const valueDisplay = container.querySelector(`#${fieldId}_value`);
+        const slider = container.querySelector(`#${sanitizedFieldId}_slider`);
+        const valueDisplay = container.querySelector(`#${sanitizedFieldId}_value`);
         
-        slider.addEventListener('input', (e) => {
-            valueDisplay.textContent = e.target.value;
-            this.handlers.onChange(fieldId, parseFloat(e.target.value));
-        });
+        if (slider && valueDisplay) {
+            slider.addEventListener('input', (e) => {
+                valueDisplay.textContent = e.target.value;
+                this.handlers.onChange(fieldId, parseFloat(e.target.value));
+            });
+        }
     },
     
     getValue: function(fieldId) {
-        const slider = document.querySelector(`#${fieldId}_slider`);
+        // Sanitize fieldId for safe selector use
+        const sanitizeId = (id) => String(id).replace(/[^a-zA-Z0-9_-]/g, '_');
+        const sanitizedFieldId = sanitizeId(fieldId);
+        const slider = document.querySelector(`#${sanitizedFieldId}_slider`);
         return slider ? parseFloat(slider.value) : null;
     },
     
     setValue: function(fieldId, value) {
-        const slider = document.querySelector(`#${fieldId}_slider`);
-        const valueDisplay = document.querySelector(`#${fieldId}_value`);
+        // Sanitize fieldId for safe selector use
+        const sanitizeId = (id) => String(id).replace(/[^a-zA-Z0-9_-]/g, '_');
+        const sanitizedFieldId = sanitizeId(fieldId);
+        const slider = document.querySelector(`#${sanitizedFieldId}_slider`);
+        const valueDisplay = document.querySelector(`#${sanitizedFieldId}_value`);
         if (slider) {
             slider.value = value;
             if (valueDisplay) {
