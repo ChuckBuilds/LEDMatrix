@@ -138,10 +138,14 @@ window.LEDMatrixWidgets.register('my-custom-widget', {
      */
     render: function(container, config, value, options) {
         const fieldId = options.fieldId || container.id;
+        // Sanitize fieldId for safe use in DOM IDs and selectors
+        const sanitizeId = (id) => String(id).replace(/[^a-zA-Z0-9_-]/g, '_');
+        const safeFieldId = sanitizeId(fieldId);
+        
         const html = `
             <div class="my-custom-widget">
                 <input type="text" 
-                       id="${fieldId}_input" 
+                       id="${safeFieldId}_input" 
                        value="${this.escapeHtml(value || '')}"
                        class="w-full px-3 py-2 border border-gray-300 rounded">
             </div>
@@ -149,10 +153,12 @@ window.LEDMatrixWidgets.register('my-custom-widget', {
         container.innerHTML = html;
         
         // Attach event listeners
-        const input = container.querySelector('input');
-        input.addEventListener('change', (e) => {
-            this.handlers.onChange(fieldId, e.target.value);
-        });
+        const input = container.querySelector(`#${safeFieldId}_input`);
+        if (input) {
+            input.addEventListener('change', (e) => {
+                this.handlers.onChange(fieldId, e.target.value);
+            });
+        }
     },
     
     /**
@@ -161,7 +167,10 @@ window.LEDMatrixWidgets.register('my-custom-widget', {
      * @returns {*} Current value
      */
     getValue: function(fieldId) {
-        const input = document.querySelector(`#${fieldId}_input`);
+        // Sanitize fieldId for safe selector use
+        const sanitizeId = (id) => String(id).replace(/[^a-zA-Z0-9_-]/g, '_');
+        const safeFieldId = sanitizeId(fieldId);
+        const input = document.querySelector(`#${safeFieldId}_input`);
         return input ? input.value : null;
     },
     
@@ -171,7 +180,10 @@ window.LEDMatrixWidgets.register('my-custom-widget', {
      * @param {*} value - Value to set
      */
     setValue: function(fieldId, value) {
-        const input = document.querySelector(`#${fieldId}_input`);
+        // Sanitize fieldId for safe selector use
+        const sanitizeId = (id) => String(id).replace(/[^a-zA-Z0-9_-]/g, '_');
+        const safeFieldId = sanitizeId(fieldId);
+        const input = document.querySelector(`#${safeFieldId}_input`);
         if (input) {
             input.value = value || '';
         }
@@ -198,6 +210,13 @@ window.LEDMatrixWidgets.register('my-custom-widget', {
         const div = document.createElement('div');
         div.textContent = text;
         return div.innerHTML;
+    },
+    
+    /**
+     * Helper: Sanitize identifier for use in DOM IDs and CSS selectors
+     */
+    sanitizeId: function(id) {
+        return String(id).replace(/[^a-zA-Z0-9_-]/g, '_');
     }
 });
 ```
@@ -297,6 +316,15 @@ handlers: {
 1. **Always escape HTML**: Use `escapeHtml()` or `textContent` to prevent XSS
 2. **Validate inputs**: Validate user input before processing
 3. **Sanitize values**: Clean values before storing
+4. **Sanitize identifiers**: Always sanitize identifiers (like `fieldId`) used as element IDs and in CSS selectors to prevent selector injection/XSS:
+   - Use `sanitizeId()` helper function (available in BaseWidget) or create your own
+   - Allow only safe characters: `[A-Za-z0-9_-]`
+   - Replace or remove invalid characters before using in:
+     - `getElementById()`, `querySelector()`, `querySelectorAll()`
+     - Setting `id` attributes
+     - Building CSS selectors
+   - Never interpolate raw `fieldId` into HTML strings or selectors without sanitization
+   - Example: `const safeId = fieldId.replace(/[^a-zA-Z0-9_-]/g, '_');`
 
 ### Performance
 

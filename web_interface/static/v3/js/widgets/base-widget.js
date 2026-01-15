@@ -87,10 +87,17 @@
                 existingError.remove();
             }
             
-            // Create error element
+            // Create error element using DOM APIs to prevent XSS
             const errorEl = document.createElement('div');
             errorEl.className = 'widget-error text-sm text-red-600 mt-2';
-            errorEl.innerHTML = `<i class="fas fa-exclamation-circle mr-1"></i>${this.escapeHtml(message)}`;
+            
+            const icon = document.createElement('i');
+            icon.className = 'fas fa-exclamation-circle mr-1';
+            errorEl.appendChild(icon);
+            
+            const messageText = document.createTextNode(message);
+            errorEl.appendChild(messageText);
+            
             container.appendChild(errorEl);
         }
         
@@ -108,16 +115,29 @@
         
         /**
          * Escape HTML to prevent XSS
-         * @param {string} text - Text to escape
+         * Always escapes the input, even for non-strings, by coercing to string first
+         * @param {*} text - Text to escape (will be coerced to string)
          * @returns {string} Escaped text
          */
         escapeHtml(text) {
-            if (typeof text !== 'string') {
-                return String(text);
-            }
+            // Always coerce to string first, then escape
+            const textStr = String(text);
             const div = document.createElement('div');
-            div.textContent = text;
+            div.textContent = textStr;
             return div.innerHTML;
+        }
+        
+        /**
+         * Sanitize identifier for use in DOM IDs and CSS selectors
+         * @param {string} id - Identifier to sanitize
+         * @returns {string} Sanitized identifier safe for DOM/CSS
+         */
+        sanitizeId(id) {
+            if (typeof id !== 'string') {
+                id = String(id);
+            }
+            // Allow only alphanumeric, underscore, and hyphen
+            return id.replace(/[^a-zA-Z0-9_-]/g, '_');
         }
         
         /**

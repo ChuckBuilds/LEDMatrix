@@ -101,15 +101,13 @@
         const fileType = uploadConfig.file_type || 'image';
         const customUploadEndpoint = uploadConfig.endpoint || '/api/v3/plugins/assets/upload';
         
+        // Get allowed types from config, with fallback
+        const allowedTypes = uploadConfig.allowed_types || ['image/png', 'image/jpeg', 'image/jpg', 'image/bmp', 'image/gif'];
+        
         // Get current files list
         const currentFiles = window.getCurrentImages ? window.getCurrentImages(fieldId) : [];
-        if (currentFiles.length + files.length > maxFiles) {
-            const notifyFn = window.showNotification || console.error;
-            notifyFn(`Maximum ${maxFiles} files allowed. You have ${currentFiles.length} and tried to add ${files.length}.`, 'error');
-            return;
-        }
         
-        // Validate file types and sizes
+        // Validate file types and sizes first, build validFiles
         const validFiles = [];
         for (const file of files) {
             if (file.size > maxSizeMB * 1024 * 1024) {
@@ -126,8 +124,7 @@
                     continue;
                 }
             } else {
-                // Validate image files
-                const allowedTypes = ['image/png', 'image/jpeg', 'image/jpg', 'image/bmp', 'image/gif'];
+                // Validate image files using allowedTypes from config
                 if (!allowedTypes.includes(file.type)) {
                     const notifyFn = window.showNotification || console.error;
                     notifyFn(`File ${file.name} is not a valid image type`, 'error');
@@ -136,6 +133,13 @@
             }
             
             validFiles.push(file);
+        }
+        
+        // Check max files AFTER building validFiles
+        if (currentFiles.length + validFiles.length > maxFiles) {
+            const notifyFn = window.showNotification || console.error;
+            notifyFn(`Maximum ${maxFiles} files allowed. You have ${currentFiles.length} and tried to add ${validFiles.length}.`, 'error');
+            return;
         }
         
         if (validFiles.length === 0) {
@@ -231,9 +235,13 @@
             const data = await response.json();
             
             if (data.status === 'success') {
-                // Remove from current list
+                // Remove from current list - normalize types for comparison
                 const currentFiles = window.getCurrentImages ? window.getCurrentImages(fieldId) : [];
-                const newFiles = currentFiles.filter(file => (file.id || file.category_name) !== fileId);
+                const fileIdStr = String(fileId);
+                const newFiles = currentFiles.filter(file => {
+                    const fileIdValue = String(file.id || file.category_name || '');
+                    return fileIdValue !== fileIdStr;
+                });
                 if (window.updateImageList) {
                     window.updateImageList(fieldId, newFiles);
                 }
@@ -317,6 +325,7 @@
 
     /**
      * Update image list display and hidden input
+     * Uses DOM creation to prevent XSS and preserves open schedule editors
      * @param {string} fieldId - Field ID
      * @param {Array} images - Array of image objects
      */
@@ -328,62 +337,164 @@
         
         // Update the display
         const imageList = document.getElementById(`${fieldId}_image_list`);
-        if (imageList) {
-            const uploadConfig = window.getUploadConfig(fieldId);
-            const pluginId = uploadConfig.plugin_id || window.currentPluginConfig?.pluginId || 'static-image';
+        if (!imageList) return;
+        
+        const uploadConfig = window.getUploadConfig(fieldId);
+        const pluginId = uploadConfig.plugin_id || window.currentPluginConfig?.pluginId || 'static-image';
+        
+        // Detect which schedule is currently open (if any)
+        const openScheduleId = (() => {
+            const existingItems = imageList.querySelectorAll('[id^="img_"]');
+            for (const item of existingItems) {
+                const scheduleDiv = item.querySelector('[id^="schedule_"]');
+                if (scheduleDiv && !scheduleDiv.classList.contains('hidden')) {
+                    // Extract the ID from schedule_<id>
+                    const match = scheduleDiv.id.match(/^schedule_(.+)$/);
+                    if (match) {
+                        return match[1];
+                    }
+                }
+            }
+            return null;
+        })();
+        
+        // Preserve open schedule content if it exists
+        const preservedScheduleContent = openScheduleId ? (() => {
+            const scheduleDiv = document.getElementById(`schedule_${openScheduleId}`);
+            return scheduleDiv ? scheduleDiv.innerHTML : null;
+        })() : null;
+        
+        // Clear and rebuild using DOM creation
+        imageList.innerHTML = '';
+        
+        images.forEach((img, idx) => {
+            const imgId = img.id || idx;
+            const sanitizedId = String(imgId).replace(/[^a-zA-Z0-9_-]/g, '_');
+            const imgSchedule = img.schedule || {};
+            const hasSchedule = imgSchedule.enabled && imgSchedule.mode && imgSchedule.mode !== 'always';
+            const scheduleSummary = hasSchedule ? (window.getScheduleSummary ? window.getScheduleSummary(imgSchedule) : 'Scheduled') : 'Always shown';
             
-            imageList.innerHTML = images.map((img, idx) => {
-                const imgSchedule = img.schedule || {};
-                const hasSchedule = imgSchedule.enabled && imgSchedule.mode && imgSchedule.mode !== 'always';
-                const scheduleSummary = hasSchedule ? (window.getScheduleSummary ? window.getScheduleSummary(imgSchedule) : 'Scheduled') : 'Always shown';
-                
-                // Escape HTML to prevent XSS
-                const escapeHtml = (text) => {
-                    const div = document.createElement('div');
-                    div.textContent = text;
-                    return div.innerHTML;
-                };
-                
-                return `
-                <div id="img_${(img.id || idx).toString().replace(/[^a-zA-Z0-9_-]/g, '_')}" class="bg-gray-50 p-3 rounded-lg border border-gray-200">
-                    <div class="flex items-center justify-between mb-2">
-                        <div class="flex items-center space-x-3 flex-1">
-                            <img src="/${escapeHtml(img.path || '')}" 
-                                 alt="${escapeHtml(img.filename || '')}" 
-                                 class="w-16 h-16 object-cover rounded"
-                                 onerror="this.style.display='none'; this.nextElementSibling.style.display='block';">
-                            <div style="display:none;" class="w-16 h-16 bg-gray-200 rounded flex items-center justify-center">
-                                <i class="fas fa-image text-gray-400"></i>
-                            </div>
-                            <div class="flex-1 min-w-0">
-                                <p class="text-sm font-medium text-gray-900 truncate">${escapeHtml(img.original_filename || img.filename || 'Image')}</p>
-                                <p class="text-xs text-gray-500">${window.formatFileSize ? window.formatFileSize(img.size || 0) : (Math.round((img.size || 0) / 1024) + ' KB')} • ${window.formatDate ? window.formatDate(img.uploaded_at) : (img.uploaded_at || '')}</p>
-                                <p class="text-xs text-blue-600 mt-1">
-                                    <i class="fas fa-clock mr-1"></i>${escapeHtml(scheduleSummary)}
-                                </p>
-                            </div>
-                        </div>
-                        <div class="flex items-center space-x-2 ml-4">
-                            <button type="button" 
-                                    onclick="window.openImageSchedule('${fieldId}', '${img.id || idx}', ${idx})"
-                                    class="text-blue-600 hover:text-blue-800 p-2" 
-                                    title="Schedule this image">
-                                <i class="fas fa-calendar-alt"></i>
-                            </button>
-                            <button type="button" 
-                                    onclick="window.deleteUploadedImage('${fieldId}', '${img.id || idx}', '${pluginId}')"
-                                    class="text-red-600 hover:text-red-800 p-2"
-                                    title="Delete image">
-                                <i class="fas fa-trash"></i>
-                            </button>
-                        </div>
-                    </div>
-                    <!-- Schedule widget will be inserted here when opened -->
-                    <div id="schedule_${(img.id || idx).toString().replace(/[^a-zA-Z0-9_-]/g, '_')}" class="hidden mt-3 pt-3 border-t border-gray-300"></div>
-                </div>
-                `;
-            }).join('');
-        }
+            // Create container div
+            const container = document.createElement('div');
+            container.id = `img_${sanitizedId}`;
+            container.className = 'bg-gray-50 p-3 rounded-lg border border-gray-200';
+            
+            // Create main content div
+            const mainDiv = document.createElement('div');
+            mainDiv.className = 'flex items-center justify-between mb-2';
+            
+            // Create left section with image and info
+            const leftSection = document.createElement('div');
+            leftSection.className = 'flex items-center space-x-3 flex-1';
+            
+            // Create image element
+            const imgEl = document.createElement('img');
+            const imgPath = String(img.path || '').replace(/^\/+/, '');
+            imgEl.src = '/' + imgPath;
+            imgEl.alt = String(img.filename || '');
+            imgEl.className = 'w-16 h-16 object-cover rounded';
+            imgEl.addEventListener('error', function() {
+                this.style.display = 'none';
+                if (this.nextElementSibling) {
+                    this.nextElementSibling.style.display = 'block';
+                }
+            });
+            
+            // Create placeholder div for broken images
+            const placeholderDiv = document.createElement('div');
+            placeholderDiv.style.display = 'none';
+            placeholderDiv.className = 'w-16 h-16 bg-gray-200 rounded flex items-center justify-center';
+            const placeholderIcon = document.createElement('i');
+            placeholderIcon.className = 'fas fa-image text-gray-400';
+            placeholderDiv.appendChild(placeholderIcon);
+            
+            // Create info div
+            const infoDiv = document.createElement('div');
+            infoDiv.className = 'flex-1 min-w-0';
+            
+            // Filename
+            const filenameP = document.createElement('p');
+            filenameP.className = 'text-sm font-medium text-gray-900 truncate';
+            filenameP.textContent = img.original_filename || img.filename || 'Image';
+            
+            // Size and date
+            const sizeDateP = document.createElement('p');
+            sizeDateP.className = 'text-xs text-gray-500';
+            const fileSize = window.formatFileSize ? window.formatFileSize(img.size || 0) : (Math.round((img.size || 0) / 1024) + ' KB');
+            const uploadedDate = window.formatDate ? window.formatDate(img.uploaded_at) : (img.uploaded_at || '');
+            sizeDateP.textContent = `${fileSize} • ${uploadedDate}`;
+            
+            // Schedule summary
+            const scheduleP = document.createElement('p');
+            scheduleP.className = 'text-xs text-blue-600 mt-1';
+            const clockIcon = document.createElement('i');
+            clockIcon.className = 'fas fa-clock mr-1';
+            scheduleP.appendChild(clockIcon);
+            scheduleP.appendChild(document.createTextNode(scheduleSummary));
+            
+            infoDiv.appendChild(filenameP);
+            infoDiv.appendChild(sizeDateP);
+            infoDiv.appendChild(scheduleP);
+            
+            leftSection.appendChild(imgEl);
+            leftSection.appendChild(placeholderDiv);
+            leftSection.appendChild(infoDiv);
+            
+            // Create right section with buttons
+            const rightSection = document.createElement('div');
+            rightSection.className = 'flex items-center space-x-2 ml-4';
+            
+            // Schedule button
+            const scheduleBtn = document.createElement('button');
+            scheduleBtn.type = 'button';
+            scheduleBtn.className = 'text-blue-600 hover:text-blue-800 p-2';
+            scheduleBtn.title = 'Schedule this image';
+            scheduleBtn.dataset.fieldId = fieldId;
+            scheduleBtn.dataset.imageId = String(imgId);
+            scheduleBtn.dataset.imageIdx = String(idx);
+            scheduleBtn.addEventListener('click', function() {
+                window.openImageSchedule(this.dataset.fieldId, this.dataset.imageId, parseInt(this.dataset.imageIdx, 10));
+            });
+            const scheduleIcon = document.createElement('i');
+            scheduleIcon.className = 'fas fa-calendar-alt';
+            scheduleBtn.appendChild(scheduleIcon);
+            
+            // Delete button
+            const deleteBtn = document.createElement('button');
+            deleteBtn.type = 'button';
+            deleteBtn.className = 'text-red-600 hover:text-red-800 p-2';
+            deleteBtn.title = 'Delete image';
+            deleteBtn.dataset.fieldId = fieldId;
+            deleteBtn.dataset.imageId = String(imgId);
+            deleteBtn.dataset.pluginId = pluginId;
+            deleteBtn.addEventListener('click', function() {
+                window.deleteUploadedImage(this.dataset.fieldId, this.dataset.imageId, this.dataset.pluginId);
+            });
+            const deleteIcon = document.createElement('i');
+            deleteIcon.className = 'fas fa-trash';
+            deleteBtn.appendChild(deleteIcon);
+            
+            rightSection.appendChild(scheduleBtn);
+            rightSection.appendChild(deleteBtn);
+            
+            mainDiv.appendChild(leftSection);
+            mainDiv.appendChild(rightSection);
+            
+            // Create schedule container
+            const scheduleContainer = document.createElement('div');
+            scheduleContainer.id = `schedule_${sanitizedId}`;
+            scheduleContainer.className = 'hidden mt-3 pt-3 border-t border-gray-300';
+            
+            // Restore preserved schedule content if this is the open one
+            if (openScheduleId === sanitizedId && preservedScheduleContent) {
+                scheduleContainer.innerHTML = preservedScheduleContent;
+                scheduleContainer.classList.remove('hidden');
+            }
+            
+            container.appendChild(mainDiv);
+            container.appendChild(scheduleContainer);
+            imageList.appendChild(container);
+        });
     };
 
     /**
@@ -491,7 +602,9 @@
         const image = currentImages[imageIdx];
         if (!image) return;
         
-        const scheduleContainer = document.getElementById(`schedule_${imageId || imageIdx}`);
+        // Sanitize imageId to match updateImageList's sanitization
+        const sanitizedId = (imageId || imageIdx).toString().replace(/[^a-zA-Z0-9_-]/g, '_');
+        const scheduleContainer = document.getElementById(`schedule_${sanitizedId}`);
         if (!scheduleContainer) return;
         
         // Toggle visibility
@@ -513,6 +626,7 @@
             return div.innerHTML;
         };
         
+        // Use sanitizedId for all ID references in the schedule HTML
         scheduleContainer.innerHTML = `
             <div class="bg-white rounded-lg border border-blue-200 p-4">
                 <h4 class="text-sm font-semibold text-gray-900 mb-3">
@@ -523,9 +637,9 @@
                 <div class="mb-4">
                     <label class="flex items-center">
                         <input type="checkbox" 
-                               id="schedule_enabled_${imageId}"
+                               id="schedule_enabled_${sanitizedId}"
                                ${schedule.enabled ? 'checked' : ''}
-                               onchange="window.toggleImageScheduleEnabled('${fieldId}', '${imageId}', ${imageIdx})"
+                               onchange="window.toggleImageScheduleEnabled('${fieldId}', '${sanitizedId}', ${imageIdx})"
                                class="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded">
                         <span class="ml-2 text-sm font-medium text-gray-700">Enable schedule for this image</span>
                     </label>
@@ -533,11 +647,11 @@
                 </div>
                 
                 <!-- Schedule Mode -->
-                <div id="schedule_options_${imageId}" class="space-y-4" style="display: ${schedule.enabled ? 'block' : 'none'};">
+                <div id="schedule_options_${sanitizedId}" class="space-y-4" style="display: ${schedule.enabled ? 'block' : 'none'};">
                     <div>
                         <label class="block text-sm font-medium text-gray-700 mb-2">Schedule Type</label>
-                        <select id="schedule_mode_${imageId}"
-                                onchange="window.updateImageScheduleMode('${fieldId}', '${imageId}', ${imageIdx})"
+                        <select id="schedule_mode_${sanitizedId}"
+                                onchange="window.updateImageScheduleMode('${fieldId}', '${sanitizedId}', ${imageIdx})"
                                 class="block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm">
                             <option value="always" ${schedule.mode === 'always' ? 'selected' : ''}>Always Show (No Schedule)</option>
                             <option value="time_range" ${schedule.mode === 'time_range' ? 'selected' : ''}>Same Time Every Day</option>
@@ -546,27 +660,27 @@
                     </div>
                     
                     <!-- Time Range Mode -->
-                    <div id="time_range_${imageId}" class="grid grid-cols-2 gap-4" style="display: ${schedule.mode === 'time_range' ? 'grid' : 'none'};">
+                    <div id="time_range_${sanitizedId}" class="grid grid-cols-2 gap-4" style="display: ${schedule.mode === 'time_range' ? 'grid' : 'none'};">
                         <div>
                             <label class="block text-xs font-medium text-gray-700 mb-1">Start Time</label>
                             <input type="time" 
-                                   id="schedule_start_${imageId}"
+                                   id="schedule_start_${sanitizedId}"
                                    value="${escapeHtml(schedule.start_time || '08:00')}"
-                                   onchange="window.updateImageScheduleTime('${fieldId}', '${imageId}', ${imageIdx})"
+                                   onchange="window.updateImageScheduleTime('${fieldId}', '${sanitizedId}', ${imageIdx})"
                                    class="block w-full px-2 py-1 text-sm border border-gray-300 rounded-md">
                         </div>
                         <div>
                             <label class="block text-xs font-medium text-gray-700 mb-1">End Time</label>
                             <input type="time" 
-                                   id="schedule_end_${imageId}"
+                                   id="schedule_end_${sanitizedId}"
                                    value="${escapeHtml(schedule.end_time || '18:00')}"
-                                   onchange="window.updateImageScheduleTime('${fieldId}', '${imageId}', ${imageIdx})"
+                                   onchange="window.updateImageScheduleTime('${fieldId}', '${sanitizedId}', ${imageIdx})"
                                    class="block w-full px-2 py-1 text-sm border border-gray-300 rounded-md">
                         </div>
                     </div>
                     
                     <!-- Per-Day Mode -->
-                    <div id="per_day_${imageId}" style="display: ${schedule.mode === 'per_day' ? 'block' : 'none'};">
+                    <div id="per_day_${sanitizedId}" style="display: ${schedule.mode === 'per_day' ? 'block' : 'none'};">
                         <label class="block text-xs font-medium text-gray-700 mb-2">Day-Specific Times</label>
                         <div class="bg-gray-50 rounded p-3 space-y-2 max-h-64 overflow-y-auto">
                             ${['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'].map(day => {
@@ -576,24 +690,24 @@
                                     <div class="flex items-center justify-between mb-2">
                                         <label class="flex items-center">
                                             <input type="checkbox"
-                                                   id="day_${day}_${imageId}"
+                                                   id="day_${day}_${sanitizedId}"
                                                    ${dayConfig.enabled ? 'checked' : ''}
-                                                   onchange="window.updateImageScheduleDay('${fieldId}', '${imageId}', ${imageIdx}, '${day}')"
+                                                   onchange="window.updateImageScheduleDay('${fieldId}', '${sanitizedId}', ${imageIdx}, '${day}')"
                                                    class="h-3 w-3 text-blue-600 focus:ring-blue-500 border-gray-300 rounded">
                                             <span class="ml-2 text-xs font-medium text-gray-700 capitalize">${day}</span>
                                         </label>
                                     </div>
-                                    <div class="grid grid-cols-2 gap-2 ml-5" id="day_times_${day}_${imageId}" style="display: ${dayConfig.enabled ? 'grid' : 'none'};">
+                                    <div class="grid grid-cols-2 gap-2 ml-5" id="day_times_${day}_${sanitizedId}" style="display: ${dayConfig.enabled ? 'grid' : 'none'};">
                                         <input type="time"
-                                               id="day_${day}_start_${imageId}"
+                                               id="day_${day}_start_${sanitizedId}"
                                                value="${escapeHtml(dayConfig.start_time || '08:00')}"
-                                               onchange="window.updateImageScheduleDay('${fieldId}', '${imageId}', ${imageIdx}, '${day}')"
+                                               onchange="window.updateImageScheduleDay('${fieldId}', '${sanitizedId}', ${imageIdx}, '${day}')"
                                                class="text-xs px-2 py-1 border border-gray-300 rounded"
                                                ${!dayConfig.enabled ? 'disabled' : ''}>
                                         <input type="time"
-                                               id="day_${day}_end_${imageId}"
+                                               id="day_${day}_end_${sanitizedId}"
                                                value="${escapeHtml(dayConfig.end_time || '18:00')}"
-                                               onchange="window.updateImageScheduleDay('${fieldId}', '${imageId}', ${imageIdx}, '${day}')"
+                                               onchange="window.updateImageScheduleDay('${fieldId}', '${sanitizedId}', ${imageIdx}, '${day}')"
                                                class="text-xs px-2 py-1 border border-gray-300 rounded"
                                                ${!dayConfig.enabled ? 'disabled' : ''}>
                                     </div>
@@ -615,8 +729,10 @@
         const image = currentImages[imageIdx];
         if (!image) return;
         
-        const checkbox = document.getElementById(`schedule_enabled_${imageId}`);
-        const enabled = checkbox.checked;
+        // Sanitize imageId for DOM lookup
+        const sanitizedId = String(imageId).replace(/[^a-zA-Z0-9_-]/g, '_');
+        const checkbox = document.getElementById(`schedule_enabled_${sanitizedId}`);
+        const enabled = checkbox ? checkbox.checked : false;
         
         if (!image.schedule) {
             image.schedule = { enabled: false, mode: 'always', start_time: '08:00', end_time: '18:00', days: {} };
@@ -624,7 +740,7 @@
         
         image.schedule.enabled = enabled;
         
-        const optionsDiv = document.getElementById(`schedule_options_${imageId}`);
+        const optionsDiv = document.getElementById(`schedule_options_${sanitizedId}`);
         if (optionsDiv) {
             optionsDiv.style.display = enabled ? 'block' : 'none';
         }
@@ -642,17 +758,20 @@
         const image = currentImages[imageIdx];
         if (!image) return;
         
+        // Sanitize imageId for DOM lookup
+        const sanitizedId = String(imageId).replace(/[^a-zA-Z0-9_-]/g, '_');
+        
         if (!image.schedule) {
             image.schedule = { enabled: true, mode: 'always', start_time: '08:00', end_time: '18:00', days: {} };
         }
         
-        const modeSelect = document.getElementById(`schedule_mode_${imageId}`);
-        const mode = modeSelect.value;
+        const modeSelect = document.getElementById(`schedule_mode_${sanitizedId}`);
+        const mode = modeSelect ? modeSelect.value : 'always';
         
         image.schedule.mode = mode;
         
-        const timeRangeDiv = document.getElementById(`time_range_${imageId}`);
-        const perDayDiv = document.getElementById(`per_day_${imageId}`);
+        const timeRangeDiv = document.getElementById(`time_range_${sanitizedId}`);
+        const perDayDiv = document.getElementById(`per_day_${sanitizedId}`);
         
         if (timeRangeDiv) timeRangeDiv.style.display = mode === 'time_range' ? 'grid' : 'none';
         if (perDayDiv) perDayDiv.style.display = mode === 'per_day' ? 'block' : 'none';
@@ -670,12 +789,15 @@
         const image = currentImages[imageIdx];
         if (!image) return;
         
+        // Sanitize imageId for DOM lookup
+        const sanitizedId = String(imageId).replace(/[^a-zA-Z0-9_-]/g, '_');
+        
         if (!image.schedule) {
             image.schedule = { enabled: true, mode: 'time_range', start_time: '08:00', end_time: '18:00' };
         }
         
-        const startInput = document.getElementById(`schedule_start_${imageId}`);
-        const endInput = document.getElementById(`schedule_end_${imageId}`);
+        const startInput = document.getElementById(`schedule_start_${sanitizedId}`);
+        const endInput = document.getElementById(`schedule_end_${sanitizedId}`);
         
         if (startInput) image.schedule.start_time = startInput.value || '08:00';
         if (endInput) image.schedule.end_time = endInput.value || '18:00';
@@ -693,6 +815,9 @@
         const image = currentImages[imageIdx];
         if (!image) return;
         
+        // Sanitize imageId for DOM lookup
+        const sanitizedId = String(imageId).replace(/[^a-zA-Z0-9_-]/g, '_');
+        
         if (!image.schedule) {
             image.schedule = { enabled: true, mode: 'per_day', days: {} };
         }
@@ -701,9 +826,9 @@
             image.schedule.days = {};
         }
         
-        const checkbox = document.getElementById(`day_${day}_${imageId}`);
-        const startInput = document.getElementById(`day_${day}_start_${imageId}`);
-        const endInput = document.getElementById(`day_${day}_end_${imageId}`);
+        const checkbox = document.getElementById(`day_${day}_${sanitizedId}`);
+        const startInput = document.getElementById(`day_${day}_start_${sanitizedId}`);
+        const endInput = document.getElementById(`day_${day}_end_${sanitizedId}`);
         
         const enabled = checkbox ? checkbox.checked : true;
         
@@ -715,7 +840,7 @@
         if (startInput) image.schedule.days[day].start_time = startInput.value || '08:00';
         if (endInput) image.schedule.days[day].end_time = endInput.value || '18:00';
         
-        const dayTimesDiv = document.getElementById(`day_times_${day}_${imageId}`);
+        const dayTimesDiv = document.getElementById(`day_times_${day}_${sanitizedId}`);
         if (dayTimesDiv) {
             dayTimesDiv.style.display = enabled ? 'grid' : 'none';
         }

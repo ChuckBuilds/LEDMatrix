@@ -73,24 +73,154 @@
          * Set value in widget
          * @param {string} fieldId - Field ID
          * @param {Array} feeds - Array of feed objects
+         * @param {Object} options - Options containing fullKey and pluginId
          */
-        setValue: function(fieldId, feeds) {
+        setValue: function(fieldId, feeds, options) {
             if (!Array.isArray(feeds)) {
                 console.error('[CustomFeedsWidget] setValue expects an array');
                 return;
             }
             
-            // Clear existing rows
-            const tbody = document.getElementById(`${fieldId}_tbody`);
-            if (tbody) {
-                tbody.innerHTML = '';
+            // Throw NotImplementedError if options are missing (defensive approach)
+            if (!options || !options.fullKey || !options.pluginId) {
+                throw new Error('CustomFeedsWidget.setValue not implemented: requires options.fullKey and options.pluginId');
             }
             
-            // Add rows for each feed
+            const tbody = document.getElementById(`${fieldId}_tbody`);
+            if (!tbody) {
+                console.warn(`[CustomFeedsWidget] tbody not found for fieldId: ${fieldId}`);
+                return;
+            }
+            
+            // Clear existing rows immediately before appending new ones
+            tbody.innerHTML = '';
+            
+            // Build rows for each feed using the same logic as addCustomFeedRow
             feeds.forEach((feed, index) => {
-                // This would need the fullKey and pluginId from options
-                // For now, this is a placeholder
-                console.log('[CustomFeedsWidget] setValue called - full implementation requires template context');
+                const fullKey = options.fullKey;
+                const pluginId = options.pluginId;
+                
+                const newRow = document.createElement('tr');
+                newRow.className = 'custom-feed-row';
+                newRow.setAttribute('data-index', index);
+                
+                // Create name cell
+                const nameCell = document.createElement('td');
+                nameCell.className = 'px-4 py-3 whitespace-nowrap';
+                const nameInput = document.createElement('input');
+                nameInput.type = 'text';
+                nameInput.name = `${fullKey}.${index}.name`;
+                nameInput.value = feed.name || '';
+                nameInput.className = 'block w-full px-2 py-1 border border-gray-300 rounded text-sm';
+                nameInput.placeholder = 'Feed Name';
+                nameInput.required = true;
+                nameCell.appendChild(nameInput);
+                
+                // Create URL cell
+                const urlCell = document.createElement('td');
+                urlCell.className = 'px-4 py-3 whitespace-nowrap';
+                const urlInput = document.createElement('input');
+                urlInput.type = 'url';
+                urlInput.name = `${fullKey}.${index}.url`;
+                urlInput.value = feed.url || '';
+                urlInput.className = 'block w-full px-2 py-1 border border-gray-300 rounded text-sm';
+                urlInput.placeholder = 'https://example.com/feed';
+                urlInput.required = true;
+                urlCell.appendChild(urlInput);
+                
+                // Create logo cell
+                const logoCell = document.createElement('td');
+                logoCell.className = 'px-4 py-3 whitespace-nowrap';
+                const logoContainer = document.createElement('div');
+                logoContainer.className = 'flex items-center space-x-2';
+                
+                const fileInput = document.createElement('input');
+                fileInput.type = 'file';
+                fileInput.id = `${fieldId}_logo_${index}`;
+                fileInput.accept = 'image/png,image/jpeg,image/bmp,image/gif';
+                fileInput.style.display = 'none';
+                fileInput.dataset.index = String(index);
+                fileInput.addEventListener('change', function(e) {
+                    const idx = parseInt(e.target.dataset.index || '0', 10);
+                    handleCustomFeedLogoUpload(e, fieldId, idx, pluginId, fullKey);
+                });
+                
+                const uploadButton = document.createElement('button');
+                uploadButton.type = 'button';
+                uploadButton.className = 'px-2 py-1 text-xs bg-gray-200 hover:bg-gray-300 rounded';
+                uploadButton.addEventListener('click', function() {
+                    fileInput.click();
+                });
+                const uploadIcon = document.createElement('i');
+                uploadIcon.className = 'fas fa-upload mr-1';
+                uploadButton.appendChild(uploadIcon);
+                uploadButton.appendChild(document.createTextNode(' Upload'));
+                
+                if (feed.logo && feed.logo.path) {
+                    const img = document.createElement('img');
+                    img.src = feed.logo.path;
+                    img.alt = 'Logo';
+                    img.className = 'w-8 h-8 object-cover rounded border';
+                    img.id = `${fieldId}_logo_preview_${index}`;
+                    logoContainer.appendChild(img);
+                    
+                    // Create hidden inputs for logo data
+                    const pathInput = document.createElement('input');
+                    pathInput.type = 'hidden';
+                    pathInput.name = `${fullKey}.${index}.logo.path`;
+                    pathInput.value = feed.logo.path;
+                    logoContainer.appendChild(pathInput);
+                    
+                    if (feed.logo.id) {
+                        const idInput = document.createElement('input');
+                        idInput.type = 'hidden';
+                        idInput.name = `${fullKey}.${index}.logo.id`;
+                        idInput.value = String(feed.logo.id);
+                        logoContainer.appendChild(idInput);
+                    }
+                } else {
+                    const noLogoSpan = document.createElement('span');
+                    noLogoSpan.className = 'text-xs text-gray-400';
+                    noLogoSpan.textContent = 'No logo';
+                    logoContainer.appendChild(noLogoSpan);
+                }
+                
+                logoContainer.appendChild(fileInput);
+                logoContainer.appendChild(uploadButton);
+                logoCell.appendChild(logoContainer);
+                
+                // Create enabled cell
+                const enabledCell = document.createElement('td');
+                enabledCell.className = 'px-4 py-3 whitespace-nowrap text-center';
+                const enabledInput = document.createElement('input');
+                enabledInput.type = 'checkbox';
+                enabledInput.name = `${fullKey}.${index}.enabled`;
+                enabledInput.checked = feed.enabled !== false;
+                enabledInput.value = 'true';
+                enabledInput.className = 'h-4 w-4 text-blue-600';
+                enabledCell.appendChild(enabledInput);
+                
+                // Create remove cell
+                const removeCell = document.createElement('td');
+                removeCell.className = 'px-4 py-3 whitespace-nowrap text-center';
+                const removeButton = document.createElement('button');
+                removeButton.type = 'button';
+                removeButton.className = 'text-red-600 hover:text-red-800 px-2 py-1';
+                removeButton.addEventListener('click', function() {
+                    removeCustomFeedRow(this);
+                });
+                const removeIcon = document.createElement('i');
+                removeIcon.className = 'fas fa-trash';
+                removeButton.appendChild(removeIcon);
+                removeCell.appendChild(removeButton);
+                
+                // Append all cells to row
+                newRow.appendChild(nameCell);
+                newRow.appendChild(urlCell);
+                newRow.appendChild(logoCell);
+                newRow.appendChild(enabledCell);
+                newRow.appendChild(removeCell);
+                tbody.appendChild(newRow);
             });
         },
         

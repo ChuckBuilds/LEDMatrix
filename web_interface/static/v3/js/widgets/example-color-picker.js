@@ -37,38 +37,47 @@
          */
         render: function(container, config, value, options) {
             const fieldId = options.fieldId || container.id.replace('_widget_container', '');
-            const currentValue = value || config.default || '#000000';
+            let currentValue = value || config.default || '#000000';
             
-            // Escape HTML to prevent XSS
+            // Validate hex color format - use safe default if invalid
+            const hexColorRegex = /^#[0-9A-Fa-f]{6}$/;
+            if (!hexColorRegex.test(currentValue)) {
+                currentValue = '#000000';
+            }
+            
+            // Escape HTML to prevent XSS (for HTML contexts)
             const escapeHtml = (text) => {
                 const div = document.createElement('div');
                 div.textContent = text;
                 return div.innerHTML;
             };
             
+            // Use validated/sanitized hex for style attribute and input values
+            const safeHex = currentValue; // Already validated above
+            
             container.innerHTML = `
                 <div class="color-picker-widget flex items-center space-x-3">
                     <div class="flex items-center space-x-2">
-                        <label for="${fieldId}_color" class="text-sm text-gray-700">Color:</label>
+                        <label for="${escapeHtml(fieldId)}_color" class="text-sm text-gray-700">Color:</label>
                         <input type="color" 
-                               id="${fieldId}_color" 
-                               value="${escapeHtml(currentValue)}"
+                               id="${escapeHtml(fieldId)}_color" 
+                               value="${safeHex}"
                                class="h-10 w-20 border border-gray-300 rounded cursor-pointer">
                     </div>
                     <div class="flex items-center space-x-2">
-                        <label for="${fieldId}_hex" class="text-sm text-gray-700">Hex:</label>
+                        <label for="${escapeHtml(fieldId)}_hex" class="text-sm text-gray-700">Hex:</label>
                         <input type="text" 
-                               id="${fieldId}_hex" 
-                               value="${escapeHtml(currentValue)}"
+                               id="${escapeHtml(fieldId)}_hex" 
+                               value="${safeHex}"
                                pattern="^#[0-9A-Fa-f]{6}$"
                                maxlength="7"
                                class="px-3 py-2 border border-gray-300 rounded-md text-sm font-mono w-24"
                                placeholder="#000000">
                     </div>
                     <div class="flex-1">
-                        <div id="${fieldId}_preview" 
+                        <div id="${escapeHtml(fieldId)}_preview" 
                              class="h-10 w-full border border-gray-300 rounded"
-                             style="background-color: ${escapeHtml(currentValue)}">
+                             style="background-color: ${safeHex}">
                         </div>
                     </div>
                 </div>
@@ -137,20 +146,19 @@
          * @param {string} value - Hex color value to set
          */
         setValue: function(fieldId, value) {
+            // Validate hex color format before using
+            const hexColorRegex = /^#[0-9A-Fa-f]{6}$/;
+            const safeValue = hexColorRegex.test(value) ? value : '#000000';
+            
             const colorInput = document.querySelector(`#${fieldId}_color`);
             const hexInput = document.querySelector(`#${fieldId}_hex`);
             const preview = document.querySelector(`#${fieldId}_preview`);
             
             if (colorInput && hexInput) {
-                // Validate hex format
-                if (/^#[0-9A-Fa-f]{6}$/.test(value)) {
-                    colorInput.value = value;
-                    hexInput.value = value;
-                    if (preview) {
-                        preview.style.backgroundColor = value;
-                    }
-                } else {
-                    console.warn(`[ColorPickerWidget] Invalid hex color: ${value}`);
+                colorInput.value = safeValue;
+                hexInput.value = safeValue;
+                if (preview) {
+                    preview.style.backgroundColor = safeValue;
                 }
             }
         },

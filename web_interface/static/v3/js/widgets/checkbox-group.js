@@ -63,11 +63,15 @@
                 return;
             }
             
+            // Normalize values to strings for consistent comparison
+            const normalizedValues = values.map(String);
+            
             // Update checkboxes
             const checkboxes = document.querySelectorAll(`input[type="checkbox"][data-checkbox-group="${fieldId}"]`);
             checkboxes.forEach(checkbox => {
                 const optionValue = checkbox.getAttribute('data-option-value') || checkbox.value;
-                checkbox.checked = values.includes(optionValue);
+                // Normalize optionValue to string for comparison
+                checkbox.checked = normalizedValues.includes(String(optionValue));
             });
             
             // Update hidden input
