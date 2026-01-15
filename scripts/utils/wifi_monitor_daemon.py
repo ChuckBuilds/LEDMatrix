@@ -58,39 +58,69 @@ class WiFiMonitorDaemon:
         logger.info("WiFi Monitor Daemon started")
         logger.info(f"Check interval: {self.check_interval} seconds")
         
+        # Log initial configuration
+        auto_enable = self.wifi_manager.config.get("auto_enable_ap_mode", True)
+        ap_ssid = self.wifi_manager.config.get("ap_ssid", "LEDMatrix-Setup")
+        logger.info(f"Configuration: auto_enable_ap_mode={auto_enable}, ap_ssid={ap_ssid}")
+        
+        # Log initial status
+        initial_status = self.wifi_manager.get_wifi_status()
+        initial_ethernet = self.wifi_manager._is_ethernet_connected()
+        logger.info(f"Initial status: WiFi connected={initial_status.connected}, "
+                   f"Ethernet connected={initial_ethernet}, AP active={initial_status.ap_mode_active}")
+        if initial_status.connected:
+            logger.info(f"  WiFi SSID: {initial_status.ssid}, IP: {initial_status.ip_address}, Signal: {initial_status.signal}%")
+        
         while self.running:
             try:
+                # Get current status before checking
+                status = self.wifi_manager.get_wifi_status()
+                ethernet_connected = self.wifi_manager._is_ethernet_connected()
+                
                 # Check WiFi status and manage AP mode
                 state_changed = self.wifi_manager.check_and_manage_ap_mode()
                 
-                # Get current status for logging
-                status = self.wifi_manager.get_wifi_status()
-                ethernet_connected = self.wifi_manager._is_ethernet_connected()
+                # Get updated status after check
+                updated_status = self.wifi_manager.get_wifi_status()
+                updated_ethernet = self.wifi_manager._is_ethernet_connected()
+                
                 current_state = {
-                    'connected': status.connected,
-                    'ethernet_connected': ethernet_connected,
-                    'ap_active': status.ap_mode_active,
-                    'ssid': status.ssid
+                    'connected': updated_status.connected,
+                    'ethernet_connected': updated_ethernet,
+                    'ap_active': updated_status.ap_mode_active,
+                    'ssid': updated_status.ssid
                 }
                 
-                # Log state changes
+                # Log state changes with detailed information
                 if current_state != self.last_state:
-                    if status.connected:
-                        logger.info(f"WiFi connected: {status.ssid} (IP: {status.ip_address})")
+                    logger.info("=== State Change Detected ===")
+                    if updated_status.connected:
+                        logger.info(f"WiFi connected: {updated_status.ssid} (IP: {updated_status.ip_address}, Signal: {updated_status.signal}%)")
                     else:
-                        logger.info("WiFi disconnected")
+                        logger.info("WiFi disconnected (no active connection)")
                     
-                    if ethernet_connected:
+                    if updated_ethernet:
                         logger.info("Ethernet connected")
                     else:
-                        logger.debug("Ethernet disconnected")
+                        logger.debug("Ethernet not connected")
                     
-                    if status.ap_mode_active:
-                        logger.info("AP mode active")
+                    if updated_status.ap_mode_active:
+                        logger.info(f"AP mode ACTIVE - SSID: {ap_ssid} (IP: 192.168.4.1)")
                     else:
                         logger.debug("AP mode inactive")
                     
+                    if state_changed:
+                        logger.info("AP mode state was changed by check_and_manage_ap_mode()")
+                    
+                    logger.info("=============================")
                     self.last_state = current_state.copy()
+                else:
+                    # Log periodic status (less verbose)
+                    if updated_status.connected:
+                        logger.debug(f"Status check: WiFi={updated_status.ssid} ({updated_status.signal}%), "
+                                   f"Ethernet={updated_ethernet}, AP={updated_status.ap_mode_active}")
+                    else:
+                        logger.debug(f"Status check: WiFi=disconnected, Ethernet={updated_ethernet}, AP={updated_status.ap_mode_active}")
                 
                 # Sleep until next check
                 time.sleep(self.check_interval)
@@ -101,23 +131,40 @@ class WiFiMonitorDaemon:
                 break
             except Exception as e:
                 logger.error(f"Error in monitor loop: {e}", exc_info=True)
+                logger.error(f"Error details - type: {type(e).__name__}, args: {e.args}")
+                # Log current state for debugging
+                try:
+                    error_status = self.wifi_manager.get_wifi_status()
+                    logger.error(f"State at error: WiFi={error_status.connected}, AP={error_status.ap_mode_active}")
+                except Exception as state_error:
+                    logger.error(f"Could not get state at error: {state_error}")
                 # Continue running even if there's an error
                 time.sleep(self.check_interval)
         
         logger.info("WiFi Monitor Daemon stopped")
         
         # Ensure AP mode is disabled on shutdown if WiFi or Ethernet is connected
+        logger.info("Performing cleanup on shutdown...")
         try:
             status = self.wifi_manager.get_wifi_status()
             ethernet_connected = self.wifi_manager._is_ethernet_connected()
+            logger.info(f"Final status: WiFi={status.connected}, Ethernet={ethernet_connected}, AP={status.ap_mode_active}")
+            
             if (status.connected or ethernet_connected) and status.ap_mode_active:
                 if status.connected:
-                    logger.info("Disabling AP mode on shutdown (WiFi is connected)")
+                    logger.info(f"Disabling AP mode on shutdown (WiFi is connected to {status.ssid})")
                 elif ethernet_connected:
                     logger.info("Disabling AP mode on shutdown (Ethernet is connected)")
-                self.wifi_manager.disable_ap_mode()
+                
+                success, message = self.wifi_manager.disable_ap_mode()
+                if success:
+                    logger.info(f"AP mode disabled successfully: {message}")
+                else:
+                    logger.warning(f"Failed to disable AP mode: {message}")
+            else:
+                logger.debug("AP mode cleanup not needed (not active or no network connection)")
         except Exception as e:
-            logger.error(f"Error disabling AP mode on shutdown: {e}")
+            logger.error(f"Error during shutdown cleanup: {e}", exc_info=True)
 
 
 def main():

@@ -51,10 +51,9 @@ You should see output indicating the service is active and running.
 
 ### Accessing the WiFi Setup Interface
 
-1. **If WiFi is NOT connected**: The Raspberry Pi will automatically create an access point
-   - Connect to the WiFi network: **LEDMatrix-Setup**
-   - Password: **ledmatrix123** (default)
-   - Open a web browser and navigate to: `http://192.168.4.1:5000`
+1. **If WiFi is NOT connected**: The Raspberry Pi will automatically create an access point (after a 90-second grace period)
+   - Connect to the WiFi network: **LEDMatrix-Setup** (open network, no password required)
+   - Open a web browser and navigate to: `http://192.168.4.1:5000` or `http://192.168.4.1` (captive portal may redirect)
    - Or use the IP address shown in the web interface
 
 2. **If WiFi IS connected**: Access the web interface normally
@@ -92,7 +91,7 @@ The WiFi monitor daemon (`wifi_monitor_daemon.py`) runs as a background service 
 3. Automatically disables AP mode when WiFi or Ethernet connection is established
 4. Logs all state changes for troubleshooting
 
-**Note**: By default, `auto_enable_ap_mode` is `true`, meaning AP mode will automatically activate when both WiFi and Ethernet are disconnected. This ensures you can always configure the device even when it has no network connection.
+**Note**: By default, `auto_enable_ap_mode` is `true`, meaning AP mode will automatically activate when both WiFi and Ethernet are disconnected. However, there's a 90-second grace period (3 consecutive checks at 30-second intervals) to prevent AP mode from enabling on transient network hiccups. This ensures you can always configure the device even when it has no network connection.
 
 ### WiFi Manager Module
 
@@ -125,12 +124,13 @@ WiFi settings are stored in `config/wifi_config.json`:
 
 **Configuration Options:**
 - `ap_ssid`: SSID for the access point (default: "LEDMatrix-Setup")
-- `ap_password`: Password for the access point (default: "ledmatrix123")
 - `ap_channel`: WiFi channel for AP mode (default: 7)
 - `auto_enable_ap_mode`: Automatically enable AP mode when WiFi/Ethernet disconnect (default: `true`)
-  - When `true`: AP mode automatically enables when both WiFi and Ethernet are disconnected
+  - When `true`: AP mode automatically enables after a 90-second grace period when both WiFi and Ethernet are disconnected
   - When `false`: AP mode must be manually enabled through the web interface
 - `saved_networks`: List of saved WiFi network credentials
+
+**Note**: The access point is configured as an open network (no password required) for ease of initial setup. This allows any device to connect without credentials.
 
 ### Access Point Configuration
 
@@ -140,6 +140,31 @@ The AP mode uses `hostapd` and `dnsmasq` for access point functionality:
 - **IP Range**: 192.168.4.2 - 192.168.4.20
 - **Gateway**: 192.168.4.1
 - **Channel**: 7 (configurable)
+
+## Verification
+
+### Running the WiFi Verification Script
+
+Use the comprehensive verification script to check your WiFi setup:
+
+```bash
+cd /home/ledpi/LEDMatrix
+./scripts/verify_wifi_setup.sh
+```
+
+This script checks:
+- Required packages are installed
+- WiFi monitor service is running
+- Configuration files are valid
+- WiFi permissions are configured
+- WiFi interface is available
+- WiFi radio status
+- Current connection status
+- AP mode status
+- WiFi Manager module availability
+- Web interface API accessibility
+
+The script provides a summary with passed/warning/failed checks to help diagnose issues.
 
 ## Troubleshooting
 
@@ -254,12 +279,12 @@ sudo systemctl restart ledmatrix-wifi-monitor
 
 ## Security Considerations
 
-- **Default AP Password**: The default AP password is "ledmatrix123". Consider changing this in `config/wifi_config.json` for production use
+- **Open AP Network**: The access point is configured as an open network (no password) for ease of initial setup. This allows any device within range to connect to the setup network. Consider your deployment environment when using this feature.
 - **WiFi Credentials**: Saved WiFi credentials are stored in `config/wifi_config.json`. Ensure proper file permissions:
   ```bash
   sudo chmod 600 config/wifi_config.json
   ```
-- **Network Access**: When in AP mode, anyone within range can connect to the setup network. Use strong passwords for production deployments
+- **Network Access**: When in AP mode, anyone within range can connect to the setup network. This is by design to allow easy initial configuration. For production deployments in secure environments, consider using the web interface when connected to WiFi instead.
 
 ## API Endpoints
 
@@ -291,11 +316,13 @@ The system supports multiple scanning methods:
 
 AP mode configuration:
 
-- Uses `hostapd` for WiFi access point functionality
-- Uses `dnsmasq` for DHCP and DNS services
+- Uses `hostapd` (preferred) or `nmcli hotspot` (fallback) for WiFi access point functionality
+- Uses `dnsmasq` for DHCP and DNS services (hostapd mode only)
 - Configures wlan0 interface in AP mode
 - Provides DHCP range: 192.168.4.2-20
 - Gateway IP: 192.168.4.1
+- **Open network**: No password required (configures as open network for easy setup)
+- Captive portal: DNS redirection for automatic browser redirects (hostapd mode only)
 
 ## Development
 

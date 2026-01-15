@@ -1415,10 +1415,10 @@ class PluginStoreManager:
             try:
                 # Try to fix permissions on __pycache__ directories recursively
                 import stat
-                for root, _dirs, files in os.walk(path):
+                for root, dirs, files in os.walk(path):
                     root_path = Path(root)
                     try:
-                        # Make directory writable (0o777 is acceptable here - temporary before deletion)
+                        # Make directory writable
                         os.chmod(root_path, stat.S_IRWXU | stat.S_IRWXG | stat.S_IRWXO)
                     except (OSError, PermissionError):
                         pass
@@ -1436,7 +1436,7 @@ class PluginStoreManager:
                 self.logger.info(f"Successfully removed {path} after fixing permissions")
                 return True
             except Exception as e2:
-                self.logger.exception(f"Failed to remove {path} even after fixing permissions: {e2}")
+                self.logger.error(f"Failed to remove {path} even after fixing permissions: {e2}")
                 # Last resort: try with ignore_errors
                 try:
                     shutil.rmtree(path, ignore_errors=True)
@@ -1448,10 +1448,10 @@ class PluginStoreManager:
                         self.logger.error(f"Could not remove {path} even with ignore_errors")
                         return False
                 except Exception as e3:
-                    self.logger.exception(f"Final removal attempt failed for {path}: {e3}")
+                    self.logger.error(f"Final removal attempt failed for {path}: {e3}")
                     return False
         except Exception as e:
-            self.logger.exception(f"Unexpected error removing {path}: {e}")
+            self.logger.error(f"Unexpected error removing {path}: {e}")
             return False
     
     def _find_plugin_path(self, plugin_id: str) -> Optional[Path]:
