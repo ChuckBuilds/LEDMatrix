@@ -2205,7 +2205,11 @@ function escapeCssSelector(str) {
     if (typeof str !== 'string') {
         str = String(str);
     }
-    // Escape special CSS selector characters
+    // Use CSS.escape() when available (handles unicode, leading digits, and edge cases)
+    if (typeof CSS !== 'undefined' && CSS.escape) {
+        return CSS.escape(str);
+    }
+    // Fallback to regex-based escaping for older browsers
     return str.replace(/[!"#$%&'()*+,.\/:;<=>?@[\\\]^`{|}~]/g, '\\$&');
 }
 
