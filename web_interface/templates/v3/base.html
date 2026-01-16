@@ -3108,6 +3108,51 @@
                     return null;
                 },
 
+                // Helper function to escape CSS selector special characters
+                escapeCssSelector(str) {
+                    if (typeof str !== 'string') {
+                        str = String(str);
+                    }
+                    // Use CSS.escape() when available (handles unicode, leading digits, and edge cases)
+                    if (typeof CSS !== 'undefined' && CSS.escape) {
+                        return CSS.escape(str);
+                    }
+                    // Fallback to regex-based escaping for older browsers
+                    // First, handle leading digits and whitespace (must be done before regex)
+                    let escaped = str;
+                    let hasLeadingHexEscape = false;
+                    if (escaped.length > 0) {
+                        const firstChar = escaped[0];
+                        const firstCode = firstChar.charCodeAt(0);
+                        
+                        // Escape leading digit (0-9: U+0030-U+0039)
+                        if (firstCode >= 0x30 && firstCode <= 0x39) {
+                            const hex = firstCode.toString(16).toUpperCase().padStart(4, '0');
+                            escaped = '\\' + hex + ' ' + escaped.slice(1);
+                            hasLeadingHexEscape = true;
+                        }
+                        // Escape leading whitespace (space: U+0020, tab: U+0009, etc.)
+                        else if (/\s/.test(firstChar)) {
+                            const hex = firstCode.toString(16).toUpperCase().padStart(4, '0');
+                            escaped = '\\' + hex + ' ' + escaped.slice(1);
+                            hasLeadingHexEscape = true;
+                        }
+                    }
+                    
+                    // Escape special characters
+                    escaped = escaped.replace(/[!"#$%&'()*+,.\/:;<=>?@[\\\]^`{|}~]/g, '\\$&');
+                    
+                    // Escape internal spaces (replace spaces with \ ), but preserve space in hex escape
+                    if (hasLeadingHexEscape) {
+                        // Skip the first 6 characters (e.g., "\0030 ") when replacing spaces
+                        escaped = escaped.slice(0, 6) + escaped.slice(6).replace(/ /g, '\\ ');
+                    } else {
+                        escaped = escaped.replace(/ /g, '\\ ');
+                    }
+                    
+                    return escaped;
+                },
+
                 async savePluginConfig(pluginId, event) {
                     try {
                         // Get the form element for this plugin
@@ -3179,7 +3224,9 @@
                         // Now process FormData for other field types
                         for (const [key, value] of formData.entries()) {
                             // Skip checkboxes - we already handled them above
-                            const element = form.elements[key];
+                            // Use querySelector to reliably find element by name (handles dot notation)
+                            const escapedKey = this.escapeCssSelector(key);
+                            const element = form.querySelector(`[name="${escapedKey}"]`);
                             if (element && element.type === 'checkbox') {
                                 // Also skip checkbox groups (name ends with [])
                                 if (key.endsWith('[]')) {
@@ -3932,6 +3979,51 @@
             return null;
         }
 
+        // Helper function to escape CSS selector special characters
+        function escapeCssSelector(str) {
+            if (typeof str !== 'string') {
+                str = String(str);
+            }
+            // Use CSS.escape() when available (handles unicode, leading digits, and edge cases)
+            if (typeof CSS !== 'undefined' && CSS.escape) {
+                return CSS.escape(str);
+            }
+            // Fallback to regex-based escaping for older browsers
+            // First, handle leading digits and whitespace (must be done before regex)
+            let escaped = str;
+            let hasLeadingHexEscape = false;
+            if (escaped.length > 0) {
+                const firstChar = escaped[0];
+                const firstCode = firstChar.charCodeAt(0);
+                
+                // Escape leading digit (0-9: U+0030-U+0039)
+                if (firstCode >= 0x30 && firstCode <= 0x39) {
+                    const hex = firstCode.toString(16).toUpperCase().padStart(4, '0');
+                    escaped = '\\' + hex + ' ' + escaped.slice(1);
+                    hasLeadingHexEscape = true;
+                }
+                // Escape leading whitespace (space: U+0020, tab: U+0009, etc.)
+                else if (/\s/.test(firstChar)) {
+                    const hex = firstCode.toString(16).toUpperCase().padStart(4, '0');
+                    escaped = '\\' + hex + ' ' + escaped.slice(1);
+                    hasLeadingHexEscape = true;
+                }
+            }
+            
+            // Escape special characters
+            escaped = escaped.replace(/[!"#$%&'()*+,.\/:;<=>?@[\\\]^`{|}~]/g, '\\$&');
+            
+            // Escape internal spaces (replace spaces with \ ), but preserve space in hex escape
+            if (hasLeadingHexEscape) {
+                // Skip the first 6 characters (e.g., "\0030 ") when replacing spaces
+                escaped = escaped.slice(0, 6) + escaped.slice(6).replace(/ /g, '\\ ');
+            } else {
+                escaped = escaped.replace(/ /g, '\\ ');
+            }
+            
+            return escaped;
+        }
+
         async function savePluginConfig(pluginId) {
             try {
                 console.log('Saving config for plugin:', pluginId);
@@ -4016,7 +4108,9 @@
                 // Now process FormData for other field types
                 for (const [key, value] of formData.entries()) {
                     // Skip checkboxes - we already handled them above
-                    const element = form.elements[key];
+                    // Use querySelector to reliably find element by name (handles dot notation)
+                    const escapedKey = escapeCssSelector(key);
+                    const element = form.querySelector(`[name="${escapedKey}"]`);
                     if (element && element.type === 'checkbox') {
                         continue; // Already processed
                     }
@@ -4816,6 +4910,14 @@
     
     <!-- Load config utilities -->
     <script src="{{ url_for('static', filename='v3/js/config/diff_viewer.js') }}" defer></script>
+    
+    <!-- Widget Registry System -->
+    <script src="{{ url_for('static', filename='v3/js/widgets/registry.js') }}" defer></script>
+    <script src="{{ url_for('static', filename='v3/js/widgets/base-widget.js') }}" defer></script>
+    <script src="{{ url_for('static', filename='v3/js/widgets/file-upload.js') }}" defer></script>
+    <script src="{{ url_for('static', filename='v3/js/widgets/checkbox-group.js') }}" defer></script>
+    <script src="{{ url_for('static', filename='v3/js/widgets/custom-feeds.js') }}" defer></script>
+    <script src="{{ url_for('static', filename='v3/js/widgets/plugin-loader.js') }}" defer></script>
     
     <!-- Legacy plugins_manager.js (for backward compatibility during migration) -->
     <script src="{{ url_for('static', filename='v3/plugins_manager.js') }}?v=20250104i" defer></script>
