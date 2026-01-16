@@ -3108,6 +3108,15 @@
                     return null;
                 },
 
+                // Helper function to escape CSS selector special characters
+                escapeCssSelector(str) {
+                    if (typeof str !== 'string') {
+                        str = String(str);
+                    }
+                    // Escape special CSS selector characters
+                    return str.replace(/[!"#$%&'()*+,.\/:;<=>?@[\\\]^`{|}~]/g, '\\$&');
+                },
+
                 async savePluginConfig(pluginId, event) {
                     try {
                         // Get the form element for this plugin
@@ -3179,7 +3188,9 @@
                         // Now process FormData for other field types
                         for (const [key, value] of formData.entries()) {
                             // Skip checkboxes - we already handled them above
-                            const element = form.elements[key];
+                            // Use querySelector to reliably find element by name (handles dot notation)
+                            const escapedKey = this.escapeCssSelector(key);
+                            const element = form.querySelector(`[name="${escapedKey}"]`);
                             if (element && element.type === 'checkbox') {
                                 // Also skip checkbox groups (name ends with [])
                                 if (key.endsWith('[]')) {
@@ -3932,6 +3943,15 @@
             return null;
         }
 
+        // Helper function to escape CSS selector special characters
+        function escapeCssSelector(str) {
+            if (typeof str !== 'string') {
+                str = String(str);
+            }
+            // Escape special CSS selector characters
+            return str.replace(/[!"#$%&'()*+,.\/:;<=>?@[\\\]^`{|}~]/g, '\\$&');
+        }
+
         async function savePluginConfig(pluginId) {
             try {
                 console.log('Saving config for plugin:', pluginId);
@@ -4016,7 +4036,9 @@
                 // Now process FormData for other field types
                 for (const [key, value] of formData.entries()) {
                     // Skip checkboxes - we already handled them above
-                    const element = form.elements[key];
+                    // Use querySelector to reliably find element by name (handles dot notation)
+                    const escapedKey = escapeCssSelector(key);
+                    const element = form.querySelector(`[name="${escapedKey}"]`);
                     if (element && element.type === 'checkbox') {
                         continue; // Already processed
                     }
