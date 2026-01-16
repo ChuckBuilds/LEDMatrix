@@ -3045,6 +3045,7 @@ function generateFieldHtml(key, prop, value, prefix = '') {
                            data-file-type="${fileType}">
                 </div>
             `;
+            }
         } else if (xWidgetValue === 'checkbox-group' || xWidgetValue2 === 'checkbox-group') {
             // Checkbox group widget for multi-select arrays with enum items
             // Use _data hidden input pattern to serialize selected values correctly
