@@ -3032,20 +3032,20 @@ function generateFieldHtml(key, prop, value, prefix = '') {
         
             // Check for file-upload widget FIRST (to avoid breaking static-image plugin)
             if (xWidgetValue === 'file-upload' || xWidgetValue2 === 'file-upload') {
-            console.log(`[DEBUG] ✅ Detected file-upload widget for ${fullKey} - rendering upload zone`);
-            const uploadConfig = prop['x-upload-config'] || {};
-            const pluginId = uploadConfig.plugin_id || currentPluginConfig?.pluginId || 'static-image';
-            const maxFiles = uploadConfig.max_files || 10;
-            const fileType = uploadConfig.file_type || 'image'; // 'image' or 'json'
-            const allowedTypes = uploadConfig.allowed_types || (fileType === 'json' ? ['application/json'] : ['image/png', 'image/jpeg', 'image/bmp', 'image/gif']);
-            const maxSizeMB = uploadConfig.max_size_mb || 5;
-            const customUploadEndpoint = uploadConfig.endpoint; // Custom endpoint if specified
-            const customDeleteEndpoint = uploadConfig.delete_endpoint; // Custom delete endpoint if specified
-            
-            const currentFiles = Array.isArray(value) ? value : [];
-            const fieldId = fullKey.replace(/\./g, '_');
-            
-            html += `
+                console.log(`[DEBUG] ✅ Detected file-upload widget for ${fullKey} - rendering upload zone`);
+                const uploadConfig = prop['x-upload-config'] || {};
+                const pluginId = uploadConfig.plugin_id || currentPluginConfig?.pluginId || 'static-image';
+                const maxFiles = uploadConfig.max_files || 10;
+                const fileType = uploadConfig.file_type || 'image'; // 'image' or 'json'
+                const allowedTypes = uploadConfig.allowed_types || (fileType === 'json' ? ['application/json'] : ['image/png', 'image/jpeg', 'image/bmp', 'image/gif']);
+                const maxSizeMB = uploadConfig.max_size_mb || 5;
+                const customUploadEndpoint = uploadConfig.endpoint; // Custom endpoint if specified
+                const customDeleteEndpoint = uploadConfig.delete_endpoint; // Custom delete endpoint if specified
+                
+                const currentFiles = Array.isArray(value) ? value : [];
+                const fieldId = fullKey.replace(/\./g, '_');
+                
+                html += `
                 <div id="${fieldId}_upload_widget" class="mt-1">
                     <!-- File Upload Drop Zone -->
                     <div id="${fieldId}_drop_zone" 
@@ -3129,7 +3129,7 @@ function generateFieldHtml(key, prop, value, prefix = '') {
                            data-upload-endpoint="${customUploadEndpoint || '/api/v3/plugins/assets/upload'}"
                            data-file-type="${fileType}">
                 </div>
-            `;
+                `;
             } else if (xWidgetValue === 'checkbox-group' || xWidgetValue2 === 'checkbox-group') {
             // Checkbox group widget for multi-select arrays with enum items
             // Use _data hidden input pattern to serialize selected values correctly
