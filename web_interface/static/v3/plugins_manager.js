@@ -161,6 +161,199 @@ window.uninstallPlugin = window.uninstallPlugin || function(pluginId) {
     });
 };
 
+// Define configurePlugin early to ensure it's always available
+window.configurePlugin = window.configurePlugin || async function(pluginId) {
+    if (_PLUGIN_DEBUG_EARLY) console.log('[PLUGINS STUB] configurePlugin called for', pluginId);
+    
+    // Switch to the plugin's configuration tab instead of opening a modal
+    // This matches the behavior of clicking the plugin tab at the top
+    function getAppComponent() {
+        if (window.Alpine) {
+            const appElement = document.querySelector('[x-data="app()"]');
+            if (appElement && appElement._x_dataStack && appElement._x_dataStack[0]) {
+                return appElement._x_dataStack[0];
+            }
+        }
+        return null;
+    }
+    
+    const appComponent = getAppComponent();
+    if (appComponent) {
+        // Set the active tab to the plugin ID
+        appComponent.activeTab = pluginId;
+        if (_PLUGIN_DEBUG_EARLY) console.log('[PLUGINS STUB] Switched to plugin tab:', pluginId);
+        
+        // Scroll to top of page to ensure the tab is visible
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+    } else {
+        console.error('Alpine.js app instance not found');
+        if (typeof showNotification === 'function') {
+            showNotification('Unable to switch to plugin configuration. Please refresh the page.', 'error');
+        }
+    }
+};
+
+// Initialize per-plugin toggle request token map for race condition protection
+if (!window._pluginToggleRequests) {
+    window._pluginToggleRequests = {};
+}
+
+// Define togglePlugin early to ensure it's always available
+window.togglePlugin = window.togglePlugin || function(pluginId, enabled) {
+    if (_PLUGIN_DEBUG_EARLY) console.log('[PLUGINS STUB] togglePlugin called for', pluginId, 'enabled:', enabled);
+    
+    const plugin = (window.installedPlugins || []).find(p => p.id === pluginId);
+    const pluginName = plugin ? (plugin.name || pluginId) : pluginId;
+    const action = enabled ? 'enabling' : 'disabling';
+    
+    // Generate unique token for this toggle request to prevent race conditions
+    const requestToken = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    window._pluginToggleRequests[pluginId] = requestToken;
+    
+    // Update UI immediately for better UX
+    const toggleCheckbox = document.getElementById(`toggle-${pluginId}`);
+    const toggleLabel = document.getElementById(`toggle-label-${pluginId}`);
+    const wrapperDiv = toggleCheckbox?.parentElement?.querySelector('.flex.items-center.gap-2');
+    const toggleTrack = wrapperDiv?.querySelector('.relative.w-14');
+    const toggleHandle = toggleTrack?.querySelector('.absolute');
+    
+    // Disable checkbox and add disabled class to prevent overlapping requests
+    if (toggleCheckbox) {
+        toggleCheckbox.checked = enabled;
+        toggleCheckbox.disabled = true;
+        toggleCheckbox.classList.add('opacity-50', 'cursor-not-allowed');
+    }
+    
+    // Disable wrapper to provide visual feedback
+    if (wrapperDiv) {
+        wrapperDiv.classList.add('opacity-50', 'pointer-events-none');
+    }
+    
+    // Update wrapper background and border
+    if (wrapperDiv) {
+        if (enabled) {
+            wrapperDiv.classList.remove('bg-gray-50', 'border-gray-300');
+            wrapperDiv.classList.add('bg-green-50', 'border-green-500');
+        } else {
+            wrapperDiv.classList.remove('bg-green-50', 'border-green-500');
+            wrapperDiv.classList.add('bg-gray-50', 'border-gray-300');
+        }
+    }
+    
+    // Update toggle track
+    if (toggleTrack) {
+        if (enabled) {
+            toggleTrack.classList.remove('bg-gray-300');
+            toggleTrack.classList.add('bg-green-500');
+        } else {
+            toggleTrack.classList.remove('bg-green-500');
+            toggleTrack.classList.add('bg-gray-300');
+        }
+    }
+    
+    // Update toggle handle
+    if (toggleHandle) {
+        if (enabled) {
+            toggleHandle.classList.add('translate-x-full', 'border-green-500');
+            toggleHandle.classList.remove('border-gray-400');
+            toggleHandle.innerHTML = '<i class="fas fa-check text-green-600 text-xs"></i>';
+        } else {
+            toggleHandle.classList.remove('translate-x-full', 'border-green-500');
+            toggleHandle.classList.add('border-gray-400');
+            toggleHandle.innerHTML = '<i class="fas fa-times text-gray-400 text-xs"></i>';
+        }
+    }
+    
+    // Update label with icon and text
+    if (toggleLabel) {
+        if (enabled) {
+            toggleLabel.className = 'text-sm font-semibold text-green-700 flex items-center gap-1.5';
+            toggleLabel.innerHTML = '<i class="fas fa-toggle-on text-green-600"></i><span>Enabled</span>';
+        } else {
+            toggleLabel.className = 'text-sm font-semibold text-gray-600 flex items-center gap-1.5';
+            toggleLabel.innerHTML = '<i class="fas fa-toggle-off text-gray-400"></i><span>Disabled</span>';
+        }
+    }
+    
+    if (typeof showNotification === 'function') {
+        showNotification(`${action.charAt(0).toUpperCase() + action.slice(1)} ${pluginName}...`, 'info');
+    }
+
+    fetch('/api/v3/plugins/toggle', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ plugin_id: pluginId, enabled: enabled })
+    })
+    .then(response => response.json())
+    .then(data => {
+        // Verify this response is for the latest request (prevent race conditions)
+        if (window._pluginToggleRequests[pluginId] !== requestToken) {
+            console.log(`[togglePlugin] Ignoring out-of-order response for ${pluginId}`);
+            return;
+        }
+        
+        if (typeof showNotification === 'function') {
+            showNotification(data.message, data.status);
+        }
+        if (data.status === 'success') {
+            // Update local state
+            if (plugin) {
+                plugin.enabled = enabled;
+            }
+            // Refresh the list to ensure consistency
+            if (typeof loadInstalledPlugins === 'function') {
+                loadInstalledPlugins();
+            }
+        } else {
+            // Revert the toggle if API call failed
+            if (plugin) {
+                plugin.enabled = !enabled;
+            }
+            if (typeof loadInstalledPlugins === 'function') {
+                loadInstalledPlugins();
+            }
+        }
+        
+        // Clear token and re-enable UI
+        delete window._pluginToggleRequests[pluginId];
+        if (toggleCheckbox) {
+            toggleCheckbox.disabled = false;
+            toggleCheckbox.classList.remove('opacity-50', 'cursor-not-allowed');
+        }
+        if (wrapperDiv) {
+            wrapperDiv.classList.remove('opacity-50', 'pointer-events-none');
+        }
+    })
+    .catch(error => {
+        // Verify this error is for the latest request (prevent race conditions)
+        if (window._pluginToggleRequests[pluginId] !== requestToken) {
+            console.log(`[togglePlugin] Ignoring out-of-order error for ${pluginId}`);
+            return;
+        }
+        
+        if (typeof showNotification === 'function') {
+            showNotification('Error toggling plugin: ' + error.message, 'error');
+        }
+        // Revert the toggle if API call failed
+        if (plugin) {
+            plugin.enabled = !enabled;
+        }
+        if (typeof loadInstalledPlugins === 'function') {
+            loadInstalledPlugins();
+        }
+        
+        // Clear token and re-enable UI
+        delete window._pluginToggleRequests[pluginId];
+        if (toggleCheckbox) {
+            toggleCheckbox.disabled = false;
+            toggleCheckbox.classList.remove('opacity-50', 'cursor-not-allowed');
+        }
+        if (wrapperDiv) {
+            wrapperDiv.classList.remove('opacity-50', 'pointer-events-none');
+        }
+    });
+};
+
 // Cleanup orphaned modals from previous executions to prevent duplicates when moving to body
 try {
     const existingModals = document.querySelectorAll('#plugin-config-modal');
@@ -306,146 +499,8 @@ window.__pluginDomReady = window.__pluginDomReady || false;
     console.log('[PLUGINS SCRIPT] Global event delegation set up');
 })();
 
-window.configurePlugin = window.configurePlugin || async function(pluginId) {
-    console.log('[DEBUG] ===== configurePlugin called =====');
-    console.log('[DEBUG] Plugin ID:', pluginId);
-    
-    // Switch to the plugin's configuration tab instead of opening a modal
-    // This matches the behavior of clicking the plugin tab at the top
-    function getAppComponent() {
-        if (window.Alpine) {
-            const appElement = document.querySelector('[x-data="app()"]');
-            if (appElement && appElement._x_dataStack && appElement._x_dataStack[0]) {
-                return appElement._x_dataStack[0];
-            }
-        }
-        return null;
-    }
-    
-    const appComponent = getAppComponent();
-    if (appComponent) {
-        // Set the active tab to the plugin ID
-        appComponent.activeTab = pluginId;
-        console.log('[DEBUG] Switched to plugin tab:', pluginId);
-        
-        // Scroll to top of page to ensure the tab is visible
-        window.scrollTo({ top: 0, behavior: 'smooth' });
-    } else {
-        console.error('Alpine.js app instance not found');
-        if (typeof showNotification === 'function') {
-            showNotification('Unable to switch to plugin configuration. Please refresh the page.', 'error');
-        }
-    }
-};
-
-window.togglePlugin = window.togglePlugin || function(pluginId, enabled) {
-    console.log('[DEBUG] ===== togglePlugin called =====');
-    console.log('[DEBUG] Plugin ID:', pluginId, 'Enabled:', enabled);
-    const plugin = (window.installedPlugins || []).find(p => p.id === pluginId);
-    const pluginName = plugin ? (plugin.name || pluginId) : pluginId;
-    const action = enabled ? 'enabling' : 'disabling';
-    
-    // Update UI immediately for better UX
-    const toggleCheckbox = document.getElementById(`toggle-${pluginId}`);
-    const toggleLabel = document.getElementById(`toggle-label-${pluginId}`);
-    const wrapperDiv = toggleCheckbox?.parentElement?.querySelector('.flex.items-center.gap-2');
-    const toggleTrack = wrapperDiv?.querySelector('.relative.w-14');
-    const toggleHandle = toggleTrack?.querySelector('.absolute');
-    
-    if (toggleCheckbox) toggleCheckbox.checked = enabled;
-    
-    // Update wrapper background and border
-    if (wrapperDiv) {
-        if (enabled) {
-            wrapperDiv.classList.remove('bg-gray-50', 'border-gray-300');
-            wrapperDiv.classList.add('bg-green-50', 'border-green-500');
-        } else {
-            wrapperDiv.classList.remove('bg-green-50', 'border-green-500');
-            wrapperDiv.classList.add('bg-gray-50', 'border-gray-300');
-        }
-    }
-    
-    // Update toggle track
-    if (toggleTrack) {
-        if (enabled) {
-            toggleTrack.classList.remove('bg-gray-300');
-            toggleTrack.classList.add('bg-green-500');
-        } else {
-            toggleTrack.classList.remove('bg-green-500');
-            toggleTrack.classList.add('bg-gray-300');
-        }
-    }
-    
-    // Update toggle handle
-    if (toggleHandle) {
-        if (enabled) {
-            toggleHandle.classList.add('translate-x-full', 'border-green-500');
-            toggleHandle.classList.remove('border-gray-400');
-            toggleHandle.innerHTML = '<i class="fas fa-check text-green-600 text-xs"></i>';
-        } else {
-            toggleHandle.classList.remove('translate-x-full', 'border-green-500');
-            toggleHandle.classList.add('border-gray-400');
-            toggleHandle.innerHTML = '<i class="fas fa-times text-gray-400 text-xs"></i>';
-        }
-    }
-    
-    // Update label with icon and text
-    if (toggleLabel) {
-        if (enabled) {
-            toggleLabel.className = 'text-sm font-semibold text-green-700 flex items-center gap-1.5';
-            toggleLabel.innerHTML = '<i class="fas fa-toggle-on text-green-600"></i><span>Enabled</span>';
-        } else {
-            toggleLabel.className = 'text-sm font-semibold text-gray-600 flex items-center gap-1.5';
-            toggleLabel.innerHTML = '<i class="fas fa-toggle-off text-gray-400"></i><span>Disabled</span>';
-        }
-    }
-    
-    if (typeof showNotification === 'function') {
-        showNotification(`${action.charAt(0).toUpperCase() + action.slice(1)} ${pluginName}...`, 'info');
-    }
-
-    fetch('/api/v3/plugins/toggle', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ plugin_id: pluginId, enabled: enabled })
-    })
-    .then(response => response.json())
-    .then(data => {
-        if (typeof showNotification === 'function') {
-            showNotification(data.message, data.status);
-        }
-        if (data.status === 'success') {
-            // Update local state
-            if (plugin) {
-                plugin.enabled = enabled;
-            }
-            // Refresh the list to ensure consistency
-            if (typeof loadInstalledPlugins === 'function') {
-                loadInstalledPlugins();
-            }
-        } else {
-            // Revert the toggle if API call failed
-            if (plugin) {
-                plugin.enabled = !enabled;
-            }
-            if (typeof loadInstalledPlugins === 'function') {
-                loadInstalledPlugins();
-            }
-        }
-    })
-    .catch(error => {
-        if (typeof showNotification === 'function') {
-            showNotification('Error toggling plugin: ' + error.message, 'error');
-        }
-        // Revert the toggle if API call failed
-        if (plugin) {
-            plugin.enabled = !enabled;
-        }
-        if (typeof loadInstalledPlugins === 'function') {
-            loadInstalledPlugins();
-        }
-    });
-};
+// Note: configurePlugin and togglePlugin are now defined at the top of the file (after uninstallPlugin)
+// to ensure they're available immediately when the script loads
 
 // Verify functions are defined (debug only)
 if (_PLUGIN_DEBUG_EARLY) {
@@ -2145,6 +2200,19 @@ function getSchemaPropertyType(schema, path) {
     return prop; // Return the full property object (was returning just type, but callers expect object)
 }
 
+// Helper function to escape CSS selector special characters
+function escapeCssSelector(str) {
+    if (typeof str !== 'string') {
+        str = String(str);
+    }
+    // Use CSS.escape() when available (handles unicode, leading digits, and edge cases)
+    if (typeof CSS !== 'undefined' && CSS.escape) {
+        return CSS.escape(str);
+    }
+    // Fallback to regex-based escaping for older browsers
+    return str.replace(/[!"#$%&'()*+,.\/:;<=>?@[\\\]^`{|}~]/g, '\\$&');
+}
+
 // Helper function to convert dot notation to nested object
 function dotToNested(obj) {
     const result = {};
@@ -2240,6 +2308,12 @@ function handlePluginConfigSubmit(e) {
             }
         }
         
+        // Skip checkbox-group inputs with bracket notation (they're handled by the hidden _data input)
+        // Pattern: fieldName[] - these are individual checkboxes, actual data is in fieldName_data
+        if (key.endsWith('[]')) {
+            continue;
+        }
+        
         // Skip key_value pair inputs (they're handled by the hidden _data input)
         if (key.includes('[key_') || key.includes('[value_')) {
             continue;
@@ -2310,8 +2384,35 @@ function handlePluginConfigSubmit(e) {
             } else if (propType === 'number') {
                 flatConfig[actualKey] = parseFloat(actualValue);
             } else if (propType === 'boolean') {
-                const formElement = form.elements[actualKey] || form.elements[key];
-                flatConfig[actualKey] = formElement ? formElement.checked : (actualValue === 'true' || actualValue === true);
+                // Use querySelector to reliably find checkbox by name attribute
+                // Escape special CSS selector characters in the name
+                const escapedKey = escapeCssSelector(key);
+                const formElement = form.querySelector(`input[type="checkbox"][name="${escapedKey}"]`);
+                
+                if (formElement) {
+                    // Element found - use its checked state
+                    flatConfig[actualKey] = formElement.checked;
+                } else {
+                    // Element not found - normalize string booleans and check FormData value
+                    // Checkboxes send "on" when checked, nothing when unchecked
+                    // Normalize string representations of booleans
+                    if (typeof actualValue === 'string') {
+                        const lowerValue = actualValue.toLowerCase().trim();
+                        if (lowerValue === 'true' || lowerValue === '1' || lowerValue === 'on') {
+                            flatConfig[actualKey] = true;
+                        } else if (lowerValue === 'false' || lowerValue === '0' || lowerValue === 'off' || lowerValue === '') {
+                            flatConfig[actualKey] = false;
+                        } else {
+                            // Non-empty string that's not a boolean representation - treat as truthy
+                            flatConfig[actualKey] = true;
+                        }
+                    } else if (actualValue === undefined || actualValue === null) {
+                        flatConfig[actualKey] = false;
+                    } else {
+                        // Non-string value - coerce to boolean
+                        flatConfig[actualKey] = Boolean(actualValue);
+                    }
+                }
             } else {
                 flatConfig[actualKey] = actualValue;
             }
@@ -2334,11 +2435,29 @@ function handlePluginConfigSubmit(e) {
                     flatConfig[actualKey] = actualValue;
                 }
             } else {
-                const formElement = form.elements[actualKey] || form.elements[key];
+                // No schema - try to detect checkbox by finding the element
+                const escapedKey = escapeCssSelector(key);
+                const formElement = form.querySelector(`input[type="checkbox"][name="${escapedKey}"]`);
+                
                 if (formElement && formElement.type === 'checkbox') {
+                    // Found checkbox element - use its checked state
                     flatConfig[actualKey] = formElement.checked;
                 } else {
-                    flatConfig[actualKey] = actualValue;
+                    // Not a checkbox or element not found - normalize string booleans
+                    if (typeof actualValue === 'string') {
+                        const lowerValue = actualValue.toLowerCase().trim();
+                        if (lowerValue === 'true' || lowerValue === '1' || lowerValue === 'on') {
+                            flatConfig[actualKey] = true;
+                        } else if (lowerValue === 'false' || lowerValue === '0' || lowerValue === 'off' || lowerValue === '') {
+                            flatConfig[actualKey] = false;
+                        } else {
+                            // Non-empty string that's not a boolean representation - keep as string
+                            flatConfig[actualKey] = actualValue;
+                        }
+                    } else {
+                        // Non-string value - use as-is
+                        flatConfig[actualKey] = actualValue;
+                    }
                 }
             }
         }
@@ -2947,20 +3066,20 @@ function generateFieldHtml(key, prop, value, prefix = '') {
         
             // Check for file-upload widget FIRST (to avoid breaking static-image plugin)
             if (xWidgetValue === 'file-upload' || xWidgetValue2 === 'file-upload') {
-            console.log(`[DEBUG] ✅ Detected file-upload widget for ${fullKey} - rendering upload zone`);
-            const uploadConfig = prop['x-upload-config'] || {};
-            const pluginId = uploadConfig.plugin_id || currentPluginConfig?.pluginId || 'static-image';
-            const maxFiles = uploadConfig.max_files || 10;
-            const fileType = uploadConfig.file_type || 'image'; // 'image' or 'json'
-            const allowedTypes = uploadConfig.allowed_types || (fileType === 'json' ? ['application/json'] : ['image/png', 'image/jpeg', 'image/bmp', 'image/gif']);
-            const maxSizeMB = uploadConfig.max_size_mb || 5;
-            const customUploadEndpoint = uploadConfig.endpoint; // Custom endpoint if specified
-            const customDeleteEndpoint = uploadConfig.delete_endpoint; // Custom delete endpoint if specified
-            
-            const currentFiles = Array.isArray(value) ? value : [];
-            const fieldId = fullKey.replace(/\./g, '_');
-            
-            html += `
+                console.log(`[DEBUG] ✅ Detected file-upload widget for ${fullKey} - rendering upload zone`);
+                const uploadConfig = prop['x-upload-config'] || {};
+                const pluginId = uploadConfig.plugin_id || currentPluginConfig?.pluginId || 'static-image';
+                const maxFiles = uploadConfig.max_files || 10;
+                const fileType = uploadConfig.file_type || 'image'; // 'image' or 'json'
+                const allowedTypes = uploadConfig.allowed_types || (fileType === 'json' ? ['application/json'] : ['image/png', 'image/jpeg', 'image/bmp', 'image/gif']);
+                const maxSizeMB = uploadConfig.max_size_mb || 5;
+                const customUploadEndpoint = uploadConfig.endpoint; // Custom endpoint if specified
+                const customDeleteEndpoint = uploadConfig.delete_endpoint; // Custom delete endpoint if specified
+                
+                const currentFiles = Array.isArray(value) ? value : [];
+                const fieldId = fullKey.replace(/\./g, '_');
+                
+                html += `
                 <div id="${fieldId}_upload_widget" class="mt-1">
                     <!-- File Upload Drop Zone -->
                     <div id="${fieldId}_drop_zone" 
