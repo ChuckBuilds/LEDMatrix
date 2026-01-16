@@ -161,6 +161,148 @@ window.uninstallPlugin = window.uninstallPlugin || function(pluginId) {
     });
 };
 
+// Define configurePlugin early to ensure it's always available
+window.configurePlugin = window.configurePlugin || async function(pluginId) {
+    if (_PLUGIN_DEBUG_EARLY) console.log('[PLUGINS STUB] configurePlugin called for', pluginId);
+    
+    // Switch to the plugin's configuration tab instead of opening a modal
+    // This matches the behavior of clicking the plugin tab at the top
+    function getAppComponent() {
+        if (window.Alpine) {
+            const appElement = document.querySelector('[x-data="app()"]');
+            if (appElement && appElement._x_dataStack && appElement._x_dataStack[0]) {
+                return appElement._x_dataStack[0];
+            }
+        }
+        return null;
+    }
+    
+    const appComponent = getAppComponent();
+    if (appComponent) {
+        // Set the active tab to the plugin ID
+        appComponent.activeTab = pluginId;
+        if (_PLUGIN_DEBUG_EARLY) console.log('[PLUGINS STUB] Switched to plugin tab:', pluginId);
+        
+        // Scroll to top of page to ensure the tab is visible
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+    } else {
+        console.error('Alpine.js app instance not found');
+        if (typeof showNotification === 'function') {
+            showNotification('Unable to switch to plugin configuration. Please refresh the page.', 'error');
+        }
+    }
+};
+
+// Define togglePlugin early to ensure it's always available
+window.togglePlugin = window.togglePlugin || function(pluginId, enabled) {
+    if (_PLUGIN_DEBUG_EARLY) console.log('[PLUGINS STUB] togglePlugin called for', pluginId, 'enabled:', enabled);
+    
+    const plugin = (window.installedPlugins || []).find(p => p.id === pluginId);
+    const pluginName = plugin ? (plugin.name || pluginId) : pluginId;
+    const action = enabled ? 'enabling' : 'disabling';
+    
+    // Update UI immediately for better UX
+    const toggleCheckbox = document.getElementById(`toggle-${pluginId}`);
+    const toggleLabel = document.getElementById(`toggle-label-${pluginId}`);
+    const wrapperDiv = toggleCheckbox?.parentElement?.querySelector('.flex.items-center.gap-2');
+    const toggleTrack = wrapperDiv?.querySelector('.relative.w-14');
+    const toggleHandle = toggleTrack?.querySelector('.absolute');
+    
+    if (toggleCheckbox) toggleCheckbox.checked = enabled;
+    
+    // Update wrapper background and border
+    if (wrapperDiv) {
+        if (enabled) {
+            wrapperDiv.classList.remove('bg-gray-50', 'border-gray-300');
+            wrapperDiv.classList.add('bg-green-50', 'border-green-500');
+        } else {
+            wrapperDiv.classList.remove('bg-green-50', 'border-green-500');
+            wrapperDiv.classList.add('bg-gray-50', 'border-gray-300');
+        }
+    }
+    
+    // Update toggle track
+    if (toggleTrack) {
+        if (enabled) {
+            toggleTrack.classList.remove('bg-gray-300');
+            toggleTrack.classList.add('bg-green-500');
+        } else {
+            toggleTrack.classList.remove('bg-green-500');
+            toggleTrack.classList.add('bg-gray-300');
+        }
+    }
+    
+    // Update toggle handle
+    if (toggleHandle) {
+        if (enabled) {
+            toggleHandle.classList.add('translate-x-full', 'border-green-500');
+            toggleHandle.classList.remove('border-gray-400');
+            toggleHandle.innerHTML = '<i class="fas fa-check text-green-600 text-xs"></i>';
+        } else {
+            toggleHandle.classList.remove('translate-x-full', 'border-green-500');
+            toggleHandle.classList.add('border-gray-400');
+            toggleHandle.innerHTML = '<i class="fas fa-times text-gray-400 text-xs"></i>';
+        }
+    }
+    
+    // Update label with icon and text
+    if (toggleLabel) {
+        if (enabled) {
+            toggleLabel.className = 'text-sm font-semibold text-green-700 flex items-center gap-1.5';
+            toggleLabel.innerHTML = '<i class="fas fa-toggle-on text-green-600"></i><span>Enabled</span>';
+        } else {
+            toggleLabel.className = 'text-sm font-semibold text-gray-600 flex items-center gap-1.5';
+            toggleLabel.innerHTML = '<i class="fas fa-toggle-off text-gray-400"></i><span>Disabled</span>';
+        }
+    }
+    
+    if (typeof showNotification === 'function') {
+        showNotification(`${action.charAt(0).toUpperCase() + action.slice(1)} ${pluginName}...`, 'info');
+    }
+
+    fetch('/api/v3/plugins/toggle', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ plugin_id: pluginId, enabled: enabled })
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (typeof showNotification === 'function') {
+            showNotification(data.message, data.status);
+        }
+        if (data.status === 'success') {
+            // Update local state
+            if (plugin) {
+                plugin.enabled = enabled;
+            }
+            // Refresh the list to ensure consistency
+            if (typeof loadInstalledPlugins === 'function') {
+                loadInstalledPlugins();
+            }
+        } else {
+            // Revert the toggle if API call failed
+            if (plugin) {
+                plugin.enabled = !enabled;
+            }
+            if (typeof loadInstalledPlugins === 'function') {
+                loadInstalledPlugins();
+            }
+        }
+    })
+    .catch(error => {
+        if (typeof showNotification === 'function') {
+            showNotification('Error toggling plugin: ' + error.message, 'error');
+        }
+        // Revert the toggle if API call failed
+        if (plugin) {
+            plugin.enabled = !enabled;
+        }
+        if (typeof loadInstalledPlugins === 'function') {
+            loadInstalledPlugins();
+        }
+    });
+};
+
 // Cleanup orphaned modals from previous executions to prevent duplicates when moving to body
 try {
     const existingModals = document.querySelectorAll('#plugin-config-modal');
@@ -306,146 +448,8 @@ window.__pluginDomReady = window.__pluginDomReady || false;
     console.log('[PLUGINS SCRIPT] Global event delegation set up');
 })();
 
-window.configurePlugin = window.configurePlugin || async function(pluginId) {
-    console.log('[DEBUG] ===== configurePlugin called =====');
-    console.log('[DEBUG] Plugin ID:', pluginId);
-    
-    // Switch to the plugin's configuration tab instead of opening a modal
-    // This matches the behavior of clicking the plugin tab at the top
-    function getAppComponent() {
-        if (window.Alpine) {
-            const appElement = document.querySelector('[x-data="app()"]');
-            if (appElement && appElement._x_dataStack && appElement._x_dataStack[0]) {
-                return appElement._x_dataStack[0];
-            }
-        }
-        return null;
-    }
-    
-    const appComponent = getAppComponent();
-    if (appComponent) {
-        // Set the active tab to the plugin ID
-        appComponent.activeTab = pluginId;
-        console.log('[DEBUG] Switched to plugin tab:', pluginId);
-        
-        // Scroll to top of page to ensure the tab is visible
-        window.scrollTo({ top: 0, behavior: 'smooth' });
-    } else {
-        console.error('Alpine.js app instance not found');
-        if (typeof showNotification === 'function') {
-            showNotification('Unable to switch to plugin configuration. Please refresh the page.', 'error');
-        }
-    }
-};
-
-window.togglePlugin = window.togglePlugin || function(pluginId, enabled) {
-    console.log('[DEBUG] ===== togglePlugin called =====');
-    console.log('[DEBUG] Plugin ID:', pluginId, 'Enabled:', enabled);
-    const plugin = (window.installedPlugins || []).find(p => p.id === pluginId);
-    const pluginName = plugin ? (plugin.name || pluginId) : pluginId;
-    const action = enabled ? 'enabling' : 'disabling';
-    
-    // Update UI immediately for better UX
-    const toggleCheckbox = document.getElementById(`toggle-${pluginId}`);
-    const toggleLabel = document.getElementById(`toggle-label-${pluginId}`);
-    const wrapperDiv = toggleCheckbox?.parentElement?.querySelector('.flex.items-center.gap-2');
-    const toggleTrack = wrapperDiv?.querySelector('.relative.w-14');
-    const toggleHandle = toggleTrack?.querySelector('.absolute');
-    
-    if (toggleCheckbox) toggleCheckbox.checked = enabled;
-    
-    // Update wrapper background and border
-    if (wrapperDiv) {
-        if (enabled) {
-            wrapperDiv.classList.remove('bg-gray-50', 'border-gray-300');
-            wrapperDiv.classList.add('bg-green-50', 'border-green-500');
-        } else {
-            wrapperDiv.classList.remove('bg-green-50', 'border-green-500');
-            wrapperDiv.classList.add('bg-gray-50', 'border-gray-300');
-        }
-    }
-    
-    // Update toggle track
-    if (toggleTrack) {
-        if (enabled) {
-            toggleTrack.classList.remove('bg-gray-300');
-            toggleTrack.classList.add('bg-green-500');
-        } else {
-            toggleTrack.classList.remove('bg-green-500');
-            toggleTrack.classList.add('bg-gray-300');
-        }
-    }
-    
-    // Update toggle handle
-    if (toggleHandle) {
-        if (enabled) {
-            toggleHandle.classList.add('translate-x-full', 'border-green-500');
-            toggleHandle.classList.remove('border-gray-400');
-            toggleHandle.innerHTML = '<i class="fas fa-check text-green-600 text-xs"></i>';
-        } else {
-            toggleHandle.classList.remove('translate-x-full', 'border-green-500');
-            toggleHandle.classList.add('border-gray-400');
-            toggleHandle.innerHTML = '<i class="fas fa-times text-gray-400 text-xs"></i>';
-        }
-    }
-    
-    // Update label with icon and text
-    if (toggleLabel) {
-        if (enabled) {
-            toggleLabel.className = 'text-sm font-semibold text-green-700 flex items-center gap-1.5';
-            toggleLabel.innerHTML = '<i class="fas fa-toggle-on text-green-600"></i><span>Enabled</span>';
-        } else {
-            toggleLabel.className = 'text-sm font-semibold text-gray-600 flex items-center gap-1.5';
-            toggleLabel.innerHTML = '<i class="fas fa-toggle-off text-gray-400"></i><span>Disabled</span>';
-        }
-    }
-    
-    if (typeof showNotification === 'function') {
-        showNotification(`${action.charAt(0).toUpperCase() + action.slice(1)} ${pluginName}...`, 'info');
-    }
-
-    fetch('/api/v3/plugins/toggle', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ plugin_id: pluginId, enabled: enabled })
-    })
-    .then(response => response.json())
-    .then(data => {
-        if (typeof showNotification === 'function') {
-            showNotification(data.message, data.status);
-        }
-        if (data.status === 'success') {
-            // Update local state
-            if (plugin) {
-                plugin.enabled = enabled;
-            }
-            // Refresh the list to ensure consistency
-            if (typeof loadInstalledPlugins === 'function') {
-                loadInstalledPlugins();
-            }
-        } else {
-            // Revert the toggle if API call failed
-            if (plugin) {
-                plugin.enabled = !enabled;
-            }
-            if (typeof loadInstalledPlugins === 'function') {
-                loadInstalledPlugins();
-            }
-        }
-    })
-    .catch(error => {
-        if (typeof showNotification === 'function') {
-            showNotification('Error toggling plugin: ' + error.message, 'error');
-        }
-        // Revert the toggle if API call failed
-        if (plugin) {
-            plugin.enabled = !enabled;
-        }
-        if (typeof loadInstalledPlugins === 'function') {
-            loadInstalledPlugins();
-        }
-    });
-};
+// Note: configurePlugin and togglePlugin are now defined at the top of the file (after uninstallPlugin)
+// to ensure they're available immediately when the script loads
 
 // Verify functions are defined (debug only)
 if (_PLUGIN_DEBUG_EARLY) {
