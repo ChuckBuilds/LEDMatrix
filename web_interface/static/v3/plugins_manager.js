@@ -3164,8 +3164,7 @@ function generateFieldHtml(key, prop, value, prefix = '') {
                            data-file-type="${fileType}">
                 </div>
             `;
-            }
-        } else if (xWidgetValue === 'checkbox-group' || xWidgetValue2 === 'checkbox-group') {
+            } else if (xWidgetValue === 'checkbox-group' || xWidgetValue2 === 'checkbox-group') {
             // Checkbox group widget for multi-select arrays with enum items
             // Use _data hidden input pattern to serialize selected values correctly
             console.log(`[DEBUG] ✅ Detected checkbox-group widget for ${fullKey} - rendering checkboxes`);
@@ -3201,7 +3200,7 @@ function generateFieldHtml(key, prop, value, prefix = '') {
             // Sentinel hidden input with bracket notation to allow clearing array to [] when all unchecked
             // This ensures the field is always submitted, even when all checkboxes are unchecked
             html += `<input type="hidden" name="${fullKey}[]" value="">`;
-        } else if (xWidgetValue === 'custom-feeds' || xWidgetValue2 === 'custom-feeds') {
+            } else if (xWidgetValue === 'custom-feeds' || xWidgetValue2 === 'custom-feeds') {
             // Custom feeds widget - check schema validation first
             const itemsSchema = prop.items || {};
             const itemProperties = itemsSchema.properties || {};
@@ -3238,7 +3237,7 @@ function generateFieldHtml(key, prop, value, prefix = '') {
                     <p class="text-sm text-gray-600 mt-1">Enter values separated by commas (custom feeds table rendered server-side)</p>
                 `;
             }
-        } else {
+            } else {
             // Regular array input (comma-separated)
             console.log(`[DEBUG] ❌ No special widget detected for ${fullKey}, using regular array input`);
             // Handle null/undefined values - use default if available
@@ -3254,6 +3253,7 @@ function generateFieldHtml(key, prop, value, prefix = '') {
                 <input type="text" id="${fullKey}" name="${fullKey}" value="${arrayValue}" placeholder="Enter values separated by commas" class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm bg-white text-black placeholder:text-gray-500">
                 <p class="text-sm text-gray-600 mt-1">Enter values separated by commas</p>
             `;
+            }
         }
     } else if (prop.enum) {
         html += `<select id="${fullKey}" name="${fullKey}" class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm bg-white text-black">`;
