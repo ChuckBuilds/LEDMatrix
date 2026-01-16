@@ -2393,10 +2393,25 @@ function handlePluginConfigSubmit(e) {
                     // Element found - use its checked state
                     flatConfig[actualKey] = formElement.checked;
                 } else {
-                    // Element not found - check if value in FormData indicates checked
+                    // Element not found - normalize string booleans and check FormData value
                     // Checkboxes send "on" when checked, nothing when unchecked
-                    // If key exists in FormData, checkbox was checked
-                    flatConfig[actualKey] = actualValue !== undefined && actualValue !== null && actualValue !== '';
+                    // Normalize string representations of booleans
+                    if (typeof actualValue === 'string') {
+                        const lowerValue = actualValue.toLowerCase().trim();
+                        if (lowerValue === 'true' || lowerValue === '1' || lowerValue === 'on') {
+                            flatConfig[actualKey] = true;
+                        } else if (lowerValue === 'false' || lowerValue === '0' || lowerValue === 'off' || lowerValue === '') {
+                            flatConfig[actualKey] = false;
+                        } else {
+                            // Non-empty string that's not a boolean representation - treat as truthy
+                            flatConfig[actualKey] = true;
+                        }
+                    } else if (actualValue === undefined || actualValue === null) {
+                        flatConfig[actualKey] = false;
+                    } else {
+                        // Non-string value - coerce to boolean
+                        flatConfig[actualKey] = Boolean(actualValue);
+                    }
                 }
             } else {
                 flatConfig[actualKey] = actualValue;
@@ -2428,8 +2443,21 @@ function handlePluginConfigSubmit(e) {
                     // Found checkbox element - use its checked state
                     flatConfig[actualKey] = formElement.checked;
                 } else {
-                    // Not a checkbox or element not found - use the value as-is
-                    flatConfig[actualKey] = actualValue;
+                    // Not a checkbox or element not found - normalize string booleans
+                    if (typeof actualValue === 'string') {
+                        const lowerValue = actualValue.toLowerCase().trim();
+                        if (lowerValue === 'true' || lowerValue === '1' || lowerValue === 'on') {
+                            flatConfig[actualKey] = true;
+                        } else if (lowerValue === 'false' || lowerValue === '0' || lowerValue === 'off' || lowerValue === '') {
+                            flatConfig[actualKey] = false;
+                        } else {
+                            // Non-empty string that's not a boolean representation - keep as string
+                            flatConfig[actualKey] = actualValue;
+                        }
+                    } else {
+                        // Non-string value - use as-is
+                        flatConfig[actualKey] = actualValue;
+                    }
                 }
             }
         }
