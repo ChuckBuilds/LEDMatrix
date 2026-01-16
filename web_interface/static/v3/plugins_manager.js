@@ -2149,6 +2149,15 @@ function getSchemaPropertyType(schema, path) {
     return prop; // Return the full property object (was returning just type, but callers expect object)
 }
 
+// Helper function to escape CSS selector special characters
+function escapeCssSelector(str) {
+    if (typeof str !== 'string') {
+        str = String(str);
+    }
+    // Escape special CSS selector characters
+    return str.replace(/[!"#$%&'()*+,.\/:;<=>?@[\\\]^`{|}~]/g, '\\$&');
+}
+
 // Helper function to convert dot notation to nested object
 function dotToNested(obj) {
     const result = {};
@@ -2314,8 +2323,20 @@ function handlePluginConfigSubmit(e) {
             } else if (propType === 'number') {
                 flatConfig[actualKey] = parseFloat(actualValue);
             } else if (propType === 'boolean') {
-                const formElement = form.elements[actualKey] || form.elements[key];
-                flatConfig[actualKey] = formElement ? formElement.checked : (actualValue === 'true' || actualValue === true);
+                // Use querySelector to reliably find checkbox by name attribute
+                // Escape special CSS selector characters in the name
+                const escapedKey = escapeCssSelector(key);
+                const formElement = form.querySelector(`input[type="checkbox"][name="${escapedKey}"]`);
+                
+                if (formElement) {
+                    // Element found - use its checked state
+                    flatConfig[actualKey] = formElement.checked;
+                } else {
+                    // Element not found - check if value in FormData indicates checked
+                    // Checkboxes send "on" when checked, nothing when unchecked
+                    // If key exists in FormData, checkbox was checked
+                    flatConfig[actualKey] = actualValue !== undefined && actualValue !== null && actualValue !== '';
+                }
             } else {
                 flatConfig[actualKey] = actualValue;
             }
@@ -2338,10 +2359,15 @@ function handlePluginConfigSubmit(e) {
                     flatConfig[actualKey] = actualValue;
                 }
             } else {
-                const formElement = form.elements[actualKey] || form.elements[key];
+                // No schema - try to detect checkbox by finding the element
+                const escapedKey = escapeCssSelector(key);
+                const formElement = form.querySelector(`input[type="checkbox"][name="${escapedKey}"]`);
+                
                 if (formElement && formElement.type === 'checkbox') {
+                    // Found checkbox element - use its checked state
                     flatConfig[actualKey] = formElement.checked;
                 } else {
+                    // Not a checkbox or element not found - use the value as-is
                     flatConfig[actualKey] = actualValue;
                 }
             }
