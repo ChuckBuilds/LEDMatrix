@@ -2308,6 +2308,12 @@ function handlePluginConfigSubmit(e) {
             }
         }
         
+        // Skip checkbox-group inputs with bracket notation (they're handled by the hidden _data input)
+        // Pattern: fieldName[] - these are individual checkboxes, actual data is in fieldName_data
+        if (key.endsWith('[]')) {
+            continue;
+        }
+        
         // Skip key_value pair inputs (they're handled by the hidden _data input)
         if (key.includes('[key_') || key.includes('[value_')) {
             continue;
