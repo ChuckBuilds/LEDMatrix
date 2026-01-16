@@ -3163,8 +3163,9 @@ function generateFieldHtml(key, prop, value, prefix = '') {
                            data-upload-endpoint="${customUploadEndpoint || '/api/v3/plugins/assets/upload'}"
                            data-file-type="${fileType}">
                 </div>
-                `;
-            } else if (xWidgetValue === 'checkbox-group' || xWidgetValue2 === 'checkbox-group') {
+            `;
+            }
+        } else if (xWidgetValue === 'checkbox-group' || xWidgetValue2 === 'checkbox-group') {
             // Checkbox group widget for multi-select arrays with enum items
             // Use _data hidden input pattern to serialize selected values correctly
             console.log(`[DEBUG] ✅ Detected checkbox-group widget for ${fullKey} - rendering checkboxes`);
