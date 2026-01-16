@@ -193,6 +193,11 @@ window.configurePlugin = window.configurePlugin || async function(pluginId) {
     }
 };
 
+// Initialize per-plugin toggle request token map for race condition protection
+if (!window._pluginToggleRequests) {
+    window._pluginToggleRequests = {};
+}
+
 // Define togglePlugin early to ensure it's always available
 window.togglePlugin = window.togglePlugin || function(pluginId, enabled) {
     if (_PLUGIN_DEBUG_EARLY) console.log('[PLUGINS STUB] togglePlugin called for', pluginId, 'enabled:', enabled);
@@ -201,6 +206,10 @@ window.togglePlugin = window.togglePlugin || function(pluginId, enabled) {
     const pluginName = plugin ? (plugin.name || pluginId) : pluginId;
     const action = enabled ? 'enabling' : 'disabling';
     
+    // Generate unique token for this toggle request to prevent race conditions
+    const requestToken = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    window._pluginToggleRequests[pluginId] = requestToken;
+    
     // Update UI immediately for better UX
     const toggleCheckbox = document.getElementById(`toggle-${pluginId}`);
     const toggleLabel = document.getElementById(`toggle-label-${pluginId}`);
@@ -208,7 +217,17 @@ window.togglePlugin = window.togglePlugin || function(pluginId, enabled) {
     const toggleTrack = wrapperDiv?.querySelector('.relative.w-14');
     const toggleHandle = toggleTrack?.querySelector('.absolute');
     
-    if (toggleCheckbox) toggleCheckbox.checked = enabled;
+    // Disable checkbox and add disabled class to prevent overlapping requests
+    if (toggleCheckbox) {
+        toggleCheckbox.checked = enabled;
+        toggleCheckbox.disabled = true;
+        toggleCheckbox.classList.add('opacity-50', 'cursor-not-allowed');
+    }
+    
+    // Disable wrapper to provide visual feedback
+    if (wrapperDiv) {
+        wrapperDiv.classList.add('opacity-50', 'pointer-events-none');
+    }
     
     // Update wrapper background and border
     if (wrapperDiv) {
@@ -267,6 +286,12 @@ window.togglePlugin = window.togglePlugin || function(pluginId, enabled) {
     })
     .then(response => response.json())
     .then(data => {
+        // Verify this response is for the latest request (prevent race conditions)
+        if (window._pluginToggleRequests[pluginId] !== requestToken) {
+            console.log(`[togglePlugin] Ignoring out-of-order response for ${pluginId}`);
+            return;
+        }
+        
         if (typeof showNotification === 'function') {
             showNotification(data.message, data.status);
         }
@@ -288,8 +313,24 @@ window.togglePlugin = window.togglePlugin || function(pluginId, enabled) {
                 loadInstalledPlugins();
             }
         }
+        
+        // Clear token and re-enable UI
+        delete window._pluginToggleRequests[pluginId];
+        if (toggleCheckbox) {
+            toggleCheckbox.disabled = false;
+            toggleCheckbox.classList.remove('opacity-50', 'cursor-not-allowed');
+        }
+        if (wrapperDiv) {
+            wrapperDiv.classList.remove('opacity-50', 'pointer-events-none');
+        }
     })
     .catch(error => {
+        // Verify this error is for the latest request (prevent race conditions)
+        if (window._pluginToggleRequests[pluginId] !== requestToken) {
+            console.log(`[togglePlugin] Ignoring out-of-order error for ${pluginId}`);
+            return;
+        }
+        
         if (typeof showNotification === 'function') {
             showNotification('Error toggling plugin: ' + error.message, 'error');
         }
@@ -299,6 +340,16 @@ window.togglePlugin = window.togglePlugin || function(pluginId, enabled) {
         }
         if (typeof loadInstalledPlugins === 'function') {
             loadInstalledPlugins();
+        }
+        
+        // Clear token and re-enable UI
+        delete window._pluginToggleRequests[pluginId];
+        if (toggleCheckbox) {
+            toggleCheckbox.disabled = false;
+            toggleCheckbox.classList.remove('opacity-50', 'cursor-not-allowed');
+        }
+        if (wrapperDiv) {
+            wrapperDiv.classList.remove('opacity-50', 'pointer-events-none');
         }
     });
 };
