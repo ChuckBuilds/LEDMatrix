@@ -3118,7 +3118,39 @@
                         return CSS.escape(str);
                     }
                     // Fallback to regex-based escaping for older browsers
-                    return str.replace(/[!"#$%&'()*+,.\/:;<=>?@[\\\]^`{|}~]/g, '\\$&');
+                    // First, handle leading digits and whitespace (must be done before regex)
+                    let escaped = str;
+                    let hasLeadingHexEscape = false;
+                    if (escaped.length > 0) {
+                        const firstChar = escaped[0];
+                        const firstCode = firstChar.charCodeAt(0);
+                        
+                        // Escape leading digit (0-9: U+0030-U+0039)
+                        if (firstCode >= 0x30 && firstCode <= 0x39) {
+                            const hex = firstCode.toString(16).toUpperCase().padStart(4, '0');
+                            escaped = '\\' + hex + ' ' + escaped.slice(1);
+                            hasLeadingHexEscape = true;
+                        }
+                        // Escape leading whitespace (space: U+0020, tab: U+0009, etc.)
+                        else if (/\s/.test(firstChar)) {
+                            const hex = firstCode.toString(16).toUpperCase().padStart(4, '0');
+                            escaped = '\\' + hex + ' ' + escaped.slice(1);
+                            hasLeadingHexEscape = true;
+                        }
+                    }
+                    
+                    // Escape special characters
+                    escaped = escaped.replace(/[!"#$%&'()*+,.\/:;<=>?@[\\\]^`{|}~]/g, '\\$&');
+                    
+                    // Escape internal spaces (replace spaces with \ ), but preserve space in hex escape
+                    if (hasLeadingHexEscape) {
+                        // Skip the first 6 characters (e.g., "\0030 ") when replacing spaces
+                        escaped = escaped.slice(0, 6) + escaped.slice(6).replace(/ /g, '\\ ');
+                    } else {
+                        escaped = escaped.replace(/ /g, '\\ ');
+                    }
+                    
+                    return escaped;
                 },
 
                 async savePluginConfig(pluginId, event) {
@@ -3957,7 +3989,39 @@
                 return CSS.escape(str);
             }
             // Fallback to regex-based escaping for older browsers
-            return str.replace(/[!"#$%&'()*+,.\/:;<=>?@[\\\]^`{|}~]/g, '\\$&');
+            // First, handle leading digits and whitespace (must be done before regex)
+            let escaped = str;
+            let hasLeadingHexEscape = false;
+            if (escaped.length > 0) {
+                const firstChar = escaped[0];
+                const firstCode = firstChar.charCodeAt(0);
+                
+                // Escape leading digit (0-9: U+0030-U+0039)
+                if (firstCode >= 0x30 && firstCode <= 0x39) {
+                    const hex = firstCode.toString(16).toUpperCase().padStart(4, '0');
+                    escaped = '\\' + hex + ' ' + escaped.slice(1);
+                    hasLeadingHexEscape = true;
+                }
+                // Escape leading whitespace (space: U+0020, tab: U+0009, etc.)
+                else if (/\s/.test(firstChar)) {
+                    const hex = firstCode.toString(16).toUpperCase().padStart(4, '0');
+                    escaped = '\\' + hex + ' ' + escaped.slice(1);
+                    hasLeadingHexEscape = true;
+                }
+            }
+            
+            // Escape special characters
+            escaped = escaped.replace(/[!"#$%&'()*+,.\/:;<=>?@[\\\]^`{|}~]/g, '\\$&');
+            
+            // Escape internal spaces (replace spaces with \ ), but preserve space in hex escape
+            if (hasLeadingHexEscape) {
+                // Skip the first 6 characters (e.g., "\0030 ") when replacing spaces
+                escaped = escaped.slice(0, 6) + escaped.slice(6).replace(/ /g, '\\ ');
+            } else {
+                escaped = escaped.replace(/ /g, '\\ ');
+            }
+            
+            return escaped;
         }
 
         async function savePluginConfig(pluginId) {
