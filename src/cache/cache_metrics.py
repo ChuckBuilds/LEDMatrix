@@ -28,7 +28,12 @@ class CacheMetrics:
             'background_hits': 0,
             'background_misses': 0,
             'total_fetch_time': 0.0,
-            'fetch_count': 0
+            'fetch_count': 0,
+            # Disk cleanup metrics
+            'last_disk_cleanup': 0.0,
+            'total_files_cleaned': 0,
+            'total_space_freed_mb': 0.0,
+            'last_cleanup_duration_sec': 0.0
         }
     
     def record_hit(self, cache_type: str = 'regular') -> None:
@@ -69,6 +74,22 @@ class CacheMetrics:
             self._metrics['total_fetch_time'] += duration
             self._metrics['fetch_count'] += 1
     
+    def record_disk_cleanup(self, files_cleaned: int, space_freed_mb: float, duration_sec: float) -> None:
+        """
+        Record disk cleanup operation results.
+        
+        Args:
+            files_cleaned: Number of files deleted
+            space_freed_mb: Space freed in megabytes
+            duration_sec: Duration of cleanup operation in seconds
+        """
+        import time
+        with self._lock:
+            self._metrics['last_disk_cleanup'] = time.time()
+            self._metrics['total_files_cleaned'] += files_cleaned
+            self._metrics['total_space_freed_mb'] += space_freed_mb
+            self._metrics['last_cleanup_duration_sec'] = duration_sec
+    
     def get_metrics(self) -> Dict[str, Any]:
         """
         Get current cache performance metrics.
@@ -93,7 +114,12 @@ class CacheMetrics:
                 'api_calls_saved': self._metrics['api_calls_saved'],
                 'average_fetch_time': avg_fetch_time,
                 'total_fetch_time': self._metrics['total_fetch_time'],
-                'fetch_count': self._metrics['fetch_count']
+                'fetch_count': self._metrics['fetch_count'],
+                # Disk cleanup metrics
+                'last_disk_cleanup': self._metrics['last_disk_cleanup'],
+                'total_files_cleaned': self._metrics['total_files_cleaned'],
+                'total_space_freed_mb': self._metrics['total_space_freed_mb'],
+                'last_cleanup_duration_sec': self._metrics['last_cleanup_duration_sec']
             }
     
     def log_metrics(self) -> None:

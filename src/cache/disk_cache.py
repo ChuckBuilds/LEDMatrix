@@ -269,4 +269,79 @@ class DiskCache:
     def get_cache_dir(self) -> Optional[str]:
         """Get the cache directory path."""
         return self.cache_dir
+    
+    def cleanup_expired_files(self, cache_strategy: Any, retention_policies: Dict[str, int]) -> Dict[str, Any]:
+        """
+        Clean up expired cache files based on retention policies.
+        
+        Args:
+            cache_strategy: CacheStrategy instance for categorizing files
+            retention_policies: Dict mapping data types to retention days
+            
+        Returns:
+            Dictionary with cleanup statistics:
+                - files_scanned: Total files checked
+                - files_deleted: Files removed
+                - space_freed_bytes: Bytes freed
+                - errors: Number of errors encountered
+        """
+        if not self.cache_dir or not os.path.exists(self.cache_dir):
+            self.logger.warning("Cache directory not available for cleanup")
+            return {'files_scanned': 0, 'files_deleted': 0, 'space_freed_bytes': 0, 'errors': 0}
+        
+        stats = {
+            'files_scanned': 0,
+            'files_deleted': 0,
+            'space_freed_bytes': 0,
+            'errors': 0
+        }
+        
+        current_time = time.time()
+        
+        try:
+            with self._lock:
+                for filename in os.listdir(self.cache_dir):
+                    if not filename.endswith('.json'):
+                        continue
+                    
+                    stats['files_scanned'] += 1
+                    file_path = os.path.join(self.cache_dir, filename)
+                    
+                    try:
+                        # Get file age
+                        file_mtime = os.path.getmtime(file_path)
+                        file_age_days = (current_time - file_mtime) / 86400  # Convert to days
+                        
+                        # Extract cache key from filename (remove .json extension)
+                        cache_key = filename[:-5]
+                        
+                        # Determine data type and retention policy
+                        data_type = cache_strategy.get_data_type_from_key(cache_key)
+                        retention_days = retention_policies.get(data_type, retention_policies.get('default', 30))
+                        
+                        # Delete if older than retention period
+                        if file_age_days > retention_days:
+                            file_size = os.path.getsize(file_path)
+                            os.remove(file_path)
+                            stats['files_deleted'] += 1
+                            stats['space_freed_bytes'] += file_size
+                            self.logger.debug(
+                                "Deleted expired cache file: %s (age: %.1f days, type: %s, retention: %d days)",
+                                filename, file_age_days, data_type, retention_days
+                            )
+                    
+                    except OSError as e:
+                        stats['errors'] += 1
+                        self.logger.warning("Error processing cache file %s: %s", filename, e)
+                        continue
+                    except Exception as e:
+                        stats['errors'] += 1
+                        self.logger.error("Unexpected error processing cache file %s: %s", filename, e, exc_info=True)
+                        continue
+        
+        except OSError as e:
+            self.logger.error("Error listing cache directory %s: %s", self.cache_dir, e, exc_info=True)
+            stats['errors'] += 1
+        
+        return stats
 

@@ -59,6 +59,33 @@ class CacheManager:
         self._max_memory_cache_size = self._memory_cache_component._max_size
         self._memory_cache_cleanup_interval = self._memory_cache_component._cleanup_interval
         self._last_memory_cache_cleanup = self._memory_cache_component._last_cleanup
+        
+        # Disk cleanup configuration
+        self._disk_cleanup_interval_hours = 24  # Run cleanup every 24 hours
+        self._cleanup_thread: Optional[threading.Thread] = None
+        self._retention_policies = {
+            'odds': 2,              # Odds data: 2 days (lines move frequently)
+            'odds_live': 2,         # Live odds: 2 days
+            'live_scores': 7,       # Live scores: 7 days
+            'sports_live': 7,       # Live sports: 7 days
+            'weather_current': 7,   # Current weather: 7 days
+            'sports_recent': 7,     # Recent games: 7 days
+            'leaderboard': 7,       # Rankings/leaderboards: 7 days (weekly updates)
+            'news': 14,             # News: 14 days
+            'sports_upcoming': 60,  # Upcoming games: 60 days (schedules stable)
+            'sports_schedules': 60, # Schedules: 60 days
+            'team_info': 60,        # Team info: 60 days
+            'logos': 60,            # Logos: 60 days
+            'stocks': 14,           # Stock data: 14 days
+            'crypto': 14,           # Crypto data: 14 days
+            'default': 30           # Default: 30 days
+        }
+        
+        # Run initial cleanup on startup
+        self.cleanup_disk_cache()
+        
+        # Start background cleanup thread
+        self.start_cleanup_thread()
 
     def _get_writable_cache_dir(self) -> Optional[str]:
         """Tries to find or create a writable cache directory, preferring a system path when available."""
@@ -555,7 +582,97 @@ class CacheManager:
             
         except (OSError, IOError, PermissionError) as e:
             self.logger.error(f"Failed to set up persistent cache directory {cache_dir}: {e}", exc_info=True)
-            return False 
+            return False
+    
+    def cleanup_disk_cache(self, force: bool = False) -> Dict[str, Any]:
+        """
+        Clean up expired disk cache files based on retention policies.
+        
+        Args:
+            force: If True, run cleanup regardless of last cleanup time
+            
+        Returns:
+            Dictionary with cleanup statistics
+        """
+        start_time = time.time()
+        
+        try:
+            # Perform cleanup
+            stats = self._disk_cache_component.cleanup_expired_files(
+                cache_strategy=self._strategy_component,
+                retention_policies=self._retention_policies
+            )
+            
+            duration = time.time() - start_time
+            space_freed_mb = stats['space_freed_bytes'] / (1024 * 1024)
+            
+            # Record metrics
+            self._metrics_component.record_disk_cleanup(
+                files_cleaned=stats['files_deleted'],
+                space_freed_mb=space_freed_mb,
+                duration_sec=duration
+            )
+            
+            # Log summary
+            if stats['files_deleted'] > 0:
+                self.logger.info(
+                    "Disk cache cleanup completed: %d/%d files deleted, %.2f MB freed, %d errors, took %.2fs",
+                    stats['files_deleted'], stats['files_scanned'], space_freed_mb, 
+                    stats['errors'], duration
+                )
+            else:
+                self.logger.debug(
+                    "Disk cache cleanup completed: no files to delete (%d files scanned)",
+                    stats['files_scanned']
+                )
+            
+            return {
+                'files_scanned': stats['files_scanned'],
+                'files_deleted': stats['files_deleted'],
+                'space_freed_mb': space_freed_mb,
+                'errors': stats['errors'],
+                'duration_sec': duration
+            }
+            
+        except Exception as e:
+            self.logger.error("Error during disk cache cleanup: %s", e, exc_info=True)
+            return {
+                'files_scanned': 0,
+                'files_deleted': 0,
+                'space_freed_mb': 0.0,
+                'errors': 1,
+                'duration_sec': time.time() - start_time
+            }
+    
+    def start_cleanup_thread(self) -> None:
+        """Start background thread for periodic disk cache cleanup."""
+        if self._cleanup_thread and self._cleanup_thread.is_alive():
+            self.logger.debug("Cleanup thread already running")
+            return
+        
+        def cleanup_loop():
+            """Background loop that runs cleanup periodically."""
+            self.logger.info("Disk cache cleanup thread started (interval: %d hours)", 
+                           self._disk_cleanup_interval_hours)
+            
+            while True:
+                try:
+                    # Sleep for the configured interval
+                    sleep_seconds = self._disk_cleanup_interval_hours * 3600
+                    time.sleep(sleep_seconds)
+                    
+                    # Run cleanup
+                    self.logger.debug("Running scheduled disk cache cleanup")
+                    self.cleanup_disk_cache()
+                    
+                except Exception as e:
+                    self.logger.error("Error in cleanup thread: %s", e, exc_info=True)
+                    # Continue running despite errors
+                    time.sleep(60)  # Wait a minute before retrying
+        
+        self._cleanup_thread = threading.Thread(target=cleanup_loop, daemon=True, name="DiskCacheCleanup")
+        self._cleanup_thread.start()
+        self.logger.info("Started disk cache cleanup background thread") 
 
     def get_sport_live_interval(self, sport_key: str) -> int:
         """
@@ -685,56 +802,23 @@ class CacheManager:
 
     def record_cache_hit(self, cache_type: str = 'regular') -> None:
         """Record a cache hit for performance monitoring."""
-        with self._cache_lock:
-            if cache_type == 'background':
-                self._cache_metrics['background_hits'] += 1
-            else:
-                self._cache_metrics['hits'] += 1
+        self._metrics_component.record_hit(cache_type)
 
     def record_cache_miss(self, cache_type: str = 'regular') -> None:
         """Record a cache miss for performance monitoring."""
-        with self._cache_lock:
-            if cache_type == 'background':
-                self._cache_metrics['background_misses'] += 1
-            else:
-                self._cache_metrics['misses'] += 1
-            self._cache_metrics['api_calls_saved'] += 1
+        self._metrics_component.record_miss(cache_type)
 
     def record_fetch_time(self, duration: float) -> None:
         """Record fetch operation duration for performance monitoring."""
-        with self._cache_lock:
-            self._cache_metrics['total_fetch_time'] += duration
-            self._cache_metrics['fetch_count'] += 1
+        self._metrics_component.record_fetch_time(duration)
 
     def get_cache_metrics(self) -> Dict[str, Any]:
         """Get current cache performance metrics."""
-        with self._cache_lock:
-            total_hits = self._cache_metrics['hits'] + self._cache_metrics['background_hits']
-            total_misses = self._cache_metrics['misses'] + self._cache_metrics['background_misses']
-            total_requests = total_hits + total_misses
-            
-            avg_fetch_time = (self._cache_metrics['total_fetch_time'] / 
-                             self._cache_metrics['fetch_count']) if self._cache_metrics['fetch_count'] > 0 else 0.0
-            
-            return {
-                'total_requests': total_requests,
-                'cache_hit_rate': total_hits / total_requests if total_requests > 0 else 0.0,
-                'background_hit_rate': (self._cache_metrics['background_hits'] / 
-                                       (self._cache_metrics['background_hits'] + self._cache_metrics['background_misses'])
-                                       if (self._cache_metrics['background_hits'] + self._cache_metrics['background_misses']) > 0 else 0.0),
-                'api_calls_saved': self._cache_metrics['api_calls_saved'],
-                'average_fetch_time': avg_fetch_time,
-                'total_fetch_time': self._cache_metrics['total_fetch_time'],
-                'fetch_count': self._cache_metrics['fetch_count']
-            }
+        return self._metrics_component.get_metrics()
 
     def log_cache_metrics(self) -> None:
         """Log current cache performance metrics."""
-        metrics = self.get_cache_metrics()
-        self.logger.info(f"Cache Performance - Hit Rate: {metrics['cache_hit_rate']:.2%}, "
-                        f"Background Hit Rate: {metrics['background_hit_rate']:.2%}, "
-                        f"API Calls Saved: {metrics['api_calls_saved']}, "
-                        f"Avg Fetch Time: {metrics['average_fetch_time']:.2f}s")
+        self._metrics_component.log_metrics()
     
     def get_memory_cache_stats(self) -> Dict[str, Any]:
         """
