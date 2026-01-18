@@ -25,8 +25,13 @@ def get_workspace_plugins():
     if not workspace_file.exists():
         return []
     
-    with open(workspace_file, 'r') as f:
-        workspace = json.load(f)
+    try:
+        with open(workspace_file, 'r') as f:
+            workspace = json.load(f)
+    except json.JSONDecodeError as e:
+        print(f"Error: Failed to parse workspace file {workspace_file}: {e}")
+        print("Please check that the workspace file contains valid JSON.")
+        return []
     
     plugins = []
     for folder in workspace.get('folders', []):

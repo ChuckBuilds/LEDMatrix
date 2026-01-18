@@ -13,7 +13,7 @@ The LEDMatrix project has been migrated from a git submodule implementation to a
 
 ## Directory Structure
 
-```
+```text
 /home/chuck/Github/
 ├── LEDMatrix/                    # Main project
 │   ├── plugin-repos/             # Symlinks to actual repos (managed automatically)
@@ -51,14 +51,7 @@ The `LEDMatrix.code-workspace` file configures VS Code/Cursor to open all plugin
 
 ### Initial Setup
 
-If you need to clone all plugin repositories:
-
-```bash
-cd /home/chuck/Github/LEDMatrix
-python3 scripts/clone_plugin_repos.py  # Note: This script was removed, see below
-```
-
-However, if you already have repos cloned, use the setup script:
+If you already have plugin repositories cloned, use the setup script:
 
 ```bash
 cd /home/chuck/Github/LEDMatrix
