@@ -10,10 +10,26 @@ import time
 import tempfile
 import logging
 import threading
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, Protocol
 from datetime import datetime
 
 from src.exceptions import CacheError
+
+
+class CacheStrategyProtocol(Protocol):
+    """Protocol for cache strategy objects that categorize cache keys."""
+    
+    def get_data_type_from_key(self, key: str) -> str:
+        """
+        Determine the data type from a cache key.
+        
+        Args:
+            key: Cache key
+            
+        Returns:
+            Data type string for strategy lookup
+        """
+        ...
 
 
 class DateTimeEncoder(json.JSONEncoder):
@@ -270,12 +286,12 @@ class DiskCache:
         """Get the cache directory path."""
         return self.cache_dir
     
-    def cleanup_expired_files(self, cache_strategy: Any, retention_policies: Dict[str, int]) -> Dict[str, Any]:
+    def cleanup_expired_files(self, cache_strategy: CacheStrategyProtocol, retention_policies: Dict[str, int]) -> Dict[str, Any]:
         """
         Clean up expired cache files based on retention policies.
         
         Args:
-            cache_strategy: CacheStrategy instance for categorizing files
+            cache_strategy: Object implementing CacheStrategyProtocol for categorizing files
             retention_policies: Dict mapping data types to retention days
             
         Returns:
@@ -299,45 +315,76 @@ class DiskCache:
         current_time = time.time()
         
         try:
-            with self._lock:
-                for filename in os.listdir(self.cache_dir):
-                    if not filename.endswith('.json'):
-                        continue
+            # Collect files to process outside the lock to avoid blocking cache operations
+            # Only hold lock during directory listing to get snapshot of files
+            try:
+                with self._lock:
+                    # Get snapshot of files while holding lock briefly
+                    filenames = [f for f in os.listdir(self.cache_dir) if f.endswith('.json')]
+            except OSError as list_error:
+                self.logger.error("Error listing cache directory %s: %s", self.cache_dir, list_error, exc_info=True)
+                stats['errors'] += 1
+                return stats
+            
+            # Process files outside the lock to avoid blocking get/set operations
+            for filename in filenames:
+                stats['files_scanned'] += 1
+                file_path = os.path.join(self.cache_dir, filename)
+                
+                try:
+                    # Get file age (outside lock - stat operations are generally atomic)
+                    file_mtime = os.path.getmtime(file_path)
+                    file_age_days = (current_time - file_mtime) / 86400  # Convert to days
                     
-                    stats['files_scanned'] += 1
-                    file_path = os.path.join(self.cache_dir, filename)
+                    # Extract cache key from filename (remove .json extension)
+                    cache_key = filename[:-5]
                     
-                    try:
-                        # Get file age
-                        file_mtime = os.path.getmtime(file_path)
-                        file_age_days = (current_time - file_mtime) / 86400  # Convert to days
-                        
-                        # Extract cache key from filename (remove .json extension)
-                        cache_key = filename[:-5]
-                        
-                        # Determine data type and retention policy
-                        data_type = cache_strategy.get_data_type_from_key(cache_key)
-                        retention_days = retention_policies.get(data_type, retention_policies.get('default', 30))
-                        
-                        # Delete if older than retention period
-                        if file_age_days > retention_days:
-                            file_size = os.path.getsize(file_path)
-                            os.remove(file_path)
-                            stats['files_deleted'] += 1
-                            stats['space_freed_bytes'] += file_size
-                            self.logger.debug(
-                                "Deleted expired cache file: %s (age: %.1f days, type: %s, retention: %d days)",
-                                filename, file_age_days, data_type, retention_days
-                            )
+                    # Determine data type and retention policy
+                    data_type = cache_strategy.get_data_type_from_key(cache_key)
+                    retention_days = retention_policies.get(data_type, retention_policies.get('default', 30))
                     
-                    except OSError as e:
-                        stats['errors'] += 1
-                        self.logger.warning("Error processing cache file %s: %s", filename, e)
-                        continue
-                    except Exception as e:
-                        stats['errors'] += 1
-                        self.logger.error("Unexpected error processing cache file %s: %s", filename, e, exc_info=True)
-                        continue
+                    # Delete if older than retention period
+                    # Only hold lock during actual file deletion to ensure atomicity
+                    if file_age_days > retention_days:
+                        try:
+                            # Hold lock only during delete operation (get size and remove atomically)
+                            with self._lock:
+                                # Double-check file still exists (may have been deleted by another process)
+                                if os.path.exists(file_path):
+                                    try:
+                                        file_size = os.path.getsize(file_path)
+                                        os.remove(file_path)
+                                        # Only increment stats if removal succeeded
+                                        stats['files_deleted'] += 1
+                                        stats['space_freed_bytes'] += file_size
+                                        self.logger.debug(
+                                            "Deleted expired cache file: %s (age: %.1f days, type: %s, retention: %d days)",
+                                            filename, file_age_days, data_type, retention_days
+                                        )
+                                    except FileNotFoundError:
+                                        # File was deleted by another process between exists check and remove
+                                        self.logger.debug("Cache file %s was already deleted", filename)
+                                else:
+                                    # File was deleted by another process before lock was acquired
+                                    self.logger.debug("Cache file %s was already deleted", filename)
+                        except FileNotFoundError:
+                            # File was already deleted by another process, skip it
+                            self.logger.debug("Cache file %s was already deleted", filename)
+                            continue
+                        except OSError as e:
+                            # Other file system errors, log but don't fail the entire cleanup
+                            stats['errors'] += 1
+                            self.logger.warning("Error deleting cache file %s: %s", filename, e)
+                            continue
+                
+                except OSError as e:
+                    stats['errors'] += 1
+                    self.logger.warning("Error processing cache file %s: %s", filename, e)
+                    continue
+                except Exception as e:
+                    stats['errors'] += 1
+                    self.logger.error("Unexpected error processing cache file %s: %s", filename, e, exc_info=True)
+                    continue
         
         except OSError as e:
             self.logger.error("Error listing cache directory %s: %s", self.cache_dir, e, exc_info=True)

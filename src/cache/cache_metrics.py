@@ -5,6 +5,7 @@ Tracks cache performance metrics including hit rates, miss rates, and fetch time
 """
 
 import threading
+import time
 import logging
 from typing import Dict, Any, Optional
 
@@ -83,7 +84,6 @@ class CacheMetrics:
             space_freed_mb: Space freed in megabytes
             duration_sec: Duration of cleanup operation in seconds
         """
-        import time
         with self._lock:
             self._metrics['last_disk_cleanup'] = time.time()
             self._metrics['total_files_cleaned'] += files_cleaned

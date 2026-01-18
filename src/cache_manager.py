@@ -62,7 +62,10 @@ class CacheManager:
         
         # Disk cleanup configuration
         self._disk_cleanup_interval_hours = 24  # Run cleanup every 24 hours
+        self._disk_cleanup_interval = 3600.0  # Minimum interval between cleanups (1 hour) for throttle
+        self._last_disk_cleanup = 0.0  # Timestamp of last disk cleanup
         self._cleanup_thread: Optional[threading.Thread] = None
+        self._cleanup_stop_event = threading.Event()  # Event to signal thread shutdown
         self._retention_policies = {
             'odds': 2,              # Odds data: 2 days (lines move frequently)
             'odds_live': 2,         # Live odds: 2 days
@@ -81,10 +84,7 @@ class CacheManager:
             'default': 30           # Default: 30 days
         }
         
-        # Run initial cleanup on startup
-        self.cleanup_disk_cache()
-        
-        # Start background cleanup thread
+        # Start background cleanup thread (which will run initial cleanup asynchronously)
         self.start_cleanup_thread()
 
     def _get_writable_cache_dir(self) -> Optional[str]:
@@ -594,6 +594,18 @@ class CacheManager:
         Returns:
             Dictionary with cleanup statistics
         """
+        now = time.time()
+        
+        # Check if cleanup is needed (throttle to prevent too-frequent cleanups)
+        if not force and (now - self._last_disk_cleanup) < self._disk_cleanup_interval:
+            return {
+                'files_scanned': 0,
+                'files_deleted': 0,
+                'space_freed_mb': 0.0,
+                'errors': 0,
+                'duration_sec': 0.0
+            }
+        
         start_time = time.time()
         
         try:
@@ -626,6 +638,9 @@ class CacheManager:
                     stats['files_scanned']
                 )
             
+            # Update last cleanup time
+            self._last_disk_cleanup = time.time()
+            
             return {
                 'files_scanned': stats['files_scanned'],
                 'files_deleted': stats['files_deleted'],
@@ -655,24 +670,62 @@ class CacheManager:
             self.logger.info("Disk cache cleanup thread started (interval: %d hours)", 
                            self._disk_cleanup_interval_hours)
             
-            while True:
+            # Run initial cleanup on startup (deferred from __init__ to avoid blocking)
+            try:
+                self.logger.debug("Running initial disk cache cleanup")
+                self.cleanup_disk_cache()
+            except Exception as e:
+                self.logger.error("Error in initial cleanup: %s", e, exc_info=True)
+            
+            # Main cleanup loop
+            while not self._cleanup_stop_event.is_set():
                 try:
-                    # Sleep for the configured interval
+                    # Sleep for the configured interval (interruptible)
                     sleep_seconds = self._disk_cleanup_interval_hours * 3600
-                    time.sleep(sleep_seconds)
+                    if self._cleanup_stop_event.wait(timeout=sleep_seconds):
+                        # Event was set, exit loop
+                        break
                     
-                    # Run cleanup
-                    self.logger.debug("Running scheduled disk cache cleanup")
-                    self.cleanup_disk_cache()
+                    # Run cleanup if not stopped
+                    if not self._cleanup_stop_event.is_set():
+                        self.logger.debug("Running scheduled disk cache cleanup")
+                        self.cleanup_disk_cache()
                     
                 except Exception as e:
                     self.logger.error("Error in cleanup thread: %s", e, exc_info=True)
-                    # Continue running despite errors
-                    time.sleep(60)  # Wait a minute before retrying
+                    # Continue running despite errors, but use interruptible sleep
+                    if self._cleanup_stop_event.wait(timeout=60):
+                        # Event was set during error recovery sleep, exit loop
+                        break
+            
+            self.logger.info("Disk cache cleanup thread stopped")
         
+        self._cleanup_stop_event.clear()  # Reset event before starting thread
         self._cleanup_thread = threading.Thread(target=cleanup_loop, daemon=True, name="DiskCacheCleanup")
         self._cleanup_thread.start()
-        self.logger.info("Started disk cache cleanup background thread") 
+        self.logger.info("Started disk cache cleanup background thread")
+    
+    def stop_cleanup_thread(self) -> None:
+        """
+        Stop the background cleanup thread gracefully.
+        
+        Signals the thread to stop and waits for it to finish (with timeout).
+        This allows for clean shutdown during testing or application termination.
+        """
+        if not self._cleanup_thread or not self._cleanup_thread.is_alive():
+            self.logger.debug("Cleanup thread not running")
+            return
+        
+        self.logger.info("Stopping disk cache cleanup thread...")
+        self._cleanup_stop_event.set()  # Signal thread to stop
+        
+        # Wait for thread to finish (with timeout to avoid hanging)
+        self._cleanup_thread.join(timeout=5.0)
+        
+        if self._cleanup_thread.is_alive():
+            self.logger.warning("Cleanup thread did not stop within timeout, thread may still be running")
+        else:
+            self.logger.info("Disk cache cleanup thread stopped successfully") 
 
     def get_sport_live_interval(self, sport_key: str) -> int:
         """
