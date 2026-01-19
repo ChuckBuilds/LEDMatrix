@@ -276,8 +276,9 @@ class WiFiManager:
                     return True
 
             # Check if NM connections are in /run (Trixie behavior)
-            run_nm_path = Path("/run/NetworkManager/system-connections")
-            etc_nm_path = Path("/etc/NetworkManager/system-connections")
+            # NM_CONNECTIONS_PATHS[0] = /etc/..., NM_CONNECTIONS_PATHS[1] = /run/...
+            etc_nm_path = NM_CONNECTIONS_PATHS[0]  # Bookworm location
+            run_nm_path = NM_CONNECTIONS_PATHS[1]  # Trixie location
             if run_nm_path.exists() and any(run_nm_path.glob("*.nmconnection")):
                 if not etc_nm_path.exists() or not any(etc_nm_path.glob("*.nmconnection")):
                     logger.debug("Detected Trixie: NM connections in /run only")
