@@ -3,6 +3,29 @@ WiFi Manager for Raspberry Pi LED Matrix
 
 Handles WiFi connection management, access point mode, and network scanning.
 Only enables AP mode when there is no active WiFi connection.
+
+Tested and optimized for:
+- Raspberry Pi OS Trixie (Debian 13) with NetworkManager/Netplan
+- Raspberry Pi OS Bookworm (Debian 12) with NetworkManager
+- Raspberry Pi 3B+, 4, 5 with built-in WiFi
+
+Sudoers Requirements:
+    The following sudoers entries are required for passwordless operation.
+    Add to /etc/sudoers.d/ledmatrix_wifi:
+
+    ledpi ALL=(ALL) NOPASSWD: /usr/bin/nmcli
+    ledpi ALL=(ALL) NOPASSWD: /usr/bin/systemctl start hostapd
+    ledpi ALL=(ALL) NOPASSWD: /usr/bin/systemctl stop hostapd
+    ledpi ALL=(ALL) NOPASSWD: /usr/bin/systemctl start dnsmasq
+    ledpi ALL=(ALL) NOPASSWD: /usr/bin/systemctl stop dnsmasq
+    ledpi ALL=(ALL) NOPASSWD: /usr/bin/systemctl restart NetworkManager
+    ledpi ALL=(ALL) NOPASSWD: /usr/sbin/ip
+    ledpi ALL=(ALL) NOPASSWD: /sbin/ip
+    ledpi ALL=(ALL) NOPASSWD: /usr/sbin/rfkill
+    ledpi ALL=(ALL) NOPASSWD: /usr/sbin/iptables
+    ledpi ALL=(ALL) NOPASSWD: /usr/sbin/sysctl
+    ledpi ALL=(ALL) NOPASSWD: /usr/bin/cp /tmp/hostapd.conf /etc/hostapd/hostapd.conf
+    ledpi ALL=(ALL) NOPASSWD: /usr/bin/cp /tmp/dnsmasq.conf /etc/dnsmasq.conf
 """
 
 import subprocess
@@ -13,7 +36,7 @@ import time
 import re
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +69,12 @@ DEFAULT_AP_CHANNEL = 7
 
 # LED status message file (for display_controller integration)
 LED_STATUS_FILE = None  # Will be set dynamically
+
+# NetworkManager connection file locations (Trixie uses /run, Bookworm uses /etc)
+NM_CONNECTIONS_PATHS = [
+    Path("/etc/NetworkManager/system-connections"),
+    Path("/run/NetworkManager/system-connections"),  # Trixie with Netplan
+]
 
 
 @dataclass
@@ -96,14 +125,21 @@ class WiFiManager:
         self.has_iwlist = self._check_command("iwlist")
         self.has_hostapd = self._check_command("hostapd")
         self.has_dnsmasq = self._check_command("dnsmasq")
-        
+
+        # Discover WiFi interface (don't hardcode wlan0)
+        self._wifi_interface = self._discover_wifi_interface()
+
+        # Detect if we're running on Trixie (Netplan-based NetworkManager)
+        self._is_trixie = self._detect_trixie()
+
         # Initialize disconnected check counter for grace period
         # This prevents AP mode from enabling on transient network hiccups
         self._disconnected_checks = 0
         self._disconnected_checks_required = 3  # Require 3 consecutive disconnected checks (90 seconds at 30s interval)
-        
+
         logger.info(f"WiFi Manager initialized - nmcli: {self.has_nmcli}, iwlist: {self.has_iwlist}, "
-                   f"hostapd: {self.has_hostapd}, dnsmasq: {self.has_dnsmasq}")
+                   f"hostapd: {self.has_hostapd}, dnsmasq: {self.has_dnsmasq}, "
+                   f"interface: {self._wifi_interface}, trixie: {self._is_trixie}")
     
     def _show_led_message(self, message: str, duration: int = 5):
         """
@@ -161,9 +197,98 @@ class WiFiManager:
                     return True
             
             return False
-        except:
+        except (subprocess.TimeoutExpired, subprocess.SubprocessError, OSError):
             return False
-    
+
+    def _discover_wifi_interface(self) -> str:
+        """
+        Discover the primary WiFi interface name dynamically.
+
+        Returns the first WiFi interface found, or 'wlan0' as fallback.
+        Supports various interface naming schemes:
+        - Traditional: wlan0, wlan1
+        - Predictable: wlp2s0, wlx<mac>
+        - USB adapters: wlan1, wlx*
+        """
+        try:
+            if self.has_nmcli:
+                # Use nmcli to find WiFi devices (most reliable on NetworkManager systems)
+                result = subprocess.run(
+                    ["nmcli", "-t", "-f", "DEVICE,TYPE", "device", "status"],
+                    capture_output=True,
+                    text=True,
+                    timeout=5
+                )
+                if result.returncode == 0:
+                    for line in result.stdout.strip().split('\n'):
+                        if ':' in line:
+                            parts = line.split(':')
+                            if len(parts) >= 2 and parts[1].strip() == 'wifi':
+                                interface = parts[0].strip()
+                                logger.debug(f"Discovered WiFi interface via nmcli: {interface}")
+                                return interface
+
+            # Fallback: Check /sys/class/net for wireless interfaces
+            net_path = Path("/sys/class/net")
+            if net_path.exists():
+                for iface in net_path.iterdir():
+                    wireless_path = iface / "wireless"
+                    if wireless_path.exists():
+                        interface = iface.name
+                        logger.debug(f"Discovered WiFi interface via /sys: {interface}")
+                        return interface
+
+            # Last resort: Check common interface names
+            for iface in ["wlan0", "wlan1", "wlp2s0", "wlp3s0"]:
+                iface_path = Path(f"/sys/class/net/{iface}")
+                if iface_path.exists():
+                    logger.debug(f"Found WiFi interface by name probe: {iface}")
+                    return iface
+
+        except (subprocess.TimeoutExpired, subprocess.SubprocessError, OSError) as e:
+            logger.warning(f"Error discovering WiFi interface: {e}")
+
+        logger.warning("Could not discover WiFi interface, defaulting to wlan0")
+        return "wlan0"
+
+    def _detect_trixie(self) -> bool:
+        """
+        Detect if running on Raspberry Pi OS Trixie (Debian 13).
+
+        Trixie uses Netplan with NetworkManager, which changes behavior:
+        - Connection files are stored in /run/NetworkManager/system-connections
+        - nmcli hotspot requires different handling
+        - PMF (Protected Management Frames) may need to be disabled
+        """
+        try:
+            # Check for Netplan (primary indicator of Trixie)
+            netplan_path = Path("/etc/netplan")
+            if netplan_path.exists() and any(netplan_path.glob("*.yaml")):
+                logger.debug("Detected Trixie: Netplan configuration found")
+                return True
+
+            # Check Debian version
+            os_release = Path("/etc/os-release")
+            if os_release.exists():
+                content = os_release.read_text()
+                if 'VERSION_CODENAME=trixie' in content or 'VERSION_ID="13"' in content:
+                    logger.debug("Detected Trixie: os-release indicates Debian 13")
+                    return True
+
+            # Check if NM connections are in /run (Trixie behavior)
+            # NM_CONNECTIONS_PATHS[0] = /etc/..., NM_CONNECTIONS_PATHS[1] = /run/...
+            etc_nm_path = NM_CONNECTIONS_PATHS[0]  # Bookworm location
+            run_nm_path = NM_CONNECTIONS_PATHS[1]  # Trixie location
+            if run_nm_path.exists() and any(run_nm_path.glob("*.nmconnection")):
+                if not etc_nm_path.exists() or not any(etc_nm_path.glob("*.nmconnection")):
+                    logger.debug("Detected Trixie: NM connections in /run only")
+                    return True
+
+        except (OSError, PermissionError) as e:
+            logger.debug(f"Could not detect Trixie: {e}")
+
+        return False
+
     def _load_config(self):
         """Load WiFi configuration from file"""
         if self.config_path.exists():
@@ -364,7 +489,7 @@ class WiFiManager:
         """Get WiFi status using iwconfig (fallback)"""
         try:
             result = subprocess.run(
-                ["iwconfig", "wlan0"],
+                ["iwconfig", self._wifi_interface],
                 capture_output=True,
                 text=True,
                 timeout=5
@@ -523,14 +648,14 @@ class WiFiManager:
             )
             if result.stdout.strip() == "active":
                 return True
-            
+
             # Check if nmcli hotspot is active (fallback mode)
             hotspot_status = self._get_ap_status_nmcli()
             if hotspot_status.get('active'):
                 return True
-            
+
             return False
-        except:
+        except (subprocess.TimeoutExpired, subprocess.SubprocessError, OSError):
             return False
     
     def scan_networks(self) -> List[WiFiNetwork]:
@@ -662,7 +787,7 @@ class WiFiManager:
         networks = []
         try:
             result = subprocess.run(
-                ["iwlist", "wlan0", "scan"],
+                ["iwlist", self._wifi_interface, "scan"],
                 capture_output=True,
                 text=True,
                 timeout=30
@@ -745,9 +870,9 @@ class WiFiManager:
             status = self.get_wifi_status()
             if status.connected and status.ssid:
                 original_ssid = status.ssid
-                # Get the active connection name/UUID for wlan0
+                # Get the active connection name/UUID for WiFi interface
                 result = subprocess.run(
-                    ["nmcli", "-t", "-f", "GENERAL.CONNECTION", "device", "show", "wlan0"],
+                    ["nmcli", "-t", "-f", "GENERAL.CONNECTION", "device", "show", self._wifi_interface],
                     capture_output=True,
                     text=True,
                     timeout=5
@@ -834,7 +959,7 @@ class WiFiManager:
                     while wait_count < max_wait:
                         time.sleep(1)
                         result = subprocess.run(
-                            ["nmcli", "-t", "-f", "STATE", "device", "status", "wlan0"],
+                            ["nmcli", "-t", "-f", "STATE", "device", "status", self._wifi_interface],
                             capture_output=True,
                             text=True,
                             timeout=5
@@ -1013,7 +1138,7 @@ class WiFiManager:
                 max_wait = 3
                 for wait_attempt in range(max_wait):
                     device_result = subprocess.run(
-                        ["nmcli", "-t", "-f", "STATE", "device", "status", "wlan0"],
+                        ["nmcli", "-t", "-f", "STATE", "device", "status", self._wifi_interface],
                         capture_output=True,
                         text=True,
                         timeout=5
@@ -1171,7 +1296,7 @@ class WiFiManager:
                 
                 # Also disconnect the device to ensure clean state
                 result = subprocess.run(
-                    ["nmcli", "device", "disconnect", "wlan0"],
+                    ["nmcli", "device", "disconnect", self._wifi_interface],
                     capture_output=True,
                     text=True,
                     timeout=10
@@ -1406,34 +1531,34 @@ class WiFiManager:
             # Create dnsmasq config
             self._create_dnsmasq_config()
             
-            # Set up wlan0 for AP mode
+            # Set up WiFi interface for AP mode
             try:
                 # Disconnect from any existing WiFi network
                 subprocess.run(
-                    ["sudo", "nmcli", "device", "disconnect", "wlan0"],
+                    ["sudo", "nmcli", "device", "disconnect", self._wifi_interface],
                     capture_output=True,
                     timeout=10
                 )
-                
+
                 # Set static IP for AP mode
                 subprocess.run(
-                    ["sudo", "ip", "addr", "flush", "dev", "wlan0"],
+                    ["sudo", "ip", "addr", "flush", "dev", self._wifi_interface],
                     capture_output=True,
                     timeout=10
                 )
                 subprocess.run(
-                    ["sudo", "ip", "addr", "add", "192.168.4.1/24", "dev", "wlan0"],
+                    ["sudo", "ip", "addr", "add", "192.168.4.1/24", "dev", self._wifi_interface],
                     capture_output=True,
                     timeout=10
                 )
                 subprocess.run(
-                    ["sudo", "ip", "link", "set", "wlan0", "up"],
+                    ["sudo", "ip", "link", "set", self._wifi_interface, "up"],
                     capture_output=True,
                     timeout=10
                 )
-                logger.info("Configured wlan0 with IP 192.168.4.1 for AP mode")
-            except Exception as e:
-                logger.warning(f"Error setting up wlan0 IP: {e}")
+                logger.info(f"Configured {self._wifi_interface} with IP 192.168.4.1 for AP mode")
+            except (subprocess.TimeoutExpired, subprocess.SubprocessError, OSError) as e:
+                logger.warning(f"Error setting up {self._wifi_interface} IP: {e}")
             
             # Start services
             try:
@@ -1480,33 +1605,33 @@ class WiFiManager:
                             timeout=5
                         )
                         
-                        # Add NAT rule to redirect port 80 to 5000 on wlan0
+                        # Add NAT rule to redirect port 80 to 5000 on WiFi interface
                         # First check if rule already exists
                         check_result = subprocess.run(
-                            ["sudo", "iptables", "-t", "nat", "-C", "PREROUTING", "-i", "wlan0", "-p", "tcp", "--dport", "80", "-j", "REDIRECT", "--to-port", "5000"],
+                            ["sudo", "iptables", "-t", "nat", "-C", "PREROUTING", "-i", self._wifi_interface, "-p", "tcp", "--dport", "80", "-j", "REDIRECT", "--to-port", "5000"],
                             capture_output=True,
                             timeout=5
                         )
-                        
+
                         if check_result.returncode != 0:
                             # Rule doesn't exist, add it
                             subprocess.run(
-                                ["sudo", "iptables", "-t", "nat", "-A", "PREROUTING", "-i", "wlan0", "-p", "tcp", "--dport", "80", "-j", "REDIRECT", "--to-port", "5000"],
+                                ["sudo", "iptables", "-t", "nat", "-A", "PREROUTING", "-i", self._wifi_interface, "-p", "tcp", "--dport", "80", "-j", "REDIRECT", "--to-port", "5000"],
                                 capture_output=True,
                                 timeout=5
                             )
                             logger.info("Added iptables rule to redirect port 80 to 5000")
-                        
+
                         # Also allow incoming connections on port 80
                         check_input = subprocess.run(
-                            ["sudo", "iptables", "-C", "INPUT", "-i", "wlan0", "-p", "tcp", "--dport", "80", "-j", "ACCEPT"],
+                            ["sudo", "iptables", "-C", "INPUT", "-i", self._wifi_interface, "-p", "tcp", "--dport", "80", "-j", "ACCEPT"],
                             capture_output=True,
                             timeout=5
                         )
-                        
+
                         if check_input.returncode != 0:
                             subprocess.run(
-                                ["sudo", "iptables", "-A", "INPUT", "-i", "wlan0", "-p", "tcp", "--dport", "80", "-j", "ACCEPT"],
+                                ["sudo", "iptables", "-A", "INPUT", "-i", self._wifi_interface, "-p", "tcp", "--dport", "80", "-j", "ACCEPT"],
                                 capture_output=True,
                                 timeout=5
                             )
@@ -1529,14 +1654,20 @@ class WiFiManager:
     
     def _enable_ap_mode_nmcli_hotspot(self) -> Tuple[bool, str]:
         """
-        Enable AP mode using nmcli hotspot (simpler fallback, no captive portal).
-        This is a fallback when hostapd/dnsmasq is not available or fails.
+        Enable AP mode using nmcli hotspot.
+
+        This method is optimized for both Bookworm and Trixie:
+        - Trixie: Uses Netplan, connections stored in /run/NetworkManager/system-connections
+        - Bookworm: Traditional NetworkManager, connections in /etc/NetworkManager/system-connections
+
+        On Trixie, we also disable PMF (Protected Management Frames) which can cause
+        connection issues with certain WiFi adapters and clients.
         """
         try:
             # Stop any existing connection
             self.disconnect_from_network()
             time.sleep(1)
-            
+
             # Delete any existing hotspot connections (more thorough cleanup)
             # First, list all connections to find any with the same SSID or hotspot-related ones
             ap_ssid = self.config.get("ap_ssid", DEFAULT_AP_SSID)
@@ -1554,7 +1685,7 @@ class WiFiManager:
                             conn_name = parts[0].strip()
                             conn_type = parts[1].strip().lower() if len(parts) > 1 else ""
                             conn_ssid = parts[2].strip() if len(parts) > 2 else ""
-                            
+
                             # Delete if:
                             # 1. It's a hotspot type
                             # 2. It has the same SSID as our AP
@@ -1565,7 +1696,7 @@ class WiFiManager:
                                 'hotspot' in conn_name.lower() or
                                 conn_name in ["Hotspot", "LEDMatrix-Setup-AP", "TickerSetup-AP"]
                             )
-                            
+
                             if should_delete:
                                 logger.info(f"Deleting existing connection: {conn_name} (type: {conn_type}, SSID: {conn_ssid})")
                                 # First disconnect it if active
@@ -1580,7 +1711,7 @@ class WiFiManager:
                                     capture_output=True,
                                     timeout=10
                                 )
-            
+
             # Also explicitly delete known connection names (in case they weren't caught above)
             for conn_name in ["Hotspot", "LEDMatrix-Setup-AP", "TickerSetup-AP"]:
                 subprocess.run(
@@ -1593,40 +1724,43 @@ class WiFiManager:
                     capture_output=True,
                     timeout=10
                 )
-            
+
             # Wait a moment for deletions to complete
             time.sleep(1)
-            
+
             # Get AP settings from config
             ap_ssid = self.config.get("ap_ssid", DEFAULT_AP_SSID)
-            
+            ap_channel = self.config.get("ap_channel", DEFAULT_AP_CHANNEL)
+
             # Use nmcli hotspot command (simpler, works with Broadcom chips)
             # Open network (no password) for easy setup access
-            logger.info(f"Creating open hotspot with nmcli: {ap_ssid} (no password)")
+            logger.info(f"Creating open hotspot with nmcli: {ap_ssid} on {self._wifi_interface} (no password)")
+
             # Note: Some NetworkManager versions add a default password to hotspots
             # We'll create it and then immediately remove all security settings
             cmd = [
                 "nmcli", "device", "wifi", "hotspot",
-                "ifname", "wlan0",
+                "ifname", self._wifi_interface,
                 "con-name", "LEDMatrix-Setup-AP",
                 "ssid", ap_ssid,
-                "band", "bg"  # 2.4GHz for maximum compatibility
+                "band", "bg",  # 2.4GHz for maximum compatibility
+                "channel", str(ap_channel),
                 # Don't pass password parameter - we'll remove security after creation
             ]
-            
+
             result = subprocess.run(
                 cmd,
                 capture_output=True,
                 text=True,
                 timeout=30
             )
-            
+
             if result.returncode == 0:
                 # Always explicitly remove all security settings to ensure open network
                 # NetworkManager sometimes adds default security even when not specified
                 logger.info("Ensuring hotspot is open (no password)...")
                 time.sleep(2)  # Give it a moment to create
-                
+
                 # Remove all possible security settings
                 security_settings = [
                     ("802-11-wireless-security.key-mgmt", "none"),
@@ -1635,7 +1769,13 @@ class WiFiManager:
                     ("802-11-wireless-security.wep-key-type", ""),
                     ("802-11-wireless-security.auth-alg", "open"),
                 ]
-                
+
+                # On Trixie, also disable PMF (Protected Management Frames)
+                # This can cause connection issues with certain WiFi adapters and clients
+                if self._is_trixie:
+                    security_settings.append(("802-11-wireless-security.pmf", "disable"))
+                    logger.info("Trixie detected: disabling PMF for better client compatibility")
+
                 for setting, value in security_settings:
                     result_modify = subprocess.run(
                         ["nmcli", "connection", "modify", "LEDMatrix-Setup-AP", setting, str(value)],
@@ -1645,6 +1785,17 @@ class WiFiManager:
                     )
                     if result_modify.returncode != 0:
                         logger.debug(f"Could not set {setting} to {value}: {result_modify.stderr}")
+
+                # On Trixie, set static IP address for the hotspot (default is 10.42.0.1)
+                # We want 192.168.4.1 for consistency
+                subprocess.run(
+                    ["nmcli", "connection", "modify", "LEDMatrix-Setup-AP",
+                     "ipv4.addresses", "192.168.4.1/24",
+                     "ipv4.method", "shared"],
+                    capture_output=True,
+                    text=True,
+                    timeout=5
+                )
                 
                 # Verify it's open
                 verify_result = subprocess.run(
@@ -1681,12 +1832,29 @@ class WiFiManager:
                         # Recreate without any password parameters
                         cmd_recreate = [
                             "nmcli", "device", "wifi", "hotspot",
-                            "ifname", "wlan0",
+                            "ifname", self._wifi_interface,
                             "con-name", "LEDMatrix-Setup-AP",
                             "ssid", ap_ssid,
-                            "band", "bg"
+                            "band", "bg",
+                            "channel", str(ap_channel),
                         ]
                         subprocess.run(cmd_recreate, capture_output=True, timeout=30)
+                        # Set IP address for consistency
+                        subprocess.run(
+                            ["nmcli", "connection", "modify", "LEDMatrix-Setup-AP",
+                             "ipv4.addresses", "192.168.4.1/24",
+                             "ipv4.method", "shared"],
+                            capture_output=True,
+                            timeout=5
+                        )
+                        # Disable PMF on Trixie
+                        if self._is_trixie:
+                            subprocess.run(
+                                ["nmcli", "connection", "modify", "LEDMatrix-Setup-AP",
+                                 "802-11-wireless-security.pmf", "disable"],
+                                capture_output=True,
+                                timeout=5
+                            )
                         logger.info("Recreated hotspot as open network")
                     else:
                         logger.info("Hotspot verified as open (no password)")
@@ -1731,9 +1899,9 @@ class WiFiManager:
     def _get_ap_status_nmcli(self) -> Dict:
         """
         Get AP status using nmcli (for hotspot mode).
-        
+
         Returns:
-            Dict with AP status info
+            Dict with AP status info including active state, SSID, IP, and interface
         """
         try:
             # Check if hotspot connection is active
@@ -1743,20 +1911,38 @@ class WiFiManager:
                 text=True,
                 timeout=5
             )
-            
+
             for line in result.stdout.strip().split('\n'):
                 parts = line.split(':')
                 if len(parts) >= 2 and 'hotspot' in parts[1].lower():
+                    # Get actual IP address (may be 192.168.4.1 or 10.42.0.1 depending on config)
+                    ip = '192.168.4.1'
+                    interface = parts[2] if len(parts) > 2 else self._wifi_interface
+                    try:
+                        ip_result = subprocess.run(
+                            ["nmcli", "-t", "-f", "IP4.ADDRESS", "device", "show", interface],
+                            capture_output=True,
+                            text=True,
+                            timeout=5
+                        )
+                        if ip_result.returncode == 0:
+                            for ip_line in ip_result.stdout.strip().split('\n'):
+                                if '/' in ip_line:
+                                    ip = ip_line.split('/')[0].split(':')[-1].strip()
+                                    break
+                    except (subprocess.TimeoutExpired, subprocess.SubprocessError):
+                        pass
+
                     return {
                         'active': True,
                         'ssid': self.config.get("ap_ssid", DEFAULT_AP_SSID),
-                        'ip': '192.168.4.1',  # nmcli hotspot uses this IP
-                        'interface': parts[2] if len(parts) > 2 else "wlan0"
+                        'ip': ip,
+                        'interface': interface
                     }
-            
+
             return {'active': False}
-            
-        except Exception as e:
+
+        except (subprocess.TimeoutExpired, subprocess.SubprocessError, OSError) as e:
             logger.error(f"Error getting AP status with nmcli: {e}")
             return {'active': False}
     
@@ -1782,7 +1968,7 @@ class WiFiManager:
                     timeout=2
                 )
                 hostapd_active = result.stdout.strip() == "active"
-            except:
+            except (subprocess.TimeoutExpired, subprocess.SubprocessError, OSError):
                 pass
             
             # Stop services
@@ -1843,26 +2029,26 @@ class WiFiManager:
                             capture_output=True,
                             timeout=2
                         )
-                        
+
                         if iptables_check.returncode == 0:
                             # Remove NAT redirect rule
                             subprocess.run(
-                                ["sudo", "iptables", "-t", "nat", "-D", "PREROUTING", "-i", "wlan0", "-p", "tcp", "--dport", "80", "-j", "REDIRECT", "--to-port", "5000"],
+                                ["sudo", "iptables", "-t", "nat", "-D", "PREROUTING", "-i", self._wifi_interface, "-p", "tcp", "--dport", "80", "-j", "REDIRECT", "--to-port", "5000"],
                                 capture_output=True,
                                 timeout=5
                             )
-                            
+
                             # Remove INPUT rule
                             subprocess.run(
-                                ["sudo", "iptables", "-D", "INPUT", "-i", "wlan0", "-p", "tcp", "--dport", "80", "-j", "ACCEPT"],
+                                ["sudo", "iptables", "-D", "INPUT", "-i", self._wifi_interface, "-p", "tcp", "--dport", "80", "-j", "ACCEPT"],
                                 capture_output=True,
                                 timeout=5
                             )
-                            
+
                             logger.info("Removed iptables port forwarding rules")
                         else:
                             logger.debug("iptables not available, skipping rule removal")
-                        
+
                         # Disable IP forwarding (restore to default client mode)
                         subprocess.run(
                             ["sudo", "sysctl", "-w", "net.ipv4.ip_forward=0"],
@@ -1870,13 +2056,13 @@ class WiFiManager:
                             timeout=5
                         )
                         logger.info("Disabled IP forwarding")
-                    except Exception as e:
+                    except (subprocess.TimeoutExpired, subprocess.SubprocessError, OSError) as e:
                         logger.warning(f"Could not remove iptables rules or disable forwarding: {e}")
                         # Continue anyway
-                    
-                    # Clean up wlan0 IP configuration
+
+                    # Clean up WiFi interface IP configuration
                     subprocess.run(
-                        ["sudo", "ip", "addr", "del", "192.168.4.1/24", "dev", "wlan0"],
+                        ["sudo", "ip", "addr", "del", "192.168.4.1/24", "dev", self._wifi_interface],
                         capture_output=True,
                         timeout=10
                     )
@@ -1940,9 +2126,9 @@ class WiFiManager:
             
             ap_ssid = self.config.get("ap_ssid", DEFAULT_AP_SSID)
             ap_channel = self.config.get("ap_channel", DEFAULT_AP_CHANNEL)
-            
+
             # Open network configuration (no password) for easy setup access
-            config_content = f"""interface=wlan0
+            config_content = f"""interface={self._wifi_interface}
 driver=nl80211
 ssid={ap_ssid}
 hw_mode=g
@@ -1953,33 +2139,77 @@ auth_algs=1
 ignore_broadcast_ssid=0
 # Open network - no WPA/WPA2 encryption
 """
-            
+
             # Write config (requires sudo)
             with open("/tmp/hostapd.conf", 'w') as f:
                 f.write(config_content)
-            
+
             # Copy to final location with sudo
             subprocess.run(
                 ["sudo", "cp", "/tmp/hostapd.conf", str(HOSTAPD_CONFIG_PATH)],
                 timeout=10
             )
-            
-            logger.info(f"Created hostapd config at {HOSTAPD_CONFIG_PATH}")
-        except Exception as e:
+
+            logger.info(f"Created hostapd config at {HOSTAPD_CONFIG_PATH} for {self._wifi_interface}")
+        except (OSError, subprocess.TimeoutExpired, subprocess.SubprocessError) as e:
             logger.error(f"Error creating hostapd config: {e}")
             raise
-    
-    def _create_dnsmasq_config(self):
-        """Create dnsmasq configuration file with captive portal DNS redirection"""
+
+    def _check_dnsmasq_conflict(self) -> Tuple[bool, str]:
+        """
+        Check if dnsmasq is already in use for other purposes (e.g., Pi-hole).
+
+        Returns:
+            Tuple of (conflict_detected, description)
+        """
         try:
+            # Check if dnsmasq service is active
+            result = subprocess.run(
+                ["systemctl", "is-active", "dnsmasq"],
+                capture_output=True,
+                text=True,
+                timeout=5
+            )
+            if result.stdout.strip() == "active":
+                # Check if it's configured for something other than our AP
+                if DNSMASQ_CONFIG_PATH.exists():
+                    try:
+                        content = DNSMASQ_CONFIG_PATH.read_text()
+                        # Check for Pi-hole or other common dnsmasq uses
+                        if 'pihole' in content.lower() or 'pi-hole' in content.lower():
+                            return True, "Pi-hole detected - dnsmasq is in use"
+                        if 'server=' in content and self._wifi_interface not in content:
+                            return True, "dnsmasq appears to be configured for DNS forwarding"
+                    except (OSError, PermissionError):
+                        pass
+
+            return False, ""
+        except (subprocess.TimeoutExpired, subprocess.SubprocessError):
+            return False, ""
+
+    def _create_dnsmasq_config(self):
+        """
+        Create dnsmasq configuration file with captive portal DNS redirection.
+
+        Note: This will overwrite /etc/dnsmasq.conf. If dnsmasq is already in use
+        (e.g., for Pi-hole), this may break that service. A backup is created.
+        """
+        try:
+            # Check for conflicts
+            conflict, conflict_msg = self._check_dnsmasq_conflict()
+            if conflict:
+                logger.warning(f"dnsmasq conflict detected: {conflict_msg}")
+                logger.warning("Proceeding anyway - backup will be created")
+
             # Backup existing config
             if DNSMASQ_CONFIG_PATH.exists():
                 subprocess.run(
                     ["sudo", "cp", str(DNSMASQ_CONFIG_PATH), f"{DNSMASQ_CONFIG_PATH}.backup"],
                     timeout=10
                 )
-            
-            config_content = """interface=wlan0
+                logger.info(f"Backed up existing dnsmasq config to {DNSMASQ_CONFIG_PATH}.backup")
+
+            config_content = f"""interface={self._wifi_interface}
 dhcp-range=192.168.4.2,192.168.4.20,255.255.255.0,24h
 
 # Captive portal: Redirect all DNS queries to Pi
@@ -1991,19 +2221,19 @@ address=/connectivitycheck.gstatic.com/192.168.4.1
 address=/www.msftconnecttest.com/192.168.4.1
 address=/detectportal.firefox.com/192.168.4.1
 """
-            
+
             # Write config (requires sudo)
             with open("/tmp/dnsmasq.conf", 'w') as f:
                 f.write(config_content)
-            
+
             # Copy to final location with sudo
             subprocess.run(
                 ["sudo", "cp", "/tmp/dnsmasq.conf", str(DNSMASQ_CONFIG_PATH)],
                 timeout=10
             )
-            
-            logger.info(f"Created dnsmasq config at {DNSMASQ_CONFIG_PATH} with captive portal DNS redirection")
-        except Exception as e:
+
+            logger.info(f"Created dnsmasq config at {DNSMASQ_CONFIG_PATH} for {self._wifi_interface}")
+        except (OSError, subprocess.TimeoutExpired, subprocess.SubprocessError) as e:
             logger.error(f"Error creating dnsmasq config: {e}")
             raise
     
