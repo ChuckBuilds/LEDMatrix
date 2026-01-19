@@ -320,6 +320,20 @@ echo -e "${YELLOW}Warnings: $WARNINGS${NC}"
 echo -e "${RED}Failed: $FAILED${NC}"
 echo ""
 
+# Show connectivity summary
+echo "=== Connectivity ==="
+if [ "$ETH_CONNECTED" = true ]; then
+    info "Ethernet: Connected"
+else
+    info "Ethernet: Not connected"
+fi
+if [ "$AP_ACTIVE" = true ]; then
+    info "AP Mode: Active"
+else
+    info "AP Mode: Inactive"
+fi
+echo ""
+
 if [ $FAILED -eq 0 ] && [ $WARNINGS -eq 0 ]; then
     echo -e "${GREEN}✓ All checks passed! WiFi setup looks good.${NC}"
     exit 0
