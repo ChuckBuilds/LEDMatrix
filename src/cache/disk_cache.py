@@ -363,13 +363,15 @@ class DiskCache:
                                         )
                                     except FileNotFoundError:
                                         # File was deleted by another process between exists check and remove
-                                        self.logger.debug("Cache file %s was already deleted", filename)
+                                        # This is a benign race condition, silently continue
+                                        pass
                                 else:
                                     # File was deleted by another process before lock was acquired
-                                    self.logger.debug("Cache file %s was already deleted", filename)
+                                    # This is a benign race condition, silently continue
+                                    pass
                         except FileNotFoundError:
                             # File was already deleted by another process, skip it
-                            self.logger.debug("Cache file %s was already deleted", filename)
+                            # This is a benign race condition, silently continue
                             continue
                         except OSError as e:
                             # Other file system errors, log but don't fail the entire cleanup
@@ -377,6 +379,10 @@ class DiskCache:
                             self.logger.warning("Error deleting cache file %s: %s", filename, e)
                             continue
                 
+                except FileNotFoundError:
+                    # File was deleted by another process between listing and processing
+                    # This is a benign race condition, silently continue
+                    continue
                 except OSError as e:
                     stats['errors'] += 1
                     self.logger.warning("Error processing cache file %s: %s", filename, e)

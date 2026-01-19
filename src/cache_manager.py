@@ -69,23 +69,21 @@ class CacheManager:
         self._retention_policies = {
             'odds': 2,              # Odds data: 2 days (lines move frequently)
             'odds_live': 2,         # Live odds: 2 days
-            'live_scores': 7,       # Live scores: 7 days
             'sports_live': 7,       # Live sports: 7 days
             'weather_current': 7,   # Current weather: 7 days
             'sports_recent': 7,     # Recent games: 7 days
-            'leaderboard': 7,       # Rankings/leaderboards: 7 days (weekly updates)
             'news': 14,             # News: 14 days
             'sports_upcoming': 60,  # Upcoming games: 60 days (schedules stable)
             'sports_schedules': 60, # Schedules: 60 days
             'team_info': 60,        # Team info: 60 days
-            'logos': 60,            # Logos: 60 days
             'stocks': 14,           # Stock data: 14 days
             'crypto': 14,           # Crypto data: 14 days
             'default': 30           # Default: 30 days
         }
         
-        # Start background cleanup thread (which will run initial cleanup asynchronously)
-        self.start_cleanup_thread()
+        # Start background cleanup thread only if disk caching is enabled
+        if self.cache_dir:
+            self.start_cleanup_thread()
 
     def _get_writable_cache_dir(self) -> Optional[str]:
         """Tries to find or create a writable cache directory, preferring a system path when available."""
