@@ -37,6 +37,9 @@ class LogoDownloader:
         'ncaa_fb_all': 'https://site.api.espn.com/apis/site/v2/sports/football/college-football/teams',  # Includes FCS
         'fcs': 'https://site.api.espn.com/apis/site/v2/sports/football/college-football/teams',  # FCS teams from same endpoint
         'ncaam_basketball': 'https://site.api.espn.com/apis/site/v2/sports/basketball/mens-college-basketball/teams',
+        'ncaam': 'https://site.api.espn.com/apis/site/v2/sports/basketball/mens-college-basketball/teams',  # Alias for basketball plugin
+        'ncaaw_basketball': 'https://site.api.espn.com/apis/site/v2/sports/basketball/womens-college-basketball/teams',
+        'ncaaw': 'https://site.api.espn.com/apis/site/v2/sports/basketball/womens-college-basketball/teams',  # Alias for basketball plugin
         'ncaa_baseball': 'https://site.api.espn.com/apis/site/v2/sports/baseball/college-baseball/teams',
         'ncaam_hockey': 'https://site.api.espn.com/apis/site/v2/sports/hockey/mens-college-hockey/teams',
         # Soccer leagues
@@ -63,6 +66,9 @@ class LogoDownloader:
         'ncaa_fb_all': 'assets/sports/ncaa_logos',
         'fcs': 'assets/sports/ncaa_logos',
         'ncaam_basketball': 'assets/sports/ncaa_logos',
+        'ncaam': 'assets/sports/ncaa_logos',  # Alias for basketball plugin
+        'ncaaw_basketball': 'assets/sports/ncaa_logos',
+        'ncaaw': 'assets/sports/ncaa_logos',  # Alias for basketball plugin
         'ncaa_baseball': 'assets/sports/ncaa_logos',
         'ncaam_hockey': 'assets/sports/ncaa_logos',
         'ncaaw_hockey': 'assets/sports/ncaa_logos',
