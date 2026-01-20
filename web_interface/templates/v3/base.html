@@ -1342,7 +1342,7 @@
         <nav class="mb-8">
             <!-- First row - System tabs -->
             <div class="border-b border-gray-200 mb-4">
-                <nav class="-mb-px flex flex-wrap gap-y-2 gap-x-4 lg:gap-x-6 xl:gap-x-8">
+                <nav class="-mb-px flex flex-wrap gap-y-2 gap-x-2 lg:gap-x-3 xl:gap-x-4">
                     <button @click="activeTab = 'overview'"
                             :class="activeTab === 'overview' ? 'nav-tab-active' : ''"
                             class="nav-tab">
@@ -1398,7 +1398,7 @@
 
             <!-- Second row - Plugin tabs (populated dynamically) -->
             <div id="plugin-tabs-row" class="border-b border-gray-200">
-                <nav class="-mb-px flex flex-wrap gap-y-2 gap-x-4 lg:gap-x-6 xl:gap-x-8">
+                <nav class="-mb-px flex flex-wrap gap-y-2 gap-x-2 lg:gap-x-3 xl:gap-x-4">
                     <button @click="activeTab = 'plugins'; $nextTick(() => { if (typeof htmx !== 'undefined' && !document.getElementById('plugins-content').hasAttribute('data-loaded')) { htmx.trigger('#plugins-content', 'load'); } })"
                             :class="activeTab === 'plugins' ? 'nav-tab-active' : ''"
                             class="nav-tab">
