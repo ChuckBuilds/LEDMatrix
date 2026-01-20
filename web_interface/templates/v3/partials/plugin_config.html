@@ -282,14 +282,237 @@
                             </button>
                         </div>
                     {% endif %}
+                {% elif x_widget == 'custom-leagues' %}
+                    {# Custom leagues table interface for soccer plugin #}
+                    {% set item_properties = items_schema.get('properties', {}) %}
+                    {% if not (item_properties.get('name') and item_properties.get('league_code')) %}
+                        <p class="text-xs text-amber-600 mt-1">
+                            <i class="fas fa-exclamation-triangle mr-1"></i>
+                            Custom leagues widget requires 'name' and 'league_code' properties in items schema.
+                        </p>
+                    {% else %}
+                        {% set max_items = prop.get('maxItems', 20) %}
+                        {% set array_value = value if value is not none and value is iterable and value is not string else (prop.default if prop.default is defined and prop.default is iterable and prop.default is not string else []) %}
+
+                        <div class="custom-leagues-table-container mt-1">
+                            <table class="min-w-full divide-y divide-gray-200 border border-gray-300 rounded-lg">
+                                <thead class="bg-gray-50">
+                                    <tr>
+                                        <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Name</th>
+                                        <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">League Code</th>
+                                        <th class="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">Priority</th>
+                                        <th class="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">Enabled</th>
+                                        <th class="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="{{ field_id }}_tbody" class="bg-white divide-y divide-gray-200">
+                                    {% for item in array_value %}
+                                    {% set item_index = loop.index0 %}
+                                    <tr class="custom-league-row" data-index="{{ item_index }}">
+                                        <td class="px-4 py-3 whitespace-nowrap">
+                                            <input type="text"
+                                                   name="{{ full_key }}.{{ item_index }}.name"
+                                                   value="{{ item.get('name', '') }}"
+                                                   class="block w-full px-2 py-1 border border-gray-300 rounded text-sm"
+                                                   placeholder="e.g., Liga Portugal"
+                                                   required>
+                                        </td>
+                                        <td class="px-4 py-3 whitespace-nowrap">
+                                            <div class="flex items-center space-x-2">
+                                                <input type="text"
+                                                       name="{{ full_key }}.{{ item_index }}.league_code"
+                                                       value="{{ item.get('league_code', '') }}"
+                                                       class="block w-32 px-2 py-1 border border-gray-300 rounded text-sm"
+                                                       placeholder="e.g., por.1"
+                                                       pattern="^[a-z]{2,6}\.[0-9]+$"
+                                                       title="Format: xxx.n (e.g., por.1, mex.1)"
+                                                       required>
+                                                <span class="validation-indicator text-sm" id="{{ field_id }}_validation_{{ item_index }}"></span>
+                                            </div>
+                                        </td>
+                                        <td class="px-4 py-3 whitespace-nowrap text-center">
+                                            <input type="number"
+                                                   name="{{ full_key }}.{{ item_index }}.priority"
+                                                   value="{{ item.get('priority', 50) }}"
+                                                   min="1"
+                                                   max="100"
+                                                   class="block w-20 px-2 py-1 border border-gray-300 rounded text-sm text-center"
+                                                   title="Display priority (1=highest, 100=lowest)">
+                                        </td>
+                                        <td class="px-4 py-3 whitespace-nowrap text-center">
+                                            <input type="hidden" name="{{ full_key }}.{{ item_index }}.enabled" value="false">
+                                            <input type="checkbox"
+                                                   name="{{ full_key }}.{{ item_index }}.enabled"
+                                                   {% if item.get('enabled', true) %}checked{% endif %}
+                                                   value="true"
+                                                   class="h-4 w-4 text-blue-600">
+                                        </td>
+                                        <td class="px-4 py-3 whitespace-nowrap text-center">
+                                            <button type="button"
+                                                    onclick="removeCustomLeagueRow(this)"
+                                                    class="text-red-600 hover:text-red-800 px-2 py-1">
+                                                <i class="fas fa-trash"></i>
+                                            </button>
+                                        </td>
+                                    </tr>
+                                    {% endfor %}
+                                </tbody>
+                            </table>
+                            <div class="flex items-center justify-between mt-3">
+                                <button type="button"
+                                        onclick="addCustomLeagueRow('{{ field_id }}', '{{ full_key }}', {{ max_items }}, '{{ plugin_id }}')"
+                                        class="px-4 py-2 text-sm bg-blue-600 hover:bg-blue-700 text-white rounded-md"
+                                        {% if array_value|length >= max_items %}disabled style="opacity: 0.5;"{% endif %}>
+                                    <i class="fas fa-plus mr-1"></i> Add League
+                                </button>
+                                <p class="text-xs text-gray-500">
+                                    <i class="fas fa-info-circle mr-1"></i>
+                                    Common codes: por.1, mex.1, arg.1, bra.1, ned.1, sco.1, tur.1, bel.1
+                                </p>
+                            </div>
+                            {# Inline JavaScript for custom-leagues widget (soccer plugin) #}
+                            <script>
+                            (function() {
+                                // Only define functions once
+                                if (window.addCustomLeagueRow) return;
+
+                                window.addCustomLeagueRow = function(fieldId, fullKey, maxItems, pluginId) {
+                                    const tbody = document.getElementById(fieldId + '_tbody');
+                                    if (!tbody) return;
+
+                                    const currentRows = tbody.querySelectorAll('.custom-league-row');
+                                    if (currentRows.length >= maxItems) {
+                                        const notifyFn = window.showNotification || alert;
+                                        notifyFn('Maximum ' + maxItems + ' custom leagues allowed', 'error');
+                                        return;
+                                    }
+
+                                    const newIndex = currentRows.length;
+                                    const row = document.createElement('tr');
+                                    row.className = 'custom-league-row';
+                                    row.setAttribute('data-index', newIndex);
+
+                                    // Name cell
+                                    const nameCell = document.createElement('td');
+                                    nameCell.className = 'px-4 py-3 whitespace-nowrap';
+                                    const nameInput = document.createElement('input');
+                                    nameInput.type = 'text';
+                                    nameInput.name = fullKey + '.' + newIndex + '.name';
+                                    nameInput.className = 'block w-full px-2 py-1 border border-gray-300 rounded text-sm';
+                                    nameInput.placeholder = 'e.g., Liga Portugal';
+                                    nameInput.required = true;
+                                    nameCell.appendChild(nameInput);
+
+                                    // League code cell
+                                    const codeCell = document.createElement('td');
+                                    codeCell.className = 'px-4 py-3 whitespace-nowrap';
+                                    const codeContainer = document.createElement('div');
+                                    codeContainer.className = 'flex items-center space-x-2';
+                                    const codeInput = document.createElement('input');
+                                    codeInput.type = 'text';
+                                    codeInput.name = fullKey + '.' + newIndex + '.league_code';
+                                    codeInput.className = 'block w-32 px-2 py-1 border border-gray-300 rounded text-sm';
+                                    codeInput.placeholder = 'e.g., por.1';
+                                    codeInput.pattern = '^[a-z]{2,6}\\.[0-9]+$';
+                                    codeInput.title = 'Format: xxx.n (e.g., por.1, mex.1)';
+                                    codeInput.required = true;
+                                    const validationSpan = document.createElement('span');
+                                    validationSpan.className = 'validation-indicator text-sm';
+                                    validationSpan.id = fieldId + '_validation_' + newIndex;
+                                    codeContainer.appendChild(codeInput);
+                                    codeContainer.appendChild(validationSpan);
+                                    codeCell.appendChild(codeContainer);
+
+                                    // Priority cell
+                                    const priorityCell = document.createElement('td');
+                                    priorityCell.className = 'px-4 py-3 whitespace-nowrap text-center';
+                                    const priorityInput = document.createElement('input');
+                                    priorityInput.type = 'number';
+                                    priorityInput.name = fullKey + '.' + newIndex + '.priority';
+                                    priorityInput.value = '50';
+                                    priorityInput.min = '1';
+                                    priorityInput.max = '100';
+                                    priorityInput.className = 'block w-20 px-2 py-1 border border-gray-300 rounded text-sm text-center';
+                                    priorityInput.title = 'Display priority (1=highest, 100=lowest)';
+                                    priorityCell.appendChild(priorityInput);
+
+                                    // Enabled cell
+                                    const enabledCell = document.createElement('td');
+                                    enabledCell.className = 'px-4 py-3 whitespace-nowrap text-center';
+                                    const enabledHidden = document.createElement('input');
+                                    enabledHidden.type = 'hidden';
+                                    enabledHidden.name = fullKey + '.' + newIndex + '.enabled';
+                                    enabledHidden.value = 'false';
+                                    const enabledInput = document.createElement('input');
+                                    enabledInput.type = 'checkbox';
+                                    enabledInput.name = fullKey + '.' + newIndex + '.enabled';
+                                    enabledInput.checked = true;
+                                    enabledInput.value = 'true';
+                                    enabledInput.className = 'h-4 w-4 text-blue-600';
+                                    enabledCell.appendChild(enabledHidden);
+                                    enabledCell.appendChild(enabledInput);
+
+                                    // Remove cell
+                                    const removeCell = document.createElement('td');
+                                    removeCell.className = 'px-4 py-3 whitespace-nowrap text-center';
+                                    const removeButton = document.createElement('button');
+                                    removeButton.type = 'button';
+                                    removeButton.className = 'text-red-600 hover:text-red-800 px-2 py-1';
+                                    removeButton.onclick = function() { removeCustomLeagueRow(this); };
+                                    const removeIcon = document.createElement('i');
+                                    removeIcon.className = 'fas fa-trash';
+                                    removeButton.appendChild(removeIcon);
+                                    removeCell.appendChild(removeButton);
+
+                                    // Append all cells
+                                    row.appendChild(nameCell);
+                                    row.appendChild(codeCell);
+                                    row.appendChild(priorityCell);
+                                    row.appendChild(enabledCell);
+                                    row.appendChild(removeCell);
+
+                                    tbody.appendChild(row);
+                                };
+
+                                window.removeCustomLeagueRow = function(button) {
+                                    const row = button.closest('tr');
+                                    if (!row) return;
+
+                                    if (confirm('Remove this custom league?')) {
+                                        const tbody = row.parentElement;
+                                        if (!tbody) return;
+
+                                        row.remove();
+
+                                        // Re-index remaining rows
+                                        const rows = tbody.querySelectorAll('.custom-league-row');
+                                        rows.forEach(function(r, index) {
+                                            r.setAttribute('data-index', index);
+                                            r.querySelectorAll('input').forEach(function(input) {
+                                                const name = input.getAttribute('name');
+                                                if (name) {
+                                                    input.setAttribute('name', name.replace(/\.\d+\./, '.' + index + '.'));
+                                                }
+                                                const id = input.id;
+                                                if (id) {
+                                                    input.id = id.replace(/_validation_\d+$/, '_validation_' + index);
+                                                }
+                                            });
+                                        });
+                                    }
+                                };
+                            })();
+                            </script>
+                        </div>
+                    {% endif %}
                 {% else %}
                     {# Generic array-of-objects would go here if needed in the future #}
                     {# For now, fall back to regular array input (comma-separated) #}
                     {# Regular array input (comma-separated) #}
                     {% set array_value = value if value is not none else (prop.default if prop.default is defined else []) %}
-                    <input type="text" 
+                    <input type="text"
                            id="{{ field_id }}"
-                           name="{{ full_key }}" 
+                           name="{{ full_key }}"
                            value="{{ array_value|join(', ') if array_value is iterable and array_value is not string else '' }}"
                            placeholder="Enter values separated by commas"
                            class="form-input w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 bg-white text-black placeholder:text-gray-500">
