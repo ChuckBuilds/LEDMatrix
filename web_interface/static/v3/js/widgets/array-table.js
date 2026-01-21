@@ -219,8 +219,26 @@
         const fullKey = button.getAttribute('data-full-key');
         const maxItems = parseInt(button.getAttribute('data-max-items'), 10);
         const pluginId = button.getAttribute('data-plugin-id');
-        const itemProperties = JSON.parse(button.getAttribute('data-item-properties') || '{}');
-        const displayColumns = JSON.parse(button.getAttribute('data-display-columns') || '[]');
+
+        // Parse JSON with fallback on error
+        let itemProperties = {};
+        let displayColumns = [];
+        const rawItemProps = button.getAttribute('data-item-properties') || '{}';
+        const rawDisplayCols = button.getAttribute('data-display-columns') || '[]';
+
+        try {
+            itemProperties = JSON.parse(rawItemProps);
+        } catch (e) {
+            console.error('[ArrayTableWidget] Failed to parse data-item-properties:', rawItemProps, e);
+            itemProperties = {};
+        }
+
+        try {
+            displayColumns = JSON.parse(rawDisplayCols);
+        } catch (e) {
+            console.error('[ArrayTableWidget] Failed to parse data-display-columns:', rawDisplayCols, e);
+            displayColumns = [];
+        }
 
         const tbody = document.getElementById(fieldId + '_tbody');
         if (!tbody) return;
