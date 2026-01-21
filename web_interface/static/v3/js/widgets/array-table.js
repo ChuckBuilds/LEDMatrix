@@ -189,14 +189,16 @@
 
     /**
      * Add a new row to the array table
-     * @param {string} fieldId - Field ID
-     * @param {string} fullKey - Full field key
-     * @param {number} maxItems - Maximum number of items allowed
-     * @param {string} pluginId - Plugin ID
-     * @param {Object} itemProperties - Schema properties for items
-     * @param {Array} displayColumns - Column names to display
+     * @param {HTMLElement} button - The button element with data attributes
      */
-    window.addArrayTableRow = function(fieldId, fullKey, maxItems, pluginId, itemProperties, displayColumns) {
+    window.addArrayTableRow = function(button) {
+        const fieldId = button.getAttribute('data-field-id');
+        const fullKey = button.getAttribute('data-full-key');
+        const maxItems = parseInt(button.getAttribute('data-max-items'), 10);
+        const pluginId = button.getAttribute('data-plugin-id');
+        const itemProperties = JSON.parse(button.getAttribute('data-item-properties') || '{}');
+        const displayColumns = JSON.parse(button.getAttribute('data-display-columns') || '[]');
+
         const tbody = document.getElementById(fieldId + '_tbody');
         if (!tbody) return;
 
