@@ -188,6 +188,29 @@
     }
 
     /**
+     * Update the Add button's disabled state based on current row count
+     * @param {string} fieldId - Field ID to find the tbody and button
+     */
+    function updateAddButtonState(fieldId) {
+        const tbody = document.getElementById(fieldId + '_tbody');
+        if (!tbody) return;
+
+        // Find the add button by looking for the button with matching data-field-id
+        const addButton = document.querySelector(`button[data-field-id="${fieldId}"]`);
+        if (!addButton) return;
+
+        const maxItems = parseInt(addButton.getAttribute('data-max-items'), 10);
+        const currentRows = tbody.querySelectorAll('.array-table-row');
+        const isAtMax = currentRows.length >= maxItems;
+
+        addButton.disabled = isAtMax;
+        addButton.style.opacity = isAtMax ? '0.5' : '';
+    }
+
+    // Expose for external use if needed
+    window.updateArrayTableAddButtonState = updateAddButtonState;
+
+    /**
      * Add a new row to the array table
      * @param {HTMLElement} button - The button element with data attributes
      */
@@ -212,6 +235,9 @@
         const newIndex = currentRows.length;
         const row = createArrayTableRow(fieldId, fullKey, newIndex, pluginId, {}, itemProperties, displayColumns);
         tbody.appendChild(row);
+
+        // Update button state after adding
+        updateAddButtonState(fieldId);
     };
 
     /**
@@ -226,6 +252,9 @@
             const tbody = row.parentElement;
             if (!tbody) return;
 
+            // Get fieldId from tbody id (format: {fieldId}_tbody)
+            const fieldId = tbody.id.replace('_tbody', '');
+
             row.remove();
 
             // Re-index remaining rows
@@ -239,8 +268,29 @@
                     }
                 });
             });
+
+            // Update button state after removing
+            updateAddButtonState(fieldId);
         }
     };
+
+    /**
+     * Initialize all array table add buttons on page load
+     */
+    function initArrayTableButtons() {
+        const addButtons = document.querySelectorAll('button[data-field-id][data-max-items]');
+        addButtons.forEach(function(button) {
+            const fieldId = button.getAttribute('data-field-id');
+            updateAddButtonState(fieldId);
+        });
+    }
+
+    // Initialize on DOM ready
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', initArrayTableButtons);
+    } else {
+        initArrayTableButtons();
+    }
 
     console.log('[ArrayTableWidget] Array table widget registered');
 })();
