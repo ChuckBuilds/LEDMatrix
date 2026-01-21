@@ -55,17 +55,16 @@
                 const item = {};
                 row.querySelectorAll('input').forEach(input => {
                     const name = input.getAttribute('name');
-                    if (name && !name.endsWith('.enabled') || input.type !== 'hidden') {
-                        const match = name.match(/\.\d+\.([^.]+)$/);
-                        if (match) {
-                            const propName = match[1];
-                            if (input.type === 'checkbox') {
-                                item[propName] = input.checked;
-                            } else if (input.type === 'number') {
-                                item[propName] = input.value ? parseFloat(input.value) : null;
-                            } else if (input.type !== 'hidden') {
-                                item[propName] = input.value;
-                            }
+                    if (!name || name.endsWith('.enabled') || input.type === 'hidden') continue;
+                    const match = name.match(/\.\d+\.([^.]+)$/);
+                    if (match) {
+                        const propName = match[1];
+                        if (input.type === 'checkbox') {
+                            item[propName] = input.checked;
+                        } else if (input.type === 'number') {
+                            item[propName] = input.value ? parseFloat(input.value) : null;
+                        } else if (input.type !== 'hidden') {
+                            item[propName] = input.value;
                         }
                     }
                 });
@@ -107,6 +106,9 @@
                 );
                 tbody.appendChild(row);
             });
+
+            // Refresh Add button state after repopulating rows
+            updateAddButtonState(fieldId);
         },
 
         handlers: {}
