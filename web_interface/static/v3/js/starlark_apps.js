@@ -10,6 +10,10 @@
     let currentConfigAppId = null;
     let repositoryApps = [];
     let repositoryCategories = [];
+    
+    // Track grids that already have event listeners to prevent duplicates
+    const gridsWithListeners = new WeakSet();
+    const repoGridsWithListeners = new WeakSet();
 
     // ========================================================================
     // Security: HTML Sanitization
@@ -29,13 +33,28 @@
     }
 
     // Initialize on page load
-    document.addEventListener('DOMContentLoaded', function() {
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', function() {
+            initStarlarkApps();
+        });
+    } else {
+        // DOM already loaded (e.g., when script is executed after HTMX swap)
         initStarlarkApps();
-    });
+    }
+
+    // Also expose init function globally for HTMX afterSwap handlers
+    window.initStarlarkApps = initStarlarkApps;
 
     function initStarlarkApps() {
+        // Check if already initialized to prevent duplicate event listeners
+        if (window.starlarkAppsInitialized) {
+            return;
+        }
+        window.starlarkAppsInitialized = true;
+
         // Set up event listeners
         setupEventListeners();
+        setupRepositoryListeners();
 
         // Load initial data
         loadStarlarkStatus();
@@ -288,6 +307,12 @@
      * Uses data attributes to avoid inline onclick handlers.
      */
     function setupAppCardEventDelegation(grid) {
+        // Guard: only attach listener once per grid element
+        if (gridsWithListeners.has(grid)) {
+            return;
+        }
+        gridsWithListeners.add(grid);
+        
         grid.addEventListener('click', async (e) => {
             const button = e.target.closest('button[data-action]');
             if (!button) return;
@@ -299,10 +324,11 @@
             const action = button.dataset.action;
 
             switch (action) {
-                case 'toggle':
+                case 'toggle': {
                     const enabled = button.dataset.enabled === 'true';
                     await toggleStarlarkApp(appId, !enabled);
                     break;
+                }
                 case 'configure':
                     await configureStarlarkApp(appId);
                     break;
@@ -429,8 +455,8 @@
 
             const app = data.app;
 
-            // Update modal title (textContent is safe, but sanitize for consistency)
-            document.getElementById('config-app-name').textContent = sanitizeHtml(app.name || '');
+            // Update modal title (textContent automatically escapes HTML)
+            document.getElementById('config-app-name').textContent = app.name || '';
 
             // Generate config fields
             const fieldsContainer = document.getElementById('starlark-config-fields');
@@ -765,6 +791,12 @@
      * Uses data attributes to avoid inline onclick handlers.
      */
     function setupRepositoryAppEventDelegation(grid) {
+        // Guard: only attach listener once per grid element
+        if (repoGridsWithListeners.has(grid)) {
+            return;
+        }
+        repoGridsWithListeners.add(grid);
+        
         grid.addEventListener('click', async (e) => {
             const button = e.target.closest('button[data-action="install"]');
             if (!button) return;
@@ -836,10 +868,5 @@
             showNotification('Failed to install app', 'error');
         }
     }
-
-    // Initialize repository listeners when document loads
-    document.addEventListener('DOMContentLoaded', function() {
-        setupRepositoryListeners();
-    });
 
 })();

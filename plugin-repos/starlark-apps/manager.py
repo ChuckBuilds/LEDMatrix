@@ -167,6 +167,20 @@ class StarlarkAppsPlugin(BasePlugin):
 
         self.logger.info(f"Starlark Apps plugin initialized with {len(self.apps)} apps")
 
+    @property
+    def modes(self) -> List[str]:
+        """
+        Return list of display modes (one per installed Starlark app).
+        
+        This allows each installed app to appear as a separate display mode
+        in the schedule/rotation system.
+        
+        Returns:
+            List of app IDs that can be used as display modes
+        """
+        # Return list of enabled app IDs as display modes
+        return [app.app_id for app in self.apps.values() if app.is_enabled()]
+
     def validate_config(self) -> bool:
         """
         Validate plugin configuration.
