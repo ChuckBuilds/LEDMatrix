@@ -11,6 +11,23 @@
     let repositoryApps = [];
     let repositoryCategories = [];
 
+    // ========================================================================
+    // Security: HTML Sanitization
+    // ========================================================================
+
+    /**
+     * Sanitize HTML string to prevent XSS attacks.
+     * Escapes HTML special characters.
+     */
+    function sanitizeHtml(str) {
+        if (str === null || str === undefined) {
+            return '';
+        }
+        const div = document.createElement('div');
+        div.textContent = String(str);
+        return div.innerHTML;
+    }
+
     // Initialize on page load
     document.addEventListener('DOMContentLoaded', function() {
         initStarlarkApps();
@@ -71,7 +88,12 @@
 
                 const files = e.dataTransfer.files;
                 if (files.length > 0) {
-                    fileInput.files = files;
+                    // Create DataTransfer to properly assign files across browsers
+                    const dataTransfer = new DataTransfer();
+                    for (let i = 0; i < files.length; i++) {
+                        dataTransfer.items.add(files[i]);
+                    }
+                    fileInput.files = dataTransfer.files;
                     handleFileSelect({ target: fileInput });
                 }
             });
@@ -128,11 +150,18 @@
                 const magnifyRec = displayInfo.calculated_magnify || 1;
                 const displaySize = displayInfo.display_size || 'unknown';
 
+                // Sanitize all dynamic values
+                const safeVersion = sanitizeHtml(data.pixlet_version || 'Unknown');
+                const safeInstalledApps = sanitizeHtml(data.installed_apps);
+                const safeEnabledApps = sanitizeHtml(data.enabled_apps);
+                const safeDisplaySize = sanitizeHtml(displaySize);
+                const safeMagnifyRec = sanitizeHtml(magnifyRec);
+
                 let magnifyHint = '';
                 if (magnifyRec > 1) {
                     magnifyHint = `<div class="mt-2 text-xs text-blue-700 bg-blue-50 px-3 py-2 rounded border border-blue-200">
                         <i class="fas fa-lightbulb mr-1"></i>
-                        <strong>Tip:</strong> Your ${displaySize} display works best with <strong>magnify=${magnifyRec}</strong>.
+                        <strong>Tip:</strong> Your ${safeDisplaySize} display works best with <strong>magnify=${safeMagnifyRec}</strong>.
                         Configure this in plugin settings for sharper output.
                     </div>`;
                 }
@@ -145,7 +174,7 @@
                                 <i class="fas fa-check-circle text-green-600 text-xl mr-3"></i>
                                 <div>
                                     <h4 class="font-semibold text-green-900">Pixlet Ready</h4>
-                                    <p class="text-sm text-green-800">Version: ${data.pixlet_version || 'Unknown'} | ${data.installed_apps} apps installed | ${data.enabled_apps} enabled</p>
+                                    <p class="text-sm text-green-800">Version: ${safeVersion} | ${safeInstalledApps} apps installed | ${safeEnabledApps} enabled</p>
                                 </div>
                             </div>
                             ${magnifyHint}
@@ -193,6 +222,9 @@
             // Render apps
             grid.innerHTML = data.apps.map(app => renderAppCard(app)).join('');
 
+            // Set up event delegation for app cards
+            setupAppCardEventDelegation(grid);
+
         } catch (error) {
             console.error('Error loading Starlark apps:', error);
             showNotification('Failed to load apps', 'error');
@@ -204,12 +236,18 @@
         const statusIcon = app.enabled ? 'check-circle' : 'pause-circle';
         const hasFrames = app.has_frames ? '<i class="fas fa-film text-blue-500 text-xs"></i>' : '';
 
+        // Sanitize all dynamic values
+        const safeName = sanitizeHtml(app.name);
+        const safeId = sanitizeHtml(app.id);
+        const safeRenderInterval = sanitizeHtml(app.render_interval);
+        const safeDisplayDuration = sanitizeHtml(app.display_duration);
+
         return `
-            <div class="border border-gray-200 rounded-lg p-4 hover:shadow-lg transition-shadow bg-white">
+            <div class="border border-gray-200 rounded-lg p-4 hover:shadow-lg transition-shadow bg-white" data-app-id="${safeId}">
                 <div class="flex items-start justify-between mb-3">
                     <div class="flex-1">
-                        <h4 class="font-semibold text-gray-900 text-sm mb-1 truncate" title="${app.name}">${app.name}</h4>
-                        <p class="text-xs text-gray-500">${app.id}</p>
+                        <h4 class="font-semibold text-gray-900 text-sm mb-1 truncate" title="${safeName}">${safeName}</h4>
+                        <p class="text-xs text-gray-500">${safeId}</p>
                     </div>
                     <div class="flex items-center gap-1">
                         ${hasFrames}
@@ -218,31 +256,64 @@
                 </div>
 
                 <div class="text-xs text-gray-600 mb-3 space-y-1">
-                    <div><span class="font-medium">Render:</span> ${app.render_interval}s</div>
-                    <div><span class="font-medium">Display:</span> ${app.display_duration}s</div>
+                    <div><span class="font-medium">Render:</span> ${safeRenderInterval}s</div>
+                    <div><span class="font-medium">Display:</span> ${safeDisplayDuration}s</div>
                     ${app.has_schema ? '<div class="text-blue-600"><i class="fas fa-cog mr-1"></i>Configurable</div>' : ''}
                 </div>
 
                 <div class="flex flex-wrap gap-2">
-                    <button onclick="toggleStarlarkApp('${app.id}', ${!app.enabled})"
+                    <button data-action="toggle" data-enabled="${app.enabled}"
                             class="flex-1 text-xs px-3 py-1.5 ${app.enabled ? 'bg-gray-100 hover:bg-gray-200 text-gray-700' : 'bg-green-100 hover:bg-green-200 text-green-700'} rounded-md font-medium transition-colors">
                         ${app.enabled ? '<i class="fas fa-pause mr-1"></i>Disable' : '<i class="fas fa-play mr-1"></i>Enable'}
                     </button>
-                    <button onclick="configureStarlarkApp('${app.id}')"
+                    <button data-action="configure"
                             class="flex-1 text-xs px-3 py-1.5 bg-blue-100 hover:bg-blue-200 text-blue-700 rounded-md font-medium transition-colors">
                         <i class="fas fa-cog mr-1"></i>Config
                     </button>
-                    <button onclick="renderStarlarkApp('${app.id}')"
+                    <button data-action="render"
                             class="flex-1 text-xs px-3 py-1.5 bg-purple-100 hover:bg-purple-200 text-purple-700 rounded-md font-medium transition-colors">
                         <i class="fas fa-sync mr-1"></i>Render
                     </button>
-                    <button onclick="uninstallStarlarkApp('${app.id}')"
+                    <button data-action="uninstall"
                             class="flex-1 text-xs px-3 py-1.5 bg-red-100 hover:bg-red-200 text-red-700 rounded-md font-medium transition-colors">
                         <i class="fas fa-trash mr-1"></i>Delete
                     </button>
                 </div>
             </div>
         `;
+    }
+
+    /**
+     * Set up event delegation for app card buttons.
+     * Uses data attributes to avoid inline onclick handlers.
+     */
+    function setupAppCardEventDelegation(grid) {
+        grid.addEventListener('click', async (e) => {
+            const button = e.target.closest('button[data-action]');
+            if (!button) return;
+
+            const card = button.closest('[data-app-id]');
+            if (!card) return;
+
+            const appId = card.dataset.appId;
+            const action = button.dataset.action;
+
+            switch (action) {
+                case 'toggle':
+                    const enabled = button.dataset.enabled === 'true';
+                    await toggleStarlarkApp(appId, !enabled);
+                    break;
+                case 'configure':
+                    await configureStarlarkApp(appId);
+                    break;
+                case 'render':
+                    await renderStarlarkApp(appId);
+                    break;
+                case 'uninstall':
+                    await uninstallStarlarkApp(appId);
+                    break;
+            }
+        });
     }
 
     function openUploadModal() {
@@ -299,7 +370,7 @@
         }
     }
 
-    window.toggleStarlarkApp = async function(appId, enabled) {
+    async function toggleStarlarkApp(appId, enabled) {
         try {
             const response = await fetch(`/api/v3/starlark/apps/${appId}/toggle`, {
                 method: 'POST',
@@ -320,9 +391,9 @@
             console.error('Error toggling app:', error);
             showNotification('Failed to toggle app', 'error');
         }
-    };
+    }
 
-    window.renderStarlarkApp = async function(appId) {
+    async function renderStarlarkApp(appId) {
         try {
             showNotification('Rendering app...', 'info');
 
@@ -342,9 +413,9 @@
             console.error('Error rendering app:', error);
             showNotification('Failed to render app', 'error');
         }
-    };
+    }
 
-    window.configureStarlarkApp = async function(appId) {
+    async function configureStarlarkApp(appId) {
         try {
             currentConfigAppId = appId;
 
@@ -358,8 +429,8 @@
 
             const app = data.app;
 
-            // Update modal title
-            document.getElementById('config-app-name').textContent = app.name;
+            // Update modal title (textContent is safe, but sanitize for consistency)
+            document.getElementById('config-app-name').textContent = sanitizeHtml(app.name || '');
 
             // Generate config fields
             const fieldsContainer = document.getElementById('starlark-config-fields');
@@ -382,7 +453,7 @@
             console.error('Error loading app config:', error);
             showNotification('Failed to load configuration', 'error');
         }
-    };
+    }
 
     function generateConfigFields(schema, config) {
         // Simple field generator - can be enhanced to handle complex Pixlet schemas
@@ -392,39 +463,49 @@
             const value = config[key] || field.default || '';
             const type = field.type || 'string';
 
+            // Sanitize all dynamic values
+            const safeKey = sanitizeHtml(key);
+            const safeName = sanitizeHtml(field.name || key);
+            const safeDescription = sanitizeHtml(field.description || '');
+            const safeValue = sanitizeHtml(value);
+            const safePlaceholder = sanitizeHtml(field.placeholder || '');
+
             html += `
                 <div>
-                    <label for="config-${key}" class="block text-sm font-medium text-gray-700 mb-2">
-                        ${field.name || key}
+                    <label for="config-${safeKey}" class="block text-sm font-medium text-gray-700 mb-2">
+                        ${safeName}
                         ${field.required ? '<span class="text-red-500">*</span>' : ''}
                     </label>
-                    ${field.description ? `<p class="text-xs text-gray-500 mb-2">${field.description}</p>` : ''}
+                    ${field.description ? `<p class="text-xs text-gray-500 mb-2">${safeDescription}</p>` : ''}
             `;
 
             if (type === 'bool' || type === 'boolean') {
                 html += `
                     <label class="flex items-center cursor-pointer">
-                        <input type="checkbox" name="${key}" id="config-${key}"
+                        <input type="checkbox" name="${safeKey}" id="config-${safeKey}"
                                ${value ? 'checked' : ''}
                                class="form-checkbox h-5 w-5 text-blue-600 rounded">
-                        <span class="ml-2 text-sm text-gray-700">Enable ${field.name || key}</span>
+                        <span class="ml-2 text-sm text-gray-700">Enable ${safeName}</span>
                     </label>
                 `;
             } else if (field.options) {
                 html += `
-                    <select name="${key}" id="config-${key}"
+                    <select name="${safeKey}" id="config-${safeKey}"
                             class="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500">
                 `;
                 for (const option of field.options) {
-                    html += `<option value="${option}" ${value === option ? 'selected' : ''}>${option}</option>`;
+                    const safeOption = sanitizeHtml(option);
+                    // Compare sanitized values for safety
+                    const safeValueForCompare = sanitizeHtml(String(value));
+                    html += `<option value="${safeOption}" ${safeValueForCompare === safeOption ? 'selected' : ''}>${safeOption}</option>`;
                 }
                 html += '</select>';
             } else {
                 html += `
-                    <input type="text" name="${key}" id="config-${key}"
-                           value="${value}"
+                    <input type="text" name="${safeKey}" id="config-${safeKey}"
+                           value="${safeValue}"
                            ${field.required ? 'required' : ''}
-                           placeholder="${field.placeholder || ''}"
+                           placeholder="${safePlaceholder}"
                            class="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500">
                 `;
             }
@@ -490,7 +571,7 @@
         }
     }
 
-    window.uninstallStarlarkApp = async function(appId) {
+    async function uninstallStarlarkApp(appId) {
         if (!confirm(`Are you sure you want to uninstall this app? This cannot be undone.`)) {
             return;
         }
@@ -513,7 +594,7 @@
             console.error('Error uninstalling app:', error);
             showNotification('Failed to uninstall app', 'error');
         }
-    };
+    }
 
     // Utility function for notifications (assuming it exists in the main app)
     function showNotification(message, type) {
@@ -634,6 +715,8 @@
                 if (grid) {
                     grid.innerHTML = repositoryApps.map(app => renderRepositoryAppCard(app)).join('');
                     grid.classList.remove('hidden');
+                    // Set up event delegation for repository app cards
+                    setupRepositoryAppEventDelegation(grid);
                 }
             }
 
@@ -650,24 +733,48 @@
         const author = app.author || 'Community';
         const category = app.category || 'Other';
 
+        // Sanitize all dynamic values
+        const safeName = sanitizeHtml(name);
+        const safeId = sanitizeHtml(app.id);
+        const safeSummary = sanitizeHtml(summary);
+        const safeAuthor = sanitizeHtml(author);
+        const safeCategory = sanitizeHtml(category);
+
         return `
-            <div class="border border-gray-200 rounded-lg p-4 hover:shadow-lg transition-shadow bg-white">
+            <div class="border border-gray-200 rounded-lg p-4 hover:shadow-lg transition-shadow bg-white" data-repo-app-id="${safeId}">
                 <div class="mb-3">
-                    <h4 class="font-semibold text-gray-900 text-sm mb-1">${name}</h4>
-                    <p class="text-xs text-gray-600 line-clamp-2 mb-2">${summary}</p>
+                    <h4 class="font-semibold text-gray-900 text-sm mb-1">${safeName}</h4>
+                    <p class="text-xs text-gray-600 line-clamp-2 mb-2">${safeSummary}</p>
                     <div class="flex items-center gap-2 text-xs text-gray-500">
-                        <span><i class="fas fa-user mr-1"></i>${author}</span>
+                        <span><i class="fas fa-user mr-1"></i>${safeAuthor}</span>
                         <span>•</span>
-                        <span><i class="fas fa-tag mr-1"></i>${category}</span>
+                        <span><i class="fas fa-tag mr-1"></i>${safeCategory}</span>
                     </div>
                 </div>
 
-                <button onclick="installFromRepository('${app.id}')"
+                <button data-action="install"
                         class="w-full text-sm px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-md font-medium transition-colors">
                     <i class="fas fa-download mr-2"></i>Install
                 </button>
             </div>
         `;
+    }
+
+    /**
+     * Set up event delegation for repository app install buttons.
+     * Uses data attributes to avoid inline onclick handlers.
+     */
+    function setupRepositoryAppEventDelegation(grid) {
+        grid.addEventListener('click', async (e) => {
+            const button = e.target.closest('button[data-action="install"]');
+            if (!button) return;
+
+            const card = button.closest('[data-repo-app-id]');
+            if (!card) return;
+
+            const appId = card.dataset.repoAppId;
+            await installFromRepository(appId);
+        });
     }
 
     function updateRateLimitInfo(rateLimit) {
@@ -678,13 +785,17 @@
         const limit = rateLimit.limit || 0;
         const used = rateLimit.used || 0;
 
+        // Sanitize numeric values
+        const safeRemaining = sanitizeHtml(remaining);
+        const safeLimit = sanitizeHtml(limit);
+
         let color = 'text-green-600';
         if (remaining < limit * 0.3) color = 'text-yellow-600';
         if (remaining < limit * 0.1) color = 'text-red-600';
 
         info.innerHTML = `
             <i class="fab fa-github mr-1"></i>
-            GitHub API: <span class="${color} font-medium">${remaining}/${limit}</span> requests remaining
+            GitHub API: <span class="${color} font-medium">${safeRemaining}/${safeLimit}</span> requests remaining
         `;
     }
 
@@ -695,9 +806,9 @@
         loadRepositoryApps(search, category);
     }
 
-    window.installFromRepository = async function(appId) {
+    async function installFromRepository(appId) {
         try {
-            showNotification(`Installing ${appId}...`, 'info');
+            showNotification(`Installing ${sanitizeHtml(appId)}...`, 'info');
 
             const response = await fetch('/api/v3/starlark/repository/install', {
                 method: 'POST',
@@ -724,7 +835,7 @@
             console.error('Error installing from repository:', error);
             showNotification('Failed to install app', 'error');
         }
-    };
+    }
 
     // Initialize repository listeners when document loads
     document.addEventListener('DOMContentLoaded', function() {

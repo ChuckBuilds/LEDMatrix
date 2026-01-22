@@ -6286,8 +6286,8 @@ def upload_starlark_app():
             # Clean up temp file
             try:
                 os.unlink(temp_path)
-            except:
-                pass
+            except OSError as e:
+                logger.warning(f"Failed to clean up temp file {temp_path}: {e}")
 
     except Exception as e:
         logger.error(f"Error uploading starlark app: {e}")
@@ -6380,7 +6380,46 @@ def update_starlark_app_config(app_id):
                 'message': 'No configuration provided'
             }), 400
 
-        # Update config
+        # Validate timing values if present
+        if 'render_interval' in data:
+            render_interval_input = data['render_interval']
+            # Reject None/null values - must provide a valid integer
+            if render_interval_input is None:
+                return jsonify({
+                    'status': 'error',
+                    'message': 'render_interval cannot be null'
+                }), 400
+            render_interval, render_error = _validate_timing_value(
+                render_interval_input, 'render_interval', min_val=1, max_val=86400
+            )
+            if render_error:
+                return jsonify({
+                    'status': 'error',
+                    'message': render_error
+                }), 400
+            # render_interval should always be set after successful validation
+            data['render_interval'] = render_interval
+        
+        if 'display_duration' in data:
+            display_duration_input = data['display_duration']
+            # Reject None/null values - must provide a valid integer
+            if display_duration_input is None:
+                return jsonify({
+                    'status': 'error',
+                    'message': 'display_duration cannot be null'
+                }), 400
+            display_duration, duration_error = _validate_timing_value(
+                display_duration_input, 'display_duration', min_val=1, max_val=86400
+            )
+            if duration_error:
+                return jsonify({
+                    'status': 'error',
+                    'message': duration_error
+                }), 400
+            # display_duration should always be set after successful validation
+            data['display_duration'] = display_duration
+
+        # Update config with validated data
         app.config.update(data)
 
         # Save to file
@@ -6661,8 +6700,8 @@ def install_from_tronbyte_repository():
             # Clean up temp file
             try:
                 os.unlink(temp_path)
-            except:
-                pass
+            except OSError as e:
+                logger.warning(f"Failed to clean up temp file {temp_path}: {e}")
 
     except Exception as e:
         logger.error(f"Error installing from repository: {e}")

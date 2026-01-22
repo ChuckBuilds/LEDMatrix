@@ -103,7 +103,7 @@ class TronbyteRepository:
         url = f"{self.raw_url}/{self.REPO_OWNER}/{self.REPO_NAME}/{branch}/{file_path}"
 
         try:
-            response = requests.get(url, timeout=10)
+            response = self.session.get(url, timeout=10)
             if response.status_code == 200:
                 return response.text
             else:

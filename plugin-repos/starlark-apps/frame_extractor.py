@@ -45,52 +45,51 @@ class FrameExtractor:
             - error: Error message, or None on success
         """
         try:
-            img = Image.open(webp_path)
+            with Image.open(webp_path) as img:
+                # Check if animated
+                is_animated = getattr(img, "is_animated", False)
 
-            # Check if animated
-            is_animated = getattr(img, "is_animated", False)
+                if not is_animated:
+                    # Static image - single frame
+                    logger.debug(f"Loaded static WebP: {webp_path}")
+                    return True, [(img.copy(), self.default_frame_delay)], None
 
-            if not is_animated:
-                # Static image - single frame
-                logger.debug(f"Loaded static WebP: {webp_path}")
-                return True, [(img.copy(), self.default_frame_delay)], None
+                # Animated WebP - extract all frames
+                frames = []
+                frame_count = getattr(img, "n_frames", 1)
 
-            # Animated WebP - extract all frames
-            frames = []
-            frame_count = getattr(img, "n_frames", 1)
+                logger.debug(f"Extracting {frame_count} frames from animated WebP: {webp_path}")
 
-            logger.debug(f"Extracting {frame_count} frames from animated WebP: {webp_path}")
+                for frame_index in range(frame_count):
+                    try:
+                        img.seek(frame_index)
 
-            for frame_index in range(frame_count):
-                try:
-                    img.seek(frame_index)
+                        # Get frame duration (in milliseconds)
+                        # WebP stores duration in milliseconds
+                        duration = img.info.get("duration", self.default_frame_delay)
 
-                    # Get frame duration (in milliseconds)
-                    # WebP stores duration in milliseconds
-                    duration = img.info.get("duration", self.default_frame_delay)
+                        # Ensure minimum frame delay (prevent too-fast animations)
+                        if duration < 16:  # Less than ~60fps
+                            duration = 16
 
-                    # Ensure minimum frame delay (prevent too-fast animations)
-                    if duration < 16:  # Less than ~60fps
-                        duration = 16
+                        # Convert frame to RGB (LED matrix needs RGB)
+                        frame = img.convert("RGB")
+                        frames.append((frame.copy(), duration))
 
-                    # Convert frame to RGB (LED matrix needs RGB)
-                    frame = img.convert("RGB")
-                    frames.append((frame.copy(), duration))
+                    except EOFError:
+                        logger.warning(f"Reached end of frames at index {frame_index}")
+                        break
+                    except Exception as e:
+                        logger.warning(f"Error extracting frame {frame_index}: {e}")
+                        continue
 
-                except EOFError:
-                    logger.warning(f"Reached end of frames at index {frame_index}")
-                    break
-                except Exception as e:
-                    logger.warning(f"Error extracting frame {frame_index}: {e}")
-                    continue
+                if not frames:
+                    error = "No frames extracted from WebP"
+                    logger.error(error)
+                    return False, None, error
 
-            if not frames:
-                error = "No frames extracted from WebP"
-                logger.error(error)
-                return False, None, error
-
-            logger.debug(f"Successfully extracted {len(frames)} frames")
-            return True, frames, None
+                logger.debug(f"Successfully extracted {len(frames)} frames")
+                return True, frames, None
 
         except FileNotFoundError:
             error = f"WebP file not found: {webp_path}"

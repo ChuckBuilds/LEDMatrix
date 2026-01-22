@@ -32,7 +32,7 @@ def _calculate_optimal_magnify():
 - `64x32` → magnify=1 (native, no scaling needed)
 - `128x64` → magnify=2 (perfect 2x fit)
 - `192x96` → magnify=3 (perfect 3x fit)
-- `128x32` → magnify=2 (width fits, height scales)
+- `128x32` → magnify=1 (width fits, height scales)
 - `256x128` → magnify=4 (perfect 4x fit)
 - `320x160` → magnify=5 (perfect 5x fit)
 

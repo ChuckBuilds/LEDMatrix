@@ -607,6 +607,11 @@ class StarlarkAppsPlugin(BasePlugin):
                 else:
                     frames = self.extractor.scale_frames(frames, width, height, scale_method)
 
+            # Optimize frames to limit memory usage (max_frames=None means no limit)
+            max_frames = self.config.get("max_frames")
+            if max_frames is not None:
+                frames = self.extractor.optimize_frames(frames, max_frames=max_frames)
+
             app.frames = frames
             app.current_frame_index = 0
             app.last_frame_time = time.time()
