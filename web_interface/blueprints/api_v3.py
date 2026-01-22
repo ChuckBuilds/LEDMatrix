@@ -9,6 +9,7 @@ import uuid
 import logging
 from datetime import datetime
 from pathlib import Path
+from typing import Tuple, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -6094,6 +6095,91 @@ def get_starlark_app(app_id):
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
 
+def _validate_and_sanitize_app_id(app_id: Optional[str], fallback_source: Optional[str] = None) -> Tuple[Optional[str], Optional[str]]:
+    """
+    Validate and sanitize app_id to a safe slug.
+    
+    Args:
+        app_id: App ID to validate (can be None)
+        fallback_source: Source to generate app_id from if app_id is None/empty
+        
+    Returns:
+        Tuple of (sanitized_app_id, error_message)
+        If error_message is not None, validation failed
+    """
+    import re
+    import hashlib
+    
+    # If app_id is not provided, generate from fallback_source
+    if not app_id and fallback_source:
+        app_id = fallback_source
+    
+    if not app_id:
+        return None, "app_id is required"
+    
+    # Check for path traversal attempts
+    if '..' in app_id or '/' in app_id or '\\' in app_id:
+        return None, "app_id contains invalid characters (path separators or '..')"
+    
+    # Normalize to lowercase
+    normalized = app_id.lower()
+    
+    # Replace invalid characters with underscore
+    # Allow only: lowercase letters, digits, underscore
+    sanitized = re.sub(r'[^a-z0-9_]', '_', normalized)
+    
+    # Remove leading/trailing underscores
+    sanitized = sanitized.strip('_')
+    
+    # Ensure it's not empty after sanitization
+    if not sanitized:
+        # Generate a safe fallback slug from hash
+        hash_slug = hashlib.md5(app_id.encode()).hexdigest()[:12]
+        sanitized = f"app_{hash_slug}"
+    
+    # Ensure it doesn't start with a number
+    if sanitized and sanitized[0].isdigit():
+        sanitized = f"app_{sanitized}"
+    
+    return sanitized, None
+
+
+def _validate_timing_value(value, field_name: str, min_val: int = 1, max_val: int = 86400) -> Tuple[Optional[int], Optional[str]]:
+    """
+    Validate and coerce timing values (render_interval, display_duration).
+    
+    Args:
+        value: Value to validate (can be None, int, or string)
+        field_name: Name of the field for error messages
+        min_val: Minimum allowed value
+        max_val: Maximum allowed value
+        
+    Returns:
+        Tuple of (validated_int_value, error_message)
+        If error_message is not None, validation failed
+    """
+    if value is None:
+        return None, None
+    
+    # Try to convert to int
+    try:
+        if isinstance(value, str):
+            int_value = int(value)
+        else:
+            int_value = int(value)
+    except (ValueError, TypeError):
+        return None, f"{field_name} must be an integer"
+    
+    # Check bounds
+    if int_value < min_val:
+        return None, f"{field_name} must be at least {min_val}"
+    
+    if int_value > max_val:
+        return None, f"{field_name} must be at most {max_val}"
+    
+    return int_value, None
+
+
 @api_v3.route('/starlark/upload', methods=['POST'])
 def upload_starlark_app():
     """Upload and install a new Starlark app."""
@@ -6130,13 +6216,43 @@ def upload_starlark_app():
 
         # Get optional metadata
         app_name = request.form.get('name')
-        app_id = request.form.get('app_id')
-        render_interval = request.form.get('render_interval', 300, type=int)
-        display_duration = request.form.get('display_duration', 15, type=int)
-
-        # Generate app_id from filename if not provided
-        if not app_id:
-            app_id = file.filename.replace('.star', '').replace(' ', '_').replace('-', '_').lower()
+        app_id_input = request.form.get('app_id')
+        
+        # Validate and sanitize app_id
+        # Generate from filename if not provided
+        filename_base = file.filename.replace('.star', '') if file.filename else None
+        app_id, app_id_error = _validate_and_sanitize_app_id(app_id_input, fallback_source=filename_base)
+        if app_id_error:
+            return jsonify({
+                'status': 'error',
+                'message': f'Invalid app_id: {app_id_error}'
+            }), 400
+        
+        # Validate render_interval
+        render_interval_input = request.form.get('render_interval', 300, type=int)
+        render_interval, render_error = _validate_timing_value(
+            render_interval_input, 'render_interval', min_val=1, max_val=86400
+        )
+        if render_error:
+            return jsonify({
+                'status': 'error',
+                'message': render_error
+            }), 400
+        if render_interval is None:
+            render_interval = 300  # Default
+        
+        # Validate display_duration
+        display_duration_input = request.form.get('display_duration', 15, type=int)
+        display_duration, duration_error = _validate_timing_value(
+            display_duration_input, 'display_duration', min_val=1, max_val=86400
+        )
+        if duration_error:
+            return jsonify({
+                'status': 'error',
+                'message': duration_error
+            }), 400
+        if display_duration is None:
+            display_duration = 15  # Default
 
         # Save file temporarily
         import tempfile
@@ -6452,7 +6568,14 @@ def install_from_tronbyte_repository():
                 'message': 'app_id is required'
             }), 400
 
-        app_id = data['app_id']
+        # Validate and sanitize app_id
+        app_id_input = data['app_id']
+        app_id, app_id_error = _validate_and_sanitize_app_id(app_id_input)
+        if app_id_error:
+            return jsonify({
+                'status': 'error',
+                'message': f'Invalid app_id: {app_id_error}'
+            }), 400
 
         # Import repository module
         from plugin_repos.starlark_apps.tronbyte_repository import TronbyteRepository
@@ -6487,11 +6610,36 @@ def install_from_tronbyte_repository():
                     'message': f'Failed to download app: {error}'
                 }), 500
 
+            # Validate timing values
+            render_interval_input = data.get('render_interval', 300)
+            render_interval, render_error = _validate_timing_value(
+                render_interval_input, 'render_interval', min_val=1, max_val=86400
+            )
+            if render_error:
+                return jsonify({
+                    'status': 'error',
+                    'message': render_error
+                }), 400
+            if render_interval is None:
+                render_interval = 300  # Default
+            
+            display_duration_input = data.get('display_duration', 15)
+            display_duration, duration_error = _validate_timing_value(
+                display_duration_input, 'display_duration', min_val=1, max_val=86400
+            )
+            if duration_error:
+                return jsonify({
+                    'status': 'error',
+                    'message': duration_error
+                }), 400
+            if display_duration is None:
+                display_duration = 15  # Default
+            
             # Install the app using plugin method
             install_metadata = {
                 'name': metadata.get('name', app_id),
-                'render_interval': data.get('render_interval', 300),
-                'display_duration': data.get('display_duration', 15)
+                'render_interval': render_interval,
+                'display_duration': display_duration
             }
 
             success = starlark_plugin.install_app(app_id, temp_path, install_metadata)

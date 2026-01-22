@@ -8,7 +8,7 @@ The Starlark plugin now includes **automatic magnification calculation** based o
 
 The plugin automatically calculates the optimal `magnify` value for your display size:
 
-```
+```text
 Your Display: 128x64
 Native Size: 64x32
 Calculated: magnify=2 (perfect fit!)
@@ -40,7 +40,7 @@ def _calculate_optimal_magnify():
 
 ### Configuration Priority
 
-```
+```text
 magnify=0  →  Auto-calculate based on display
 magnify=1  →  Force 64x32 rendering
 magnify=2  →  Force 128x64 rendering
@@ -122,7 +122,7 @@ magnify = _get_effective_magnify()
 
 The Pixlet status banner now shows a helpful tip when auto-calculation detects a non-native display:
 
-```
+```text
 ┌─────────────────────────────────────────────┐
 │ ✓ Pixlet Ready                              │
 │ Version: v0.33.6 | 3 apps | 2 enabled       │
@@ -182,24 +182,24 @@ Auto-magnify + post-render scaling for perfect results.
 
 ### Non-Standard Displays
 
-**128x32 (wide):**
-```
+#### 128x32 (wide)
+```text
 Width scale: 2.0
 Height scale: 1.0
 Auto magnify: 1 (limited by height)
 ```
 Renders at 64x32, scales to 128x32 (horizontal stretch).
 
-**192x64:**
-```
+#### 192x64
+```text
 Width scale: 3.0
 Height scale: 2.0
 Auto magnify: 2 (limited by height)
 ```
 Renders at 128x64, scales to 192x64.
 
-**256x64:**
-```
+#### 256x64
+```text
 Width scale: 4.0
 Height scale: 2.0
 Auto magnify: 2 (limited by height)
@@ -214,7 +214,7 @@ The recommendation system scores each magnify option:
 **95 points:** Native render without scaling
 **Variable:** Based on how close render size is to display
 
-**Example for 128x64 display:**
+### Example for 128x64 display
 - magnify=1 (64x32) → Score: 50 (needs 2x scaling)
 - magnify=2 (128x64) → Score: 100 (perfect fit!)
 - magnify=3 (192x96) → Score: 75 (needs downscaling)
@@ -225,15 +225,15 @@ The recommendation system scores each magnify option:
 
 Auto-magnify intelligently balances quality and performance:
 
-**64x32 display:**
+### 64x32 display
 - Auto: magnify=1 (fast)
 - No scaling overhead
 
-**128x64 display:**
+### 128x64 display
 - Auto: magnify=2 (medium)
 - Better quality than post-scaling
 
-**256x128 display:**
+### 256x128 display
 - Auto: magnify=4 (slow)
 - Consider manual override to magnify=2-3 on slow hardware
 
@@ -273,7 +273,7 @@ System detects your display and sets optimal magnify.
 
 The plugin logs magnification decisions:
 
-```
+```text
 INFO: Display size: 128x64, recommended magnify: 2
 DEBUG: Using magnify=2 for world_clock
 ```
@@ -329,8 +329,8 @@ magnify = min(width_scale, height_scale)
 
 This prevents overflow on one dimension.
 
-**Example: 192x64 display**
-```
+### Example: 192x64 display
+```text
 width_scale = 192 / 64 = 3.0
 height_scale = 64 / 32 = 2.0
 magnify = min(3.0, 2.0) = 2
@@ -375,6 +375,6 @@ The auto-scaling feature:
 
 **For existing users:** Want auto-scaling? Set `magnify: 0` in config.
 
-**For power users:** Override with specific `magnify` value when needed.
+**For power-users:** Override with specific `magnify` value when needed.
 
 Enjoy perfect quality widgets on any display size! 🎨

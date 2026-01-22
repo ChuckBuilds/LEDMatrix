@@ -6,7 +6,7 @@ Phase 2 of the Starlark integration is complete. The web UI and API endpoints ar
 
 ### 1. API Endpoints (api_v3.py)
 
-Added 10 new REST API endpoints for Starlark app management:
+Added 9 new REST API endpoints for Starlark app management:
 
 #### Status & Discovery
 - `GET /api/v3/starlark/status` - Get Pixlet status and plugin info
@@ -176,7 +176,7 @@ The Starlark UI integrates seamlessly with the existing LEDMatrix web interface:
 - `web_interface/static/v3/js/starlark_apps.js` - JavaScript module
 
 ### Modified Files
-- `web_interface/blueprints/api_v3.py` - Added 10 API endpoints (461 lines)
+- `web_interface/blueprints/api_v3.py` - Added 9 API endpoints (461 lines)
 
 ## How to Use
 

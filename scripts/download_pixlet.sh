@@ -70,7 +70,11 @@ download_binary() {
 
     # Extract binary
     echo "  Extracting..."
-    tar -xzf "$temp_file" -C "$temp_dir"
+    if ! tar -xzf "$temp_file" -C "$temp_dir"; then
+        echo "✗ Failed to extract archive: $temp_file"
+        rm -rf "$temp_dir"
+        return 1
+    fi
 
     # Find the pixlet binary in extracted files
     local extracted_binary=$(find "$temp_dir" -name "pixlet" -o -name "pixlet.exe" | head -n 1)

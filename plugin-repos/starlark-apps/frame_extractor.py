@@ -224,7 +224,7 @@ class FrameExtractor:
         optimized = frames.copy()
 
         # Limit frame count if specified
-        if max_frames and len(optimized) > max_frames:
+        if max_frames is not None and max_frames > 0 and len(optimized) > max_frames:
             # Sample frames evenly
             step = len(optimized) / max_frames
             indices = [int(i * step) for i in range(max_frames)]

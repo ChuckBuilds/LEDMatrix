@@ -10,6 +10,7 @@ API Version: 1.0.0
 import json
 import logging
 import os
+import re
 import time
 from pathlib import Path
 from typing import Dict, Any, Optional, List, Tuple
@@ -150,6 +151,57 @@ class StarlarkAppsPlugin(BasePlugin):
 
         self.logger.info(f"Starlark Apps plugin initialized with {len(self.apps)} apps")
 
+    def validate_config(self) -> bool:
+        """
+        Validate plugin configuration.
+
+        Ensures required configuration values are valid for Starlark apps.
+
+        Returns:
+            True if configuration is valid, False otherwise
+        """
+        # Call parent validation first
+        if not super().validate_config():
+            return False
+
+        # Validate magnify range (0-8)
+        if "magnify" in self.config:
+            magnify = self.config["magnify"]
+            if not isinstance(magnify, int) or magnify < 0 or magnify > 8:
+                self.logger.error("magnify must be an integer between 0 and 8")
+                return False
+
+        # Validate render_timeout
+        if "render_timeout" in self.config:
+            timeout = self.config["render_timeout"]
+            if not isinstance(timeout, (int, float)) or timeout < 5 or timeout > 120:
+                self.logger.error("render_timeout must be a number between 5 and 120")
+                return False
+
+        # Validate cache_ttl
+        if "cache_ttl" in self.config:
+            ttl = self.config["cache_ttl"]
+            if not isinstance(ttl, (int, float)) or ttl < 60 or ttl > 3600:
+                self.logger.error("cache_ttl must be a number between 60 and 3600")
+                return False
+
+        # Validate scale_method
+        if "scale_method" in self.config:
+            method = self.config["scale_method"]
+            valid_methods = ["nearest", "bilinear", "bicubic", "lanczos"]
+            if method not in valid_methods:
+                self.logger.error(f"scale_method must be one of: {', '.join(valid_methods)}")
+                return False
+
+        # Validate default_frame_delay
+        if "default_frame_delay" in self.config:
+            delay = self.config["default_frame_delay"]
+            if not isinstance(delay, (int, float)) or delay < 16 or delay > 1000:
+                self.logger.error("default_frame_delay must be a number between 16 and 1000")
+                return False
+
+        return True
+
     def _calculate_optimal_magnify(self) -> int:
         """
         Calculate optimal magnification factor based on display dimensions.
@@ -263,20 +315,28 @@ class StarlarkAppsPlugin(BasePlugin):
         Get the effective magnify value to use for rendering.
 
         Priority:
-        1. User-configured magnify (if > 0)
+        1. User-configured magnify (if valid and in range 1-8)
         2. Auto-calculated magnify
 
         Returns:
             Magnify value to use
         """
-        config_magnify = self.config.get("magnify", 0)
+        config_magnify = self.config.get("magnify")
 
-        if config_magnify > 0:
-            # User explicitly set magnify
-            return config_magnify
-        else:
-            # Use auto-calculated value
-            return self.calculated_magnify
+        # Validate and clamp config_magnify
+        if config_magnify is not None:
+            try:
+                # Convert to int if possible
+                config_magnify = int(config_magnify)
+                # Clamp to safe range (1-8)
+                if 1 <= config_magnify <= 8:
+                    return config_magnify
+            except (ValueError, TypeError):
+                # Non-numeric value, fall through to calculated
+                pass
+
+        # Fall back to auto-calculated value
+        return self.calculated_magnify
 
     def _get_apps_directory(self) -> Path:
         """Get the directory for storing Starlark apps."""
@@ -293,6 +353,65 @@ class StarlarkAppsPlugin(BasePlugin):
         apps_dir.mkdir(parents=True, exist_ok=True)
         return apps_dir
 
+    def _sanitize_app_id(self, app_id: str) -> str:
+        """
+        Sanitize app_id into a safe slug for use in file paths.
+
+        Args:
+            app_id: Original app identifier
+
+        Returns:
+            Sanitized slug containing only [a-z0-9_.-] characters
+        """
+        if not app_id:
+            raise ValueError("app_id cannot be empty")
+
+        # Replace invalid characters with underscore
+        # Allow only: lowercase letters, digits, underscore, period, hyphen
+        safe_slug = re.sub(r'[^a-z0-9_.-]', '_', app_id.lower())
+
+        # Remove leading/trailing dots, underscores, or hyphens
+        safe_slug = safe_slug.strip('._-')
+
+        # Ensure it's not empty after sanitization
+        if not safe_slug:
+            raise ValueError(f"app_id '{app_id}' becomes empty after sanitization")
+
+        return safe_slug
+
+    def _verify_path_safety(self, path: Path, base_dir: Path) -> None:
+        """
+        Verify that a path is within the base directory to prevent path traversal.
+
+        Args:
+            path: Path to verify
+            base_dir: Base directory that path must be within
+
+        Raises:
+            ValueError: If path escapes the base directory
+        """
+        try:
+            resolved_path = path.resolve()
+            resolved_base = base_dir.resolve()
+
+            # Check if path is relative to base directory
+            if not resolved_path.is_relative_to(resolved_base):
+                raise ValueError(
+                    f"Path traversal detected: {resolved_path} is not within {resolved_base}"
+                )
+        except (ValueError, AttributeError) as e:
+            # AttributeError for Python < 3.9 where is_relative_to doesn't exist
+            # Fallback: check if resolved path starts with resolved base
+            resolved_path = path.resolve()
+            resolved_base = base_dir.resolve()
+
+            try:
+                resolved_path.relative_to(resolved_base)
+            except ValueError:
+                raise ValueError(
+                    f"Path traversal detected: {resolved_path} is not within {resolved_base}"
+                ) from e
+
     def _load_installed_apps(self) -> None:
         """Load all installed apps from manifest."""
         if not self.manifest_file.exists():
@@ -306,16 +425,26 @@ class StarlarkAppsPlugin(BasePlugin):
 
             apps_data = manifest.get("apps", {})
             for app_id, app_manifest in apps_data.items():
-                app_dir = self.apps_dir / app_id
+                try:
+                    # Sanitize app_id to prevent path traversal
+                    safe_app_id = self._sanitize_app_id(app_id)
+                    app_dir = (self.apps_dir / safe_app_id).resolve()
+
+                    # Verify path safety
+                    self._verify_path_safety(app_dir, self.apps_dir)
+                except ValueError as e:
+                    self.logger.warning(f"Invalid app_id '{app_id}': {e}")
+                    continue
 
                 if not app_dir.exists():
                     self.logger.warning(f"App directory missing: {app_id}")
                     continue
 
                 try:
-                    app = StarlarkApp(app_id, app_dir, app_manifest)
-                    self.apps[app_id] = app
-                    self.logger.debug(f"Loaded app: {app_id}")
+                    # Use safe_app_id for internal storage to match directory structure
+                    app = StarlarkApp(safe_app_id, app_dir, app_manifest)
+                    self.apps[safe_app_id] = app
+                    self.logger.debug(f"Loaded app: {app_id} (sanitized: {safe_app_id})")
                 except Exception as e:
                     self.logger.error(f"Error loading app {app_id}: {e}")
 
@@ -528,18 +657,27 @@ class StarlarkAppsPlugin(BasePlugin):
         try:
             import shutil
 
-            # Create app directory
-            app_dir = self.apps_dir / app_id
+            # Sanitize app_id to prevent path traversal
+            safe_app_id = self._sanitize_app_id(app_id)
+
+            # Create app directory with resolved path
+            app_dir = (self.apps_dir / safe_app_id).resolve()
             app_dir.mkdir(parents=True, exist_ok=True)
 
-            # Copy .star file
-            star_dest = app_dir / f"{app_id}.star"
+            # Verify path safety after mkdir
+            self._verify_path_safety(app_dir, self.apps_dir)
+
+            # Copy .star file with sanitized app_id
+            star_dest = app_dir / f"{safe_app_id}.star"
+            # Verify star_dest path safety
+            self._verify_path_safety(star_dest, self.apps_dir)
             shutil.copy2(star_file_path, star_dest)
 
             # Create app manifest entry
             app_manifest = {
                 "name": metadata.get("name", app_id) if metadata else app_id,
-                "star_file": f"{app_id}.star",
+                "original_id": app_id,  # Store original for reference
+                "star_file": f"{safe_app_id}.star",
                 "enabled": True,
                 "render_interval": metadata.get("render_interval", 300) if metadata else 300,
                 "display_duration": metadata.get("display_duration", 15) if metadata else 15
@@ -548,26 +686,32 @@ class StarlarkAppsPlugin(BasePlugin):
             # Try to extract schema
             _, schema, _ = self.pixlet.extract_schema(str(star_dest))
             if schema:
-                with open(app_dir / "schema.json", 'w') as f:
+                schema_path = app_dir / "schema.json"
+                # Verify schema path safety
+                self._verify_path_safety(schema_path, self.apps_dir)
+                with open(schema_path, 'w') as f:
                     json.dump(schema, f, indent=2)
 
             # Create default config
             default_config = {}
-            with open(app_dir / "config.json", 'w') as f:
+            config_path = app_dir / "config.json"
+            # Verify config path safety
+            self._verify_path_safety(config_path, self.apps_dir)
+            with open(config_path, 'w') as f:
                 json.dump(default_config, f, indent=2)
 
-            # Update manifest
+            # Update manifest (use safe_app_id as key to match directory)
             with open(self.manifest_file, 'r') as f:
                 manifest = json.load(f)
 
-            manifest["apps"][app_id] = app_manifest
+            manifest["apps"][safe_app_id] = app_manifest
             self._save_manifest(manifest)
 
-            # Create app instance
-            app = StarlarkApp(app_id, app_dir, app_manifest)
-            self.apps[app_id] = app
+            # Create app instance (use safe_app_id for internal key, original for display)
+            app = StarlarkApp(safe_app_id, app_dir, app_manifest)
+            self.apps[safe_app_id] = app
 
-            self.logger.info(f"Installed Starlark app: {app_id}")
+            self.logger.info(f"Installed Starlark app: {app_id} (sanitized: {safe_app_id})")
             return True
 
         except Exception as e:

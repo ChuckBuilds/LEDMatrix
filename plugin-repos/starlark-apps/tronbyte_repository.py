@@ -165,6 +165,15 @@ class TronbyteRepository:
         try:
             metadata = yaml.safe_load(content)
 
+            # Validate that metadata is a dict before mutating
+            if not isinstance(metadata, dict):
+                if metadata is None:
+                    logger.warning(f"Manifest for {app_id} is empty or None, initializing empty dict")
+                    metadata = {}
+                else:
+                    logger.error(f"Manifest for {app_id} is not a dict (got {type(metadata).__name__}), skipping")
+                    return False, None, f"Invalid manifest format: expected dict, got {type(metadata).__name__}"
+
             # Enhance with app_id
             metadata['id'] = app_id
 
@@ -175,7 +184,7 @@ class TronbyteRepository:
 
             return True, metadata, None
 
-        except yaml.YAMLError as e:
+        except (yaml.YAMLError, TypeError) as e:
             logger.error(f"Failed to parse manifest for {app_id}: {e}")
             return False, None, f"Invalid manifest format: {e}"
 
@@ -197,7 +206,7 @@ class TronbyteRepository:
             logger.error(f"Failed to list apps: {error}")
             return []
 
-        if max_apps:
+        if max_apps is not None:
             apps = apps[:max_apps]
 
         apps_with_metadata = []

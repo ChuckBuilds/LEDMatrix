@@ -6,7 +6,7 @@ This directory contains installed Starlark (.star) apps from the Tronbyte/Tidbyt
 
 Each app is stored in its own subdirectory:
 
-```
+```text
 starlark-apps/
   manifest.json              # Registry of installed apps
   world_clock/

@@ -73,14 +73,14 @@ class PixletRenderer:
                     try:
                         os.chmod(bundled_path, 0o755)
                         logger.debug(f"Made bundled binary executable: {bundled_path}")
-                    except Exception as e:
-                        logger.warning(f"Could not make bundled binary executable: {e}")
+                    except OSError:
+                        logger.exception(f"Could not make bundled binary executable: {bundled_path}")
 
                 if os.access(bundled_path, os.X_OK):
                     logger.debug(f"Using bundled Pixlet binary: {bundled_path}")
                     return bundled_path
-        except Exception as e:
-            logger.debug(f"Could not locate bundled binary: {e}")
+        except OSError:
+            logger.exception("Could not locate bundled binary")
 
         # 3. Check system PATH
         system_pixlet = shutil.which("pixlet")
@@ -135,8 +135,25 @@ class PixletRenderer:
             logger.debug(f"Bundled binary not found at: {binary_path}")
             return None
 
-        except Exception as e:
-            logger.debug(f"Error finding bundled binary: {e}")
+        except OSError:
+            logger.exception("Error finding bundled binary")
+            return None
+
+    def _get_safe_working_directory(self, star_file: str) -> Optional[str]:
+        """
+        Get a safe working directory for subprocess execution.
+
+        Args:
+            star_file: Path to .star file
+
+        Returns:
+            Resolved parent directory, or None if empty or invalid
+        """
+        try:
+            resolved_parent = os.path.dirname(os.path.abspath(star_file))
+            # Return None if empty string to avoid FileNotFoundError
+            return resolved_parent if resolved_parent else None
+        except (OSError, ValueError):
             return None
 
     def is_available(self) -> bool:
@@ -157,8 +174,11 @@ class PixletRenderer:
                 timeout=5
             )
             return result.returncode == 0
-        except Exception as e:
-            logger.debug(f"Pixlet not available: {e}")
+        except subprocess.TimeoutExpired:
+            logger.debug("Pixlet version check timed out")
+            return False
+        except (subprocess.SubprocessError, OSError):
+            logger.exception("Pixlet not available")
             return False
 
     def get_version(self) -> Optional[str]:
@@ -180,8 +200,10 @@ class PixletRenderer:
             )
             if result.returncode == 0:
                 return result.stdout.strip()
-        except Exception as e:
-            logger.debug(f"Could not get Pixlet version: {e}")
+        except subprocess.TimeoutExpired:
+            logger.debug("Pixlet version check timed out")
+        except (subprocess.SubprocessError, OSError):
+            logger.exception("Could not get Pixlet version")
 
         return None
 
@@ -233,12 +255,13 @@ class PixletRenderer:
             logger.debug(f"Executing Pixlet: {' '.join(cmd)}")
 
             # Execute rendering
+            safe_cwd = self._get_safe_working_directory(star_file)
             result = subprocess.run(
                 cmd,
                 capture_output=True,
                 text=True,
                 timeout=self.timeout,
-                cwd=os.path.dirname(star_file)  # Run in .star file directory
+                cwd=safe_cwd  # Run in .star file directory (or None if relative path)
             )
 
             if result.returncode == 0:
@@ -258,10 +281,9 @@ class PixletRenderer:
             error = f"Rendering timeout after {self.timeout}s"
             logger.error(error)
             return False, error
-        except Exception as e:
-            error = f"Rendering exception: {e}"
-            logger.error(error)
-            return False, error
+        except (subprocess.SubprocessError, OSError):
+            logger.exception("Rendering exception")
+            return False, "Rendering failed - see logs for details"
 
     def extract_schema(self, star_file: str) -> Tuple[bool, Optional[Dict[str, Any]], Optional[str]]:
         """
@@ -286,12 +308,13 @@ class PixletRenderer:
 
             logger.debug(f"Extracting schema: {' '.join(cmd)}")
 
+            safe_cwd = self._get_safe_working_directory(star_file)
             result = subprocess.run(
                 cmd,
                 capture_output=True,
                 text=True,
                 timeout=10,
-                cwd=os.path.dirname(star_file)
+                cwd=safe_cwd  # Run in .star file directory (or None if relative path)
             )
 
             if result.returncode == 0:
@@ -314,7 +337,6 @@ class PixletRenderer:
             error = "Schema extraction timeout"
             logger.warning(error)
             return False, None, error
-        except Exception as e:
-            error = f"Schema extraction exception: {e}"
-            logger.warning(error)
-            return False, None, error
+        except (subprocess.SubprocessError, OSError):
+            logger.exception("Schema extraction exception")
+            return False, None, "Schema extraction failed - see logs for details"
