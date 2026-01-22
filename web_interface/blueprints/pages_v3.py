@@ -78,6 +78,8 @@ def load_partial(partial_name):
             return _load_cache_partial()
         elif partial_name == 'operation-history':
             return _load_operation_history_partial()
+        elif partial_name == 'starlark-apps':
+            return _load_starlark_apps_partial()
         else:
             return f"Partial '{partial_name}' not found", 404
 
@@ -303,6 +305,13 @@ def _load_operation_history_partial():
     """Load operation history partial"""
     try:
         return render_template('v3/partials/operation_history.html')
+    except Exception as e:
+        return f"Error: {str(e)}", 500
+
+def _load_starlark_apps_partial():
+    """Load Starlark apps management partial"""
+    try:
+        return render_template('v3/partials/starlark_apps.html')
     except Exception as e:
         return f"Error: {str(e)}", 500
 
