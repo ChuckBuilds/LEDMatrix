@@ -5978,6 +5978,14 @@ def delete_cache_file():
 def get_starlark_status():
     """Get Starlark plugin status and Pixlet availability."""
     try:
+        # Guard: check if plugin_manager is initialized
+        if not api_v3.plugin_manager:
+            return jsonify({
+                'status': 'error',
+                'message': 'Plugin manager not initialized',
+                'pixlet_available': False
+            }), 500
+        
         # Get the starlark-apps plugin
         starlark_plugin = api_v3.plugin_manager.get_plugin('starlark-apps')
 
@@ -6014,6 +6022,14 @@ def get_starlark_status():
 def get_starlark_apps():
     """List all installed Starlark apps."""
     try:
+        # Guard: check if plugin_manager is initialized
+        if not api_v3.plugin_manager:
+            return jsonify({
+                'status': 'error',
+                'message': 'Plugin manager not initialized',
+                'pixlet_available': False
+            }), 500
+        
         starlark_plugin = api_v3.plugin_manager.get_plugin('starlark-apps')
 
         if not starlark_plugin:
@@ -6058,6 +6074,14 @@ def get_starlark_apps():
 def get_starlark_app(app_id):
     """Get details for a specific Starlark app."""
     try:
+        # Guard: check if plugin_manager is initialized
+        if not api_v3.plugin_manager:
+            return jsonify({
+                'status': 'error',
+                'message': 'Plugin manager not initialized',
+                'pixlet_available': False
+            }), 500
+        
         starlark_plugin = api_v3.plugin_manager.get_plugin('starlark-apps')
 
         if not starlark_plugin:
@@ -6134,7 +6158,7 @@ def _validate_and_sanitize_app_id(app_id: Optional[str], fallback_source: Option
     # Ensure it's not empty after sanitization
     if not sanitized:
         # Generate a safe fallback slug from hash
-        hash_slug = hashlib.md5(app_id.encode()).hexdigest()[:12]
+        hash_slug = hashlib.sha256(app_id.encode()).hexdigest()[:12]
         sanitized = f"app_{hash_slug}"
     
     # Ensure it doesn't start with a number
@@ -6184,6 +6208,14 @@ def _validate_timing_value(value, field_name: str, min_val: int = 1, max_val: in
 def upload_starlark_app():
     """Upload and install a new Starlark app."""
     try:
+        # Guard: check if plugin_manager is initialized
+        if not api_v3.plugin_manager:
+            return jsonify({
+                'status': 'error',
+                'message': 'Plugin manager not initialized',
+                'pixlet_available': False
+            }), 500
+        
         starlark_plugin = api_v3.plugin_manager.get_plugin('starlark-apps')
 
         if not starlark_plugin:
@@ -6228,31 +6260,37 @@ def upload_starlark_app():
                 'message': f'Invalid app_id: {app_id_error}'
             }), 400
         
-        # Validate render_interval
-        render_interval_input = request.form.get('render_interval', 300, type=int)
-        render_interval, render_error = _validate_timing_value(
-            render_interval_input, 'render_interval', min_val=1, max_val=86400
-        )
-        if render_error:
-            return jsonify({
-                'status': 'error',
-                'message': render_error
-            }), 400
-        if render_interval is None:
-            render_interval = 300  # Default
+        # Validate render_interval (get raw value, no type coercion)
+        render_interval_input = request.form.get('render_interval')
+        if render_interval_input is None:
+            render_interval = 300  # Default when field is missing
+        else:
+            render_interval, render_error = _validate_timing_value(
+                render_interval_input, 'render_interval', min_val=1, max_val=86400
+            )
+            if render_error:
+                return jsonify({
+                    'status': 'error',
+                    'message': render_error
+                }), 400
+            if render_interval is None:
+                render_interval = 300  # Default when validation returns None
         
-        # Validate display_duration
-        display_duration_input = request.form.get('display_duration', 15, type=int)
-        display_duration, duration_error = _validate_timing_value(
-            display_duration_input, 'display_duration', min_val=1, max_val=86400
-        )
-        if duration_error:
-            return jsonify({
-                'status': 'error',
-                'message': duration_error
-            }), 400
-        if display_duration is None:
-            display_duration = 15  # Default
+        # Validate display_duration (get raw value, no type coercion)
+        display_duration_input = request.form.get('display_duration')
+        if display_duration_input is None:
+            display_duration = 15  # Default when field is missing
+        else:
+            display_duration, duration_error = _validate_timing_value(
+                display_duration_input, 'display_duration', min_val=1, max_val=86400
+            )
+            if duration_error:
+                return jsonify({
+                    'status': 'error',
+                    'message': duration_error
+                }), 400
+            if display_duration is None:
+                display_duration = 15  # Default when validation returns None
 
         # Save file temporarily
         import tempfile
@@ -6298,6 +6336,14 @@ def upload_starlark_app():
 def uninstall_starlark_app(app_id):
     """Uninstall a Starlark app."""
     try:
+        # Guard: check if plugin_manager is initialized
+        if not api_v3.plugin_manager:
+            return jsonify({
+                'status': 'error',
+                'message': 'Plugin manager not initialized',
+                'pixlet_available': False
+            }), 500
+        
         starlark_plugin = api_v3.plugin_manager.get_plugin('starlark-apps')
 
         if not starlark_plugin:
@@ -6358,6 +6404,14 @@ def get_starlark_app_config(app_id):
 def update_starlark_app_config(app_id):
     """Update configuration for a Starlark app."""
     try:
+        # Guard: check if plugin_manager is initialized
+        if not api_v3.plugin_manager:
+            return jsonify({
+                'status': 'error',
+                'message': 'Plugin manager not initialized',
+                'pixlet_available': False
+            }), 500
+        
         starlark_plugin = api_v3.plugin_manager.get_plugin('starlark-apps')
 
         if not starlark_plugin:
@@ -6447,6 +6501,14 @@ def update_starlark_app_config(app_id):
 def toggle_starlark_app(app_id):
     """Enable or disable a Starlark app."""
     try:
+        # Guard: check if plugin_manager is initialized
+        if not api_v3.plugin_manager:
+            return jsonify({
+                'status': 'error',
+                'message': 'Plugin manager not initialized',
+                'pixlet_available': False
+            }), 500
+        
         starlark_plugin = api_v3.plugin_manager.get_plugin('starlark-apps')
 
         if not starlark_plugin:
@@ -6494,6 +6556,14 @@ def toggle_starlark_app(app_id):
 def render_starlark_app(app_id):
     """Force render a Starlark app."""
     try:
+        # Guard: check if plugin_manager is initialized
+        if not api_v3.plugin_manager:
+            return jsonify({
+                'status': 'error',
+                'message': 'Plugin manager not initialized',
+                'pixlet_available': False
+            }), 500
+        
         starlark_plugin = api_v3.plugin_manager.get_plugin('starlark-apps')
 
         if not starlark_plugin:
@@ -6533,6 +6603,14 @@ def render_starlark_app(app_id):
 def browse_tronbyte_repository():
     """Browse apps in the Tronbyte repository."""
     try:
+        # Guard: check if plugin_manager is initialized
+        if not api_v3.plugin_manager:
+            return jsonify({
+                'status': 'error',
+                'message': 'Plugin manager not initialized',
+                'pixlet_available': False
+            }), 500
+        
         starlark_plugin = api_v3.plugin_manager.get_plugin('starlark-apps')
 
         if not starlark_plugin:
@@ -6554,6 +6632,10 @@ def browse_tronbyte_repository():
         search_query = request.args.get('search', '')
         category = request.args.get('category', 'all')
         limit = request.args.get('limit', 50, type=int)
+        if limit is None:
+            limit = 50
+        # Clamp limit to reasonable range to prevent excessive API calls and memory usage
+        limit = max(1, min(limit, 200))
 
         # Fetch apps with metadata
         logger.info(f"Fetching Tronbyte apps (limit: {limit})")
@@ -6592,6 +6674,14 @@ def browse_tronbyte_repository():
 def install_from_tronbyte_repository():
     """Install an app directly from the Tronbyte repository."""
     try:
+        # Guard: check if plugin_manager is initialized
+        if not api_v3.plugin_manager:
+            return jsonify({
+                'status': 'error',
+                'message': 'Plugin manager not initialized',
+                'pixlet_available': False
+            }), 500
+        
         starlark_plugin = api_v3.plugin_manager.get_plugin('starlark-apps')
 
         if not starlark_plugin:

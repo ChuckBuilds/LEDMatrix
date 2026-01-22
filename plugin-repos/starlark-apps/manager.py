@@ -80,7 +80,7 @@ class StarlarkApp:
                 json.dump(self.config, f, indent=2)
             return True
         except Exception as e:
-            logger.error(f"Could not save config for {self.app_id}: {e}")
+            logger.exception(f"Could not save config for {self.app_id}: {e}")
             return False
 
     def is_enabled(self) -> bool:
@@ -89,11 +89,27 @@ class StarlarkApp:
 
     def get_render_interval(self) -> int:
         """Get render interval in seconds."""
-        return self.manifest.get("render_interval", 300)
+        default = 300
+        try:
+            value = self.manifest.get("render_interval", default)
+            interval = int(value)
+        except (ValueError, TypeError):
+            interval = default
+        
+        # Clamp to safe range: min 5, max 3600
+        return max(5, min(interval, 3600))
 
     def get_display_duration(self) -> int:
         """Get display duration in seconds."""
-        return self.manifest.get("display_duration", 15)
+        default = 15
+        try:
+            value = self.manifest.get("display_duration", default)
+            duration = int(value)
+        except (ValueError, TypeError):
+            duration = default
+        
+        # Clamp to safe range: min 1, max 600
+        return max(1, min(duration, 600))
 
     def should_render(self, current_time: float) -> bool:
         """Check if app should be re-rendered based on interval."""
@@ -303,7 +319,7 @@ class StarlarkAppsPlugin(BasePlugin):
             }
 
         except Exception as e:
-            self.logger.error(f"Error getting magnify recommendation: {e}")
+            self.logger.exception(f"Error getting magnify recommendation: {e}")
             return {
                 'display_size': 'unknown',
                 'calculated_magnify': 1,
@@ -446,12 +462,12 @@ class StarlarkAppsPlugin(BasePlugin):
                     self.apps[safe_app_id] = app
                     self.logger.debug(f"Loaded app: {app_id} (sanitized: {safe_app_id})")
                 except Exception as e:
-                    self.logger.error(f"Error loading app {app_id}: {e}")
+                    self.logger.exception(f"Error loading app {app_id}: {e}")
 
             self.logger.info(f"Loaded {len(self.apps)} Starlark apps")
 
         except Exception as e:
-            self.logger.error(f"Error loading apps manifest: {e}")
+            self.logger.exception(f"Error loading apps manifest: {e}")
 
     def _save_manifest(self, manifest: Dict[str, Any]) -> bool:
         """Save apps manifest to file."""

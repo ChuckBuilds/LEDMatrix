@@ -51,8 +51,10 @@ class FrameExtractor:
 
                 if not is_animated:
                     # Static image - single frame
+                    # Convert to RGB (LED matrix needs RGB) to match animated branch format
                     logger.debug(f"Loaded static WebP: {webp_path}")
-                    return True, [(img.copy(), self.default_frame_delay)], None
+                    rgb_img = img.convert("RGB")
+                    return True, [(rgb_img.copy(), self.default_frame_delay)], None
 
                 # Animated WebP - extract all frames
                 frames = []

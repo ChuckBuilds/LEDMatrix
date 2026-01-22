@@ -88,7 +88,7 @@ class TronbyteRepository:
             logger.error(f"Unexpected error: {e}")
             return None
 
-    def _fetch_raw_file(self, file_path: str, branch: str = None) -> Optional[str]:
+    def _fetch_raw_file(self, file_path: str, branch: Optional[str] = None) -> Optional[str]:
         """
         Fetch raw file content from repository.
 
@@ -123,7 +123,7 @@ class TronbyteRepository:
         url = f"{self.base_url}/repos/{self.REPO_OWNER}/{self.REPO_NAME}/contents/{self.APPS_PATH}"
 
         data = self._make_request(url)
-        if not data:
+        if data is None:
             return False, None, "Failed to fetch repository contents"
 
         if not isinstance(data, list):
@@ -257,8 +257,8 @@ class TronbyteRepository:
             logger.info(f"Downloaded {app_id}.star to {output_path}")
             return True, None
 
-        except Exception as e:
-            logger.error(f"Failed to save .star file: {e}")
+        except OSError as e:
+            logger.exception(f"Failed to save .star file: {e}")
             return False, f"Failed to save file: {e}"
 
     def get_app_files(self, app_id: str) -> Tuple[bool, Optional[List[str]], Optional[str]]:
