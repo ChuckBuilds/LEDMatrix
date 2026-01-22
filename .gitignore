@@ -40,3 +40,12 @@ htmlcov/
 # See docs/MULTI_ROOT_WORKSPACE_SETUP.md for details
 plugins/*
 !plugins/.gitkeep
+
+# Pixlet bundled binaries
+bin/pixlet/
+
+# Starlark apps data
+starlark-apps/*
+!starlark-apps/.gitkeep
+!starlark-apps/manifest.json
+!starlark-apps/README.md

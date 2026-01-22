@@ -1,0 +1,26 @@
+{
+  "id": "starlark-apps",
+  "name": "Starlark Apps Manager",
+  "version": "1.0.0",
+  "author": "LEDMatrix",
+  "description": "Manages and displays Starlark (.star) apps from Tronbyte/Tidbyt community. Import widgets seamlessly without modification.",
+  "entry_point": "manager.py",
+  "class_name": "StarlarkAppsPlugin",
+  "category": "system",
+  "tags": [
+    "starlark",
+    "widgets",
+    "tronbyte",
+    "tidbyt",
+    "apps",
+    "community"
+  ],
+  "display_modes": [],
+  "update_interval": 60,
+  "default_duration": 15,
+  "dependencies": [
+    "Pillow>=10.0.0",
+    "PyYAML>=6.0",
+    "requests>=2.31.0"
+  ]
+}
