@@ -55,7 +55,7 @@
                 const item = {};
                 row.querySelectorAll('input').forEach(input => {
                     const name = input.getAttribute('name');
-                    if (!name || name.endsWith('.enabled') || input.type === 'hidden') continue;
+                    if (!name || name.endsWith('.enabled') || input.type === 'hidden') return;
                     const match = name.match(/\.\d+\.([^.]+)$/);
                     if (match) {
                         const propName = match[1];
@@ -63,7 +63,7 @@
                             item[propName] = input.checked;
                         } else if (input.type === 'number') {
                             item[propName] = input.value ? parseFloat(input.value) : null;
-                        } else if (input.type !== 'hidden') {
+                        } else {
                             item[propName] = input.value;
                         }
                     }
