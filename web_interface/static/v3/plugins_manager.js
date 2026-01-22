@@ -1435,7 +1435,8 @@ function renderInstalledPlugins(plugins) {
 
             <!-- Plugin Actions -->
             <div class="flex flex-col gap-2 mt-4 pt-4 border-t border-gray-200">
-                <button class="btn bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md text-sm font-semibold w-full"
+                <button class="btn bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md text-sm font-semibold"
+                        style="display: flex; width: 100%;"
                         data-plugin-id="${escapedPluginId}"
                         data-action="configure">
                     <i class="fas fa-cog mr-2"></i>Configure
