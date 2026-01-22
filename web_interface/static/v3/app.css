@@ -113,6 +113,7 @@ body {
 
 .flex { display: flex; }
 .inline-flex { display: inline-flex; }
+.flex-wrap { flex-wrap: wrap; }
 .flex-shrink-0 { flex-shrink: 0; }
 .flex-1 { flex: 1; }
 .items-center { align-items: center; }
@@ -137,6 +138,12 @@ body {
 .gap-3 { gap: 0.75rem; }
 .gap-4 { gap: 1rem; }
 .gap-6 { gap: 1.5rem; }
+.gap-x-2 { column-gap: 0.5rem; }
+.gap-x-3 { column-gap: 0.75rem; }
+.gap-x-4 { column-gap: 1rem; }
+.gap-x-6 { column-gap: 1.5rem; }
+.gap-x-8 { column-gap: 2rem; }
+.gap-y-2 { row-gap: 0.5rem; }
 
 /* Enhanced Typography */
 .text-xs { font-size: 0.75rem; line-height: 1.4; }
@@ -175,6 +182,7 @@ h4 { font-size: 1.125rem; }
 .right-4 { right: 1rem; }
 
 .max-w-7xl { max-width: 56rem; }
+.max-w-full { max-width: 100%; }
 .mx-auto { margin-left: auto; margin-right: auto; }
 .overflow-x-auto { overflow-x: auto; }
 .overflow-hidden { overflow: hidden; }
@@ -339,6 +347,8 @@ a, button, input, select, textarea {
     .lg\:grid-cols-5 { grid-template-columns: repeat(5, minmax(0, 1fr)); }
     .lg\:grid-cols-6 { grid-template-columns: repeat(6, minmax(0, 1fr)); }
     .lg\:px-8 { padding-left: 2rem; padding-right: 2rem; }
+    .lg\:gap-x-3 { column-gap: 0.75rem; }
+    .lg\:gap-x-6 { column-gap: 1.5rem; }
 }
 
 @media (min-width: 1280px) {
@@ -349,6 +359,8 @@ a, button, input, select, textarea {
     .xl\:grid-cols-8 { grid-template-columns: repeat(8, minmax(0, 1fr)); }
     .xl\:px-12 { padding-left: 3rem; padding-right: 3rem; }
     .xl\:space-x-6 > * + * { margin-left: 1.5rem; }
+    .xl\:gap-x-4 { column-gap: 1rem; }
+    .xl\:gap-x-8 { column-gap: 2rem; }
 }
 
 @media (min-width: 1536px) {

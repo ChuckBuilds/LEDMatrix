@@ -1434,22 +1434,27 @@ function renderInstalledPlugins(plugins) {
             ` : ''}
 
             <!-- Plugin Actions -->
-            <div class="flex flex-wrap gap-2 mt-4 pt-4 border-t border-gray-200">
-                <button class="btn bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md text-sm flex-1 font-semibold"
+            <div style="display: flex; flex-direction: column; gap: 0.5rem; margin-top: 1rem; padding-top: 1rem; border-top: 1px solid #e5e7eb;">
+                <button class="btn bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md text-sm font-semibold"
+                        style="display: flex; width: 100%; justify-content: center;"
                         data-plugin-id="${escapedPluginId}"
                         data-action="configure">
                     <i class="fas fa-cog mr-2"></i>Configure
                 </button>
-                <button class="btn bg-yellow-600 hover:bg-yellow-700 text-white px-4 py-2 rounded-md text-sm flex-1 font-semibold"
-                        data-plugin-id="${escapedPluginId}"
-                        data-action="update">
-                    <i class="fas fa-sync mr-2"></i>Update
-                </button>
-                <button class="btn bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-md text-sm flex-1 font-semibold"
-                        data-plugin-id="${escapedPluginId}"
-                        data-action="uninstall">
-                    <i class="fas fa-trash mr-2"></i>Uninstall
-                </button>
+                <div style="display: flex; gap: 0.5rem;">
+                    <button class="btn bg-yellow-600 hover:bg-yellow-700 text-white px-4 py-2 rounded-md text-sm font-semibold"
+                            style="flex: 1;"
+                            data-plugin-id="${escapedPluginId}"
+                            data-action="update">
+                        <i class="fas fa-sync mr-2"></i>Update
+                    </button>
+                    <button class="btn bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-md text-sm font-semibold"
+                            style="flex: 1;"
+                            data-plugin-id="${escapedPluginId}"
+                            data-action="uninstall">
+                        <i class="fas fa-trash mr-2"></i>Uninstall
+                    </button>
+                </div>
             </div>
         </div>
         `;
