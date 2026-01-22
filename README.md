@@ -14,8 +14,12 @@ I'm very new to all of this and am *heavily* relying on AI development tools to 
 I'm trying to be open to constructive criticism and support, as long as it's a realistic ask and aligns with my priorities on this project. If you have ideas for improvements, find bugs, or want to add features to the base project, please don't hesitate to reach out on Discord or submit a pull request. Similarly, if you want to develop a plugin of your own, please do so! I'd love to see what you create.
 
 
+### Installing the LEDMatrix project on a pi video:
+[![Installing LEDMatrix on a Pi](https://img.youtube.com/vi/bkT0f1tZI0Y/hqdefault.jpg)](https://www.youtube.com/watch?v=bkT0f1tZI0Y)
+
 ### Setup video and feature walkthrough on Youtube (Outdated but still useful) : 
-[![IMAGE ALT TEXT HERE](https://img.youtube.com/vi/_HaqfJy1Y54/0.jpg)](https://www.youtube.com/watch?v=_HaqfJy1Y54)
+[![Outdated Video about the project](https://img.youtube.com/vi/_HaqfJy1Y54/hqdefault.jpg)](https://www.youtube.com/watch?v=_HaqfJy1Y54)
+
 
 -----------------------------------------------------------------------------------
 ### Connect with ChuckBuilds
