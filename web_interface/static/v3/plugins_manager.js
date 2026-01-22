@@ -1434,25 +1434,24 @@ function renderInstalledPlugins(plugins) {
             ` : ''}
 
             <!-- Plugin Actions -->
-            <div class="flex flex-wrap gap-2 mt-4 pt-4 border-t border-gray-200">
-                <button class="btn bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md text-sm font-semibold"
-                        style="flex: 2;"
+            <div class="flex flex-col gap-2 mt-4 pt-4 border-t border-gray-200">
+                <button class="btn bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md text-sm font-semibold w-full"
                         data-plugin-id="${escapedPluginId}"
                         data-action="configure">
                     <i class="fas fa-cog mr-2"></i>Configure
                 </button>
-                <button class="btn bg-yellow-600 hover:bg-yellow-700 text-white px-4 py-2 rounded-md text-sm font-semibold"
-                        style="flex: 1;"
-                        data-plugin-id="${escapedPluginId}"
-                        data-action="update">
-                    <i class="fas fa-sync mr-2"></i>Update
-                </button>
-                <button class="btn bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-md text-sm font-semibold"
-                        style="flex: 1;"
-                        data-plugin-id="${escapedPluginId}"
-                        data-action="uninstall">
-                    <i class="fas fa-trash mr-2"></i>Uninstall
-                </button>
+                <div class="flex gap-2">
+                    <button class="btn bg-yellow-600 hover:bg-yellow-700 text-white px-4 py-2 rounded-md text-sm font-semibold flex-1"
+                            data-plugin-id="${escapedPluginId}"
+                            data-action="update">
+                        <i class="fas fa-sync mr-2"></i>Update
+                    </button>
+                    <button class="btn bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-md text-sm font-semibold flex-1"
+                            data-plugin-id="${escapedPluginId}"
+                            data-action="uninstall">
+                        <i class="fas fa-trash mr-2"></i>Uninstall
+                    </button>
+                </div>
             </div>
         </div>
         `;
