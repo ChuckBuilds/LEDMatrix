@@ -5985,32 +5985,66 @@ def get_starlark_status():
                 'message': 'Plugin manager not initialized',
                 'pixlet_available': False
             }), 500
-        
-        # Get the starlark-apps plugin
+
+        # Get the starlark-apps plugin instance (only available if loaded)
         starlark_plugin = api_v3.plugin_manager.get_plugin('starlark-apps')
 
-        if not starlark_plugin:
+        if starlark_plugin:
+            # Plugin is loaded - get full info
+            info = starlark_plugin.get_info()
+            magnify_info = starlark_plugin.get_magnify_recommendation()
+
+            return jsonify({
+                'status': 'success',
+                'pixlet_available': info.get('pixlet_available', False),
+                'pixlet_version': info.get('pixlet_version'),
+                'installed_apps': info.get('installed_apps', 0),
+                'enabled_apps': info.get('enabled_apps', 0),
+                'current_app': info.get('current_app'),
+                'plugin_enabled': starlark_plugin.enabled,
+                'display_info': magnify_info
+            })
+
+        # Plugin not loaded - check if it's at least installed
+        plugin_info = api_v3.plugin_manager.get_plugin_info('starlark-apps')
+
+        if not plugin_info:
             return jsonify({
                 'status': 'error',
                 'message': 'Starlark Apps plugin not installed',
                 'pixlet_available': False
             }), 404
 
-        # Get plugin info
-        info = starlark_plugin.get_info()
+        # Plugin is installed but not loaded - check Pixlet availability directly
+        import shutil
+        from pathlib import Path
 
-        # Get magnify recommendation
-        magnify_info = starlark_plugin.get_magnify_recommendation()
+        # Check for pixlet binary
+        pixlet_path = Path(__file__).parent.parent.parent / 'pixlet' / 'pixlet'
+        pixlet_available = pixlet_path.exists() or shutil.which('pixlet') is not None
+
+        # Get pixlet version if available
+        pixlet_version = None
+        if pixlet_available:
+            try:
+                import subprocess
+                pixlet_binary = str(pixlet_path) if pixlet_path.exists() else 'pixlet'
+                result = subprocess.run([pixlet_binary, 'version'], capture_output=True, text=True, timeout=5)
+                if result.returncode == 0:
+                    pixlet_version = result.stdout.strip()
+            except Exception:
+                pass
 
         return jsonify({
             'status': 'success',
-            'pixlet_available': info.get('pixlet_available', False),
-            'pixlet_version': info.get('pixlet_version'),
-            'installed_apps': info.get('installed_apps', 0),
-            'enabled_apps': info.get('enabled_apps', 0),
-            'current_app': info.get('current_app'),
-            'plugin_enabled': starlark_plugin.enabled,
-            'display_info': magnify_info
+            'pixlet_available': pixlet_available,
+            'pixlet_version': pixlet_version,
+            'installed_apps': 0,
+            'enabled_apps': 0,
+            'current_app': None,
+            'plugin_enabled': plugin_info.get('enabled', False),
+            'plugin_loaded': False,
+            'display_info': {}
         })
 
     except Exception as e:
@@ -6603,23 +6637,7 @@ def render_starlark_app(app_id):
 def browse_tronbyte_repository():
     """Browse apps in the Tronbyte repository."""
     try:
-        # Guard: check if plugin_manager is initialized
-        if not api_v3.plugin_manager:
-            return jsonify({
-                'status': 'error',
-                'message': 'Plugin manager not initialized',
-                'pixlet_available': False
-            }), 500
-        
-        starlark_plugin = api_v3.plugin_manager.get_plugin('starlark-apps')
-
-        if not starlark_plugin:
-            return jsonify({
-                'status': 'error',
-                'message': 'Starlark Apps plugin not installed'
-            }), 404
-
-        # Import repository module
+        # Import repository module - doesn't require the plugin to be loaded
         from plugin_repos.starlark_apps.tronbyte_repository import TronbyteRepository
 
         # Get optional GitHub token from config
