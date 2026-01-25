@@ -1378,11 +1378,6 @@
                             class="nav-tab">
                         <i class="fas fa-font"></i>Fonts
                     </button>
-                    <button @click="activeTab = 'starlark-apps'"
-                            :class="activeTab === 'starlark-apps' ? 'nav-tab-active' : ''"
-                            class="nav-tab">
-                        <i class="fas fa-star"></i>Starlark Apps
-                    </button>
                     <button @click="activeTab = 'logs'"
                             :class="activeTab === 'logs' ? 'nav-tab-active' : ''"
                             class="nav-tab">
@@ -1622,22 +1617,6 @@
                             <div class="space-y-4">
                                 <div class="h-20 bg-gray-200 rounded"></div>
                                 <div class="h-20 bg-gray-200 rounded"></div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Starlark Apps tab -->
-            <div x-show="activeTab === 'starlark-apps'" x-transition>
-                <div id="starlark-apps-content" hx-get="/v3/partials/starlark-apps" hx-trigger="revealed" hx-swap="innerHTML">
-                    <div class="animate-pulse">
-                        <div class="bg-white rounded-lg shadow p-6">
-                            <div class="h-4 bg-gray-200 rounded w-1/4 mb-4"></div>
-                            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                                <div class="h-24 bg-gray-200 rounded"></div>
-                                <div class="h-24 bg-gray-200 rounded"></div>
-                                <div class="h-24 bg-gray-200 rounded"></div>
                             </div>
                         </div>
                     </div>

@@ -320,11 +320,17 @@ def _load_plugin_config_partial(plugin_id):
     """
     Load plugin configuration partial - server-side rendered form.
     This replaces the client-side generateConfigForm() JavaScript.
+
+    Special handling for starlark-apps plugin which has a custom interface.
     """
     try:
+        # Special case: Starlark Apps plugin has its own full interface
+        if plugin_id == 'starlark-apps':
+            return _load_starlark_apps_partial()
+
         if not pages_v3.plugin_manager:
             return '<div class="text-red-500 p-4">Plugin manager not available</div>', 500
-        
+
         # Try to get plugin info first
         plugin_info = pages_v3.plugin_manager.get_plugin_info(plugin_id)
         

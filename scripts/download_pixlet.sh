@@ -40,11 +40,6 @@ download_binary() {
     local archive_name="$2"
     local binary_name="pixlet-${arch}"
 
-    # Add .exe for Windows
-    if [[ "$arch" == *"windows"* ]]; then
-        binary_name="${binary_name}.exe"
-    fi
-
     local output_path="$BIN_DIR/$binary_name"
 
     # Skip if already exists
@@ -59,7 +54,8 @@ download_binary() {
     local url="https://github.com/${REPO}/releases/download/${PIXLET_VERSION}/${archive_name}"
 
     # Download to temp directory
-    local temp_dir=$(mktemp -d)
+    local temp_dir
+    temp_dir=$(mktemp -d)
     local temp_file="$temp_dir/$archive_name"
 
     if ! curl -L -o "$temp_file" "$url" 2>/dev/null; then
@@ -77,7 +73,8 @@ download_binary() {
     fi
 
     # Find the pixlet binary in extracted files
-    local extracted_binary=$(find "$temp_dir" -name "pixlet" -o -name "pixlet.exe" | head -n 1)
+    local extracted_binary
+    extracted_binary=$(find "$temp_dir" -name "pixlet" | head -n 1)
 
     if [ -z "$extracted_binary" ]; then
         echo "✗ Binary not found in archive"
@@ -88,17 +85,20 @@ download_binary() {
     # Move to final location
     mv "$extracted_binary" "$output_path"
 
-    # Make executable (not needed for Windows)
-    if [[ "$arch" != *"windows"* ]]; then
-        chmod +x "$output_path"
-    fi
+    # Make executable
+    chmod +x "$output_path"
 
     # Clean up
     rm -rf "$temp_dir"
 
     # Verify
-    local size=$(stat -f%z "$output_path" 2>/dev/null || stat -c%s "$output_path" 2>/dev/null)
-    echo "✓ Downloaded $binary_name ($(numfmt --to=iec-i --suffix=B $size 2>/dev/null || echo "${size} bytes"))"
+    local size
+    size=$(stat -f%z "$output_path" 2>/dev/null || stat -c%s "$output_path" 2>/dev/null || echo "unknown")
+    if [ "$size" = "unknown" ]; then
+        echo "✓ Downloaded $binary_name"
+    else
+        echo "✓ Downloaded $binary_name ($(numfmt --to=iec-i --suffix=B $size 2>/dev/null || echo "${size} bytes"))"
+    fi
 
     return 0
 }
@@ -121,6 +121,10 @@ echo "========================================"
 # List downloaded binaries
 echo ""
 echo "Installed binaries:"
-ls -lh "$BIN_DIR" | grep -v "^total" || echo "No binaries found"
+if compgen -G "$BIN_DIR/*" > /dev/null 2>&1; then
+    ls -lh "$BIN_DIR"/*
+else
+    echo "No binaries found"
+fi
 
 exit 0

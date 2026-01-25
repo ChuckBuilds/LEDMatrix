@@ -1,6 +1,6 @@
 {
   "id": "starlark-apps",
-  "name": "Starlark Apps Manager",
+  "name": "Starlark Apps",
   "version": "1.0.0",
   "author": "LEDMatrix",
   "description": "Manages and displays Starlark (.star) apps from Tronbyte/Tidbyt community. Import widgets seamlessly without modification.",

@@ -6830,3 +6830,72 @@ def get_tronbyte_categories():
     except Exception as e:
         logger.error(f"Error fetching categories: {e}")
         return jsonify({'status': 'error', 'message': str(e)}), 500
+
+
+@api_v3.route('/starlark/install-pixlet', methods=['POST'])
+def install_pixlet():
+    """
+    Download and install Pixlet binary.
+
+    Runs the download_pixlet.sh script to fetch the appropriate binary
+    for the current platform.
+
+    Returns:
+        JSON response with installation status
+    """
+    try:
+        import subprocess
+        import os
+        from pathlib import Path
+
+        # Get project root
+        project_root = Path(__file__).parent.parent.parent
+        script_path = project_root / 'scripts' / 'download_pixlet.sh'
+
+        if not script_path.exists():
+            return jsonify({
+                'status': 'error',
+                'message': f'Installation script not found: {script_path}'
+            }), 404
+
+        # Make script executable
+        os.chmod(script_path, 0o755)
+
+        # Run the download script
+        logger.info("Starting Pixlet download...")
+        result = subprocess.run(
+            [str(script_path)],
+            cwd=str(project_root),
+            capture_output=True,
+            text=True,
+            timeout=300  # 5 minute timeout
+        )
+
+        if result.returncode == 0:
+            logger.info("Pixlet downloaded successfully")
+            return jsonify({
+                'status': 'success',
+                'message': 'Pixlet installed successfully! You can now use Starlark apps.',
+                'output': result.stdout
+            })
+        else:
+            logger.error(f"Pixlet download failed: {result.stderr}")
+            return jsonify({
+                'status': 'error',
+                'message': f'Failed to download Pixlet: {result.stderr}',
+                'output': result.stdout
+            }), 500
+
+    except subprocess.TimeoutExpired:
+        logger.error("Pixlet download timed out")
+        return jsonify({
+            'status': 'error',
+            'message': 'Download timed out. Please check your internet connection and try again.'
+        }), 500
+
+    except Exception as e:
+        logger.error(f"Error installing Pixlet: {e}")
+        return jsonify({
+            'status': 'error',
+            'message': f'Installation error: {str(e)}'
+        }), 500

@@ -157,12 +157,21 @@
                 banner.innerHTML = `
                     <div class="flex items-start">
                         <i class="fas fa-exclamation-triangle text-yellow-600 text-xl mr-3 mt-1"></i>
-                        <div>
+                        <div class="flex-1">
                             <h4 class="font-semibold text-yellow-900 mb-1">Pixlet Not Available</h4>
-                            <p class="text-sm text-yellow-800">Pixlet is required to render Starlark apps. Please install Pixlet or run <code class="bg-yellow-100 px-2 py-1 rounded">./scripts/download_pixlet.sh</code></p>
+                            <p class="text-sm text-yellow-800 mb-3">Pixlet is required to render Starlark apps. Click below to download and install Pixlet automatically.</p>
+                            <button id="install-pixlet-btn" class="inline-flex items-center px-4 py-2 bg-yellow-600 hover:bg-yellow-700 text-white rounded-md text-sm font-medium transition-colors">
+                                <i class="fas fa-download mr-2"></i>Download & Install Pixlet
+                            </button>
                         </div>
                     </div>
                 `;
+
+                // Attach event listener to install button
+                const installBtn = document.getElementById('install-pixlet-btn');
+                if (installBtn) {
+                    installBtn.addEventListener('click', installPixlet);
+                }
             } else {
                 // Get display info for magnification recommendation
                 const displayInfo = data.display_info || {};
@@ -866,6 +875,45 @@
         } catch (error) {
             console.error('Error installing from repository:', error);
             showNotification('Failed to install app', 'error');
+        }
+    }
+
+    // ========================================================================
+    // Pixlet Installation Function
+    // ========================================================================
+
+    async function installPixlet() {
+        const btn = document.getElementById('install-pixlet-btn');
+        if (!btn) return;
+
+        const originalText = btn.innerHTML;
+        btn.disabled = true;
+        btn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>Downloading Pixlet...';
+
+        try {
+            showNotification('Downloading Pixlet binary...', 'info');
+
+            const response = await fetch('/api/v3/starlark/install-pixlet', {
+                method: 'POST'
+            });
+
+            const data = await response.json();
+
+            if (data.status === 'success') {
+                showNotification(data.message, 'success');
+                // Refresh status to show Pixlet is now available
+                setTimeout(() => loadStarlarkStatus(), 1000);
+            } else {
+                showNotification(data.message || 'Failed to install Pixlet', 'error');
+                btn.disabled = false;
+                btn.innerHTML = originalText;
+            }
+
+        } catch (error) {
+            console.error('Error installing Pixlet:', error);
+            showNotification('Failed to download Pixlet. Please check your internet connection.', 'error');
+            btn.disabled = false;
+            btn.innerHTML = originalText;
         }
     }
 

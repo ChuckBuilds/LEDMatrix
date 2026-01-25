@@ -5,6 +5,7 @@ Handles execution of Pixlet CLI to render .star files into WebP animations.
 Supports bundled binaries and system-installed Pixlet.
 """
 
+import json
 import logging
 import os
 import platform
@@ -152,8 +153,12 @@ class PixletRenderer:
         try:
             resolved_parent = os.path.dirname(os.path.abspath(star_file))
             # Return None if empty string to avoid FileNotFoundError
-            return resolved_parent if resolved_parent else None
+            if not resolved_parent:
+                logger.debug(f"Empty parent directory for star_file: {star_file}")
+                return None
+            return resolved_parent
         except (OSError, ValueError):
+            logger.debug(f"Could not resolve working directory for: {star_file}")
             return None
 
     def is_available(self) -> bool:
@@ -319,7 +324,6 @@ class PixletRenderer:
 
             if result.returncode == 0:
                 # Parse JSON schema from output
-                import json
                 try:
                     schema = json.loads(result.stdout)
                     logger.debug(f"Extracted schema from: {star_file}")
