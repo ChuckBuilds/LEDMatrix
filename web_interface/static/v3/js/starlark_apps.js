@@ -152,7 +152,20 @@
             const banner = document.getElementById('pixlet-status-banner');
             if (!banner) return;
 
-            if (data.status === 'error' || !data.pixlet_available) {
+            // Check if the plugin itself is not installed (different from Pixlet not being available)
+            if (data.status === 'error' && data.message && data.message.includes('plugin not installed')) {
+                banner.className = 'mb-6 p-4 rounded-lg border border-red-400 bg-red-50';
+                banner.innerHTML = `
+                    <div class="flex items-start">
+                        <i class="fas fa-exclamation-circle text-red-600 text-xl mr-3 mt-1"></i>
+                        <div class="flex-1">
+                            <h4 class="font-semibold text-red-900 mb-1">Starlark Apps Plugin Not Active</h4>
+                            <p class="text-sm text-red-800 mb-2">The Starlark Apps plugin needs to be discovered and enabled. This usually happens after a server restart.</p>
+                            <p class="text-xs text-red-700">Try refreshing the page or restarting the LEDMatrix service.</p>
+                        </div>
+                    </div>
+                `;
+            } else if (data.status === 'error' || !data.pixlet_available) {
                 banner.className = 'mb-6 p-4 rounded-lg border border-yellow-400 bg-yellow-50';
                 banner.innerHTML = `
                     <div class="flex items-start">
@@ -354,17 +367,19 @@
     function openUploadModal() {
         const modal = document.getElementById('upload-star-modal');
         if (modal) {
-            modal.classList.remove('hidden');
+            modal.style.display = 'flex';
             // Reset form
-            document.getElementById('upload-star-form').reset();
-            document.getElementById('selected-file-name').classList.add('hidden');
+            const form = document.getElementById('upload-star-form');
+            if (form) form.reset();
+            const fileName = document.getElementById('selected-file-name');
+            if (fileName) fileName.classList.add('hidden');
         }
     }
 
     window.closeUploadModal = function() {
         const modal = document.getElementById('upload-star-modal');
         if (modal) {
-            modal.classList.add('hidden');
+            modal.style.display = 'none';
         }
     };
 
@@ -482,7 +497,8 @@
             }
 
             // Show modal
-            document.getElementById('starlark-config-modal').classList.remove('hidden');
+            const configModal = document.getElementById('starlark-config-modal');
+            if (configModal) configModal.style.display = 'flex';
 
         } catch (error) {
             console.error('Error loading app config:', error);
@@ -552,7 +568,8 @@
     }
 
     window.closeConfigModal = function() {
-        document.getElementById('starlark-config-modal').classList.add('hidden');
+        const modal = document.getElementById('starlark-config-modal');
+        if (modal) modal.style.display = 'none';
         currentConfigAppId = null;
     };
 
@@ -669,7 +686,7 @@
         const modal = document.getElementById('repository-browser-modal');
         if (!modal) return;
 
-        modal.classList.remove('hidden');
+        modal.style.display = 'flex';
 
         // Load categories first
         loadRepositoryCategories();
@@ -681,7 +698,7 @@
     window.closeRepositoryBrowser = function() {
         const modal = document.getElementById('repository-browser-modal');
         if (modal) {
-            modal.classList.add('hidden');
+            modal.style.display = 'none';
         }
     };
 
@@ -732,10 +749,19 @@
             if (data.status === 'error') {
                 showNotification(data.message, 'error');
                 if (loading) loading.classList.add('hidden');
+                // Show error state in the modal
+                if (empty) {
+                    empty.innerHTML = `
+                        <i class="fas fa-exclamation-circle text-6xl text-red-300 mb-4"></i>
+                        <h3 class="text-lg font-semibold text-gray-700 mb-2">Unable to Load Repository</h3>
+                        <p class="text-gray-500">${sanitizeHtml(data.message)}</p>
+                    `;
+                    empty.classList.remove('hidden');
+                }
                 return;
             }
 
-            repositoryApps = data.apps;
+            repositoryApps = data.apps || [];
 
             // Update rate limit info
             updateRateLimitInfo(data.rate_limit);
