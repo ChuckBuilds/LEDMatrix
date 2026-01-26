@@ -11,13 +11,12 @@ WEB_INTERFACE_SCRIPT = os.path.join(PROJECT_DIR, 'web_interface', 'start.py')
 
 def install_dependencies():
     """Install required dependencies using system Python."""
-    print("Installing dependencies...")
+    print("Checking dependencies...")
     try:
         requirements_file = os.path.join(PROJECT_DIR, 'web_interface', 'requirements.txt')
-        # Use --ignore-installed to handle system packages (like psutil) that can't be uninstalled
-        # This allows pip to install even if a system package version conflicts
+        # First try to install normally (only installs missing packages)
         result = subprocess.run([
-            sys.executable, '-m', 'pip', 'install', '--break-system-packages', '--ignore-installed', '-r', requirements_file
+            sys.executable, '-m', 'pip', 'install', '--break-system-packages', '-r', requirements_file
         ], capture_output=True, text=True)
         
         if result.returncode != 0:
@@ -35,7 +34,7 @@ def install_dependencies():
                     f.writelines(filtered_lines)
                 try:
                     subprocess.check_call([
-                        sys.executable, '-m', 'pip', 'install', '--break-system-packages', '--ignore-installed', '-r', temp_reqs
+                        sys.executable, '-m', 'pip', 'install', '--break-system-packages', '-r', temp_reqs
                     ])
                     print("Dependencies installed successfully (psutil skipped - using system version)")
                 finally:
