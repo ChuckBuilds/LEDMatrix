@@ -816,8 +816,12 @@ class DisplayManager:
                 get_assets_file_mode
             )
             snapshot_path_obj = Path(self._snapshot_path)
-            if snapshot_path_obj.parent:
-                ensure_directory_permissions(snapshot_path_obj.parent, get_assets_dir_mode())
+            # Only ensure permissions on non-system directories
+            # Never modify /tmp permissions - it has special system permissions (1777)
+            # that must not be changed or it breaks apt and other system tools
+            parent_dir = snapshot_path_obj.parent
+            if parent_dir and str(parent_dir) != '/tmp':
+                ensure_directory_permissions(parent_dir, get_assets_dir_mode())
             # Write atomically: temp then replace
             tmp_path = f"{self._snapshot_path}.tmp"
             self.image.save(tmp_path, format='PNG')
