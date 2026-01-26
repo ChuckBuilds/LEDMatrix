@@ -46,17 +46,18 @@
     window.initStarlarkApps = initStarlarkApps;
 
     function initStarlarkApps() {
-        // Check if already initialized to prevent duplicate event listeners
-        if (window.starlarkAppsInitialized) {
-            return;
+        console.log('[Starlark] initStarlarkApps called, initialized:', window.starlarkAppsInitialized);
+
+        // Set up event listeners only once to prevent duplicates
+        if (!window.starlarkAppsInitialized) {
+            window.starlarkAppsInitialized = true;
+            setupEventListeners();
+            setupRepositoryListeners();
+            console.log('[Starlark] Event listeners set up');
         }
-        window.starlarkAppsInitialized = true;
 
-        // Set up event listeners
-        setupEventListeners();
-        setupRepositoryListeners();
-
-        // Load initial data
+        // Always load data when init is called (handles tab switching)
+        console.log('[Starlark] Loading status and apps...');
         loadStarlarkStatus();
         loadStarlarkApps();
     }
@@ -145,11 +146,14 @@
     }
 
     async function loadStarlarkStatus() {
+        console.log('[Starlark] loadStarlarkStatus called');
         try {
             const response = await fetch('/api/v3/starlark/status');
             const data = await response.json();
+            console.log('[Starlark] Status API response:', data);
 
             const banner = document.getElementById('pixlet-status-banner');
+            console.log('[Starlark] Banner element found:', !!banner);
             if (!banner) return;
 
             // Check if the plugin itself is not installed (different from Pixlet not being available)
