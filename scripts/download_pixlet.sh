@@ -11,8 +11,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 BIN_DIR="$PROJECT_ROOT/bin/pixlet"
 
-# Pixlet version to download
-PIXLET_VERSION="${PIXLET_VERSION:-v0.33.6}"
+# Pixlet version to download (use 'latest' to auto-detect)
+PIXLET_VERSION="${PIXLET_VERSION:-latest}"
 
 # GitHub repository (Tronbyte fork)
 REPO="tronbyt/pixlet"
@@ -20,6 +20,17 @@ REPO="tronbyt/pixlet"
 echo "========================================"
 echo "Pixlet Binary Download Script"
 echo "========================================"
+
+# Auto-detect latest version if needed
+if [ "$PIXLET_VERSION" = "latest" ]; then
+    echo "Detecting latest version..."
+    PIXLET_VERSION=$(curl -s "https://api.github.com/repos/${REPO}/releases/latest" | grep '"tag_name"' | sed -E 's/.*"([^"]+)".*/\1/')
+    if [ -z "$PIXLET_VERSION" ]; then
+        echo "Failed to detect latest version, using fallback"
+        PIXLET_VERSION="v0.50.2"
+    fi
+fi
+
 echo "Version: $PIXLET_VERSION"
 echo "Target directory: $BIN_DIR"
 echo ""
@@ -27,12 +38,13 @@ echo ""
 # Create bin directory if it doesn't exist
 mkdir -p "$BIN_DIR"
 
-# Architecture mappings
+# New naming convention: pixlet_v0.50.2_linux-amd64.tar.gz
+# Architecture mappings (version will be inserted dynamically)
 declare -A ARCHITECTURES=(
-    ["linux-amd64"]="pixlet_Linux_x86_64.tar.gz"
-    ["linux-arm64"]="pixlet_Linux_arm64.tar.gz"
-    ["darwin-amd64"]="pixlet_Darwin_x86_64.tar.gz"
-    ["darwin-arm64"]="pixlet_Darwin_arm64.tar.gz"
+    ["linux-amd64"]="pixlet_${PIXLET_VERSION}_linux-amd64.tar.gz"
+    ["linux-arm64"]="pixlet_${PIXLET_VERSION}_linux-arm64.tar.gz"
+    ["darwin-amd64"]="pixlet_${PIXLET_VERSION}_darwin-amd64.tar.gz"
+    ["darwin-arm64"]="pixlet_${PIXLET_VERSION}_darwin-arm64.tar.gz"
 )
 
 download_binary() {

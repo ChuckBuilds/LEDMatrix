@@ -6017,19 +6017,39 @@ def get_starlark_status():
 
         # Plugin is installed but not loaded - check Pixlet availability directly
         import shutil
+        import platform
         from pathlib import Path
 
-        # Check for pixlet binary
-        pixlet_path = Path(__file__).parent.parent.parent / 'pixlet' / 'pixlet'
-        pixlet_available = pixlet_path.exists() or shutil.which('pixlet') is not None
+        # Check for pixlet binary in bundled location (bin/pixlet/)
+        project_root = Path(__file__).parent.parent.parent
+        bin_dir = project_root / 'bin' / 'pixlet'
+
+        # Detect architecture and find the right binary
+        system = platform.system().lower()
+        machine = platform.machine().lower()
+
+        pixlet_binary = None
+        if system == "linux":
+            if "aarch64" in machine or "arm64" in machine:
+                pixlet_binary = bin_dir / "pixlet-linux-arm64"
+            elif "x86_64" in machine or "amd64" in machine:
+                pixlet_binary = bin_dir / "pixlet-linux-amd64"
+        elif system == "darwin":
+            if "arm64" in machine:
+                pixlet_binary = bin_dir / "pixlet-darwin-arm64"
+            else:
+                pixlet_binary = bin_dir / "pixlet-darwin-amd64"
+
+        # Check bundled binary or system PATH
+        pixlet_available = (pixlet_binary and pixlet_binary.exists()) or shutil.which('pixlet') is not None
 
         # Get pixlet version if available
         pixlet_version = None
         if pixlet_available:
             try:
                 import subprocess
-                pixlet_binary = str(pixlet_path) if pixlet_path.exists() else 'pixlet'
-                result = subprocess.run([pixlet_binary, 'version'], capture_output=True, text=True, timeout=5)
+                binary_to_use = str(pixlet_binary) if (pixlet_binary and pixlet_binary.exists()) else 'pixlet'
+                result = subprocess.run([binary_to_use, 'version'], capture_output=True, text=True, timeout=5)
                 if result.returncode == 0:
                     pixlet_version = result.stdout.strip()
             except Exception:
