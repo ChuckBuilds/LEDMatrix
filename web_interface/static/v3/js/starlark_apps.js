@@ -672,8 +672,10 @@
 
     function setupRepositoryListeners() {
         const browseBtn = document.getElementById('browse-repository-btn');
+        console.log('[Starlark] Browse button found:', !!browseBtn);
         if (browseBtn) {
             browseBtn.addEventListener('click', openRepositoryBrowser);
+            console.log('[Starlark] Browse button event listener attached');
         }
 
         const applyFiltersBtn = document.getElementById('repo-apply-filters-btn');
@@ -692,7 +694,9 @@
     }
 
     function openRepositoryBrowser() {
+        console.log('[Starlark] openRepositoryBrowser called');
         const modal = document.getElementById('repository-browser-modal');
+        console.log('[Starlark] Modal found:', !!modal);
         if (!modal) return;
 
         modal.style.display = 'flex';
