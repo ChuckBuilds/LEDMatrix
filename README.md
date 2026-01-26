@@ -27,7 +27,7 @@ I'm trying to be open to constructive criticism and support, as long as it's a r
 - Show support on Youtube: https://www.youtube.com/@ChuckBuilds
 - Check out the write-up on my website: https://www.chuck-builds.com/led-matrix/
 - Stay in touch on Instagram: https://www.instagram.com/ChuckBuilds/
-- Want to chat? Reach out on the ChuckBuilds Discord: https://discord.com/invite/uW36dVAtcT
+- Want to chat? Reach out on the LEDMatrix Discord: [https://discord.com/invite/uW36dVAtcT](https://discord.gg/dfFwsasa6W)
 - Feeling Generous? Consider sponsoring this project or sending a donation (these AI credits aren't cheap!)          
 
 -----------------------------------------------------------------------------------
