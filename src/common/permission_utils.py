@@ -13,27 +13,63 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
+# System directories that should never have their permissions modified
+# These directories have special system-level permissions that must be preserved
+PROTECTED_SYSTEM_DIRECTORIES = {
+    '/tmp',
+    '/var/tmp',
+    '/dev',
+    '/proc',
+    '/sys',
+    '/run',
+    '/var/run',
+    '/etc',
+    '/boot',
+    '/var',
+    '/usr',
+    '/lib',
+    '/lib64',
+    '/bin',
+    '/sbin',
+}
+
 
 def ensure_directory_permissions(path: Path, mode: int = 0o775) -> None:
     """
     Create directory and set permissions.
-    
+
     If the directory already exists and we cannot change its permissions,
     we check if it's usable (readable/writable). If so, we continue without
     raising an exception. This allows the system to work even when running
     as a non-root user who cannot change permissions on existing directories.
-    
+
+    Protected system directories (like /tmp, /etc, /var) are never modified
+    to prevent breaking system functionality.
+
     Args:
         path: Directory path to create/ensure
         mode: Permission mode (default: 0o775 for group-writable directories)
-    
+
     Raises:
         OSError: If directory creation fails or directory exists but is not usable
     """
     try:
+        # Never modify permissions on system directories
+        path_str = str(path.resolve() if path.is_absolute() else path)
+        if path_str in PROTECTED_SYSTEM_DIRECTORIES:
+            logger.debug(f"Skipping permission modification on protected system directory: {path_str}")
+            # Verify the directory is usable
+            if path.exists() and os.access(path, os.R_OK | os.W_OK):
+                return
+            elif path.exists():
+                logger.warning(f"Protected system directory {path_str} exists but is not writable")
+                return
+            else:
+                raise OSError(f"Protected system directory {path_str} does not exist")
+
         # Create directory if it doesn't exist
         path.mkdir(parents=True, exist_ok=True)
-        
+
         # Try to set permissions
         try:
             os.chmod(path, mode)
