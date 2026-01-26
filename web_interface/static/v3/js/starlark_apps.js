@@ -32,35 +32,40 @@
         return div.innerHTML;
     }
 
-    // Initialize on page load
-    if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', function() {
-            initStarlarkApps();
-        });
-    } else {
-        // DOM already loaded (e.g., when script is executed after HTMX swap)
-        initStarlarkApps();
-    }
-
-    // Also expose init function globally for HTMX afterSwap handlers
-    window.initStarlarkApps = initStarlarkApps;
-
+    // Define init function first
     function initStarlarkApps() {
         console.log('[Starlark] initStarlarkApps called, initialized:', window.starlarkAppsInitialized);
 
-        // Set up event listeners only once to prevent duplicates
-        if (!window.starlarkAppsInitialized) {
-            window.starlarkAppsInitialized = true;
-            setupEventListeners();
-            setupRepositoryListeners();
-            console.log('[Starlark] Event listeners set up');
-        }
+        try {
+            // Set up event listeners only once to prevent duplicates
+            if (!window.starlarkAppsInitialized) {
+                window.starlarkAppsInitialized = true;
+                setupEventListeners();
+                setupRepositoryListeners();
+                console.log('[Starlark] Event listeners set up');
+            }
 
-        // Always load data when init is called (handles tab switching)
-        console.log('[Starlark] Loading status and apps...');
-        loadStarlarkStatus();
-        loadStarlarkApps();
+            // Always load data when init is called (handles tab switching)
+            console.log('[Starlark] Loading status and apps...');
+            loadStarlarkStatus();
+            loadStarlarkApps();
+        } catch (error) {
+            console.error('[Starlark] Error in initStarlarkApps:', error);
+        }
     }
+
+    // Expose init function globally BEFORE auto-init
+    window.initStarlarkApps = initStarlarkApps;
+
+    // Initialize on page load - but DON'T auto-init when loaded dynamically
+    // Let the HTML partial's script handle initialization for HTMX swaps
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', function() {
+            console.log('[Starlark] DOMContentLoaded, calling init');
+            initStarlarkApps();
+        });
+    }
+    // Note: Removed the else block - dynamic loading handled by HTML partial
 
     function setupEventListeners() {
         // Upload button

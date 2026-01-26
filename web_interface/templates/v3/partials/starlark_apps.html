@@ -225,10 +225,18 @@
     // Load the script dynamically
     console.log('[Starlark] Loading starlark_apps.js dynamically');
     var script = document.createElement('script');
-    script.src = '/static/v3/js/starlark_apps.js';
+    // Add cache-busting parameter to ensure fresh load during development
+    script.src = '/static/v3/js/starlark_apps.js?v=' + Date.now();
     script.onload = function() {
         console.log('[Starlark] Script loaded successfully');
         window.starlarkAppsScriptLoaded = true;
+        // Call init - the script no longer auto-inits when loaded dynamically
+        console.log('[Starlark] Calling initStarlarkApps after script load');
+        if (typeof window.initStarlarkApps === 'function') {
+            window.initStarlarkApps();
+        } else {
+            console.error('[Starlark] initStarlarkApps not available after script load');
+        }
     };
     script.onerror = function() {
         console.error('[Starlark] Failed to load starlark_apps.js');
