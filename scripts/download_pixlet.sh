@@ -65,9 +65,9 @@ download_binary() {
     # Construct download URL
     local url="https://github.com/${REPO}/releases/download/${PIXLET_VERSION}/${archive_name}"
 
-    # Download to temp directory
+    # Download to temp directory (use project-local temp to avoid /tmp permission issues)
     local temp_dir
-    temp_dir=$(mktemp -d)
+    temp_dir=$(mktemp -d -p "$PROJECT_ROOT" -t pixlet_download.XXXXXXXXXX)
     local temp_file="$temp_dir/$archive_name"
 
     if ! curl -L -o "$temp_file" "$url" 2>/dev/null; then
