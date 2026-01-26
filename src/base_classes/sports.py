@@ -467,7 +467,8 @@ class SportsCore(ABC):
                 sport=self.sport,
                 league=self.league,
                 event_id=game['id'],
-                update_interval_seconds=update_interval
+                update_interval_seconds=update_interval,
+                is_live=is_live
             )
             
             if odds_data:
