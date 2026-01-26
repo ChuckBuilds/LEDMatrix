@@ -38,13 +38,10 @@ echo ""
 # Create bin directory if it doesn't exist
 mkdir -p "$BIN_DIR"
 
-# New naming convention: pixlet_v0.50.2_linux-amd64.tar.gz
-# Architecture mappings (version will be inserted dynamically)
+# New naming convention: pixlet_v0.50.2_linux-arm64.tar.gz
+# Only download ARM64 Linux binary for Raspberry Pi
 declare -A ARCHITECTURES=(
-    ["linux-amd64"]="pixlet_${PIXLET_VERSION}_linux-amd64.tar.gz"
     ["linux-arm64"]="pixlet_${PIXLET_VERSION}_linux-arm64.tar.gz"
-    ["darwin-amd64"]="pixlet_${PIXLET_VERSION}_darwin-amd64.tar.gz"
-    ["darwin-arm64"]="pixlet_${PIXLET_VERSION}_darwin-arm64.tar.gz"
 )
 
 download_binary() {
