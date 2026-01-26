@@ -6633,12 +6633,38 @@ def render_starlark_app(app_id):
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
 
+def _get_tronbyte_repository_class():
+    """
+    Import TronbyteRepository from plugin-repos directory.
+
+    Handles the hyphenated directory name by using importlib.
+    """
+    import sys
+    import importlib.util
+    from pathlib import Path
+
+    # Get path to the tronbyte_repository module
+    project_root = Path(__file__).parent.parent.parent
+    module_path = project_root / 'plugin-repos' / 'starlark-apps' / 'tronbyte_repository.py'
+
+    if not module_path.exists():
+        raise ImportError(f"TronbyteRepository module not found at {module_path}")
+
+    # Load the module using importlib
+    spec = importlib.util.spec_from_file_location("tronbyte_repository", module_path)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules["tronbyte_repository"] = module
+    spec.loader.exec_module(module)
+
+    return module.TronbyteRepository
+
+
 @api_v3.route('/starlark/repository/browse', methods=['GET'])
 def browse_tronbyte_repository():
     """Browse apps in the Tronbyte repository."""
     try:
         # Import repository module - doesn't require the plugin to be loaded
-        from plugin_repos.starlark_apps.tronbyte_repository import TronbyteRepository
+        TronbyteRepository = _get_tronbyte_repository_class()
 
         # Get optional GitHub token from config
         config = api_v3.config_manager.load_config() if api_v3.config_manager else {}
@@ -6725,7 +6751,7 @@ def install_from_tronbyte_repository():
             }), 400
 
         # Import repository module
-        from plugin_repos.starlark_apps.tronbyte_repository import TronbyteRepository
+        TronbyteRepository = _get_tronbyte_repository_class()
         import tempfile
 
         # Get optional GitHub token from config
@@ -6823,7 +6849,7 @@ def get_tronbyte_categories():
     """Get list of available app categories."""
     try:
         # Import repository module
-        from plugin_repos.starlark_apps.tronbyte_repository import TronbyteRepository
+        TronbyteRepository = _get_tronbyte_repository_class()
 
         # Get optional GitHub token from config
         config = api_v3.config_manager.load_config() if api_v3.config_manager else {}
