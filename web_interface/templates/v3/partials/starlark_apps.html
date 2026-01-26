@@ -208,4 +208,31 @@
     </div>
 </div>
 
-<script src="/static/v3/js/starlark_apps.js"></script>
+<!-- Load and initialize Starlark Apps JavaScript -->
+<script>
+(function() {
+    // Check if script already loaded
+    if (window.starlarkAppsScriptLoaded) {
+        console.log('[Starlark] Script already loaded, calling init directly');
+        // Reset the init flag to allow re-initialization of data
+        window.starlarkAppsInitialized = false;
+        if (typeof window.initStarlarkApps === 'function') {
+            window.initStarlarkApps();
+        }
+        return;
+    }
+
+    // Load the script dynamically
+    console.log('[Starlark] Loading starlark_apps.js dynamically');
+    var script = document.createElement('script');
+    script.src = '/static/v3/js/starlark_apps.js';
+    script.onload = function() {
+        console.log('[Starlark] Script loaded successfully');
+        window.starlarkAppsScriptLoaded = true;
+    };
+    script.onerror = function() {
+        console.error('[Starlark] Failed to load starlark_apps.js');
+    };
+    document.head.appendChild(script);
+})();
+</script>
