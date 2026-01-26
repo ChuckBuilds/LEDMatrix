@@ -6063,14 +6063,18 @@ def get_starlark_apps():
                 'message': 'Plugin manager not initialized',
                 'pixlet_available': False
             }), 500
-        
+
         starlark_plugin = api_v3.plugin_manager.get_plugin('starlark-apps')
 
         if not starlark_plugin:
+            # Plugin not loaded - return empty list instead of error
+            # This happens when Pixlet isn't installed yet
             return jsonify({
-                'status': 'error',
-                'message': 'Starlark Apps plugin not installed'
-            }), 404
+                'status': 'success',
+                'apps': [],
+                'count': 0,
+                'message': 'Plugin not loaded - install Pixlet first'
+            })
 
         # Get plugin info which includes apps list
         info = starlark_plugin.get_info()
