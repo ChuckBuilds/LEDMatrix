@@ -6921,9 +6921,32 @@ def install_pixlet():
 
         if result.returncode == 0:
             logger.info("Pixlet downloaded successfully")
+
+            # Try to reload the starlark-apps plugin now that Pixlet is available
+            reload_message = ""
+            try:
+                if api_v3.plugin_manager:
+                    # Check if plugin is already loaded
+                    existing_plugin = api_v3.plugin_manager.get_plugin('starlark-apps')
+                    if existing_plugin:
+                        # Plugin already loaded, just verify Pixlet works
+                        reload_message = " Plugin already loaded."
+                    else:
+                        # Try to load/reload the plugin
+                        plugin_info = api_v3.plugin_manager.get_plugin_info('starlark-apps')
+                        if plugin_info:
+                            # Plugin is registered, try to enable it
+                            api_v3.plugin_manager.enable_plugin('starlark-apps')
+                            reload_message = " Plugin enabled."
+                        else:
+                            reload_message = " Restart may be required to load plugin."
+            except Exception as reload_error:
+                logger.warning(f"Could not auto-reload plugin: {reload_error}")
+                reload_message = " Please refresh the page."
+
             return jsonify({
                 'status': 'success',
-                'message': 'Pixlet installed successfully! You can now use Starlark apps.',
+                'message': f'Pixlet installed successfully!{reload_message}',
                 'output': result.stdout
             })
         else:
