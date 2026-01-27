@@ -1053,7 +1053,8 @@ window.initPluginsPage = function() {
         onDemandModal.onclick = closeOnDemandModalOnBackdrop;
     }
 
-    loadOnDemandStatus(true);
+    // Load on-demand status silently (false = don't show notification)
+    loadOnDemandStatus(false);
     startOnDemandStatusPolling();
     
     window.pluginManager.initialized = true;
