@@ -1,7 +1,7 @@
 /**
  * LEDMatrix Select Dropdown Widget
  *
- * Enhanced dropdown select with search, groups, and custom rendering.
+ * Enhanced dropdown select with custom labels.
  *
  * Schema example:
  * {
@@ -11,16 +11,10 @@
  *     "enum": ["light", "dark", "auto"],
  *     "x-options": {
  *       "placeholder": "Select a theme...",
- *       "searchable": false,
  *       "labels": {
  *         "light": "Light Mode",
  *         "dark": "Dark Mode",
  *         "auto": "System Default"
- *       },
- *       "icons": {
- *         "light": "fas fa-sun",
- *         "dark": "fas fa-moon",
- *         "auto": "fas fa-desktop"
  *       }
  *     }
  *   }
@@ -38,7 +32,7 @@
         if (base) return base.escapeHtml(text);
         const div = document.createElement('div');
         div.textContent = String(text);
-        return div.innerHTML;
+        return div.innerHTML.replace(/"/g, '&quot;').replace(/'/g, '&#39;');
     }
 
     function sanitizeId(id) {

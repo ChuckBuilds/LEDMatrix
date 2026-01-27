@@ -54,7 +54,7 @@
         if (base) return base.escapeHtml(text);
         const div = document.createElement('div');
         div.textContent = String(text);
-        return div.innerHTML;
+        return div.innerHTML.replace(/"/g, '&quot;').replace(/'/g, '&#39;');
     }
 
     function sanitizeId(id) {
@@ -95,12 +95,13 @@
 
             // Normalize value to array
             const selectedDays = Array.isArray(value) ? value : [];
+            const inputName = options.name || fieldId;
 
             // Build HTML
             let html = `<div id="${fieldId}_widget" class="day-selector-widget" data-field-id="${fieldId}">`;
 
             // Hidden input to store the value as JSON array
-            html += `<input type="hidden" id="${fieldId}_data" name="${fieldId}" value='${escapeHtml(JSON.stringify(selectedDays))}'>`;
+            html += `<input type="hidden" id="${fieldId}_data" name="${inputName}" value='${escapeHtml(JSON.stringify(selectedDays))}'>`;
 
             // Select All toggle
             if (showSelectAll) {

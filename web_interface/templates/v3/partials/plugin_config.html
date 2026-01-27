@@ -83,16 +83,45 @@
             <p class="text-sm text-gray-500 mb-2">{{ description }}</p>
             {% endif %}
             
-            {# Boolean checkbox #}
+            {# Boolean - check for widget first #}
             {% if field_type == 'boolean' %}
+            {% set bool_widget = prop.get('x-widget') or prop.get('x_widget') %}
+            {% if bool_widget == 'toggle-switch' %}
+                {# Render toggle-switch widget #}
+                <div id="{{ field_id }}_container" class="toggle-switch-container"></div>
+                <script>
+                (function() {
+                    function initWidget() {
+                        if (!window.LEDMatrixWidgets) { setTimeout(initWidget, 50); return; }
+                        var widget = window.LEDMatrixWidgets.get('toggle-switch');
+                        if (!widget) { setTimeout(initWidget, 50); return; }
+                        var container = document.getElementById('{{ field_id }}_container');
+                        if (!container) return;
+                        var value = {{ value|tojson|safe if value is not none else 'false' }};
+                        var config = {
+                            'type': 'boolean',
+                            'x-options': {{ (prop.get('x-options') or prop.get('x_options') or {})|tojson|safe }}
+                        };
+                        widget.render(container, config, value, { fieldId: '{{ field_id }}', name: '{{ full_key }}', pluginId: '{{ plugin_id }}' });
+                    }
+                    if (document.readyState === 'loading') {
+                        document.addEventListener('DOMContentLoaded', initWidget);
+                    } else {
+                        setTimeout(initWidget, 50);
+                    }
+                })();
+                </script>
+            {% else %}
+            {# Default checkbox #}
             <label class="flex items-center cursor-pointer">
-                <input type="checkbox" 
+                <input type="checkbox"
                        id="{{ field_id }}"
-                       name="{{ full_key }}" 
+                       name="{{ full_key }}"
                        {% if value %}checked{% endif %}
                        class="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded">
                 <span class="ml-2 text-sm text-gray-600">Enabled</span>
             </label>
+            {% endif %}
             
             {# Enum dropdown #}
             {% elif prop.enum %}
@@ -106,16 +135,47 @@
                 {% endfor %}
             </select>
             
-            {# Number input #}
+            {# Number input - check for widget first #}
             {% elif field_type in ['number', 'integer'] %}
-            <input type="number" 
+            {% set num_widget = prop.get('x-widget') or prop.get('x_widget') %}
+            {% if num_widget in ['slider', 'number-input'] %}
+                {# Render slider or number-input widget #}
+                <div id="{{ field_id }}_container" class="{{ num_widget }}-container"></div>
+                <script>
+                (function() {
+                    function initWidget() {
+                        if (!window.LEDMatrixWidgets) { setTimeout(initWidget, 50); return; }
+                        var widget = window.LEDMatrixWidgets.get('{{ num_widget }}');
+                        if (!widget) { setTimeout(initWidget, 50); return; }
+                        var container = document.getElementById('{{ field_id }}_container');
+                        if (!container) return;
+                        var value = {{ value|tojson if value is not none else (prop.default|tojson if prop.default is defined else 'null') }};
+                        var config = {
+                            'type': '{{ field_type }}',
+                            'minimum': {{ prop.minimum|tojson if prop.minimum is defined else 'null' }},
+                            'maximum': {{ prop.maximum|tojson if prop.maximum is defined else 'null' }},
+                            'x-options': {{ (prop.get('x-options') or prop.get('x_options') or {})|tojson|safe }}
+                        };
+                        widget.render(container, config, value, { fieldId: '{{ field_id }}', name: '{{ full_key }}', pluginId: '{{ plugin_id }}' });
+                    }
+                    if (document.readyState === 'loading') {
+                        document.addEventListener('DOMContentLoaded', initWidget);
+                    } else {
+                        setTimeout(initWidget, 50);
+                    }
+                })();
+                </script>
+            {% else %}
+            {# Default number input #}
+            <input type="number"
                    id="{{ field_id }}"
-                   name="{{ full_key }}" 
+                   name="{{ full_key }}"
                    value="{{ value if value is not none else (prop.default if prop.default is defined else '') }}"
                    {% if prop.minimum is defined %}min="{{ prop.minimum }}"{% endif %}
                    {% if prop.maximum is defined %}max="{{ prop.maximum }}"{% endif %}
                    {% if field_type == 'integer' %}step="1"{% else %}step="any"{% endif %}
                    class="form-input w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 bg-white text-black placeholder:text-gray-500">
+            {% endif %}
             
             {# Array - check for file upload widget first (to avoid breaking static-image plugin), then checkbox-group, then array of objects #}
             {% elif field_type == 'array' %}
@@ -257,7 +317,7 @@
                         if (!container) return;
                         var value = {{ array_value|tojson|safe }};
                         var config = { 'x-options': {{ (prop.get('x-options') or prop.get('x_options') or {})|tojson|safe }} };
-                        widget.render(container, config, value, { fieldId: '{{ field_id }}', pluginId: '{{ plugin_id }}' });
+                        widget.render(container, config, value, { fieldId: '{{ field_id }}', pluginId: '{{ plugin_id }}', name: '{{ full_key }}' });
                     }
                     if (document.readyState === 'loading') {
                         document.addEventListener('DOMContentLoaded', initWidget);

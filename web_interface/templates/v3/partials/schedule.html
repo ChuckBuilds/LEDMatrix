@@ -51,12 +51,22 @@
         }
 
         // Get schedule config from template data (injected by Jinja2)
-        const scheduleConfig = {{ schedule_config | tojson | safe }};
+        // Default to empty object if null/undefined
+        const scheduleConfig = {{ schedule_config | tojson | safe }} || {};
+
+        // Determine mode: prefer explicit mode, then infer from days, then default to global
+        let mode = 'global';
+        if (scheduleConfig.mode) {
+            // Normalize mode value (handle both 'per_day' and 'per-day')
+            mode = scheduleConfig.mode.replace('-', '_');
+        } else if (scheduleConfig.days) {
+            mode = 'per_day';
+        }
 
         // Convert flat config to nested format expected by widget
         const widgetValue = {
             enabled: scheduleConfig.enabled || false,
-            mode: scheduleConfig.days ? 'per_day' : 'global',
+            mode: mode,
             start_time: scheduleConfig.start_time || '07:00',
             end_time: scheduleConfig.end_time || '23:00',
             days: scheduleConfig.days || {}

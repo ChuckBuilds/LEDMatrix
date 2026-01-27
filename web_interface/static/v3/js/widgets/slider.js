@@ -32,7 +32,7 @@
         if (base) return base.escapeHtml(text);
         const div = document.createElement('div');
         div.textContent = String(text);
-        return div.innerHTML;
+        return div.innerHTML.replace(/"/g, '&quot;').replace(/'/g, '&#39;');
     }
 
     function sanitizeId(id) {

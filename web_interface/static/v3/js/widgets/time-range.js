@@ -36,7 +36,7 @@
         if (base) return base.escapeHtml(text);
         const div = document.createElement('div');
         div.textContent = String(text);
-        return div.innerHTML;
+        return div.innerHTML.replace(/"/g, '&quot;').replace(/'/g, '&#39;');
     }
 
     function sanitizeId(id) {
@@ -149,12 +149,13 @@
 
             const disabledAttr = disabled ? 'disabled' : '';
             const disabledClass = disabled ? 'bg-gray-100 cursor-not-allowed' : '';
+            const inputName = options.name || fieldId;
 
             let html = `<div id="${fieldId}_widget" class="time-range-widget" data-field-id="${fieldId}" data-allow-overnight="${allowOvernight}">`;
 
             // Hidden inputs for form submission
-            html += `<input type="hidden" id="${fieldId}_start_time" name="${fieldId}_start_time" value="${escapeHtml(startTime)}">`;
-            html += `<input type="hidden" id="${fieldId}_end_time" name="${fieldId}_end_time" value="${escapeHtml(endTime)}">`;
+            html += `<input type="hidden" id="${fieldId}_start_time" name="${inputName}_start_time" value="${escapeHtml(startTime)}">`;
+            html += `<input type="hidden" id="${fieldId}_end_time" name="${inputName}_end_time" value="${escapeHtml(endTime)}">`;
 
             html += `<div class="grid grid-cols-1 md:grid-cols-2 gap-4">`;
 

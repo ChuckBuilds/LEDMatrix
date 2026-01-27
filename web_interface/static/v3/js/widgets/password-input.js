@@ -32,7 +32,7 @@
         if (base) return base.escapeHtml(text);
         const div = document.createElement('div');
         div.textContent = String(text);
-        return div.innerHTML;
+        return div.innerHTML.replace(/"/g, '&quot;').replace(/'/g, '&#39;');
     }
 
     function sanitizeId(id) {
@@ -98,12 +98,15 @@
             const showToggle = xOptions.showToggle !== false;
             const showStrength = xOptions.showStrength === true;
             const minLength = xOptions.minLength || 0;
+            const requireUppercase = xOptions.requireUppercase === true;
+            const requireNumber = xOptions.requireNumber === true;
+            const requireSpecial = xOptions.requireSpecial === true;
             const disabled = xOptions.disabled === true;
             const required = xOptions.required === true;
 
             const currentValue = value || '';
 
-            let html = `<div id="${fieldId}_widget" class="password-input-widget" data-field-id="${fieldId}" data-min-length="${minLength}">`;
+            let html = `<div id="${fieldId}_widget" class="password-input-widget" data-field-id="${fieldId}" data-min-length="${minLength}" data-require-uppercase="${requireUppercase}" data-require-number="${requireNumber}" data-require-special="${requireSpecial}">`;
 
             html += '<div class="relative">';
 
@@ -186,14 +189,38 @@
             const safeId = sanitizeId(fieldId);
             const input = document.getElementById(`${safeId}_input`);
             const errorEl = document.getElementById(`${safeId}_error`);
+            const widget = document.getElementById(`${safeId}_widget`);
 
             if (!input) return { valid: true, errors: [] };
 
-            const isValid = input.checkValidity();
+            const errors = [];
+            let isValid = input.checkValidity();
+
+            if (!isValid) {
+                errors.push(input.validationMessage);
+            } else if (input.value && widget) {
+                // Check custom validation requirements
+                const requireUppercase = widget.dataset.requireUppercase === 'true';
+                const requireNumber = widget.dataset.requireNumber === 'true';
+                const requireSpecial = widget.dataset.requireSpecial === 'true';
+
+                if (requireUppercase && !/[A-Z]/.test(input.value)) {
+                    isValid = false;
+                    errors.push('Password must contain at least one uppercase letter');
+                }
+                if (requireNumber && !/[0-9]/.test(input.value)) {
+                    isValid = false;
+                    errors.push('Password must contain at least one number');
+                }
+                if (requireSpecial && !/[^a-zA-Z0-9]/.test(input.value)) {
+                    isValid = false;
+                    errors.push('Password must contain at least one special character');
+                }
+            }
 
             if (errorEl) {
-                if (!isValid) {
-                    errorEl.textContent = input.validationMessage;
+                if (!isValid && errors.length > 0) {
+                    errorEl.textContent = errors[0];
                     errorEl.classList.remove('hidden');
                     input.classList.add('border-red-500');
                 } else {
@@ -202,7 +229,7 @@
                 }
             }
 
-            return { valid: isValid, errors: isValid ? [] : [input.validationMessage] };
+            return { valid: isValid, errors };
         },
 
         handlers: {

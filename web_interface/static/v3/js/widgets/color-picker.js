@@ -29,7 +29,7 @@
         if (base) return base.escapeHtml(text);
         const div = document.createElement('div');
         div.textContent = String(text);
-        return div.innerHTML;
+        return div.innerHTML.replace(/"/g, '&quot;').replace(/'/g, '&#39;');
     }
 
     function sanitizeId(id) {
@@ -131,25 +131,28 @@
             // Hidden input for form submission
             html += `<input type="hidden" id="${fieldId}_input" name="${options.name || fieldId}" value="${currentValue}">`;
 
-            // Preset colors
+            // Preset colors - only render valid hex colors
             if (presets && presets.length > 0) {
-                html += `
-                    <div class="flex flex-wrap gap-1 mt-3">
-                        <span class="text-xs text-gray-400 w-full mb-1">Quick colors:</span>
-                `;
-                for (const preset of presets) {
-                    const normalized = normalizeHex(preset);
+                const validPresets = presets.map(p => normalizeHex(p)).filter(p => isValidHex(p));
+                if (validPresets.length > 0) {
                     html += `
-                        <button type="button"
-                                ${disabled ? 'disabled' : ''}
-                                onclick="window.LEDMatrixWidgets.getHandlers('color-picker').onPresetClick('${fieldId}', '${normalized}')"
-                                class="w-6 h-6 rounded border border-gray-300 hover:scale-110 transition-transform ${disabled ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}"
-                                style="background-color: ${normalized};"
-                                title="${normalized}">
-                        </button>
+                        <div class="flex flex-wrap gap-1 mt-3">
+                            <span class="text-xs text-gray-400 w-full mb-1">Quick colors:</span>
                     `;
+                    for (const normalized of validPresets) {
+                        html += `
+                            <button type="button"
+                                    ${disabled ? 'disabled' : ''}
+                                    data-color="${escapeHtml(normalized)}"
+                                    onclick="window.LEDMatrixWidgets.getHandlers('color-picker').onPresetClick('${fieldId}', this.dataset.color)"
+                                    class="w-6 h-6 rounded border border-gray-300 hover:scale-110 transition-transform ${disabled ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}"
+                                    style="background-color: ${escapeHtml(normalized)};"
+                                    title="${escapeHtml(normalized)}">
+                            </button>
+                        `;
+                    }
+                    html += '</div>';
                 }
-                html += '</div>';
             }
 
             // Error message area

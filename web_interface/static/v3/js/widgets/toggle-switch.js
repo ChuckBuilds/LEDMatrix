@@ -30,7 +30,7 @@
         if (base) return base.escapeHtml(text);
         const div = document.createElement('div');
         div.textContent = String(text);
-        return div.innerHTML;
+        return div.innerHTML.replace(/"/g, '&quot;').replace(/'/g, '&#39;');
     }
 
     function sanitizeId(id) {
@@ -148,15 +148,26 @@
 
             if (button) {
                 button.setAttribute('aria-checked', isChecked);
-                // Get color class from current classes or default
+                // Get color from widget data attribute (preferred) or scan button classes
                 const colorClasses = Object.values(COLOR_CLASSES);
                 let currentColor = 'bg-blue-600';
-                for (const cls of colorClasses) {
-                    if (button.classList.contains(cls)) {
-                        currentColor = cls;
-                        break;
+
+                // First try to get from widget data attribute
+                if (widget && widget.dataset.color) {
+                    const configuredColor = COLOR_CLASSES[widget.dataset.color];
+                    if (configuredColor) {
+                        currentColor = configuredColor;
+                    }
+                } else {
+                    // Fall back to scanning button classes
+                    for (const cls of colorClasses) {
+                        if (button.classList.contains(cls)) {
+                            currentColor = cls;
+                            break;
+                        }
                     }
                 }
+
                 if (isChecked) {
                     button.classList.remove('bg-gray-200');
                     button.classList.add(currentColor);

@@ -57,7 +57,7 @@
         if (base) return base.escapeHtml(text);
         const div = document.createElement('div');
         div.textContent = String(text);
-        return div.innerHTML;
+        return div.innerHTML.replace(/"/g, '&quot;').replace(/'/g, '&#39;');
     }
 
     function sanitizeId(id) {
@@ -501,9 +501,8 @@
                 if (dayStart) {
                     dayStart.disabled = !enabled;
                     dayStart.classList.toggle('bg-gray-100', !enabled);
-                    if (!enabled) {
-                        dayStart.value = '';
-                    } else if (!dayStart.value) {
+                    // Set default value only when enabling and input is empty
+                    if (enabled && !dayStart.value) {
                         dayStart.value = '07:00';
                     }
                 }
@@ -511,9 +510,8 @@
                 if (dayEnd) {
                     dayEnd.disabled = !enabled;
                     dayEnd.classList.toggle('bg-gray-100', !enabled);
-                    if (!enabled) {
-                        dayEnd.value = '';
-                    } else if (!dayEnd.value) {
+                    // Set default value only when enabling and input is empty
+                    if (enabled && !dayEnd.value) {
                         dayEnd.value = '23:00';
                     }
                 }

@@ -33,7 +33,7 @@
         if (base) return base.escapeHtml(text);
         const div = document.createElement('div');
         div.textContent = String(text);
-        return div.innerHTML;
+        return div.innerHTML.replace(/"/g, '&quot;').replace(/'/g, '&#39;');
     }
 
     function sanitizeId(id) {
@@ -73,7 +73,7 @@
 
             const currentValue = value !== null && value !== undefined ? String(value) : '';
 
-            let html = `<div id="${fieldId}_widget" class="text-input-widget" data-field-id="${fieldId}">`;
+            let html = `<div id="${fieldId}_widget" class="text-input-widget" data-field-id="${fieldId}" data-pattern-message="${escapeHtml(patternMessage)}">`;
 
             // Container for prefix/input/suffix layout
             const hasAddons = prefix || suffix || clearable;
@@ -155,14 +155,27 @@
             const safeId = sanitizeId(fieldId);
             const input = document.getElementById(`${safeId}_input`);
             const errorEl = document.getElementById(`${safeId}_error`);
+            const widget = document.getElementById(`${safeId}_widget`);
 
             if (!input) return { valid: true, errors: [] };
 
             const isValid = input.checkValidity();
+            let errorMessage = input.validationMessage;
+
+            // Use custom pattern message if pattern mismatch
+            if (!isValid && input.validity.patternMismatch && widget) {
+                const patternMessage = widget.dataset.patternMessage;
+                if (patternMessage) {
+                    errorMessage = patternMessage;
+                    input.setCustomValidity(patternMessage);
+                }
+            } else {
+                input.setCustomValidity('');
+            }
 
             if (errorEl) {
                 if (!isValid) {
-                    errorEl.textContent = input.validationMessage;
+                    errorEl.textContent = errorMessage;
                     errorEl.classList.remove('hidden');
                     input.classList.add('border-red-500');
                 } else {
@@ -171,7 +184,7 @@
                 }
             }
 
-            return { valid: isValid, errors: isValid ? [] : [input.validationMessage] };
+            return { valid: isValid, errors: isValid ? [] : [errorMessage] };
         },
 
         handlers: {

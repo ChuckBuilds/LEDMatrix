@@ -37,7 +37,7 @@
         if (base) return base.escapeHtml(text);
         const div = document.createElement('div');
         div.textContent = String(text);
-        return div.innerHTML;
+        return div.innerHTML.replace(/"/g, '&quot;').replace(/'/g, '&#39;');
     }
 
     function sanitizeId(id) {
@@ -92,7 +92,7 @@
                                    value="${escapeHtml(String(optValue))}"
                                    ${isChecked ? 'checked' : ''}
                                    ${disabled ? 'disabled' : ''}
-                                   onchange="window.LEDMatrixWidgets.getHandlers('radio-group').onChange('${fieldId}', '${escapeHtml(String(optValue))}')"
+                                   onchange="window.LEDMatrixWidgets.getHandlers('radio-group').onChange('${fieldId}', this.value)"
                                    class="h-4 w-4 text-blue-600 border-gray-300 focus:ring-blue-500 ${disabled ? 'cursor-not-allowed' : 'cursor-pointer'}">
                         </div>
                         <div class="ml-3">

@@ -30,7 +30,7 @@
         if (base) return base.escapeHtml(text);
         const div = document.createElement('div');
         div.textContent = String(text);
-        return div.innerHTML;
+        return div.innerHTML.replace(/"/g, '&quot;').replace(/'/g, '&#39;');
     }
 
     function sanitizeId(id) {
@@ -79,6 +79,7 @@
                            value="${escapeHtml(currentValue)}"
                            ${min ? `min="${escapeHtml(min)}"` : ''}
                            ${max ? `max="${escapeHtml(max)}"` : ''}
+                           ${placeholder ? `placeholder="${escapeHtml(placeholder)}"` : ''}
                            ${disabled ? 'disabled' : ''}
                            ${required ? 'required' : ''}
                            onchange="window.LEDMatrixWidgets.getHandlers('date-picker').onChange('${fieldId}')"
