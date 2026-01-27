@@ -997,18 +997,27 @@ window.initPluginsPage = function() {
     const cancelOnDemandBtn = document.getElementById('cancel-on-demand');
     const onDemandForm = document.getElementById('on-demand-form');
     const onDemandModal = document.getElementById('on-demand-modal');
-    
+
+    console.log('[initPluginsPage] Setting up button listeners:', {
+        refreshBtn: !!refreshBtn,
+        updateAllBtn: !!updateAllBtn,
+        restartBtn: !!restartBtn
+    });
+
     if (refreshBtn) {
         refreshBtn.replaceWith(refreshBtn.cloneNode(true));
         document.getElementById('refresh-plugins-btn').addEventListener('click', refreshPlugins);
+        console.log('[initPluginsPage] Attached refreshPlugins listener');
     }
     if (updateAllBtn) {
         updateAllBtn.replaceWith(updateAllBtn.cloneNode(true));
         document.getElementById('update-all-plugins-btn').addEventListener('click', runUpdateAllPlugins);
+        console.log('[initPluginsPage] Attached runUpdateAllPlugins listener');
     }
     if (restartBtn) {
         restartBtn.replaceWith(restartBtn.cloneNode(true));
         document.getElementById('restart-display-btn').addEventListener('click', restartDisplay);
+        console.log('[initPluginsPage] Attached restartDisplay listener');
     }
     if (searchBtn) {
         searchBtn.replaceWith(searchBtn.cloneNode(true));
@@ -1675,6 +1684,7 @@ function startOnDemandStatusPolling() {
 window.loadOnDemandStatus = loadOnDemandStatus;
 
 function runUpdateAllPlugins() {
+    console.log('[runUpdateAllPlugins] Button clicked, checking for updates...');
     const button = document.getElementById('update-all-plugins-btn');
 
     if (!button) {
@@ -5008,10 +5018,11 @@ function handleUninstallSuccess(pluginId) {
 }
 
 function refreshPlugins() {
+    console.log('[refreshPlugins] Button clicked, refreshing plugins...');
     // Clear cache to force fresh data
     pluginStoreCache = null;
     cacheTimestamp = null;
-    
+
     loadInstalledPlugins();
     // Fetch latest metadata from GitHub when refreshing
     searchPluginStore(true);
@@ -5019,8 +5030,9 @@ function refreshPlugins() {
 }
 
 function restartDisplay() {
+    console.log('[restartDisplay] Button clicked, restarting display service...');
     showNotification('Restarting display service...', 'info');
-    
+
     fetch('/api/v3/system/action', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
