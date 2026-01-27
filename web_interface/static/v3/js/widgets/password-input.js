@@ -113,7 +113,7 @@
             html += `
                 <input type="password"
                        id="${fieldId}_input"
-                       name="${options.name || fieldId}"
+                       name="${escapeHtml(options.name || fieldId)}"
                        value="${escapeHtml(currentValue)}"
                        placeholder="${escapeHtml(placeholder)}"
                        ${minLength ? `minlength="${minLength}"` : ''}

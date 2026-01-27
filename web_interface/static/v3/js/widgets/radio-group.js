@@ -88,7 +88,7 @@
                         <div class="flex items-center h-5">
                             <input type="radio"
                                    id="${optId}"
-                                   name="${options.name || fieldId}"
+                                   name="${escapeHtml(options.name || fieldId)}"
                                    value="${escapeHtml(String(optValue))}"
                                    ${isChecked ? 'checked' : ''}
                                    ${disabled ? 'disabled' : ''}

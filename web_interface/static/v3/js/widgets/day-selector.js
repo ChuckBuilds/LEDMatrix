@@ -89,7 +89,9 @@
         render: function(container, config, value, options) {
             const fieldId = sanitizeId(options.fieldId || container.id || 'day_selector');
             const xOptions = config['x-options'] || config['x_options'] || {};
-            const format = xOptions.format || 'long';
+            const requestedFormat = xOptions.format || 'long';
+            // Validate format exists in DAY_LABELS, default to 'long' if not
+            const format = DAY_LABELS.hasOwnProperty(requestedFormat) ? requestedFormat : 'long';
             const layout = xOptions.layout || 'horizontal';
             const showSelectAll = xOptions.selectAll !== false;
 

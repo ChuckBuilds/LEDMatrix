@@ -73,7 +73,7 @@
 
             html += `
                 <select id="${fieldId}_input"
-                        name="${options.name || fieldId}"
+                        name="${escapeHtml(options.name || fieldId)}"
                         ${disabled ? 'disabled' : ''}
                         ${required ? 'required' : ''}
                         onchange="window.LEDMatrixWidgets.getHandlers('select-dropdown').onChange('${fieldId}')"

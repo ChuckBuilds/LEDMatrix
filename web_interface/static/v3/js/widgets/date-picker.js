@@ -75,7 +75,7 @@
                 <div class="relative flex-1">
                     <input type="date"
                            id="${fieldId}_input"
-                           name="${options.name || fieldId}"
+                           name="${escapeHtml(options.name || fieldId)}"
                            value="${escapeHtml(currentValue)}"
                            ${min ? `min="${escapeHtml(min)}"` : ''}
                            ${max ? `max="${escapeHtml(max)}"` : ''}

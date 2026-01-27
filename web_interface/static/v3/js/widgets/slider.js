@@ -98,7 +98,7 @@
             html += `
                 <input type="range"
                        id="${fieldId}_input"
-                       name="${options.name || fieldId}"
+                       name="${escapeHtml(options.name || fieldId)}"
                        value="${currentValue}"
                        min="${min}"
                        max="${max}"

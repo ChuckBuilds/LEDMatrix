@@ -95,7 +95,7 @@
             html += `
                 <input type="url"
                        id="${fieldId}_input"
-                       name="${options.name || fieldId}"
+                       name="${escapeHtml(options.name || fieldId)}"
                        value="${escapeHtml(currentValue)}"
                        placeholder="${escapeHtml(placeholder)}"
                        ${disabled ? 'disabled' : ''}

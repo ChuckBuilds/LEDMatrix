@@ -91,7 +91,7 @@
             html += `
                 <input type="text"
                        id="${fieldId}_input"
-                       name="${options.name || fieldId}"
+                       name="${escapeHtml(options.name || fieldId)}"
                        value="${escapeHtml(currentValue)}"
                        placeholder="${escapeHtml(placeholder)}"
                        ${pattern ? `pattern="${escapeHtml(pattern)}"` : ''}

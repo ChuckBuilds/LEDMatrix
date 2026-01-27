@@ -80,7 +80,7 @@
 
             html += `
                 <textarea id="${fieldId}_input"
-                          name="${options.name || fieldId}"
+                          name="${escapeHtml(options.name || fieldId)}"
                           rows="${rows}"
                           placeholder="${escapeHtml(placeholder)}"
                           ${maxLength ? `maxlength="${maxLength}"` : ''}

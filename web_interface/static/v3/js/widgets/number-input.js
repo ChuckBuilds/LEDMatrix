@@ -94,7 +94,7 @@
             html += `
                 <input type="number"
                        id="${fieldId}_input"
-                       name="${options.name || fieldId}"
+                       name="${escapeHtml(options.name || fieldId)}"
                        value="${currentValue}"
                        placeholder="${escapeHtml(placeholder)}"
                        ${min !== null ? `min="${min}"` : ''}

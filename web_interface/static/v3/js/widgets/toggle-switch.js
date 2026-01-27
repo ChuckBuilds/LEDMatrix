@@ -98,7 +98,7 @@
             let html = `<div id="${fieldId}_widget" class="toggle-switch-widget flex items-center" data-field-id="${fieldId}" data-label-on="${escapeHtml(labelOn)}" data-label-off="${escapeHtml(labelOff)}" data-color="${colorOn}">`;
 
             // Hidden checkbox for form submission
-            html += `<input type="hidden" id="${fieldId}_hidden" name="${options.name || fieldId}" value="${isChecked}">`;
+            html += `<input type="hidden" id="${fieldId}_hidden" name="${escapeHtml(options.name || fieldId)}" value="${isChecked}">`;
 
             html += `
                 <button type="button"

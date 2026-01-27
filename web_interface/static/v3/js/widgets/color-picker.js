@@ -129,7 +129,7 @@
             html += '</div>';
 
             // Hidden input for form submission
-            html += `<input type="hidden" id="${fieldId}_input" name="${options.name || fieldId}" value="${currentValue}">`;
+            html += `<input type="hidden" id="${fieldId}_input" name="${escapeHtml(options.name || fieldId)}" value="${currentValue}">`;
 
             // Preset colors - only render valid hex colors
             if (presets && presets.length > 0) {
