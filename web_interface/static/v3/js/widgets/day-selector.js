@@ -104,7 +104,7 @@
             let html = `<div id="${fieldId}_widget" class="day-selector-widget" data-field-id="${fieldId}">`;
 
             // Hidden input to store the value as JSON array
-            html += `<input type="hidden" id="${fieldId}_data" name="${inputName}" value='${escapeHtml(JSON.stringify(selectedDays))}'>`;
+            html += `<input type="hidden" id="${fieldId}_data" name="${escapeHtml(inputName)}" value='${escapeHtml(JSON.stringify(selectedDays))}'>`;
 
             // Select All toggle
             if (showSelectAll) {

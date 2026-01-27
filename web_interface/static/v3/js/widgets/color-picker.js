@@ -56,13 +56,26 @@
 
     function normalizeHex(hex) {
         if (!hex) return '#000000';
-        hex = hex.trim();
+        hex = String(hex).trim();
         if (!hex.startsWith('#')) hex = '#' + hex;
         // Expand 3-digit hex
         if (hex.length === 4) {
             hex = '#' + hex[1] + hex[1] + hex[2] + hex[2] + hex[3] + hex[3];
         }
         return hex.toLowerCase();
+    }
+
+    /**
+     * Sanitize and validate a hex color, returning a safe 7-char #rrggbb string.
+     * Falls back to #000000 for any invalid input.
+     */
+    function sanitizeHex(value) {
+        const normalized = normalizeHex(value);
+        // Validate it's exactly #rrggbb format with valid hex chars
+        if (/^#[0-9a-f]{6}$/.test(normalized)) {
+            return normalized;
+        }
+        return '#000000';
     }
 
     const DEFAULT_PRESETS = [
@@ -82,7 +95,7 @@
             const presets = xOptions.presets || DEFAULT_PRESETS;
             const disabled = xOptions.disabled === true;
 
-            const currentValue = normalizeHex(value || '#000000');
+            const currentValue = sanitizeHex(value);
 
             let html = `<div id="${fieldId}_widget" class="color-picker-widget" data-field-id="${fieldId}">`;
 
@@ -171,24 +184,24 @@
 
         setValue: function(fieldId, value) {
             const safeId = sanitizeId(fieldId);
-            const normalized = normalizeHex(value);
+            const sanitized = sanitizeHex(value);
 
             const colorInput = document.getElementById(`${safeId}_color`);
             const hexInput = document.getElementById(`${safeId}_hex`);
             const preview = document.getElementById(`${safeId}_preview`);
             const hidden = document.getElementById(`${safeId}_input`);
 
-            if (colorInput) colorInput.value = normalized;
-            if (hexInput) hexInput.value = normalized.substring(1);
-            if (preview) preview.style.backgroundColor = normalized;
-            if (hidden) hidden.value = normalized;
+            if (colorInput) colorInput.value = sanitized;
+            if (hexInput) hexInput.value = sanitized.substring(1);
+            if (preview) preview.style.backgroundColor = sanitized;
+            if (hidden) hidden.value = sanitized;
         },
 
         handlers: {
             onColorChange: function(fieldId) {
                 const safeId = sanitizeId(fieldId);
                 const colorInput = document.getElementById(`${safeId}_color`);
-                const value = colorInput?.value || '#000000';
+                const value = sanitizeHex(colorInput?.value);
 
                 const widget = window.LEDMatrixWidgets.get('color-picker');
                 widget.setValue(fieldId, value);
@@ -200,10 +213,10 @@
                 const hexInput = document.getElementById(`${safeId}_hex`);
                 const errorEl = document.getElementById(`${safeId}_error`);
 
-                let value = '#' + (hexInput?.value || '000000');
-                value = normalizeHex(value);
+                const rawValue = '#' + (hexInput?.value || '000000');
+                const normalized = normalizeHex(rawValue);
 
-                if (!isValidHex(value)) {
+                if (!isValidHex(normalized)) {
                     if (errorEl) {
                         errorEl.textContent = 'Invalid hex color';
                         errorEl.classList.remove('hidden');
@@ -215,9 +228,11 @@
                     errorEl.classList.add('hidden');
                 }
 
+                // Use sanitized value for setting
+                const sanitized = sanitizeHex(normalized);
                 const widget = window.LEDMatrixWidgets.get('color-picker');
-                widget.setValue(fieldId, value);
-                triggerChange(fieldId, value);
+                widget.setValue(fieldId, sanitized);
+                triggerChange(fieldId, sanitized);
             },
 
             onHexInput: function(fieldId) {
@@ -231,9 +246,10 @@
             },
 
             onPresetClick: function(fieldId, color) {
+                const sanitized = sanitizeHex(color);
                 const widget = window.LEDMatrixWidgets.get('color-picker');
-                widget.setValue(fieldId, color);
-                triggerChange(fieldId, color);
+                widget.setValue(fieldId, sanitized);
+                triggerChange(fieldId, sanitized);
             }
         }
     });

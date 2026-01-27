@@ -141,7 +141,7 @@
             if (input) {
                 input.value = value !== null && value !== undefined ? value : input.min;
             }
-            if (valueEl && widget) {
+            if (valueEl && widget && input) {
                 const prefix = widget.dataset.prefix || '';
                 const suffix = widget.dataset.suffix || '';
                 valueEl.textContent = `${prefix}${input.value}${suffix}`;

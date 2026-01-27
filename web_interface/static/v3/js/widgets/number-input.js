@@ -69,7 +69,9 @@
             const disabled = xOptions.disabled === true;
             const placeholder = xOptions.placeholder || '';
 
-            const currentValue = value !== null && value !== undefined ? value : '';
+            // Sanitize currentValue - ensure it's a safe numeric string or empty
+            const rawValue = value !== null && value !== undefined ? value : '';
+            const currentValue = rawValue === '' ? '' : (isNaN(Number(rawValue)) ? '' : String(Number(rawValue)));
 
             let html = `<div id="${fieldId}_widget" class="number-input-widget" data-field-id="${fieldId}" data-min="${min !== null ? min : ''}" data-max="${max !== null ? max : ''}" data-step="${step}">`;
 
@@ -95,7 +97,7 @@
                 <input type="number"
                        id="${fieldId}_input"
                        name="${escapeHtml(options.name || fieldId)}"
-                       value="${currentValue}"
+                       value="${escapeHtml(currentValue)}"
                        placeholder="${escapeHtml(placeholder)}"
                        ${min !== null ? `min="${min}"` : ''}
                        ${max !== null ? `max="${max}"` : ''}

@@ -74,13 +74,27 @@
             const placeholder = xOptions.placeholder || 'https://example.com';
             const showIcon = xOptions.showIcon !== false;
             const showPreview = xOptions.showPreview === true;
-            const allowedProtocols = xOptions.allowedProtocols || ['http', 'https'];
+            // Normalize allowedProtocols to an array
+            let allowedProtocols = xOptions.allowedProtocols;
+            if (typeof allowedProtocols === 'string') {
+                allowedProtocols = allowedProtocols.split(',').map(p => p.trim()).filter(p => p);
+            } else if (!Array.isArray(allowedProtocols)) {
+                allowedProtocols = ['http', 'https'];
+            }
+            // Filter to only valid protocol strings (alphanumeric only)
+            allowedProtocols = allowedProtocols.map(p => String(p).replace(/[^a-zA-Z0-9]/g, '')).filter(p => p);
+            if (allowedProtocols.length === 0) {
+                allowedProtocols = ['http', 'https'];
+            }
+
             const disabled = xOptions.disabled === true;
             const required = xOptions.required === true;
 
             const currentValue = value || '';
 
-            let html = `<div id="${fieldId}_widget" class="url-input-widget" data-field-id="${fieldId}" data-protocols="${allowedProtocols.join(',')}">`;
+            // Escape the protocols for safe HTML attribute interpolation
+            const escapedProtocols = escapeHtml(allowedProtocols.join(','));
+            let html = `<div id="${fieldId}_widget" class="url-input-widget" data-field-id="${fieldId}" data-protocols="${escapedProtocols}">`;
 
             html += '<div class="relative">';
 

@@ -159,7 +159,10 @@
 
             if (!input) return { valid: true, errors: [] };
 
-            const isValid = input.checkValidity();
+            // Clear any prior custom validity to avoid stale errors
+            input.setCustomValidity('');
+
+            let isValid = input.checkValidity();
             let errorMessage = input.validationMessage;
 
             // Use custom pattern message if pattern mismatch
@@ -168,9 +171,9 @@
                 if (patternMessage) {
                     errorMessage = patternMessage;
                     input.setCustomValidity(patternMessage);
+                    // Re-check validity with custom message set
+                    isValid = input.checkValidity();
                 }
-            } else {
-                input.setCustomValidity('');
             }
 
             if (errorEl) {

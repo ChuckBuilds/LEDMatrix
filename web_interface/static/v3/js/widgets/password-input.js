@@ -97,7 +97,9 @@
             const placeholder = xOptions.placeholder || 'Enter password';
             const showToggle = xOptions.showToggle !== false;
             const showStrength = xOptions.showStrength === true;
-            const minLength = xOptions.minLength !== undefined ? xOptions.minLength : 8;
+            // Validate and sanitize minLength as a non-negative integer
+            const rawMinLength = xOptions.minLength !== undefined ? parseInt(xOptions.minLength, 10) : 8;
+            const sanitizedMinLength = (Number.isFinite(rawMinLength) && Number.isInteger(rawMinLength) && rawMinLength >= 0) ? rawMinLength : 8;
             const requireUppercase = xOptions.requireUppercase === true;
             const requireNumber = xOptions.requireNumber === true;
             const requireSpecial = xOptions.requireSpecial === true;
@@ -106,7 +108,7 @@
 
             const currentValue = value || '';
 
-            let html = `<div id="${fieldId}_widget" class="password-input-widget" data-field-id="${fieldId}" data-min-length="${minLength}" data-require-uppercase="${requireUppercase}" data-require-number="${requireNumber}" data-require-special="${requireSpecial}">`;
+            let html = `<div id="${fieldId}_widget" class="password-input-widget" data-field-id="${fieldId}" data-min-length="${sanitizedMinLength}" data-require-uppercase="${requireUppercase}" data-require-number="${requireNumber}" data-require-special="${requireSpecial}">`;
 
             html += '<div class="relative">';
 
@@ -116,7 +118,7 @@
                        name="${escapeHtml(options.name || fieldId)}"
                        value="${escapeHtml(currentValue)}"
                        placeholder="${escapeHtml(placeholder)}"
-                       ${minLength ? `minlength="${minLength}"` : ''}
+                       ${sanitizedMinLength > 0 ? `minlength="${sanitizedMinLength}"` : ''}
                        ${disabled ? 'disabled' : ''}
                        ${required ? 'required' : ''}
                        onchange="window.LEDMatrixWidgets.getHandlers('password-input').onChange('${fieldId}')"
