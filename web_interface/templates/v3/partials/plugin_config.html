@@ -11,9 +11,68 @@
     {% set description = prop.description if prop.description else '' %}
     {% set field_type = prop.type if prop.type is string else (prop.type[0] if prop.type is iterable else 'string') %}
     
-    {# Handle nested objects recursively #}
-    {% if field_type == 'object' and prop.properties %}
-        {{ render_nested_section(key, prop, value, prefix, plugin_id) }}
+    {# Handle nested objects - check for widget first #}
+    {% if field_type == 'object' %}
+        {% set obj_widget = prop.get('x-widget') or prop.get('x_widget') %}
+        {% if obj_widget == 'schedule-picker' %}
+            {# Schedule picker widget - renders enable/mode/times UI #}
+            {% set obj_value = value if value is not none else {} %}
+            <div class="form-group mb-4">
+                <label class="block text-sm font-medium text-gray-700 mb-1">{{ label }}</label>
+                {% if description %}<p class="text-sm text-gray-500 mb-2">{{ description }}</p>{% endif %}
+                <div id="{{ field_id }}_container" class="schedule-picker-container mt-1"></div>
+                <input type="hidden" id="{{ field_id }}_data" name="{{ full_key }}" value='{{ obj_value|tojson|safe }}'>
+            </div>
+            <script>
+            (function() {
+                function initWidget() {
+                    if (!window.LEDMatrixWidgets) { setTimeout(initWidget, 50); return; }
+                    var widget = window.LEDMatrixWidgets.get('schedule-picker');
+                    if (!widget) { setTimeout(initWidget, 50); return; }
+                    var container = document.getElementById('{{ field_id }}_container');
+                    if (!container) return;
+                    var value = {{ obj_value|tojson|safe }};
+                    var config = { 'x-options': {{ (prop.get('x-options') or prop.get('x_options') or {})|tojson|safe }} };
+                    widget.render(container, config, value, { fieldId: '{{ field_id }}', pluginId: '{{ plugin_id }}' });
+                }
+                if (document.readyState === 'loading') {
+                    document.addEventListener('DOMContentLoaded', initWidget);
+                } else {
+                    setTimeout(initWidget, 50);
+                }
+            })();
+            </script>
+        {% elif obj_widget == 'time-range' %}
+            {# Time range widget - renders start/end time inputs #}
+            {% set obj_value = value if value is not none else {} %}
+            <div class="form-group mb-4">
+                <label class="block text-sm font-medium text-gray-700 mb-1">{{ label }}</label>
+                {% if description %}<p class="text-sm text-gray-500 mb-2">{{ description }}</p>{% endif %}
+                <div id="{{ field_id }}_container" class="time-range-container mt-1"></div>
+                <input type="hidden" id="{{ field_id }}_data" name="{{ full_key }}" value='{{ obj_value|tojson|safe }}'>
+            </div>
+            <script>
+            (function() {
+                function initWidget() {
+                    if (!window.LEDMatrixWidgets) { setTimeout(initWidget, 50); return; }
+                    var widget = window.LEDMatrixWidgets.get('time-range');
+                    if (!widget) { setTimeout(initWidget, 50); return; }
+                    var container = document.getElementById('{{ field_id }}_container');
+                    if (!container) return;
+                    var value = {{ obj_value|tojson|safe }};
+                    var config = { 'x-options': {{ (prop.get('x-options') or prop.get('x_options') or {})|tojson|safe }} };
+                    widget.render(container, config, value, { fieldId: '{{ field_id }}', pluginId: '{{ plugin_id }}' });
+                }
+                if (document.readyState === 'loading') {
+                    document.addEventListener('DOMContentLoaded', initWidget);
+                } else {
+                    setTimeout(initWidget, 50);
+                }
+            })();
+            </script>
+        {% elif prop.properties %}
+            {{ render_nested_section(key, prop, value, prefix, plugin_id) }}
+        {% endif %}
     {% else %}
         <div class="form-group mb-4">
             <label for="{{ field_id }}" class="block text-sm font-medium text-gray-700 mb-1">
@@ -184,6 +243,29 @@
                 {# Sentinel hidden input with bracket notation to allow clearing array to [] when all unchecked #}
                 {# This ensures the field is always submitted, even when all checkboxes are unchecked #}
                 <input type="hidden" name="{{ full_key }}[]" value="">
+            {% elif x_widget == 'day-selector' %}
+                {# Day selector widget for selecting days of the week #}
+                {% set array_value = value if value is not none and value is iterable and value is not string else (prop.default if prop.default is defined and prop.default is iterable and prop.default is not string else []) %}
+                <div id="{{ field_id }}_container" class="day-selector-container mt-1"></div>
+                <script>
+                (function() {
+                    function initWidget() {
+                        if (!window.LEDMatrixWidgets) { setTimeout(initWidget, 50); return; }
+                        var widget = window.LEDMatrixWidgets.get('day-selector');
+                        if (!widget) { setTimeout(initWidget, 50); return; }
+                        var container = document.getElementById('{{ field_id }}_container');
+                        if (!container) return;
+                        var value = {{ array_value|tojson|safe }};
+                        var config = { 'x-options': {{ (prop.get('x-options') or prop.get('x_options') or {})|tojson|safe }} };
+                        widget.render(container, config, value, { fieldId: '{{ field_id }}', pluginId: '{{ plugin_id }}' });
+                    }
+                    if (document.readyState === 'loading') {
+                        document.addEventListener('DOMContentLoaded', initWidget);
+                    } else {
+                        setTimeout(initWidget, 50);
+                    }
+                })();
+                </script>
             {% else %}
                 {# Check for custom-feeds widget first #}
                 {% set items_schema = prop.get('items') or {} %}
@@ -390,13 +472,46 @@
                 {% endif %}
             {% endif %}
             
-            {# Text input (default) #}
+            {# String/default field - check for widgets #}
             {% else %}
-            <input type="text" 
-                   id="{{ field_id }}"
-                   name="{{ full_key }}" 
-                   value="{{ value if value is not none else (prop.default if prop.default is defined else '') }}"
-                   class="form-input w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 bg-white text-black placeholder:text-gray-500">
+            {% set str_widget = prop.get('x-widget') or prop.get('x_widget') %}
+            {% set str_value = value if value is not none else (prop.default if prop.default is defined else '') %}
+            {% if str_widget in ['text-input', 'textarea', 'select-dropdown', 'toggle-switch', 'radio-group', 'date-picker', 'slider', 'color-picker', 'email-input', 'url-input', 'password-input'] %}
+                {# Render widget container #}
+                <div id="{{ field_id }}_container" class="{{ str_widget }}-container"></div>
+                <script>
+                (function() {
+                    function initWidget() {
+                        if (!window.LEDMatrixWidgets) { setTimeout(initWidget, 50); return; }
+                        var widget = window.LEDMatrixWidgets.get('{{ str_widget }}');
+                        if (!widget) { setTimeout(initWidget, 50); return; }
+                        var container = document.getElementById('{{ field_id }}_container');
+                        if (!container) return;
+                        var value = {{ str_value|tojson|safe }};
+                        var config = {
+                            'type': '{{ field_type }}',
+                            'enum': {{ (prop.enum or [])|tojson|safe }},
+                            'minimum': {{ prop.minimum|tojson if prop.minimum is defined else 'null' }},
+                            'maximum': {{ prop.maximum|tojson if prop.maximum is defined else 'null' }},
+                            'x-options': {{ (prop.get('x-options') or prop.get('x_options') or {})|tojson|safe }}
+                        };
+                        widget.render(container, config, value, { fieldId: '{{ field_id }}', name: '{{ full_key }}', pluginId: '{{ plugin_id }}' });
+                    }
+                    if (document.readyState === 'loading') {
+                        document.addEventListener('DOMContentLoaded', initWidget);
+                    } else {
+                        setTimeout(initWidget, 50);
+                    }
+                })();
+                </script>
+            {% else %}
+                {# Default text input #}
+                <input type="text"
+                       id="{{ field_id }}"
+                       name="{{ full_key }}"
+                       value="{{ str_value }}"
+                       class="form-input w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 bg-white text-black placeholder:text-gray-500">
+            {% endif %}
             {% endif %}
         </div>
     {% endif %}
