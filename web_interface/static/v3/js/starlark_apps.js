@@ -32,11 +32,27 @@
         return div.innerHTML;
     }
 
+    // Move modals to body to ensure they can overlay the entire page
+    function moveModalsToBody() {
+        const modalIds = ['upload-star-modal', 'starlark-config-modal', 'repository-browser-modal'];
+
+        modalIds.forEach(modalId => {
+            const modal = document.getElementById(modalId);
+            if (modal && modal.parentElement !== document.body) {
+                console.log('[Starlark] Moving modal to body:', modalId);
+                document.body.appendChild(modal);
+            }
+        });
+    }
+
     // Define init function first
     function initStarlarkApps() {
         console.log('[Starlark] initStarlarkApps called, initialized:', window.starlarkAppsInitialized);
 
         try {
+            // Move modals to body so they can overlay the entire page
+            moveModalsToBody();
+
             // Set up event listeners only once to prevent duplicates
             if (!window.starlarkAppsInitialized) {
                 window.starlarkAppsInitialized = true;
