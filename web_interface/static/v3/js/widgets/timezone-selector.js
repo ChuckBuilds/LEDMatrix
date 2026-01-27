@@ -372,7 +372,7 @@
         // After any HTMX request, restore timezone select values
         document.body.addEventListener('htmx:afterRequest', function(event) {
             console.log('[TZ-HTMX] afterRequest fired');
-            // Small delay to ensure any DOM updates have completed
+            // Delay to ensure any DOM updates have completed (50ms instead of 10ms for reliability)
             setTimeout(function() {
                 Object.keys(savedTimezoneValues).forEach(function(fieldId) {
                     const select = document.getElementById(fieldId + '_input');
@@ -387,6 +387,14 @@
                             if (select.options[i].value === savedValue) {
                                 select.selectedIndex = i;
                                 console.log('[TZ-HTMX] Set selectedIndex to', i, '- visual value now:', select.options[select.selectedIndex]?.text);
+
+                                // Force browser to repaint by temporarily modifying a style
+                                select.style.display = 'none';
+                                // Trigger reflow
+                                void select.offsetHeight;
+                                select.style.display = '';
+
+                                console.log('[TZ-HTMX] Forced repaint - visual value:', select.options[select.selectedIndex]?.text);
                                 break;
                             }
                         }
@@ -395,7 +403,7 @@
                         hidden.value = savedValue;
                     }
                 });
-            }, 10);
+            }, 50);
         });
     })();
 
