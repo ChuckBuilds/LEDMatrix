@@ -51,11 +51,34 @@
         }
     }
 
+    // RFC 3986 scheme pattern: starts with letter, then letters/digits/+/./-
+    const RFC_SCHEME_PATTERN = /^[A-Za-z][A-Za-z0-9+.-]*$/;
+
+    /**
+     * Normalize and validate protocol list against RFC 3986 scheme pattern.
+     * Accepts schemes like "http", "https", "git+ssh", "android-app", etc.
+     * @param {Array|string} protocols - Protocol list (array or comma-separated string)
+     * @returns {Array} Normalized lowercase protocols, defaults to ['http', 'https']
+     */
+    function normalizeProtocols(protocols) {
+        let list = protocols;
+        if (typeof list === 'string') {
+            list = list.split(',').map(p => p.trim()).filter(p => p);
+        } else if (!Array.isArray(list)) {
+            return ['http', 'https'];
+        }
+        const normalized = list
+            .map(p => String(p).trim())
+            .filter(p => RFC_SCHEME_PATTERN.test(p))
+            .map(p => p.toLowerCase());
+        return normalized.length > 0 ? normalized : ['http', 'https'];
+    }
+
     function isValidUrl(string, allowedProtocols) {
         try {
             const url = new URL(string);
             if (allowedProtocols && allowedProtocols.length > 0) {
-                const protocol = url.protocol.replace(':', '');
+                const protocol = url.protocol.replace(':', '').toLowerCase();
                 return allowedProtocols.includes(protocol);
             }
             return true;
@@ -74,23 +97,8 @@
             const placeholder = xOptions.placeholder || 'https://example.com';
             const showIcon = xOptions.showIcon !== false;
             const showPreview = xOptions.showPreview === true;
-            // Normalize allowedProtocols to an array
-            let allowedProtocols = xOptions.allowedProtocols;
-            if (typeof allowedProtocols === 'string') {
-                allowedProtocols = allowedProtocols.split(',').map(p => p.trim()).filter(p => p);
-            } else if (!Array.isArray(allowedProtocols)) {
-                allowedProtocols = ['http', 'https'];
-            }
-            // Validate against RFC 3986 scheme pattern: starts with letter, then letters/digits/+/./-
-            // Accepts schemes like "http", "https", "git+ssh", "android-app", etc.
-            const rfcSchemePattern = /^[A-Za-z][A-Za-z0-9+.-]*$/;
-            allowedProtocols = allowedProtocols
-                .map(p => String(p).trim())
-                .filter(p => rfcSchemePattern.test(p))
-                .map(p => p.toLowerCase());
-            if (allowedProtocols.length === 0) {
-                allowedProtocols = ['http', 'https'];
-            }
+            // Normalize allowedProtocols using RFC 3986 validation
+            const allowedProtocols = normalizeProtocols(xOptions.allowedProtocols);
 
             const disabled = xOptions.disabled === true;
             const required = xOptions.required === true;
@@ -174,7 +182,7 @@
             if (!input) return { valid: true, errors: [] };
 
             const value = input.value;
-            const protocols = widget?.dataset.protocols?.split(',') || ['http', 'https'];
+            const protocols = normalizeProtocols(widget?.dataset.protocols);
 
             let isValid = true;
             let errorMsg = '';
@@ -220,7 +228,7 @@
                 const widgetEl = document.getElementById(`${safeId}_widget`);
 
                 const value = input?.value || '';
-                const protocols = widgetEl?.dataset.protocols?.split(',') || ['http', 'https'];
+                const protocols = normalizeProtocols(widgetEl?.dataset.protocols);
 
                 if (previewEl && previewLink) {
                     if (value && isValidUrl(value, protocols)) {
