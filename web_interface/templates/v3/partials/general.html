@@ -8,7 +8,22 @@
           hx-ext="json-enc"
           hx-headers='{"Content-Type": "application/json"}'
           hx-swap="none"
-          hx-on:htmx:after-request="showNotification(event.detail.xhr.responseJSON?.message || 'Settings saved', event.detail.xhr.responseJSON?.status || 'success');"
+          hx-on:htmx:after-request="
+              var xhr = event.detail.xhr;
+              var isSuccess = xhr.status >= 200 && xhr.status < 300;
+              var message = 'Settings saved';
+              var status = 'success';
+              try {
+                  var data = JSON.parse(xhr.responseText);
+                  message = data.message || message;
+                  status = data.status || status;
+              } catch (e) {}
+              if (!isSuccess) {
+                  message = message || 'Failed to save settings';
+                  status = 'error';
+              }
+              showNotification(message, isSuccess ? status : 'error');
+          "
           class="space-y-6">
 
         <!-- Web Display Autostart -->
