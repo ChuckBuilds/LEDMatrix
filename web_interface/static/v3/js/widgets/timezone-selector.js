@@ -382,8 +382,14 @@
                     console.log('[TZ-HTMX] Restoring', fieldId, 'to', savedValue, '- select exists:', !!select, '- current select value:', select?.value);
 
                     if (select && savedValue) {
-                        select.value = savedValue;
-                        console.log('[TZ-HTMX] Set select.value to', savedValue, '- actual value now:', select.value);
+                        // Find the option and set selectedIndex to force visual update
+                        for (let i = 0; i < select.options.length; i++) {
+                            if (select.options[i].value === savedValue) {
+                                select.selectedIndex = i;
+                                console.log('[TZ-HTMX] Set selectedIndex to', i, '- visual value now:', select.options[select.selectedIndex]?.text);
+                                break;
+                            }
+                        }
                     }
                     if (hidden && savedValue) {
                         hidden.value = savedValue;
