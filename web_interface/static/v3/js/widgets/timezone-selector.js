@@ -295,17 +295,27 @@
 
         setValue: function(fieldId, value) {
             const safeId = sanitizeId(fieldId);
-            const input = document.getElementById(`${safeId}_input`);
+            const select = document.getElementById(`${safeId}_input`);
             const hiddenInput = document.getElementById(`${safeId}_data`);
 
-            if (input) {
-                input.value = value || '';
-            }
-            if (hiddenInput) {
-                hiddenInput.value = value || '';
+            // Validate incoming value against known timezones
+            const requestedValue = (typeof value === 'string' && value.trim()) ? value.trim() : '';
+            const validValue = isValidTimezone(requestedValue) ? requestedValue : '';
+
+            if (select) {
+                // Only set to a value that exists in the select options
+                select.value = validValue;
             }
 
-            this.handlers.updateTimePreview(fieldId, value);
+            // Read the actual selected value from the select element
+            const actualValue = select ? select.value : '';
+
+            if (hiddenInput) {
+                // Synchronize hidden input to the actual selected value
+                hiddenInput.value = actualValue;
+            }
+
+            this.handlers.updateTimePreview(fieldId, actualValue);
         },
 
         handlers: {
@@ -363,15 +373,14 @@
     (function setupHtmxProtection() {
         let savedTimezoneValues = {};
 
-        // Before any HTMX request, save timezone select values
+        // Before any HTMX request, save timezone select values (including empty selections)
         document.body.addEventListener('htmx:beforeRequest', function(event) {
             document.querySelectorAll('.timezone-selector-widget').forEach(function(widget) {
                 const fieldId = widget.dataset.fieldId;
                 if (fieldId) {
                     const select = document.getElementById(fieldId + '_input');
-                    if (select && select.value) {
-                        savedTimezoneValues[fieldId] = select.value;
-                    }
+                    // Record value even if empty to preserve cleared selections
+                    savedTimezoneValues[fieldId] = select ? select.value : '';
                 }
             });
         });
@@ -385,21 +394,27 @@
                     const hidden = document.getElementById(fieldId + '_data');
                     const savedValue = savedTimezoneValues[fieldId];
 
-                    if (select && savedValue) {
-                        // Find the option and set selectedIndex to force visual update
-                        for (let i = 0; i < select.options.length; i++) {
-                            if (select.options[i].value === savedValue) {
-                                select.selectedIndex = i;
-
-                                // Force browser to repaint by temporarily modifying a style
-                                select.style.display = 'none';
-                                void select.offsetHeight;
-                                select.style.display = '';
-                                break;
+                    // Check for undefined, not truthiness, so empty strings are restored
+                    if (select && savedValue !== undefined) {
+                        if (savedValue === '') {
+                            // Handle empty string: clear the selection
+                            select.selectedIndex = -1;
+                        } else {
+                            // Find the option and set selectedIndex to force visual update
+                            for (let i = 0; i < select.options.length; i++) {
+                                if (select.options[i].value === savedValue) {
+                                    select.selectedIndex = i;
+                                    break;
+                                }
                             }
                         }
+
+                        // Force browser to repaint by temporarily modifying a style
+                        select.style.display = 'none';
+                        void select.offsetHeight;
+                        select.style.display = '';
                     }
-                    if (hidden && savedValue) {
+                    if (hidden && savedValue !== undefined) {
                         hidden.value = savedValue;
                     }
                 });

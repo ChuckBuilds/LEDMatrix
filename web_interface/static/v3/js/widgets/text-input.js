@@ -68,10 +68,15 @@
             // Sanitize minLength/maxLength - must be finite non-negative integers
             const rawMinLength = parseInt(xOptions.minLength, 10);
             const rawMaxLength = parseInt(xOptions.maxLength, 10);
-            const minLength = (Number.isFinite(rawMinLength) && rawMinLength >= 0 && rawMinLength <= 10000000)
+            let minLength = (Number.isFinite(rawMinLength) && rawMinLength >= 0 && rawMinLength <= 10000000)
                 ? rawMinLength : null;
-            const maxLength = (Number.isFinite(rawMaxLength) && rawMaxLength >= 0 && rawMaxLength <= 10000000)
+            let maxLength = (Number.isFinite(rawMaxLength) && rawMaxLength >= 0 && rawMaxLength <= 10000000)
                 ? rawMaxLength : null;
+
+            // Normalize constraints: ensure maxLength >= minLength when both are set
+            if (minLength !== null && maxLength !== null && maxLength < minLength) {
+                maxLength = minLength;
+            }
 
             const prefix = xOptions.prefix || '';
             const suffix = xOptions.suffix || '';
