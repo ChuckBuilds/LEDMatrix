@@ -222,9 +222,11 @@
 
             let html = `<div id="${fieldId}_widget" class="timezone-selector-widget" data-field-id="${fieldId}">`;
 
+            // Hidden input for form submission
+            html += `<input type="hidden" id="${fieldId}_data" name="${escapeHtml(options.name || fieldId)}" value="${escapeHtml(currentValue)}">`;
+
             html += `
                 <select id="${fieldId}_input"
-                        name="${escapeHtml(options.name || fieldId)}"
                         ${disabled ? 'disabled' : ''}
                         onchange="window.LEDMatrixWidgets.getHandlers('timezone-selector').onChange('${fieldId}')"
                         class="form-select w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 ${disabled ? 'bg-gray-100 cursor-not-allowed' : 'bg-white'} text-black">
@@ -282,16 +284,30 @@
         setValue: function(fieldId, value) {
             const safeId = sanitizeId(fieldId);
             const input = document.getElementById(`${safeId}_input`);
+            const hiddenInput = document.getElementById(`${safeId}_data`);
+
             if (input) {
                 input.value = value || '';
-                this.handlers.updateTimePreview(fieldId, value);
             }
+            if (hiddenInput) {
+                hiddenInput.value = value || '';
+            }
+
+            this.handlers.updateTimePreview(fieldId, value);
         },
 
         handlers: {
             onChange: function(fieldId) {
+                const safeId = sanitizeId(fieldId);
                 const widget = window.LEDMatrixWidgets.get('timezone-selector');
                 const value = widget.getValue(fieldId);
+
+                // Update hidden input for form submission
+                const hiddenInput = document.getElementById(`${safeId}_data`);
+                if (hiddenInput) {
+                    hiddenInput.value = value;
+                }
+
                 widget.handlers.updateTimePreview(fieldId, value);
                 triggerChange(fieldId, value);
             },
