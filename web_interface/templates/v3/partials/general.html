@@ -31,18 +31,33 @@
         </div>
         <script>
         (function() {
+            // Track if already initialized to prevent re-render
+            if (window.__timezoneWidgetInitialized) {
+                console.log('[TZ-DEBUG] Widget already initialized, skipping');
+                return;
+            }
+
             function initTimezoneWidget() {
                 if (!window.LEDMatrixWidgets) { setTimeout(initTimezoneWidget, 50); return; }
                 var widget = window.LEDMatrixWidgets.get('timezone-selector');
                 if (!widget) { setTimeout(initTimezoneWidget, 50); return; }
                 var container = document.getElementById('timezone_container');
                 if (!container) return;
+
+                // Only render if container is empty (not already rendered)
+                if (container.children.length > 0) {
+                    console.log('[TZ-DEBUG] Container already has children, skipping render');
+                    return;
+                }
+
+                console.log('[TZ-DEBUG] Initializing widget with value:', {{ (main_config.timezone or "America/Chicago")|tojson }});
                 widget.render(container, {
                     'x-options': { showOffset: true, placeholder: 'Select your timezone...' }
                 }, {{ (main_config.timezone or "America/Chicago")|tojson }}, {
                     fieldId: 'timezone',
                     name: 'timezone'
                 });
+                window.__timezoneWidgetInitialized = true;
             }
             if (document.readyState === 'loading') {
                 document.addEventListener('DOMContentLoaded', initTimezoneWidget);
