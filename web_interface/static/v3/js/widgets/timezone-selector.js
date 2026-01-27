@@ -302,10 +302,13 @@
                 const widget = window.LEDMatrixWidgets.get('timezone-selector');
                 const value = widget.getValue(fieldId);
 
+                console.log('[TZ-DEBUG] onChange fired! fieldId:', fieldId, 'new value:', value);
+
                 // Update hidden input for form submission
                 const hiddenInput = document.getElementById(`${safeId}_data`);
                 if (hiddenInput) {
                     hiddenInput.value = value;
+                    console.log('[TZ-DEBUG] Updated hidden input to:', value);
                 }
 
                 widget.handlers.updateTimePreview(fieldId, value);
