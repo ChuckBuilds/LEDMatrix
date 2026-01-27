@@ -162,9 +162,11 @@
             html += `
                 <button type="button"
                         onclick="window.LEDMatrixWidgets.get('notification').dismiss('${notificationId}')"
-                        class="flex-shrink-0 hover:bg-white hover:bg-opacity-20 rounded p-1 transition-colors"
+                        class="flex-shrink-0 ml-2 w-5 h-5 flex items-center justify-center rounded-full opacity-70 hover:opacity-100 hover:bg-white hover:bg-opacity-20 transition-all duration-150"
                         aria-label="Dismiss notification">
-                    <i class="fas fa-times text-xs"></i>
+                    <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M6 18L18 6M6 6l12 12"></path>
+                    </svg>
                 </button>
             `;
         }
