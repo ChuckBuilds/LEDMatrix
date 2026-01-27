@@ -720,14 +720,24 @@
         console.log('[Starlark] Modal display after:', modal.style.display);
 
         const computed = window.getComputedStyle(modal);
+        const rect = modal.getBoundingClientRect();
         console.log('[Starlark] Modal computed display:', computed.display);
         console.log('[Starlark] Modal computed z-index:', computed.zIndex);
         console.log('[Starlark] Modal computed position:', computed.position);
         console.log('[Starlark] Modal computed opacity:', computed.opacity);
         console.log('[Starlark] Modal computed visibility:', computed.visibility);
-        console.log('[Starlark] Modal bounding rect:', modal.getBoundingClientRect());
+        console.log('[Starlark] Modal rect - width:', rect.width, 'height:', rect.height);
+        console.log('[Starlark] Modal rect - top:', rect.top, 'left:', rect.left, 'right:', rect.right, 'bottom:', rect.bottom);
         console.log('[Starlark] Modal parent:', modal.parentElement?.tagName);
         console.log('[Starlark] Modal classList:', modal.className);
+
+        // Check if anything has higher z-index
+        const allElements = document.querySelectorAll('*');
+        const highZIndex = Array.from(allElements).filter(el => {
+            const z = window.getComputedStyle(el).zIndex;
+            return z !== 'auto' && parseInt(z) > 50;
+        });
+        console.log('[Starlark] Elements with z-index > 50:', highZIndex.length, highZIndex);
 
         // Load categories first
         loadRepositoryCategories();
