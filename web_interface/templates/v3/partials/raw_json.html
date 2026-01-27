@@ -312,28 +312,7 @@ function saveSecretsConfig() {
     }
 }
 
-// Global notification function
-function showNotification(message, type = 'info') {
-    const notifications = document.getElementById('notifications');
-    if (!notifications) return;
-    
-    const notification = document.createElement('div');
-    
-    const colors = {
-        success: 'bg-green-500',
-        error: 'bg-red-500',
-        warning: 'bg-yellow-500',
-        info: 'bg-blue-500'
-    };
-    
-    notification.className = `px-4 py-3 rounded-md text-white text-sm shadow-lg ${colors[type] || colors.info}`;
-    notification.innerHTML = `<i class="fas fa-${type === 'success' ? 'check' : type === 'error' ? 'times' : 'info'}-circle mr-2"></i>${message}`;
-    
-    notifications.appendChild(notification);
-    
-    setTimeout(() => {
-        notification.remove();
-    }, 5000);
-}
+// showNotification is provided by the notification widget (notification.js)
+// No local definition needed - uses window.showNotification from the widget
 </script>
 

@@ -231,38 +231,11 @@ function initializeFontsTab() {
         return;
     }
     
-    // Ensure showNotification function is available
+    // showNotification is provided by the notification widget (notification.js)
+    // Fallback only if widget hasn't loaded yet
     if (typeof window.showNotification !== 'function') {
         window.showNotification = function(message, type = 'info') {
-            // Try to use the base template's notification system first
-            if (typeof window.app !== 'undefined' && window.app.showNotification) {
-                window.app.showNotification(message, type);
-                return;
-            }
-            
-            // Create notification element like in base template
-            const notifications = document.getElementById('notifications');
-            if (notifications) {
-                const notification = document.createElement('div');
-
-                const colors = {
-                    success: 'bg-green-500',
-                    error: 'bg-red-500',
-                    warning: 'bg-yellow-500',
-                    info: 'bg-blue-500'
-                };
-
-                notification.className = `px-4 py-3 rounded-md text-white text-sm ${colors[type] || colors.info}`;
-                notification.textContent = message;
-
-                notifications.appendChild(notification);
-
-                setTimeout(() => {
-                    notification.remove();
-                }, 5000);
-            } else {
-                console.log(`${type}: ${message}`);
-            }
+            console.log(`[${type.toUpperCase()}]`, message);
         };
     }
 
