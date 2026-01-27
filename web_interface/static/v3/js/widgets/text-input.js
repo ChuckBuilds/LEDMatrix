@@ -64,8 +64,15 @@
             const placeholder = xOptions.placeholder || '';
             const pattern = xOptions.pattern || '';
             const patternMessage = xOptions.patternMessage || 'Invalid format';
-            const minLength = xOptions.minLength || 0;
-            const maxLength = xOptions.maxLength || null;
+
+            // Sanitize minLength/maxLength - must be finite non-negative integers
+            const rawMinLength = parseInt(xOptions.minLength, 10);
+            const rawMaxLength = parseInt(xOptions.maxLength, 10);
+            const minLength = (Number.isFinite(rawMinLength) && rawMinLength >= 0 && rawMinLength <= 10000000)
+                ? rawMinLength : null;
+            const maxLength = (Number.isFinite(rawMaxLength) && rawMaxLength >= 0 && rawMaxLength <= 10000000)
+                ? rawMaxLength : null;
+
             const prefix = xOptions.prefix || '';
             const suffix = xOptions.suffix || '';
             const clearable = xOptions.clearable === true;
@@ -95,8 +102,8 @@
                        value="${escapeHtml(currentValue)}"
                        placeholder="${escapeHtml(placeholder)}"
                        ${pattern ? `pattern="${escapeHtml(pattern)}"` : ''}
-                       ${minLength ? `minlength="${minLength}"` : ''}
-                       ${maxLength ? `maxlength="${maxLength}"` : ''}
+                       ${minLength !== null ? `minlength="${minLength}"` : ''}
+                       ${maxLength !== null ? `maxlength="${maxLength}"` : ''}
                        ${disabled ? 'disabled' : ''}
                        onchange="window.LEDMatrixWidgets.getHandlers('text-input').onChange('${fieldId}')"
                        oninput="window.LEDMatrixWidgets.getHandlers('text-input').onInput('${fieldId}')"
@@ -127,7 +134,7 @@
             html += `<div id="${fieldId}_error" class="text-sm text-red-600 mt-1 hidden"></div>`;
 
             // Character count if maxLength specified
-            if (maxLength) {
+            if (maxLength !== null) {
                 html += `<div id="${fieldId}_count" class="text-xs text-gray-400 mt-1 text-right">${currentValue.length}/${maxLength}</div>`;
             }
 

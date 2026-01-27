@@ -114,7 +114,7 @@
             { value: 'Europe/Sofia', label: 'Sofia' },
             { value: 'Europe/Lisbon', label: 'Lisbon' },
             { value: 'Europe/Moscow', label: 'Moscow' },
-            { value: 'Europe/Kiev', label: 'Kyiv' },
+            { value: 'Europe/Kyiv', label: 'Kyiv' },
             { value: 'Europe/Istanbul', label: 'Istanbul' }
         ],
         'UK & Ireland': [
@@ -190,6 +190,17 @@
         ]
     };
 
+    // Check if a timezone value exists in TIMEZONE_GROUPS
+    function isValidTimezone(value) {
+        if (!value || typeof value !== 'string') return false;
+        for (const timezones of Object.values(TIMEZONE_GROUPS)) {
+            for (const tz of timezones) {
+                if (tz.value === value) return true;
+            }
+        }
+        return false;
+    }
+
     // Get current UTC offset for a timezone
     function getTimezoneOffset(tz) {
         try {
@@ -217,8 +228,9 @@
             const placeholder = xOptions.placeholder || 'Select timezone...';
             const disabled = xOptions.disabled === true;
 
-            // Validate current value - must be a valid timezone string
-            const currentValue = (typeof value === 'string' && value.trim()) ? value.trim() : '';
+            // Validate current value - must be a recognized timezone from TIMEZONE_GROUPS
+            const trimmedValue = (typeof value === 'string' && value.trim()) ? value.trim() : '';
+            const currentValue = isValidTimezone(trimmedValue) ? trimmedValue : '';
 
             let html = `<div id="${fieldId}_widget" class="timezone-selector-widget" data-field-id="${fieldId}">`;
 
