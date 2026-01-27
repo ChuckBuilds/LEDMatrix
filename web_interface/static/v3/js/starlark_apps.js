@@ -831,20 +831,27 @@
             }
 
             repositoryApps = data.apps || [];
+            console.log('[Starlark] Rendering', repositoryApps.length, 'apps to grid');
 
             // Update rate limit info
             updateRateLimitInfo(data.rate_limit);
 
             // Hide loading
             if (loading) loading.classList.add('hidden');
+            console.log('[Starlark] Loading hidden');
 
             // Show apps or empty state
             if (repositoryApps.length === 0) {
+                console.log('[Starlark] No apps, showing empty state');
                 if (empty) empty.classList.remove('hidden');
             } else {
+                console.log('[Starlark] Rendering apps to grid element:', !!grid);
                 if (grid) {
-                    grid.innerHTML = repositoryApps.map(app => renderRepositoryAppCard(app)).join('');
+                    const cardsHtml = repositoryApps.map(app => renderRepositoryAppCard(app)).join('');
+                    console.log('[Starlark] Generated HTML length:', cardsHtml.length);
+                    grid.innerHTML = cardsHtml;
                     grid.classList.remove('hidden');
+                    console.log('[Starlark] Grid visible, grid children count:', grid.children.length);
                     // Set up event delegation for repository app cards
                     setupRepositoryAppEventDelegation(grid);
                 }
