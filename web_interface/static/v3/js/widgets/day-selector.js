@@ -130,9 +130,12 @@
 
             html += `<div class="${containerClass}">`;
 
+            // Get the validated label map (guaranteed to exist due to format validation above)
+            const labelMap = DAY_LABELS[format] || DAY_LABELS.long;
+
             for (const day of DAYS) {
                 const isChecked = selectedDays.includes(day);
-                const label = DAY_LABELS[format][day] || day;
+                const label = labelMap[day] || day;
 
                 html += `
                     <label class="inline-flex items-center cursor-pointer">
