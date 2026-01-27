@@ -32,10 +32,7 @@
         <script>
         (function() {
             // Track if already initialized to prevent re-render
-            if (window.__timezoneWidgetInitialized) {
-                console.log('[TZ-DEBUG] Widget already initialized, skipping');
-                return;
-            }
+            if (window.__timezoneWidgetInitialized) return;
 
             function initTimezoneWidget() {
                 if (!window.LEDMatrixWidgets) { setTimeout(initTimezoneWidget, 50); return; }
@@ -45,12 +42,8 @@
                 if (!container) return;
 
                 // Only render if container is empty (not already rendered)
-                if (container.children.length > 0) {
-                    console.log('[TZ-DEBUG] Container already has children, skipping render');
-                    return;
-                }
+                if (container.children.length > 0) return;
 
-                console.log('[TZ-DEBUG] Initializing widget with value:', {{ (main_config.timezone or "America/Chicago")|tojson }});
                 widget.render(container, {
                     'x-options': { showOffset: true, placeholder: 'Select your timezone...' }
                 }, {{ (main_config.timezone or "America/Chicago")|tojson }}, {

@@ -302,13 +302,10 @@
                 const widget = window.LEDMatrixWidgets.get('timezone-selector');
                 const value = widget.getValue(fieldId);
 
-                console.log('[TZ-DEBUG] onChange fired! fieldId:', fieldId, 'new value:', value);
-
                 // Update hidden input for form submission
                 const hiddenInput = document.getElementById(`${safeId}_data`);
                 if (hiddenInput) {
                     hiddenInput.value = value;
-                    console.log('[TZ-DEBUG] Updated hidden input to:', value);
                 }
 
                 widget.handlers.updateTimePreview(fieldId, value);
@@ -356,14 +353,12 @@
 
         // Before any HTMX request, save timezone select values
         document.body.addEventListener('htmx:beforeRequest', function(event) {
-            console.log('[TZ-HTMX] beforeRequest fired');
             document.querySelectorAll('.timezone-selector-widget').forEach(function(widget) {
                 const fieldId = widget.dataset.fieldId;
                 if (fieldId) {
                     const select = document.getElementById(fieldId + '_input');
                     if (select && select.value) {
                         savedTimezoneValues[fieldId] = select.value;
-                        console.log('[TZ-HTMX] Saved value for', fieldId, ':', select.value);
                     }
                 }
             });
@@ -371,30 +366,23 @@
 
         // After any HTMX request, restore timezone select values
         document.body.addEventListener('htmx:afterRequest', function(event) {
-            console.log('[TZ-HTMX] afterRequest fired');
-            // Delay to ensure any DOM updates have completed (50ms instead of 10ms for reliability)
+            // Delay to ensure any DOM updates have completed
             setTimeout(function() {
                 Object.keys(savedTimezoneValues).forEach(function(fieldId) {
                     const select = document.getElementById(fieldId + '_input');
                     const hidden = document.getElementById(fieldId + '_data');
                     const savedValue = savedTimezoneValues[fieldId];
 
-                    console.log('[TZ-HTMX] Restoring', fieldId, 'to', savedValue, '- select exists:', !!select, '- current select value:', select?.value);
-
                     if (select && savedValue) {
                         // Find the option and set selectedIndex to force visual update
                         for (let i = 0; i < select.options.length; i++) {
                             if (select.options[i].value === savedValue) {
                                 select.selectedIndex = i;
-                                console.log('[TZ-HTMX] Set selectedIndex to', i, '- visual value now:', select.options[select.selectedIndex]?.text);
 
                                 // Force browser to repaint by temporarily modifying a style
                                 select.style.display = 'none';
-                                // Trigger reflow
                                 void select.offsetHeight;
                                 select.style.display = '';
-
-                                console.log('[TZ-HTMX] Forced repaint - visual value:', select.options[select.selectedIndex]?.text);
                                 break;
                             }
                         }
