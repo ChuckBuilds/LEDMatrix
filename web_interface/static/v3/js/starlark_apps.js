@@ -718,7 +718,16 @@
         console.log('[Starlark] Modal display before:', modal.style.display);
         modal.style.display = 'flex';
         console.log('[Starlark] Modal display after:', modal.style.display);
-        console.log('[Starlark] Modal computed display:', window.getComputedStyle(modal).display);
+
+        const computed = window.getComputedStyle(modal);
+        console.log('[Starlark] Modal computed display:', computed.display);
+        console.log('[Starlark] Modal computed z-index:', computed.zIndex);
+        console.log('[Starlark] Modal computed position:', computed.position);
+        console.log('[Starlark] Modal computed opacity:', computed.opacity);
+        console.log('[Starlark] Modal computed visibility:', computed.visibility);
+        console.log('[Starlark] Modal bounding rect:', modal.getBoundingClientRect());
+        console.log('[Starlark] Modal parent:', modal.parentElement?.tagName);
+        console.log('[Starlark] Modal classList:', modal.className);
 
         // Load categories first
         loadRepositoryCategories();
