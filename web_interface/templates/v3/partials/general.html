@@ -11,18 +11,20 @@
           hx-on:htmx:after-request="
               var xhr = event.detail.xhr;
               var isSuccess = xhr.status >= 200 && xhr.status < 300;
-              var message = 'Settings saved';
+              var message = '';
               var status = 'success';
               try {
                   var data = JSON.parse(xhr.responseText);
-                  message = data.message || message;
+                  message = data.message || '';
                   status = data.status || status;
               } catch (e) {}
-              if (!isSuccess) {
+              if (isSuccess) {
+                  message = message || 'Settings saved';
+              } else {
                   message = message || 'Failed to save settings';
                   status = 'error';
               }
-              showNotification(message, isSuccess ? status : 'error');
+              showNotification(message, status);
           "
           class="space-y-6">
 
