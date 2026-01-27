@@ -800,8 +800,13 @@
             if (search) params.append('search', search);
             if (category && category !== 'all') params.append('category', category);
 
-            const response = await fetch(`/api/v3/starlark/repository/browse?${params}`);
+            const url = `/api/v3/starlark/repository/browse?${params}`;
+            console.log('[Starlark] Fetching repository apps from:', url);
+            const response = await fetch(url);
+            console.log('[Starlark] Repository browse API response status:', response.status);
             const data = await response.json();
+            console.log('[Starlark] Repository browse API data:', data);
+            console.log('[Starlark] Number of apps received:', data.apps?.length || 0);
 
             if (data.status === 'error') {
                 showNotification(data.message, 'error');
