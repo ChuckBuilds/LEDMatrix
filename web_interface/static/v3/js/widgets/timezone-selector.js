@@ -353,12 +353,14 @@
 
         // Before any HTMX request, save timezone select values
         document.body.addEventListener('htmx:beforeRequest', function(event) {
+            console.log('[TZ-HTMX] beforeRequest fired');
             document.querySelectorAll('.timezone-selector-widget').forEach(function(widget) {
                 const fieldId = widget.dataset.fieldId;
                 if (fieldId) {
                     const select = document.getElementById(fieldId + '_input');
                     if (select && select.value) {
                         savedTimezoneValues[fieldId] = select.value;
+                        console.log('[TZ-HTMX] Saved value for', fieldId, ':', select.value);
                     }
                 }
             });
@@ -366,6 +368,7 @@
 
         // After any HTMX request, restore timezone select values
         document.body.addEventListener('htmx:afterRequest', function(event) {
+            console.log('[TZ-HTMX] afterRequest fired');
             // Small delay to ensure any DOM updates have completed
             setTimeout(function() {
                 Object.keys(savedTimezoneValues).forEach(function(fieldId) {
@@ -373,8 +376,11 @@
                     const hidden = document.getElementById(fieldId + '_data');
                     const savedValue = savedTimezoneValues[fieldId];
 
+                    console.log('[TZ-HTMX] Restoring', fieldId, 'to', savedValue, '- select exists:', !!select, '- current select value:', select?.value);
+
                     if (select && savedValue) {
                         select.value = savedValue;
+                        console.log('[TZ-HTMX] Set select.value to', savedValue, '- actual value now:', select.value);
                     }
                     if (hidden && savedValue) {
                         hidden.value = savedValue;
