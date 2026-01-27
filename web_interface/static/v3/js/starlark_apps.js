@@ -392,12 +392,31 @@
     function openUploadModal() {
         const modal = document.getElementById('upload-star-modal');
         if (modal) {
+            // Force correct position
+            modal.style.top = '0';
+            modal.style.left = '0';
+            modal.style.right = '0';
+            modal.style.bottom = '0';
+
+            // Prevent body scroll
+            document.body.style.overflow = 'hidden';
+
             modal.style.display = 'flex';
+
             // Reset form
             const form = document.getElementById('upload-star-form');
             if (form) form.reset();
             const fileName = document.getElementById('selected-file-name');
             if (fileName) fileName.classList.add('hidden');
+
+            // Add ESC key handler
+            const handleEscape = (e) => {
+                if (e.key === 'Escape') {
+                    window.closeUploadModal();
+                }
+            };
+            document.addEventListener('keydown', handleEscape);
+            modal._escapeHandler = handleEscape;
         }
     }
 
@@ -405,6 +424,15 @@
         const modal = document.getElementById('upload-star-modal');
         if (modal) {
             modal.style.display = 'none';
+
+            // Restore body scroll
+            document.body.style.overflow = '';
+
+            // Remove ESC key handler
+            if (modal._escapeHandler) {
+                document.removeEventListener('keydown', modal._escapeHandler);
+                modal._escapeHandler = null;
+            }
         }
     };
 
@@ -523,7 +551,27 @@
 
             // Show modal
             const configModal = document.getElementById('starlark-config-modal');
-            if (configModal) configModal.style.display = 'flex';
+            if (configModal) {
+                // Force correct position
+                configModal.style.top = '0';
+                configModal.style.left = '0';
+                configModal.style.right = '0';
+                configModal.style.bottom = '0';
+
+                // Prevent body scroll
+                document.body.style.overflow = 'hidden';
+
+                configModal.style.display = 'flex';
+
+                // Add ESC key handler
+                const handleEscape = (e) => {
+                    if (e.key === 'Escape') {
+                        window.closeConfigModal();
+                    }
+                };
+                document.addEventListener('keydown', handleEscape);
+                configModal._escapeHandler = handleEscape;
+            }
 
         } catch (error) {
             console.error('Error loading app config:', error);
@@ -594,7 +642,18 @@
 
     window.closeConfigModal = function() {
         const modal = document.getElementById('starlark-config-modal');
-        if (modal) modal.style.display = 'none';
+        if (modal) {
+            modal.style.display = 'none';
+
+            // Restore body scroll
+            document.body.style.overflow = '';
+
+            // Remove ESC key handler
+            if (modal._escapeHandler) {
+                document.removeEventListener('keydown', modal._escapeHandler);
+                modal._escapeHandler = null;
+            }
+        }
         currentConfigAppId = null;
     };
 
@@ -712,10 +771,7 @@
     function openRepositoryBrowser() {
         console.log('[Starlark] openRepositoryBrowser called');
         const modal = document.getElementById('repository-browser-modal');
-        console.log('[Starlark] Modal found:', !!modal);
         if (!modal) return;
-
-        console.log('[Starlark] Modal display before:', modal.style.display);
 
         // Force the modal to the correct position (fixes issue with parent transforms)
         modal.style.top = '0';
@@ -723,40 +779,42 @@
         modal.style.right = '0';
         modal.style.bottom = '0';
 
+        // Prevent body scroll when modal is open
+        document.body.style.overflow = 'hidden';
+
         modal.style.display = 'flex';
-        console.log('[Starlark] Modal display after:', modal.style.display);
-
-        const computed = window.getComputedStyle(modal);
-        const rect = modal.getBoundingClientRect();
-        console.log('[Starlark] Modal computed display:', computed.display);
-        console.log('[Starlark] Modal computed z-index:', computed.zIndex);
-        console.log('[Starlark] Modal computed position:', computed.position);
-        console.log('[Starlark] Modal computed opacity:', computed.opacity);
-        console.log('[Starlark] Modal computed visibility:', computed.visibility);
-        console.log('[Starlark] Modal rect - width:', rect.width, 'height:', rect.height);
-        console.log('[Starlark] Modal rect - top:', rect.top, 'left:', rect.left, 'right:', rect.right, 'bottom:', rect.bottom);
-        console.log('[Starlark] Modal parent:', modal.parentElement?.tagName);
-        console.log('[Starlark] Modal classList:', modal.className);
-
-        // Check if anything has higher z-index
-        const allElements = document.querySelectorAll('*');
-        const highZIndex = Array.from(allElements).filter(el => {
-            const z = window.getComputedStyle(el).zIndex;
-            return z !== 'auto' && parseInt(z) > 50;
-        });
-        console.log('[Starlark] Elements with z-index > 50:', highZIndex.length, highZIndex);
 
         // Load categories first
         loadRepositoryCategories();
 
         // Then load apps
         loadRepositoryApps();
+
+        // Add ESC key handler
+        const handleEscape = (e) => {
+            if (e.key === 'Escape') {
+                window.closeRepositoryBrowser();
+            }
+        };
+        document.addEventListener('keydown', handleEscape);
+
+        // Store handler reference for cleanup
+        modal._escapeHandler = handleEscape;
     }
 
     window.closeRepositoryBrowser = function() {
         const modal = document.getElementById('repository-browser-modal');
         if (modal) {
             modal.style.display = 'none';
+
+            // Restore body scroll
+            document.body.style.overflow = '';
+
+            // Remove ESC key handler
+            if (modal._escapeHandler) {
+                document.removeEventListener('keydown', modal._escapeHandler);
+                modal._escapeHandler = null;
+            }
         }
     };
 

@@ -1,0 +1,24 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git checkout:*)",
+      "Bash(git pull:*)",
+      "Bash(git push:*)",
+      "Bash(python -m pytest:*)",
+      "Bash(git -C /var/home/chuck/Github/ledmatrix-football-scoreboard show main:config_schema.json)",
+      "Bash(node --check:*)",
+      "Bash(~/.bun/bin/bun:*)",
+      "Bash(git reset:*)",
+      "Bash(xargs -I {} sh -c 'echo \"\"=== {} ===\"\" && cat \"\"{}\"\"')",
+      "Bash(cat:*)",
+      "Bash(chmod:*)",
+      "Bash(test:*)",
+      "Bash(git cherry-pick:*)",
+      "Bash(ssh devpi@devpi \"ls -lah /home/devpi/LEDMatrix/bin/pixlet/ 2>/dev/null || echo ''Directory does not exist''\")",
+      "Bash(ssh-copy-id:*)"
+    ],
+    "additionalDirectories": [
+      "/var/home/chuck/Github/LEDMatrix/web_interface/static/v3"
+    ]
+  }
+}
