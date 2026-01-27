@@ -93,8 +93,9 @@
             const layout = xOptions.layout || 'horizontal';
             const showSelectAll = xOptions.selectAll !== false;
 
-            // Normalize value to array
-            const selectedDays = Array.isArray(value) ? value : [];
+            // Normalize value to array and filter to only valid days
+            const rawDays = Array.isArray(value) ? value : [];
+            const selectedDays = rawDays.filter(day => DAYS.includes(day));
             const inputName = options.name || fieldId;
 
             // Build HTML
@@ -178,7 +179,9 @@
             const widget = document.getElementById(`${safeId}_widget`);
             if (!widget) return;
 
-            const selectedDays = Array.isArray(days) ? days : [];
+            // Filter to only valid days
+            const rawDays = Array.isArray(days) ? days : [];
+            const selectedDays = rawDays.filter(day => DAYS.includes(day));
 
             // Update checkboxes
             DAYS.forEach(day => {

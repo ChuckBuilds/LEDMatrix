@@ -97,7 +97,7 @@
             const placeholder = xOptions.placeholder || 'Enter password';
             const showToggle = xOptions.showToggle !== false;
             const showStrength = xOptions.showStrength === true;
-            const minLength = xOptions.minLength || 0;
+            const minLength = xOptions.minLength !== undefined ? xOptions.minLength : 8;
             const requireUppercase = xOptions.requireUppercase === true;
             const requireNumber = xOptions.requireNumber === true;
             const requireSpecial = xOptions.requireSpecial === true;
