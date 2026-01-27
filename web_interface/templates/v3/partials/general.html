@@ -8,8 +8,7 @@
           hx-ext="json-enc"
           hx-headers='{"Content-Type": "application/json"}'
           hx-swap="none"
-          hx-on:htmx:before-request="this._savedTimezone = document.getElementById('timezone_input')?.value;"
-          hx-on:htmx:after-request="showNotification(event.detail.xhr.responseJSON?.message || 'Settings saved', event.detail.xhr.responseJSON?.status || 'success'); (function(form){ var s=document.getElementById('timezone_input'); var h=document.getElementById('timezone_data'); if(s && form._savedTimezone){ s.value=form._savedTimezone; if(h) h.value=form._savedTimezone; } })(this);"
+          hx-on:htmx:after-request="showNotification(event.detail.xhr.responseJSON?.message || 'Settings saved', event.detail.xhr.responseJSON?.status || 'success');"
           class="space-y-6">
 
         <!-- Web Display Autostart -->

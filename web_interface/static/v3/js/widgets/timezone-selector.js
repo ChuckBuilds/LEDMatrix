@@ -346,5 +346,43 @@
     // Expose timezone data for external use
     window.LEDMatrixWidgets.get('timezone-selector').TIMEZONE_GROUPS = TIMEZONE_GROUPS;
 
+    // HTMX form submission protection - preserve timezone selection across requests
+    // This handles cases where HTMX or other form handling might reset select values
+    (function setupHtmxProtection() {
+        let savedTimezoneValues = {};
+
+        // Before any HTMX request, save timezone select values
+        document.body.addEventListener('htmx:beforeRequest', function(event) {
+            document.querySelectorAll('.timezone-selector-widget').forEach(function(widget) {
+                const fieldId = widget.dataset.fieldId;
+                if (fieldId) {
+                    const select = document.getElementById(fieldId + '_input');
+                    if (select && select.value) {
+                        savedTimezoneValues[fieldId] = select.value;
+                    }
+                }
+            });
+        });
+
+        // After any HTMX request, restore timezone select values
+        document.body.addEventListener('htmx:afterRequest', function(event) {
+            // Small delay to ensure any DOM updates have completed
+            setTimeout(function() {
+                Object.keys(savedTimezoneValues).forEach(function(fieldId) {
+                    const select = document.getElementById(fieldId + '_input');
+                    const hidden = document.getElementById(fieldId + '_data');
+                    const savedValue = savedTimezoneValues[fieldId];
+
+                    if (select && savedValue) {
+                        select.value = savedValue;
+                    }
+                    if (hidden && savedValue) {
+                        hidden.value = savedValue;
+                    }
+                });
+            }, 10);
+        });
+    })();
+
     console.log('[TimezoneSelectorWidget] Timezone selector widget registered');
 })();
