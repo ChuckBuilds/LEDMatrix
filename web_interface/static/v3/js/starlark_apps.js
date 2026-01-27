@@ -716,6 +716,13 @@
         if (!modal) return;
 
         console.log('[Starlark] Modal display before:', modal.style.display);
+
+        // Force the modal to the correct position (fixes issue with parent transforms)
+        modal.style.top = '0';
+        modal.style.left = '0';
+        modal.style.right = '0';
+        modal.style.bottom = '0';
+
         modal.style.display = 'flex';
         console.log('[Starlark] Modal display after:', modal.style.display);
 
