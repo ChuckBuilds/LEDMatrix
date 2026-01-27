@@ -699,7 +699,10 @@
         console.log('[Starlark] Modal found:', !!modal);
         if (!modal) return;
 
+        console.log('[Starlark] Modal display before:', modal.style.display);
         modal.style.display = 'flex';
+        console.log('[Starlark] Modal display after:', modal.style.display);
+        console.log('[Starlark] Modal computed display:', window.getComputedStyle(modal).display);
 
         // Load categories first
         loadRepositoryCategories();
@@ -716,9 +719,12 @@
     };
 
     async function loadRepositoryCategories() {
+        console.log('[Starlark] loadRepositoryCategories called');
         try {
             const response = await fetch('/api/v3/starlark/repository/categories');
+            console.log('[Starlark] Categories API response status:', response.status);
             const data = await response.json();
+            console.log('[Starlark] Categories data:', data);
 
             if (data.status === 'success') {
                 repositoryCategories = data.categories;
@@ -743,9 +749,12 @@
     }
 
     async function loadRepositoryApps(search = '', category = 'all') {
+        console.log('[Starlark] loadRepositoryApps called with search:', search, 'category:', category);
         const loading = document.getElementById('repo-apps-loading');
         const grid = document.getElementById('repo-apps-grid');
         const empty = document.getElementById('repo-apps-empty');
+
+        console.log('[Starlark] Elements found - loading:', !!loading, 'grid:', !!grid, 'empty:', !!empty);
 
         if (loading) loading.classList.remove('hidden');
         if (grid) grid.classList.add('hidden');
