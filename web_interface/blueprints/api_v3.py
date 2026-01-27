@@ -1453,6 +1453,30 @@ def get_installed_plugins():
                 'web_ui_actions': web_ui_actions
             })
 
+        # Add starlark apps as virtual plugins
+        starlark_plugin = api_v3.plugin_manager.get_plugin('starlark-apps')
+        if starlark_plugin and hasattr(starlark_plugin, 'apps'):
+            for app_id, app in starlark_plugin.apps.items():
+                # Create virtual plugin entry for each starlark app
+                plugins.append({
+                    'id': f'starlark:{app_id}',  # Prefix to identify as starlark app
+                    'name': app.manifest.get('name', app_id),
+                    'author': app.manifest.get('author', 'Tronbyte Community'),
+                    'category': 'Starlark App',
+                    'description': app.manifest.get('summary', app.manifest.get('desc', 'Starlark app from Tronbyte repository')),
+                    'tags': ['starlark', app.manifest.get('category', 'other')],
+                    'enabled': app.is_enabled(),
+                    'verified': True,  # Tronbyte apps are community verified
+                    'loaded': True,
+                    'last_updated': None,
+                    'last_commit': None,
+                    'last_commit_message': None,
+                    'branch': None,
+                    'web_ui_actions': [],
+                    'is_starlark_app': True,  # Flag to identify starlark apps
+                    'starlark_app_id': app_id  # Original app ID for API calls
+                })
+
         return jsonify({'status': 'success', 'data': {'plugins': plugins}})
     except Exception as e:
         import traceback
@@ -1727,6 +1751,34 @@ def toggle_plugin():
                 config = api_v3.config_manager.load_config()
                 current_enabled = config.get(plugin_id, {}).get('enabled', False)
                 enabled = not current_enabled
+
+        # Handle starlark apps (prefixed with 'starlark:')
+        if plugin_id.startswith('starlark:'):
+            starlark_app_id = plugin_id.replace('starlark:', '', 1)
+            starlark_plugin = api_v3.plugin_manager.get_plugin('starlark-apps')
+
+            if not starlark_plugin:
+                return jsonify({'status': 'error', 'message': 'Starlark Apps plugin not loaded'}), 404
+
+            app = starlark_plugin.apps.get(starlark_app_id)
+            if not app:
+                return jsonify({'status': 'error', 'message': f'Starlark app {starlark_app_id} not found'}), 404
+
+            # Update manifest
+            app.manifest['enabled'] = enabled
+
+            # Save manifest
+            with open(starlark_plugin.manifest_file, 'r') as f:
+                manifest = json.load(f)
+
+            manifest['apps'][starlark_app_id]['enabled'] = enabled
+            starlark_plugin._save_manifest(manifest)
+
+            return jsonify({
+                'status': 'success',
+                'message': f"Starlark app {'enabled' if enabled else 'disabled'}",
+                'enabled': enabled
+            })
 
         # Check if plugin exists in manifests (discovered but may not be loaded)
         if plugin_id not in api_v3.plugin_manager.plugin_manifests:

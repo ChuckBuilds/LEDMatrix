@@ -2351,13 +2351,23 @@
                                 this.updatePluginTabStates();
                             }
                         };
+
+                        // Use star icon for starlark apps, puzzle icon for regular plugins
+                        const isStarlarkApp = plugin.id.startsWith('starlark:') || plugin.is_starlark_app;
+                        const iconClass = isStarlarkApp ? 'fa-star text-yellow-500' : 'fa-puzzle-piece';
+
                         tabButton.innerHTML = `
-                            <i class="fas fa-puzzle-piece"></i>${this.escapeHtml(plugin.name || plugin.id)}
+                            <i class="fas ${iconClass}"></i>${this.escapeHtml(plugin.name || plugin.id)}
                         `;
+
+                        // Store starlark app info for content loading
+                        if (isStarlarkApp) {
+                            tabButton.setAttribute('data-starlark-app-id', plugin.starlark_app_id || plugin.id.replace('starlark:', ''));
+                        }
 
                         // Insert before the closing </nav> tag
                         pluginTabsNav.appendChild(tabButton);
-                        console.log('[FULL] Added tab for plugin:', plugin.id);
+                        console.log('[FULL] Added tab for plugin:', plugin.id, isStarlarkApp ? '(starlark app)' : '');
                     });
 
                     console.log('[FULL] Plugin tabs update completed. Total tabs:', pluginTabsNav.querySelectorAll('.plugin-tab').length);
@@ -3533,14 +3543,40 @@
                     console.error('loadPluginConfig requires component context');
                     return;
                 }
-                
+
                 console.log('Loading config for plugin:', pluginId);
                 componentContext.loading = true;
 
                 try {
+                    // Handle starlark apps differently
+                    if (pluginId.startsWith('starlark:')) {
+                        const starlarkAppId = pluginId.replace('starlark:', '');
+                        console.log('Loading starlark app config:', starlarkAppId);
+
+                        const appResponse = await fetch(`/api/v3/starlark/apps/${starlarkAppId}`).then(r => r.json());
+
+                        if (appResponse.status === 'success' && appResponse.app) {
+                            componentContext.config = appResponse.app.config || {};
+                            componentContext.config.enabled = appResponse.app.enabled;
+                            componentContext.schema = appResponse.app.schema || {};
+                            componentContext.webUiActions = [];
+                            componentContext.isStarlarkApp = true;
+                            componentContext.starlarkAppId = starlarkAppId;
+                            componentContext.starlarkAppInfo = appResponse.app;
+                        } else {
+                            console.error('Failed to load starlark app:', appResponse.message);
+                            componentContext.config = { enabled: true };
+                            componentContext.schema = {};
+                            componentContext.webUiActions = [];
+                        }
+
+                        componentContext.loading = false;
+                        return;
+                    }
+
                     // Load config, schema, and installed plugins (for web_ui_actions) in parallel
                     let configData, schemaData, pluginsData;
-                    
+
                     if (window.PluginAPI && window.PluginAPI.batch) {
                         try {
                             const results = await window.PluginAPI.batch([
