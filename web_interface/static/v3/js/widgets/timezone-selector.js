@@ -396,18 +396,11 @@
 
                     // Check for undefined, not truthiness, so empty strings are restored
                     if (select && savedValue !== undefined) {
-                        if (savedValue === '') {
-                            // Handle empty string: clear the selection
-                            select.selectedIndex = -1;
-                        } else {
-                            // Find the option and set selectedIndex to force visual update
-                            for (let i = 0; i < select.options.length; i++) {
-                                if (select.options[i].value === savedValue) {
-                                    select.selectedIndex = i;
-                                    break;
-                                }
-                            }
-                        }
+                        // Set value directly (handles empty string and placeholders correctly)
+                        select.value = savedValue;
+
+                        // Dispatch change event to trigger timezone preview update
+                        select.dispatchEvent(new Event('change'));
 
                         // Force browser to repaint by temporarily modifying a style
                         select.style.display = 'none';
