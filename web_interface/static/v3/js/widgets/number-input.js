@@ -58,11 +58,22 @@
         version: '1.0.0',
 
         render: function(container, config, value, options) {
+            // Guard against undefined options
+            options = options || {};
             const fieldId = sanitizeId(options.fieldId || container.id || 'number_input');
             const xOptions = config['x-options'] || config['x_options'] || {};
-            const min = config.minimum !== undefined ? config.minimum : (xOptions.min !== undefined ? xOptions.min : null);
-            const max = config.maximum !== undefined ? config.maximum : (xOptions.max !== undefined ? xOptions.max : null);
-            const step = xOptions.step || (config.type === 'integer' ? 1 : 'any');
+
+            // Sanitize min/max as valid numbers or null
+            const rawMin = config.minimum !== undefined ? config.minimum : (xOptions.min !== undefined ? xOptions.min : null);
+            const rawMax = config.maximum !== undefined ? config.maximum : (xOptions.max !== undefined ? xOptions.max : null);
+            const min = (rawMin !== null && Number.isFinite(Number(rawMin))) ? Number(rawMin) : null;
+            const max = (rawMax !== null && Number.isFinite(Number(rawMax))) ? Number(rawMax) : null;
+
+            // Sanitize step - must be a positive number or 'any'
+            const rawStep = xOptions.step || (config.type === 'integer' ? 1 : 'any');
+            const step = (rawStep === 'any' || (Number.isFinite(Number(rawStep)) && Number(rawStep) > 0))
+                ? (rawStep === 'any' ? 'any' : Number(rawStep))
+                : 1;
             const prefix = xOptions.prefix || '';
             const suffix = xOptions.suffix || '';
             const showButtons = xOptions.showButtons !== false;
@@ -73,7 +84,12 @@
             const rawValue = value !== null && value !== undefined ? value : '';
             const currentValue = rawValue === '' ? '' : (isNaN(Number(rawValue)) ? '' : String(Number(rawValue)));
 
-            let html = `<div id="${fieldId}_widget" class="number-input-widget" data-field-id="${fieldId}" data-min="${min !== null ? min : ''}" data-max="${max !== null ? max : ''}" data-step="${step}">`;
+            // Escape values for safe HTML attribute interpolation
+            const safeMin = min !== null ? escapeHtml(String(min)) : '';
+            const safeMax = max !== null ? escapeHtml(String(max)) : '';
+            const safeStep = escapeHtml(String(step));
+
+            let html = `<div id="${fieldId}_widget" class="number-input-widget" data-field-id="${fieldId}" data-min="${safeMin}" data-max="${safeMax}" data-step="${safeStep}">`;
 
             html += '<div class="flex items-center">';
 
@@ -99,9 +115,9 @@
                        name="${escapeHtml(options.name || fieldId)}"
                        value="${escapeHtml(currentValue)}"
                        placeholder="${escapeHtml(placeholder)}"
-                       ${min !== null ? `min="${min}"` : ''}
-                       ${max !== null ? `max="${max}"` : ''}
-                       step="${step}"
+                       ${min !== null ? `min="${safeMin}"` : ''}
+                       ${max !== null ? `max="${safeMax}"` : ''}
+                       step="${safeStep}"
                        ${disabled ? 'disabled' : ''}
                        onchange="window.LEDMatrixWidgets.getHandlers('number-input').onChange('${fieldId}')"
                        oninput="window.LEDMatrixWidgets.getHandlers('number-input').onInput('${fieldId}')"

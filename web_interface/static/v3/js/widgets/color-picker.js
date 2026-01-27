@@ -92,7 +92,8 @@
             const xOptions = config['x-options'] || config['x_options'] || {};
             const showHexInput = xOptions.showHexInput !== false;
             const showPreview = xOptions.showPreview !== false;
-            const presets = xOptions.presets || DEFAULT_PRESETS;
+            // Ensure presets is always an array to prevent crashes on .map()
+            const presets = Array.isArray(xOptions.presets) ? xOptions.presets : DEFAULT_PRESETS;
             const disabled = xOptions.disabled === true;
 
             const currentValue = sanitizeHex(value);
@@ -145,8 +146,8 @@
             html += `<input type="hidden" id="${fieldId}_input" name="${escapeHtml(options.name || fieldId)}" value="${currentValue}">`;
 
             // Preset colors - only render valid hex colors
-            if (presets && presets.length > 0) {
-                const validPresets = presets.map(p => normalizeHex(p)).filter(p => isValidHex(p));
+            if (Array.isArray(presets) && presets.length > 0) {
+                const validPresets = (Array.isArray(presets) ? presets : []).map(p => normalizeHex(p)).filter(p => isValidHex(p));
                 if (validPresets.length > 0) {
                     html += `
                         <div class="flex flex-wrap gap-1 mt-3">

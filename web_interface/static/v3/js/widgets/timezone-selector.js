@@ -120,7 +120,7 @@
         'UK & Ireland': [
             { value: 'Europe/London', label: 'London' },
             { value: 'Europe/Dublin', label: 'Dublin' },
-            { value: 'Europe/Belfast', label: 'Belfast' }
+            { value: 'Europe/London', label: 'Belfast' }  // Belfast uses Europe/London (canonical IANA identifier)
         ],
         'Asia': [
             { value: 'Asia/Tokyo', label: 'Tokyo' },

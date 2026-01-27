@@ -81,8 +81,13 @@
             } else if (!Array.isArray(allowedProtocols)) {
                 allowedProtocols = ['http', 'https'];
             }
-            // Filter to only valid protocol strings (alphanumeric only)
-            allowedProtocols = allowedProtocols.map(p => String(p).replace(/[^a-zA-Z0-9]/g, '')).filter(p => p);
+            // Validate against RFC 3986 scheme pattern: starts with letter, then letters/digits/+/./-
+            // Accepts schemes like "http", "https", "git+ssh", "android-app", etc.
+            const rfcSchemePattern = /^[A-Za-z][A-Za-z0-9+.-]*$/;
+            allowedProtocols = allowedProtocols
+                .map(p => String(p).trim())
+                .filter(p => rfcSchemePattern.test(p))
+                .map(p => p.toLowerCase());
             if (allowedProtocols.length === 0) {
                 allowedProtocols = ['http', 'https'];
             }

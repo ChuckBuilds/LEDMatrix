@@ -203,6 +203,11 @@
                 const clearBtn = document.getElementById(`${safeId}_clear`);
                 const countEl = document.getElementById(`${safeId}_count`);
 
+                // Clear any stale custom validity to allow form submission after user fixes input
+                if (input && input.validity.customError) {
+                    input.setCustomValidity('');
+                }
+
                 if (clearBtn) {
                     clearBtn.classList.toggle('hidden', !input.value);
                 }

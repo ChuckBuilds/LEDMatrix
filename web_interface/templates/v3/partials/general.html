@@ -39,7 +39,7 @@
                 if (!container) return;
                 widget.render(container, {
                     'x-options': { showOffset: true, placeholder: 'Select your timezone...' }
-                }, '{{ main_config.timezone or "America/Chicago" }}', {
+                }, {{ (main_config.timezone or "America/Chicago")|tojson }}, {
                     fieldId: 'timezone',
                     name: 'timezone'
                 });
