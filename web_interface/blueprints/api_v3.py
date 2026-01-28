@@ -3088,11 +3088,17 @@ def _parse_form_value_with_schema(value, key_path, schema):
     if isinstance(value, str):
         stripped = value.strip()
 
-        # Check for boolean strings (includes "on"/"off" from HTML checkboxes)
-        if stripped.lower() in ('true', 'on'):
+        # Check for boolean strings
+        if stripped.lower() == 'true':
             return True
-        if stripped.lower() in ('false', 'off'):
+        if stripped.lower() == 'false':
             return False
+        # "on"/"off" come from HTML checkboxes — only coerce when schema says boolean
+        if prop and prop.get('type') == 'boolean':
+            if stripped.lower() == 'on':
+                return True
+            if stripped.lower() == 'off':
+                return False
 
         # Handle arrays based on schema
         if prop and prop.get('type') == 'array':
@@ -3206,6 +3212,9 @@ def _set_missing_booleans_to_false(config, schema_props, form_keys, prefix=''):
     The top-level ``enabled`` field is excluded because it has its own preservation
     logic in the save endpoint.
 
+    Handles boolean fields inside nested objects and inside arrays of objects
+    (e.g. ``feeds.custom_feeds.0.enabled``).
+
     Args:
         config: The plugin config dict being built
         schema_props: Schema ``properties`` dict at the current nesting level
@@ -3229,6 +3238,28 @@ def _set_missing_booleans_to_false(config, schema_props, form_keys, prefix=''):
             _set_missing_booleans_to_false(
                 config, prop_schema['properties'], form_keys, full_path
             )
+
+        elif prop_type == 'array':
+            # Handle arrays of objects that may contain boolean fields
+            # Form keys use indexed notation: "path.0.field", "path.1.field"
+            items_schema = prop_schema.get('items', {})
+            if isinstance(items_schema, dict) and items_schema.get('type') == 'object' and 'properties' in items_schema:
+                array_prefix = f"{full_path}."
+                # Collect unique item indices from submitted form keys
+                indices = set()
+                for k in form_keys:
+                    if k.startswith(array_prefix):
+                        # Extract index: "path.0.field" -> "0"
+                        rest = k[len(array_prefix):]
+                        idx = rest.split('.', 1)[0]
+                        if idx.isdigit():
+                            indices.add(idx)
+                # Recurse into each array item so its missing booleans get set to False
+                for idx in indices:
+                    item_prefix = f"{full_path}.{idx}"
+                    _set_missing_booleans_to_false(
+                        config, items_schema['properties'], form_keys, item_prefix
+                    )
 
 
 def _enhance_schema_with_core_properties(schema):
