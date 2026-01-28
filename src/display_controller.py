@@ -369,8 +369,8 @@ class DisplayController:
                     from src.vegas_mode import VegasModeCoordinator as VMC
                     VegasModeCoordinator = VMC
                     _vegas_mode_imported = True
-                except ImportError as ie:
-                    logger.error("Failed to import Vegas mode module: %s", ie)
+                except ImportError:
+                    logger.exception("Failed to import Vegas mode module")
                     return
 
             self.vegas_coordinator = VegasModeCoordinator(

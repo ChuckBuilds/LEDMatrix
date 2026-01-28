@@ -6,6 +6,7 @@ implement get_vegas_content() and fallback capture of display() output.
 """
 
 import logging
+import threading
 import time
 from typing import Optional, List, Any, TYPE_CHECKING
 from PIL import Image
@@ -38,6 +39,7 @@ class PluginAdapter:
 
         # Cache for recently fetched content (prevents redundant fetch)
         self._content_cache: dict = {}
+        self._cache_lock = threading.Lock()
         self._cache_ttl = 5.0  # Cache for 5 seconds
 
         logger.info(
@@ -150,7 +152,7 @@ class PluginAdapter:
 
             return None
 
-        except (AttributeError, TypeError, ValueError, OSError) as e:
+        except (AttributeError, TypeError, ValueError, OSError):
             logger.exception(
                 "Error calling get_vegas_content() on %s",
                 plugin_id
@@ -246,27 +248,29 @@ class PluginAdapter:
 
     def _get_cached(self, plugin_id: str) -> Optional[List[Image.Image]]:
         """Get cached content if still valid."""
-        if plugin_id not in self._content_cache:
-            return None
+        with self._cache_lock:
+            if plugin_id not in self._content_cache:
+                return None
 
-        cached_time, content = self._content_cache[plugin_id]
-        if time.time() - cached_time > self._cache_ttl:
-            del self._content_cache[plugin_id]
-            return None
+            cached_time, content = self._content_cache[plugin_id]
+            if time.time() - cached_time > self._cache_ttl:
+                del self._content_cache[plugin_id]
+                return None
 
-        return content
+            return content
 
     def _cache_content(self, plugin_id: str, content: List[Image.Image]) -> None:
         """Cache content for a plugin."""
-        # Periodic cleanup of expired entries to prevent memory leak
-        self._cleanup_expired_cache()
-
-        # Make copies to prevent mutation
+        # Make copies to prevent mutation (done outside lock to minimize hold time)
         cached_content = [img.copy() for img in content]
-        self._content_cache[plugin_id] = (time.time(), cached_content)
 
-    def _cleanup_expired_cache(self) -> None:
-        """Remove expired entries from cache to prevent memory leaks."""
+        with self._cache_lock:
+            # Periodic cleanup of expired entries to prevent memory leak
+            self._cleanup_expired_cache_locked()
+            self._content_cache[plugin_id] = (time.time(), cached_content)
+
+    def _cleanup_expired_cache_locked(self) -> None:
+        """Remove expired entries from cache. Must be called with _cache_lock held."""
         current_time = time.time()
         expired_keys = [
             key for key, (cached_time, _) in self._content_cache.items()
@@ -282,10 +286,11 @@ class PluginAdapter:
         Args:
             plugin_id: Specific plugin to invalidate, or None for all
         """
-        if plugin_id:
-            self._content_cache.pop(plugin_id, None)
-        else:
-            self._content_cache.clear()
+        with self._cache_lock:
+            if plugin_id:
+                self._content_cache.pop(plugin_id, None)
+            else:
+                self._content_cache.clear()
 
     def get_content_type(self, plugin: 'BasePlugin', plugin_id: str) -> str:
         """
@@ -312,5 +317,6 @@ class PluginAdapter:
 
     def cleanup(self) -> None:
         """Clean up resources."""
-        self._content_cache.clear()
+        with self._cache_lock:
+            self._content_cache.clear()
         logger.debug("PluginAdapter cleanup complete")

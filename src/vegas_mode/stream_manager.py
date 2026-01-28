@@ -203,8 +203,8 @@ class StreamManager:
         """
         Process pending plugin updates.
 
-        Rebuilds content for updated plugins in staging buffer,
-        then swaps buffers atomically.
+        Performs in-place update of segments in the active buffer,
+        preserving non-updated plugins and their order.
         """
         with self._buffer_lock:
             if not self._pending_updates:
@@ -213,11 +213,34 @@ class StreamManager:
             updated_plugins = list(self._pending_updates.keys())
             self._pending_updates.clear()
 
-        # Rebuild content for updated plugins
+        # Fetch fresh content for each updated plugin (outside lock for slow ops)
+        refreshed_segments = {}
         for plugin_id in updated_plugins:
-            self._refresh_plugin_content(plugin_id)
+            self.plugin_adapter.invalidate_cache(plugin_id)
+            segment = self._fetch_plugin_content(plugin_id)
+            if segment:
+                refreshed_segments[plugin_id] = segment
 
-        logger.debug("Processed updates for %d plugins", len(updated_plugins))
+        # In-place merge: replace segments in active buffer
+        with self._buffer_lock:
+            # Build new buffer preserving order, replacing updated segments
+            new_buffer: Deque[ContentSegment] = deque()
+            seen_plugins: set = set()
+
+            for segment in self._active_buffer:
+                if segment.plugin_id in refreshed_segments:
+                    # Replace with refreshed segment (only once per plugin)
+                    if segment.plugin_id not in seen_plugins:
+                        new_buffer.append(refreshed_segments[segment.plugin_id])
+                        seen_plugins.add(segment.plugin_id)
+                    # Skip duplicate entries for same plugin
+                else:
+                    # Keep non-updated segment
+                    new_buffer.append(segment)
+
+            self._active_buffer = new_buffer
+
+        logger.debug("Processed in-place updates for %d plugins", len(updated_plugins))
 
     def swap_buffers(self) -> None:
         """
