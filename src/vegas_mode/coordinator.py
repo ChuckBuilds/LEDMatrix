@@ -300,6 +300,9 @@ class VegasModeCoordinator:
         duration = self.render_pipeline.get_dynamic_duration()
         start_time = time.time()
         frame_count = 0
+        fps_log_interval = 5.0  # Log FPS every 5 seconds
+        last_fps_log_time = start_time
+        fps_frame_count = 0
 
         logger.info("Starting Vegas iteration for %.1fs", duration)
 
@@ -329,6 +332,19 @@ class VegasModeCoordinator:
 
             # Increment frame count and check for interrupt periodically
             frame_count += 1
+            fps_frame_count += 1
+
+            # Periodic FPS logging
+            current_time = time.time()
+            if current_time - last_fps_log_time >= fps_log_interval:
+                fps = fps_frame_count / (current_time - last_fps_log_time)
+                logger.info(
+                    "Vegas FPS: %.1f (target: %d, frames: %d)",
+                    fps, self.vegas_config.target_fps, fps_frame_count
+                )
+                last_fps_log_time = current_time
+                fps_frame_count = 0
+
             if (self._interrupt_check and
                     frame_count % self._interrupt_check_interval == 0):
                 try:
