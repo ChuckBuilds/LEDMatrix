@@ -3200,7 +3200,7 @@ def _set_nested_value(config, key_path, value):
         current[parts[-1]] = value
 
 
-def _set_missing_booleans_to_false(config, schema_props, form_keys, prefix=''):
+def _set_missing_booleans_to_false(config, schema_props, form_keys, prefix='', config_node=None):
     """Walk schema and set missing boolean form fields to False.
 
     HTML checkboxes don't submit values when unchecked. When saving plugin config,
@@ -3216,11 +3216,16 @@ def _set_missing_booleans_to_false(config, schema_props, form_keys, prefix=''):
     (e.g. ``feeds.custom_feeds.0.enabled``).
 
     Args:
-        config: The plugin config dict being built
+        config: The root plugin config dict (used for pure-dict paths)
         schema_props: Schema ``properties`` dict at the current nesting level
         form_keys: Set of form field names that were submitted
         prefix: Dot-notation prefix for the current nesting level
+        config_node: The current config subtree when inside an array item (avoids
+                     using _set_nested_value which corrupts lists)
     """
+    # Determine which config node to operate on
+    node = config_node if config_node is not None else config
+
     for prop_name, prop_schema in schema_props.items():
         if not isinstance(prop_schema, dict):
             continue
@@ -3231,13 +3236,27 @@ def _set_missing_booleans_to_false(config, schema_props, form_keys, prefix=''):
         if prop_type == 'boolean' and full_path != 'enabled':
             # If this boolean wasn't submitted in the form, it's an unchecked checkbox
             if full_path not in form_keys:
-                _set_nested_value(config, full_path, False)
+                if config_node is not None:
+                    # Inside an array item — set directly on the item dict
+                    node[prop_name] = False
+                else:
+                    # Pure dict path — use helper
+                    _set_nested_value(config, full_path, False)
 
         elif prop_type == 'object' and 'properties' in prop_schema:
             # Recurse into nested objects
-            _set_missing_booleans_to_false(
-                config, prop_schema['properties'], form_keys, full_path
-            )
+            if config_node is not None:
+                # Inside an array item — ensure nested dict exists in item
+                if prop_name not in node or not isinstance(node[prop_name], dict):
+                    node[prop_name] = {}
+                _set_missing_booleans_to_false(
+                    config, prop_schema['properties'], form_keys, full_path,
+                    config_node=node[prop_name]
+                )
+            else:
+                _set_missing_booleans_to_false(
+                    config, prop_schema['properties'], form_keys, full_path
+                )
 
         elif prop_type == 'array':
             # Handle arrays of objects that may contain boolean fields
@@ -3253,12 +3272,40 @@ def _set_missing_booleans_to_false(config, schema_props, form_keys, prefix=''):
                         rest = k[len(array_prefix):]
                         idx = rest.split('.', 1)[0]
                         if idx.isdigit():
-                            indices.add(idx)
+                            indices.add(int(idx))
+
+                if not indices:
+                    continue
+
+                # Navigate to the array in the config (create if missing)
+                if config_node is not None:
+                    if prop_name not in node or not isinstance(node[prop_name], list):
+                        node[prop_name] = []
+                    array_list = node[prop_name]
+                else:
+                    # Navigate from root config through dict keys to get the list
+                    parts = full_path.split('.')
+                    current = config
+                    for part in parts[:-1]:
+                        if part not in current or not isinstance(current[part], dict):
+                            current[part] = {}
+                        current = current[part]
+                    arr_key = parts[-1]
+                    if arr_key not in current or not isinstance(current[arr_key], list):
+                        current[arr_key] = []
+                    array_list = current[arr_key]
+
                 # Recurse into each array item so its missing booleans get set to False
                 for idx in indices:
+                    # Ensure list is long enough and item is a dict
+                    while len(array_list) <= idx:
+                        array_list.append({})
+                    if not isinstance(array_list[idx], dict):
+                        array_list[idx] = {}
                     item_prefix = f"{full_path}.{idx}"
                     _set_missing_booleans_to_false(
-                        config, items_schema['properties'], form_keys, item_prefix
+                        config, items_schema['properties'], form_keys, item_prefix,
+                        config_node=array_list[idx]
                     )
 
 
