@@ -281,8 +281,18 @@ class StreamManager:
         available_plugins = []
 
         if hasattr(self.plugin_manager, 'loaded_plugins'):
+            logger.debug(
+                "Checking %d loaded plugins for Vegas scroll",
+                len(self.plugin_manager.loaded_plugins)
+            )
             for plugin_id, plugin in self.plugin_manager.loaded_plugins.items():
-                if hasattr(plugin, 'enabled') and plugin.enabled:
+                has_enabled = hasattr(plugin, 'enabled')
+                is_enabled = getattr(plugin, 'enabled', False)
+                logger.debug(
+                    "[%s] has_enabled=%s, enabled=%s",
+                    plugin_id, has_enabled, is_enabled
+                )
+                if has_enabled and is_enabled:
                     # Check vegas content type - skip 'none' unless in STATIC mode
                     content_type = self.plugin_adapter.get_content_type(plugin, plugin_id)
 
@@ -300,9 +310,25 @@ class StreamManager:
 
                     if content_type != 'none' or display_mode == VegasDisplayMode.STATIC:
                         available_plugins.append(plugin_id)
+                        logger.debug("[%s] Added to Vegas scroll", plugin_id)
+                    else:
+                        logger.debug(
+                            "[%s] Excluded: content_type=%s, display_mode=%s",
+                            plugin_id, content_type, display_mode
+                        )
+
+        else:
+            logger.warning(
+                "plugin_manager does not have loaded_plugins attribute: %s",
+                type(self.plugin_manager).__name__
+            )
 
         # Apply ordering from config
         self._ordered_plugins = self.config.get_ordered_plugins(available_plugins)
+        logger.debug(
+            "Vegas scroll: %d available -> %d ordered plugins",
+            len(available_plugins), len(self._ordered_plugins)
+        )
 
         # Reset indices if needed
         if self._current_index >= len(self._ordered_plugins):
