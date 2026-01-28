@@ -177,17 +177,36 @@ class PluginAdapter:
             # Save current display state
             original_image = self.display_manager.image.copy()
 
+            # Ensure plugin has fresh data before capturing
+            if hasattr(plugin, 'update_data'):
+                try:
+                    plugin.update_data()
+                except Exception as e:
+                    logger.debug("[%s] update_data() failed: %s", plugin_id, e)
+
             # Clear and call plugin display
             self.display_manager.clear()
-            plugin.display(force_clear=True)
+
+            # First try without force_clear (some plugins behave better this way)
+            try:
+                plugin.display()
+            except TypeError:
+                # Plugin may require force_clear argument
+                plugin.display(force_clear=True)
 
             # Capture the result
             captured = self.display_manager.image.copy()
 
             # Check if captured image has content (not all black)
             if self._is_blank_image(captured):
-                logger.debug("Plugin %s produced blank image", plugin_id)
-                return None
+                # Try once more with force_clear=True
+                self.display_manager.clear()
+                plugin.display(force_clear=True)
+                captured = self.display_manager.image.copy()
+
+                if self._is_blank_image(captured):
+                    logger.debug("[%s] Produced blank image after retry", plugin_id)
+                    return None
 
             # Convert to RGB if needed
             if captured.mode != 'RGB':
@@ -216,6 +235,9 @@ class PluginAdapter:
         """
         Check if an image is essentially blank (all black or nearly so).
 
+        Uses histogram-based detection which is more reliable than
+        point sampling for content that may be positioned anywhere.
+
         Args:
             img: Image to check
 
@@ -226,25 +248,32 @@ class PluginAdapter:
         if img.mode != 'RGB':
             img = img.convert('RGB')
 
-        # Sample some pixels rather than checking all
-        width, height = img.size
-        sample_points = [
-            (width // 4, height // 4),
-            (width // 2, height // 2),
-            (3 * width // 4, 3 * height // 4),
-            (width // 4, 3 * height // 4),
-            (3 * width // 4, height // 4),
-        ]
+        # Use histogram to check for any non-black content
+        # This is more reliable than point sampling
+        histogram = img.histogram()
 
-        for x, y in sample_points:
-            pixel = img.getpixel((x, y))
-            if isinstance(pixel, tuple):
-                if sum(pixel[:3]) > 30:  # Not very dark
-                    return False
-            elif pixel > 10:
-                return False
+        # RGB histogram: 256 values per channel
+        # Check if there's any significant brightness in any channel
+        total_bright_pixels = 0
+        threshold = 15  # Minimum brightness to count as "content"
 
-        return True
+        for channel_offset in [0, 256, 512]:  # R, G, B
+            for brightness in range(threshold, 256):
+                total_bright_pixels += histogram[channel_offset + brightness]
+
+        # If less than 0.5% of pixels have any brightness, consider blank
+        total_pixels = img.width * img.height
+        bright_ratio = total_bright_pixels / (total_pixels * 3)  # Normalize across channels
+
+        is_blank = bright_ratio < 0.005  # Less than 0.5% bright pixels
+
+        if is_blank:
+            logger.debug(
+                "Image appears blank: %.3f%% bright pixels (threshold: 0.5%%)",
+                bright_ratio * 100
+            )
+
+        return is_blank
 
     def _get_cached(self, plugin_id: str) -> Optional[List[Image.Image]]:
         """Get cached content if still valid."""
