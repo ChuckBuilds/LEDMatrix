@@ -100,8 +100,19 @@ class RenderPipeline:
     def _configure_scroll_helper(self) -> None:
         """Configure ScrollHelper with current settings."""
         self.scroll_helper.set_frame_based_scrolling(self.config.frame_based_scrolling)
-        self.scroll_helper.set_scroll_speed(self.config.scroll_speed)
         self.scroll_helper.set_scroll_delay(self.config.scroll_delay)
+
+        # Config scroll_speed is always pixels per second, but ScrollHelper
+        # interprets it differently based on frame_based_scrolling mode:
+        # - Frame-based: pixels per frame step
+        # - Time-based: pixels per second
+        if self.config.frame_based_scrolling:
+            # Convert pixels/second to pixels/frame
+            # pixels_per_frame = pixels_per_second * seconds_per_frame
+            pixels_per_frame = self.config.scroll_speed * self.config.scroll_delay
+            self.scroll_helper.set_scroll_speed(pixels_per_frame)
+        else:
+            self.scroll_helper.set_scroll_speed(self.config.scroll_speed)
         self.scroll_helper.set_dynamic_duration_settings(
             enabled=self.config.dynamic_duration_enabled,
             min_duration=self.config.min_cycle_duration,
