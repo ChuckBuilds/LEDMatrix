@@ -72,7 +72,16 @@
         "display_durations": {
             "calendar": 30
         },
-        "use_short_date_format": true
+        "use_short_date_format": true,
+        "vegas_scroll": {
+            "enabled": false,
+            "scroll_speed": 50,
+            "separator_width": 32,
+            "plugin_order": [],
+            "excluded_plugins": [],
+            "target_fps": 125,
+            "buffer_ahead": 2
+        }
     },
     "plugin_system": {
         "plugins_directory": "plugin-repos",

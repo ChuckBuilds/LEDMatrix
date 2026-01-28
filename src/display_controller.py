@@ -18,6 +18,10 @@ from src.logging_config import get_logger
 
 # Get logger with consistent configuration
 logger = get_logger(__name__)
+
+# Vegas mode import (lazy loaded to avoid circular imports)
+_vegas_mode_imported = False
+VegasModeCoordinator = None
 DEFAULT_DYNAMIC_DURATION_CAP = 180.0
 
 # WiFi status message file path (same as used in wifi_manager.py)
@@ -343,7 +347,56 @@ class DisplayController:
         self._update_modules()
         logger.info("Initial plugin update completed in %.3f seconds", time.time() - update_start)
 
+        # Initialize Vegas mode coordinator
+        self.vegas_coordinator = None
+        self._initialize_vegas_mode()
+
         logger.info("DisplayController initialization completed in %.3f seconds", time.time() - start_time)
+
+    def _initialize_vegas_mode(self):
+        """Initialize Vegas mode coordinator if enabled."""
+        global _vegas_mode_imported, VegasModeCoordinator
+
+        vegas_config = self.config.get('display', {}).get('vegas_scroll', {})
+        if not vegas_config.get('enabled', False):
+            logger.debug("Vegas mode disabled in config")
+            return
+
+        try:
+            # Lazy import to avoid circular imports
+            if not _vegas_mode_imported:
+                try:
+                    from src.vegas_mode import VegasModeCoordinator as VMC
+                    VegasModeCoordinator = VMC
+                    _vegas_mode_imported = True
+                except ImportError as ie:
+                    logger.error("Failed to import Vegas mode module: %s", ie)
+                    return
+
+            self.vegas_coordinator = VegasModeCoordinator(
+                config=self.config,
+                display_manager=self.display_manager,
+                plugin_manager=self.plugin_manager
+            )
+
+            # Set up live priority checker
+            self.vegas_coordinator.set_live_priority_checker(self._check_live_priority)
+
+            logger.info("Vegas mode coordinator initialized")
+
+        except Exception as e:
+            logger.error("Failed to initialize Vegas mode: %s", e, exc_info=True)
+            self.vegas_coordinator = None
+
+    def _is_vegas_mode_active(self) -> bool:
+        """Check if Vegas mode should be running."""
+        if not self.vegas_coordinator:
+            return False
+        if not self.vegas_coordinator.is_enabled:
+            return False
+        if self.on_demand_active:
+            return False  # On-demand takes priority
+        return True
 
     def _check_schedule(self):
         """Check if display should be active based on schedule."""
@@ -1151,6 +1204,23 @@ class DisplayController:
                             self.current_mode_index = self.available_modes.index(live_priority_mode)
                         except ValueError:
                             pass
+
+                # Vegas scroll mode - continuous ticker across all plugins
+                # Priority: on-demand > wifi-status > live-priority > vegas > normal rotation
+                if self._is_vegas_mode_active() and not wifi_status_data:
+                    live_mode = self._check_live_priority()
+                    if not live_mode:
+                        try:
+                            # Run Vegas mode iteration
+                            if self.vegas_coordinator.run_iteration():
+                                # Vegas completed an iteration, continue to next loop
+                                continue
+                            else:
+                                # Vegas was interrupted (live priority), fall through to normal handling
+                                logger.debug("Vegas mode interrupted, falling back to normal rotation")
+                        except Exception as e:
+                            logger.error("Vegas mode error: %s", e)
+                            # Fall through to normal rotation on error
 
                 if self.on_demand_active:
                     # Guard against empty on_demand_modes
