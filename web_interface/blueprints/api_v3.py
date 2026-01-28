@@ -463,6 +463,50 @@ def save_main_config():
                     current_config['display']['dynamic_duration'] = {}
                 current_config['display']['dynamic_duration']['max_duration_seconds'] = int(data['max_dynamic_duration_seconds'])
 
+        # Handle Vegas scroll mode settings
+        vegas_fields = ['vegas_scroll_enabled', 'vegas_scroll_speed', 'vegas_separator_width',
+                       'vegas_target_fps', 'vegas_buffer_ahead', 'vegas_plugin_order', 'vegas_excluded_plugins']
+
+        if any(k in data for k in vegas_fields):
+            if 'display' not in current_config:
+                current_config['display'] = {}
+            if 'vegas_scroll' not in current_config['display']:
+                current_config['display']['vegas_scroll'] = {}
+
+            vegas_config = current_config['display']['vegas_scroll']
+
+            # Handle enabled checkbox
+            vegas_config['enabled'] = data.get('vegas_scroll_enabled', False)
+
+            # Handle numeric settings
+            if 'vegas_scroll_speed' in data:
+                vegas_config['scroll_speed'] = int(data['vegas_scroll_speed'])
+            if 'vegas_separator_width' in data:
+                vegas_config['separator_width'] = int(data['vegas_separator_width'])
+            if 'vegas_target_fps' in data:
+                vegas_config['target_fps'] = int(data['vegas_target_fps'])
+            if 'vegas_buffer_ahead' in data:
+                vegas_config['buffer_ahead'] = int(data['vegas_buffer_ahead'])
+
+            # Handle plugin order and exclusions (JSON arrays)
+            if 'vegas_plugin_order' in data:
+                try:
+                    if isinstance(data['vegas_plugin_order'], str):
+                        vegas_config['plugin_order'] = json.loads(data['vegas_plugin_order'])
+                    else:
+                        vegas_config['plugin_order'] = data['vegas_plugin_order']
+                except (json.JSONDecodeError, TypeError):
+                    vegas_config['plugin_order'] = []
+
+            if 'vegas_excluded_plugins' in data:
+                try:
+                    if isinstance(data['vegas_excluded_plugins'], str):
+                        vegas_config['excluded_plugins'] = json.loads(data['vegas_excluded_plugins'])
+                    else:
+                        vegas_config['excluded_plugins'] = data['vegas_excluded_plugins']
+                except (json.JSONDecodeError, TypeError):
+                    vegas_config['excluded_plugins'] = []
+
         # Handle display durations
         duration_fields = [k for k in data.keys() if k.endswith('_duration') or k in ['default_duration', 'transition_duration']]
         if duration_fields:

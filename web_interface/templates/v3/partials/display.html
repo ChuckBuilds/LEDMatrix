@@ -238,6 +238,93 @@
             </div>
         </div>
 
+        <!-- Vegas Scroll Mode Settings -->
+        <div class="bg-gray-50 rounded-lg p-4 mt-6">
+            <div class="flex items-center justify-between mb-4">
+                <div>
+                    <h3 class="text-md font-medium text-gray-900">
+                        <i class="fas fa-scroll mr-2"></i>Vegas Scroll Mode
+                    </h3>
+                    <p class="mt-1 text-sm text-gray-600">Combine all plugin content into one continuous scrolling ticker display.</p>
+                </div>
+                <label class="relative inline-flex items-center cursor-pointer">
+                    <input type="checkbox"
+                           id="vegas_scroll_enabled"
+                           name="vegas_scroll_enabled"
+                           {% if main_config.display.get('vegas_scroll', {}).get('enabled', false) %}checked{% endif %}
+                           class="sr-only peer">
+                    <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+                </label>
+            </div>
+
+            <!-- Vegas Settings (shown when enabled) -->
+            <div id="vegas_scroll_settings" class="space-y-4" style="{% if not main_config.display.get('vegas_scroll', {}).get('enabled', false) %}display: none;{% endif %}">
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div class="form-group">
+                        <label for="vegas_scroll_speed" class="block text-sm font-medium text-gray-700">Scroll Speed (pixels/second)</label>
+                        <div class="flex items-center space-x-2">
+                            <input type="range"
+                                   id="vegas_scroll_speed"
+                                   name="vegas_scroll_speed"
+                                   value="{{ main_config.display.get('vegas_scroll', {}).get('scroll_speed', 50) }}"
+                                   min="10"
+                                   max="200"
+                                   step="5"
+                                   class="flex-1">
+                            <span id="vegas_scroll_speed_value" class="text-sm font-medium w-12">{{ main_config.display.get('vegas_scroll', {}).get('scroll_speed', 50) }}</span>
+                        </div>
+                        <p class="mt-1 text-sm text-gray-600">Speed of the scrolling ticker (10-200 px/s)</p>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="vegas_separator_width" class="block text-sm font-medium text-gray-700">Separator Width (pixels)</label>
+                        <input type="number"
+                               id="vegas_separator_width"
+                               name="vegas_separator_width"
+                               value="{{ main_config.display.get('vegas_scroll', {}).get('separator_width', 32) }}"
+                               min="0"
+                               max="128"
+                               class="form-control">
+                        <p class="mt-1 text-sm text-gray-600">Gap between plugin content blocks (0-128 px)</p>
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div class="form-group">
+                        <label for="vegas_target_fps" class="block text-sm font-medium text-gray-700">Target FPS</label>
+                        <select id="vegas_target_fps" name="vegas_target_fps" class="form-control">
+                            <option value="60" {% if main_config.display.get('vegas_scroll', {}).get('target_fps', 125) == 60 %}selected{% endif %}>60 FPS (Lower CPU)</option>
+                            <option value="90" {% if main_config.display.get('vegas_scroll', {}).get('target_fps', 125) == 90 %}selected{% endif %}>90 FPS (Balanced)</option>
+                            <option value="125" {% if main_config.display.get('vegas_scroll', {}).get('target_fps', 125) == 125 %}selected{% endif %}>125 FPS (Smoothest)</option>
+                        </select>
+                        <p class="mt-1 text-sm text-gray-600">Higher FPS = smoother scroll, more CPU usage</p>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="vegas_buffer_ahead" class="block text-sm font-medium text-gray-700">Buffer Ahead</label>
+                        <select id="vegas_buffer_ahead" name="vegas_buffer_ahead" class="form-control">
+                            <option value="1" {% if main_config.display.get('vegas_scroll', {}).get('buffer_ahead', 2) == 1 %}selected{% endif %}>1 Plugin (Less memory)</option>
+                            <option value="2" {% if main_config.display.get('vegas_scroll', {}).get('buffer_ahead', 2) == 2 %}selected{% endif %}>2 Plugins (Recommended)</option>
+                            <option value="3" {% if main_config.display.get('vegas_scroll', {}).get('buffer_ahead', 2) == 3 %}selected{% endif %}>3 Plugins (More buffer)</option>
+                        </select>
+                        <p class="mt-1 text-sm text-gray-600">How many plugins to pre-load ahead</p>
+                    </div>
+                </div>
+
+                <!-- Plugin Order Section -->
+                <div class="mt-4 pt-4 border-t border-gray-200">
+                    <h4 class="text-sm font-medium text-gray-900 mb-3">Plugin Order</h4>
+                    <p class="text-sm text-gray-600 mb-3">Drag to reorder plugins. Uncheck to exclude from Vegas scroll.</p>
+                    <div id="vegas_plugin_order" class="space-y-2 bg-white rounded-lg p-3 border border-gray-200">
+                        <!-- Plugin order list will be populated by JavaScript -->
+                        <p class="text-sm text-gray-500 italic">Loading plugins...</p>
+                    </div>
+                    <input type="hidden" id="vegas_plugin_order_value" name="vegas_plugin_order" value="{{ main_config.display.get('vegas_scroll', {}).get('plugin_order', [])|tojson }}">
+                    <input type="hidden" id="vegas_excluded_plugins_value" name="vegas_excluded_plugins" value="{{ main_config.display.get('vegas_scroll', {}).get('excluded_plugins', [])|tojson }}">
+                </div>
+            </div>
+        </div>
+
         <!-- Submit Button -->
         <div class="flex justify-end">
             <button type="submit"
@@ -265,7 +352,7 @@ if (typeof window.fixInvalidNumberInputs !== 'function') {
             const min = parseFloat(input.getAttribute('min'));
             const max = parseFloat(input.getAttribute('max'));
             const value = parseFloat(input.value);
-            
+
             if (!isNaN(value)) {
                 if (!isNaN(min) && value < min) {
                     input.value = min;
@@ -276,4 +363,192 @@ if (typeof window.fixInvalidNumberInputs !== 'function') {
         });
     };
 }
+
+// Vegas Scroll Mode Settings
+(function() {
+    // Toggle settings visibility
+    const vegasEnabledCheckbox = document.getElementById('vegas_scroll_enabled');
+    const vegasSettings = document.getElementById('vegas_scroll_settings');
+
+    if (vegasEnabledCheckbox && vegasSettings) {
+        vegasEnabledCheckbox.addEventListener('change', function() {
+            vegasSettings.style.display = this.checked ? 'block' : 'none';
+        });
+    }
+
+    // Update scroll speed display
+    const scrollSpeedSlider = document.getElementById('vegas_scroll_speed');
+    const scrollSpeedValue = document.getElementById('vegas_scroll_speed_value');
+
+    if (scrollSpeedSlider && scrollSpeedValue) {
+        scrollSpeedSlider.addEventListener('input', function() {
+            scrollSpeedValue.textContent = this.value;
+        });
+    }
+
+    // Initialize plugin order list
+    function initPluginOrderList() {
+        const container = document.getElementById('vegas_plugin_order');
+        if (!container) return;
+
+        // Fetch available plugins
+        fetch('/api/v3/plugins')
+            .then(response => response.json())
+            .then(data => {
+                if (!data.plugins || data.plugins.length === 0) {
+                    container.innerHTML = '<p class="text-sm text-gray-500 italic">No plugins available</p>';
+                    return;
+                }
+
+                // Get current order and exclusions
+                const orderInput = document.getElementById('vegas_plugin_order_value');
+                const excludedInput = document.getElementById('vegas_excluded_plugins_value');
+                let currentOrder = [];
+                let excluded = [];
+
+                try {
+                    currentOrder = JSON.parse(orderInput.value || '[]');
+                    excluded = JSON.parse(excludedInput.value || '[]');
+                } catch (e) {
+                    console.error('Error parsing vegas config:', e);
+                }
+
+                // Build ordered plugin list
+                const plugins = data.plugins.filter(p => p.enabled);
+                const orderedPlugins = [];
+
+                // First add plugins in current order
+                currentOrder.forEach(id => {
+                    const plugin = plugins.find(p => p.id === id);
+                    if (plugin) orderedPlugins.push(plugin);
+                });
+
+                // Then add remaining plugins
+                plugins.forEach(plugin => {
+                    if (!orderedPlugins.find(p => p.id === plugin.id)) {
+                        orderedPlugins.push(plugin);
+                    }
+                });
+
+                // Build HTML
+                let html = '';
+                orderedPlugins.forEach((plugin, index) => {
+                    const isExcluded = excluded.includes(plugin.id);
+                    html += `
+                        <div class="flex items-center p-2 bg-gray-50 rounded border border-gray-200 cursor-move vegas-plugin-item"
+                             data-plugin-id="${plugin.id}" draggable="true">
+                            <i class="fas fa-grip-vertical text-gray-400 mr-3"></i>
+                            <label class="flex items-center flex-1">
+                                <input type="checkbox"
+                                       class="vegas-plugin-include h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded mr-2"
+                                       ${!isExcluded ? 'checked' : ''}>
+                                <span class="text-sm font-medium text-gray-700">${plugin.name || plugin.id}</span>
+                            </label>
+                        </div>
+                    `;
+                });
+
+                container.innerHTML = html || '<p class="text-sm text-gray-500 italic">No enabled plugins</p>';
+
+                // Setup drag and drop
+                setupDragAndDrop(container);
+
+                // Setup checkbox handlers
+                container.querySelectorAll('.vegas-plugin-include').forEach(checkbox => {
+                    checkbox.addEventListener('change', updatePluginConfig);
+                });
+            })
+            .catch(error => {
+                console.error('Error fetching plugins:', error);
+                container.innerHTML = '<p class="text-sm text-red-500">Error loading plugins</p>';
+            });
+    }
+
+    function setupDragAndDrop(container) {
+        let draggedItem = null;
+
+        container.querySelectorAll('.vegas-plugin-item').forEach(item => {
+            item.addEventListener('dragstart', function(e) {
+                draggedItem = this;
+                this.style.opacity = '0.5';
+                e.dataTransfer.effectAllowed = 'move';
+            });
+
+            item.addEventListener('dragend', function() {
+                this.style.opacity = '1';
+                draggedItem = null;
+                updatePluginConfig();
+            });
+
+            item.addEventListener('dragover', function(e) {
+                e.preventDefault();
+                e.dataTransfer.dropEffect = 'move';
+
+                const rect = this.getBoundingClientRect();
+                const midY = rect.top + rect.height / 2;
+
+                if (e.clientY < midY) {
+                    this.style.borderTop = '2px solid #3b82f6';
+                    this.style.borderBottom = '';
+                } else {
+                    this.style.borderBottom = '2px solid #3b82f6';
+                    this.style.borderTop = '';
+                }
+            });
+
+            item.addEventListener('dragleave', function() {
+                this.style.borderTop = '';
+                this.style.borderBottom = '';
+            });
+
+            item.addEventListener('drop', function(e) {
+                e.preventDefault();
+                this.style.borderTop = '';
+                this.style.borderBottom = '';
+
+                if (draggedItem && draggedItem !== this) {
+                    const rect = this.getBoundingClientRect();
+                    const midY = rect.top + rect.height / 2;
+
+                    if (e.clientY < midY) {
+                        container.insertBefore(draggedItem, this);
+                    } else {
+                        container.insertBefore(draggedItem, this.nextSibling);
+                    }
+                }
+            });
+        });
+    }
+
+    function updatePluginConfig() {
+        const container = document.getElementById('vegas_plugin_order');
+        const orderInput = document.getElementById('vegas_plugin_order_value');
+        const excludedInput = document.getElementById('vegas_excluded_plugins_value');
+
+        if (!container || !orderInput || !excludedInput) return;
+
+        const order = [];
+        const excluded = [];
+
+        container.querySelectorAll('.vegas-plugin-item').forEach(item => {
+            const pluginId = item.dataset.pluginId;
+            const checkbox = item.querySelector('.vegas-plugin-include');
+
+            order.push(pluginId);
+            if (checkbox && !checkbox.checked) {
+                excluded.push(pluginId);
+            }
+        });
+
+        orderInput.value = JSON.stringify(order);
+        excludedInput.value = JSON.stringify(excluded);
+    }
+
+    // Initialize on DOM ready
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', initPluginOrderList);
+    } else {
+        initPluginOrderList();
+    }
+})();
 </script>

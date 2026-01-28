@@ -285,6 +285,54 @@ class BasePlugin(ABC):
             return manifest.get("display_modes", [self.plugin_id])
         return [self.plugin_id]
 
+    # -------------------------------------------------------------------------
+    # Vegas scroll mode support
+    # -------------------------------------------------------------------------
+    def get_vegas_content(self) -> Optional[Any]:
+        """
+        Get content for Vegas-style continuous scroll mode.
+
+        Override this method to provide optimized content for continuous scrolling.
+        Plugins can return:
+        - A single PIL Image: Displayed as a static block in the scroll
+        - A list of PIL Images: Each image becomes a separate item in the scroll
+        - None: Vegas mode will fall back to capturing display() output
+
+        Multi-item plugins (sports scores, odds) should return individual game/item
+        images so they scroll smoothly with other plugins.
+
+        Returns:
+            PIL Image, list of PIL Images, or None
+
+        Example (sports plugin):
+            def get_vegas_content(self):
+                # Return individual game cards for smooth scrolling
+                return [self._render_game(game) for game in self.games]
+
+        Example (static plugin):
+            def get_vegas_content(self):
+                # Return current display as single block
+                return self._render_current_view()
+        """
+        return None
+
+    def get_vegas_content_type(self) -> str:
+        """
+        Indicate the type of content this plugin provides for Vegas scroll.
+
+        Override this to specify how Vegas mode should treat this plugin's content.
+
+        Returns:
+            'multi' - Plugin has multiple scrollable items (sports, odds, news)
+            'static' - Plugin is a static block (clock, weather, music)
+            'none' - Plugin should not appear in Vegas scroll mode
+
+        Example:
+            def get_vegas_content_type(self):
+                return 'multi'  # We have multiple games to scroll
+        """
+        return 'static'
+
     def validate_config(self) -> bool:
         """
         Validate plugin configuration against schema.
