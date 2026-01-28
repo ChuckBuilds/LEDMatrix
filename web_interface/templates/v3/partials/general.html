@@ -8,7 +8,24 @@
           hx-ext="json-enc"
           hx-headers='{"Content-Type": "application/json"}'
           hx-swap="none"
-          hx-on:htmx:after-request="showNotification(event.detail.xhr.responseJSON?.message || 'Settings saved', event.detail.xhr.responseJSON?.status || 'success')"
+          hx-on:htmx:after-request="
+              var xhr = event.detail.xhr;
+              var isSuccess = xhr.status >= 200 && xhr.status < 300;
+              var message = '';
+              var status = 'success';
+              try {
+                  var data = JSON.parse(xhr.responseText);
+                  message = data.message || '';
+                  status = data.status || status;
+              } catch (e) {}
+              if (isSuccess) {
+                  message = message || 'Settings saved';
+              } else {
+                  message = message || 'Failed to save settings';
+                  status = 'error';
+              }
+              showNotification(message, status);
+          "
           class="space-y-6">
 
         <!-- Web Display Autostart -->
@@ -26,14 +43,39 @@
         <!-- Timezone -->
         <div class="form-group">
             <label for="timezone" class="block text-sm font-medium text-gray-700">Timezone</label>
-            <input type="text"
-                   id="timezone"
-                   name="timezone"
-                   value="{{ main_config.timezone or 'America/Chicago' }}"
-                   placeholder="e.g., America/Chicago"
-                   class="form-control">
-            <p class="mt-1 text-sm text-gray-600">IANA timezone, affects time-based features and scheduling.</p>
+            <div id="timezone_container" class="mt-1"></div>
+            <p class="mt-1 text-sm text-gray-600">Select your timezone for time-based features and scheduling.</p>
         </div>
+        <script>
+        (function() {
+            // Track if already initialized to prevent re-render
+            if (window.__timezoneWidgetInitialized) return;
+
+            function initTimezoneWidget() {
+                if (!window.LEDMatrixWidgets) { setTimeout(initTimezoneWidget, 50); return; }
+                var widget = window.LEDMatrixWidgets.get('timezone-selector');
+                if (!widget) { setTimeout(initTimezoneWidget, 50); return; }
+                var container = document.getElementById('timezone_container');
+                if (!container) return;
+
+                // Only render if container is empty (not already rendered)
+                if (container.children.length > 0) return;
+
+                widget.render(container, {
+                    'x-options': { showOffset: true, placeholder: 'Select your timezone...' }
+                }, {{ (main_config.timezone or "America/Chicago")|tojson }}, {
+                    fieldId: 'timezone',
+                    name: 'timezone'
+                });
+                window.__timezoneWidgetInitialized = true;
+            }
+            if (document.readyState === 'loading') {
+                document.addEventListener('DOMContentLoaded', initTimezoneWidget);
+            } else {
+                setTimeout(initTimezoneWidget, 50);
+            }
+        })();
+        </script>
 
         <!-- Location Information -->
         <div class="grid grid-cols-1 md:grid-cols-3 xl:grid-cols-3 2xl:grid-cols-3 gap-4">

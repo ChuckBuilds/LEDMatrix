@@ -4,135 +4,16 @@
         <p class="mt-1 text-sm text-gray-600">Configure when the LED matrix display should be active. You can set global hours or customize times for each day of the week.</p>
     </div>
 
-    <form hx-post="/api/v3/config/schedule"
+    <form id="schedule_form"
+          hx-post="/api/v3/config/schedule"
           hx-ext="json-enc"
           hx-headers='{"Content-Type": "application/json"}'
           hx-swap="none"
-          hx-on:htmx:after-request="showNotification(event.detail.xhr.responseJSON?.message || 'Schedule settings saved', event.detail.xhr.responseJSON?.status || 'success')"
+          hx-on:htmx:after-request="handleScheduleResponse(event)"
           class="space-y-6">
 
-        <!-- Enable Schedule -->
-        <div class="bg-blue-50 rounded-lg p-4">
-            <label class="flex items-center">
-                <input type="checkbox"
-                       name="enabled"
-                       id="schedule_enabled"
-                       {{ 'checked' if schedule_config.enabled else '' }}
-                       class="form-control h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded">
-                <span class="ml-2 text-sm font-medium text-gray-900">Enable Schedule</span>
-            </label>
-            <p class="mt-1 text-sm text-gray-600">When enabled, the display will only operate during specified hours.</p>
-        </div>
-
-        <!-- Schedule Mode Selection -->
-        <div class="bg-gray-50 rounded-lg p-4">
-            <h3 class="text-md font-medium text-gray-900 mb-4">Schedule Mode</h3>
-            <div class="space-y-3">
-                <label class="flex items-center">
-                    <input type="radio"
-                           name="mode"
-                           value="global"
-                           id="mode_global"
-                           {% if not schedule_config.get('days') %}checked{% endif %}
-                           onclick="toggleScheduleMode('global')"
-                           class="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300">
-                    <span class="ml-2 text-sm font-medium text-gray-900">Global Schedule</span>
-                </label>
-                <p class="ml-6 text-sm text-gray-600">Use the same start and end time for all days of the week</p>
-
-                <label class="flex items-center mt-4">
-                    <input type="radio"
-                           name="mode"
-                           value="per_day"
-                           id="mode_per_day"
-                           {% if schedule_config.get('days') %}checked{% endif %}
-                           onclick="toggleScheduleMode('per_day')"
-                           class="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300">
-                    <span class="ml-2 text-sm font-medium text-gray-900">Per-Day Schedule</span>
-                </label>
-                <p class="ml-6 text-sm text-gray-600">Set different times for each day of the week</p>
-            </div>
-        </div>
-
-        <!-- Global Schedule -->
-        <div id="global_schedule" class="bg-gray-50 rounded-lg p-4" style="display: {% if not schedule_config.get('days') %}block{% else %}none{% endif %};">
-            <h3 class="text-md font-medium text-gray-900 mb-4">Global Times</h3>
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div class="form-group">
-                    <label for="start_time" class="block text-sm font-medium text-gray-700">Start Time</label>
-                    <input type="time"
-                           id="start_time"
-                           name="start_time"
-                           value="{{ schedule_config.start_time or '07:00' }}"
-                           class="form-control">
-                    <p class="mt-1 text-sm text-gray-600">When to start displaying content (HH:MM)</p>
-                </div>
-
-                <div class="form-group">
-                    <label for="end_time" class="block text-sm font-medium text-gray-700">End Time</label>
-                    <input type="time"
-                           id="end_time"
-                           name="end_time"
-                           value="{{ schedule_config.end_time or '23:00' }}"
-                           class="form-control">
-                    <p class="mt-1 text-sm text-gray-600">When to stop displaying content (HH:MM)</p>
-                </div>
-            </div>
-        </div>
-
-        <!-- Per-Day Schedule -->
-        <div id="per_day_schedule" class="space-y-3" style="display: {% if schedule_config.get('days') %}block{% else %}none{% endif %};">
-            <h3 class="text-md font-medium text-gray-900 mb-4">Day-Specific Times</h3>
-            
-            <div class="bg-gray-50 rounded-lg p-4">
-                <div class="overflow-x-auto">
-                    <table class="min-w-full divide-y divide-gray-200">
-                        <thead>
-                            <tr class="bg-gray-100">
-                                <th class="px-3 py-2 text-left text-xs font-semibold text-gray-700 uppercase">Day</th>
-                                <th class="px-3 py-2 text-left text-xs font-semibold text-gray-700 uppercase">Enabled</th>
-                                <th class="px-3 py-2 text-left text-xs font-semibold text-gray-700 uppercase">Start</th>
-                                <th class="px-3 py-2 text-left text-xs font-semibold text-gray-700 uppercase">End</th>
-                            </tr>
-                        </thead>
-                        <tbody class="bg-white divide-y divide-gray-200">
-                            {% set days = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'] %}
-                            {% for day in days %}
-                            <tr class="hover:bg-gray-50">
-                                <td class="px-3 py-2 whitespace-nowrap">
-                                    <span class="text-sm font-medium text-gray-900 capitalize">{{ day }}</span>
-                                </td>
-                                <td class="px-3 py-2 whitespace-nowrap">
-                                    <input type="checkbox"
-                                           name="{{ day }}_enabled"
-                                           id="{{ day }}_enabled"
-                                           {{ 'checked' if schedule_config.get('days', {}).get(day, {}).get('enabled', True) else '' }}
-                                           class="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
-                                           onchange="toggleDaySchedule('{{ day }}', this.checked)">
-                                </td>
-                                <td class="px-3 py-2 whitespace-nowrap">
-                                    <input type="time"
-                                           id="{{ day }}_start"
-                                           name="{{ day }}_start"
-                                           value="{{ schedule_config.get('days', {}).get(day, {}).get('start_time', '07:00') }}"
-                                           class="block w-full px-2 py-1 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-blue-500 focus:border-blue-500 {{ 'disabled bg-gray-100' if not schedule_config.get('days', {}).get(day, {}).get('enabled', True) else '' }}"
-                                           {{ 'disabled' if not schedule_config.get('days', {}).get(day, {}).get('enabled', True) else '' }}>
-                                </td>
-                                <td class="px-3 py-2 whitespace-nowrap">
-                                    <input type="time"
-                                           id="{{ day }}_end"
-                                           name="{{ day }}_end"
-                                           value="{{ schedule_config.get('days', {}).get(day, {}).get('end_time', '23:00') }}"
-                                           class="block w-full px-2 py-1 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-blue-500 focus:border-blue-500 {{ 'disabled bg-gray-100' if not schedule_config.get('days', {}).get(day, {}).get('enabled', True) else '' }}"
-                                           {{ 'disabled' if not schedule_config.get('days', {}).get(day, {}).get('enabled', True) else '' }}>
-                                </td>
-                            </tr>
-                            {% endfor %}
-                        </tbody>
-                    </table>
-                </div>
-            </div>
-        </div>
+        <!-- Schedule Picker Widget Container -->
+        <div id="schedule_picker_container"></div>
 
         <!-- Submit Button -->
         <div class="flex justify-end">
@@ -146,55 +27,122 @@
 </div>
 
 <script>
-function toggleScheduleMode(mode) {
-    const globalSchedule = document.getElementById('global_schedule');
-    const perDaySchedule = document.getElementById('per_day_schedule');
-    
-    if (mode === 'global') {
-        globalSchedule.style.display = 'block';
-        perDaySchedule.style.display = 'none';
-    } else {
-        globalSchedule.style.display = 'none';
-        perDaySchedule.style.display = 'block';
-    }
-}
+(function() {
+    'use strict';
 
-function toggleDaySchedule(day, enabled) {
-    const startInput = document.getElementById(day + '_start');
-    const endInput = document.getElementById(day + '_end');
-    
-    startInput.disabled = !enabled;
-    endInput.disabled = !enabled;
-    
-    if (!enabled) {
-        startInput.value = '';
-        endInput.value = '';
-    } else {
-        // Set default values if empty
-        if (!startInput.value) startInput.value = '07:00';
-        if (!endInput.value) endInput.value = '23:00';
-    }
-}
+    // Initialize schedule picker widget when DOM is ready
+    function initSchedulePicker() {
+        const container = document.getElementById('schedule_picker_container');
+        if (!container) {
+            console.error('[Schedule] Container not found');
+            return;
+        }
 
-// Helper function for notifications (if not already defined globally)
-function showNotification(message, type) {
-    const colors = {
-        success: 'bg-green-500',
-        error: 'bg-red-500',
-        warning: 'bg-yellow-500',
-        info: 'bg-blue-500'
+        // Check if widget registry is available
+        if (typeof window.LEDMatrixWidgets === 'undefined') {
+            console.error('[Schedule] LEDMatrixWidgets registry not available');
+            return;
+        }
+
+        const widget = window.LEDMatrixWidgets.get('schedule-picker');
+        if (!widget) {
+            console.error('[Schedule] schedule-picker widget not registered');
+            return;
+        }
+
+        // Get schedule config from template data (injected by Jinja2)
+        // Default to empty object if null/undefined
+        const scheduleConfig = {{ schedule_config | tojson | safe }} || {};
+
+        // Determine mode: prefer explicit mode, then infer from days, then default to global
+        let mode = 'global';
+        if (scheduleConfig.mode) {
+            // Normalize mode value (handle both 'per_day' and 'per-day')
+            mode = scheduleConfig.mode.replace('-', '_');
+        } else if (scheduleConfig.days) {
+            mode = 'per_day';
+        }
+
+        // Convert flat config to nested format expected by widget
+        const widgetValue = {
+            enabled: scheduleConfig.enabled || false,
+            mode: mode,
+            start_time: scheduleConfig.start_time || '07:00',
+            end_time: scheduleConfig.end_time || '23:00',
+            days: scheduleConfig.days || {}
+        };
+
+        // If we have per-day data in the old flat format, convert it
+        if (!scheduleConfig.days) {
+            widgetValue.days = {};
+            const days = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
+            days.forEach(function(day) {
+                widgetValue.days[day] = {
+                    enabled: true,
+                    start_time: '07:00',
+                    end_time: '23:00'
+                };
+            });
+        }
+
+        // Render the widget
+        widget.render(container, {
+            'x-options': {
+                showModeToggle: true,
+                showEnableToggle: true,
+                compactMode: false
+            }
+        }, widgetValue, {
+            fieldId: 'schedule'
+        });
+
+        console.log('[Schedule] Schedule picker widget initialized');
+    }
+
+    // Handle form submission response
+    window.handleScheduleResponse = function(event) {
+        const xhr = event.detail.xhr;
+        let response;
+        try {
+            response = JSON.parse(xhr.responseText);
+        } catch (e) {
+            response = { status: 'error', message: 'Invalid response from server' };
+        }
+
+        const message = response.message || (response.status === 'success' ? 'Schedule settings saved' : 'Error saving schedule');
+        const type = response.status || 'info';
+
+        // Use global notification function if available
+        if (typeof window.showNotification === 'function') {
+            window.showNotification(message, type);
+        } else {
+            // Fallback notification
+            const colors = {
+                success: 'bg-green-500',
+                error: 'bg-red-500',
+                warning: 'bg-yellow-500',
+                info: 'bg-blue-500'
+            };
+
+            const notification = document.createElement('div');
+            notification.className = 'fixed top-4 right-4 px-6 py-3 rounded-lg shadow-lg z-50 ' + (colors[type] || colors.info) + ' text-white';
+            notification.textContent = message;
+            document.body.appendChild(notification);
+
+            setTimeout(function() {
+                notification.style.transition = 'opacity 0.5s';
+                notification.style.opacity = '0';
+                setTimeout(function() { notification.remove(); }, 500);
+            }, 3000);
+        }
     };
-    
-    const notification = document.createElement('div');
-    notification.className = `fixed top-4 right-4 px-6 py-3 rounded-lg shadow-lg z-50 ${colors[type] || colors.info} text-white`;
-    notification.textContent = message;
-    document.body.appendChild(notification);
-    
-    setTimeout(() => {
-        notification.style.transition = 'opacity 0.5s';
-        notification.style.opacity = '0';
-        setTimeout(() => notification.remove(), 500);
-    }, 3000);
-}
-</script>
 
+    // Initialize when DOM is ready or if already loaded
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', initSchedulePicker);
+    } else {
+        // Small delay to ensure widget scripts are loaded
+        setTimeout(initSchedulePicker, 50);
+    }
+})();
+</script>

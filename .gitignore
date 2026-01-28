@@ -40,3 +40,7 @@ htmlcov/
 # See docs/MULTI_ROOT_WORKSPACE_SETUP.md for details
 plugins/*
 !plugins/.gitkeep
+
+# Binary files and backups
+bin/pixlet/
+config/backups/

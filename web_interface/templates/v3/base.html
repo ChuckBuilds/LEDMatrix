@@ -2380,24 +2380,12 @@
                 },
 
                 showNotification(message, type = 'info') {
-                    const notifications = document.getElementById('notifications');
-                    const notification = document.createElement('div');
-
-                    const colors = {
-                        success: 'bg-green-500',
-                        error: 'bg-red-500',
-                        warning: 'bg-yellow-500',
-                        info: 'bg-blue-500'
-                    };
-
-                    notification.className = `px-4 py-3 rounded-md text-white text-sm ${colors[type] || colors.info}`;
-                    notification.textContent = message;
-
-                    notifications.appendChild(notification);
-
-                    setTimeout(() => {
-                        notification.remove();
-                    }, 5000);
+                    // Use global notification widget
+                    if (typeof window.showNotification === 'function') {
+                        window.showNotification(message, type);
+                    } else {
+                        console.log(`[${type.toUpperCase()}]`, message);
+                    }
                 },
 
                 escapeHtml(text) {
@@ -4291,26 +4279,19 @@
             });
         };
         
-        function showNotification(message, type = 'info') {
-            console.log(`[${type.toUpperCase()}]`, message);
-            
-            // Create a simple toast notification
-            const notification = document.createElement('div');
-            notification.className = `fixed top-4 right-4 px-6 py-3 rounded-lg shadow-lg z-50 ${
-                type === 'success' ? 'bg-green-500' :
-                type === 'error' ? 'bg-red-500' :
-                'bg-blue-500'
-            } text-white`;
-            notification.textContent = message;
-            
-            document.body.appendChild(notification);
-            
-            // Fade out and remove after 3 seconds
-            setTimeout(() => {
-                notification.style.transition = 'opacity 0.5s';
-                notification.style.opacity = '0';
-                setTimeout(() => notification.remove(), 500);
-            }, 3000);
+        // showNotification is provided by notification.js widget
+        // This fallback is only used if the widget hasn't loaded yet
+        if (typeof window.showNotification !== 'function') {
+            window.showNotification = function(message, type = 'info') {
+                console.log(`[${type.toUpperCase()}]`, message);
+                const notification = document.createElement('div');
+                notification.className = `fixed top-4 right-4 px-6 py-3 rounded-lg shadow-lg z-50 ${
+                    type === 'success' ? 'bg-green-500' : type === 'error' ? 'bg-red-500' : 'bg-blue-500'
+                } text-white`;
+                notification.textContent = message;
+                document.body.appendChild(notification);
+                setTimeout(() => { notification.style.opacity = '0'; setTimeout(() => notification.remove(), 500); }, 3000);
+            };
         }
 
         // Section toggle function - already defined earlier, but ensure it's not overwritten
@@ -4914,10 +4895,28 @@
     <!-- Widget Registry System -->
     <script src="{{ url_for('static', filename='v3/js/widgets/registry.js') }}" defer></script>
     <script src="{{ url_for('static', filename='v3/js/widgets/base-widget.js') }}" defer></script>
+    <script src="{{ url_for('static', filename='v3/js/widgets/notification.js') }}" defer></script>
     <script src="{{ url_for('static', filename='v3/js/widgets/file-upload.js') }}" defer></script>
     <script src="{{ url_for('static', filename='v3/js/widgets/checkbox-group.js') }}" defer></script>
     <script src="{{ url_for('static', filename='v3/js/widgets/custom-feeds.js') }}" defer></script>
     <script src="{{ url_for('static', filename='v3/js/widgets/array-table.js') }}" defer></script>
+    <script src="{{ url_for('static', filename='v3/js/widgets/day-selector.js') }}" defer></script>
+    <script src="{{ url_for('static', filename='v3/js/widgets/time-range.js') }}" defer></script>
+    <script src="{{ url_for('static', filename='v3/js/widgets/schedule-picker.js') }}" defer></script>
+    <!-- Basic input widgets -->
+    <script src="{{ url_for('static', filename='v3/js/widgets/text-input.js') }}" defer></script>
+    <script src="{{ url_for('static', filename='v3/js/widgets/number-input.js') }}" defer></script>
+    <script src="{{ url_for('static', filename='v3/js/widgets/textarea.js') }}" defer></script>
+    <script src="{{ url_for('static', filename='v3/js/widgets/select-dropdown.js') }}" defer></script>
+    <script src="{{ url_for('static', filename='v3/js/widgets/toggle-switch.js') }}" defer></script>
+    <script src="{{ url_for('static', filename='v3/js/widgets/radio-group.js') }}" defer></script>
+    <script src="{{ url_for('static', filename='v3/js/widgets/date-picker.js') }}" defer></script>
+    <script src="{{ url_for('static', filename='v3/js/widgets/slider.js') }}" defer></script>
+    <script src="{{ url_for('static', filename='v3/js/widgets/color-picker.js') }}" defer></script>
+    <script src="{{ url_for('static', filename='v3/js/widgets/email-input.js') }}" defer></script>
+    <script src="{{ url_for('static', filename='v3/js/widgets/url-input.js') }}" defer></script>
+    <script src="{{ url_for('static', filename='v3/js/widgets/password-input.js') }}" defer></script>
+    <script src="{{ url_for('static', filename='v3/js/widgets/timezone-selector.js') }}" defer></script>
     <script src="{{ url_for('static', filename='v3/js/widgets/plugin-loader.js') }}" defer></script>
     
     <!-- Legacy plugins_manager.js (for backward compatibility during migration) -->
