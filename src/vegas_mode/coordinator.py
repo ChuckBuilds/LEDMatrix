@@ -467,8 +467,8 @@ class VegasModeCoordinator:
 
     def get_ordered_plugins(self) -> List[str]:
         """Get the current ordered list of plugins in Vegas scroll."""
-        if hasattr(self.plugin_manager, 'loaded_plugins'):
-            available = list(self.plugin_manager.loaded_plugins.keys())
+        if hasattr(self.plugin_manager, 'plugins'):
+            available = list(self.plugin_manager.plugins.keys())
             return self.vegas_config.get_ordered_plugins(available)
         return []
 

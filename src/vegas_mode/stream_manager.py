@@ -280,12 +280,12 @@ class StreamManager:
         # Get all enabled plugins
         available_plugins = []
 
-        if hasattr(self.plugin_manager, 'loaded_plugins'):
+        if hasattr(self.plugin_manager, 'plugins'):
             logger.debug(
                 "Checking %d loaded plugins for Vegas scroll",
-                len(self.plugin_manager.loaded_plugins)
+                len(self.plugin_manager.plugins)
             )
-            for plugin_id, plugin in self.plugin_manager.loaded_plugins.items():
+            for plugin_id, plugin in self.plugin_manager.plugins.items():
                 has_enabled = hasattr(plugin, 'enabled')
                 is_enabled = getattr(plugin, 'enabled', False)
                 logger.debug(
@@ -319,7 +319,7 @@ class StreamManager:
 
         else:
             logger.warning(
-                "plugin_manager does not have loaded_plugins attribute: %s",
+                "plugin_manager does not have plugins attribute: %s",
                 type(self.plugin_manager).__name__
             )
 
@@ -388,10 +388,10 @@ class StreamManager:
         """
         try:
             # Get plugin instance
-            if not hasattr(self.plugin_manager, 'loaded_plugins'):
+            if not hasattr(self.plugin_manager, 'plugins'):
                 return None
 
-            plugin = self.plugin_manager.loaded_plugins.get(plugin_id)
+            plugin = self.plugin_manager.plugins.get(plugin_id)
             if not plugin:
                 logger.warning("Plugin %s not found", plugin_id)
                 return None
