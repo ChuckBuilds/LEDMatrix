@@ -310,6 +310,28 @@ class RenderPipeline:
             'stats': self.stats.copy(),
         }
 
+    def get_scroll_position(self) -> int:
+        """
+        Get current scroll position.
+
+        Used by coordinator to save position before static pause.
+
+        Returns:
+            Current scroll position in pixels
+        """
+        return int(self.scroll_helper.scroll_position)
+
+    def set_scroll_position(self, position: int) -> None:
+        """
+        Set scroll position.
+
+        Used by coordinator to restore position after static pause.
+
+        Args:
+            position: Scroll position in pixels
+        """
+        self.scroll_helper.scroll_position = float(position)
+
     def update_config(self, new_config: VegasModeConfig) -> None:
         """
         Update render pipeline configuration.

@@ -1479,6 +1479,31 @@ def get_installed_plugins():
             # Get web_ui_actions from manifest if available
             web_ui_actions = plugin_info.get('web_ui_actions', [])
 
+            # Get Vegas display mode info from plugin instance
+            vegas_mode = None
+            vegas_content_type = None
+            plugin_instance = api_v3.plugin_manager.get_plugin(plugin_id)
+            if plugin_instance:
+                try:
+                    # Try to get the display mode enum
+                    if hasattr(plugin_instance, 'get_vegas_display_mode'):
+                        mode = plugin_instance.get_vegas_display_mode()
+                        vegas_mode = mode.value if hasattr(mode, 'value') else str(mode)
+                except Exception:
+                    pass
+                try:
+                    # Get legacy content type as fallback
+                    if hasattr(plugin_instance, 'get_vegas_content_type'):
+                        vegas_content_type = plugin_instance.get_vegas_content_type()
+                except Exception:
+                    pass
+
+            # Also check plugin config for explicit vegas_mode setting
+            if api_v3.config_manager:
+                plugin_cfg = full_config.get(plugin_id, {})
+                if 'vegas_mode' in plugin_cfg:
+                    vegas_mode = plugin_cfg['vegas_mode']
+
             plugins.append({
                 'id': plugin_id,
                 'name': plugin_info.get('name', plugin_id),
@@ -1493,7 +1518,9 @@ def get_installed_plugins():
                 'last_commit': last_commit,
                 'last_commit_message': last_commit_message,
                 'branch': branch,
-                'web_ui_actions': web_ui_actions
+                'web_ui_actions': web_ui_actions,
+                'vegas_mode': vegas_mode,
+                'vegas_content_type': vegas_content_type
             })
 
         return jsonify({'status': 'success', 'data': {'plugins': plugins}})

@@ -4,6 +4,11 @@ Vegas Mode Coordinator
 Main orchestrator for Vegas-style continuous scroll mode. Coordinates between
 StreamManager, RenderPipeline, and the display system to provide smooth
 continuous scrolling of all enabled plugin content.
+
+Supports three display modes per plugin:
+- SCROLL: Content scrolls continuously within the stream
+- FIXED_SEGMENT: Fixed block that scrolls by with other content
+- STATIC: Scroll pauses, plugin displays for its duration, then resumes
 """
 
 import logging
@@ -15,9 +20,11 @@ from src.vegas_mode.config import VegasModeConfig
 from src.vegas_mode.plugin_adapter import PluginAdapter
 from src.vegas_mode.stream_manager import StreamManager
 from src.vegas_mode.render_pipeline import RenderPipeline
+from src.plugin_system.base_plugin import VegasDisplayMode
 
 if TYPE_CHECKING:
     from src.plugin_system.plugin_manager import PluginManager
+    from src.plugin_system.base_plugin import BasePlugin
     from src.display_manager import DisplayManager
 
 logger = logging.getLogger(__name__)
@@ -83,12 +90,22 @@ class VegasModeCoordinator:
         self._config_version = 0
         self._pending_config_update = False
 
+        # Static pause handling
+        self._static_pause_active = False
+        self._static_pause_plugin: Optional['BasePlugin'] = None
+        self._static_pause_start: Optional[float] = None
+        self._saved_scroll_position: Optional[int] = None
+
+        # Track which plugins should use STATIC mode (pause scroll)
+        self._static_mode_plugins: set = set()
+
         # Statistics
         self.stats = {
             'total_runtime_seconds': 0.0,
             'cycles_completed': 0,
             'interruptions': 0,
             'config_updates': 0,
+            'static_pauses': 0,
         }
         self._start_time: Optional[float] = None
 
@@ -242,12 +259,19 @@ class VegasModeCoordinator:
         This is called by DisplayController to run Vegas mode for one
         "display duration" period before checking for mode changes.
 
+        Handles three display modes:
+        - SCROLL/FIXED_SEGMENT: Continue normal scroll rendering
+        - STATIC: Pause scroll, display plugin, resume on completion
+
         Returns:
             True if iteration completed normally, False if interrupted
         """
         if not self.is_active:
             if not self.start():
                 return False
+
+        # Update static mode plugin list on iteration start
+        self._update_static_mode_plugins()
 
         frame_interval = self.vegas_config.get_frame_interval()
         duration = self.render_pipeline.get_dynamic_duration()
@@ -256,6 +280,16 @@ class VegasModeCoordinator:
         logger.info("Starting Vegas iteration for %.1fs", duration)
 
         while True:
+            # Check for STATIC mode plugin that should pause scroll
+            static_plugin = self._check_static_plugin_trigger()
+            if static_plugin:
+                if not self._handle_static_pause(static_plugin):
+                    # Static pause was interrupted
+                    return False
+                # After static pause, skip this segment and continue
+                self.stream_manager.get_next_segment()  # Consume the segment
+                continue
+
             # Run frame
             if not self.run_frame():
                 # Check why we stopped
@@ -395,6 +429,142 @@ class VegasModeCoordinator:
             available = list(self.plugin_manager.loaded_plugins.keys())
             return self.vegas_config.get_ordered_plugins(available)
         return []
+
+    # -------------------------------------------------------------------------
+    # Static pause handling (for STATIC display mode)
+    # -------------------------------------------------------------------------
+
+    def _check_static_plugin_trigger(self) -> Optional['BasePlugin']:
+        """
+        Check if a STATIC mode plugin should take over display.
+
+        Called during iteration to detect when scroll should pause
+        for a static plugin display.
+
+        Returns:
+            Plugin instance if static pause should begin, None otherwise
+        """
+        # Get the next plugin that would be displayed
+        next_segment = self.stream_manager.peek_next_segment()
+        if not next_segment:
+            return None
+
+        plugin_id = next_segment.plugin_id
+        plugin = self.plugin_manager.get_plugin(plugin_id)
+
+        if not plugin:
+            return None
+
+        # Check if this plugin is configured for STATIC mode
+        try:
+            display_mode = plugin.get_vegas_display_mode()
+            if display_mode == VegasDisplayMode.STATIC:
+                return plugin
+        except Exception as e:
+            logger.debug("Error checking vegas mode for %s: %s", plugin_id, e)
+
+        return None
+
+    def _handle_static_pause(self, plugin: 'BasePlugin') -> bool:
+        """
+        Handle a static pause - scroll pauses while plugin displays.
+
+        Args:
+            plugin: The STATIC mode plugin to display
+
+        Returns:
+            True if completed normally, False if interrupted
+        """
+        plugin_id = plugin.plugin_id
+
+        with self._state_lock:
+            if self._static_pause_active:
+                logger.warning("Static pause already active")
+                return True
+
+            # Save current scroll position for smooth resume
+            self._saved_scroll_position = self.render_pipeline.get_scroll_position()
+            self._static_pause_active = True
+            self._static_pause_plugin = plugin
+            self._static_pause_start = time.time()
+            self.stats['static_pauses'] += 1
+
+        logger.info("Static pause started for plugin: %s", plugin_id)
+
+        # Stop scrolling indicator
+        self.display_manager.set_scrolling_state(False)
+
+        try:
+            # Display the plugin using its standard display() method
+            plugin.display(force_clear=True)
+            self.display_manager.update_display()
+
+            # Wait for the plugin's display duration
+            duration = plugin.get_display_duration()
+            start = time.time()
+
+            while time.time() - start < duration:
+                # Check for interruptions
+                if self._should_stop:
+                    logger.info("Static pause interrupted by stop request")
+                    return False
+
+                if self._check_live_priority():
+                    logger.info("Static pause interrupted by live priority")
+                    return False
+
+                # Sleep in small increments to remain responsive
+                time.sleep(0.1)
+
+            logger.info(
+                "Static pause completed for %s after %.1fs",
+                plugin_id, time.time() - start
+            )
+
+        except Exception as e:
+            logger.error("Error during static pause for %s: %s", plugin_id, e)
+            return False
+
+        finally:
+            self._end_static_pause()
+
+        return True
+
+    def _end_static_pause(self) -> None:
+        """End static pause and restore scroll state."""
+        with self._state_lock:
+            self._static_pause_active = False
+            self._static_pause_plugin = None
+            self._static_pause_start = None
+
+            # Restore scroll position
+            if self._saved_scroll_position is not None:
+                self.render_pipeline.set_scroll_position(self._saved_scroll_position)
+                self._saved_scroll_position = None
+
+        # Resume scrolling state
+        self.display_manager.set_scrolling_state(True)
+        logger.debug("Static pause ended, scroll resumed")
+
+    def _update_static_mode_plugins(self) -> None:
+        """Update the set of plugins using STATIC display mode."""
+        self._static_mode_plugins.clear()
+
+        for plugin_id in self.get_ordered_plugins():
+            plugin = self.plugin_manager.get_plugin(plugin_id)
+            if plugin:
+                try:
+                    mode = plugin.get_vegas_display_mode()
+                    if mode == VegasDisplayMode.STATIC:
+                        self._static_mode_plugins.add(plugin_id)
+                except Exception:
+                    pass
+
+        if self._static_mode_plugins:
+            logger.info(
+                "Static mode plugins: %s",
+                ', '.join(self._static_mode_plugins)
+            )
 
     def cleanup(self) -> None:
         """Clean up all resources."""

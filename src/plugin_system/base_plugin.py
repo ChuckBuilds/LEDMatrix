@@ -9,9 +9,33 @@ Stability: Stable - maintains backward compatibility
 """
 
 from abc import ABC, abstractmethod
+from enum import Enum
 from typing import Dict, Any, Optional, List
 import logging
 from src.logging_config import get_logger
+
+
+class VegasDisplayMode(Enum):
+    """
+    Display mode for Vegas scroll integration.
+
+    Determines how a plugin's content behaves within the continuous scroll:
+
+    - SCROLL: Content scrolls continuously within the stream.
+      Best for multi-item plugins like sports scores, odds tickers, news feeds.
+      Plugin provides multiple frames via get_vegas_content().
+
+    - FIXED_SEGMENT: Content is a fixed-width block that scrolls BY with
+      the rest of the content. Best for static info like clock, weather.
+      Plugin provides a single image sized to vegas_panel_count panels.
+
+    - STATIC: Scroll pauses, plugin displays for its duration, then scroll
+      resumes. Best for important alerts or detailed views that need attention.
+      Plugin uses standard display() method during the pause.
+    """
+    SCROLL = "scroll"
+    FIXED_SEGMENT = "fixed"
+    STATIC = "static"
 
 
 class BasePlugin(ABC):
@@ -141,7 +165,7 @@ class BasePlugin(ABC):
                         pass  # Fall through to config
             except (TypeError, ValueError, AttributeError):
                 pass  # Fall through to config
-        
+
         # Fall back to config
         config_duration = self.config.get("display_duration", 15.0)
         try:
@@ -152,7 +176,7 @@ class BasePlugin(ABC):
                 return float(config_duration) if float(config_duration) > 0 else 15.0
         except (ValueError, TypeError):
             pass
-        
+
         return 15.0
 
     # ---------------------------------------------------------------------
@@ -332,6 +356,101 @@ class BasePlugin(ABC):
                 return 'multi'  # We have multiple games to scroll
         """
         return 'static'
+
+    def get_vegas_display_mode(self) -> VegasDisplayMode:
+        """
+        Get the display mode for Vegas scroll integration.
+
+        This method determines how the plugin's content behaves within Vegas mode:
+        - SCROLL: Content scrolls continuously (multi-item plugins)
+        - FIXED_SEGMENT: Fixed block that scrolls by (clock, weather)
+        - STATIC: Pause scroll to display (alerts, detailed views)
+
+        Override to change default behavior. By default, reads from config
+        or maps legacy get_vegas_content_type() for backward compatibility.
+
+        Returns:
+            VegasDisplayMode enum value
+
+        Example:
+            def get_vegas_display_mode(self):
+                return VegasDisplayMode.SCROLL
+        """
+        # Check for explicit config setting first
+        config_mode = self.config.get("vegas_mode")
+        if config_mode:
+            try:
+                return VegasDisplayMode(config_mode)
+            except ValueError:
+                self.logger.warning(
+                    "Invalid vegas_mode '%s' for %s, using default",
+                    config_mode, self.plugin_id
+                )
+
+        # Fall back to mapping legacy content_type
+        content_type = self.get_vegas_content_type()
+        if content_type == 'multi':
+            return VegasDisplayMode.SCROLL
+        elif content_type == 'static':
+            return VegasDisplayMode.FIXED_SEGMENT
+        elif content_type == 'none':
+            # 'none' means excluded - return FIXED_SEGMENT as default
+            # The exclusion is handled by checking get_vegas_content_type() separately
+            return VegasDisplayMode.FIXED_SEGMENT
+
+        return VegasDisplayMode.FIXED_SEGMENT
+
+    def get_supported_vegas_modes(self) -> List[VegasDisplayMode]:
+        """
+        Return list of Vegas display modes this plugin supports.
+
+        Used by the web UI to show available mode options for user configuration.
+        Override to customize which modes are available for this plugin.
+
+        By default:
+        - 'multi' content type plugins support SCROLL and FIXED_SEGMENT
+        - 'static' content type plugins support FIXED_SEGMENT and STATIC
+        - 'none' content type plugins return empty list (excluded from Vegas)
+
+        Returns:
+            List of VegasDisplayMode values this plugin can use
+
+        Example:
+            def get_supported_vegas_modes(self):
+                # This plugin only makes sense as a scrolling ticker
+                return [VegasDisplayMode.SCROLL]
+        """
+        content_type = self.get_vegas_content_type()
+
+        if content_type == 'none':
+            return []
+        elif content_type == 'multi':
+            return [VegasDisplayMode.SCROLL, VegasDisplayMode.FIXED_SEGMENT]
+        else:  # 'static'
+            return [VegasDisplayMode.FIXED_SEGMENT, VegasDisplayMode.STATIC]
+
+    def get_vegas_segment_width(self) -> Optional[int]:
+        """
+        Get the preferred width for this plugin in Vegas FIXED_SEGMENT mode.
+
+        Returns the number of panels this plugin should occupy when displayed
+        as a fixed segment. The actual pixel width is calculated as:
+            width = panels * single_panel_width
+
+        Where single_panel_width comes from display.hardware.cols in config.
+
+        Override to provide dynamic sizing based on content.
+        Returns None to use the default (1 panel).
+
+        Returns:
+            Number of panels, or None for default (1 panel)
+
+        Example:
+            def get_vegas_segment_width(self):
+                # Clock needs 2 panels to show time clearly
+                return 2
+        """
+        return self.config.get("vegas_panel_count", None)
 
     def validate_config(self) -> bool:
         """

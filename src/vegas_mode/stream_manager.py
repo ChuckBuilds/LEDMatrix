@@ -4,6 +4,11 @@ Stream Manager for Vegas Mode
 Manages plugin content streaming with look-ahead buffering. Maintains a queue
 of plugin content that's ready to be rendered, prefetching 1-2 plugins ahead
 of the current scroll position.
+
+Supports three display modes:
+- SCROLL: Continuous scrolling content
+- FIXED_SEGMENT: Fixed block that scrolls by
+- STATIC: Pause scroll to display (marked for coordinator handling)
 """
 
 import logging
@@ -16,6 +21,7 @@ from PIL import Image
 
 from src.vegas_mode.config import VegasModeConfig
 from src.vegas_mode.plugin_adapter import PluginAdapter
+from src.plugin_system.base_plugin import VegasDisplayMode
 
 if TYPE_CHECKING:
     from src.plugin_system.base_plugin import BasePlugin
@@ -30,12 +36,18 @@ class ContentSegment:
     plugin_id: str
     images: List[Image.Image]
     total_width: int
+    display_mode: VegasDisplayMode = field(default=VegasDisplayMode.FIXED_SEGMENT)
     fetched_at: float = field(default_factory=time.time)
     is_stale: bool = False
 
     @property
     def image_count(self) -> int:
         return len(self.images)
+
+    @property
+    def is_static(self) -> bool:
+        """Check if this segment should trigger a static pause."""
+        return self.display_mode == VegasDisplayMode.STATIC
 
 
 class StreamManager:
@@ -250,9 +262,18 @@ class StreamManager:
         if hasattr(self.plugin_manager, 'loaded_plugins'):
             for plugin_id, plugin in self.plugin_manager.loaded_plugins.items():
                 if hasattr(plugin, 'enabled') and plugin.enabled:
-                    # Check vegas content type - skip 'none'
+                    # Check vegas content type - skip 'none' unless in STATIC mode
                     content_type = self.plugin_adapter.get_content_type(plugin, plugin_id)
-                    if content_type != 'none':
+
+                    # Also check display mode - STATIC plugins should be included
+                    # even if their content_type is 'none'
+                    display_mode = VegasDisplayMode.FIXED_SEGMENT
+                    try:
+                        display_mode = plugin.get_vegas_display_mode()
+                    except Exception:
+                        pass
+
+                    if content_type != 'none' or display_mode == VegasDisplayMode.STATIC:
                         available_plugins.append(plugin_id)
 
         # Apply ordering from config
@@ -320,7 +341,31 @@ class StreamManager:
                 logger.warning("Plugin %s not found", plugin_id)
                 return None
 
-            # Get content via adapter
+            # Get display mode from plugin
+            display_mode = VegasDisplayMode.FIXED_SEGMENT
+            try:
+                display_mode = plugin.get_vegas_display_mode()
+            except Exception as e:
+                logger.debug("Error getting vegas mode for %s: %s", plugin_id, e)
+
+            # For STATIC mode, we create a placeholder segment
+            # The actual content will be displayed by coordinator during pause
+            if display_mode == VegasDisplayMode.STATIC:
+                # Create minimal placeholder - coordinator handles actual display
+                segment = ContentSegment(
+                    plugin_id=plugin_id,
+                    images=[],  # No images needed for static pause
+                    total_width=0,
+                    display_mode=display_mode
+                )
+                self.stats['segments_fetched'] += 1
+                logger.debug(
+                    "Created STATIC placeholder for %s (pause trigger)",
+                    plugin_id
+                )
+                return segment
+
+            # Get content via adapter for SCROLL/FIXED_SEGMENT modes
             images = self.plugin_adapter.get_content(plugin, plugin_id)
             if not images:
                 logger.debug("No content from plugin %s", plugin_id)
@@ -332,13 +377,14 @@ class StreamManager:
             segment = ContentSegment(
                 plugin_id=plugin_id,
                 images=images,
-                total_width=total_width
+                total_width=total_width,
+                display_mode=display_mode
             )
 
             self.stats['segments_fetched'] += 1
             logger.debug(
-                "Fetched segment from %s: %d images, %dpx total",
-                plugin_id, len(images), total_width
+                "Fetched segment from %s: %d images, %dpx total, mode=%s",
+                plugin_id, len(images), total_width, display_mode.value
             )
 
             return segment
@@ -377,6 +423,7 @@ class StreamManager:
         Get all buffered content as a flat list of images.
 
         Used when composing the full scroll image.
+        Skips STATIC segments as they don't have images to compose.
 
         Returns:
             List of all images in buffer order
@@ -384,7 +431,9 @@ class StreamManager:
         all_images = []
         with self._buffer_lock:
             for segment in self._active_buffer:
-                all_images.extend(segment.images)
+                # Skip STATIC segments - they trigger pauses, not scroll content
+                if segment.display_mode != VegasDisplayMode.STATIC:
+                    all_images.extend(segment.images)
         return all_images
 
     def reset(self) -> None:

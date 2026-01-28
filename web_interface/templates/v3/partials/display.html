@@ -392,10 +392,12 @@ if (typeof window.fixInvalidNumberInputs !== 'function') {
         if (!container) return;
 
         // Fetch available plugins
-        fetch('/api/v3/plugins')
+        fetch('/api/v3/plugins/installed')
             .then(response => response.json())
             .then(data => {
-                if (!data.plugins || data.plugins.length === 0) {
+                // Handle both {data: {plugins: []}} and {plugins: []} response formats
+                const allPlugins = data.data?.plugins || data.plugins || [];
+                if (!allPlugins || allPlugins.length === 0) {
                     container.innerHTML = '<p class="text-sm text-gray-500 italic">No plugins available</p>';
                     return;
                 }
@@ -413,8 +415,8 @@ if (typeof window.fixInvalidNumberInputs !== 'function') {
                     console.error('Error parsing vegas config:', e);
                 }
 
-                // Build ordered plugin list
-                const plugins = data.plugins.filter(p => p.enabled);
+                // Build ordered plugin list (only enabled plugins)
+                const plugins = allPlugins.filter(p => p.enabled);
                 const orderedPlugins = [];
 
                 // First add plugins in current order
@@ -430,10 +432,18 @@ if (typeof window.fixInvalidNumberInputs !== 'function') {
                     }
                 });
 
-                // Build HTML
+                // Build HTML with display mode indicators
                 let html = '';
                 orderedPlugins.forEach((plugin, index) => {
                     const isExcluded = excluded.includes(plugin.id);
+                    // Determine display mode (from plugin config or default)
+                    const vegasMode = plugin.vegas_mode || plugin.vegas_content_type || 'fixed';
+                    const modeLabels = {
+                        'scroll': { label: 'Scroll', icon: 'fa-scroll', color: 'text-blue-600' },
+                        'fixed': { label: 'Fixed', icon: 'fa-square', color: 'text-green-600' },
+                        'static': { label: 'Static', icon: 'fa-pause', color: 'text-orange-600' }
+                    };
+                    const modeInfo = modeLabels[vegasMode] || modeLabels['fixed'];
                     html += `
                         <div class="flex items-center p-2 bg-gray-50 rounded border border-gray-200 cursor-move vegas-plugin-item"
                              data-plugin-id="${plugin.id}" draggable="true">
@@ -444,6 +454,9 @@ if (typeof window.fixInvalidNumberInputs !== 'function') {
                                        ${!isExcluded ? 'checked' : ''}>
                                 <span class="text-sm font-medium text-gray-700">${plugin.name || plugin.id}</span>
                             </label>
+                            <span class="text-xs ${modeInfo.color} ml-2" title="Vegas display mode: ${modeInfo.label}">
+                                <i class="fas ${modeInfo.icon} mr-1"></i>${modeInfo.label}
+                            </span>
                         </div>
                     `;
                 });
