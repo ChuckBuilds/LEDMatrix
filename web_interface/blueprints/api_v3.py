@@ -3093,6 +3093,12 @@ def _parse_form_value_with_schema(value, key_path, schema):
             return True
         if stripped.lower() == 'false':
             return False
+        # "on"/"off" come from HTML checkboxes — only coerce when schema says boolean
+        if prop and prop.get('type') == 'boolean':
+            if stripped.lower() == 'on':
+                return True
+            if stripped.lower() == 'off':
+                return False
 
         # Handle arrays based on schema
         if prop and prop.get('type') == 'array':
@@ -3192,6 +3198,115 @@ def _set_nested_value(config, key_path, value):
     # Set the final value (don't overwrite with empty dict if value is None and we want to preserve structure)
     if value is not None or parts[-1] not in current:
         current[parts[-1]] = value
+
+
+def _set_missing_booleans_to_false(config, schema_props, form_keys, prefix='', config_node=None):
+    """Walk schema and set missing boolean form fields to False.
+
+    HTML checkboxes don't submit values when unchecked. When saving plugin config,
+    the backend starts from existing config (to support partial form updates), which
+    means an unchecked checkbox's old ``True`` value persists. This function detects
+    boolean schema properties not present in the form submission and explicitly sets
+    them to ``False``.
+
+    The top-level ``enabled`` field is excluded because it has its own preservation
+    logic in the save endpoint.
+
+    Handles boolean fields inside nested objects and inside arrays of objects
+    (e.g. ``feeds.custom_feeds.0.enabled``).
+
+    Args:
+        config: The root plugin config dict (used for pure-dict paths)
+        schema_props: Schema ``properties`` dict at the current nesting level
+        form_keys: Set of form field names that were submitted
+        prefix: Dot-notation prefix for the current nesting level
+        config_node: The current config subtree when inside an array item (avoids
+                     using _set_nested_value which corrupts lists)
+    """
+    # Determine which config node to operate on
+    node = config_node if config_node is not None else config
+
+    for prop_name, prop_schema in schema_props.items():
+        if not isinstance(prop_schema, dict):
+            continue
+
+        full_path = f"{prefix}.{prop_name}" if prefix else prop_name
+        prop_type = prop_schema.get('type')
+
+        if prop_type == 'boolean' and full_path != 'enabled':
+            # If this boolean wasn't submitted in the form, it's an unchecked checkbox
+            if full_path not in form_keys:
+                if config_node is not None:
+                    # Inside an array item — set directly on the item dict
+                    node[prop_name] = False
+                else:
+                    # Pure dict path — use helper
+                    _set_nested_value(config, full_path, False)
+
+        elif prop_type == 'object' and 'properties' in prop_schema:
+            # Recurse into nested objects
+            if config_node is not None:
+                # Inside an array item — ensure nested dict exists in item
+                if prop_name not in node or not isinstance(node[prop_name], dict):
+                    node[prop_name] = {}
+                _set_missing_booleans_to_false(
+                    config, prop_schema['properties'], form_keys, full_path,
+                    config_node=node[prop_name]
+                )
+            else:
+                _set_missing_booleans_to_false(
+                    config, prop_schema['properties'], form_keys, full_path
+                )
+
+        elif prop_type == 'array':
+            # Handle arrays of objects that may contain boolean fields
+            # Form keys use indexed notation: "path.0.field", "path.1.field"
+            items_schema = prop_schema.get('items', {})
+            if isinstance(items_schema, dict) and items_schema.get('type') == 'object' and 'properties' in items_schema:
+                array_prefix = f"{full_path}."
+                # Collect unique item indices from submitted form keys
+                indices = set()
+                for k in form_keys:
+                    if k.startswith(array_prefix):
+                        # Extract index: "path.0.field" -> "0"
+                        rest = k[len(array_prefix):]
+                        idx = rest.split('.', 1)[0]
+                        if idx.isdigit():
+                            indices.add(int(idx))
+
+                if not indices:
+                    continue
+
+                # Navigate to the array in the config (create if missing)
+                if config_node is not None:
+                    if prop_name not in node or not isinstance(node[prop_name], list):
+                        node[prop_name] = []
+                    array_list = node[prop_name]
+                else:
+                    # Navigate from root config through dict keys to get the list
+                    parts = full_path.split('.')
+                    current = config
+                    for part in parts[:-1]:
+                        if part not in current or not isinstance(current[part], dict):
+                            current[part] = {}
+                        current = current[part]
+                    arr_key = parts[-1]
+                    if arr_key not in current or not isinstance(current[arr_key], list):
+                        current[arr_key] = []
+                    array_list = current[arr_key]
+
+                # Recurse into each array item so its missing booleans get set to False
+                for idx in indices:
+                    # Ensure list is long enough and item is a dict
+                    while len(array_list) <= idx:
+                        array_list.append({})
+                    if not isinstance(array_list[idx], dict):
+                        array_list[idx] = {}
+                    item_prefix = f"{full_path}.{idx}"
+                    _set_missing_booleans_to_false(
+                        config, items_schema['properties'], form_keys, item_prefix,
+                        config_node=array_list[idx]
+                    )
 
 
 def _enhance_schema_with_core_properties(schema):
@@ -3678,6 +3793,13 @@ def save_plugin_config():
                             sorted_keys = sorted(keys, key=lambda x: int(str(x)))
                             feeds_config['custom_feeds'] = [custom_feeds_dict[k] for k in sorted_keys]
                             logger.info(f"Force-converted feeds.custom_feeds from dict to array: {len(feeds_config['custom_feeds'])} items")
+
+            # Fix unchecked boolean checkboxes: HTML checkboxes don't submit values
+            # when unchecked, so the existing config value (potentially True) persists.
+            # Walk the schema and set any boolean fields missing from form data to False.
+            if schema and 'properties' in schema:
+                form_keys = set(request.form.keys())
+                _set_missing_booleans_to_false(plugin_config, schema['properties'], form_keys)
 
         # Get schema manager instance (for JSON requests)
         schema_mgr = api_v3.schema_manager
