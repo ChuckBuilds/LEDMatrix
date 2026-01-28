@@ -323,18 +323,21 @@ class StreamManager:
                 type(self.plugin_manager).__name__
             )
 
-        # Apply ordering from config
-        self._ordered_plugins = self.config.get_ordered_plugins(available_plugins)
+        # Apply ordering from config (outside lock for potentially slow operation)
+        ordered_plugins = self.config.get_ordered_plugins(available_plugins)
         logger.debug(
             "Vegas scroll: %d available -> %d ordered plugins",
-            len(available_plugins), len(self._ordered_plugins)
+            len(available_plugins), len(ordered_plugins)
         )
 
-        # Reset indices if needed
-        if self._current_index >= len(self._ordered_plugins):
-            self._current_index = 0
-        if self._prefetch_index >= len(self._ordered_plugins):
-            self._prefetch_index = 0
+        # Atomically update shared state under lock to avoid races with prefetchers
+        with self._buffer_lock:
+            self._ordered_plugins = ordered_plugins
+            # Reset indices if needed
+            if self._current_index >= len(self._ordered_plugins):
+                self._current_index = 0
+            if self._prefetch_index >= len(self._ordered_plugins):
+                self._prefetch_index = 0
 
     def _prefetch_content(self, count: int = 1) -> None:
         """
