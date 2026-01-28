@@ -291,9 +291,12 @@ class StreamManager:
                     display_mode = VegasDisplayMode.FIXED_SEGMENT
                     try:
                         display_mode = plugin.get_vegas_display_mode()
-                    except (AttributeError, TypeError):
+                    except (AttributeError, TypeError) as e:
                         # Plugin may not implement get_vegas_display_mode
-                        pass
+                        logger.debug(
+                            "[%s] get_vegas_display_mode() not available: %s",
+                            plugin_id, e
+                        )
 
                     if content_type != 'none' or display_mode == VegasDisplayMode.STATIC:
                         available_plugins.append(plugin_id)
@@ -371,8 +374,8 @@ class StreamManager:
             display_mode = VegasDisplayMode.FIXED_SEGMENT
             try:
                 display_mode = plugin.get_vegas_display_mode()
-            except Exception as e:
-                logger.debug("Error getting vegas mode for %s: %s", plugin_id, e)
+            except (AttributeError, TypeError) as e:
+                logger.debug("[%s] get_vegas_display_mode() not available: %s", plugin_id, e)
 
             # For STATIC mode, we create a placeholder segment
             # The actual content will be displayed by coordinator during pause

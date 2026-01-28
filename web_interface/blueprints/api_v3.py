@@ -1511,14 +1511,14 @@ def get_installed_plugins():
                     if hasattr(plugin_instance, 'get_vegas_display_mode'):
                         mode = plugin_instance.get_vegas_display_mode()
                         vegas_mode = mode.value if hasattr(mode, 'value') else str(mode)
-                except Exception:
-                    pass
+                except (AttributeError, TypeError, ValueError) as e:
+                    logger.debug("[%s] Failed to get vegas_display_mode: %s", plugin_id, e)
                 try:
                     # Get legacy content type as fallback
                     if hasattr(plugin_instance, 'get_vegas_content_type'):
                         vegas_content_type = plugin_instance.get_vegas_content_type()
-                except Exception:
-                    pass
+                except (AttributeError, TypeError, ValueError) as e:
+                    logger.debug("[%s] Failed to get vegas_content_type: %s", plugin_id, e)
 
             # Also check plugin config for explicit vegas_mode setting
             if api_v3.config_manager:
