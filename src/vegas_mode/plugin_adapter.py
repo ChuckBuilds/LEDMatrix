@@ -34,8 +34,15 @@ class PluginAdapter:
             display_manager: DisplayManager instance for fallback capture
         """
         self.display_manager = display_manager
-        self.display_width = display_manager.width
-        self.display_height = display_manager.height
+        # Handle both property and method access patterns
+        self.display_width = (
+            display_manager.width() if callable(display_manager.width)
+            else display_manager.width
+        )
+        self.display_height = (
+            display_manager.height() if callable(display_manager.height)
+            else display_manager.height
+        )
 
         # Cache for recently fetched content (prevents redundant fetch)
         self._content_cache: dict = {}

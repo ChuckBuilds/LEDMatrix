@@ -53,9 +53,15 @@ class RenderPipeline:
         self.display_manager = display_manager
         self.stream_manager = stream_manager
 
-        # Display dimensions
-        self.display_width = display_manager.width
-        self.display_height = display_manager.height
+        # Display dimensions (handle both property and method access patterns)
+        self.display_width = (
+            display_manager.width() if callable(display_manager.width)
+            else display_manager.width
+        )
+        self.display_height = (
+            display_manager.height() if callable(display_manager.height)
+            else display_manager.height
+        )
 
         # ScrollHelper for optimized scrolling
         self.scroll_helper = ScrollHelper(
