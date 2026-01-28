@@ -86,6 +86,10 @@ class VegasModeCoordinator:
         self._live_priority_active = False
         self._live_priority_check: Optional[Callable[[], Optional[str]]] = None
 
+        # Interrupt checker for yielding control back to display controller
+        self._interrupt_check: Optional[Callable[[], bool]] = None
+        self._interrupt_check_interval: int = 10  # Check every N frames
+
         # Config update tracking
         self._config_version = 0
         self._pending_config_update = False
@@ -135,6 +139,24 @@ class VegasModeCoordinator:
             checker: Callable that returns live priority mode name or None
         """
         self._live_priority_check = checker
+
+    def set_interrupt_checker(
+        self,
+        checker: Callable[[], bool],
+        check_interval: int = 10
+    ) -> None:
+        """
+        Set the callback for checking if Vegas should yield control.
+
+        This allows the display controller to interrupt Vegas mode
+        when on-demand, wifi status, or other priority events occur.
+
+        Args:
+            checker: Callable that returns True if Vegas should yield
+            check_interval: Check every N frames (default 10)
+        """
+        self._interrupt_check = checker
+        self._interrupt_check_interval = max(1, check_interval)
 
     def start(self) -> bool:
         """
@@ -277,6 +299,7 @@ class VegasModeCoordinator:
         frame_interval = self.vegas_config.get_frame_interval()
         duration = self.render_pipeline.get_dynamic_duration()
         start_time = time.time()
+        frame_count = 0
 
         logger.info("Starting Vegas iteration for %.1fs", duration)
 
@@ -303,6 +326,21 @@ class VegasModeCoordinator:
 
             # Sleep for frame interval
             time.sleep(frame_interval)
+
+            # Increment frame count and check for interrupt periodically
+            frame_count += 1
+            if (self._interrupt_check and
+                    frame_count % self._interrupt_check_interval == 0):
+                try:
+                    if self._interrupt_check():
+                        logger.debug(
+                            "Vegas interrupted by callback after %d frames",
+                            frame_count
+                        )
+                        return False
+                except Exception:
+                    # Don't let interrupt check errors stop Vegas
+                    pass
 
             # Check elapsed time
             elapsed = time.time() - start_time
@@ -378,6 +416,7 @@ class VegasModeCoordinator:
 
             # Update components
             self.render_pipeline.update_config(new_vegas_config)
+            self.stream_manager.config = new_vegas_config
 
             # Handle enable/disable
             if was_enabled and not new_vegas_config.enabled:

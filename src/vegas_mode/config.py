@@ -91,16 +91,16 @@ class VegasModeConfig:
         """
         Check if a plugin should be included in Vegas scroll.
 
+        This is consistent with get_ordered_plugins - plugins not explicitly
+        in plugin_order are still included (appended at the end) unless excluded.
+
         Args:
             plugin_id: Plugin identifier to check
 
         Returns:
             True if plugin should be included
         """
-        # If explicit order is set, only include those plugins
-        if self.plugin_order:
-            return plugin_id in self.plugin_order and plugin_id not in self.excluded_plugins
-        # Otherwise include all non-excluded plugins
+        # Plugins are included unless explicitly excluded
         return plugin_id not in self.excluded_plugins
 
     def get_ordered_plugins(self, available_plugins: List[str]) -> List[str]:
@@ -186,6 +186,12 @@ class VegasModeConfig:
             self.frame_based_scrolling = vegas_config['frame_based_scrolling']
         if 'scroll_delay' in vegas_config:
             self.scroll_delay = float(vegas_config['scroll_delay'])
+        if 'dynamic_duration_enabled' in vegas_config:
+            self.dynamic_duration_enabled = vegas_config['dynamic_duration_enabled']
+        if 'min_cycle_duration' in vegas_config:
+            self.min_cycle_duration = int(vegas_config['min_cycle_duration'])
+        if 'max_cycle_duration' in vegas_config:
+            self.max_cycle_duration = int(vegas_config['max_cycle_duration'])
 
         # Log config update
         logger.info(

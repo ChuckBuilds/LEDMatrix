@@ -382,6 +382,12 @@ class DisplayController:
             # Set up live priority checker
             self.vegas_coordinator.set_live_priority_checker(self._check_live_priority)
 
+            # Set up interrupt checker for on-demand/wifi status
+            self.vegas_coordinator.set_interrupt_checker(
+                self._check_vegas_interrupt,
+                check_interval=10  # Check every 10 frames (~80ms at 125 FPS)
+            )
+
             logger.info("Vegas mode coordinator initialized")
 
         except Exception as e:
@@ -397,6 +403,26 @@ class DisplayController:
         if self.on_demand_active:
             return False  # On-demand takes priority
         return True
+
+    def _check_vegas_interrupt(self) -> bool:
+        """
+        Check if Vegas should yield control for higher priority events.
+
+        Called periodically by Vegas coordinator to allow responsive
+        handling of on-demand requests, wifi status, etc.
+
+        Returns:
+            True if Vegas should yield control, False to continue
+        """
+        # Check for pending on-demand request
+        if self.on_demand_active:
+            return True
+
+        # Check for wifi status that needs display
+        if self._check_wifi_status():
+            return True
+
+        return False
 
     def _check_schedule(self):
         """Check if display should be active based on schedule."""

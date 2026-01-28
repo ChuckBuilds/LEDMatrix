@@ -268,7 +268,8 @@ class StreamManager:
                     display_mode = VegasDisplayMode.FIXED_SEGMENT
                     try:
                         display_mode = plugin.get_vegas_display_mode()
-                    except Exception:
+                    except (AttributeError, TypeError):
+                        # Plugin may not implement get_vegas_display_mode
                         pass
 
                     if content_type != 'none' or display_mode == VegasDisplayMode.STATIC:
@@ -391,8 +392,8 @@ class StreamManager:
 
             return segment
 
-        except Exception as e:
-            logger.error("Error fetching content from %s: %s", plugin_id, e)
+        except Exception:
+            logger.exception("Error fetching content from %s", plugin_id)
             self.stats['fetch_errors'] += 1
             return None
 

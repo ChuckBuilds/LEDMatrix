@@ -247,10 +247,12 @@
                     </h3>
                     <p class="mt-1 text-sm text-gray-600">Combine all plugin content into one continuous scrolling ticker display.</p>
                 </div>
-                <label class="relative inline-flex items-center cursor-pointer">
+                <label class="relative inline-flex items-center cursor-pointer"
+                       aria-labelledby="vegas_scroll_label">
                     <input type="checkbox"
                            id="vegas_scroll_enabled"
                            name="vegas_scroll_enabled"
+                           aria-label="Enable Vegas Scroll Mode"
                            {% if main_config.display.get('vegas_scroll', {}).get('enabled', false) %}checked{% endif %}
                            class="sr-only peer">
                     <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
@@ -366,6 +368,18 @@ if (typeof window.fixInvalidNumberInputs !== 'function') {
 
 // Vegas Scroll Mode Settings
 (function() {
+    // Escape HTML to prevent XSS
+    function escapeHtml(text) {
+        const div = document.createElement('div');
+        div.textContent = String(text || '');
+        return div.innerHTML;
+    }
+
+    // Escape for use in HTML attributes
+    function escapeAttr(text) {
+        return escapeHtml(text).replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+    }
+
     // Toggle settings visibility
     const vegasEnabledCheckbox = document.getElementById('vegas_scroll_enabled');
     const vegasSettings = document.getElementById('vegas_scroll_settings');
@@ -444,15 +458,18 @@ if (typeof window.fixInvalidNumberInputs !== 'function') {
                         'static': { label: 'Static', icon: 'fa-pause', color: 'text-orange-600' }
                     };
                     const modeInfo = modeLabels[vegasMode] || modeLabels['fixed'];
+                    // Escape plugin metadata to prevent XSS
+                    const safePluginId = escapeAttr(plugin.id);
+                    const safePluginName = escapeHtml(plugin.name || plugin.id);
                     html += `
                         <div class="flex items-center p-2 bg-gray-50 rounded border border-gray-200 cursor-move vegas-plugin-item"
-                             data-plugin-id="${plugin.id}" draggable="true">
+                             data-plugin-id="${safePluginId}" draggable="true">
                             <i class="fas fa-grip-vertical text-gray-400 mr-3"></i>
                             <label class="flex items-center flex-1">
                                 <input type="checkbox"
                                        class="vegas-plugin-include h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded mr-2"
                                        ${!isExcluded ? 'checked' : ''}>
-                                <span class="text-sm font-medium text-gray-700">${plugin.name || plugin.id}</span>
+                                <span class="text-sm font-medium text-gray-700">${safePluginName}</span>
                             </label>
                             <span class="text-xs ${modeInfo.color} ml-2" title="Vegas display mode: ${modeInfo.label}">
                                 <i class="fas ${modeInfo.icon} mr-1"></i>${modeInfo.label}
