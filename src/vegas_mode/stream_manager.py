@@ -301,10 +301,10 @@ class StreamManager:
                     display_mode = VegasDisplayMode.FIXED_SEGMENT
                     try:
                         display_mode = plugin.get_vegas_display_mode()
-                    except (AttributeError, TypeError):
-                        # Plugin may not implement get_vegas_display_mode
+                    except Exception:
+                        # Plugin error should not abort refresh; use default mode
                         logger.exception(
-                            "[%s] (%s) get_vegas_display_mode() failed",
+                            "[%s] (%s) get_vegas_display_mode() failed, using default",
                             plugin_id, plugin.__class__.__name__
                         )
 
