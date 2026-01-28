@@ -291,11 +291,11 @@ class StreamManager:
                     display_mode = VegasDisplayMode.FIXED_SEGMENT
                     try:
                         display_mode = plugin.get_vegas_display_mode()
-                    except (AttributeError, TypeError) as e:
+                    except (AttributeError, TypeError):
                         # Plugin may not implement get_vegas_display_mode
-                        logger.debug(
-                            "[%s] get_vegas_display_mode() not available: %s",
-                            plugin_id, e
+                        logger.exception(
+                            "[%s] (%s) get_vegas_display_mode() failed",
+                            plugin_id, plugin.__class__.__name__
                         )
 
                     if content_type != 'none' or display_mode == VegasDisplayMode.STATIC:

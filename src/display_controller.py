@@ -419,7 +419,7 @@ class DisplayController:
             return True
 
         # Check for wifi status that needs display
-        if self._check_wifi_status():
+        if self._check_wifi_status_message():
             return True
 
         return False
