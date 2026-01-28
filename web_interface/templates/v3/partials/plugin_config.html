@@ -112,11 +112,12 @@
                 })();
                 </script>
             {% else %}
-            {# Default checkbox #}
+            {# Default checkbox - value="true" ensures checked sends "true" not "on" #}
             <label class="flex items-center cursor-pointer">
                 <input type="checkbox"
                        id="{{ field_id }}"
                        name="{{ full_key }}"
+                       value="true"
                        {% if value %}checked{% endif %}
                        class="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded">
                 <span class="ml-2 text-sm text-gray-600">Enabled</span>

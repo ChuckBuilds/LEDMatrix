@@ -3088,10 +3088,10 @@ def _parse_form_value_with_schema(value, key_path, schema):
     if isinstance(value, str):
         stripped = value.strip()
 
-        # Check for boolean strings
-        if stripped.lower() == 'true':
+        # Check for boolean strings (includes "on"/"off" from HTML checkboxes)
+        if stripped.lower() in ('true', 'on'):
             return True
-        if stripped.lower() == 'false':
+        if stripped.lower() in ('false', 'off'):
             return False
 
         # Handle arrays based on schema
@@ -3192,6 +3192,43 @@ def _set_nested_value(config, key_path, value):
     # Set the final value (don't overwrite with empty dict if value is None and we want to preserve structure)
     if value is not None or parts[-1] not in current:
         current[parts[-1]] = value
+
+
+def _set_missing_booleans_to_false(config, schema_props, form_keys, prefix=''):
+    """Walk schema and set missing boolean form fields to False.
+
+    HTML checkboxes don't submit values when unchecked. When saving plugin config,
+    the backend starts from existing config (to support partial form updates), which
+    means an unchecked checkbox's old ``True`` value persists. This function detects
+    boolean schema properties not present in the form submission and explicitly sets
+    them to ``False``.
+
+    The top-level ``enabled`` field is excluded because it has its own preservation
+    logic in the save endpoint.
+
+    Args:
+        config: The plugin config dict being built
+        schema_props: Schema ``properties`` dict at the current nesting level
+        form_keys: Set of form field names that were submitted
+        prefix: Dot-notation prefix for the current nesting level
+    """
+    for prop_name, prop_schema in schema_props.items():
+        if not isinstance(prop_schema, dict):
+            continue
+
+        full_path = f"{prefix}.{prop_name}" if prefix else prop_name
+        prop_type = prop_schema.get('type')
+
+        if prop_type == 'boolean' and full_path != 'enabled':
+            # If this boolean wasn't submitted in the form, it's an unchecked checkbox
+            if full_path not in form_keys:
+                _set_nested_value(config, full_path, False)
+
+        elif prop_type == 'object' and 'properties' in prop_schema:
+            # Recurse into nested objects
+            _set_missing_booleans_to_false(
+                config, prop_schema['properties'], form_keys, full_path
+            )
 
 
 def _enhance_schema_with_core_properties(schema):
@@ -3678,6 +3715,13 @@ def save_plugin_config():
                             sorted_keys = sorted(keys, key=lambda x: int(str(x)))
                             feeds_config['custom_feeds'] = [custom_feeds_dict[k] for k in sorted_keys]
                             logger.info(f"Force-converted feeds.custom_feeds from dict to array: {len(feeds_config['custom_feeds'])} items")
+
+            # Fix unchecked boolean checkboxes: HTML checkboxes don't submit values
+            # when unchecked, so the existing config value (potentially True) persists.
+            # Walk the schema and set any boolean fields missing from form data to False.
+            if schema and 'properties' in schema:
+                form_keys = set(request.form.keys())
+                _set_missing_booleans_to_false(plugin_config, schema['properties'], form_keys)
 
         # Get schema manager instance (for JSON requests)
         schema_mgr = api_v3.schema_manager
