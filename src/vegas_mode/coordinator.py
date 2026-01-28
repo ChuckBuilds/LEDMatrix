@@ -401,11 +401,13 @@ class VegasModeCoordinator:
 
     def _apply_pending_config(self) -> None:
         """Apply pending configuration update."""
+        # Atomically grab pending config and clear it to avoid losing concurrent updates
         with self._state_lock:
             if self._pending_config is None:
                 self._pending_config_update = False
                 return
             pending_config = self._pending_config
+            self._pending_config = None  # Clear while holding lock
 
         try:
             new_vegas_config = VegasModeConfig.from_config(pending_config)
@@ -430,9 +432,10 @@ class VegasModeCoordinator:
             logger.error("Error applying config update: %s", e)
 
         finally:
+            # Only clear update flag if no new config arrived during processing
             with self._state_lock:
-                self._pending_config_update = False
-                self._pending_config = None
+                if self._pending_config is None:
+                    self._pending_config_update = False
 
     def mark_plugin_updated(self, plugin_id: str) -> None:
         """

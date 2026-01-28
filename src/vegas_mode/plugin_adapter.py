@@ -58,32 +58,27 @@ class PluginAdapter:
         Returns:
             List of PIL Images representing plugin content, or None if no content
         """
-        try:
-            # Check cache first
-            cached = self._get_cached(plugin_id)
-            if cached is not None:
-                logger.debug("Using cached content for %s", plugin_id)
-                return cached
+        # Check cache first
+        cached = self._get_cached(plugin_id)
+        if cached is not None:
+            logger.debug("Using cached content for %s", plugin_id)
+            return cached
 
-            # Try native Vegas content method first
-            if hasattr(plugin, 'get_vegas_content'):
-                content = self._get_native_content(plugin, plugin_id)
-                if content:
-                    self._cache_content(plugin_id, content)
-                    return content
-
-            # Fall back to display capture
-            content = self._capture_display_content(plugin, plugin_id)
+        # Try native Vegas content method first
+        if hasattr(plugin, 'get_vegas_content'):
+            content = self._get_native_content(plugin, plugin_id)
             if content:
                 self._cache_content(plugin_id, content)
                 return content
 
-            logger.warning("No content available from plugin %s", plugin_id)
-            return None
+        # Fall back to display capture
+        content = self._capture_display_content(plugin, plugin_id)
+        if content:
+            self._cache_content(plugin_id, content)
+            return content
 
-        except Exception as e:
-            logger.error("Error getting content from plugin %s: %s", plugin_id, e)
-            return None
+        logger.warning("No content available from plugin %s", plugin_id)
+        return None
 
     def _get_native_content(
         self, plugin: 'BasePlugin', plugin_id: str
@@ -155,10 +150,10 @@ class PluginAdapter:
 
             return None
 
-        except Exception as e:
-            logger.error(
-                "Error calling get_vegas_content() on %s: %s",
-                plugin_id, e
+        except (AttributeError, TypeError, ValueError, OSError) as e:
+            logger.exception(
+                "Error calling get_vegas_content() on %s",
+                plugin_id
             )
             return None
 
@@ -203,10 +198,10 @@ class PluginAdapter:
 
             return [captured]
 
-        except Exception as e:
-            logger.error(
-                "Error capturing display from %s: %s",
-                plugin_id, e
+        except (AttributeError, TypeError, ValueError, OSError, RuntimeError):
+            logger.exception(
+                "Error capturing display from %s",
+                plugin_id
             )
             return None
 
@@ -306,10 +301,10 @@ class PluginAdapter:
         if hasattr(plugin, 'get_vegas_content_type'):
             try:
                 return plugin.get_vegas_content_type()
-            except Exception as e:
-                logger.warning(
-                    "Error calling get_vegas_content_type() on %s: %s",
-                    plugin_id, e
+            except (AttributeError, TypeError, ValueError):
+                logger.exception(
+                    "Error calling get_vegas_content_type() on %s",
+                    plugin_id
                 )
 
         # Default to static for plugins without explicit type

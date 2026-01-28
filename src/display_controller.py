@@ -1244,8 +1244,8 @@ class DisplayController:
                             else:
                                 # Vegas was interrupted (live priority), fall through to normal handling
                                 logger.debug("Vegas mode interrupted, falling back to normal rotation")
-                        except Exception as e:
-                            logger.error("Vegas mode error: %s", e)
+                        except Exception:
+                            logger.exception("Vegas mode error")
                             # Fall through to normal rotation on error
 
                 if self.on_demand_active:

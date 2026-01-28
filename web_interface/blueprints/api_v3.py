@@ -475,9 +475,14 @@ def save_main_config():
 
             vegas_config = current_config['display']['vegas_scroll']
 
-            # Handle enabled checkbox (HTML checkbox sends "on" string, not boolean)
-            enabled_value = data.get('vegas_scroll_enabled', False)
-            vegas_config['enabled'] = enabled_value in (True, 'on', 'true', '1', 1)
+            # Ensure a default enabled value exists on first init
+            vegas_config.setdefault('enabled', False)
+
+            # Handle enabled checkbox only when explicitly provided
+            # (HTML checkbox sends "on" string when checked, omits key when unchecked)
+            if 'vegas_scroll_enabled' in data:
+                enabled_value = data['vegas_scroll_enabled']
+                vegas_config['enabled'] = enabled_value in (True, 'on', 'true', '1', 1)
 
             # Handle numeric settings with validation
             if 'vegas_scroll_speed' in data:

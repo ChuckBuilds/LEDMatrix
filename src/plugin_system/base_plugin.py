@@ -450,7 +450,26 @@ class BasePlugin(ABC):
                 # Clock needs 2 panels to show time clearly
                 return 2
         """
-        return self.config.get("vegas_panel_count", None)
+        raw_value = self.config.get("vegas_panel_count", None)
+        if raw_value is None:
+            return None
+
+        try:
+            panel_count = int(raw_value)
+            if panel_count > 0:
+                return panel_count
+            else:
+                self.logger.warning(
+                    "vegas_panel_count must be positive, got %s; using default",
+                    raw_value
+                )
+                return None
+        except (ValueError, TypeError):
+            self.logger.warning(
+                "Invalid vegas_panel_count value '%s'; using default",
+                raw_value
+            )
+            return None
 
     def validate_config(self) -> bool:
         """
