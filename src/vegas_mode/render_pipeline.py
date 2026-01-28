@@ -360,7 +360,7 @@ class RenderPipeline:
 
         self._cycle_complete = False
         self._segments_in_scroll = []
-        self._frame_times = []
+        self._frame_times = deque(maxlen=100)
 
         self.display_manager.set_scrolling_state(False)
 

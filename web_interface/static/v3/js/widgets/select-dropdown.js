@@ -53,6 +53,12 @@
         }
     }
 
+    // Guard against missing global registry
+    if (!window.LEDMatrixWidgets || typeof window.LEDMatrixWidgets.register !== 'function') {
+        console.error('[SelectDropdownWidget] LEDMatrixWidgets registry not available');
+        return;
+    }
+
     window.LEDMatrixWidgets.register('select-dropdown', {
         name: 'Select Dropdown Widget',
         version: '1.0.0',

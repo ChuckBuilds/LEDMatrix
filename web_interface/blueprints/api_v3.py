@@ -475,36 +475,53 @@ def save_main_config():
 
             vegas_config = current_config['display']['vegas_scroll']
 
-            # Handle enabled checkbox
-            vegas_config['enabled'] = data.get('vegas_scroll_enabled', False)
+            # Handle enabled checkbox (HTML checkbox sends "on" string, not boolean)
+            enabled_value = data.get('vegas_scroll_enabled', False)
+            vegas_config['enabled'] = enabled_value in (True, 'on', 'true', '1', 1)
 
-            # Handle numeric settings
+            # Handle numeric settings with validation
             if 'vegas_scroll_speed' in data:
-                vegas_config['scroll_speed'] = int(data['vegas_scroll_speed'])
+                try:
+                    vegas_config['scroll_speed'] = int(data['vegas_scroll_speed'])
+                except (ValueError, TypeError):
+                    pass  # Keep existing value
             if 'vegas_separator_width' in data:
-                vegas_config['separator_width'] = int(data['vegas_separator_width'])
+                try:
+                    vegas_config['separator_width'] = int(data['vegas_separator_width'])
+                except (ValueError, TypeError):
+                    pass
             if 'vegas_target_fps' in data:
-                vegas_config['target_fps'] = int(data['vegas_target_fps'])
+                try:
+                    vegas_config['target_fps'] = int(data['vegas_target_fps'])
+                except (ValueError, TypeError):
+                    pass
             if 'vegas_buffer_ahead' in data:
-                vegas_config['buffer_ahead'] = int(data['vegas_buffer_ahead'])
+                try:
+                    vegas_config['buffer_ahead'] = int(data['vegas_buffer_ahead'])
+                except (ValueError, TypeError):
+                    pass
 
             # Handle plugin order and exclusions (JSON arrays)
             if 'vegas_plugin_order' in data:
                 try:
                     if isinstance(data['vegas_plugin_order'], str):
-                        vegas_config['plugin_order'] = json.loads(data['vegas_plugin_order'])
+                        parsed = json.loads(data['vegas_plugin_order'])
                     else:
-                        vegas_config['plugin_order'] = data['vegas_plugin_order']
-                except (json.JSONDecodeError, TypeError):
+                        parsed = data['vegas_plugin_order']
+                    # Ensure result is a list
+                    vegas_config['plugin_order'] = list(parsed) if isinstance(parsed, (list, tuple)) else []
+                except (json.JSONDecodeError, TypeError, ValueError):
                     vegas_config['plugin_order'] = []
 
             if 'vegas_excluded_plugins' in data:
                 try:
                     if isinstance(data['vegas_excluded_plugins'], str):
-                        vegas_config['excluded_plugins'] = json.loads(data['vegas_excluded_plugins'])
+                        parsed = json.loads(data['vegas_excluded_plugins'])
                     else:
-                        vegas_config['excluded_plugins'] = data['vegas_excluded_plugins']
-                except (json.JSONDecodeError, TypeError):
+                        parsed = data['vegas_excluded_plugins']
+                    # Ensure result is a list
+                    vegas_config['excluded_plugins'] = list(parsed) if isinstance(parsed, (list, tuple)) else []
+                except (json.JSONDecodeError, TypeError, ValueError):
                     vegas_config['excluded_plugins'] = []
 
         # Handle display durations

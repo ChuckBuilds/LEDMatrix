@@ -89,6 +89,7 @@ class VegasModeCoordinator:
         # Config update tracking
         self._config_version = 0
         self._pending_config_update = False
+        self._pending_config: Optional[Dict[str, Any]] = None
 
         # Static pause handling
         self._static_pause_active = False
@@ -363,7 +364,7 @@ class VegasModeCoordinator:
     def _apply_pending_config(self) -> None:
         """Apply pending configuration update."""
         with self._state_lock:
-            if not hasattr(self, '_pending_config'):
+            if self._pending_config is None:
                 self._pending_config_update = False
                 return
             pending_config = self._pending_config
@@ -392,8 +393,7 @@ class VegasModeCoordinator:
         finally:
             with self._state_lock:
                 self._pending_config_update = False
-                if hasattr(self, '_pending_config'):
-                    delattr(self, '_pending_config')
+                self._pending_config = None
 
     def mark_plugin_updated(self, plugin_id: str) -> None:
         """

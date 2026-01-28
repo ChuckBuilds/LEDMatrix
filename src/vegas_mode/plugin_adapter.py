@@ -7,7 +7,6 @@ implement get_vegas_content() and fallback capture of display() output.
 
 import logging
 import time
-import copy
 from typing import Optional, List, Any, TYPE_CHECKING
 from PIL import Image
 

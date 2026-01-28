@@ -92,7 +92,6 @@
                                    value="${escapeHtml(String(optValue))}"
                                    ${isChecked ? 'checked' : ''}
                                    ${disabled ? 'disabled' : ''}
-                                   onchange="window.LEDMatrixWidgets.getHandlers('radio-group').onChange('${fieldId}', this.value)"
                                    class="h-4 w-4 text-blue-600 border-gray-300 focus:ring-blue-500 ${disabled ? 'cursor-not-allowed' : 'cursor-pointer'}">
                         </div>
                         <div class="ml-3">
@@ -106,6 +105,17 @@
             html += '</div>';
 
             container.innerHTML = html;
+
+            // Attach event listeners (safer than inline handlers, prevents XSS)
+            const widget = document.getElementById(`${fieldId}_widget`);
+            if (widget) {
+                const radios = widget.querySelectorAll('input[type="radio"]');
+                radios.forEach(radio => {
+                    radio.addEventListener('change', () => {
+                        triggerChange(fieldId, radio.value);
+                    });
+                });
+            }
         },
 
         getValue: function(fieldId) {

@@ -227,10 +227,8 @@ class StreamManager:
         """
         with self._buffer_lock:
             if self._staging_buffer:
-                # Merge staging into active at appropriate positions
-                # For simplicity, append staging content
-                self._active_buffer.extend(self._staging_buffer)
-                self._staging_buffer.clear()
+                # True swap: staging becomes active, old active is discarded
+                self._active_buffer, self._staging_buffer = self._staging_buffer, deque()
                 self.stats['buffer_swaps'] += 1
                 logger.debug("Swapped buffers, active now has %d segments", len(self._active_buffer))
 
@@ -296,13 +294,12 @@ class StreamManager:
             if not self._ordered_plugins:
                 return
 
-            num_plugins = len(self._ordered_plugins)
-
             for _ in range(count):
                 if len(self._active_buffer) >= self.config.buffer_ahead + 1:
                     break
 
                 # Ensure index is valid (guard against empty list)
+                num_plugins = len(self._ordered_plugins)
                 if num_plugins == 0:
                     break
 
@@ -317,6 +314,11 @@ class StreamManager:
 
                 if segment:
                     self._active_buffer.append(segment)
+
+                # Revalidate num_plugins after reacquiring lock (may have changed)
+                num_plugins = len(self._ordered_plugins)
+                if num_plugins == 0:
+                    break
 
                 # Advance prefetch index (thread-safe within lock)
                 self._prefetch_index = (self._prefetch_index + 1) % num_plugins

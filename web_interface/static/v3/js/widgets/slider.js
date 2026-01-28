@@ -35,6 +35,11 @@
         return div.innerHTML.replace(/"/g, '&quot;').replace(/'/g, '&#39;');
     }
 
+    // Escape for use in HTML attributes (also escapes quotes)
+    function escapeAttr(text) {
+        return escapeHtml(text).replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+    }
+
     function sanitizeId(id) {
         if (base) return base.sanitizeId(id);
         return String(id).replace(/[^a-zA-Z0-9_-]/g, '_');
@@ -81,7 +86,7 @@
             const currentValue = value !== null && value !== undefined ? value : min;
             const colorClass = COLOR_CLASSES[color] || COLOR_CLASSES.blue;
 
-            let html = `<div id="${fieldId}_widget" class="slider-widget" data-field-id="${fieldId}" data-prefix="${escapeHtml(prefix)}" data-suffix="${escapeHtml(suffix)}">`;
+            let html = `<div id="${fieldId}_widget" class="slider-widget" data-field-id="${fieldId}" data-prefix="${escapeAttr(prefix)}" data-suffix="${escapeAttr(suffix)}">`;
 
             // Value display above slider
             if (showValue) {

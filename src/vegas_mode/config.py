@@ -139,13 +139,13 @@ class VegasModeConfig:
 
         if self.scroll_speed < 1.0:
             errors.append(f"scroll_speed must be >= 1.0, got {self.scroll_speed}")
-        if self.scroll_speed > 500.0:
-            errors.append(f"scroll_speed must be <= 500.0, got {self.scroll_speed}")
+        if self.scroll_speed > 200.0:
+            errors.append(f"scroll_speed must be <= 200.0, got {self.scroll_speed}")
 
         if self.separator_width < 0:
             errors.append(f"separator_width must be >= 0, got {self.separator_width}")
-        if self.separator_width > 256:
-            errors.append(f"separator_width must be <= 256, got {self.separator_width}")
+        if self.separator_width > 128:
+            errors.append(f"separator_width must be <= 128, got {self.separator_width}")
 
         if self.target_fps < 30:
             errors.append(f"target_fps must be >= 30, got {self.target_fps}")
