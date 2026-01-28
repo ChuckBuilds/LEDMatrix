@@ -439,6 +439,20 @@ class StreamManager:
                     all_images.extend(segment.images)
         return all_images
 
+    def advance_cycle(self) -> None:
+        """
+        Advance to next cycle by clearing the active buffer.
+
+        Called when a scroll cycle completes to allow fresh content
+        to be fetched for the next cycle. Does not reset indices,
+        so prefetching continues from the current position in the
+        plugin order.
+        """
+        with self._buffer_lock:
+            consumed_count = len(self._active_buffer)
+            self._active_buffer.clear()
+            logger.debug("Advanced cycle, cleared %d segments", consumed_count)
+
     def reset(self) -> None:
         """Reset the stream manager state."""
         with self._buffer_lock:

@@ -339,8 +339,8 @@ class VegasModeCoordinator:
                         )
                         return False
                 except Exception:
-                    # Don't let interrupt check errors stop Vegas
-                    pass
+                    # Log but don't let interrupt check errors stop Vegas
+                    logger.exception("Interrupt check failed")
 
             # Check elapsed time
             elapsed = time.time() - start_time
@@ -563,8 +563,8 @@ class VegasModeCoordinator:
                 plugin_id, time.time() - start
             )
 
-        except Exception as e:
-            logger.error("Error during static pause for %s: %s", plugin_id, e)
+        except Exception:
+            logger.exception("Error during static pause for %s", plugin_id)
             return False
 
         finally:

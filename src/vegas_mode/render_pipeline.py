@@ -291,14 +291,16 @@ class RenderPipeline:
         self.scroll_helper.reset_scroll()
         self._cycle_complete = False
 
-        # Refresh stream content
+        # Clear buffer from previous cycle so new content is fetched
+        self.stream_manager.advance_cycle()
+
+        # Refresh stream content (picks up plugin list changes)
         self.stream_manager.refresh()
 
-        # Reinitialize stream if needed
-        if not self.stream_manager.get_buffer_status()['active_count']:
-            if not self.stream_manager.initialize():
-                logger.warning("Failed to reinitialize stream for new cycle")
-                return False
+        # Reinitialize stream (fills buffer with fresh content)
+        if not self.stream_manager.initialize():
+            logger.warning("Failed to reinitialize stream for new cycle")
+            return False
 
         # Compose new scroll content
         return self.compose_scroll_content()

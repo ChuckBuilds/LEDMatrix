@@ -242,7 +242,7 @@
         <div class="bg-gray-50 rounded-lg p-4 mt-6">
             <div class="flex items-center justify-between mb-4">
                 <div>
-                    <h3 class="text-md font-medium text-gray-900">
+                    <h3 id="vegas_scroll_label" class="text-md font-medium text-gray-900">
                         <i class="fas fa-scroll mr-2"></i>Vegas Scroll Mode
                     </h3>
                     <p class="mt-1 text-sm text-gray-600">Combine all plugin content into one continuous scrolling ticker display.</p>
@@ -487,6 +487,9 @@ if (typeof window.fixInvalidNumberInputs !== 'function') {
                 container.querySelectorAll('.vegas-plugin-include').forEach(checkbox => {
                     checkbox.addEventListener('change', updatePluginConfig);
                 });
+
+                // Initialize hidden inputs with current state
+                updatePluginConfig();
             })
             .catch(error => {
                 console.error('Error fetching plugins:', error);
