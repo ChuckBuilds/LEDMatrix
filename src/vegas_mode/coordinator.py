@@ -340,8 +340,8 @@ class VegasModeCoordinator:
                     self.resume()
                     logger.info("Live priority ended - resuming Vegas")
                 return False
-        except Exception as e:
-            logger.error("Error checking live priority: %s", e)
+        except Exception:
+            logger.exception("Error checking live priority")
             return False
 
     def update_config(self, new_config: Dict[str, Any]) -> None:
@@ -532,19 +532,33 @@ class VegasModeCoordinator:
 
     def _end_static_pause(self) -> None:
         """End static pause and restore scroll state."""
+        should_resume_scrolling = False
+
         with self._state_lock:
+            # Only resume scrolling if we weren't interrupted
+            was_active = self._static_pause_active
+            should_resume_scrolling = (
+                was_active and
+                not self._should_stop and
+                not self._live_priority_active
+            )
+
+            # Clear pause state
             self._static_pause_active = False
             self._static_pause_plugin = None
             self._static_pause_start = None
 
-            # Restore scroll position
-            if self._saved_scroll_position is not None:
+            # Restore scroll position if we're resuming
+            if should_resume_scrolling and self._saved_scroll_position is not None:
                 self.render_pipeline.set_scroll_position(self._saved_scroll_position)
-                self._saved_scroll_position = None
+            self._saved_scroll_position = None
 
-        # Resume scrolling state
-        self.display_manager.set_scrolling_state(True)
-        logger.debug("Static pause ended, scroll resumed")
+        # Only resume scrolling state if not interrupted
+        if should_resume_scrolling:
+            self.display_manager.set_scrolling_state(True)
+            logger.debug("Static pause ended, scroll resumed")
+        else:
+            logger.debug("Static pause ended (interrupted, not resuming scroll)")
 
     def _update_static_mode_plugins(self) -> None:
         """Update the set of plugins using STATIC display mode."""
@@ -557,8 +571,11 @@ class VegasModeCoordinator:
                     mode = plugin.get_vegas_display_mode()
                     if mode == VegasDisplayMode.STATIC:
                         self._static_mode_plugins.add(plugin_id)
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.error(
+                        "Error getting vegas display mode for plugin %s: %s",
+                        plugin_id, e
+                    )
 
         if self._static_mode_plugins:
             logger.info(

@@ -162,8 +162,9 @@ class RenderPipeline:
 
             return True
 
-        except Exception as e:
-            logger.error("Error composing scroll content: %s", e)
+        except (ValueError, TypeError, OSError, RuntimeError):
+            # Expected errors from image operations, scroll helper, or bad data
+            logger.exception("Error composing scroll content")
             return False
 
     def render_frame(self) -> bool:
@@ -213,8 +214,9 @@ class RenderPipeline:
 
             return True
 
-        except Exception as e:
-            logger.error("Error rendering frame: %s", e)
+        except (ValueError, TypeError, OSError, RuntimeError):
+            # Expected errors from scroll helper or display manager operations
+            logger.exception("Error rendering frame")
             return False
 
     def _track_frame_time(self, frame_time: float) -> None:
@@ -271,8 +273,9 @@ class RenderPipeline:
 
             return False
 
-        except Exception as e:
-            logger.error("Error during hot-swap: %s", e)
+        except (ValueError, TypeError, OSError, RuntimeError):
+            # Expected errors from stream manager or composition operations
+            logger.exception("Error during hot-swap")
             return False
 
     def start_new_cycle(self) -> bool:
