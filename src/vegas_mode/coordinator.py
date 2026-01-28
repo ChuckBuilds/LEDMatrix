@@ -629,10 +629,10 @@ class VegasModeCoordinator:
                     mode = plugin.get_vegas_display_mode()
                     if mode == VegasDisplayMode.STATIC:
                         self._static_mode_plugins.add(plugin_id)
-                except Exception as e:
-                    logger.error(
-                        "Error getting vegas display mode for plugin %s: %s",
-                        plugin_id, e
+                except Exception:
+                    logger.exception(
+                        "Error getting vegas display mode for plugin %s",
+                        plugin_id
                     )
 
         if self._static_mode_plugins:
