@@ -277,20 +277,24 @@ class StreamManager:
 
     def _refresh_plugin_list(self) -> None:
         """Refresh the ordered list of plugins from plugin manager."""
+        logger.info("=" * 60)
+        logger.info("REFRESHING PLUGIN LIST FOR VEGAS SCROLL")
+        logger.info("=" * 60)
+
         # Get all enabled plugins
         available_plugins = []
 
         if hasattr(self.plugin_manager, 'plugins'):
-            logger.debug(
+            logger.info(
                 "Checking %d loaded plugins for Vegas scroll",
                 len(self.plugin_manager.plugins)
             )
             for plugin_id, plugin in self.plugin_manager.plugins.items():
                 has_enabled = hasattr(plugin, 'enabled')
                 is_enabled = getattr(plugin, 'enabled', False)
-                logger.debug(
-                    "[%s] has_enabled=%s, enabled=%s",
-                    plugin_id, has_enabled, is_enabled
+                logger.info(
+                    "[%s] class=%s, has_enabled=%s, enabled=%s",
+                    plugin_id, plugin.__class__.__name__, has_enabled, is_enabled
                 )
                 if has_enabled and is_enabled:
                     # Check vegas content type - skip 'none' unless in STATIC mode
@@ -308,14 +312,18 @@ class StreamManager:
                             plugin_id, plugin.__class__.__name__
                         )
 
+                    logger.info(
+                        "[%s] content_type=%s, display_mode=%s",
+                        plugin_id, content_type, display_mode.value
+                    )
+
                     if content_type != 'none' or display_mode == VegasDisplayMode.STATIC:
                         available_plugins.append(plugin_id)
-                        logger.debug("[%s] Added to Vegas scroll", plugin_id)
+                        logger.info("[%s] --> INCLUDED in Vegas scroll", plugin_id)
                     else:
-                        logger.debug(
-                            "[%s] Excluded: content_type=%s, display_mode=%s",
-                            plugin_id, content_type, display_mode
-                        )
+                        logger.info("[%s] --> EXCLUDED from Vegas scroll", plugin_id)
+                else:
+                    logger.info("[%s] --> SKIPPED (not enabled)", plugin_id)
 
         else:
             logger.warning(
@@ -325,10 +333,11 @@ class StreamManager:
 
         # Apply ordering from config (outside lock for potentially slow operation)
         ordered_plugins = self.config.get_ordered_plugins(available_plugins)
-        logger.debug(
-            "Vegas scroll: %d available -> %d ordered plugins",
+        logger.info(
+            "Vegas scroll plugin list: %d available -> %d ordered",
             len(available_plugins), len(ordered_plugins)
         )
+        logger.info("Ordered plugins: %s", ordered_plugins)
 
         # Atomically update shared state under lock to avoid races with prefetchers
         with self._buffer_lock:
@@ -338,6 +347,8 @@ class StreamManager:
                 self._current_index = 0
             if self._prefetch_index >= len(self._ordered_plugins):
                 self._prefetch_index = 0
+
+        logger.info("=" * 60)
 
     def _prefetch_content(self, count: int = 1) -> None:
         """
@@ -390,21 +401,35 @@ class StreamManager:
             ContentSegment or None if fetch failed
         """
         try:
+            logger.info("=" * 60)
+            logger.info("[%s] FETCHING CONTENT", plugin_id)
+            logger.info("=" * 60)
+
             # Get plugin instance
             if not hasattr(self.plugin_manager, 'plugins'):
+                logger.warning("[%s] plugin_manager has no plugins attribute", plugin_id)
                 return None
 
             plugin = self.plugin_manager.plugins.get(plugin_id)
             if not plugin:
-                logger.warning("Plugin %s not found", plugin_id)
+                logger.warning("[%s] Plugin not found in plugin_manager.plugins", plugin_id)
                 return None
+
+            logger.info(
+                "[%s] Plugin found: class=%s, enabled=%s",
+                plugin_id, plugin.__class__.__name__, getattr(plugin, 'enabled', 'N/A')
+            )
 
             # Get display mode from plugin
             display_mode = VegasDisplayMode.FIXED_SEGMENT
             try:
                 display_mode = plugin.get_vegas_display_mode()
+                logger.info("[%s] Display mode: %s", plugin_id, display_mode.value)
             except (AttributeError, TypeError) as e:
-                logger.debug("[%s] get_vegas_display_mode() not available: %s", plugin_id, e)
+                logger.info(
+                    "[%s] get_vegas_display_mode() not available: %s (using FIXED_SEGMENT)",
+                    plugin_id, e
+                )
 
             # For STATIC mode, we create a placeholder segment
             # The actual content will be displayed by coordinator during pause
@@ -417,16 +442,17 @@ class StreamManager:
                     display_mode=display_mode
                 )
                 self.stats['segments_fetched'] += 1
-                logger.debug(
-                    "Created STATIC placeholder for %s (pause trigger)",
+                logger.info(
+                    "[%s] Created STATIC placeholder (pause trigger)",
                     plugin_id
                 )
                 return segment
 
             # Get content via adapter for SCROLL/FIXED_SEGMENT modes
+            logger.info("[%s] Calling plugin_adapter.get_content()...", plugin_id)
             images = self.plugin_adapter.get_content(plugin, plugin_id)
             if not images:
-                logger.debug("No content from plugin %s", plugin_id)
+                logger.warning("[%s] NO CONTENT RETURNED from plugin_adapter", plugin_id)
                 return None
 
             # Calculate total width
@@ -440,15 +466,16 @@ class StreamManager:
             )
 
             self.stats['segments_fetched'] += 1
-            logger.debug(
-                "Fetched segment from %s: %d images, %dpx total, mode=%s",
+            logger.info(
+                "[%s] SEGMENT CREATED: %d images, %dpx total, mode=%s",
                 plugin_id, len(images), total_width, display_mode.value
             )
+            logger.info("=" * 60)
 
             return segment
 
         except Exception:
-            logger.exception("Error fetching content from %s", plugin_id)
+            logger.exception("[%s] ERROR fetching content", plugin_id)
             self.stats['fetch_errors'] += 1
             return None
 
