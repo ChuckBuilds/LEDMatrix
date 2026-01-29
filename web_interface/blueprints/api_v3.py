@@ -402,7 +402,20 @@ def save_dim_schedule_config():
             enabled_value = enabled_value.lower() in ('true', 'on', '1')
 
         # Validate and get dim_brightness
-        dim_brightness = int(data.get('dim_brightness', 30))
+        dim_brightness_raw = data.get('dim_brightness', 30)
+        try:
+            # Handle empty string or None
+            if dim_brightness_raw is None or dim_brightness_raw == '':
+                dim_brightness = 30
+            else:
+                dim_brightness = int(dim_brightness_raw)
+        except (ValueError, TypeError):
+            return error_response(
+                ErrorCode.VALIDATION_ERROR,
+                "dim_brightness must be an integer between 0 and 100",
+                status_code=400
+            )
+
         if not 0 <= dim_brightness <= 100:
             return error_response(
                 ErrorCode.VALIDATION_ERROR,

@@ -579,9 +579,11 @@ class DisplayController:
         current_time_only = current_time.time()
 
         # Determine if using per-day or global dim schedule
+        # Normalize mode to handle both "per-day" and "per_day" variants
         mode = dim_config.get('mode', 'global')
+        mode_normalized = mode.replace('_', '-') if mode else 'global'
         days_config = dim_config.get('days')
-        use_per_day = mode == 'per-day' and days_config and current_day in days_config
+        use_per_day = mode_normalized == 'per-day' and days_config and current_day in days_config
 
         if use_per_day:
             day_config = days_config[current_day]
