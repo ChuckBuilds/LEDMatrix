@@ -8,7 +8,7 @@ implement get_vegas_content() and fallback capture of display() output.
 import logging
 import threading
 import time
-from typing import Optional, List, Any, TYPE_CHECKING
+from typing import Optional, List, Any, Tuple, Union, TYPE_CHECKING
 from PIL import Image
 
 if TYPE_CHECKING:
@@ -205,14 +205,25 @@ class PluginAdapter:
             captured = self.display_manager.image.copy()
 
             # Check if captured image has content (not all black)
-            if self._is_blank_image(captured):
+            is_blank, bright_ratio = self._is_blank_image(captured, return_ratio=True)
+            if is_blank:
+                logger.debug(
+                    "[%s] First capture blank (%.3f%% bright), retrying with force_clear",
+                    plugin_id, bright_ratio * 100
+                )
                 # Try once more with force_clear=True
                 self.display_manager.clear()
                 plugin.display(force_clear=True)
                 captured = self.display_manager.image.copy()
 
-                if self._is_blank_image(captured):
-                    logger.debug("[%s] Produced blank image after retry", plugin_id)
+                is_blank, bright_ratio = self._is_blank_image(captured, return_ratio=True)
+                if is_blank:
+                    logger.info(
+                        "[%s] Produced blank image after retry (%.3f%% bright pixels, "
+                        "threshold=0.5%%), size=%dx%d",
+                        plugin_id, bright_ratio * 100,
+                        captured.width, captured.height
+                    )
                     return None
 
             # Convert to RGB if needed
@@ -238,7 +249,9 @@ class PluginAdapter:
             if original_image is not None:
                 self.display_manager.image = original_image
 
-    def _is_blank_image(self, img: Image.Image) -> bool:
+    def _is_blank_image(
+        self, img: Image.Image, return_ratio: bool = False
+    ) -> Union[bool, Tuple[bool, float]]:
         """
         Check if an image is essentially blank (all black or nearly so).
 
@@ -247,9 +260,10 @@ class PluginAdapter:
 
         Args:
             img: Image to check
+            return_ratio: If True, return tuple of (is_blank, bright_ratio)
 
         Returns:
-            True if image is blank
+            True if image is blank, or tuple (is_blank, bright_ratio) if return_ratio=True
         """
         # Convert to RGB for consistent checking
         if img.mode != 'RGB':
@@ -274,12 +288,8 @@ class PluginAdapter:
 
         is_blank = bright_ratio < 0.005  # Less than 0.5% bright pixels
 
-        if is_blank:
-            logger.debug(
-                "Image appears blank: %.3f%% bright pixels (threshold: 0.5%%)",
-                bright_ratio * 100
-            )
-
+        if return_ratio:
+            return is_blank, bright_ratio
         return is_blank
 
     def _get_cached(self, plugin_id: str) -> Optional[List[Image.Image]]:
