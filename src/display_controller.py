@@ -362,6 +362,10 @@ class DisplayController:
             logger.debug("Vegas mode disabled in config")
             return
 
+        if self.plugin_manager is None:
+            logger.warning("Vegas mode skipped: plugin_manager is None")
+            return
+
         try:
             # Lazy import to avoid circular imports
             if not _vegas_mode_imported:

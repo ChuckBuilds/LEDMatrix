@@ -235,6 +235,7 @@ class VegasModeCoordinator:
                 return
             self._is_paused = False
 
+        self.display_manager.set_scrolling_state(True)
         logger.info("Vegas mode resumed")
 
     def run_frame(self) -> bool:

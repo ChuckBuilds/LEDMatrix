@@ -485,26 +485,31 @@ def save_main_config():
                 vegas_config['enabled'] = enabled_value in (True, 'on', 'true', '1', 1)
 
             # Handle numeric settings with validation
-            if 'vegas_scroll_speed' in data:
-                try:
-                    vegas_config['scroll_speed'] = int(data['vegas_scroll_speed'])
-                except (ValueError, TypeError):
-                    pass  # Keep existing value
-            if 'vegas_separator_width' in data:
-                try:
-                    vegas_config['separator_width'] = int(data['vegas_separator_width'])
-                except (ValueError, TypeError):
-                    pass
-            if 'vegas_target_fps' in data:
-                try:
-                    vegas_config['target_fps'] = int(data['vegas_target_fps'])
-                except (ValueError, TypeError):
-                    pass
-            if 'vegas_buffer_ahead' in data:
-                try:
-                    vegas_config['buffer_ahead'] = int(data['vegas_buffer_ahead'])
-                except (ValueError, TypeError):
-                    pass
+            numeric_fields = {
+                'vegas_scroll_speed': ('scroll_speed', 1, 100),
+                'vegas_separator_width': ('separator_width', 0, 500),
+                'vegas_target_fps': ('target_fps', 1, 200),
+                'vegas_buffer_ahead': ('buffer_ahead', 1, 20),
+            }
+            for field_name, (config_key, min_val, max_val) in numeric_fields.items():
+                if field_name in data:
+                    raw_value = data[field_name]
+                    # Skip empty strings (treat as "not provided")
+                    if raw_value == '' or raw_value is None:
+                        continue
+                    try:
+                        int_value = int(raw_value)
+                    except (ValueError, TypeError):
+                        return jsonify({
+                            'status': 'error',
+                            'message': f"Invalid value for {field_name}: must be an integer"
+                        }), 400
+                    if not (min_val <= int_value <= max_val):
+                        return jsonify({
+                            'status': 'error',
+                            'message': f"Invalid value for {field_name}: must be between {min_val} and {max_val}"
+                        }), 400
+                    vegas_config[config_key] = int_value
 
             # Handle plugin order and exclusions (JSON arrays)
             if 'vegas_plugin_order' in data:
