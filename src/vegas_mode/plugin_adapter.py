@@ -302,11 +302,8 @@ class PluginAdapter:
 
             return [img]
 
-        except (AttributeError, TypeError, ValueError, OSError) as e:
-            logger.warning(
-                "[%s] Error getting scroll_helper content: %s",
-                plugin_id, e
-            )
+        except (AttributeError, TypeError, ValueError, OSError):
+            logger.exception("[%s] Error getting scroll_helper content", plugin_id)
             return None
 
     def _trigger_scroll_content_generation(
@@ -347,10 +344,9 @@ class PluginAdapter:
                             plugin_id, cached_image.width, cached_image.height
                         )
                         return cached_image
-                except Exception as e:
-                    logger.info(
-                        "[%s] _create_scrolling_display() failed: %s",
-                        plugin_id, e
+                except (AttributeError, TypeError, ValueError, OSError):
+                    logger.exception(
+                        "[%s] _create_scrolling_display() failed", plugin_id
                     )
 
             # Method 2: Try display(force_clear=True) which typically builds scroll content
@@ -373,10 +369,9 @@ class PluginAdapter:
                         "[%s] display(force_clear=True) did not populate cached_image",
                         plugin_id
                     )
-                except Exception as e:
-                    logger.info(
-                        "[%s] display(force_clear=True) failed: %s",
-                        plugin_id, e
+                except (AttributeError, TypeError, ValueError, OSError):
+                    logger.exception(
+                        "[%s] display(force_clear=True) failed", plugin_id
                     )
 
             logger.info(
@@ -385,11 +380,8 @@ class PluginAdapter:
             )
             return None
 
-        except Exception as e:
-            logger.warning(
-                "[%s] Error triggering scroll content: %s",
-                plugin_id, e
-            )
+        except (AttributeError, TypeError, ValueError, OSError):
+            logger.exception("[%s] Error triggering scroll content", plugin_id)
             return None
 
         finally:
