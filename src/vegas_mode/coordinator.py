@@ -436,6 +436,10 @@ class VegasModeCoordinator:
             self.render_pipeline.update_config(new_vegas_config)
             self.stream_manager.config = new_vegas_config
 
+            # Force refresh of stream manager to pick up plugin_order/buffer changes
+            self.stream_manager._last_refresh = 0
+            self.stream_manager.refresh()
+
             # Handle enable/disable
             if was_enabled and not new_vegas_config.enabled:
                 self.stop()
@@ -444,8 +448,8 @@ class VegasModeCoordinator:
 
             logger.info("Config update applied (version %d)", self._config_version)
 
-        except Exception as e:
-            logger.error("Error applying config update: %s", e)
+        except Exception:
+            logger.exception("Error applying config update")
 
         finally:
             # Only clear update flag if no new config arrived during processing
