@@ -522,8 +522,8 @@ class VegasModeCoordinator:
             display_mode = plugin.get_vegas_display_mode()
             if display_mode == VegasDisplayMode.STATIC:
                 return plugin
-        except Exception as e:
-            logger.debug("Error checking vegas mode for %s: %s", plugin_id, e)
+        except (AttributeError, TypeError):
+            logger.exception("Error checking vegas mode for %s", plugin_id)
 
         return None
 

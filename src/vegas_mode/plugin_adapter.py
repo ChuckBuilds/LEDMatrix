@@ -415,8 +415,8 @@ class PluginAdapter:
                 try:
                     plugin.update_data()
                     logger.info("[%s] Fallback: update_data() called", plugin_id)
-                except Exception as e:
-                    logger.info("[%s] Fallback: update_data() failed: %s", plugin_id, e)
+                except (AttributeError, RuntimeError, OSError):
+                    logger.exception("[%s] Fallback: update_data() failed", plugin_id)
 
             # Clear and call plugin display
             self.display_manager.clear()
