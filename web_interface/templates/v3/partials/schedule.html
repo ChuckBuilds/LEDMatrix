@@ -26,6 +26,56 @@
     </form>
 </div>
 
+<!-- Dim Schedule Section -->
+<div class="bg-white rounded-lg shadow p-6 mt-6">
+    <div class="border-b border-gray-200 pb-4 mb-6">
+        <h2 class="text-lg font-semibold text-gray-900">Dim Schedule Settings</h2>
+        <p class="mt-1 text-sm text-gray-600">Configure when the display should automatically dim to a lower brightness. Dimming only applies when the display is ON (active per the schedule above). The dim schedule will not turn the display back on if it's off.</p>
+    </div>
+
+    <form id="dim_schedule_form"
+          hx-post="/api/v3/config/dim-schedule"
+          hx-ext="json-enc"
+          hx-headers='{"Content-Type": "application/json"}'
+          hx-swap="none"
+          hx-on:htmx:after-request="handleDimScheduleResponse(event)"
+          class="space-y-6">
+
+        <!-- Dim Brightness Level -->
+        <div class="bg-gray-50 rounded-lg p-4 mb-4">
+            <label for="dim_brightness" class="block text-sm font-medium text-gray-700 mb-2">
+                Dim Brightness Level
+            </label>
+            <div class="flex items-center space-x-4">
+                <input type="range"
+                       id="dim_brightness"
+                       name="dim_brightness"
+                       min="0"
+                       max="100"
+                       value="{{ dim_schedule_config.dim_brightness | default(30) }}"
+                       class="flex-1 h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-blue-600"
+                       oninput="document.getElementById('dim_brightness_display').textContent = this.value + '%'">
+                <span id="dim_brightness_display" class="text-sm font-medium text-gray-700 w-12 text-right">
+                    {{ dim_schedule_config.dim_brightness | default(30) }}%
+                </span>
+            </div>
+            <p class="mt-1 text-xs text-gray-500">Current normal brightness: {{ normal_brightness }}%</p>
+        </div>
+
+        <!-- Dim Schedule Picker Widget Container -->
+        <div id="dim_schedule_picker_container"></div>
+
+        <!-- Submit Button -->
+        <div class="flex justify-end">
+            <button type="submit"
+                    class="btn bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md">
+                <i class="fas fa-save mr-2"></i>
+                Save Dim Schedule Settings
+            </button>
+        </div>
+    </form>
+</div>
+
 <script>
 (function() {
     'use strict';
@@ -143,6 +193,122 @@
     } else {
         // Small delay to ensure widget scripts are loaded
         setTimeout(initSchedulePicker, 50);
+    }
+})();
+
+// Dim Schedule Picker initialization
+(function() {
+    'use strict';
+
+    function initDimSchedulePicker() {
+        const container = document.getElementById('dim_schedule_picker_container');
+        if (!container) {
+            console.error('[DimSchedule] Container not found');
+            return;
+        }
+
+        // Check if widget registry is available
+        if (typeof window.LEDMatrixWidgets === 'undefined') {
+            console.error('[DimSchedule] LEDMatrixWidgets registry not available');
+            return;
+        }
+
+        const widget = window.LEDMatrixWidgets.get('schedule-picker');
+        if (!widget) {
+            console.error('[DimSchedule] schedule-picker widget not registered');
+            return;
+        }
+
+        // Get dim schedule config from template data (injected by Jinja2)
+        const dimScheduleConfig = {{ dim_schedule_config | tojson | safe }} || {};
+
+        // Determine mode
+        let mode = 'global';
+        if (dimScheduleConfig.mode) {
+            mode = dimScheduleConfig.mode.replace('-', '_');
+        } else if (dimScheduleConfig.days) {
+            mode = 'per_day';
+        }
+
+        // Convert config to widget format
+        const widgetValue = {
+            enabled: dimScheduleConfig.enabled || false,
+            mode: mode,
+            start_time: dimScheduleConfig.start_time || '20:00',
+            end_time: dimScheduleConfig.end_time || '07:00',
+            days: dimScheduleConfig.days || {}
+        };
+
+        // If no days config, initialize with defaults for dim schedule (20:00-07:00)
+        if (!dimScheduleConfig.days || Object.keys(dimScheduleConfig.days).length === 0) {
+            widgetValue.days = {};
+            const days = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
+            days.forEach(function(day) {
+                widgetValue.days[day] = {
+                    enabled: true,
+                    start_time: '20:00',
+                    end_time: '07:00'
+                };
+            });
+        }
+
+        // Render the widget with a different field ID
+        widget.render(container, {
+            'x-options': {
+                showModeToggle: true,
+                showEnableToggle: true,
+                compactMode: false
+            }
+        }, widgetValue, {
+            fieldId: 'dim_schedule'
+        });
+
+        console.log('[DimSchedule] Dim schedule picker widget initialized');
+    }
+
+    // Handle dim schedule form submission response
+    window.handleDimScheduleResponse = function(event) {
+        const xhr = event.detail.xhr;
+        let response;
+        try {
+            response = JSON.parse(xhr.responseText);
+        } catch (e) {
+            response = { status: 'error', message: 'Invalid response from server' };
+        }
+
+        const message = response.message || (response.status === 'success' ? 'Dim schedule settings saved' : 'Error saving dim schedule');
+        const type = response.status || 'info';
+
+        // Use global notification function if available
+        if (typeof window.showNotification === 'function') {
+            window.showNotification(message, type);
+        } else {
+            // Fallback notification
+            const colors = {
+                success: 'bg-green-500',
+                error: 'bg-red-500',
+                warning: 'bg-yellow-500',
+                info: 'bg-blue-500'
+            };
+
+            const notification = document.createElement('div');
+            notification.className = 'fixed top-4 right-4 px-6 py-3 rounded-lg shadow-lg z-50 ' + (colors[type] || colors.info) + ' text-white';
+            notification.textContent = message;
+            document.body.appendChild(notification);
+
+            setTimeout(function() {
+                notification.style.transition = 'opacity 0.5s';
+                notification.style.opacity = '0';
+                setTimeout(function() { notification.remove(); }, 500);
+            }, 3000);
+        }
+    };
+
+    // Initialize when DOM is ready
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', initDimSchedulePicker);
+    } else {
+        setTimeout(initDimSchedulePicker, 100);
     }
 })();
 </script>

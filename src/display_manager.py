@@ -174,6 +174,57 @@ class DisplayManager:
         else:
             return 32  # Default fallback height
 
+    def set_brightness(self, brightness: int) -> bool:
+        """
+        Set display brightness at runtime.
+
+        Args:
+            brightness: Brightness level (0-100)
+
+        Returns:
+            True if brightness was set successfully, False otherwise
+        """
+        # Fail fast: validate input type
+        if not isinstance(brightness, (int, float)):
+            logger.error(f"[BRIGHTNESS] Invalid brightness type: {type(brightness).__name__}, expected int")
+            return False
+
+        if self.matrix is None:
+            logger.warning("[BRIGHTNESS] Cannot set brightness in fallback mode")
+            return False
+
+        # Clamp to valid range
+        brightness = max(0, min(100, int(brightness)))
+
+        try:
+            # RGBMatrix accepts brightness as a property
+            self.matrix.brightness = brightness
+            logger.info(f"[BRIGHTNESS] Display brightness set to {brightness}%")
+            return True
+        except AttributeError as e:
+            logger.error(f"[BRIGHTNESS] Matrix does not support brightness property: {e}", exc_info=True)
+            return False
+        except (TypeError, ValueError) as e:
+            logger.error(f"[BRIGHTNESS] Invalid brightness value rejected by hardware: {e}", exc_info=True)
+            return False
+
+    def get_brightness(self) -> int:
+        """
+        Get current display brightness.
+
+        Returns:
+            Current brightness level (0-100), or -1 if unavailable
+        """
+        if self.matrix is None:
+            logger.debug("[BRIGHTNESS] Cannot get brightness in fallback mode")
+            return -1
+
+        try:
+            return self.matrix.brightness
+        except AttributeError as e:
+            logger.warning(f"[BRIGHTNESS] Matrix does not support brightness property: {e}", exc_info=True)
+            return -1
+
     def _draw_test_pattern(self):
         """Draw a test pattern to verify the display is working."""
         try:

@@ -353,6 +353,227 @@ def save_schedule_config():
             status_code=500
         )
 
+@api_v3.route('/config/dim-schedule', methods=['GET'])
+def get_dim_schedule_config():
+    """Get current dim schedule configuration"""
+    import logging
+    import json
+
+    if not api_v3.config_manager:
+        logging.error("[DIM SCHEDULE] Config manager not initialized")
+        return error_response(
+            ErrorCode.CONFIG_LOAD_FAILED,
+            'Config manager not initialized',
+            status_code=500
+        )
+
+    try:
+        config = api_v3.config_manager.load_config()
+        dim_schedule_config = config.get('dim_schedule', {
+            'enabled': False,
+            'dim_brightness': 30,
+            'mode': 'global',
+            'start_time': '20:00',
+            'end_time': '07:00',
+            'days': {}
+        })
+
+        return success_response(data=dim_schedule_config)
+    except FileNotFoundError as e:
+        logging.error(f"[DIM SCHEDULE] Config file not found: {e}", exc_info=True)
+        return error_response(
+            ErrorCode.CONFIG_LOAD_FAILED,
+            "Configuration file not found",
+            status_code=500
+        )
+    except json.JSONDecodeError as e:
+        logging.error(f"[DIM SCHEDULE] Invalid JSON in config file: {e}", exc_info=True)
+        return error_response(
+            ErrorCode.CONFIG_LOAD_FAILED,
+            "Configuration file contains invalid JSON",
+            status_code=500
+        )
+    except (IOError, OSError) as e:
+        logging.error(f"[DIM SCHEDULE] Error reading config file: {e}", exc_info=True)
+        return error_response(
+            ErrorCode.CONFIG_LOAD_FAILED,
+            f"Error reading configuration file: {str(e)}",
+            status_code=500
+        )
+    except Exception as e:
+        logging.error(f"[DIM SCHEDULE] Unexpected error loading config: {e}", exc_info=True)
+        return error_response(
+            ErrorCode.CONFIG_LOAD_FAILED,
+            f"Unexpected error loading dim schedule configuration: {str(e)}",
+            status_code=500
+        )
+
+@api_v3.route('/config/dim-schedule', methods=['POST'])
+def save_dim_schedule_config():
+    """Save dim schedule configuration"""
+    try:
+        if not api_v3.config_manager:
+            return jsonify({'status': 'error', 'message': 'Config manager not initialized'}), 500
+
+        data = request.get_json()
+        if not data:
+            return jsonify({'status': 'error', 'message': 'No data provided'}), 400
+
+        # Load current config
+        current_config = api_v3.config_manager.load_config()
+
+        # Build dim schedule configuration
+        enabled_value = data.get('enabled', False)
+        if isinstance(enabled_value, str):
+            enabled_value = enabled_value.lower() in ('true', 'on', '1')
+
+        # Validate and get dim_brightness
+        dim_brightness_raw = data.get('dim_brightness', 30)
+        try:
+            # Handle empty string or None
+            if dim_brightness_raw is None or dim_brightness_raw == '':
+                dim_brightness = 30
+            else:
+                dim_brightness = int(dim_brightness_raw)
+        except (ValueError, TypeError):
+            return error_response(
+                ErrorCode.VALIDATION_ERROR,
+                "dim_brightness must be an integer between 0 and 100",
+                status_code=400
+            )
+
+        if not 0 <= dim_brightness <= 100:
+            return error_response(
+                ErrorCode.VALIDATION_ERROR,
+                "dim_brightness must be between 0 and 100",
+                status_code=400
+            )
+
+        dim_schedule_config = {
+            'enabled': enabled_value,
+            'dim_brightness': dim_brightness
+        }
+
+        mode = data.get('mode', 'global')
+        dim_schedule_config['mode'] = mode
+
+        if mode == 'global':
+            # Simple global schedule
+            start_time = data.get('start_time', '20:00')
+            end_time = data.get('end_time', '07:00')
+
+            # Validate time formats
+            is_valid, error_msg = _validate_time_format(start_time)
+            if not is_valid:
+                return error_response(
+                    ErrorCode.VALIDATION_ERROR,
+                    error_msg,
+                    status_code=400
+                )
+
+            is_valid, error_msg = _validate_time_format(end_time)
+            if not is_valid:
+                return error_response(
+                    ErrorCode.VALIDATION_ERROR,
+                    error_msg,
+                    status_code=400
+                )
+
+            dim_schedule_config['start_time'] = start_time
+            dim_schedule_config['end_time'] = end_time
+            # Remove days config when switching to global mode
+            dim_schedule_config.pop('days', None)
+        else:
+            # Per-day schedule
+            dim_schedule_config['days'] = {}
+            # Remove global times when switching to per-day mode
+            dim_schedule_config.pop('start_time', None)
+            dim_schedule_config.pop('end_time', None)
+            days = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday']
+            enabled_days_count = 0
+
+            for day in days:
+                day_config = {}
+                enabled_key = f'{day}_enabled'
+                start_key = f'{day}_start'
+                end_key = f'{day}_end'
+
+                # Check if day is enabled
+                if enabled_key in data:
+                    enabled_val = data[enabled_key]
+                    if isinstance(enabled_val, str):
+                        day_config['enabled'] = enabled_val.lower() in ('true', 'on', '1')
+                    else:
+                        day_config['enabled'] = bool(enabled_val)
+                else:
+                    day_config['enabled'] = True
+
+                # Only add times if day is enabled
+                if day_config.get('enabled', True):
+                    enabled_days_count += 1
+                    start_time = data.get(start_key) or '20:00'
+                    end_time = data.get(end_key) or '07:00'
+
+                    # Validate time formats
+                    is_valid, error_msg = _validate_time_format(start_time)
+                    if not is_valid:
+                        return error_response(
+                            ErrorCode.VALIDATION_ERROR,
+                            f"Invalid start time for {day}: {error_msg}",
+                            status_code=400
+                        )
+
+                    is_valid, error_msg = _validate_time_format(end_time)
+                    if not is_valid:
+                        return error_response(
+                            ErrorCode.VALIDATION_ERROR,
+                            f"Invalid end time for {day}: {error_msg}",
+                            status_code=400
+                        )
+
+                    day_config['start_time'] = start_time
+                    day_config['end_time'] = end_time
+
+                dim_schedule_config['days'][day] = day_config
+
+            # Validate that at least one day is enabled in per-day mode
+            if enabled_days_count == 0:
+                return error_response(
+                    ErrorCode.VALIDATION_ERROR,
+                    "At least one day must be enabled in per-day dim schedule mode",
+                    status_code=400
+                )
+
+        # Update and save config using atomic save
+        current_config['dim_schedule'] = dim_schedule_config
+        success, error_msg = _save_config_atomic(api_v3.config_manager, current_config, create_backup=True)
+        if not success:
+            return error_response(
+                ErrorCode.CONFIG_SAVE_FAILED,
+                f"Failed to save dim schedule configuration: {error_msg}",
+                status_code=500
+            )
+
+        # Invalidate cache on config change
+        try:
+            from web_interface.cache import invalidate_cache
+            invalidate_cache()
+        except ImportError:
+            pass
+
+        return success_response(message='Dim schedule configuration saved successfully')
+    except Exception as e:
+        import logging
+        import traceback
+        error_msg = f"Error saving dim schedule config: {str(e)}\n{traceback.format_exc()}"
+        logging.error(error_msg)
+        return error_response(
+            ErrorCode.CONFIG_SAVE_FAILED,
+            f"Error saving dim schedule configuration: {str(e)}",
+            details=traceback.format_exc(),
+            status_code=500
+        )
+
 @api_v3.route('/config/main', methods=['POST'])
 def save_main_config():
     """Save main configuration"""
