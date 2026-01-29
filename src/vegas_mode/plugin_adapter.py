@@ -80,6 +80,12 @@ class PluginAdapter:
                 self._cache_content(plugin_id, content)
                 return content
 
+        # Try to get scroll_helper's cached image (for scrolling plugins like stocks/odds)
+        content = self._get_scroll_helper_content(plugin, plugin_id)
+        if content:
+            self._cache_content(plugin_id, content)
+            return content
+
         # Fall back to display capture
         content = self._capture_display_content(plugin, plugin_id)
         if content:
@@ -162,6 +168,66 @@ class PluginAdapter:
         except (AttributeError, TypeError, ValueError, OSError):
             logger.exception(
                 "Error calling get_vegas_content() on %s",
+                plugin_id
+            )
+            return None
+
+    def _get_scroll_helper_content(
+        self, plugin: 'BasePlugin', plugin_id: str
+    ) -> Optional[List[Image.Image]]:
+        """
+        Get content from plugin's scroll_helper if available.
+
+        Many scrolling plugins (stocks, odds) use a ScrollHelper that caches
+        their full scrolling image. This method extracts that image for Vegas
+        mode instead of falling back to single-frame capture.
+
+        Args:
+            plugin: Plugin instance
+            plugin_id: Plugin identifier
+
+        Returns:
+            List with the cached scroll image, or None if not available
+        """
+        try:
+            # Check for scroll_helper with cached_image
+            scroll_helper = getattr(plugin, 'scroll_helper', None)
+            if scroll_helper is None:
+                return None
+
+            cached_image = getattr(scroll_helper, 'cached_image', None)
+            if cached_image is None or not isinstance(cached_image, Image.Image):
+                return None
+
+            # Copy the image to prevent modification
+            img = cached_image.copy()
+
+            # Ensure correct height
+            if img.height != self.display_height:
+                logger.debug(
+                    "[%s] Resizing scroll_helper content: %dx%d -> %dx%d",
+                    plugin_id, img.width, img.height,
+                    img.width, self.display_height
+                )
+                img = img.resize(
+                    (img.width, self.display_height),
+                    Image.Resampling.LANCZOS
+                )
+
+            # Convert to RGB if needed
+            if img.mode != 'RGB':
+                img = img.convert('RGB')
+
+            logger.info(
+                "[%s] Using scroll_helper cached image: %dx%d",
+                plugin_id, img.width, img.height
+            )
+
+            return [img]
+
+        except (AttributeError, TypeError, ValueError, OSError):
+            logger.debug(
+                "[%s] No scroll_helper content available",
                 plugin_id
             )
             return None
