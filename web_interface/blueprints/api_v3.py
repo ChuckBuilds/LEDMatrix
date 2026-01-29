@@ -356,14 +356,18 @@ def save_schedule_config():
 @api_v3.route('/config/dim-schedule', methods=['GET'])
 def get_dim_schedule_config():
     """Get current dim schedule configuration"""
-    try:
-        if not api_v3.config_manager:
-            return error_response(
-                ErrorCode.CONFIG_LOAD_FAILED,
-                'Config manager not initialized',
-                status_code=500
-            )
+    import logging
+    import json
 
+    if not api_v3.config_manager:
+        logging.error("[DIM SCHEDULE] Config manager not initialized")
+        return error_response(
+            ErrorCode.CONFIG_LOAD_FAILED,
+            'Config manager not initialized',
+            status_code=500
+        )
+
+    try:
         config = api_v3.config_manager.load_config()
         dim_schedule_config = config.get('dim_schedule', {
             'enabled': False,
@@ -375,10 +379,32 @@ def get_dim_schedule_config():
         })
 
         return success_response(data=dim_schedule_config)
-    except Exception as e:
+    except FileNotFoundError as e:
+        logging.error(f"[DIM SCHEDULE] Config file not found: {e}", exc_info=True)
         return error_response(
             ErrorCode.CONFIG_LOAD_FAILED,
-            f"Error loading dim schedule configuration: {str(e)}",
+            "Configuration file not found",
+            status_code=500
+        )
+    except json.JSONDecodeError as e:
+        logging.error(f"[DIM SCHEDULE] Invalid JSON in config file: {e}", exc_info=True)
+        return error_response(
+            ErrorCode.CONFIG_LOAD_FAILED,
+            "Configuration file contains invalid JSON",
+            status_code=500
+        )
+    except (IOError, OSError) as e:
+        logging.error(f"[DIM SCHEDULE] Error reading config file: {e}", exc_info=True)
+        return error_response(
+            ErrorCode.CONFIG_LOAD_FAILED,
+            f"Error reading configuration file: {str(e)}",
+            status_code=500
+        )
+    except Exception as e:
+        logging.error(f"[DIM SCHEDULE] Unexpected error loading config: {e}", exc_info=True)
+        return error_response(
+            ErrorCode.CONFIG_LOAD_FAILED,
+            f"Unexpected error loading dim schedule configuration: {str(e)}",
             status_code=500
         )
 
