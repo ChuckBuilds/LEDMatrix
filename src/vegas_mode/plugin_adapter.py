@@ -254,10 +254,15 @@ class PluginAdapter:
             cached_image = getattr(scroll_helper, 'cached_image', None)
             if cached_image is None:
                 logger.info(
-                    "[%s] scroll_helper.cached_image is None (not yet populated)",
+                    "[%s] scroll_helper.cached_image is None, triggering content generation",
                     plugin_id
                 )
-                return None
+                # Try to trigger scroll content generation
+                cached_image = self._trigger_scroll_content_generation(
+                    plugin, plugin_id, scroll_helper
+                )
+                if cached_image is None:
+                    return None
 
             if not isinstance(cached_image, Image.Image):
                 logger.info(
@@ -303,6 +308,94 @@ class PluginAdapter:
                 plugin_id, e
             )
             return None
+
+    def _trigger_scroll_content_generation(
+        self, plugin: 'BasePlugin', plugin_id: str, scroll_helper: Any
+    ) -> Optional[Image.Image]:
+        """
+        Trigger scroll content generation for plugins that haven't built it yet.
+
+        Tries multiple approaches:
+        1. _create_scrolling_display() - stocks plugin pattern
+        2. display(force_clear=True) - general pattern that populates scroll cache
+
+        Args:
+            plugin: Plugin instance
+            plugin_id: Plugin identifier
+            scroll_helper: Plugin's scroll_helper instance
+
+        Returns:
+            The generated cached_image or None
+        """
+        original_image = None
+        try:
+            # Save display state to restore after
+            original_image = self.display_manager.image.copy()
+
+            # Method 1: Try _create_scrolling_display (stocks pattern)
+            if hasattr(plugin, '_create_scrolling_display'):
+                logger.info(
+                    "[%s] Triggering via _create_scrolling_display()",
+                    plugin_id
+                )
+                try:
+                    plugin._create_scrolling_display()
+                    cached_image = getattr(scroll_helper, 'cached_image', None)
+                    if cached_image is not None and isinstance(cached_image, Image.Image):
+                        logger.info(
+                            "[%s] _create_scrolling_display() SUCCESS: %dx%d",
+                            plugin_id, cached_image.width, cached_image.height
+                        )
+                        return cached_image
+                except Exception as e:
+                    logger.info(
+                        "[%s] _create_scrolling_display() failed: %s",
+                        plugin_id, e
+                    )
+
+            # Method 2: Try display(force_clear=True) which typically builds scroll content
+            if hasattr(plugin, 'display'):
+                logger.info(
+                    "[%s] Triggering via display(force_clear=True)",
+                    plugin_id
+                )
+                try:
+                    self.display_manager.clear()
+                    plugin.display(force_clear=True)
+                    cached_image = getattr(scroll_helper, 'cached_image', None)
+                    if cached_image is not None and isinstance(cached_image, Image.Image):
+                        logger.info(
+                            "[%s] display(force_clear=True) SUCCESS: %dx%d",
+                            plugin_id, cached_image.width, cached_image.height
+                        )
+                        return cached_image
+                    logger.info(
+                        "[%s] display(force_clear=True) did not populate cached_image",
+                        plugin_id
+                    )
+                except Exception as e:
+                    logger.info(
+                        "[%s] display(force_clear=True) failed: %s",
+                        plugin_id, e
+                    )
+
+            logger.info(
+                "[%s] Could not trigger scroll content generation",
+                plugin_id
+            )
+            return None
+
+        except Exception as e:
+            logger.warning(
+                "[%s] Error triggering scroll content: %s",
+                plugin_id, e
+            )
+            return None
+
+        finally:
+            # Restore original display state
+            if original_image is not None:
+                self.display_manager.image = original_image
 
     def _capture_display_content(
         self, plugin: 'BasePlugin', plugin_id: str
