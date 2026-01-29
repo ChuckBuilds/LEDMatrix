@@ -53,6 +53,16 @@
         }
     }
 
+    // Deterministic color class mapping to avoid Tailwind JIT purging
+    const STRENGTH_COLORS = {
+        gray: 'bg-gray-300',
+        red: 'bg-red-500',
+        orange: 'bg-orange-500',
+        yellow: 'bg-yellow-500',
+        lime: 'bg-lime-500',
+        green: 'bg-green-500'
+    };
+
     function calculateStrength(password, options) {
         if (!password) return { score: 0, label: '', color: 'gray' };
 
@@ -143,20 +153,21 @@
             // Strength indicator
             if (showStrength) {
                 const strength = calculateStrength(currentValue, xOptions);
+                const colorClass = STRENGTH_COLORS[strength.color] || STRENGTH_COLORS.gray;
                 html += `
                     <div id="${fieldId}_strength" class="mt-2 ${currentValue ? '' : 'hidden'}">
                         <div class="flex gap-1 mb-1">
                             <div class="h-1 flex-1 rounded bg-gray-200">
-                                <div id="${fieldId}_bar0" class="h-full rounded ${strength.score >= 1 ? 'bg-' + strength.color + '-500' : ''}" style="width: ${strength.score >= 1 ? '100%' : '0'}"></div>
+                                <div id="${fieldId}_bar0" class="h-full rounded ${strength.score >= 1 ? colorClass : ''}" style="width: ${strength.score >= 1 ? '100%' : '0'}"></div>
                             </div>
                             <div class="h-1 flex-1 rounded bg-gray-200">
-                                <div id="${fieldId}_bar1" class="h-full rounded ${strength.score >= 2 ? 'bg-' + strength.color + '-500' : ''}" style="width: ${strength.score >= 2 ? '100%' : '0'}"></div>
+                                <div id="${fieldId}_bar1" class="h-full rounded ${strength.score >= 2 ? colorClass : ''}" style="width: ${strength.score >= 2 ? '100%' : '0'}"></div>
                             </div>
                             <div class="h-1 flex-1 rounded bg-gray-200">
-                                <div id="${fieldId}_bar2" class="h-full rounded ${strength.score >= 3 ? 'bg-' + strength.color + '-500' : ''}" style="width: ${strength.score >= 3 ? '100%' : '0'}"></div>
+                                <div id="${fieldId}_bar2" class="h-full rounded ${strength.score >= 3 ? colorClass : ''}" style="width: ${strength.score >= 3 ? '100%' : '0'}"></div>
                             </div>
                             <div class="h-1 flex-1 rounded bg-gray-200">
-                                <div id="${fieldId}_bar3" class="h-full rounded ${strength.score >= 4 ? 'bg-' + strength.color + '-500' : ''}" style="width: ${strength.score >= 4 ? '100%' : '0'}"></div>
+                                <div id="${fieldId}_bar3" class="h-full rounded ${strength.score >= 4 ? colorClass : ''}" style="width: ${strength.score >= 4 ? '100%' : '0'}"></div>
                             </div>
                         </div>
                         <span id="${fieldId}_strength_label" class="text-xs text-gray-500">${strength.label}</span>
@@ -256,15 +267,8 @@
                         strengthEl.classList.remove('hidden');
                         const strength = calculateStrength(value, { minLength });
 
-                        // Update bars
-                        const colors = {
-                            red: 'bg-red-500',
-                            orange: 'bg-orange-500',
-                            yellow: 'bg-yellow-500',
-                            lime: 'bg-lime-500',
-                            green: 'bg-green-500'
-                        };
-                        const colorClass = colors[strength.color] || 'bg-gray-300';
+                        // Update bars using shared color mapping
+                        const colorClass = STRENGTH_COLORS[strength.color] || STRENGTH_COLORS.gray;
 
                         for (let i = 0; i < 4; i++) {
                             const bar = document.getElementById(`${safeId}_bar${i}`);

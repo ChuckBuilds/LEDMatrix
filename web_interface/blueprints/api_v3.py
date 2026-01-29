@@ -463,6 +463,77 @@ def save_main_config():
                     current_config['display']['dynamic_duration'] = {}
                 current_config['display']['dynamic_duration']['max_duration_seconds'] = int(data['max_dynamic_duration_seconds'])
 
+        # Handle Vegas scroll mode settings
+        vegas_fields = ['vegas_scroll_enabled', 'vegas_scroll_speed', 'vegas_separator_width',
+                       'vegas_target_fps', 'vegas_buffer_ahead', 'vegas_plugin_order', 'vegas_excluded_plugins']
+
+        if any(k in data for k in vegas_fields):
+            if 'display' not in current_config:
+                current_config['display'] = {}
+            if 'vegas_scroll' not in current_config['display']:
+                current_config['display']['vegas_scroll'] = {}
+
+            vegas_config = current_config['display']['vegas_scroll']
+
+            # Ensure a default enabled value exists on first init
+            vegas_config.setdefault('enabled', True)
+
+            # Handle enabled checkbox only when explicitly provided
+            # (HTML checkbox sends "on" string when checked, omits key when unchecked)
+            if 'vegas_scroll_enabled' in data:
+                enabled_value = data['vegas_scroll_enabled']
+                vegas_config['enabled'] = enabled_value in (True, 'on', 'true', '1', 1)
+
+            # Handle numeric settings with validation
+            numeric_fields = {
+                'vegas_scroll_speed': ('scroll_speed', 1, 100),
+                'vegas_separator_width': ('separator_width', 0, 500),
+                'vegas_target_fps': ('target_fps', 1, 200),
+                'vegas_buffer_ahead': ('buffer_ahead', 1, 20),
+            }
+            for field_name, (config_key, min_val, max_val) in numeric_fields.items():
+                if field_name in data:
+                    raw_value = data[field_name]
+                    # Skip empty strings (treat as "not provided")
+                    if raw_value == '' or raw_value is None:
+                        continue
+                    try:
+                        int_value = int(raw_value)
+                    except (ValueError, TypeError):
+                        return jsonify({
+                            'status': 'error',
+                            'message': f"Invalid value for {field_name}: must be an integer"
+                        }), 400
+                    if not (min_val <= int_value <= max_val):
+                        return jsonify({
+                            'status': 'error',
+                            'message': f"Invalid value for {field_name}: must be between {min_val} and {max_val}"
+                        }), 400
+                    vegas_config[config_key] = int_value
+
+            # Handle plugin order and exclusions (JSON arrays)
+            if 'vegas_plugin_order' in data:
+                try:
+                    if isinstance(data['vegas_plugin_order'], str):
+                        parsed = json.loads(data['vegas_plugin_order'])
+                    else:
+                        parsed = data['vegas_plugin_order']
+                    # Ensure result is a list
+                    vegas_config['plugin_order'] = list(parsed) if isinstance(parsed, (list, tuple)) else []
+                except (json.JSONDecodeError, TypeError, ValueError):
+                    vegas_config['plugin_order'] = []
+
+            if 'vegas_excluded_plugins' in data:
+                try:
+                    if isinstance(data['vegas_excluded_plugins'], str):
+                        parsed = json.loads(data['vegas_excluded_plugins'])
+                    else:
+                        parsed = data['vegas_excluded_plugins']
+                    # Ensure result is a list
+                    vegas_config['excluded_plugins'] = list(parsed) if isinstance(parsed, (list, tuple)) else []
+                except (json.JSONDecodeError, TypeError, ValueError):
+                    vegas_config['excluded_plugins'] = []
+
         # Handle display durations
         duration_fields = [k for k in data.keys() if k.endswith('_duration') or k in ['default_duration', 'transition_duration']]
         if duration_fields:
@@ -1435,6 +1506,31 @@ def get_installed_plugins():
             # Get web_ui_actions from manifest if available
             web_ui_actions = plugin_info.get('web_ui_actions', [])
 
+            # Get Vegas display mode info from plugin instance
+            vegas_mode = None
+            vegas_content_type = None
+            plugin_instance = api_v3.plugin_manager.get_plugin(plugin_id)
+            if plugin_instance:
+                try:
+                    # Try to get the display mode enum
+                    if hasattr(plugin_instance, 'get_vegas_display_mode'):
+                        mode = plugin_instance.get_vegas_display_mode()
+                        vegas_mode = mode.value if hasattr(mode, 'value') else str(mode)
+                except (AttributeError, TypeError, ValueError) as e:
+                    logger.debug("[%s] Failed to get vegas_display_mode: %s", plugin_id, e)
+                try:
+                    # Get legacy content type as fallback
+                    if hasattr(plugin_instance, 'get_vegas_content_type'):
+                        vegas_content_type = plugin_instance.get_vegas_content_type()
+                except (AttributeError, TypeError, ValueError) as e:
+                    logger.debug("[%s] Failed to get vegas_content_type: %s", plugin_id, e)
+
+            # Also check plugin config for explicit vegas_mode setting
+            if api_v3.config_manager:
+                plugin_cfg = full_config.get(plugin_id, {})
+                if 'vegas_mode' in plugin_cfg:
+                    vegas_mode = plugin_cfg['vegas_mode']
+
             plugins.append({
                 'id': plugin_id,
                 'name': plugin_info.get('name', plugin_id),
@@ -1449,7 +1545,9 @@ def get_installed_plugins():
                 'last_commit': last_commit,
                 'last_commit_message': last_commit_message,
                 'branch': branch,
-                'web_ui_actions': web_ui_actions
+                'web_ui_actions': web_ui_actions,
+                'vegas_mode': vegas_mode,
+                'vegas_content_type': vegas_content_type
             })
 
         return jsonify({'status': 'success', 'data': {'plugins': plugins}})
