@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Dict, Any, List, Optional
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed  # pylint: disable=no-name-in-module
+import pytz
 
 # Core system imports only - all functionality now handled via plugins
 from src.display_manager import DisplayManager
@@ -334,7 +335,12 @@ class DisplayController:
         # Schedule management
         self.is_display_active = True
         self._was_display_active = True  # Track previous state for schedule change detection
-        
+
+        # Brightness state tracking for dim schedule
+        self.current_brightness = self.config.get('display', {}).get('hardware', {}).get('brightness', 90)
+        self.is_dimmed = False
+        self._was_dimmed = False
+
         # Publish initial on-demand state
         try:
             self._publish_on_demand_state()
@@ -445,8 +451,17 @@ class DisplayController:
             self._was_display_active = True  # Track previous state for schedule change detection
             logger.debug("Schedule is disabled - display always active")
             return
-            
-        current_time = datetime.now()
+
+        # Get configured timezone, default to UTC
+        timezone_str = self.config.get('timezone', 'UTC')
+        try:
+            tz = pytz.timezone(timezone_str)
+        except pytz.UnknownTimeZoneError:
+            logger.warning(f"Unknown timezone '{timezone_str}', using UTC")
+            tz = pytz.UTC
+
+        # Use timezone-aware current time
+        current_time = datetime.now(tz)
         current_day = current_time.strftime('%A').lower()  # Get day name (monday, tuesday, etc.)
         current_time_only = current_time.time()
         
@@ -523,10 +538,93 @@ class DisplayController:
             self._was_display_active = self.is_display_active
                 
         except ValueError as e:
-            logger.warning("Invalid schedule format for %s schedule: %s (start: %s, end: %s). Defaulting to active.", 
+            logger.warning("Invalid schedule format for %s schedule: %s (start: %s, end: %s). Defaulting to active.",
                          schedule_type, e, start_time_str, end_time_str)
             self.is_display_active = True
             self._was_display_active = True  # Track previous state for schedule change detection
+
+    def _check_dim_schedule(self) -> int:
+        """
+        Check if display should be dimmed based on dim schedule.
+
+        Returns:
+            Target brightness level (dim_brightness if in dim period,
+            normal brightness otherwise)
+        """
+        # Get normal brightness from config
+        normal_brightness = self.config.get('display', {}).get('hardware', {}).get('brightness', 90)
+
+        # If display is OFF via schedule, don't process dim schedule
+        if not self.is_display_active:
+            self.is_dimmed = False
+            return normal_brightness
+
+        dim_config = self.config.get('dim_schedule', {})
+
+        # If dim schedule doesn't exist or is disabled, use normal brightness
+        if not dim_config or not dim_config.get('enabled', False):
+            self.is_dimmed = False
+            return normal_brightness
+
+        # Get configured timezone
+        timezone_str = self.config.get('timezone', 'UTC')
+        try:
+            tz = pytz.timezone(timezone_str)
+        except pytz.UnknownTimeZoneError:
+            logger.warning(f"Unknown timezone '{timezone_str}' in dim schedule, using UTC")
+            tz = pytz.UTC
+
+        current_time = datetime.now(tz)
+        current_day = current_time.strftime('%A').lower()
+        current_time_only = current_time.time()
+
+        # Determine if using per-day or global dim schedule
+        mode = dim_config.get('mode', 'global')
+        days_config = dim_config.get('days')
+        use_per_day = mode == 'per-day' and days_config and current_day in days_config
+
+        if use_per_day:
+            day_config = days_config[current_day]
+            if not day_config.get('enabled', True):
+                self.is_dimmed = False
+                return normal_brightness
+            start_time_str = day_config.get('start_time', '20:00')
+            end_time_str = day_config.get('end_time', '07:00')
+        else:
+            start_time_str = dim_config.get('start_time', '20:00')
+            end_time_str = dim_config.get('end_time', '07:00')
+
+        try:
+            start_time = datetime.strptime(start_time_str, '%H:%M').time()
+            end_time = datetime.strptime(end_time_str, '%H:%M').time()
+
+            # Determine if currently in dim period
+            if start_time <= end_time:
+                # Same-day schedule (e.g., 10:00 to 18:00)
+                in_dim_period = start_time <= current_time_only <= end_time
+            else:
+                # Overnight schedule (e.g., 20:00 to 07:00)
+                in_dim_period = current_time_only >= start_time or current_time_only <= end_time
+
+            if in_dim_period:
+                self.is_dimmed = True
+                target_brightness = dim_config.get('dim_brightness', 30)
+            else:
+                self.is_dimmed = False
+                target_brightness = normal_brightness
+
+            # Log state changes
+            if self.is_dimmed and not self._was_dimmed:
+                logger.info(f"Dim schedule activated: brightness set to {target_brightness}%")
+            elif not self.is_dimmed and self._was_dimmed:
+                logger.info(f"Dim schedule deactivated: brightness restored to {target_brightness}%")
+
+            self._was_dimmed = self.is_dimmed
+            return target_brightness
+
+        except ValueError as e:
+            logger.warning(f"Invalid dim schedule time format: {e}")
+            return normal_brightness
 
     def _update_modules(self):
         """Update all plugin modules."""
@@ -1183,6 +1281,13 @@ class DisplayController:
                     self.is_display_active = True
                 elif not self.on_demand_active and self.on_demand_schedule_override:
                     self.on_demand_schedule_override = False
+
+                # Check dim schedule and apply brightness (only when display is active)
+                if self.is_display_active:
+                    target_brightness = self._check_dim_schedule()
+                    if target_brightness != self.current_brightness:
+                        if self.display_manager.set_brightness(target_brightness):
+                            self.current_brightness = target_brightness
 
                 if not self.is_display_active:
                     # Clear display when schedule makes it inactive to ensure blank screen

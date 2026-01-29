@@ -43,6 +43,50 @@
             }
         }
     },
+    "dim_schedule": {
+        "enabled": false,
+        "dim_brightness": 30,
+        "mode": "global",
+        "start_time": "20:00",
+        "end_time": "07:00",
+        "days": {
+            "monday": {
+                "enabled": true,
+                "start_time": "20:00",
+                "end_time": "07:00"
+            },
+            "tuesday": {
+                "enabled": true,
+                "start_time": "20:00",
+                "end_time": "07:00"
+            },
+            "wednesday": {
+                "enabled": true,
+                "start_time": "20:00",
+                "end_time": "07:00"
+            },
+            "thursday": {
+                "enabled": true,
+                "start_time": "20:00",
+                "end_time": "07:00"
+            },
+            "friday": {
+                "enabled": true,
+                "start_time": "20:00",
+                "end_time": "07:00"
+            },
+            "saturday": {
+                "enabled": true,
+                "start_time": "20:00",
+                "end_time": "07:00"
+            },
+            "sunday": {
+                "enabled": true,
+                "start_time": "20:00",
+                "end_time": "07:00"
+            }
+        }
+    },
     "timezone": "America/Chicago",
     "location": {
         "city": "Dallas",

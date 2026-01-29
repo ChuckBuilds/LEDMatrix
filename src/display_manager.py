@@ -174,6 +174,46 @@ class DisplayManager:
         else:
             return 32  # Default fallback height
 
+    def set_brightness(self, brightness: int) -> bool:
+        """
+        Set display brightness at runtime.
+
+        Args:
+            brightness: Brightness level (0-100)
+
+        Returns:
+            True if brightness was set successfully, False otherwise
+        """
+        try:
+            if self.matrix is None:
+                logger.warning("Cannot set brightness in fallback mode")
+                return False
+
+            # Clamp to valid range
+            brightness = max(0, min(100, brightness))
+
+            # RGBMatrix accepts brightness as a property
+            self.matrix.brightness = brightness
+            logger.info(f"Display brightness set to {brightness}%")
+            return True
+        except Exception as e:
+            logger.error(f"Error setting brightness: {e}")
+            return False
+
+    def get_brightness(self) -> int:
+        """
+        Get current display brightness.
+
+        Returns:
+            Current brightness level (0-100), or -1 if unavailable
+        """
+        try:
+            if self.matrix is None:
+                return -1
+            return self.matrix.brightness
+        except Exception:
+            return -1
+
     def _draw_test_pattern(self):
         """Draw a test pattern to verify the display is working."""
         try:

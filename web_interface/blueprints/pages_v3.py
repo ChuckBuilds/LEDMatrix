@@ -140,8 +140,13 @@ def _load_schedule_partial():
         if pages_v3.config_manager:
             main_config = pages_v3.config_manager.load_config()
             schedule_config = main_config.get('schedule', {})
+            dim_schedule_config = main_config.get('dim_schedule', {})
+            # Get normal brightness for display in dim schedule UI
+            normal_brightness = main_config.get('display', {}).get('hardware', {}).get('brightness', 90)
             return render_template('v3/partials/schedule.html',
-                                 schedule_config=schedule_config)
+                                 schedule_config=schedule_config,
+                                 dim_schedule_config=dim_schedule_config,
+                                 normal_brightness=normal_brightness)
     except Exception as e:
         return f"Error: {str(e)}", 500
 
