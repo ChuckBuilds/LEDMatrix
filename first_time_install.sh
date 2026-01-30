@@ -666,16 +666,10 @@ cd "$PROJECT_ROOT_DIR"
 if [ -f "$PROJECT_ROOT_DIR/requirements.txt" ]; then
     echo "Reading requirements from: $PROJECT_ROOT_DIR/requirements.txt"
     
-    # Check pip version and upgrade if needed
+    # Check pip version (apt-installed pip is sufficient, no upgrade needed)
     echo "Checking pip version..."
     python3 -m pip --version
-    
-    # Upgrade pip for better compatibility (setuptools/wheel are already installed via apt)
-    echo "Upgrading pip..."
-    python3 -m pip install --break-system-packages --upgrade pip || {
-        echo "⚠ Warning: Failed to upgrade pip, continuing anyway..."
-    }
-    
+
     # Count total packages for progress
     TOTAL_PACKAGES=$(grep -v '^#' "$PROJECT_ROOT_DIR/requirements.txt" | grep -v '^$' | wc -l)
     echo "Found $TOTAL_PACKAGES package(s) to install"
