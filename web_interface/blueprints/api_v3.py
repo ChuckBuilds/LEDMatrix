@@ -65,6 +65,29 @@ def _save_config_atomic(config_manager, config_data, create_backup=True):
         except Exception as e:
             return False, str(e)
 
+def _coerce_to_bool(value):
+    """
+    Coerce a form value to a proper Python boolean.
+
+    HTML checkboxes send string values like "true", "on", "1" when checked.
+    This ensures we store actual booleans in config JSON, not strings.
+
+    Args:
+        value: The form value (string, bool, int, or None)
+
+    Returns:
+        bool: True if value represents a truthy checkbox state, False otherwise
+    """
+    if value is None:
+        return False
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int):
+        return value == 1
+    if isinstance(value, str):
+        return value.lower() in ('true', 'on', '1', 'yes')
+    return False
+
 def _get_display_service_status():
     """Return status information about the ledmatrix service."""
     try:
@@ -612,7 +635,7 @@ def save_main_config():
 
         if is_general_update:
             # For checkbox: if not present in data during general update, it means unchecked
-            current_config['web_display_autostart'] = data.get('web_display_autostart', False)
+            current_config['web_display_autostart'] = _coerce_to_bool(data.get('web_display_autostart'))
 
         if 'timezone' in data:
             current_config['timezone'] = data['timezone']
@@ -633,10 +656,10 @@ def save_main_config():
             if 'plugin_system' not in current_config:
                 current_config['plugin_system'] = {}
 
-            # Handle plugin system checkboxes
+            # Handle plugin system checkboxes - always set to handle unchecked state
+            # HTML checkboxes omit the key when unchecked, so missing key = unchecked = False
             for checkbox in ['auto_discover', 'auto_load_enabled', 'development_mode']:
-                if checkbox in data:
-                    current_config['plugin_system'][checkbox] = data.get(checkbox, False)
+                current_config['plugin_system'][checkbox] = _coerce_to_bool(data.get(checkbox))
 
             # Handle plugins_directory
             if 'plugins_directory' in data:
@@ -670,13 +693,12 @@ def save_main_config():
             if 'gpio_slowdown' in data:
                 current_config['display']['runtime']['gpio_slowdown'] = int(data['gpio_slowdown'])
 
-            # Handle checkboxes
+            # Handle checkboxes - coerce to bool to ensure proper JSON types
             for checkbox in ['disable_hardware_pulsing', 'inverse_colors', 'show_refresh_rate']:
-                current_config['display']['hardware'][checkbox] = data.get(checkbox, False)
+                current_config['display']['hardware'][checkbox] = _coerce_to_bool(data.get(checkbox))
 
-            # Handle display-level checkboxes
-            if 'use_short_date_format' in data:
-                current_config['display']['use_short_date_format'] = data.get('use_short_date_format', False)
+            # Handle display-level checkboxes (always set to handle unchecked state)
+            current_config['display']['use_short_date_format'] = _coerce_to_bool(data.get('use_short_date_format'))
 
             # Handle dynamic duration settings
             if 'max_dynamic_duration_seconds' in data:
@@ -696,14 +718,11 @@ def save_main_config():
 
             vegas_config = current_config['display']['vegas_scroll']
 
-            # Ensure a default enabled value exists on first init
-            vegas_config.setdefault('enabled', True)
-
-            # Handle enabled checkbox only when explicitly provided
-            # (HTML checkbox sends "on" string when checked, omits key when unchecked)
-            if 'vegas_scroll_enabled' in data:
-                enabled_value = data['vegas_scroll_enabled']
-                vegas_config['enabled'] = enabled_value in (True, 'on', 'true', '1', 1)
+            # Handle enabled checkbox
+            # HTML checkboxes omit the key entirely when unchecked, so if the form
+            # was submitted (any vegas field present) but enabled key is missing,
+            # the checkbox was unchecked and we should set enabled=False
+            vegas_config['enabled'] = _coerce_to_bool(data.get('vegas_scroll_enabled'))
 
             # Handle numeric settings with validation
             numeric_fields = {
