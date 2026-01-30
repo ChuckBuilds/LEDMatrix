@@ -115,6 +115,18 @@
     }
 
     /**
+     * Normalize mode value to handle both 'per_day' and 'per-day' variants.
+     */
+    function normalizeMode(mode) {
+        if (!mode || typeof mode !== 'string') {
+            return 'global';
+        }
+        // Normalize: replace hyphens with underscores and check for per_day
+        const normalized = mode.trim().toLowerCase().replace(/-/g, '_');
+        return normalized === 'per_day' ? 'per_day' : 'global';
+    }
+
+    /**
      * Merge user value with defaults
      */
     function normalizeSchedule(value) {
@@ -125,7 +137,7 @@
 
         const schedule = {
             enabled: coerceToBoolean(value.enabled),
-            mode: value.mode === 'per_day' ? 'per_day' : 'global',
+            mode: normalizeMode(value.mode),
             start_time: value.start_time || defaults.start_time,
             end_time: value.end_time || defaults.end_time,
             days: {}
