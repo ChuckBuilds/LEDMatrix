@@ -100,6 +100,21 @@
     }
 
     /**
+     * Coerce a value to boolean, handling string 'true'/'false' values
+     * that may come from config files or form submissions.
+     */
+    function coerceToBoolean(value) {
+        if (typeof value === 'boolean') {
+            return value;
+        }
+        if (typeof value === 'string') {
+            const trimmed = value.trim().toLowerCase();
+            return trimmed === 'true' || trimmed === '1' || trimmed === 'on';
+        }
+        return Boolean(value);
+    }
+
+    /**
      * Merge user value with defaults
      */
     function normalizeSchedule(value) {
@@ -109,7 +124,7 @@
         }
 
         const schedule = {
-            enabled: value.enabled === true,
+            enabled: coerceToBoolean(value.enabled),
             mode: value.mode === 'per_day' ? 'per_day' : 'global',
             start_time: value.start_time || defaults.start_time,
             end_time: value.end_time || defaults.end_time,
@@ -119,8 +134,10 @@
         // Merge days
         DAYS.forEach(day => {
             const dayConfig = (value.days && value.days[day]) || defaults.days[day];
+            // Use coerceToBoolean but default to true if enabled is undefined
+            const dayEnabled = dayConfig.enabled === undefined ? true : coerceToBoolean(dayConfig.enabled);
             schedule.days[day] = {
-                enabled: dayConfig.enabled !== false,
+                enabled: dayEnabled,
                 start_time: dayConfig.start_time || defaults.days[day].start_time,
                 end_time: dayConfig.end_time || defaults.days[day].end_time
             };
