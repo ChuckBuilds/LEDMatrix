@@ -804,12 +804,14 @@ echo ""
 # Install web interface dependencies
 echo "Installing web interface dependencies..."
 if [ -f "$PROJECT_ROOT_DIR/web_interface/requirements.txt" ]; then
-    python3 -m pip install --break-system-packages -r "$PROJECT_ROOT_DIR/web_interface/requirements.txt" || {
+    if python3 -m pip install --break-system-packages -r "$PROJECT_ROOT_DIR/web_interface/requirements.txt"; then
+        echo "✓ Web interface dependencies installed"
+        # Create marker file to indicate dependencies are installed
+        touch "$PROJECT_ROOT_DIR/.web_deps_installed"
+    else
         echo "⚠ Warning: Some web interface dependencies failed to install"
-    }
-    echo "✓ Web interface dependencies installed"
-    # Create marker file to indicate dependencies are installed
-    touch "$PROJECT_ROOT_DIR/.web_deps_installed"
+        echo "  The web interface may not work correctly until dependencies are installed"
+    fi
 else
     echo "⚠ web_interface/requirements.txt not found; skipping"
 fi
