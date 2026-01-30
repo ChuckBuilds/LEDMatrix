@@ -303,4 +303,4 @@ cp config/backups/config_20240115_120000.json config/config.json
 2. Enable debug: `LEDMATRIX_DEBUG=1`
 3. Check error dashboard: `/api/v3/errors/summary`
 4. Validate JSON: https://jsonlint.com/
-5. File an issue: https://github.com/anthropics/claude-code/issues
+5. File an issue: https://github.com/ChuckBuilds/LEDMatrix/issues

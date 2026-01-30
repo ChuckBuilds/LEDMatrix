@@ -107,10 +107,11 @@ class TestTypeValidation:
         """Null value for required field should be detected."""
         schema_manager = SchemaManager()
 
+        # Schema that explicitly disallows null for api_key
         schema = {
             "type": "object",
             "properties": {
-                "api_key": {"type": "string"}
+                "api_key": {"type": "string"}  # string type doesn't allow null
             },
             "required": ["api_key"]
         }
@@ -120,8 +121,11 @@ class TestTypeValidation:
         is_valid, errors = schema_manager.validate_config_against_schema(
             config, schema, "test-plugin"
         )
-        # JSON Schema treats null as a valid type, but this should be validated
-        # at the application level for required fields
+        # JSON Schema Draft 7: null is not a valid string type
+        assert not is_valid, "Null value should fail validation for string type"
+        assert errors, "Should have validation errors"
+        assert any("api_key" in str(e).lower() or "null" in str(e).lower() or "type" in str(e).lower() for e in errors), \
+            f"Error should mention api_key, null, or type issue: {errors}"
 
 
 class TestNestedValidation:

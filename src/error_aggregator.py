@@ -110,7 +110,7 @@ class ErrorAggregator:
         self._plugin_error_counts: Dict[str, Dict[str, int]] = defaultdict(lambda: defaultdict(int))
         self._patterns: Dict[str, ErrorPattern] = {}
         self._pattern_callbacks: List[Callable[[ErrorPattern], None]] = []
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()  # RLock allows nested acquisition for export_to_file
 
         # Track session start for relative timing
         self._session_start = datetime.now()

@@ -300,12 +300,22 @@ class PluginManager:
                 config = {}
             
             # Check if plugin has a config schema
-            schema = self.schema_manager.load_schema(plugin_id)
-            if schema is None:
+            schema_path = self.schema_manager.get_schema_path(plugin_id)
+            if schema_path is None:
+                # Schema file doesn't exist
                 self.logger.warning(
                     f"Plugin '{plugin_id}' has no config_schema.json - configuration will not be validated. "
                     f"Consider adding a schema file for better error detection and user experience."
                 )
+            else:
+                # Schema file exists, try to load it
+                schema = self.schema_manager.load_schema(plugin_id)
+                if schema is None:
+                    # Schema exists but couldn't be loaded (likely invalid JSON or schema)
+                    self.logger.warning(
+                        f"Plugin '{plugin_id}' has a config_schema.json but it could not be loaded. "
+                        f"The schema may be invalid. Please verify the schema file at: {schema_path}"
+                    )
 
             # Merge config with schema defaults to ensure all defaults are applied
             try:

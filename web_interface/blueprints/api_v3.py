@@ -6485,11 +6485,36 @@ def clear_old_errors():
     Clear error records older than specified age.
 
     Request body (optional):
-        max_age_hours: Maximum age in hours (default: 24)
+        max_age_hours: Maximum age in hours (default: 24, max: 8760 = 1 year)
     """
     try:
         data = request.get_json(silent=True) or {}
-        max_age_hours = data.get('max_age_hours', 24)
+        raw_max_age = data.get('max_age_hours', 24)
+
+        # Validate and coerce max_age_hours
+        try:
+            max_age_hours = int(raw_max_age)
+            if max_age_hours < 1:
+                return error_response(
+                    error_code=ErrorCode.INVALID_INPUT,
+                    message="max_age_hours must be at least 1",
+                    context={'provided_value': raw_max_age},
+                    status_code=400
+                )
+            if max_age_hours > 8760:  # 1 year max
+                return error_response(
+                    error_code=ErrorCode.INVALID_INPUT,
+                    message="max_age_hours cannot exceed 8760 (1 year)",
+                    context={'provided_value': raw_max_age},
+                    status_code=400
+                )
+        except (ValueError, TypeError):
+            return error_response(
+                error_code=ErrorCode.INVALID_INPUT,
+                message="max_age_hours must be a valid integer",
+                context={'provided_value': str(raw_max_age)},
+                status_code=400
+            )
 
         aggregator = get_error_aggregator()
         cleared_count = aggregator.clear_old_records(max_age_hours=max_age_hours)

@@ -328,7 +328,6 @@ class TestErrorAggregation:
 
         # Get the aggregator
         aggregator = get_error_aggregator()
-        initial_count = len(aggregator._records)
 
         with patch('src.common.permission_utils.ensure_directory_permissions'):
             manager = PluginManager(
