@@ -113,9 +113,7 @@
         "runtime": {
             "gpio_slowdown": 3
         },
-        "display_durations": {
-            "calendar": 30
-        },
+        "display_durations": {},
         "use_short_date_format": true,
         "vegas_scroll": {
             "enabled": false,
