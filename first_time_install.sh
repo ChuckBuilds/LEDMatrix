@@ -220,11 +220,13 @@ echo "1. Install system dependencies"
 echo "2. Fix cache permissions"
 echo "3. Fix assets directory permissions"
 echo "3.1. Fix plugin directory permissions"
-echo "4. Install main LED Matrix service"
+echo "4. Ensure configuration files exist"
 echo "5. Install Python project dependencies (requirements.txt)"
 echo "6. Build and install rpi-rgb-led-matrix and test import"
 echo "7. Install web interface dependencies"
+echo "7.5. Install main LED Matrix service"
 echo "8. Install web interface service"
+echo "8.1. Harden systemd unit file permissions"
 echo "8.5. Install WiFi monitor service"
 echo "9. Configure web interface permissions"
 echo "10. Configure passwordless sudo access"
@@ -511,43 +513,9 @@ find "$PLUGIN_REPOS_DIR" -type f -exec chmod 664 {} \;
 echo "✓ Plugin-repos directory permissions fixed"
 echo ""
 
-CURRENT_STEP="Install main LED Matrix service"
-echo "Step 4: Installing main LED Matrix service..."
-echo "---------------------------------------------"
-
-# Run the main service installation (idempotent)
-# Note: install_service.sh always overwrites the service file, so it will update paths automatically
-if [ -f "$PROJECT_ROOT_DIR/scripts/install/install_service.sh" ]; then
-    echo "Running main service installation/update..."
-    bash "$PROJECT_ROOT_DIR/scripts/install/install_service.sh"
-    echo "✓ Main LED Matrix service installed/updated"
-else
-    echo "✗ Main service installation script not found at $PROJECT_ROOT_DIR/scripts/install/install_service.sh"
-    echo "Please ensure you are running this script from the project root: $PROJECT_ROOT_DIR"
-    exit 1
-fi
-
-# Configure Python capabilities for hardware timing
-echo "Configuring Python capabilities for hardware timing..."
-if [ -f "/usr/bin/python3.13" ]; then
-    sudo setcap 'cap_sys_nice=eip' /usr/bin/python3.13 2>/dev/null || echo "⚠ Could not set cap_sys_nice on python3.13 (may need manual setup)"
-    echo "✓ Python3.13 capabilities configured"
-elif [ -f "/usr/bin/python3" ]; then
-    PYTHON_VER=$(python3 --version 2>&1 | grep -oP '(?<=Python )\d\.\d+' || echo "unknown")
-    if command -v setcap >/dev/null 2>&1; then
-        sudo setcap 'cap_sys_nice=eip' /usr/bin/python3 2>/dev/null || echo "⚠ Could not set cap_sys_nice on python3"
-        echo "✓ Python3 capabilities configured (version: $PYTHON_VER)"
-    else
-        echo "⚠ setcap not found, skipping capability configuration"
-    fi
-else
-    echo "⚠ Python3 not found, skipping capability configuration"
-fi
-echo ""
-
 CURRENT_STEP="Ensure configuration files exist"
-echo "Step 4.1: Ensuring configuration files exist..."
-echo "------------------------------------------------"
+echo "Step 4: Ensuring configuration files exist..."
+echo "----------------------------------------------"
 
 # Ensure config directory exists
 mkdir -p "$PROJECT_ROOT_DIR/config"
@@ -666,16 +634,10 @@ cd "$PROJECT_ROOT_DIR"
 if [ -f "$PROJECT_ROOT_DIR/requirements.txt" ]; then
     echo "Reading requirements from: $PROJECT_ROOT_DIR/requirements.txt"
     
-    # Check pip version and upgrade if needed
+    # Check pip version (apt-installed pip is sufficient, no upgrade needed)
     echo "Checking pip version..."
     python3 -m pip --version
-    
-    # Upgrade pip for better compatibility (setuptools/wheel are already installed via apt)
-    echo "Upgrading pip..."
-    python3 -m pip install --break-system-packages --upgrade pip || {
-        echo "⚠ Warning: Failed to upgrade pip, continuing anyway..."
-    }
-    
+
     # Count total packages for progress
     TOTAL_PACKAGES=$(grep -v '^#' "$PROJECT_ROOT_DIR/requirements.txt" | grep -v '^$' | wc -l)
     echo "Found $TOTAL_PACKAGES package(s) to install"
@@ -932,6 +894,57 @@ else
     # Create marker file to indicate dependencies are installed
     touch "$PROJECT_ROOT_DIR/.web_deps_installed"
     echo "✓ Web interface dependencies installed"
+fi
+echo ""
+
+CURRENT_STEP="Install main LED Matrix service"
+echo "Step 7.5: Installing main LED Matrix service..."
+echo "------------------------------------------------"
+
+# Run the main service installation (idempotent)
+# Note: install_service.sh always overwrites the service file, so it will update paths automatically
+# This step runs AFTER all Python dependencies are installed (Steps 5-7)
+if [ -f "$PROJECT_ROOT_DIR/scripts/install/install_service.sh" ]; then
+    echo "Running main service installation/update..."
+    bash "$PROJECT_ROOT_DIR/scripts/install/install_service.sh"
+    echo "✓ Main LED Matrix service installed/updated"
+else
+    echo "✗ Main service installation script not found at $PROJECT_ROOT_DIR/scripts/install/install_service.sh"
+    echo "Please ensure you are running this script from the project root: $PROJECT_ROOT_DIR"
+    exit 1
+fi
+
+# Configure Python capabilities for hardware timing
+echo "Configuring Python capabilities for hardware timing..."
+
+# Check if setcap is available first
+if ! command -v setcap >/dev/null 2>&1; then
+    echo "⚠ setcap not found, skipping capability configuration"
+    echo "  Install libcap2-bin if you need hardware timing capabilities"
+else
+    # Find the Python binary and resolve symlinks to get the real binary
+    PYTHON_BIN=""
+    PYTHON_VER=""
+    if [ -f "/usr/bin/python3.13" ]; then
+        PYTHON_BIN=$(readlink -f /usr/bin/python3.13)
+        PYTHON_VER="3.13"
+    elif [ -f "/usr/bin/python3" ]; then
+        PYTHON_BIN=$(readlink -f /usr/bin/python3)
+        PYTHON_VER=$(python3 --version 2>&1 | grep -oP '(?<=Python )\d+\.\d+' || echo "unknown")
+    fi
+
+    if [ -n "$PYTHON_BIN" ] && [ -f "$PYTHON_BIN" ]; then
+        echo "Setting cap_sys_nice on $PYTHON_BIN (Python $PYTHON_VER)..."
+        if sudo setcap 'cap_sys_nice=eip' "$PYTHON_BIN" 2>/dev/null; then
+            echo "✓ Python $PYTHON_VER capabilities configured ($PYTHON_BIN)"
+        else
+            echo "⚠ Could not set cap_sys_nice on $PYTHON_BIN"
+            echo "  This may require manual setup or running as root"
+            echo "  The LED display may have timing issues without this capability"
+        fi
+    else
+        echo "⚠ Python3 not found, skipping capability configuration"
+    fi
 fi
 echo ""
 
