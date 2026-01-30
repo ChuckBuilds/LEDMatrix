@@ -906,24 +906,31 @@ CURRENT_STEP="Install web interface dependencies"
 echo "Step 7: Installing web interface dependencies..."
 echo "------------------------------------------------"
 
-# Install web interface dependencies
-echo "Installing Python dependencies for web interface..."
-cd "$PROJECT_ROOT_DIR"
-
-# Try to install dependencies using the smart installer if available
-if [ -f "$PROJECT_ROOT_DIR/scripts/install_dependencies_apt.py" ]; then
-    echo "Using smart dependency installer..."
-    python3 "$PROJECT_ROOT_DIR/scripts/install_dependencies_apt.py"
+# Check if web dependencies were already installed (marker created in Step 5)
+if [ -f "$PROJECT_ROOT_DIR/.web_deps_installed" ]; then
+    echo "✓ Web interface dependencies already installed (marker file found)"
 else
-    echo "Using pip to install dependencies..."
-    if [ -f "$PROJECT_ROOT_DIR/requirements_web_v2.txt" ]; then
-        python3 -m pip install --break-system-packages -r requirements_web_v2.txt
-    else
-        echo "⚠ requirements_web_v2.txt not found; skipping web dependency install"
-    fi
-fi
+    # Install web interface dependencies
+    echo "Installing Python dependencies for web interface..."
+    cd "$PROJECT_ROOT_DIR"
 
-echo "✓ Web interface dependencies installed"
+    # Try to install dependencies using the smart installer if available
+    if [ -f "$PROJECT_ROOT_DIR/scripts/install_dependencies_apt.py" ]; then
+        echo "Using smart dependency installer..."
+        python3 "$PROJECT_ROOT_DIR/scripts/install_dependencies_apt.py"
+    else
+        echo "Using pip to install dependencies..."
+        if [ -f "$PROJECT_ROOT_DIR/requirements_web_v2.txt" ]; then
+            python3 -m pip install --break-system-packages -r requirements_web_v2.txt
+        else
+            echo "⚠ requirements_web_v2.txt not found; skipping web dependency install"
+        fi
+    fi
+
+    # Create marker file to indicate dependencies are installed
+    touch "$PROJECT_ROOT_DIR/.web_deps_installed"
+    echo "✓ Web interface dependencies installed"
+fi
 echo ""
 
 CURRENT_STEP="Install web interface service"
