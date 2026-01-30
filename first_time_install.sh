@@ -1212,19 +1212,21 @@ CURRENT_STEP="Normalize project file permissions"
 echo "Step 11.1: Normalizing project file and directory permissions..."
 echo "--------------------------------------------------------------"
 
-# Normalize directory permissions (exclude VCS metadata and plugin directories)
+# Normalize directory permissions (exclude VCS metadata, plugin directories, and compiled libraries)
 find "$PROJECT_ROOT_DIR" \
     -path "$PROJECT_ROOT_DIR/plugins" -prune -o \
     -path "$PROJECT_ROOT_DIR/plugin-repos" -prune -o \
     -path "$PROJECT_ROOT_DIR/scripts/dev/plugins" -prune -o \
+    -path "$PROJECT_ROOT_DIR/rpi-rgb-led-matrix-master" -prune -o \
     -path "*/.git*" -prune -o \
     -type d -exec chmod 755 {} \; 2>/dev/null || true
 
-# Set default file permissions (exclude plugin directories)
+# Set default file permissions (exclude plugin directories and compiled libraries)
 find "$PROJECT_ROOT_DIR" \
     -path "$PROJECT_ROOT_DIR/plugins" -prune -o \
     -path "$PROJECT_ROOT_DIR/plugin-repos" -prune -o \
     -path "$PROJECT_ROOT_DIR/scripts/dev/plugins" -prune -o \
+    -path "$PROJECT_ROOT_DIR/rpi-rgb-led-matrix-master" -prune -o \
     -path "*/.git*" -prune -o \
     -type f -exec chmod 644 {} \; 2>/dev/null || true
 
