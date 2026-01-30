@@ -136,13 +136,24 @@ class PluginManager:
     def discover_plugins(self) -> List[str]:
         """
         Discover all plugins in the plugins directory.
-        
+
+        Also checks for potential config key collisions and logs warnings.
+
         Returns:
             List of plugin IDs
         """
         self.logger.info("Discovering plugins in %s", self.plugins_dir)
         plugin_ids = self._scan_directory_for_plugins(self.plugins_dir)
         self.logger.info("Discovered %d plugin(s)", len(plugin_ids))
+
+        # Check for config key collisions
+        collisions = self.schema_manager.detect_config_key_collisions(plugin_ids)
+        for collision in collisions:
+            self.logger.warning(
+                "Config collision detected: %s",
+                collision.get('message', str(collision))
+            )
+
         return plugin_ids
 
     def _get_dependency_marker_path(self, plugin_id: str) -> Path:
@@ -288,6 +299,14 @@ class PluginManager:
             else:
                 config = {}
             
+            # Check if plugin has a config schema
+            schema = self.schema_manager.load_schema(plugin_id)
+            if schema is None:
+                self.logger.warning(
+                    f"Plugin '{plugin_id}' has no config_schema.json - configuration will not be validated. "
+                    f"Consider adding a schema file for better error detection and user experience."
+                )
+
             # Merge config with schema defaults to ensure all defaults are applied
             try:
                 defaults = self.schema_manager.generate_default_config(plugin_id, use_cache=True)

@@ -21,6 +21,7 @@ from src.web_interface.validators import (
     validate_image_url, validate_file_upload, validate_mime_type,
     validate_numeric_range, validate_string_length, sanitize_plugin_config
 )
+from src.error_aggregator import get_error_aggregator
 
 # Will be initialized when blueprint is registered
 config_manager = None
@@ -6427,3 +6428,81 @@ def delete_cache_file():
         print(f"Error in delete_cache_file: {str(e)}")
         print(error_details)
         return jsonify({'status': 'error', 'message': str(e)}), 500
+
+
+# =============================================================================
+# Error Aggregation Endpoints
+# =============================================================================
+
+@api_v3.route('/errors/summary', methods=['GET'])
+def get_error_summary():
+    """
+    Get summary of all errors for monitoring and debugging.
+
+    Returns error counts, detected patterns, and recent errors.
+    """
+    try:
+        aggregator = get_error_aggregator()
+        summary = aggregator.get_error_summary()
+        return success_response(data=summary, message="Error summary retrieved")
+    except Exception as e:
+        logger.error(f"Error getting error summary: {e}", exc_info=True)
+        return error_response(
+            error_code=ErrorCode.SYSTEM_ERROR,
+            message="Failed to retrieve error summary",
+            details=str(e),
+            status_code=500
+        )
+
+
+@api_v3.route('/errors/plugin/<plugin_id>', methods=['GET'])
+def get_plugin_errors(plugin_id):
+    """
+    Get error health status for a specific plugin.
+
+    Args:
+        plugin_id: Plugin identifier
+
+    Returns health status and error statistics for the plugin.
+    """
+    try:
+        aggregator = get_error_aggregator()
+        health = aggregator.get_plugin_health(plugin_id)
+        return success_response(data=health, message=f"Plugin {plugin_id} health retrieved")
+    except Exception as e:
+        logger.error(f"Error getting plugin health for {plugin_id}: {e}", exc_info=True)
+        return error_response(
+            error_code=ErrorCode.SYSTEM_ERROR,
+            message=f"Failed to retrieve health for plugin {plugin_id}",
+            details=str(e),
+            status_code=500
+        )
+
+
+@api_v3.route('/errors/clear', methods=['POST'])
+def clear_old_errors():
+    """
+    Clear error records older than specified age.
+
+    Request body (optional):
+        max_age_hours: Maximum age in hours (default: 24)
+    """
+    try:
+        data = request.get_json(silent=True) or {}
+        max_age_hours = data.get('max_age_hours', 24)
+
+        aggregator = get_error_aggregator()
+        cleared_count = aggregator.clear_old_records(max_age_hours=max_age_hours)
+
+        return success_response(
+            data={'cleared_count': cleared_count},
+            message=f"Cleared {cleared_count} error records older than {max_age_hours} hours"
+        )
+    except Exception as e:
+        logger.error(f"Error clearing old errors: {e}", exc_info=True)
+        return error_response(
+            error_code=ErrorCode.SYSTEM_ERROR,
+            message="Failed to clear old errors",
+            details=str(e),
+            status_code=500
+        )

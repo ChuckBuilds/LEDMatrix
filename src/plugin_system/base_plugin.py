@@ -133,11 +133,11 @@ class BasePlugin(ABC):
     def get_display_duration(self) -> float:
         """
         Get the display duration for this plugin instance.
-        
+
         Automatically detects duration from:
         1. self.display_duration instance variable (if exists)
         2. self.config.get("display_duration", 15.0) (fallback)
-        
+
         Can be overridden by plugins to provide dynamic durations based
         on content (e.g., longer duration for more complex displays).
 
@@ -155,27 +155,78 @@ class BasePlugin(ABC):
                 elif isinstance(duration, (int, float)):
                     if duration > 0:
                         return float(duration)
+                    else:
+                        self.logger.debug(
+                            "display_duration instance variable is non-positive (%s), using config fallback",
+                            duration
+                        )
                 # Try converting string representations of numbers
                 elif isinstance(duration, str):
                     try:
                         duration_float = float(duration)
                         if duration_float > 0:
                             return duration_float
+                        else:
+                            self.logger.debug(
+                                "display_duration string value is non-positive (%s), using config fallback",
+                                duration
+                            )
                     except (ValueError, TypeError):
-                        pass  # Fall through to config
-            except (TypeError, ValueError, AttributeError):
-                pass  # Fall through to config
+                        self.logger.warning(
+                            "display_duration instance variable has invalid string value '%s', using config fallback",
+                            duration
+                        )
+                else:
+                    self.logger.warning(
+                        "display_duration instance variable has unexpected type %s (value: %s), using config fallback",
+                        type(duration).__name__, duration
+                    )
+            except (TypeError, ValueError, AttributeError) as e:
+                self.logger.warning(
+                    "Error reading display_duration instance variable: %s, using config fallback",
+                    e
+                )
 
         # Fall back to config
         config_duration = self.config.get("display_duration", 15.0)
         try:
             # Ensure config value is also a valid float
             if isinstance(config_duration, (int, float)):
-                return float(config_duration) if config_duration > 0 else 15.0
+                if config_duration > 0:
+                    return float(config_duration)
+                else:
+                    self.logger.debug(
+                        "Config display_duration is non-positive (%s), using default 15.0",
+                        config_duration
+                    )
+                    return 15.0
             elif isinstance(config_duration, str):
-                return float(config_duration) if float(config_duration) > 0 else 15.0
-        except (ValueError, TypeError):
-            pass
+                try:
+                    duration_float = float(config_duration)
+                    if duration_float > 0:
+                        return duration_float
+                    else:
+                        self.logger.debug(
+                            "Config display_duration string is non-positive (%s), using default 15.0",
+                            config_duration
+                        )
+                        return 15.0
+                except ValueError:
+                    self.logger.warning(
+                        "Config display_duration has invalid string value '%s', using default 15.0",
+                        config_duration
+                    )
+                    return 15.0
+            else:
+                self.logger.warning(
+                    "Config display_duration has unexpected type %s (value: %s), using default 15.0",
+                    type(config_duration).__name__, config_duration
+                )
+        except (ValueError, TypeError) as e:
+            self.logger.warning(
+                "Error processing config display_duration: %s, using default 15.0",
+                e
+            )
 
         return 15.0
 

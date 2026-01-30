@@ -387,43 +387,8 @@ class FootballLive(Football, SportsLive):
             main_img = main_img.convert('RGB') # Convert for display
 
             # Display the final image
-            # #region agent log
-            import json
-            import time
-            try:
-                with open('/home/chuck/Github/LEDMatrix/.cursor/debug.log', 'a') as f:
-                    f.write(json.dumps({
-                        "sessionId": "debug-session",
-                        "runId": "run1",
-                        "hypothesisId": "C",
-                        "location": "football.py:390",
-                        "message": "About to update display",
-                        "data": {
-                            "force_clear": force_clear,
-                            "game": game.get('away_abbr', '') + "@" + game.get('home_abbr', '')
-                        },
-                        "timestamp": int(time.time() * 1000)
-                    }) + "\n")
-            except: pass
-            # #endregion
             self.display_manager.image.paste(main_img, (0, 0))
             self.display_manager.update_display() # Update display here for live
-            # #region agent log
-            try:
-                with open('/home/chuck/Github/LEDMatrix/.cursor/debug.log', 'a') as f:
-                    f.write(json.dumps({
-                        "sessionId": "debug-session",
-                        "runId": "run1",
-                        "hypothesisId": "C",
-                        "location": "football.py:392",
-                        "message": "After update display",
-                        "data": {
-                            "force_clear": force_clear
-                        },
-                        "timestamp": int(time.time() * 1000)
-                    }) + "\n")
-            except: pass
-            # #endregion
 
         except Exception as e:
             self.logger.error(f"Error displaying live Football game: {e}", exc_info=True) # Changed log prefix
