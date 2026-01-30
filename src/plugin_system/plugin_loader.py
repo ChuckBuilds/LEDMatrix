@@ -24,16 +24,17 @@ from src.common.permission_utils import (
 
 class PluginLoader:
     """Handles plugin module loading and class instantiation."""
-    
+
     def __init__(self, logger: Optional[logging.Logger] = None) -> None:
         """
         Initialize the plugin loader.
-        
+
         Args:
             logger: Optional logger instance
         """
         self.logger = logger or get_logger(__name__)
         self._loaded_modules: Dict[str, Any] = {}
+        self._plugin_module_registry: Dict[str, set] = {}  # Maps plugin_id to set of module names
     
     def find_plugin_directory(
         self,
@@ -189,6 +190,50 @@ class PluginLoader:
             self.logger.error("Unexpected error installing dependencies for %s: %s", plugin_id, e, exc_info=True)
             return False
     
+    def _clear_conflicting_modules(self, plugin_dir: Path, plugin_id: str) -> None:
+        """
+        Clear cached modules from sys.modules that could conflict with the plugin being loaded.
+
+        When multiple plugins have modules with the same name (e.g., data_fetcher.py),
+        Python's module cache can cause the wrong module to be imported. This method
+        removes cached modules from other plugin directories to ensure the correct
+        module is loaded.
+
+        Args:
+            plugin_dir: The directory of the plugin being loaded
+            plugin_id: The plugin identifier
+        """
+        plugin_dir_str = str(plugin_dir)
+
+        # Find modules to remove: those from other plugin directories
+        # that could conflict with modules in the current plugin
+        modules_to_remove = []
+
+        for mod_name, mod in list(sys.modules.items()):
+            if mod is None:
+                continue
+
+            # Skip standard library and site-packages modules
+            mod_file = getattr(mod, '__file__', None)
+            if mod_file is None:
+                continue
+
+            # Check if this module is from a different plugin directory
+            # We look for modules that:
+            # 1. Have simple names (no dots) - these are the ones that conflict
+            # 2. Are loaded from a plugin-repos directory but not the current plugin
+            if '.' not in mod_name and 'plugin-repos' in mod_file:
+                if plugin_dir_str not in mod_file:
+                    modules_to_remove.append(mod_name)
+                    self.logger.debug(
+                        "Clearing cached module '%s' from %s to avoid conflict with plugin %s",
+                        mod_name, mod_file, plugin_id
+                    )
+
+        # Remove conflicting modules
+        for mod_name in modules_to_remove:
+            del sys.modules[mod_name]
+
     def load_module(
         self,
         plugin_id: str,
@@ -197,12 +242,12 @@ class PluginLoader:
     ) -> Optional[Any]:
         """
         Load a plugin module from file.
-        
+
         Args:
             plugin_id: Plugin identifier
             plugin_dir: Plugin directory path
             entry_point: Entry point filename (e.g., 'manager.py')
-            
+
         Returns:
             Loaded module or None on error
         """
@@ -211,34 +256,37 @@ class PluginLoader:
             error_msg = f"Entry point file not found: {entry_file} for plugin {plugin_id}"
             self.logger.error(error_msg)
             raise PluginError(error_msg, plugin_id=plugin_id, context={'entry_file': str(entry_file)})
-        
+
+        # Clear any conflicting modules from other plugins before loading
+        self._clear_conflicting_modules(plugin_dir, plugin_id)
+
         # Add plugin directory to sys.path if not already there
         plugin_dir_str = str(plugin_dir)
         if plugin_dir_str not in sys.path:
             sys.path.insert(0, plugin_dir_str)
             self.logger.debug("Added plugin directory to sys.path: %s", plugin_dir_str)
-        
+
         # Import the plugin module
         module_name = f"plugin_{plugin_id.replace('-', '_')}"
-        
+
         # Check if already loaded
         if module_name in sys.modules:
             self.logger.debug("Module %s already loaded, reusing", module_name)
             return sys.modules[module_name]
-        
+
         spec = importlib.util.spec_from_file_location(module_name, entry_file)
         if spec is None or spec.loader is None:
             error_msg = f"Could not create module spec for {entry_file}"
             self.logger.error(error_msg)
             raise PluginError(error_msg, plugin_id=plugin_id, context={'entry_file': str(entry_file)})
-        
+
         module = importlib.util.module_from_spec(spec)
         sys.modules[module_name] = module
         spec.loader.exec_module(module)
-        
+
         self._loaded_modules[plugin_id] = module
         self.logger.debug("Loaded module %s for plugin %s", module_name, plugin_id)
-        
+
         return module
     
     def get_plugin_class(
