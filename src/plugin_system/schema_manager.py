@@ -445,3 +445,62 @@ class SchemaManager:
         replace_none_with_defaults(merged, defaults)
         return merged
 
+    def detect_config_key_collisions(
+        self,
+        plugin_ids: List[str]
+    ) -> List[Dict[str, Any]]:
+        """
+        Detect config key collisions between plugins.
+
+        Checks for:
+        1. Plugin IDs that collide with reserved system config keys
+        2. Plugin IDs that might cause confusion or conflicts
+
+        Args:
+            plugin_ids: List of plugin identifiers to check
+
+        Returns:
+            List of collision warnings, each containing:
+            - type: 'reserved_key_collision' or 'case_collision'
+            - plugin_id: The plugin ID involved
+            - message: Human-readable warning message
+        """
+        collisions = []
+
+        # Reserved top-level config keys that plugins should not use as IDs
+        reserved_keys = {
+            'display', 'schedule', 'timezone', 'plugin_system',
+            'display_modes', 'system', 'hardware', 'debug',
+            'log_level', 'emulator', 'web_interface'
+        }
+
+        # Track plugin IDs for case collision detection
+        lowercase_ids: Dict[str, str] = {}
+
+        for plugin_id in plugin_ids:
+            # Check reserved key collision
+            if plugin_id.lower() in {k.lower() for k in reserved_keys}:
+                collisions.append({
+                    "type": "reserved_key_collision",
+                    "plugin_id": plugin_id,
+                    "message": f"Plugin ID '{plugin_id}' conflicts with reserved config key. "
+                               f"This may cause configuration issues."
+                })
+
+            # Check for case-insensitive collisions between plugins
+            lower_id = plugin_id.lower()
+            if lower_id in lowercase_ids:
+                existing_id = lowercase_ids[lower_id]
+                if existing_id != plugin_id:
+                    collisions.append({
+                        "type": "case_collision",
+                        "plugin_id": plugin_id,
+                        "conflicting_id": existing_id,
+                        "message": f"Plugin ID '{plugin_id}' may conflict with '{existing_id}' "
+                                   f"on case-insensitive file systems."
+                    })
+            else:
+                lowercase_ids[lower_id] = plugin_id
+
+        return collisions
+

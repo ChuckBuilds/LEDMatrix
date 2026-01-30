@@ -13,6 +13,7 @@ import logging
 
 from src.exceptions import PluginError
 from src.logging_config import get_logger
+from src.error_aggregator import record_error
 
 
 class TimeoutError(Exception):
@@ -80,12 +81,15 @@ class PluginExecutor:
         if not result_container['completed']:
             error_msg = f"{plugin_context} operation timed out after {timeout}s"
             self.logger.error(error_msg)
-            raise TimeoutError(error_msg)
-        
+            timeout_error = TimeoutError(error_msg)
+            record_error(timeout_error, plugin_id=plugin_id, operation="timeout")
+            raise timeout_error
+
         if result_container['exception']:
             error = result_container['exception']
             error_msg = f"{plugin_context} operation failed: {error}"
             self.logger.error(error_msg, exc_info=True)
+            record_error(error, plugin_id=plugin_id, operation="execute")
             raise PluginError(error_msg, plugin_id=plugin_id) from error
         
         return result_container['value']
@@ -128,7 +132,7 @@ class PluginExecutor:
             self.logger.error("Plugin %s update() timed out", plugin_id)
             return False
         except PluginError:
-            # Already logged in execute_with_timeout
+            # Already logged and recorded in execute_with_timeout
             return False
         except Exception as e:
             self.logger.error(
@@ -137,6 +141,7 @@ class PluginExecutor:
                 e,
                 exc_info=True
             )
+            record_error(e, plugin_id=plugin_id, operation="update")
             return False
     
     def execute_display(
@@ -203,7 +208,7 @@ class PluginExecutor:
             self.logger.error("Plugin %s display() timed out", plugin_id)
             return False
         except PluginError:
-            # Already logged in execute_with_timeout
+            # Already logged and recorded in execute_with_timeout
             return False
         except Exception as e:
             self.logger.error(
@@ -212,6 +217,7 @@ class PluginExecutor:
                 e,
                 exc_info=True
             )
+            record_error(e, plugin_id=plugin_id, operation="display")
             return False
     
     def execute_safe(
