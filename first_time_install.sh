@@ -220,11 +220,13 @@ echo "1. Install system dependencies"
 echo "2. Fix cache permissions"
 echo "3. Fix assets directory permissions"
 echo "3.1. Fix plugin directory permissions"
-echo "4. Install main LED Matrix service"
+echo "4. Ensure configuration files exist"
 echo "5. Install Python project dependencies (requirements.txt)"
 echo "6. Build and install rpi-rgb-led-matrix and test import"
 echo "7. Install web interface dependencies"
+echo "7.5. Install main LED Matrix service"
 echo "8. Install web interface service"
+echo "8.1. Harden systemd unit file permissions"
 echo "8.5. Install WiFi monitor service"
 echo "9. Configure web interface permissions"
 echo "10. Configure passwordless sudo access"
@@ -914,19 +916,35 @@ fi
 
 # Configure Python capabilities for hardware timing
 echo "Configuring Python capabilities for hardware timing..."
-if [ -f "/usr/bin/python3.13" ]; then
-    sudo setcap 'cap_sys_nice=eip' /usr/bin/python3.13 2>/dev/null || echo "⚠ Could not set cap_sys_nice on python3.13 (may need manual setup)"
-    echo "✓ Python3.13 capabilities configured"
-elif [ -f "/usr/bin/python3" ]; then
-    PYTHON_VER=$(python3 --version 2>&1 | grep -oP '(?<=Python )\d\.\d+' || echo "unknown")
-    if command -v setcap >/dev/null 2>&1; then
-        sudo setcap 'cap_sys_nice=eip' /usr/bin/python3 2>/dev/null || echo "⚠ Could not set cap_sys_nice on python3"
-        echo "✓ Python3 capabilities configured (version: $PYTHON_VER)"
-    else
-        echo "⚠ setcap not found, skipping capability configuration"
-    fi
+
+# Check if setcap is available first
+if ! command -v setcap >/dev/null 2>&1; then
+    echo "⚠ setcap not found, skipping capability configuration"
+    echo "  Install libcap2-bin if you need hardware timing capabilities"
 else
-    echo "⚠ Python3 not found, skipping capability configuration"
+    # Find the Python binary and resolve symlinks to get the real binary
+    PYTHON_BIN=""
+    PYTHON_VER=""
+    if [ -f "/usr/bin/python3.13" ]; then
+        PYTHON_BIN=$(readlink -f /usr/bin/python3.13)
+        PYTHON_VER="3.13"
+    elif [ -f "/usr/bin/python3" ]; then
+        PYTHON_BIN=$(readlink -f /usr/bin/python3)
+        PYTHON_VER=$(python3 --version 2>&1 | grep -oP '(?<=Python )\d+\.\d+' || echo "unknown")
+    fi
+
+    if [ -n "$PYTHON_BIN" ] && [ -f "$PYTHON_BIN" ]; then
+        echo "Setting cap_sys_nice on $PYTHON_BIN (Python $PYTHON_VER)..."
+        if sudo setcap 'cap_sys_nice=eip' "$PYTHON_BIN" 2>/dev/null; then
+            echo "✓ Python $PYTHON_VER capabilities configured ($PYTHON_BIN)"
+        else
+            echo "⚠ Could not set cap_sys_nice on $PYTHON_BIN"
+            echo "  This may require manual setup or running as root"
+            echo "  The LED display may have timing issues without this capability"
+        fi
+    else
+        echo "⚠ Python3 not found, skipping capability configuration"
+    fi
 fi
 echo ""
 
