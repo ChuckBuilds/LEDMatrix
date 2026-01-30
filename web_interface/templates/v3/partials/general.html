@@ -33,6 +33,7 @@
             <label class="flex items-center">
                 <input type="checkbox"
                        name="web_display_autostart"
+                       value="true"
                        {% if main_config.web_display_autostart %}checked{% endif %}
                        class="form-control h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded">
                 <span class="ml-2 text-sm font-medium text-gray-900">Web Display Autostart</span>
@@ -118,6 +119,7 @@
                     <label class="flex items-center">
                         <input type="checkbox"
                                name="auto_discover"
+                               value="true"
                                {% if main_config.get('plugin_system', {}).get('auto_discover', True) %}checked{% endif %}
                                class="form-control h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded">
                         <span class="ml-2 text-sm font-medium text-gray-900">Auto Discover Plugins</span>
@@ -130,6 +132,7 @@
                     <label class="flex items-center">
                         <input type="checkbox"
                                name="auto_load_enabled"
+                               value="true"
                                {% if main_config.get('plugin_system', {}).get('auto_load_enabled', True) %}checked{% endif %}
                                class="form-control h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded">
                         <span class="ml-2 text-sm font-medium text-gray-900">Auto Load Enabled Plugins</span>
@@ -142,6 +145,7 @@
                     <label class="flex items-center">
                         <input type="checkbox"
                                name="development_mode"
+                               value="true"
                                {% if main_config.get('plugin_system', {}).get('development_mode', False) %}checked{% endif %}
                                class="form-control h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded">
                         <span class="ml-2 text-sm font-medium text-gray-900">Development Mode</span>

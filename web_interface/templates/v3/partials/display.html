@@ -182,6 +182,7 @@
                     <label class="flex items-center">
                         <input type="checkbox"
                                name="disable_hardware_pulsing"
+                               value="true"
                                {% if main_config.display.hardware.disable_hardware_pulsing %}checked{% endif %}
                                class="form-control h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded">
                         <span class="ml-2 text-sm font-medium text-gray-900">Disable Hardware Pulsing</span>
@@ -192,6 +193,7 @@
                     <label class="flex items-center">
                         <input type="checkbox"
                                name="inverse_colors"
+                               value="true"
                                {% if main_config.display.hardware.inverse_colors %}checked{% endif %}
                                class="form-control h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded">
                         <span class="ml-2 text-sm font-medium text-gray-900">Inverse Colors</span>
@@ -202,6 +204,7 @@
                     <label class="flex items-center">
                         <input type="checkbox"
                                name="show_refresh_rate"
+                               value="true"
                                {% if main_config.display.hardware.show_refresh_rate %}checked{% endif %}
                                class="form-control h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded">
                         <span class="ml-2 text-sm font-medium text-gray-900">Show Refresh Rate</span>
@@ -212,6 +215,7 @@
                     <label class="flex items-center">
                         <input type="checkbox"
                                name="use_short_date_format"
+                               value="true"
                                {% if main_config.display.use_short_date_format %}checked{% endif %}
                                class="form-control h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded">
                         <span class="ml-2 text-sm font-medium text-gray-900">Use Short Date Format</span>
@@ -251,6 +255,7 @@
                     <input type="checkbox"
                            id="vegas_scroll_enabled"
                            name="vegas_scroll_enabled"
+                           value="true"
                            aria-label="Enable Vegas Scroll Mode"
                            {% if main_config.display.get('vegas_scroll', {}).get('enabled', false) %}checked{% endif %}
                            class="h-5 w-5 text-blue-600 focus:ring-blue-500 border-gray-300 rounded">
