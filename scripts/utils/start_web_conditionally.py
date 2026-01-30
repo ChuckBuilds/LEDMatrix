@@ -8,6 +8,13 @@ from pathlib import Path
 PROJECT_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 CONFIG_FILE = os.path.join(PROJECT_DIR, 'config', 'config.json')
 WEB_INTERFACE_SCRIPT = os.path.join(PROJECT_DIR, 'web_interface', 'start.py')
+# Marker file created by first_time_install.sh to indicate dependencies are installed
+DEPS_MARKER = os.path.join(PROJECT_DIR, '.web_deps_installed')
+
+
+def dependencies_installed():
+    """Check if dependencies were installed during first-time setup."""
+    return os.path.exists(DEPS_MARKER)
 
 def install_dependencies():
     """Install required dependencies using system Python."""
@@ -85,11 +92,18 @@ def main():
 
     if is_enabled:
         print("Configuration 'web_display_autostart' is enabled. Starting web interface...")
-        
-        # Install dependencies
-        if not install_dependencies():
-            print("Failed to install dependencies. Exiting.")
-            sys.exit(1)
+
+        # Only install dependencies if not already done during first-time setup
+        if not dependencies_installed():
+            print("First run detected: Installing dependencies...")
+            if not install_dependencies():
+                print("Failed to install dependencies. Exiting.")
+                sys.exit(1)
+            # Create marker file after successful install
+            Path(DEPS_MARKER).touch()
+            print("Dependencies installed and marker file created.")
+        else:
+            print("Dependencies already installed (marker file found). Skipping installation.")
         
         try:
             # Replace the current process with web_interface.py using system Python

@@ -271,7 +271,7 @@ apt_update
 
 # Install required system packages
 echo "Installing Python packages and dependencies..."
-apt_install python3-pip python3-venv python3-dev python3-pil python3-pil.imagetk python3-pillow build-essential python3-setuptools python3-wheel cython3 scons cmake ninja-build
+apt_install python3-pip python3-venv python3-dev python3-pil python3-pil.imagetk build-essential python3-setuptools python3-wheel cython3 scons cmake ninja-build
 
 # Install additional system dependencies that might be needed
 echo "Installing additional system dependencies..."
@@ -661,18 +661,7 @@ CURRENT_STEP="Install project Python dependencies"
 echo "Step 5: Installing Python project dependencies..."
 echo "-----------------------------------------------"
 
-# Install numpy via apt first (pre-built binary, much faster than building from source)
-echo "Installing numpy via apt (pre-built binary for faster installation)..."
-if ! python3 -c "import numpy" >/dev/null 2>&1; then
-    apt_install python3-numpy
-    echo "✓ numpy installed via apt"
-else
-    NUMPY_VERSION=$(python3 -c "import numpy; print(numpy.__version__)" 2>/dev/null || echo "unknown")
-    echo "✓ numpy already installed (version: $NUMPY_VERSION)"
-fi
-echo ""
-
-# Install main project Python dependencies
+# Install main project Python dependencies (numpy will be installed via pip from requirements.txt)
 cd "$PROJECT_ROOT_DIR"
 if [ -f "$PROJECT_ROOT_DIR/requirements.txt" ]; then
     echo "Reading requirements from: $PROJECT_ROOT_DIR/requirements.txt"
@@ -681,10 +670,10 @@ if [ -f "$PROJECT_ROOT_DIR/requirements.txt" ]; then
     echo "Checking pip version..."
     python3 -m pip --version
     
-    # Upgrade pip, setuptools, and wheel for better compatibility
-    echo "Upgrading pip, setuptools, and wheel..."
-    python3 -m pip install --break-system-packages --upgrade pip setuptools wheel || {
-        echo "⚠ Warning: Failed to upgrade pip/setuptools/wheel, continuing anyway..."
+    # Upgrade pip for better compatibility (setuptools/wheel are already installed via apt)
+    echo "Upgrading pip..."
+    python3 -m pip install --break-system-packages --upgrade pip || {
+        echo "⚠ Warning: Failed to upgrade pip, continuing anyway..."
     }
     
     # Count total packages for progress
@@ -812,6 +801,22 @@ else
 fi
 echo ""
 
+# Install web interface dependencies
+echo "Installing web interface dependencies..."
+if [ -f "$PROJECT_ROOT_DIR/web_interface/requirements.txt" ]; then
+    if python3 -m pip install --break-system-packages -r "$PROJECT_ROOT_DIR/web_interface/requirements.txt"; then
+        echo "✓ Web interface dependencies installed"
+        # Create marker file to indicate dependencies are installed
+        touch "$PROJECT_ROOT_DIR/.web_deps_installed"
+    else
+        echo "⚠ Warning: Some web interface dependencies failed to install"
+        echo "  The web interface may not work correctly until dependencies are installed"
+    fi
+else
+    echo "⚠ web_interface/requirements.txt not found; skipping"
+fi
+echo ""
+
 CURRENT_STEP="Build and install rpi-rgb-led-matrix"
 echo "Step 6: Building and installing rpi-rgb-led-matrix..."
 echo "-----------------------------------------------------"
@@ -903,24 +908,31 @@ CURRENT_STEP="Install web interface dependencies"
 echo "Step 7: Installing web interface dependencies..."
 echo "------------------------------------------------"
 
-# Install web interface dependencies
-echo "Installing Python dependencies for web interface..."
-cd "$PROJECT_ROOT_DIR"
-
-# Try to install dependencies using the smart installer if available
-if [ -f "$PROJECT_ROOT_DIR/scripts/install_dependencies_apt.py" ]; then
-    echo "Using smart dependency installer..."
-    python3 "$PROJECT_ROOT_DIR/scripts/install_dependencies_apt.py"
+# Check if web dependencies were already installed (marker created in Step 5)
+if [ -f "$PROJECT_ROOT_DIR/.web_deps_installed" ]; then
+    echo "✓ Web interface dependencies already installed (marker file found)"
 else
-    echo "Using pip to install dependencies..."
-    if [ -f "$PROJECT_ROOT_DIR/requirements_web_v2.txt" ]; then
-        python3 -m pip install --break-system-packages -r requirements_web_v2.txt
-    else
-        echo "⚠ requirements_web_v2.txt not found; skipping web dependency install"
-    fi
-fi
+    # Install web interface dependencies
+    echo "Installing Python dependencies for web interface..."
+    cd "$PROJECT_ROOT_DIR"
 
-echo "✓ Web interface dependencies installed"
+    # Try to install dependencies using the smart installer if available
+    if [ -f "$PROJECT_ROOT_DIR/scripts/install_dependencies_apt.py" ]; then
+        echo "Using smart dependency installer..."
+        python3 "$PROJECT_ROOT_DIR/scripts/install_dependencies_apt.py"
+    else
+        echo "Using pip to install dependencies..."
+        if [ -f "$PROJECT_ROOT_DIR/requirements_web_v2.txt" ]; then
+            python3 -m pip install --break-system-packages -r requirements_web_v2.txt
+        else
+            echo "⚠ requirements_web_v2.txt not found; skipping web dependency install"
+        fi
+    fi
+
+    # Create marker file to indicate dependencies are installed
+    touch "$PROJECT_ROOT_DIR/.web_deps_installed"
+    echo "✓ Web interface dependencies installed"
+fi
 echo ""
 
 CURRENT_STEP="Install web interface service"
@@ -1212,19 +1224,21 @@ CURRENT_STEP="Normalize project file permissions"
 echo "Step 11.1: Normalizing project file and directory permissions..."
 echo "--------------------------------------------------------------"
 
-# Normalize directory permissions (exclude VCS metadata and plugin directories)
+# Normalize directory permissions (exclude VCS metadata, plugin directories, and compiled libraries)
 find "$PROJECT_ROOT_DIR" \
     -path "$PROJECT_ROOT_DIR/plugins" -prune -o \
     -path "$PROJECT_ROOT_DIR/plugin-repos" -prune -o \
     -path "$PROJECT_ROOT_DIR/scripts/dev/plugins" -prune -o \
+    -path "$PROJECT_ROOT_DIR/rpi-rgb-led-matrix-master" -prune -o \
     -path "*/.git*" -prune -o \
     -type d -exec chmod 755 {} \; 2>/dev/null || true
 
-# Set default file permissions (exclude plugin directories)
+# Set default file permissions (exclude plugin directories and compiled libraries)
 find "$PROJECT_ROOT_DIR" \
     -path "$PROJECT_ROOT_DIR/plugins" -prune -o \
     -path "$PROJECT_ROOT_DIR/plugin-repos" -prune -o \
     -path "$PROJECT_ROOT_DIR/scripts/dev/plugins" -prune -o \
+    -path "$PROJECT_ROOT_DIR/rpi-rgb-led-matrix-master" -prune -o \
     -path "*/.git*" -prune -o \
     -type f -exec chmod 644 {} \; 2>/dev/null || true
 
@@ -1541,26 +1555,31 @@ echo "=========================================="
 echo "Important Notes"
 echo "=========================================="
 echo ""
-echo "1. For group changes to take effect:"
+echo "1. PLEASE BE PATIENT after reboot!"
+echo "   - The web interface may take up to 5 minutes to start on first boot"
+echo "   - Services need time to initialize after installation"
+echo "   - Wait at least 2-3 minutes before checking service status"
+echo ""
+echo "2. For group changes to take effect:"
 echo "   - Log out and log back in to your SSH session, OR"
 echo "   - Run: newgrp systemd-journal"
 echo ""
-echo "2. If you cannot access the web UI:"
+echo "3. If you cannot access the web UI:"
 echo "   - Check that the web service is running: sudo systemctl status ledmatrix-web"
 echo "   - Verify firewall allows port 5000: sudo ufw status (if using UFW)"
 echo "   - Check network connectivity: ping -c 3 8.8.8.8"
 echo "   - If WiFi is not connected, connect to LEDMatrix-Setup AP network"
 echo ""
-echo "3. SSH Access:"
+echo "4. SSH Access:"
 echo "   - SSH must be configured during initial Pi setup (via Raspberry Pi Imager or raspi-config)"
 echo "   - This installation script does not configure SSH credentials"
 echo ""
-echo "4. Useful Commands:"
+echo "5. Useful Commands:"
 echo "   - Check service status: sudo systemctl status ledmatrix.service"
 echo "   - View logs: journalctl -u ledmatrix-web.service -f"
 echo "   - Start/stop display: sudo systemctl start/stop ledmatrix.service"
 echo ""
-echo "5. Configuration Files:"
+echo "6. Configuration Files:"
 echo "   - Main config: $PROJECT_ROOT_DIR/config/config.json"
 echo "   - Secrets: $PROJECT_ROOT_DIR/config/config_secrets.json"
 echo ""
