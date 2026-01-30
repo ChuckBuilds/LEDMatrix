@@ -108,7 +108,8 @@
             return value;
         }
         if (typeof value === 'string') {
-            return value.toLowerCase() === 'true' || value === '1' || value.toLowerCase() === 'on';
+            const trimmed = value.trim().toLowerCase();
+            return trimmed === 'true' || trimmed === '1' || trimmed === 'on';
         }
         return Boolean(value);
     }
