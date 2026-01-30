@@ -135,18 +135,5 @@
     "web-ui-info": {
         "enabled": true,
         "display_duration": 10
-    },
-    "ledmatrix-leaderboard": {
-        "enabled": true,
-        "enabled_sports": {
-            "nfl": {
-                "enabled": true,
-                "top_teams": 10
-            },
-            "nhl": {
-                "enabled": true,
-                "top_teams": 10
-            }
-        }
     }
 }
