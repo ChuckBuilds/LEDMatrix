@@ -240,7 +240,7 @@ class ScrollHelper:
                 # Move pixels (can move multiple steps if lag occurred, but cap to prevent huge jumps)
                 steps = int(time_since_last_step / self.scroll_delay)
                 # Cap at reasonable number to prevent huge jumps from lag
-                max_steps = max(1, int(0.1 / self.scroll_delay))  # Allow up to 0.1s of catch-up
+                max_steps = max(1, int(0.04 / self.scroll_delay))  # Limit to 0.04s (2 steps at 50 FPS) for smoother scrolling
                 steps = min(steps, max_steps)
                 pixels_to_move = self.scroll_speed * steps
                 # Update last_step_time, preserving fractional delay for smooth timing
