@@ -1,0 +1,47 @@
+# Pre-commit hooks for LEDMatrix
+# Install: pip install pre-commit && pre-commit install
+# Run manually: pre-commit run --all-files
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.5.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-json
+      - id: check-added-large-files
+        args: ['--maxkb=1000']
+      - id: check-merge-conflict
+
+  - repo: https://github.com/PyCQA/flake8
+    rev: 7.0.0
+    hooks:
+      - id: flake8
+        args: ['--select=E9,F63,F7,F82,B', '--ignore=E501']
+        additional_dependencies: [flake8-bugbear]
+
+  - repo: local
+    hooks:
+      - id: no-bare-except
+        name: Check for bare except clauses
+        entry: bash -c 'if grep -rn "except:\s*pass" src/; then echo "Found bare except:pass - please handle exceptions properly"; exit 1; fi'
+        language: system
+        types: [python]
+        pass_filenames: false
+
+      - id: no-hardcoded-paths
+        name: Check for hardcoded user paths
+        entry: bash -c 'if grep -rn "/home/chuck/" src/; then echo "Found hardcoded user paths - please use relative paths or config"; exit 1; fi'
+        language: system
+        types: [python]
+        pass_filenames: false
+
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v1.8.0
+    hooks:
+      - id: mypy
+        additional_dependencies: [types-requests, types-pytz]
+        args: [--ignore-missing-imports, --no-error-summary]
+        pass_filenames: false
+        files: ^src/

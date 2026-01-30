@@ -136,13 +136,24 @@ class PluginManager:
     def discover_plugins(self) -> List[str]:
         """
         Discover all plugins in the plugins directory.
-        
+
+        Also checks for potential config key collisions and logs warnings.
+
         Returns:
             List of plugin IDs
         """
         self.logger.info("Discovering plugins in %s", self.plugins_dir)
         plugin_ids = self._scan_directory_for_plugins(self.plugins_dir)
         self.logger.info("Discovered %d plugin(s)", len(plugin_ids))
+
+        # Check for config key collisions
+        collisions = self.schema_manager.detect_config_key_collisions(plugin_ids)
+        for collision in collisions:
+            self.logger.warning(
+                "Config collision detected: %s",
+                collision.get('message', str(collision))
+            )
+
         return plugin_ids
 
     def _get_dependency_marker_path(self, plugin_id: str) -> Path:
@@ -288,6 +299,24 @@ class PluginManager:
             else:
                 config = {}
             
+            # Check if plugin has a config schema
+            schema_path = self.schema_manager.get_schema_path(plugin_id)
+            if schema_path is None:
+                # Schema file doesn't exist
+                self.logger.warning(
+                    f"Plugin '{plugin_id}' has no config_schema.json - configuration will not be validated. "
+                    f"Consider adding a schema file for better error detection and user experience."
+                )
+            else:
+                # Schema file exists, try to load it
+                schema = self.schema_manager.load_schema(plugin_id)
+                if schema is None:
+                    # Schema exists but couldn't be loaded (likely invalid JSON or schema)
+                    self.logger.warning(
+                        f"Plugin '{plugin_id}' has a config_schema.json but it could not be loaded. "
+                        f"The schema may be invalid. Please verify the schema file at: {schema_path}"
+                    )
+
             # Merge config with schema defaults to ensure all defaults are applied
             try:
                 defaults = self.schema_manager.generate_default_config(plugin_id, use_cache=True)
