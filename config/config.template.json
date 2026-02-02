@@ -108,6 +108,7 @@
             "disable_hardware_pulsing": false,
             "inverse_colors": false,
             "show_refresh_rate": false,
+            "led_rgb_sequence": "RGB",
             "limit_refresh_rate_hz": 100
         },
         "runtime": {
