@@ -5385,9 +5385,23 @@ def get_fonts_catalog():
 
                     # Store relative path from project root
                     relative_path = str(filepath.relative_to(PROJECT_ROOT))
+                    font_type = 'ttf' if filename.endswith('.ttf') else 'otf' if filename.endswith('.otf') else 'bdf'
+
+                    # Generate human-readable display name
+                    display_name = family_name.replace('-', ' ').replace('_', ' ')
+                    # Add space before capital letters for camelCase names
+                    import re
+                    display_name = re.sub(r'([a-z])([A-Z])', r'\1 \2', display_name)
+                    # Add space before numbers that follow letters
+                    display_name = re.sub(r'([a-zA-Z])(\d)', r'\1 \2', display_name)
+                    # Clean up multiple spaces
+                    display_name = ' '.join(display_name.split())
+
                     catalog[family_name] = {
+                        'filename': filename,
+                        'display_name': display_name,
                         'path': relative_path,
-                        'type': 'ttf' if filename.endswith('.ttf') else 'otf' if filename.endswith('.otf') else 'bdf',
+                        'type': font_type,
                         'metadata': metadata if metadata else None
                     }
 
@@ -5489,11 +5503,207 @@ def upload_font():
         if not font_family.replace('_', '').replace('-', '').isalnum():
             return jsonify({'status': 'error', 'message': 'Font family name must contain only letters, numbers, underscores, and hyphens'}), 400
 
-        # This would integrate with the actual font system to save the file
-        # For now, just return success
-        return jsonify({'status': 'success', 'message': f'Font {font_family} uploaded successfully', 'font_family': font_family})
+        # Save the font file to assets/fonts directory
+        fonts_dir = PROJECT_ROOT / "assets" / "fonts"
+        fonts_dir.mkdir(parents=True, exist_ok=True)
+
+        # Create filename from family name
+        original_ext = os.path.splitext(font_file.filename)[1].lower()
+        safe_filename = f"{font_family}{original_ext}"
+        filepath = fonts_dir / safe_filename
+
+        # Check if file already exists
+        if filepath.exists():
+            return jsonify({'status': 'error', 'message': f'Font with name {font_family} already exists'}), 400
+
+        # Save the file
+        font_file.save(str(filepath))
+
+        # Clear font catalog cache
+        try:
+            from web_interface.cache import delete_cached
+            delete_cached('fonts_catalog')
+        except (ImportError, Exception):
+            pass  # Cache clearing failed, but file was saved
+
+        return jsonify({
+            'status': 'success',
+            'message': f'Font {font_family} uploaded successfully',
+            'font_family': font_family,
+            'filename': safe_filename,
+            'path': f'assets/fonts/{safe_filename}'
+        })
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)}), 500
+
+
+@api_v3.route('/fonts/preview', methods=['GET'])
+def get_font_preview():
+    """Generate a preview image of text rendered with a specific font"""
+    try:
+        from PIL import Image, ImageDraw, ImageFont
+        import io
+        import base64
+
+        font_filename = request.args.get('font', '')
+        text = request.args.get('text', 'Sample Text 123')
+        size = int(request.args.get('size', 12))
+        bg_color = request.args.get('bg', '000000')
+        fg_color = request.args.get('fg', 'ffffff')
+
+        if not font_filename:
+            return jsonify({'status': 'error', 'message': 'Font filename required'}), 400
+
+        # Validate size
+        if size < 4 or size > 72:
+            return jsonify({'status': 'error', 'message': 'Font size must be between 4 and 72'}), 400
+
+        # Find the font file
+        fonts_dir = PROJECT_ROOT / "assets" / "fonts"
+        font_path = fonts_dir / font_filename
+
+        if not font_path.exists():
+            # Try finding by family name (without extension)
+            for ext in ['.ttf', '.otf', '.bdf']:
+                potential_path = fonts_dir / f"{font_filename}{ext}"
+                if potential_path.exists():
+                    font_path = potential_path
+                    break
+
+        if not font_path.exists():
+            return jsonify({'status': 'error', 'message': f'Font file not found: {font_filename}'}), 404
+
+        # Parse colors
+        try:
+            bg_rgb = tuple(int(bg_color[i:i+2], 16) for i in (0, 2, 4))
+            fg_rgb = tuple(int(fg_color[i:i+2], 16) for i in (0, 2, 4))
+        except (ValueError, IndexError):
+            bg_rgb = (0, 0, 0)
+            fg_rgb = (255, 255, 255)
+
+        # Load font
+        font = None
+        if str(font_path).endswith('.bdf'):
+            # For BDF fonts, try using freetype via PIL BDF support or fallback
+            try:
+                import freetype
+                face = freetype.Face(str(font_path))
+                face.set_pixel_sizes(0, size)
+                # For BDF, we'll render character by character
+                # This is a simplified approach - full BDF rendering is complex
+                font = ImageFont.load_default()
+            except Exception:
+                font = ImageFont.load_default()
+        else:
+            # TTF/OTF fonts
+            try:
+                font = ImageFont.truetype(str(font_path), size)
+            except Exception:
+                font = ImageFont.load_default()
+
+        # Calculate text size
+        temp_img = Image.new('RGB', (1, 1))
+        temp_draw = ImageDraw.Draw(temp_img)
+        bbox = temp_draw.textbbox((0, 0), text, font=font)
+        text_width = bbox[2] - bbox[0]
+        text_height = bbox[3] - bbox[1]
+
+        # Create image with padding
+        padding = 10
+        img_width = max(text_width + padding * 2, 100)
+        img_height = max(text_height + padding * 2, 30)
+
+        img = Image.new('RGB', (img_width, img_height), bg_rgb)
+        draw = ImageDraw.Draw(img)
+
+        # Center text
+        x = (img_width - text_width) // 2
+        y = (img_height - text_height) // 2
+
+        draw.text((x, y), text, font=font, fill=fg_rgb)
+
+        # Convert to base64
+        buffer = io.BytesIO()
+        img.save(buffer, format='PNG')
+        buffer.seek(0)
+        img_base64 = base64.b64encode(buffer.getvalue()).decode('utf-8')
+
+        return jsonify({
+            'status': 'success',
+            'data': {
+                'image': f'data:image/png;base64,{img_base64}',
+                'width': img_width,
+                'height': img_height
+            }
+        })
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+
+@api_v3.route('/fonts/<font_family>', methods=['DELETE'])
+def delete_font(font_family):
+    """Delete a user-uploaded font file"""
+    try:
+        # List of system fonts that cannot be deleted
+        SYSTEM_FONTS = [
+            'PressStart2P-Regular', 'pressstart2p-regular',
+            '4x6-font', '4x6',
+            '5by7.regular', '5by7', '5x7',
+            '5x8', '6x9', '6x10', '6x12', '6x13',
+            '7x13', '7x14', '8x13', '9x15', '9x18', '10x20',
+            'MatrixChunky8', 'MatrixLight6', 'tom-thumb'
+        ]
+
+        # Normalize for comparison
+        font_family_lower = font_family.lower()
+
+        # Check if this is a system font
+        if any(sys_font.lower() == font_family_lower for sys_font in SYSTEM_FONTS):
+            return jsonify({'status': 'error', 'message': 'Cannot delete system fonts'}), 403
+
+        # Find and delete the font file
+        fonts_dir = PROJECT_ROOT / "assets" / "fonts"
+        deleted = False
+        deleted_filename = None
+
+        for ext in ['.ttf', '.otf', '.bdf', '']:
+            # Try exact match first
+            potential_path = fonts_dir / f"{font_family}{ext}"
+            if potential_path.exists() and potential_path.is_file():
+                potential_path.unlink()
+                deleted = True
+                deleted_filename = f"{font_family}{ext}"
+                break
+
+        if not deleted:
+            # Try case-insensitive match
+            for filename in os.listdir(fonts_dir):
+                name_without_ext = os.path.splitext(filename)[0]
+                if name_without_ext.lower() == font_family_lower:
+                    filepath = fonts_dir / filename
+                    if filepath.is_file():
+                        filepath.unlink()
+                        deleted = True
+                        deleted_filename = filename
+                        break
+
+        if not deleted:
+            return jsonify({'status': 'error', 'message': f'Font not found: {font_family}'}), 404
+
+        # Clear font catalog cache
+        try:
+            from web_interface.cache import delete_cached
+            delete_cached('fonts_catalog')
+        except (ImportError, Exception):
+            pass  # Cache clearing failed, but file was deleted
+
+        return jsonify({
+            'status': 'success',
+            'message': f'Font {deleted_filename} deleted successfully'
+        })
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
 
 @api_v3.route('/plugins/assets/upload', methods=['POST'])
 def upload_plugin_asset():

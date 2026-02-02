@@ -112,9 +112,7 @@
                 <label class="block text-sm font-medium text-gray-700 mb-1">Font Family</label>
                 <select id="override-family" class="form-control text-sm">
                     <option value="">Use default</option>
-                    <option value="press_start">Press Start 2P</option>
-                    <option value="four_by_six">4x6 Font</option>
-                    <option value="matrix_light_6">Matrix Light 6</option>
+                    <!-- Dynamically populated from font catalog -->
                 </select>
             </div>
 
@@ -152,7 +150,10 @@
         <h3 class="text-md font-medium text-gray-900 mb-4">Font Preview</h3>
         <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-2 2xl:grid-cols-2 gap-6">
             <div>
-                <canvas id="font-preview-canvas" width="400" height="100" class="border border-gray-300 bg-black rounded"></canvas>
+                <div id="font-preview-container" class="border border-gray-300 bg-black rounded p-4 min-h-[100px] flex items-center justify-center">
+                    <img id="font-preview-image" src="" alt="Font preview" class="max-w-full" style="display: none;">
+                    <span id="font-preview-loading" class="text-gray-400">Select a font to preview</span>
+                </div>
             </div>
             <div class="space-y-3">
                 <div>
@@ -163,9 +164,7 @@
                     <div>
                         <label class="block text-sm font-medium text-gray-700 mb-1">Font Family</label>
                         <select id="preview-family" class="form-control text-sm">
-                            <option value="press_start">Press Start 2P</option>
-                            <option value="four_by_six">4x6 Font</option>
-                            <option value="matrix_light_6">Matrix Light 6</option>
+                            <!-- Dynamically populated from font catalog -->
                         </select>
                     </div>
                     <div>
@@ -488,21 +487,100 @@ function updateAvailableFontsDisplay() {
         return;
     }
 
-    const lines = Object.entries(fontCatalog).map(([name, fontInfo]) => {
+    // System fonts that cannot be deleted
+    const systemFonts = [
+        'pressstart2p-regular', 'pressstart2p', 'press start 2p',
+        '4x6-font', '4x6', '5by7.regular', '5by7', '5x7',
+        '5x8', '6x9', '6x10', '6x12', '6x13',
+        '7x13', '7x14', '8x13', '9x15', '9x18', '10x20',
+        'matrixchunky8', 'matrixlight6', 'tom-thumb'
+    ];
+
+    const fontEntries = Object.entries(fontCatalog).map(([name, fontInfo]) => {
         const fontPath = typeof fontInfo === 'string' ? fontInfo : (fontInfo?.path || '');
-        // Only prefix with "assets/fonts/" if path is a bare filename (no "/" and doesn't start with "assets/")
-        // If path is absolute (starts with "/") or already has "assets/" prefix, use as-is
-        const fullPath = (fontPath.startsWith('/') || fontPath.startsWith('assets/')) 
-            ? fontPath 
-            : `assets/fonts/${fontPath}`;
-        return `${name}: ${fullPath}`;
-    });
-    container.textContent = lines.join('\n');
+        const filename = typeof fontInfo === 'object' ? (fontInfo.filename || name) : name;
+        const displayName = typeof fontInfo === 'object' ? (fontInfo.display_name || name) : name;
+        const fontType = typeof fontInfo === 'object' ? (fontInfo.type || '').toUpperCase() : '';
+        const isSystem = systemFonts.some(sf => name.toLowerCase().includes(sf) || displayName.toLowerCase().includes(sf));
+        return { name, filename, displayName, fontType, fontPath, isSystem };
+    }).sort((a, b) => a.displayName.localeCompare(b.displayName));
+
+    // Build HTML with delete buttons for non-system fonts
+    container.innerHTML = fontEntries.map(font => {
+        const typeLabel = font.fontType ? ` <span class="text-gray-500">(${font.fontType})</span>` : '';
+        const deleteBtn = font.isSystem
+            ? '<span class="text-gray-600 text-xs ml-2">[system]</span>'
+            : `<button onclick="deleteFont('${font.name}')" class="text-red-400 hover:text-red-300 text-xs ml-2" title="Delete font">[delete]</button>`;
+        return `<div class="flex items-center justify-between py-1 border-b border-gray-700 last:border-0">
+            <span class="truncate flex-1">${font.displayName}${typeLabel}</span>
+            ${deleteBtn}
+        </div>`;
+    }).join('');
+}
+
+async function deleteFont(fontFamily) {
+    if (!confirm(`Are you sure you want to delete the font "${fontFamily}"? This action cannot be undone.`)) {
+        return;
+    }
+
+    try {
+        const response = await fetch(`${baseUrl}/api/v3/fonts/${encodeURIComponent(fontFamily)}`, {
+            method: 'DELETE'
+        });
+
+        const data = await response.json();
+
+        if (data.status === 'success') {
+            showNotification(data.message || `Font "${fontFamily}" deleted successfully`, 'success');
+            // Refresh font data and UI
+            await loadFontData();
+            populateFontSelects();
+            // Clear font-selector widget cache if available
+            if (typeof window.clearFontSelectorCache === 'function') {
+                window.clearFontSelectorCache();
+            }
+        } else {
+            showNotification(data.message || `Failed to delete font "${fontFamily}"`, 'error');
+        }
+    } catch (error) {
+        console.error('Error deleting font:', error);
+        showNotification(`Error deleting font: ${error.message}`, 'error');
+    }
 }
 
 function populateFontSelects() {
-    // This would populate the select options with actual font data
-    // For now, using placeholder options
+    // Populate font family dropdowns from catalog
+    const overrideSelect = document.getElementById('override-family');
+    const previewSelect = document.getElementById('preview-family');
+
+    if (!overrideSelect || !previewSelect) return;
+
+    // Get font entries sorted by display name
+    const fontEntries = Object.entries(fontCatalog).map(([key, info]) => {
+        const filename = typeof info === 'object' ? (info.filename || key) : key;
+        const displayName = typeof info === 'object' ? (info.display_name || key) : key;
+        const fontType = typeof info === 'object' ? (info.type || 'unknown').toUpperCase() : '';
+        return { key, filename, displayName, fontType };
+    }).sort((a, b) => a.displayName.localeCompare(b.displayName));
+
+    // Build options HTML
+    const optionsHtml = fontEntries.map(font => {
+        const typeLabel = font.fontType ? ` (${font.fontType})` : '';
+        return `<option value="${font.filename}">${font.displayName}${typeLabel}</option>`;
+    }).join('');
+
+    // Populate override select (keep the default option)
+    overrideSelect.innerHTML = '<option value="">Use default</option>' + optionsHtml;
+
+    // Populate preview select
+    previewSelect.innerHTML = optionsHtml;
+
+    // Select first font in preview if available
+    if (fontEntries.length > 0) {
+        previewSelect.value = fontEntries[0].filename;
+    }
+
+    console.log(`Populated font selects with ${fontEntries.length} fonts`);
 }
 
 async function addFontOverride() {
@@ -639,30 +717,59 @@ function getFontDisplayName(fontKey) {
     return names[fontKey] || fontKey;
 }
 
-function updateFontPreview() {
-    const canvas = document.getElementById('font-preview-canvas');
-    const text = document.getElementById('preview-text').value || 'Sample Text';
-    const family = document.getElementById('preview-family').value;
-    const size = document.getElementById('preview-size').value;
+async function updateFontPreview() {
+    const previewImage = document.getElementById('font-preview-image');
+    const loadingText = document.getElementById('font-preview-loading');
+    const textInput = document.getElementById('preview-text');
+    const familySelect = document.getElementById('preview-family');
+    const sizeSelect = document.getElementById('preview-size');
 
-    if (!canvas) return;
+    if (!previewImage || !loadingText) return;
 
-    const ctx = canvas.getContext('2d');
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    const text = textInput?.value || 'Sample Text 123';
+    const family = familySelect?.value || '';
+    const sizeToken = sizeSelect?.value || 'md';
+    const sizePx = fontTokens[sizeToken] || 10;
 
-    // Set background
-    ctx.fillStyle = '#000000';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    if (!family) {
+        previewImage.style.display = 'none';
+        loadingText.style.display = 'block';
+        loadingText.textContent = 'Select a font to preview';
+        return;
+    }
 
-    // Set font properties
-    const fontSize = fontTokens[size] || 8;
-    ctx.fillStyle = '#ffffff';
-    ctx.font = `${fontSize}px monospace`;
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
+    // Show loading state
+    loadingText.textContent = 'Loading preview...';
+    loadingText.style.display = 'block';
+    previewImage.style.display = 'none';
 
-    // Draw text in center
-    ctx.fillText(text, canvas.width / 2, canvas.height / 2);
+    try {
+        const params = new URLSearchParams({
+            font: family,
+            text: text,
+            size: sizePx,
+            bg: '000000',
+            fg: 'ffffff'
+        });
+
+        const response = await fetch(`${baseUrl}/api/v3/fonts/preview?${params}`);
+        const data = await response.json();
+
+        if (data.status === 'success' && data.data?.image) {
+            previewImage.src = data.data.image;
+            previewImage.style.display = 'block';
+            loadingText.style.display = 'none';
+        } else {
+            loadingText.textContent = data.message || 'Failed to load preview';
+            loadingText.style.display = 'block';
+            previewImage.style.display = 'none';
+        }
+    } catch (error) {
+        console.error('Error loading font preview:', error);
+        loadingText.textContent = 'Error loading preview';
+        loadingText.style.display = 'block';
+        previewImage.style.display = 'none';
+    }
 }
 
 function initializeFontUpload() {
@@ -773,6 +880,10 @@ async function uploadSelectedFonts() {
         populateFontSelects();
         cancelFontUpload();
         hideUploadProgress();
+        // Clear font-selector widget cache so new fonts appear in plugin configs
+        if (typeof window.clearFontSelectorCache === 'function') {
+            window.clearFontSelectorCache();
+        }
 
     } catch (error) {
         console.error('Error uploading fonts:', error);
@@ -850,7 +961,12 @@ function updateUploadProgress(percent) {
     border: 1px solid #d1d5db;
 }
 
-#font-preview-canvas {
+#font-preview-container {
+    max-width: 100%;
+    min-height: 100px;
+}
+
+#font-preview-image {
     max-width: 100%;
     height: auto;
 }
