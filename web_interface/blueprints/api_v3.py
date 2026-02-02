@@ -5547,9 +5547,14 @@ def get_font_preview():
 
         font_filename = request.args.get('font', '')
         text = request.args.get('text', 'Sample Text 123')
-        size = int(request.args.get('size', 12))
         bg_color = request.args.get('bg', '000000')
         fg_color = request.args.get('fg', 'ffffff')
+
+        # Safe integer parsing for size
+        try:
+            size = int(request.args.get('size', 12))
+        except (ValueError, TypeError):
+            return jsonify({'status': 'error', 'message': 'Invalid font size'}), 400
 
         if not font_filename:
             return jsonify({'status': 'error', 'message': 'Font filename required'}), 400
@@ -5558,17 +5563,38 @@ def get_font_preview():
         if size < 4 or size > 72:
             return jsonify({'status': 'error', 'message': 'Font size must be between 4 and 72'}), 400
 
+        # Security: Validate font_filename to prevent path traversal
+        # Only allow alphanumeric, hyphen, underscore, and dot (for extension)
+        from pathlib import Path as PathLib
+        safe_name = PathLib(font_filename).name  # Strip any directory components
+        if safe_name != font_filename or '..' in font_filename:
+            return jsonify({'status': 'error', 'message': 'Invalid font filename'}), 400
+
+        # Validate extension
+        allowed_extensions = ['.ttf', '.otf', '.bdf']
+        has_valid_ext = any(safe_name.lower().endswith(ext) for ext in allowed_extensions)
+        name_without_ext = safe_name.rsplit('.', 1)[0] if '.' in safe_name else safe_name
+
         # Find the font file
         fonts_dir = PROJECT_ROOT / "assets" / "fonts"
-        font_path = fonts_dir / font_filename
+        if not fonts_dir.exists():
+            return jsonify({'status': 'error', 'message': 'Fonts directory not found'}), 404
 
-        if not font_path.exists():
+        font_path = fonts_dir / safe_name
+
+        if not font_path.exists() and not has_valid_ext:
             # Try finding by family name (without extension)
-            for ext in ['.ttf', '.otf', '.bdf']:
-                potential_path = fonts_dir / f"{font_filename}{ext}"
+            for ext in allowed_extensions:
+                potential_path = fonts_dir / f"{name_without_ext}{ext}"
                 if potential_path.exists():
                     font_path = potential_path
                     break
+
+        # Final security check: ensure path is within fonts_dir
+        try:
+            font_path.resolve().relative_to(fonts_dir.resolve())
+        except ValueError:
+            return jsonify({'status': 'error', 'message': 'Invalid font path'}), 400
 
         if not font_path.exists():
             return jsonify({'status': 'error', 'message': f'Font file not found: {font_filename}'}), 404
@@ -5644,6 +5670,18 @@ def get_font_preview():
 def delete_font(font_family):
     """Delete a user-uploaded font file"""
     try:
+        import re
+        from pathlib import Path as PathLib
+
+        # Security: Validate font_family to prevent path traversal
+        # Reject if it contains path separators or ..
+        if '..' in font_family or '/' in font_family or '\\' in font_family:
+            return jsonify({'status': 'error', 'message': 'Invalid font family name'}), 400
+
+        # Only allow safe characters: alphanumeric, hyphen, underscore, dot
+        if not re.match(r'^[a-zA-Z0-9_\-\.]+$', font_family):
+            return jsonify({'status': 'error', 'message': 'Invalid font family name'}), 400
+
         # List of system fonts that cannot be deleted
         SYSTEM_FONTS = [
             'PressStart2P-Regular', 'pressstart2p-regular',
@@ -5663,12 +5701,24 @@ def delete_font(font_family):
 
         # Find and delete the font file
         fonts_dir = PROJECT_ROOT / "assets" / "fonts"
+
+        # Ensure fonts directory exists
+        if not fonts_dir.exists() or not fonts_dir.is_dir():
+            return jsonify({'status': 'error', 'message': 'Fonts directory not found'}), 404
+
         deleted = False
         deleted_filename = None
 
-        for ext in ['.ttf', '.otf', '.bdf', '']:
-            # Try exact match first
+        # Only try valid font extensions (no empty string to avoid matching directories)
+        for ext in ['.ttf', '.otf', '.bdf']:
             potential_path = fonts_dir / f"{font_family}{ext}"
+
+            # Security: Verify path is within fonts_dir
+            try:
+                potential_path.resolve().relative_to(fonts_dir.resolve())
+            except ValueError:
+                continue  # Path escapes fonts_dir, skip
+
             if potential_path.exists() and potential_path.is_file():
                 potential_path.unlink()
                 deleted = True
@@ -5676,11 +5726,22 @@ def delete_font(font_family):
                 break
 
         if not deleted:
-            # Try case-insensitive match
+            # Try case-insensitive match within fonts directory
             for filename in os.listdir(fonts_dir):
+                # Only consider files with valid font extensions
+                if not any(filename.lower().endswith(ext) for ext in ['.ttf', '.otf', '.bdf']):
+                    continue
+
                 name_without_ext = os.path.splitext(filename)[0]
                 if name_without_ext.lower() == font_family_lower:
                     filepath = fonts_dir / filename
+
+                    # Security: Verify path is within fonts_dir
+                    try:
+                        filepath.resolve().relative_to(fonts_dir.resolve())
+                    except ValueError:
+                        continue  # Path escapes fonts_dir, skip
+
                     if filepath.is_file():
                         filepath.unlink()
                         deleted = True
@@ -6250,15 +6311,6 @@ def list_plugin_assets():
     except Exception as e:
         import traceback
         return jsonify({'status': 'error', 'message': str(e), 'traceback': traceback.format_exc()}), 500
-
-@api_v3.route('/fonts/delete/<font_family>', methods=['DELETE'])
-def delete_font(font_family):
-    """Delete font"""
-    try:
-        # This would integrate with the actual font system
-        return jsonify({'status': 'success', 'message': f'Font {font_family} deleted'})
-    except Exception as e:
-        return jsonify({'status': 'error', 'message': str(e)}), 500
 
 @api_v3.route('/logs', methods=['GET'])
 def get_logs():

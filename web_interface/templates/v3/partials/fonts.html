@@ -208,12 +208,15 @@
     window.fontTokens = window.fontTokens || {};
     window.fontOverrides = window.fontOverrides || {};
     window.selectedFontFiles = window.selectedFontFiles || [];
-    
+
     // Create references that can be reassigned
     var fontCatalog = window.fontCatalog;
     var fontTokens = window.fontTokens;
     var fontOverrides = window.fontOverrides;
     var selectedFontFiles = window.selectedFontFiles;
+
+    // Base URL for API calls (shared scope)
+    var baseUrl = window.location.origin;
 
 function initializeFontsTab() {
     // Allow re-initialization on each HTMX content swap
@@ -367,7 +370,6 @@ async function loadFontData() {
 
     try {
         // Use absolute URLs to ensure they work when loaded via HTMX
-        const baseUrl = window.location.origin;
         const [catalogRes, tokensRes, overridesRes] = await Promise.all([
             fetch(`${baseUrl}/api/v3/fonts/catalog`),
             fetch(`${baseUrl}/api/v3/fonts/tokens`),
@@ -505,17 +507,44 @@ function updateAvailableFontsDisplay() {
         return { name, filename, displayName, fontType, fontPath, isSystem };
     }).sort((a, b) => a.displayName.localeCompare(b.displayName));
 
-    // Build HTML with delete buttons for non-system fonts
-    container.innerHTML = fontEntries.map(font => {
-        const typeLabel = font.fontType ? ` <span class="text-gray-500">(${font.fontType})</span>` : '';
-        const deleteBtn = font.isSystem
-            ? '<span class="text-gray-600 text-xs ml-2">[system]</span>'
-            : `<button onclick="deleteFont('${font.name}')" class="text-red-400 hover:text-red-300 text-xs ml-2" title="Delete font">[delete]</button>`;
-        return `<div class="flex items-center justify-between py-1 border-b border-gray-700 last:border-0">
-            <span class="truncate flex-1">${font.displayName}${typeLabel}</span>
-            ${deleteBtn}
-        </div>`;
-    }).join('');
+    // Build list using DOM APIs to prevent XSS
+    container.innerHTML = '';
+    fontEntries.forEach(font => {
+        const row = document.createElement('div');
+        row.className = 'flex items-center justify-between py-1 border-b border-gray-700 last:border-0';
+
+        const nameSpan = document.createElement('span');
+        nameSpan.className = 'truncate flex-1';
+        nameSpan.textContent = font.displayName;
+
+        if (font.fontType) {
+            const typeSpan = document.createElement('span');
+            typeSpan.className = 'text-gray-500 ml-1';
+            typeSpan.textContent = `(${font.fontType})`;
+            nameSpan.appendChild(typeSpan);
+        }
+
+        row.appendChild(nameSpan);
+
+        if (font.isSystem) {
+            const systemBadge = document.createElement('span');
+            systemBadge.className = 'text-gray-600 text-xs ml-2';
+            systemBadge.textContent = '[system]';
+            row.appendChild(systemBadge);
+        } else {
+            const deleteBtn = document.createElement('button');
+            deleteBtn.className = 'text-red-400 hover:text-red-300 text-xs ml-2';
+            deleteBtn.title = 'Delete font';
+            deleteBtn.textContent = '[delete]';
+            deleteBtn.dataset.fontName = font.name;
+            deleteBtn.addEventListener('click', function() {
+                deleteFont(this.dataset.fontName);
+            });
+            row.appendChild(deleteBtn);
+        }
+
+        container.appendChild(row);
+    });
 }
 
 async function deleteFont(fontFamily) {
