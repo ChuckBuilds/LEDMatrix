@@ -218,6 +218,13 @@
     // Base URL for API calls (shared scope)
     var baseUrl = window.location.origin;
 
+// Helper function to escape HTML and prevent XSS
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = String(text);
+    return div.innerHTML;
+}
+
 function initializeFontsTab() {
     // Allow re-initialization on each HTMX content swap
     // The window._fontsScriptLoaded guard prevents function redeclaration
@@ -592,17 +599,31 @@ function populateFontSelects() {
         return { key, filename, displayName, fontType };
     }).sort((a, b) => a.displayName.localeCompare(b.displayName));
 
-    // Build options HTML
-    const optionsHtml = fontEntries.map(font => {
+    // Build options using DOM APIs to prevent XSS
+    // Clear and add default option for override select
+    overrideSelect.innerHTML = '';
+    const defaultOption = document.createElement('option');
+    defaultOption.value = '';
+    defaultOption.textContent = 'Use default';
+    overrideSelect.appendChild(defaultOption);
+
+    // Clear preview select
+    previewSelect.innerHTML = '';
+
+    // Add font options to both selects
+    fontEntries.forEach(font => {
         const typeLabel = font.fontType ? ` (${font.fontType})` : '';
-        return `<option value="${font.filename}">${font.displayName}${typeLabel}</option>`;
-    }).join('');
 
-    // Populate override select (keep the default option)
-    overrideSelect.innerHTML = '<option value="">Use default</option>' + optionsHtml;
+        const overrideOpt = document.createElement('option');
+        overrideOpt.value = font.filename;
+        overrideOpt.textContent = font.displayName + typeLabel;
+        overrideSelect.appendChild(overrideOpt);
 
-    // Populate preview select
-    previewSelect.innerHTML = optionsHtml;
+        const previewOpt = document.createElement('option');
+        previewOpt.value = font.filename;
+        previewOpt.textContent = font.displayName + typeLabel;
+        previewSelect.appendChild(previewOpt);
+    });
 
     // Select first font in preview if available
     if (fontEntries.length > 0) {
@@ -694,7 +715,9 @@ function displayCurrentOverrides() {
         return;
     }
 
-    container.innerHTML = Object.entries(fontOverrides).map(([elementKey, override]) => {
+    // Build list using DOM APIs to prevent XSS
+    container.innerHTML = '';
+    Object.entries(fontOverrides).forEach(([elementKey, override]) => {
         const elementName = getElementDisplayName(elementKey);
         const settings = [];
 
@@ -707,18 +730,34 @@ function displayCurrentOverrides() {
             settings.push(`Size: ${override.size_px}px`);
         }
 
-        return `
-            <div class="flex items-center justify-between p-3 bg-white rounded border">
-                <div>
-                    <div class="font-medium text-gray-900">${elementName}</div>
-                    <div class="text-sm text-gray-600">${settings.join(', ')}</div>
-                </div>
-                <button onclick="deleteFontOverride('${elementKey}')" class="btn bg-red-600 hover:bg-red-700 text-white px-3 py-1 text-sm">
-                    <i class="fas fa-trash mr-1"></i>Remove
-                </button>
-            </div>
-        `;
-    }).join('');
+        const row = document.createElement('div');
+        row.className = 'flex items-center justify-between p-3 bg-white rounded border';
+
+        const infoDiv = document.createElement('div');
+
+        const nameDiv = document.createElement('div');
+        nameDiv.className = 'font-medium text-gray-900';
+        nameDiv.textContent = elementName;
+
+        const settingsDiv = document.createElement('div');
+        settingsDiv.className = 'text-sm text-gray-600';
+        settingsDiv.textContent = settings.join(', ');
+
+        infoDiv.appendChild(nameDiv);
+        infoDiv.appendChild(settingsDiv);
+
+        const deleteBtn = document.createElement('button');
+        deleteBtn.className = 'btn bg-red-600 hover:bg-red-700 text-white px-3 py-1 text-sm';
+        deleteBtn.innerHTML = '<i class="fas fa-trash mr-1"></i>Remove';
+        deleteBtn.dataset.elementKey = elementKey;
+        deleteBtn.addEventListener('click', function() {
+            deleteFontOverride(this.dataset.elementKey);
+        });
+
+        row.appendChild(infoDiv);
+        row.appendChild(deleteBtn);
+        container.appendChild(row);
+    });
 }
 
 function getElementDisplayName(elementKey) {
@@ -832,12 +871,19 @@ function showUploadForm() {
     const selectedFilesContainer = document.getElementById('selected-files');
     const fontFamilyInput = document.getElementById('upload-font-family');
 
-    // Show selected files
-    selectedFilesContainer.innerHTML = selectedFontFiles.map(file => `
-        <div class="flex items-center justify-between p-2 bg-gray-100 rounded">
-            <span class="text-sm">${file.name} (${(file.size / 1024).toFixed(1)} KB)</span>
-        </div>
-    `).join('');
+    // Show selected files using DOM APIs to prevent XSS
+    selectedFilesContainer.innerHTML = '';
+    selectedFontFiles.forEach(file => {
+        const row = document.createElement('div');
+        row.className = 'flex items-center justify-between p-2 bg-gray-100 rounded';
+
+        const span = document.createElement('span');
+        span.className = 'text-sm';
+        span.textContent = `${file.name} (${(file.size / 1024).toFixed(1)} KB)`;
+
+        row.appendChild(span);
+        selectedFilesContainer.appendChild(row);
+    });
 
     // Auto-generate font family name from first file
     if (selectedFontFiles.length === 1) {

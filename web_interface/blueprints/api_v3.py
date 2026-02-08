@@ -1,6 +1,7 @@
 from flask import Blueprint, request, jsonify, Response, send_from_directory
 import json
 import os
+import re
 import sys
 import subprocess
 import time
@@ -5390,7 +5391,6 @@ def get_fonts_catalog():
                     # Generate human-readable display name
                     display_name = family_name.replace('-', ' ').replace('_', ' ')
                     # Add space before capital letters for camelCase names
-                    import re
                     display_name = re.sub(r'([a-z])([A-Z])', r'\1 \2', display_name)
                     # Add space before numbers that follow letters
                     display_name = re.sub(r'([a-zA-Z])(\d)', r'\1 \2', display_name)
@@ -5487,17 +5487,10 @@ def upload_font():
         if not is_valid:
             return jsonify({'status': 'error', 'message': error_msg}), 400
 
-        font_file = request.files['font_file']
         font_family = request.form.get('font_family', '')
 
-        if not font_file or not font_family:
+        if not font_family:
             return jsonify({'status': 'error', 'message': 'Font file and family name required'}), 400
-
-        # Validate file type
-        allowed_extensions = ['.ttf', '.bdf']
-        file_extension = font_file.filename.lower().split('.')[-1]
-        if f'.{file_extension}' not in allowed_extensions:
-            return jsonify({'status': 'error', 'message': 'Only .ttf and .bdf files are allowed'}), 400
 
         # Validate font family name
         if not font_family.replace('_', '').replace('-', '').isalnum():
@@ -5565,8 +5558,7 @@ def get_font_preview():
 
         # Security: Validate font_filename to prevent path traversal
         # Only allow alphanumeric, hyphen, underscore, and dot (for extension)
-        from pathlib import Path as PathLib
-        safe_name = PathLib(font_filename).name  # Strip any directory components
+        safe_name = Path(font_filename).name  # Strip any directory components
         if safe_name != font_filename or '..' in font_filename:
             return jsonify({'status': 'error', 'message': 'Invalid font filename'}), 400
 
@@ -5670,9 +5662,6 @@ def get_font_preview():
 def delete_font(font_family):
     """Delete a user-uploaded font file"""
     try:
-        import re
-        from pathlib import Path as PathLib
-
         # Security: Validate font_family to prevent path traversal
         # Reject if it contains path separators or ..
         if '..' in font_family or '/' in font_family or '\\' in font_family:
