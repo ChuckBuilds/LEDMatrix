@@ -5388,7 +5388,7 @@ def get_fonts_catalog():
                     relative_path = str(filepath.relative_to(PROJECT_ROOT))
                     font_type = 'ttf' if filename.endswith('.ttf') else 'otf' if filename.endswith('.otf') else 'bdf'
 
-                    # Generate human-readable display name
+                    # Generate human-readable display name from family_name
                     display_name = family_name.replace('-', ' ').replace('_', ' ')
                     # Add space before capital letters for camelCase names
                     display_name = re.sub(r'([a-z])([A-Z])', r'\1 \2', display_name)
@@ -5397,8 +5397,12 @@ def get_fonts_catalog():
                     # Clean up multiple spaces
                     display_name = ' '.join(display_name.split())
 
-                    catalog[family_name] = {
+                    # Use filename (without extension) as unique key to avoid collisions
+                    # when multiple files share the same family_name from font metadata
+                    catalog_key = os.path.splitext(filename)[0]
+                    catalog[catalog_key] = {
                         'filename': filename,
+                        'family_name': family_name,
                         'display_name': display_name,
                         'path': relative_path,
                         'type': font_type,
@@ -5409,8 +5413,8 @@ def get_fonts_catalog():
         if set_cached:
             try:
                 set_cached('fonts_catalog', catalog, ttl_seconds=300)
-            except Exception:
-                pass  # Cache write failed, but continue
+            except Exception as e:
+                logger.error("[FontCatalog] Failed to cache fonts_catalog", exc_info=True)
 
         return jsonify({'status': 'success', 'data': {'catalog': catalog}})
     except Exception as e:
@@ -5516,8 +5520,10 @@ def upload_font():
         try:
             from web_interface.cache import delete_cached
             delete_cached('fonts_catalog')
-        except (ImportError, Exception):
-            pass  # Cache clearing failed, but file was saved
+        except ImportError as e:
+            logger.warning("[FontUpload] Cache module not available: %s", e)
+        except Exception as e:
+            logger.error("[FontUpload] Failed to clear fonts_catalog cache", exc_info=True)
 
         return jsonify({
             'status': 'success',
@@ -5614,16 +5620,12 @@ def get_font_preview():
         # Load font
         font = None
         if str(font_path).endswith('.bdf'):
-            # For BDF fonts, try using freetype via PIL BDF support or fallback
-            try:
-                import freetype
-                face = freetype.Face(str(font_path))
-                face.set_pixel_sizes(0, size)
-                # For BDF, we'll render character by character
-                # This is a simplified approach - full BDF rendering is complex
-                font = ImageFont.load_default()
-            except Exception:
-                font = ImageFont.load_default()
+            # BDF fonts require complex per-glyph rendering via freetype
+            # Return explicit error rather than showing misleading preview with default font
+            return jsonify({
+                'status': 'error',
+                'message': 'BDF font preview not supported. BDF fonts will render correctly on the LED matrix.'
+            }), 400
         else:
             # TTF/OTF fonts
             try:
@@ -5762,8 +5764,10 @@ def delete_font(font_family):
         try:
             from web_interface.cache import delete_cached
             delete_cached('fonts_catalog')
-        except (ImportError, Exception):
-            pass  # Cache clearing failed, but file was deleted
+        except ImportError as e:
+            logger.warning("[FontDelete] Cache module not available: %s", e)
+        except Exception as e:
+            logger.error("[FontDelete] Failed to clear fonts_catalog cache", exc_info=True)
 
         return jsonify({
             'status': 'success',
