@@ -1339,6 +1339,9 @@ def execute_system_action():
         elif action == 'reboot_system':
             result = subprocess.run(['sudo', 'reboot'],
                                  capture_output=True, text=True)
+        elif action == 'shutdown_system':
+            result = subprocess.run(['sudo', 'poweroff'],
+                                 capture_output=True, text=True)
         elif action == 'git_pull':
             # Use PROJECT_ROOT instead of hardcoded path
             project_dir = str(PROJECT_ROOT)
