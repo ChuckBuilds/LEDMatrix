@@ -5538,10 +5538,22 @@ def get_font_preview():
         import io
         import base64
 
+        # Limits to prevent DoS via large image generation on constrained devices
+        MAX_TEXT_CHARS = 100
+        MAX_TEXT_LINES = 3
+        MAX_DIM = 1024  # Max width or height in pixels
+        MAX_PIXELS = 500000  # Max total pixels (e.g., ~700x700)
+
         font_filename = request.args.get('font', '')
         text = request.args.get('text', 'Sample Text 123')
         bg_color = request.args.get('bg', '000000')
         fg_color = request.args.get('fg', 'ffffff')
+
+        # Validate text length and line count early
+        if len(text) > MAX_TEXT_CHARS:
+            return jsonify({'status': 'error', 'message': f'Text exceeds maximum length of {MAX_TEXT_CHARS} characters'}), 400
+        if text.count('\n') >= MAX_TEXT_LINES:
+            return jsonify({'status': 'error', 'message': f'Text exceeds maximum of {MAX_TEXT_LINES} lines'}), 400
 
         # Safe integer parsing for size
         try:
@@ -5630,6 +5642,12 @@ def get_font_preview():
         padding = 10
         img_width = max(text_width + padding * 2, 100)
         img_height = max(text_height + padding * 2, 30)
+
+        # Validate resulting image size to prevent memory/CPU spikes
+        if img_width > MAX_DIM or img_height > MAX_DIM:
+            return jsonify({'status': 'error', 'message': 'Requested image too large'}), 400
+        if img_width * img_height > MAX_PIXELS:
+            return jsonify({'status': 'error', 'message': 'Requested image too large'}), 400
 
         img = Image.new('RGB', (img_width, img_height), bg_rgb)
         draw = ImageDraw.Draw(img)
