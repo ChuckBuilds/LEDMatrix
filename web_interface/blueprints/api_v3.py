@@ -5432,7 +5432,7 @@ def get_fonts_catalog():
         if set_cached:
             try:
                 set_cached('fonts_catalog', catalog, ttl_seconds=300)
-            except Exception as e:
+            except Exception:
                 logger.error("[FontCatalog] Failed to cache fonts_catalog", exc_info=True)
 
         return jsonify({'status': 'success', 'data': {'catalog': catalog}})
@@ -5742,6 +5742,7 @@ def delete_font(font_family):
 
         if not deleted:
             # Try case-insensitive match within fonts directory
+            font_family_lower = font_family.lower()
             for filename in os.listdir(fonts_dir):
                 # Only consider files with valid font extensions
                 if not any(filename.lower().endswith(ext) for ext in ['.ttf', '.otf', '.bdf']):

@@ -858,6 +858,22 @@ async function updateFontPreview() {
         });
 
         const response = await fetch(`${baseUrl}/api/v3/fonts/preview?${params}`);
+
+        if (!response.ok) {
+            const text = await response.text();
+            let message;
+            try {
+                const errorData = JSON.parse(text);
+                message = errorData.message || `Server error: ${response.status}`;
+            } catch {
+                message = `Server error: ${response.status}`;
+            }
+            loadingText.textContent = message;
+            loadingText.style.display = 'block';
+            previewImage.style.display = 'none';
+            return;
+        }
+
         const data = await response.json();
 
         if (data.status === 'success' && data.data?.image) {
