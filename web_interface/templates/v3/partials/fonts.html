@@ -28,14 +28,14 @@
     <!-- Font Upload -->
     <div class="bg-gray-50 rounded-lg p-4 mb-8">
         <h3 class="text-md font-medium text-gray-900 mb-4">Upload Custom Fonts</h3>
-        <p class="text-sm text-gray-600 mb-4">Upload your own TTF or BDF font files to use in your LED matrix display.</p>
+        <p class="text-sm text-gray-600 mb-4">Upload your own TTF, OTF, or BDF font files to use in your LED matrix display.</p>
 
         <div class="font-upload-area" id="font-upload-area">
             <div class="upload-dropzone" id="upload-dropzone">
                 <i class="fas fa-cloud-upload-alt text-3xl text-gray-400 mb-3"></i>
                 <p class="text-gray-600">Drag and drop font files here, or click to select</p>
-                <p class="text-sm text-gray-500">Supports .ttf and .bdf files</p>
-                <input type="file" id="font-file-input" accept=".ttf,.bdf" multiple style="display: none;">
+                <p class="text-sm text-gray-500">Supports .ttf, .otf, and .bdf files</p>
+                <input type="file" id="font-file-input" accept=".ttf,.otf,.bdf" multiple style="display: none;">
             </div>
         </div>
 
@@ -49,8 +49,8 @@
                 <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div>
                         <label class="block text-sm font-medium text-gray-700 mb-1">Font Family Name</label>
-                        <input type="text" id="upload-font-family" class="form-control" placeholder="e.g., my_custom_font">
-                        <p class="text-sm text-gray-600 mt-1">Custom name for this font (letters, numbers, underscores only)</p>
+                        <input type="text" id="upload-font-family" class="form-control" placeholder="e.g., my-custom-font">
+                        <p class="text-sm text-gray-600 mt-1">Custom name for this font (letters, numbers, underscores, hyphens)</p>
                     </div>
                     <div class="flex items-end">
                         <button type="button" id="upload-fonts-btn" class="btn bg-blue-600 hover:bg-blue-700 text-white px-4 py-2">
@@ -883,13 +883,14 @@ function initializeFontUpload() {
 
 function handleFileSelection(event) {
     const files = Array.from(event.target.files);
+    const validExtensions = ['ttf', 'otf', 'bdf'];
     const validFiles = files.filter(file => {
         const extension = file.name.toLowerCase().split('.').pop();
-        return extension === 'ttf' || extension === 'bdf';
+        return validExtensions.includes(extension);
     });
 
     if (validFiles.length === 0) {
-        showNotification('Please select valid .ttf or .bdf font files', 'warning');
+        showNotification('Please select valid .ttf, .otf, or .bdf font files', 'warning');
         return;
     }
 
@@ -926,7 +927,8 @@ function showUploadForm() {
     if (selectedFontFiles.length === 1) {
         const filename = selectedFontFiles[0].name;
         const nameWithoutExt = filename.substring(0, filename.lastIndexOf('.'));
-        fontFamilyInput.value = nameWithoutExt.toLowerCase().replace(/[^a-z0-9]/g, '_');
+        // Preserve hyphens, convert other special chars to underscores
+        fontFamilyInput.value = nameWithoutExt.toLowerCase().replace(/[^a-z0-9-]/g, '_');
     }
 
     uploadForm.style.display = 'block';
@@ -953,9 +955,9 @@ async function uploadSelectedFonts() {
         return;
     }
 
-    // Validate font family name
-    if (!/^[a-z0-9_]+$/i.test(fontFamily)) {
-        showNotification('Font family name can only contain letters, numbers, and underscores', 'warning');
+    // Validate font family name (must match backend validation)
+    if (!/^[a-z0-9_-]+$/i.test(fontFamily)) {
+        showNotification('Font family name can only contain letters, numbers, underscores, and hyphens', 'warning');
         return;
     }
 
