@@ -5556,7 +5556,7 @@ def upload_font():
 
 
 @api_v3.route('/fonts/preview', methods=['GET'])
-def get_font_preview():
+def get_font_preview() -> tuple[Response, int] | Response:
     """Generate a preview image of text rendered with a specific font"""
     try:
         from PIL import Image, ImageDraw, ImageFont
@@ -5649,7 +5649,9 @@ def get_font_preview():
             # TTF/OTF fonts
             try:
                 font = ImageFont.truetype(str(font_path), size)
-            except Exception:
+            except (IOError, OSError) as e:
+                # IOError/OSError raised for invalid/corrupt font files
+                logger.warning("[FontPreview] Failed to load font %s: %s", font_path, e)
                 font = ImageFont.load_default()
 
         # Calculate text size
@@ -5698,7 +5700,7 @@ def get_font_preview():
 
 
 @api_v3.route('/fonts/<font_family>', methods=['DELETE'])
-def delete_font(font_family):
+def delete_font(font_family: str) -> tuple[Response, int] | Response:
     """Delete a user-uploaded font file"""
     try:
         # Security: Validate font_family to prevent path traversal

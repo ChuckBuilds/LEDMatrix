@@ -785,7 +785,10 @@ function displayCurrentOverrides() {
 
         const deleteBtn = document.createElement('button');
         deleteBtn.className = 'btn bg-red-600 hover:bg-red-700 text-white px-3 py-1 text-sm';
-        deleteBtn.innerHTML = '<i class="fas fa-trash mr-1"></i>Remove';
+        const trashIcon = document.createElement('i');
+        trashIcon.className = 'fas fa-trash mr-1';
+        deleteBtn.appendChild(trashIcon);
+        deleteBtn.appendChild(document.createTextNode('Remove'));
         deleteBtn.dataset.elementKey = elementKey;
         deleteBtn.addEventListener('click', function() {
             deleteFontOverride(this.dataset.elementKey);
