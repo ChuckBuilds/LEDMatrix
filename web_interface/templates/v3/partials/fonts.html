@@ -218,27 +218,33 @@
     // Base URL for API calls (shared scope)
     var baseUrl = window.location.origin;
 
-// Helper function to escape HTML and prevent XSS
-function escapeHtml(text) {
-    const div = document.createElement('div');
-    div.textContent = String(text);
-    return div.innerHTML;
-}
+    // Retry counter for initialization
+    var initRetryCount = 0;
+    var MAX_INIT_RETRIES = 50; // 5 seconds max (50 * 100ms)
 
 function initializeFontsTab() {
     // Allow re-initialization on each HTMX content swap
     // The window._fontsScriptLoaded guard prevents function redeclaration
     const detectedEl = document.getElementById('detected-fonts');
     const availableEl = document.getElementById('available-fonts');
-    
+
     if (!detectedEl || !availableEl) {
+        initRetryCount++;
+        if (initRetryCount >= MAX_INIT_RETRIES) {
+            console.error('Fonts tab elements not found after max retries, giving up');
+            return;
+        }
         console.log('Fonts tab elements not found, retrying...', {
             detectedFonts: !!detectedEl,
-            availableFonts: !!availableEl
+            availableFonts: !!availableEl,
+            attempt: initRetryCount
         });
         setTimeout(initializeFontsTab, 100);
         return;
     }
+
+    // Reset retry counter on successful init
+    initRetryCount = 0;
     
     // showNotification is provided by the notification widget (notification.js)
     // Fallback only if widget hasn't loaded yet
@@ -496,21 +502,13 @@ function updateAvailableFontsDisplay() {
         return;
     }
 
-    // System fonts that cannot be deleted
-    const systemFonts = [
-        'pressstart2p-regular', 'pressstart2p', 'press start 2p',
-        '4x6-font', '4x6', '5by7.regular', '5by7', '5x7',
-        '5x8', '6x9', '6x10', '6x12', '6x13',
-        '7x13', '7x14', '8x13', '9x15', '9x18', '10x20',
-        'matrixchunky8', 'matrixlight6', 'tom-thumb'
-    ];
-
     const fontEntries = Object.entries(fontCatalog).map(([name, fontInfo]) => {
         const fontPath = typeof fontInfo === 'string' ? fontInfo : (fontInfo?.path || '');
         const filename = typeof fontInfo === 'object' ? (fontInfo.filename || name) : name;
         const displayName = typeof fontInfo === 'object' ? (fontInfo.display_name || name) : name;
         const fontType = typeof fontInfo === 'object' ? (fontInfo.type || '').toUpperCase() : '';
-        const isSystem = systemFonts.some(sf => name.toLowerCase().includes(sf) || displayName.toLowerCase().includes(sf));
+        // Use is_system flag from API (single source of truth)
+        const isSystem = typeof fontInfo === 'object' ? (fontInfo.is_system === true) : false;
         return { name, filename, displayName, fontType, fontPath, isSystem };
     }).sort((a, b) => a.displayName.localeCompare(b.displayName));
 
@@ -563,6 +561,19 @@ async function deleteFont(fontFamily) {
         const response = await fetch(`${baseUrl}/api/v3/fonts/${encodeURIComponent(fontFamily)}`, {
             method: 'DELETE'
         });
+
+        if (!response.ok) {
+            const text = await response.text();
+            let message;
+            try {
+                const errorData = JSON.parse(text);
+                message = errorData.message || `Server error: ${response.status}`;
+            } catch {
+                message = `Server error: ${response.status}`;
+            }
+            showNotification(message, 'error');
+            return;
+        }
 
         const data = await response.json();
 
@@ -664,6 +675,19 @@ async function addFontOverride() {
             })
         });
 
+        if (!response.ok) {
+            const text = await response.text();
+            let message;
+            try {
+                const errorData = JSON.parse(text);
+                message = errorData.message || `Server error: ${response.status}`;
+            } catch {
+                message = `Server error: ${response.status}`;
+            }
+            showNotification('Error adding font override: ' + message, 'error');
+            return;
+        }
+
         const data = await response.json();
         if (data.status === 'success') {
             showNotification('Font override added successfully', 'success');
@@ -691,6 +715,19 @@ async function deleteFontOverride(elementKey) {
         const response = await fetch(`${baseUrl}/api/v3/fonts/overrides/${elementKey}`, {
             method: 'DELETE'
         });
+
+        if (!response.ok) {
+            const text = await response.text();
+            let message;
+            try {
+                const errorData = JSON.parse(text);
+                message = errorData.message || `Server error: ${response.status}`;
+            } catch {
+                message = `Server error: ${response.status}`;
+            }
+            showNotification('Error removing font override: ' + message, 'error');
+            return;
+        }
 
         const data = await response.json();
         if (data.status === 'success') {
@@ -936,6 +973,19 @@ async function uploadSelectedFonts() {
                 method: 'POST',
                 body: formData
             });
+
+            if (!response.ok) {
+                const text = await response.text();
+                let message;
+                try {
+                    const errorData = JSON.parse(text);
+                    message = errorData.message || `Server error: ${response.status}`;
+                } catch {
+                    message = `Server error: ${response.status}`;
+                }
+                showNotification(`Error uploading "${file.name}": ${message}`, 'error');
+                continue;
+            }
 
             const data = await response.json();
 

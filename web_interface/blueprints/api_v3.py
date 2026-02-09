@@ -38,6 +38,20 @@ operation_history = None
 # Get project root directory (web_interface/../..)
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 
+# System fonts that cannot be deleted (used by catalog API and delete endpoint)
+SYSTEM_FONTS = frozenset([
+    'pressstart2p-regular', 'pressstart2p',
+    '4x6-font', '4x6',
+    '5by7.regular', '5by7', '5x7',
+    '5x8', '6x9', '6x10', '6x12', '6x13', '6x13b', '6x13o',
+    '7x13', '7x13b', '7x13o', '7x14', '7x14b',
+    '8x13', '8x13b', '8x13o',
+    '9x15', '9x15b', '9x18', '9x18b',
+    '10x20',
+    'matrixchunky8', 'matrixlight6', 'tom-thumb',
+    'clr6x12', 'helvr12', 'texgyre-27'
+])
+
 api_v3 = Blueprint('api_v3', __name__)
 
 def _ensure_cache_manager():
@@ -5400,12 +5414,17 @@ def get_fonts_catalog():
                     # Use filename (without extension) as unique key to avoid collisions
                     # when multiple files share the same family_name from font metadata
                     catalog_key = os.path.splitext(filename)[0]
+
+                    # Check if this is a system font (cannot be deleted)
+                    is_system = catalog_key.lower() in SYSTEM_FONTS
+
                     catalog[catalog_key] = {
                         'filename': filename,
                         'family_name': family_name,
                         'display_name': display_name,
                         'path': relative_path,
                         'type': font_type,
+                        'is_system': is_system,
                         'metadata': metadata if metadata else None
                     }
 
@@ -5691,21 +5710,8 @@ def delete_font(font_family):
         if not re.match(r'^[a-zA-Z0-9_\-\.]+$', font_family):
             return jsonify({'status': 'error', 'message': 'Invalid font family name'}), 400
 
-        # List of system fonts that cannot be deleted
-        SYSTEM_FONTS = [
-            'PressStart2P-Regular', 'pressstart2p-regular',
-            '4x6-font', '4x6',
-            '5by7.regular', '5by7', '5x7',
-            '5x8', '6x9', '6x10', '6x12', '6x13',
-            '7x13', '7x14', '8x13', '9x15', '9x18', '10x20',
-            'MatrixChunky8', 'MatrixLight6', 'tom-thumb'
-        ]
-
-        # Normalize for comparison
-        font_family_lower = font_family.lower()
-
-        # Check if this is a system font
-        if any(sys_font.lower() == font_family_lower for sys_font in SYSTEM_FONTS):
+        # Check if this is a system font (uses module-level SYSTEM_FONTS frozenset)
+        if font_family.lower() in SYSTEM_FONTS:
             return jsonify({'status': 'error', 'message': 'Cannot delete system fonts'}), 403
 
         # Find and delete the font file
