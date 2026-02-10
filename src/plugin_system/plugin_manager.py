@@ -417,8 +417,7 @@ class PluginManager:
             
             # Remove module from sys.modules if present
             module_name = f"plugin_{plugin_id.replace('-', '_')}"
-            if module_name in sys.modules:
-                del sys.modules[module_name]
+            sys.modules.pop(module_name, None)
             
             # Remove from plugin_modules
             self.plugin_modules.pop(plugin_id, None)
