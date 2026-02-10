@@ -890,7 +890,7 @@ class SportsUpcoming(SportsCore):
                             away_text = ''
                     elif self.show_ranking:
                         # Show ranking only if available
-                        away_rank = rankself._team_rankings_cacheings.get(away_abbr, 0)
+                        away_rank = self._team_rankings_cache.get(away_abbr, 0)
                         if away_rank > 0:
                             away_text = f"#{away_rank}"
                         else:

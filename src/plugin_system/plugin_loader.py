@@ -230,9 +230,9 @@ class PluginLoader:
                         mod_name, mod_file, plugin_id
                     )
 
-        # Remove conflicting modules
+        # Remove conflicting modules (use pop to avoid KeyError if already removed)
         for mod_name in modules_to_remove:
-            del sys.modules[mod_name]
+            sys.modules.pop(mod_name, None)
 
     def load_module(
         self,
