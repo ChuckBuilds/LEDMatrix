@@ -1155,6 +1155,9 @@ class PluginStoreManager:
             if result:
                 return True
             self.logger.info(f"API-based install failed for {plugin_subpath}, falling back to ZIP download")
+            # Ensure no partial files remain before ZIP fallback
+            if target_path.exists():
+                shutil.rmtree(target_path, ignore_errors=True)
 
         # Fallback: download full ZIP and extract subdirectory
         return self._install_from_monorepo_zip(download_url, plugin_subpath, target_path)
@@ -1319,6 +1322,9 @@ class PluginStoreManager:
                         get_plugin_dir_mode
                     )
                     ensure_directory_permissions(target_path.parent, get_plugin_dir_mode())
+                    # Ensure target doesn't exist to prevent shutil.move nesting
+                    if target_path.exists():
+                        shutil.rmtree(target_path, ignore_errors=True)
                     shutil.move(str(source_plugin_dir), str(target_path))
 
                     if temp_extract.exists():
