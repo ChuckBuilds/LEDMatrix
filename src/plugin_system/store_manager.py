@@ -1134,57 +1134,186 @@ class PluginStoreManager:
     
     def _install_from_monorepo(self, download_url: str, plugin_subpath: str, target_path: Path) -> bool:
         """
-        Install a plugin from a monorepo by downloading and extracting a subdirectory.
-        
+        Install a plugin from a monorepo by downloading only the target subdirectory.
+
+        Uses the GitHub Git Trees API to list files, then downloads each file
+        individually from raw.githubusercontent.com. Falls back to downloading
+        the full ZIP archive if the API approach fails.
+
         Args:
-            download_url: URL to download zip from
+            download_url: URL to download zip from (used as fallback and to extract repo info)
             plugin_subpath: Path within repo (e.g., "plugins/hello-world")
             target_path: Target directory for plugin
-            
+
         Returns:
             True if successful
         """
+        # Try the API-based approach first (downloads only the target directory)
+        repo_url, branch = self._parse_monorepo_download_url(download_url)
+        if repo_url and branch:
+            result = self._install_from_monorepo_api(repo_url, branch, plugin_subpath, target_path)
+            if result:
+                return True
+            self.logger.info(f"API-based install failed for {plugin_subpath}, falling back to ZIP download")
+
+        # Fallback: download full ZIP and extract subdirectory
+        return self._install_from_monorepo_zip(download_url, plugin_subpath, target_path)
+
+    @staticmethod
+    def _parse_monorepo_download_url(download_url: str):
+        """Extract repo URL and branch from a GitHub archive download URL.
+
+        Example: "https://github.com/ChuckBuilds/ledmatrix-plugins/archive/refs/heads/main.zip"
+        Returns: ("https://github.com/ChuckBuilds/ledmatrix-plugins", "main")
+        """
         try:
-            self.logger.info(f"Downloading monorepo from: {download_url}")
+            # Pattern: {repo_url}/archive/refs/heads/{branch}.zip
+            if '/archive/refs/heads/' in download_url:
+                parts = download_url.split('/archive/refs/heads/')
+                repo_url = parts[0]
+                branch = parts[1].rstrip('.zip')
+                return repo_url, branch
+        except (IndexError, AttributeError):
+            pass
+        return None, None
+
+    def _install_from_monorepo_api(self, repo_url: str, branch: str, plugin_subpath: str, target_path: Path) -> bool:
+        """
+        Install a plugin subdirectory using the GitHub Git Trees API.
+
+        Downloads only the files in the target subdirectory (~200KB) instead
+        of the entire repository ZIP (~5MB+). Uses one API call for the tree
+        listing, then downloads individual files from raw.githubusercontent.com.
+
+        Args:
+            repo_url: GitHub repository URL (e.g., "https://github.com/owner/repo")
+            branch: Branch name (e.g., "main")
+            plugin_subpath: Path within repo (e.g., "plugins/hello-world")
+            target_path: Target directory for plugin
+
+        Returns:
+            True if successful, False to trigger ZIP fallback
+        """
+        try:
+            # Parse owner/repo from URL
+            clean_url = repo_url.rstrip('/')
+            if clean_url.endswith('.git'):
+                clean_url = clean_url[:-4]
+            parts = clean_url.split('/')
+            if len(parts) < 2:
+                return False
+            owner, repo = parts[-2], parts[-1]
+
+            # Step 1: Get the recursive tree listing (1 API call)
+            api_url = f"https://api.github.com/repos/{owner}/{repo}/git/trees/{branch}?recursive=true"
+            headers = {
+                'Accept': 'application/vnd.github.v3+json',
+                'User-Agent': 'LEDMatrix-Plugin-Manager/1.0'
+            }
+            if self.github_token:
+                headers['Authorization'] = f'token {self.github_token}'
+
+            tree_response = self._http_get_with_retries(api_url, timeout=15, headers=headers)
+            if tree_response.status_code != 200:
+                self.logger.debug(f"Trees API returned {tree_response.status_code} for {owner}/{repo}")
+                return False
+
+            tree_data = tree_response.json()
+            if tree_data.get('truncated'):
+                self.logger.debug(f"Tree response truncated for {owner}/{repo}, falling back to ZIP")
+                return False
+
+            # Step 2: Filter for files in the target subdirectory
+            prefix = f"{plugin_subpath}/"
+            file_entries = [
+                entry for entry in tree_data.get('tree', [])
+                if entry['path'].startswith(prefix) and entry['type'] == 'blob'
+            ]
+
+            if not file_entries:
+                self.logger.error(f"No files found under '{plugin_subpath}' in tree for {owner}/{repo}")
+                return False
+
+            self.logger.info(f"Downloading {len(file_entries)} files for {plugin_subpath} via API")
+
+            # Step 3: Create target directory and download each file
+            from src.common.permission_utils import (
+                ensure_directory_permissions,
+                get_plugin_dir_mode
+            )
+            ensure_directory_permissions(target_path.parent, get_plugin_dir_mode())
+            target_path.mkdir(parents=True, exist_ok=True)
+
+            prefix_len = len(prefix)
+            for entry in file_entries:
+                # Relative path within the plugin directory
+                rel_path = entry['path'][prefix_len:]
+                dest_file = target_path / rel_path
+
+                # Create parent directories
+                dest_file.parent.mkdir(parents=True, exist_ok=True)
+
+                # Download from raw.githubusercontent.com (no API rate limit cost)
+                raw_url = f"https://raw.githubusercontent.com/{owner}/{repo}/{branch}/{entry['path']}"
+                file_response = self._http_get_with_retries(raw_url, timeout=30)
+                if file_response.status_code != 200:
+                    self.logger.error(f"Failed to download {entry['path']}: HTTP {file_response.status_code}")
+                    # Clean up partial download
+                    if target_path.exists():
+                        shutil.rmtree(target_path, ignore_errors=True)
+                    return False
+
+                dest_file.write_bytes(file_response.content)
+
+            self.logger.info(f"Successfully installed {plugin_subpath} via API ({len(file_entries)} files)")
+            return True
+
+        except Exception as e:
+            self.logger.debug(f"API-based monorepo install failed: {e}")
+            # Clean up partial download
+            if target_path.exists():
+                shutil.rmtree(target_path, ignore_errors=True)
+            return False
+
+    def _install_from_monorepo_zip(self, download_url: str, plugin_subpath: str, target_path: Path) -> bool:
+        """
+        Fallback: install a plugin from a monorepo by downloading the full ZIP.
+
+        Used when the API-based approach fails (rate limited, auth issues, etc.).
+        """
+        try:
+            self.logger.info(f"Downloading monorepo ZIP from: {download_url}")
             response = self._http_get_with_retries(download_url, timeout=60, stream=True)
             response.raise_for_status()
-            
+
             # Download to temporary file
             with tempfile.NamedTemporaryFile(suffix='.zip', delete=False) as tmp_file:
                 for chunk in response.iter_content(chunk_size=8192):
                     tmp_file.write(chunk)
                 tmp_zip_path = tmp_file.name
-            
+
             try:
-                # Extract zip
                 with zipfile.ZipFile(tmp_zip_path, 'r') as zip_ref:
                     zip_contents = zip_ref.namelist()
                     if not zip_contents:
                         return False
-                    
-                    # GitHub zips have a root directory like "repo-main/"
+
                     root_dir = zip_contents[0].split('/')[0]
-                    
-                    # Build prefix to match plugin files within the zip
-                    # e.g., "ledmatrix-plugins-main/plugins/hello-world/"
                     plugin_prefix = f"{root_dir}/{plugin_subpath}/"
 
-                    # Extract ONLY files under the plugin subdirectory (not the whole repo)
+                    # Extract ONLY files under the plugin subdirectory
                     plugin_members = [m for m in zip_contents if m.startswith(plugin_prefix)]
 
                     if not plugin_members:
                         self.logger.error(f"Plugin path not found in archive: {plugin_subpath}")
-                        self.logger.error(f"Looked for prefix: {plugin_prefix}")
                         return False
 
                     temp_extract = Path(tempfile.mkdtemp())
                     for member in plugin_members:
                         zip_ref.extract(member, temp_extract)
 
-                    # Find the plugin directory
                     source_plugin_dir = temp_extract / root_dir / plugin_subpath
 
-                    # Move plugin contents to target
                     from src.common.permission_utils import (
                         ensure_directory_permissions,
                         get_plugin_dir_mode
@@ -1192,19 +1321,17 @@ class PluginStoreManager:
                     ensure_directory_permissions(target_path.parent, get_plugin_dir_mode())
                     shutil.move(str(source_plugin_dir), str(target_path))
 
-                    # Cleanup temp extract dir
                     if temp_extract.exists():
                         shutil.rmtree(temp_extract, ignore_errors=True)
-                
+
                 return True
-                
+
             finally:
-                # Remove temporary zip file
                 if os.path.exists(tmp_zip_path):
                     os.remove(tmp_zip_path)
-            
+
         except Exception as e:
-            self.logger.error(f"Monorepo download failed: {e}", exc_info=True)
+            self.logger.error(f"Monorepo ZIP download failed: {e}", exc_info=True)
             return False
     
     def _install_via_download(self, download_url: str, target_path: Path) -> bool:
