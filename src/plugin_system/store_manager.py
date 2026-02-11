@@ -560,7 +560,9 @@ class PluginStoreManager:
                         enhanced_plugin['last_commit_branch'] = commit_info.get('branch')
 
                     # Fetch manifest from GitHub for additional metadata (description, etc.)
-                    github_manifest = self._fetch_manifest_from_github(repo_url, branch)
+                    plugin_subpath = plugin.get('plugin_path', '')
+                    manifest_rel = f"{plugin_subpath}/manifest.json" if plugin_subpath else "manifest.json"
+                    github_manifest = self._fetch_manifest_from_github(repo_url, branch, manifest_rel)
                     if github_manifest:
                         if 'last_updated' in github_manifest and not enhanced_plugin.get('last_updated'):
                             enhanced_plugin['last_updated'] = github_manifest['last_updated']
@@ -571,14 +573,16 @@ class PluginStoreManager:
 
         return results
     
-    def _fetch_manifest_from_github(self, repo_url: str, branch: str = "master") -> Optional[Dict]:
+    def _fetch_manifest_from_github(self, repo_url: str, branch: str = "master", manifest_path: str = "manifest.json") -> Optional[Dict]:
         """
         Fetch manifest.json directly from a GitHub repository.
-        
+
         Args:
             repo_url: GitHub repository URL
             branch: Branch name (default: master)
-            
+            manifest_path: Path to manifest within the repo (default: manifest.json).
+                          For monorepo plugins this will be e.g. "plugins/football-scoreboard/manifest.json".
+
         Returns:
             Manifest data or None if not found
         """
@@ -590,27 +594,27 @@ class PluginStoreManager:
                 repo_url = repo_url.rstrip('/')
                 if repo_url.endswith('.git'):
                     repo_url = repo_url[:-4]
-                
+
                 parts = repo_url.split('/')
                 if len(parts) >= 2:
                     owner = parts[-2]
                     repo = parts[-1]
-                    
-                    raw_url = f"https://raw.githubusercontent.com/{owner}/{repo}/{branch}/manifest.json"
-                    
+
+                    raw_url = f"https://raw.githubusercontent.com/{owner}/{repo}/{branch}/{manifest_path}"
+
                     response = self._http_get_with_retries(raw_url, timeout=10)
                     if response.status_code == 200:
                         return response.json()
                     elif response.status_code == 404:
                         # Try main branch instead
                         if branch != "main":
-                            raw_url = f"https://raw.githubusercontent.com/{owner}/{repo}/main/manifest.json"
+                            raw_url = f"https://raw.githubusercontent.com/{owner}/{repo}/main/{manifest_path}"
                             response = self._http_get_with_retries(raw_url, timeout=10)
                             if response.status_code == 200:
                                 return response.json()
         except Exception as e:
             self.logger.debug(f"Could not fetch manifest from GitHub for {repo_url}: {e}")
-        
+
         return None
     
     def _get_latest_commit_info(self, repo_url: str, branch: str = "main") -> Optional[Dict[str, Any]]:
@@ -722,7 +726,9 @@ class PluginStoreManager:
                     plugin_info['branch'] = commit_info.get('branch', branch)
                     plugin_info['last_commit_branch'] = commit_info.get('branch')
 
-                github_manifest = self._fetch_manifest_from_github(repo_url, branch)
+                plugin_subpath = plugin_info.get('plugin_path', '')
+                manifest_rel = f"{plugin_subpath}/manifest.json" if plugin_subpath else "manifest.json"
+                github_manifest = self._fetch_manifest_from_github(repo_url, branch, manifest_rel)
                 if github_manifest:
                     if 'last_updated' in github_manifest and not plugin_info.get('last_updated'):
                         plugin_info['last_updated'] = github_manifest['last_updated']
@@ -1128,76 +1134,247 @@ class PluginStoreManager:
     
     def _install_from_monorepo(self, download_url: str, plugin_subpath: str, target_path: Path) -> bool:
         """
-        Install a plugin from a monorepo by downloading and extracting a subdirectory.
-        
+        Install a plugin from a monorepo by downloading only the target subdirectory.
+
+        Uses the GitHub Git Trees API to list files, then downloads each file
+        individually from raw.githubusercontent.com. Falls back to downloading
+        the full ZIP archive if the API approach fails.
+
         Args:
-            download_url: URL to download zip from
+            download_url: URL to download zip from (used as fallback and to extract repo info)
             plugin_subpath: Path within repo (e.g., "plugins/hello-world")
             target_path: Target directory for plugin
-            
+
         Returns:
             True if successful
         """
+        # Try the API-based approach first (downloads only the target directory)
+        repo_url, branch = self._parse_monorepo_download_url(download_url)
+        if repo_url and branch:
+            result = self._install_from_monorepo_api(repo_url, branch, plugin_subpath, target_path)
+            if result:
+                return True
+            self.logger.info(f"API-based install failed for {plugin_subpath}, falling back to ZIP download")
+            # Ensure no partial files remain before ZIP fallback
+            if target_path.exists():
+                shutil.rmtree(target_path, ignore_errors=True)
+
+        # Fallback: download full ZIP and extract subdirectory
+        return self._install_from_monorepo_zip(download_url, plugin_subpath, target_path)
+
+    @staticmethod
+    def _parse_monorepo_download_url(download_url: str):
+        """Extract repo URL and branch from a GitHub archive download URL.
+
+        Example: "https://github.com/ChuckBuilds/ledmatrix-plugins/archive/refs/heads/main.zip"
+        Returns: ("https://github.com/ChuckBuilds/ledmatrix-plugins", "main")
+        """
         try:
-            self.logger.info(f"Downloading monorepo from: {download_url}")
+            # Pattern: {repo_url}/archive/refs/heads/{branch}.zip
+            if '/archive/refs/heads/' in download_url:
+                parts = download_url.split('/archive/refs/heads/')
+                repo_url = parts[0]
+                branch = parts[1].removesuffix('.zip')
+                return repo_url, branch
+        except (IndexError, AttributeError):
+            pass
+        return None, None
+
+    @staticmethod
+    def _normalize_repo_url(url: str) -> str:
+        """Normalize a GitHub repo URL for comparison (strip trailing / and .git)."""
+        url = url.rstrip('/')
+        if url.endswith('.git'):
+            url = url[:-4]
+        return url.lower()
+
+    def _install_from_monorepo_api(self, repo_url: str, branch: str, plugin_subpath: str, target_path: Path) -> bool:
+        """
+        Install a plugin subdirectory using the GitHub Git Trees API.
+
+        Downloads only the files in the target subdirectory (~200KB) instead
+        of the entire repository ZIP (~5MB+). Uses one API call for the tree
+        listing, then downloads individual files from raw.githubusercontent.com.
+
+        Args:
+            repo_url: GitHub repository URL (e.g., "https://github.com/owner/repo")
+            branch: Branch name (e.g., "main")
+            plugin_subpath: Path within repo (e.g., "plugins/hello-world")
+            target_path: Target directory for plugin
+
+        Returns:
+            True if successful, False to trigger ZIP fallback
+        """
+        try:
+            # Parse owner/repo from URL
+            clean_url = repo_url.rstrip('/')
+            if clean_url.endswith('.git'):
+                clean_url = clean_url[:-4]
+            parts = clean_url.split('/')
+            if len(parts) < 2:
+                return False
+            owner, repo = parts[-2], parts[-1]
+
+            # Step 1: Get the recursive tree listing (1 API call)
+            api_url = f"https://api.github.com/repos/{owner}/{repo}/git/trees/{branch}?recursive=true"
+            headers = {
+                'Accept': 'application/vnd.github.v3+json',
+                'User-Agent': 'LEDMatrix-Plugin-Manager/1.0'
+            }
+            if self.github_token:
+                headers['Authorization'] = f'token {self.github_token}'
+
+            tree_response = self._http_get_with_retries(api_url, timeout=15, headers=headers)
+            if tree_response.status_code != 200:
+                self.logger.debug(f"Trees API returned {tree_response.status_code} for {owner}/{repo}")
+                return False
+
+            tree_data = tree_response.json()
+            if tree_data.get('truncated'):
+                self.logger.debug(f"Tree response truncated for {owner}/{repo}, falling back to ZIP")
+                return False
+
+            # Step 2: Filter for files in the target subdirectory
+            prefix = f"{plugin_subpath}/"
+            file_entries = [
+                entry for entry in tree_data.get('tree', [])
+                if entry['path'].startswith(prefix) and entry['type'] == 'blob'
+            ]
+
+            if not file_entries:
+                self.logger.error(f"No files found under '{plugin_subpath}' in tree for {owner}/{repo}")
+                return False
+
+            # Sanity check: refuse unreasonably large plugin directories
+            max_files = 500
+            if len(file_entries) > max_files:
+                self.logger.error(
+                    f"Plugin {plugin_subpath} has {len(file_entries)} files (limit {max_files}), "
+                    f"falling back to ZIP"
+                )
+                return False
+
+            self.logger.info(f"Downloading {len(file_entries)} files for {plugin_subpath} via API")
+
+            # Step 3: Create target directory and download each file
+            from src.common.permission_utils import (
+                ensure_directory_permissions,
+                get_plugin_dir_mode
+            )
+            ensure_directory_permissions(target_path.parent, get_plugin_dir_mode())
+            target_path.mkdir(parents=True, exist_ok=True)
+
+            prefix_len = len(prefix)
+            target_root = target_path.resolve()
+            for entry in file_entries:
+                # Relative path within the plugin directory
+                rel_path = entry['path'][prefix_len:]
+                dest_file = target_path / rel_path
+
+                # Guard against path traversal
+                if not dest_file.resolve().is_relative_to(target_root):
+                    self.logger.error(
+                        f"Path traversal detected: {entry['path']!r} resolves outside target directory"
+                    )
+                    if target_path.exists():
+                        shutil.rmtree(target_path, ignore_errors=True)
+                    return False
+
+                # Create parent directories
+                dest_file.parent.mkdir(parents=True, exist_ok=True)
+
+                # Download from raw.githubusercontent.com (no API rate limit cost)
+                raw_url = f"https://raw.githubusercontent.com/{owner}/{repo}/{branch}/{entry['path']}"
+                file_response = self._http_get_with_retries(raw_url, timeout=30)
+                if file_response.status_code != 200:
+                    self.logger.error(f"Failed to download {entry['path']}: HTTP {file_response.status_code}")
+                    # Clean up partial download
+                    if target_path.exists():
+                        shutil.rmtree(target_path, ignore_errors=True)
+                    return False
+
+                dest_file.write_bytes(file_response.content)
+
+            self.logger.info(f"Successfully installed {plugin_subpath} via API ({len(file_entries)} files)")
+            return True
+
+        except Exception as e:
+            self.logger.debug(f"API-based monorepo install failed: {e}")
+            # Clean up partial download
+            if target_path.exists():
+                shutil.rmtree(target_path, ignore_errors=True)
+            return False
+
+    def _install_from_monorepo_zip(self, download_url: str, plugin_subpath: str, target_path: Path) -> bool:
+        """
+        Fallback: install a plugin from a monorepo by downloading the full ZIP.
+
+        Used when the API-based approach fails (rate limited, auth issues, etc.).
+        """
+        tmp_zip_path = None
+        temp_extract = None
+        try:
+            self.logger.info(f"Downloading monorepo ZIP from: {download_url}")
             response = self._http_get_with_retries(download_url, timeout=60, stream=True)
             response.raise_for_status()
-            
+
             # Download to temporary file
             with tempfile.NamedTemporaryFile(suffix='.zip', delete=False) as tmp_file:
                 for chunk in response.iter_content(chunk_size=8192):
                     tmp_file.write(chunk)
                 tmp_zip_path = tmp_file.name
-            
-            try:
-                # Extract zip
-                with zipfile.ZipFile(tmp_zip_path, 'r') as zip_ref:
-                    zip_contents = zip_ref.namelist()
-                    if not zip_contents:
-                        return False
-                    
-                    # GitHub zips have a root directory like "repo-main/"
-                    root_dir = zip_contents[0].split('/')[0]
-                    
-                    # Build path to plugin within extracted archive
-                    # e.g., "ledmatrix-plugins-main/plugins/hello-world/"
-                    plugin_path_in_zip = f"{root_dir}/{plugin_subpath}/"
-                    
-                    # Extract to temp location
-                    temp_extract = Path(tempfile.mkdtemp())
-                    zip_ref.extractall(temp_extract)
-                    
-                    # Find the plugin directory
-                    source_plugin_dir = temp_extract / root_dir / plugin_subpath
-                    
-                    if not source_plugin_dir.exists():
-                        self.logger.error(f"Plugin path not found in archive: {plugin_subpath}")
-                        self.logger.error(f"Expected at: {source_plugin_dir}")
-                        shutil.rmtree(temp_extract, ignore_errors=True)
-                        return False
-                    
-                    # Move plugin contents to target
-                    from src.common.permission_utils import (
-                        ensure_directory_permissions,
-                        get_plugin_dir_mode
-                    )
-                    ensure_directory_permissions(target_path.parent, get_plugin_dir_mode())
-                    shutil.move(str(source_plugin_dir), str(target_path))
-                    
-                    # Cleanup temp extract dir
-                    if temp_extract.exists():
-                        shutil.rmtree(temp_extract, ignore_errors=True)
-                
-                return True
-                
-            finally:
-                # Remove temporary zip file
-                if os.path.exists(tmp_zip_path):
-                    os.remove(tmp_zip_path)
-            
+
+            with zipfile.ZipFile(tmp_zip_path, 'r') as zip_ref:
+                zip_contents = zip_ref.namelist()
+                if not zip_contents:
+                    return False
+
+                root_dir = zip_contents[0].split('/')[0]
+                plugin_prefix = f"{root_dir}/{plugin_subpath}/"
+
+                # Extract ONLY files under the plugin subdirectory
+                plugin_members = [m for m in zip_contents if m.startswith(plugin_prefix)]
+
+                if not plugin_members:
+                    self.logger.error(f"Plugin path not found in archive: {plugin_subpath}")
+                    return False
+
+                temp_extract = Path(tempfile.mkdtemp())
+                temp_extract_resolved = temp_extract.resolve()
+
+                for member in plugin_members:
+                    # Guard against zip-slip (directory traversal)
+                    member_dest = (temp_extract / member).resolve()
+                    if not member_dest.is_relative_to(temp_extract_resolved):
+                        self.logger.error(
+                            f"Zip-slip detected: member {member!r} resolves outside "
+                            f"temp directory, skipping"
+                        )
+                        continue
+                    zip_ref.extract(member, temp_extract)
+
+                source_plugin_dir = temp_extract / root_dir / plugin_subpath
+
+                from src.common.permission_utils import (
+                    ensure_directory_permissions,
+                    get_plugin_dir_mode
+                )
+                ensure_directory_permissions(target_path.parent, get_plugin_dir_mode())
+                # Ensure target doesn't exist to prevent shutil.move nesting
+                if target_path.exists():
+                    shutil.rmtree(target_path, ignore_errors=True)
+                shutil.move(str(source_plugin_dir), str(target_path))
+
+            return True
+
         except Exception as e:
-            self.logger.error(f"Monorepo download failed: {e}", exc_info=True)
+            self.logger.error(f"Monorepo ZIP download failed: {e}", exc_info=True)
             return False
+        finally:
+            if tmp_zip_path and os.path.exists(tmp_zip_path):
+                os.remove(tmp_zip_path)
+            if temp_extract and temp_extract.exists():
+                shutil.rmtree(temp_extract, ignore_errors=True)
     
     def _install_via_download(self, download_url: str, target_path: Path) -> bool:
         """
@@ -1535,22 +1712,37 @@ class PluginStoreManager:
                 # Plugin is a git repository - try to update via git
                 local_branch = git_info.get('branch') or 'main'
                 local_sha = git_info.get('sha')
-                
+
                 # Try to get remote info from registry (optional)
                 self.fetch_registry(force_refresh=True)
                 plugin_info_remote = self.get_plugin_info(plugin_id, fetch_latest_from_github=True)
                 remote_branch = None
                 remote_sha = None
-                
+
                 if plugin_info_remote:
                     remote_branch = plugin_info_remote.get('branch') or plugin_info_remote.get('default_branch')
                     remote_sha = plugin_info_remote.get('last_commit_sha')
-                    
+
+                    # Check if the local git remote still matches the registry repo URL.
+                    # After monorepo migration, old clones point to archived individual repos
+                    # while the registry now points to the monorepo. Detect this and reinstall.
+                    registry_repo = plugin_info_remote.get('repo', '')
+                    local_remote = git_info.get('remote_url', '')
+                    if local_remote and registry_repo and self._normalize_repo_url(local_remote) != self._normalize_repo_url(registry_repo):
+                        self.logger.info(
+                            f"Plugin {plugin_id} git remote ({local_remote}) differs from registry ({registry_repo}). "
+                            f"Reinstalling from registry to migrate to new source."
+                        )
+                        if not self._safe_remove_directory(plugin_path):
+                            self.logger.error(f"Failed to remove old plugin directory for {plugin_id}")
+                            return False
+                        return self.install_plugin(plugin_id)
+
                     # Check if already up to date
                     if remote_sha and local_sha and remote_sha.startswith(local_sha):
                         self.logger.info(f"Plugin {plugin_id} already matches remote commit {remote_sha[:7]}")
                         return True
-                
+
                 # Update via git pull
                 self.logger.info(f"Updating {plugin_id} via git pull (local branch: {local_branch})...")
                 try:
@@ -1833,7 +2025,22 @@ class PluginStoreManager:
             remote_sha = plugin_info_remote.get('last_commit_sha')
             remote_branch = plugin_info_remote.get('branch') or plugin_info_remote.get('default_branch')
 
-            # If we get here, plugin is not a git repo but is in registry - reinstall
+            # Compare local manifest version against registry latest_version
+            # to avoid unnecessary reinstalls for monorepo plugins
+            try:
+                local_manifest_path = plugin_path / "manifest.json"
+                if local_manifest_path.exists():
+                    with open(local_manifest_path, 'r', encoding='utf-8') as f:
+                        local_manifest = json.load(f)
+                    local_version = local_manifest.get('version', '')
+                    remote_version = plugin_info_remote.get('latest_version', '')
+                    if local_version and remote_version and local_version == remote_version:
+                        self.logger.info(f"Plugin {plugin_id} already at latest version {local_version}")
+                        return True
+            except Exception as e:
+                self.logger.debug(f"Could not compare versions for {plugin_id}: {e}")
+
+            # Plugin is not a git repo but is in registry and has a newer version - reinstall
             self.logger.info(f"Plugin {plugin_id} not installed via git; re-installing latest archive")
 
             # Remove directory and reinstall fresh

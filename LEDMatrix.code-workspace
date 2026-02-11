@@ -5,88 +5,8 @@
 			"name": "LEDMatrix (Main)"
 		},
 		{
-			"path": "../ledmatrix-odds-ticker",
-			"name": "Odds Ticker"
-		},
-		{
-			"path": "../ledmatrix-clock-simple",
-			"name": "Clock Simple"
-		},
-		{
-			"path": "../ledmatrix-text-display",
-			"name": "Text Display"
-		},
-		{
-			"path": "../ledmatrix-basketball-scoreboard",
-			"name": "Basketball Scoreboard"
-		},
-		{
-			"path": "../ledmatrix-soccer-scoreboard",
-			"name": "Soccer Scoreboard"
-		},
-		{
-			"path": "../ledmatrix-calendar",
-			"name": "Calendar"
-		},
-		{
-			"path": "../ledmatrix-olympics-countdown",
-			"name": "Olympics Countdown"
-		},
-		{
-			"path": "../ledmatrix-stocks",
-			"name": "Stocks"
-		},
-		{
-			"path": "../ledmatrix-music",
-			"name": "Music"
-		},
-		{
-			"path": "../ledmatrix-static-image",
-			"name": "Static Image"
-		},
-		{
-			"path": "../ledmatrix-football-scoreboard",
-			"name": "Football Scoreboard"
-		},
-		{
-			"path": "../ledmatrix-hockey-scoreboard",
-			"name": "Hockey Scoreboard"
-		},
-		{
-			"path": "../ledmatrix-baseball-scoreboard",
-			"name": "Baseball Scoreboard"
-		},
-		{
-			"path": "../ledmatrix-christmas-countdown",
-			"name": "Christmas Countdown"
-		},
-		{
-			"path": "../ledmatrix-flights",
-			"name": "Flights"
-		},
-		{
-			"path": "../ledmatrix-leaderboard",
-			"name": "Leaderboard"
-		},
-		{
-			"path": "../ledmatrix-weather",
-			"name": "Weather"
-		},
-		{
-			"path": "../ledmatrix-news",
-			"name": "News"
-		},
-		{
-			"path": "../ledmatrix-of-the-day",
-			"name": "Of The Day"
-		},
-		{
-			"path": "../ledmatrix-youtube-stats",
-			"name": "YouTube Stats"
-		},
-		{
 			"path": "../ledmatrix-plugins",
-			"name": "Plugin Registry"
+			"name": "Plugins (Monorepo)"
 		}
 	],
 	"settings": {
