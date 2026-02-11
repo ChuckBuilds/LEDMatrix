@@ -415,11 +415,13 @@ class PluginManager:
             if plugin_id in self.plugin_last_update:
                 del self.plugin_last_update[plugin_id]
             
-            # Remove module from sys.modules if present
+            # Remove main module from sys.modules if present
             module_name = f"plugin_{plugin_id.replace('-', '_')}"
-            if module_name in sys.modules:
-                del sys.modules[module_name]
-            
+            sys.modules.pop(module_name, None)
+
+            # Delegate sub-module and cached-module cleanup to the loader
+            self.plugin_loader.unregister_plugin_modules(plugin_id)
+
             # Remove from plugin_modules
             self.plugin_modules.pop(plugin_id, None)
             

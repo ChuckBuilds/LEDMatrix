@@ -10,6 +10,7 @@ import importlib
 import importlib.util
 import sys
 import subprocess
+import threading
 from pathlib import Path
 from typing import Dict, Any, Optional, Tuple, Type
 import logging
@@ -35,6 +36,14 @@ class PluginLoader:
         self.logger = logger or get_logger(__name__)
         self._loaded_modules: Dict[str, Any] = {}
         self._plugin_module_registry: Dict[str, set] = {}  # Maps plugin_id to set of module names
+        # Lock to serialize module loading when plugins share module names
+        # (e.g., scroll_display.py, game_renderer.py across sport plugins).
+        # During exec_module, bare-name sub-modules temporarily appear in
+        # sys.modules; the lock prevents concurrent plugins from seeing each
+        # other's entries.  After exec_module, _namespace_plugin_modules
+        # moves those bare names to namespaced keys (e.g.
+        # _plg_basketball_scoreboard_scroll_display) so they never collide.
+        self._module_load_lock = threading.Lock()
     
     def find_plugin_directory(
         self,
@@ -190,49 +199,91 @@ class PluginLoader:
             self.logger.error("Unexpected error installing dependencies for %s: %s", plugin_id, e, exc_info=True)
             return False
     
-    def _clear_conflicting_modules(self, plugin_dir: Path, plugin_id: str) -> None:
+    @staticmethod
+    def _iter_plugin_bare_modules(
+        plugin_dir: Path, before_keys: set
+    ) -> list:
+        """Return bare-name modules from plugin_dir added after before_keys.
+
+        Returns a list of (mod_name, module) tuples for modules that:
+        - Were added to sys.modules after before_keys snapshot
+        - Have bare names (no dots)
+        - Have a ``__file__`` inside plugin_dir
         """
-        Clear cached modules from sys.modules that could conflict with the plugin being loaded.
-
-        When multiple plugins have modules with the same name (e.g., data_fetcher.py),
-        Python's module cache can cause the wrong module to be imported. This method
-        removes cached modules from other plugin directories to ensure the correct
-        module is loaded.
-
-        Args:
-            plugin_dir: The directory of the plugin being loaded
-            plugin_id: The plugin identifier
-        """
-        plugin_dir_str = str(plugin_dir)
-
-        # Find modules to remove: those from other plugin directories
-        # that could conflict with modules in the current plugin
-        modules_to_remove = []
-
-        for mod_name, mod in list(sys.modules.items()):
+        resolved_dir = plugin_dir.resolve()
+        result = []
+        for key in set(sys.modules.keys()) - before_keys:
+            if "." in key:
+                continue
+            mod = sys.modules.get(key)
             if mod is None:
                 continue
-
-            # Skip standard library and site-packages modules
-            mod_file = getattr(mod, '__file__', None)
-            if mod_file is None:
+            mod_file = getattr(mod, "__file__", None)
+            if not mod_file:
                 continue
+            try:
+                if Path(mod_file).resolve().is_relative_to(resolved_dir):
+                    result.append((key, mod))
+            except (ValueError, TypeError):
+                continue
+        return result
 
-            # Check if this module is from a different plugin directory
-            # We look for modules that:
-            # 1. Have simple names (no dots) - these are the ones that conflict
-            # 2. Are loaded from a plugin-repos directory but not the current plugin
-            if '.' not in mod_name and 'plugin-repos' in mod_file:
-                if plugin_dir_str not in mod_file:
-                    modules_to_remove.append(mod_name)
-                    self.logger.debug(
-                        "Clearing cached module '%s' from %s to avoid conflict with plugin %s",
-                        mod_name, mod_file, plugin_id
-                    )
+    def _namespace_plugin_modules(
+        self, plugin_id: str, plugin_dir: Path, before_keys: set
+    ) -> None:
+        """
+        Move bare-name plugin modules to namespaced keys in sys.modules.
 
-        # Remove conflicting modules
-        for mod_name in modules_to_remove:
-            del sys.modules[mod_name]
+        After exec_module loads a plugin's entry point, Python will have added
+        the plugin's local modules (scroll_display, game_renderer, …) to
+        sys.modules under their bare names.  This method renames them to
+        ``_plg_<plugin_id>_<module>`` so they cannot collide with identically-
+        named modules from other plugins.
+
+        The plugin code keeps working because ``from scroll_display import X``
+        binds ``X`` to the class *object*, not to the sys.modules entry.
+
+        Args:
+            plugin_id: Plugin identifier
+            plugin_dir: Plugin directory path
+            before_keys: Snapshot of sys.modules keys taken *before* exec_module
+        """
+        safe_id = plugin_id.replace("-", "_")
+        namespaced_names: set = set()
+
+        for mod_name, mod in self._iter_plugin_bare_modules(plugin_dir, before_keys):
+            namespaced = f"_plg_{safe_id}_{mod_name}"
+            sys.modules[namespaced] = mod
+            # Keep sys.modules[mod_name] as an alias to the same object.
+            # Removing it would cause lazy intra-plugin imports (e.g. a
+            # deferred ``import scroll_display`` inside a method) to
+            # re-import from disk and create a second, inconsistent copy
+            # of the module.  The next plugin's exec_module will naturally
+            # overwrite the bare entry with its own version.
+            namespaced_names.add(namespaced)
+            self.logger.debug(
+                "Namespace-isolated module '%s' -> '%s' for plugin %s",
+                mod_name, namespaced, plugin_id,
+            )
+
+        # Track for cleanup during unload
+        self._plugin_module_registry[plugin_id] = namespaced_names
+
+        if namespaced_names:
+            self.logger.info(
+                "Namespace-isolated %d module(s) for plugin %s",
+                len(namespaced_names), plugin_id,
+            )
+
+    def unregister_plugin_modules(self, plugin_id: str) -> None:
+        """Remove namespaced sub-modules and cached module for a plugin from sys.modules.
+
+        Called by PluginManager during unload to clean up all module entries
+        that were created when the plugin was loaded.
+        """
+        for ns_name in self._plugin_module_registry.pop(plugin_id, set()):
+            sys.modules.pop(ns_name, None)
+        self._loaded_modules.pop(plugin_id, None)
 
     def load_module(
         self,
@@ -242,6 +293,15 @@ class PluginLoader:
     ) -> Optional[Any]:
         """
         Load a plugin module from file.
+
+        Module loading is serialized via _module_load_lock because plugins are
+        loaded in parallel (ThreadPoolExecutor) and multiple sport plugins
+        share identically-named local modules (scroll_display.py,
+        game_renderer.py, sports.py, etc.).
+
+        After loading, bare-name modules from the plugin directory are moved
+        to namespaced keys in sys.modules (e.g. ``_plg_basketball_scoreboard_scroll_display``)
+        so they cannot collide with other plugins.
 
         Args:
             plugin_id: Plugin identifier
@@ -257,35 +317,51 @@ class PluginLoader:
             self.logger.error(error_msg)
             raise PluginError(error_msg, plugin_id=plugin_id, context={'entry_file': str(entry_file)})
 
-        # Clear any conflicting modules from other plugins before loading
-        self._clear_conflicting_modules(plugin_dir, plugin_id)
+        with self._module_load_lock:
+            # Add plugin directory to sys.path if not already there
+            plugin_dir_str = str(plugin_dir)
+            if plugin_dir_str not in sys.path:
+                sys.path.insert(0, plugin_dir_str)
+                self.logger.debug("Added plugin directory to sys.path: %s", plugin_dir_str)
 
-        # Add plugin directory to sys.path if not already there
-        plugin_dir_str = str(plugin_dir)
-        if plugin_dir_str not in sys.path:
-            sys.path.insert(0, plugin_dir_str)
-            self.logger.debug("Added plugin directory to sys.path: %s", plugin_dir_str)
+            # Import the plugin module
+            module_name = f"plugin_{plugin_id.replace('-', '_')}"
 
-        # Import the plugin module
-        module_name = f"plugin_{plugin_id.replace('-', '_')}"
+            # Check if already loaded
+            if module_name in sys.modules:
+                self.logger.debug("Module %s already loaded, reusing", module_name)
+                return sys.modules[module_name]
 
-        # Check if already loaded
-        if module_name in sys.modules:
-            self.logger.debug("Module %s already loaded, reusing", module_name)
-            return sys.modules[module_name]
+            spec = importlib.util.spec_from_file_location(module_name, entry_file)
+            if spec is None or spec.loader is None:
+                error_msg = f"Could not create module spec for {entry_file}"
+                self.logger.error(error_msg)
+                raise PluginError(error_msg, plugin_id=plugin_id, context={'entry_file': str(entry_file)})
 
-        spec = importlib.util.spec_from_file_location(module_name, entry_file)
-        if spec is None or spec.loader is None:
-            error_msg = f"Could not create module spec for {entry_file}"
-            self.logger.error(error_msg)
-            raise PluginError(error_msg, plugin_id=plugin_id, context={'entry_file': str(entry_file)})
+            module = importlib.util.module_from_spec(spec)
+            sys.modules[module_name] = module
 
-        module = importlib.util.module_from_spec(spec)
-        sys.modules[module_name] = module
-        spec.loader.exec_module(module)
+            # Snapshot AFTER inserting the main module so that
+            # _namespace_plugin_modules and error cleanup only target
+            # sub-modules, not the main module entry itself.
+            before_keys = set(sys.modules.keys())
+            try:
+                spec.loader.exec_module(module)
 
-        self._loaded_modules[plugin_id] = module
-        self.logger.debug("Loaded module %s for plugin %s", module_name, plugin_id)
+                # Move bare-name plugin modules to namespaced keys so they
+                # cannot collide with identically-named modules from other plugins
+                self._namespace_plugin_modules(plugin_id, plugin_dir, before_keys)
+            except Exception:
+                # Clean up the partially-initialized main module and any
+                # bare-name sub-modules that were added during exec_module
+                # so they don't leak into subsequent plugin loads.
+                sys.modules.pop(module_name, None)
+                for key, _ in self._iter_plugin_bare_modules(plugin_dir, before_keys):
+                    sys.modules.pop(key, None)
+                raise
+
+            self._loaded_modules[plugin_id] = module
+            self.logger.debug("Loaded module %s for plugin %s", module_name, plugin_id)
 
         return module
     
