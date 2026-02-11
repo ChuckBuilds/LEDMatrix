@@ -38,9 +38,11 @@ class PluginLoader:
         self._plugin_module_registry: Dict[str, set] = {}  # Maps plugin_id to set of module names
         # Lock to serialize module loading when plugins share module names
         # (e.g., scroll_display.py, game_renderer.py across sport plugins).
-        # Without this, parallel plugin loading via ThreadPoolExecutor can
-        # cause one thread's _clear_conflicting_modules to remove a module
-        # from sys.modules while another thread is actively importing it.
+        # During exec_module, bare-name sub-modules temporarily appear in
+        # sys.modules; the lock prevents concurrent plugins from seeing each
+        # other's entries.  After exec_module, _namespace_plugin_modules
+        # moves those bare names to namespaced keys (e.g.
+        # _plg_basketball_scoreboard_scroll_display) so they never collide.
         self._module_load_lock = threading.Lock()
     
     def find_plugin_directory(
@@ -239,7 +241,10 @@ class PluginLoader:
                 continue
 
             # Only rename modules whose source lives inside this plugin dir
-            if plugin_dir_str not in mod_file:
+            try:
+                if not Path(mod_file).resolve().is_relative_to(plugin_dir.resolve()):
+                    continue
+            except (ValueError, TypeError):
                 continue
 
             namespaced = f"_plg_{safe_id}_{mod_name}"
@@ -259,6 +264,16 @@ class PluginLoader:
                 "Namespace-isolated %d module(s) for plugin %s",
                 len(namespaced_names), plugin_id,
             )
+
+    def unregister_plugin_modules(self, plugin_id: str) -> None:
+        """Remove namespaced sub-modules and cached module for a plugin from sys.modules.
+
+        Called by PluginManager during unload to clean up all module entries
+        that were created when the plugin was loaded.
+        """
+        for ns_name in self._plugin_module_registry.pop(plugin_id, set()):
+            sys.modules.pop(ns_name, None)
+        self._loaded_modules.pop(plugin_id, None)
 
     def load_module(
         self,
@@ -293,9 +308,6 @@ class PluginLoader:
             raise PluginError(error_msg, plugin_id=plugin_id, context={'entry_file': str(entry_file)})
 
         with self._module_load_lock:
-            # Snapshot sys.modules so we can detect new bare-name entries
-            before_keys = set(sys.modules.keys())
-
             # Add plugin directory to sys.path if not already there
             plugin_dir_str = str(plugin_dir)
             if plugin_dir_str not in sys.path:
@@ -318,11 +330,37 @@ class PluginLoader:
 
             module = importlib.util.module_from_spec(spec)
             sys.modules[module_name] = module
-            spec.loader.exec_module(module)
 
-            # Move bare-name plugin modules to namespaced keys so they
-            # cannot collide with identically-named modules from other plugins
-            self._namespace_plugin_modules(plugin_id, plugin_dir, before_keys)
+            # Snapshot AFTER inserting the main module so that
+            # _namespace_plugin_modules and error cleanup only target
+            # sub-modules, not the main module entry itself.
+            before_keys = set(sys.modules.keys())
+            try:
+                spec.loader.exec_module(module)
+
+                # Move bare-name plugin modules to namespaced keys so they
+                # cannot collide with identically-named modules from other plugins
+                self._namespace_plugin_modules(plugin_id, plugin_dir, before_keys)
+            except Exception:
+                # Clean up the partially-initialized main module and any
+                # bare-name sub-modules that were added during exec_module
+                # so they don't leak into subsequent plugin loads.
+                sys.modules.pop(module_name, None)
+                for key in set(sys.modules.keys()) - before_keys:
+                    if "." in key:
+                        continue
+                    mod = sys.modules.get(key)
+                    if mod is None:
+                        continue
+                    mod_file = getattr(mod, "__file__", None)
+                    if not mod_file:
+                        continue
+                    try:
+                        if Path(mod_file).resolve().is_relative_to(plugin_dir.resolve()):
+                            sys.modules.pop(key, None)
+                    except (ValueError, TypeError):
+                        continue
+                raise
 
             self._loaded_modules[plugin_id] = module
             self.logger.debug("Loaded module %s for plugin %s", module_name, plugin_id)

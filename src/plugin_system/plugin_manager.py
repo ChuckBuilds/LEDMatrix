@@ -419,11 +419,8 @@ class PluginManager:
             module_name = f"plugin_{plugin_id.replace('-', '_')}"
             sys.modules.pop(module_name, None)
 
-            # Remove namespaced sub-modules tracked by the plugin loader
-            # (e.g. _plg_basketball_scoreboard_scroll_display)
-            if hasattr(self, 'plugin_loader') and hasattr(self.plugin_loader, '_plugin_module_registry'):
-                for ns_name in self.plugin_loader._plugin_module_registry.pop(plugin_id, set()):
-                    sys.modules.pop(ns_name, None)
+            # Delegate sub-module and cached-module cleanup to the loader
+            self.plugin_loader.unregister_plugin_modules(plugin_id)
 
             # Remove from plugin_modules
             self.plugin_modules.pop(plugin_id, None)
