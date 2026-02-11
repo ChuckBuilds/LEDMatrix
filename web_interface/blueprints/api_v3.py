@@ -3151,7 +3151,8 @@ def list_plugin_store():
                 'last_commit_message': plugin.get('last_commit_message'),
                 'last_commit_author': plugin.get('last_commit_author'),
                 'branch': plugin.get('branch') or plugin.get('default_branch'),
-                'default_branch': plugin.get('default_branch')
+                'default_branch': plugin.get('default_branch'),
+                'plugin_path': plugin.get('plugin_path', '')
             })
 
         return jsonify({'status': 'success', 'data': {'plugins': formatted_plugins}})
