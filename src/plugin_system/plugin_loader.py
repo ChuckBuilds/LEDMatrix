@@ -219,7 +219,6 @@ class PluginLoader:
             plugin_dir: Plugin directory path
             before_keys: Snapshot of sys.modules keys taken *before* exec_module
         """
-        plugin_dir_str = str(plugin_dir)
         safe_id = plugin_id.replace("-", "_")
         namespaced_names: set = set()
 
