@@ -1165,23 +1165,25 @@ class PluginStoreManager:
                     # GitHub zips have a root directory like "repo-main/"
                     root_dir = zip_contents[0].split('/')[0]
                     
-                    # Build path to plugin within extracted archive
+                    # Build prefix to match plugin files within the zip
                     # e.g., "ledmatrix-plugins-main/plugins/hello-world/"
-                    plugin_path_in_zip = f"{root_dir}/{plugin_subpath}/"
-                    
-                    # Extract to temp location
+                    plugin_prefix = f"{root_dir}/{plugin_subpath}/"
+
+                    # Extract ONLY files under the plugin subdirectory (not the whole repo)
+                    plugin_members = [m for m in zip_contents if m.startswith(plugin_prefix)]
+
+                    if not plugin_members:
+                        self.logger.error(f"Plugin path not found in archive: {plugin_subpath}")
+                        self.logger.error(f"Looked for prefix: {plugin_prefix}")
+                        return False
+
                     temp_extract = Path(tempfile.mkdtemp())
-                    zip_ref.extractall(temp_extract)
-                    
+                    for member in plugin_members:
+                        zip_ref.extract(member, temp_extract)
+
                     # Find the plugin directory
                     source_plugin_dir = temp_extract / root_dir / plugin_subpath
-                    
-                    if not source_plugin_dir.exists():
-                        self.logger.error(f"Plugin path not found in archive: {plugin_subpath}")
-                        self.logger.error(f"Expected at: {source_plugin_dir}")
-                        shutil.rmtree(temp_extract, ignore_errors=True)
-                        return False
-                    
+
                     # Move plugin contents to target
                     from src.common.permission_utils import (
                         ensure_directory_permissions,
@@ -1189,7 +1191,7 @@ class PluginStoreManager:
                     )
                     ensure_directory_permissions(target_path.parent, get_plugin_dir_mode())
                     shutil.move(str(source_plugin_dir), str(target_path))
-                    
+
                     # Cleanup temp extract dir
                     if temp_extract.exists():
                         shutil.rmtree(temp_extract, ignore_errors=True)
