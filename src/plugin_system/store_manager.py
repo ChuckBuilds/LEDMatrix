@@ -1180,6 +1180,14 @@ class PluginStoreManager:
             pass
         return None, None
 
+    @staticmethod
+    def _normalize_repo_url(url: str) -> str:
+        """Normalize a GitHub repo URL for comparison (strip trailing / and .git)."""
+        url = url.rstrip('/')
+        if url.endswith('.git'):
+            url = url[:-4]
+        return url.lower()
+
     def _install_from_monorepo_api(self, repo_url: str, branch: str, plugin_subpath: str, target_path: Path) -> bool:
         """
         Install a plugin subdirectory using the GitHub Git Trees API.
@@ -1237,6 +1245,15 @@ class PluginStoreManager:
                 self.logger.error(f"No files found under '{plugin_subpath}' in tree for {owner}/{repo}")
                 return False
 
+            # Sanity check: refuse unreasonably large plugin directories
+            max_files = 500
+            if len(file_entries) > max_files:
+                self.logger.error(
+                    f"Plugin {plugin_subpath} has {len(file_entries)} files (limit {max_files}), "
+                    f"falling back to ZIP"
+                )
+                return False
+
             self.logger.info(f"Downloading {len(file_entries)} files for {plugin_subpath} via API")
 
             # Step 3: Create target directory and download each file
@@ -1284,6 +1301,8 @@ class PluginStoreManager:
 
         Used when the API-based approach fails (rate limited, auth issues, etc.).
         """
+        tmp_zip_path = None
+        temp_extract = None
         try:
             self.logger.info(f"Downloading monorepo ZIP from: {download_url}")
             response = self._http_get_with_retries(download_url, timeout=60, stream=True)
@@ -1295,50 +1314,57 @@ class PluginStoreManager:
                     tmp_file.write(chunk)
                 tmp_zip_path = tmp_file.name
 
-            try:
-                with zipfile.ZipFile(tmp_zip_path, 'r') as zip_ref:
-                    zip_contents = zip_ref.namelist()
-                    if not zip_contents:
-                        return False
+            with zipfile.ZipFile(tmp_zip_path, 'r') as zip_ref:
+                zip_contents = zip_ref.namelist()
+                if not zip_contents:
+                    return False
 
-                    root_dir = zip_contents[0].split('/')[0]
-                    plugin_prefix = f"{root_dir}/{plugin_subpath}/"
+                root_dir = zip_contents[0].split('/')[0]
+                plugin_prefix = f"{root_dir}/{plugin_subpath}/"
 
-                    # Extract ONLY files under the plugin subdirectory
-                    plugin_members = [m for m in zip_contents if m.startswith(plugin_prefix)]
+                # Extract ONLY files under the plugin subdirectory
+                plugin_members = [m for m in zip_contents if m.startswith(plugin_prefix)]
 
-                    if not plugin_members:
-                        self.logger.error(f"Plugin path not found in archive: {plugin_subpath}")
-                        return False
+                if not plugin_members:
+                    self.logger.error(f"Plugin path not found in archive: {plugin_subpath}")
+                    return False
 
-                    temp_extract = Path(tempfile.mkdtemp())
-                    for member in plugin_members:
-                        zip_ref.extract(member, temp_extract)
+                temp_extract = Path(tempfile.mkdtemp())
+                temp_extract_resolved = temp_extract.resolve()
 
-                    source_plugin_dir = temp_extract / root_dir / plugin_subpath
+                for member in plugin_members:
+                    # Guard against zip-slip (directory traversal)
+                    member_dest = (temp_extract / member).resolve()
+                    if not member_dest.is_relative_to(temp_extract_resolved):
+                        self.logger.error(
+                            f"Zip-slip detected: member {member!r} resolves outside "
+                            f"temp directory, skipping"
+                        )
+                        continue
+                    zip_ref.extract(member, temp_extract)
 
-                    from src.common.permission_utils import (
-                        ensure_directory_permissions,
-                        get_plugin_dir_mode
-                    )
-                    ensure_directory_permissions(target_path.parent, get_plugin_dir_mode())
-                    # Ensure target doesn't exist to prevent shutil.move nesting
-                    if target_path.exists():
-                        shutil.rmtree(target_path, ignore_errors=True)
-                    shutil.move(str(source_plugin_dir), str(target_path))
+                source_plugin_dir = temp_extract / root_dir / plugin_subpath
 
-                    if temp_extract.exists():
-                        shutil.rmtree(temp_extract, ignore_errors=True)
+                from src.common.permission_utils import (
+                    ensure_directory_permissions,
+                    get_plugin_dir_mode
+                )
+                ensure_directory_permissions(target_path.parent, get_plugin_dir_mode())
+                # Ensure target doesn't exist to prevent shutil.move nesting
+                if target_path.exists():
+                    shutil.rmtree(target_path, ignore_errors=True)
+                shutil.move(str(source_plugin_dir), str(target_path))
 
-                return True
-
-            finally:
-                if os.path.exists(tmp_zip_path):
-                    os.remove(tmp_zip_path)
+            return True
 
         except Exception as e:
             self.logger.error(f"Monorepo ZIP download failed: {e}", exc_info=True)
             return False
+        finally:
+            if tmp_zip_path and os.path.exists(tmp_zip_path):
+                os.remove(tmp_zip_path)
+            if temp_extract and temp_extract.exists():
+                shutil.rmtree(temp_extract, ignore_errors=True)
     
     def _install_via_download(self, download_url: str, target_path: Path) -> bool:
         """
@@ -1692,13 +1718,7 @@ class PluginStoreManager:
                     # while the registry now points to the monorepo. Detect this and reinstall.
                     registry_repo = plugin_info_remote.get('repo', '')
                     local_remote = git_info.get('remote_url', '')
-                    # Normalize for comparison: strip trailing slashes and .git suffix
-                    def _normalize_url(url):
-                        url = url.rstrip('/')
-                        if url.endswith('.git'):
-                            url = url[:-4]
-                        return url.lower()
-                    if local_remote and registry_repo and _normalize_url(local_remote) != _normalize_url(registry_repo):
+                    if local_remote and registry_repo and self._normalize_repo_url(local_remote) != self._normalize_repo_url(registry_repo):
                         self.logger.info(
                             f"Plugin {plugin_id} git remote ({local_remote}) differs from registry ({registry_repo}). "
                             f"Reinstalling from registry to migrate to new source."

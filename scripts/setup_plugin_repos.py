@@ -63,7 +63,7 @@ def create_symlinks() -> bool:
                         continue
                     else:
                         link_path.unlink()
-                except Exception:
+                except OSError:
                     link_path.unlink()
             else:
                 print(f"  {plugin_id} - exists but is not a symlink, skipping")
@@ -81,7 +81,8 @@ def create_symlinks() -> bool:
 
 def main():
     print("Setting up plugin repository symlinks from monorepo...\n")
-    create_symlinks()
+    if not create_symlinks():
+        sys.exit(1)
 
 
 if __name__ == "__main__":
