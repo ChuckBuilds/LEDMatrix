@@ -571,14 +571,16 @@ class PluginStoreManager:
 
         return results
     
-    def _fetch_manifest_from_github(self, repo_url: str, branch: str = "master") -> Optional[Dict]:
+    def _fetch_manifest_from_github(self, repo_url: str, branch: str = "master", manifest_path: str = "manifest.json") -> Optional[Dict]:
         """
         Fetch manifest.json directly from a GitHub repository.
-        
+
         Args:
             repo_url: GitHub repository URL
             branch: Branch name (default: master)
-            
+            manifest_path: Path to manifest within the repo (default: manifest.json).
+                          For monorepo plugins this will be e.g. "plugins/football-scoreboard/manifest.json".
+
         Returns:
             Manifest data or None if not found
         """
@@ -590,27 +592,27 @@ class PluginStoreManager:
                 repo_url = repo_url.rstrip('/')
                 if repo_url.endswith('.git'):
                     repo_url = repo_url[:-4]
-                
+
                 parts = repo_url.split('/')
                 if len(parts) >= 2:
                     owner = parts[-2]
                     repo = parts[-1]
-                    
-                    raw_url = f"https://raw.githubusercontent.com/{owner}/{repo}/{branch}/manifest.json"
-                    
+
+                    raw_url = f"https://raw.githubusercontent.com/{owner}/{repo}/{branch}/{manifest_path}"
+
                     response = self._http_get_with_retries(raw_url, timeout=10)
                     if response.status_code == 200:
                         return response.json()
                     elif response.status_code == 404:
                         # Try main branch instead
                         if branch != "main":
-                            raw_url = f"https://raw.githubusercontent.com/{owner}/{repo}/main/manifest.json"
+                            raw_url = f"https://raw.githubusercontent.com/{owner}/{repo}/main/{manifest_path}"
                             response = self._http_get_with_retries(raw_url, timeout=10)
                             if response.status_code == 200:
                                 return response.json()
         except Exception as e:
             self.logger.debug(f"Could not fetch manifest from GitHub for {repo_url}: {e}")
-        
+
         return None
     
     def _get_latest_commit_info(self, repo_url: str, branch: str = "main") -> Optional[Dict[str, Any]]:
@@ -722,7 +724,9 @@ class PluginStoreManager:
                     plugin_info['branch'] = commit_info.get('branch', branch)
                     plugin_info['last_commit_branch'] = commit_info.get('branch')
 
-                github_manifest = self._fetch_manifest_from_github(repo_url, branch)
+                plugin_subpath = plugin_info.get('plugin_path', '')
+                manifest_rel = f"{plugin_subpath}/manifest.json" if plugin_subpath else "manifest.json"
+                github_manifest = self._fetch_manifest_from_github(repo_url, branch, manifest_rel)
                 if github_manifest:
                     if 'last_updated' in github_manifest and not plugin_info.get('last_updated'):
                         plugin_info['last_updated'] = github_manifest['last_updated']
