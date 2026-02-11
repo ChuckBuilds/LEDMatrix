@@ -199,6 +199,35 @@ class PluginLoader:
             self.logger.error("Unexpected error installing dependencies for %s: %s", plugin_id, e, exc_info=True)
             return False
     
+    @staticmethod
+    def _iter_plugin_bare_modules(
+        plugin_dir: Path, before_keys: set
+    ) -> list:
+        """Return bare-name modules from plugin_dir added after before_keys.
+
+        Returns a list of (mod_name, module) tuples for modules that:
+        - Were added to sys.modules after before_keys snapshot
+        - Have bare names (no dots)
+        - Have a ``__file__`` inside plugin_dir
+        """
+        resolved_dir = plugin_dir.resolve()
+        result = []
+        for key in set(sys.modules.keys()) - before_keys:
+            if "." in key:
+                continue
+            mod = sys.modules.get(key)
+            if mod is None:
+                continue
+            mod_file = getattr(mod, "__file__", None)
+            if not mod_file:
+                continue
+            try:
+                if Path(mod_file).resolve().is_relative_to(resolved_dir):
+                    result.append((key, mod))
+            except (ValueError, TypeError):
+                continue
+        return result
+
     def _namespace_plugin_modules(
         self, plugin_id: str, plugin_dir: Path, before_keys: set
     ) -> None:
@@ -222,30 +251,7 @@ class PluginLoader:
         safe_id = plugin_id.replace("-", "_")
         namespaced_names: set = set()
 
-        after_keys = set(sys.modules.keys())
-        new_keys = after_keys - before_keys
-
-        for mod_name in new_keys:
-            # Only touch bare names (no dots) — dotted names are packages or
-            # stdlib/site-packages modules that should be left alone.
-            if "." in mod_name:
-                continue
-
-            mod = sys.modules.get(mod_name)
-            if mod is None:
-                continue
-
-            mod_file = getattr(mod, "__file__", None)
-            if mod_file is None:
-                continue
-
-            # Only rename modules whose source lives inside this plugin dir
-            try:
-                if not Path(mod_file).resolve().is_relative_to(plugin_dir.resolve()):
-                    continue
-            except (ValueError, TypeError):
-                continue
-
+        for mod_name, mod in self._iter_plugin_bare_modules(plugin_dir, before_keys):
             namespaced = f"_plg_{safe_id}_{mod_name}"
             sys.modules[namespaced] = mod
             sys.modules.pop(mod_name, None)
@@ -345,20 +351,8 @@ class PluginLoader:
                 # bare-name sub-modules that were added during exec_module
                 # so they don't leak into subsequent plugin loads.
                 sys.modules.pop(module_name, None)
-                for key in set(sys.modules.keys()) - before_keys:
-                    if "." in key:
-                        continue
-                    mod = sys.modules.get(key)
-                    if mod is None:
-                        continue
-                    mod_file = getattr(mod, "__file__", None)
-                    if not mod_file:
-                        continue
-                    try:
-                        if Path(mod_file).resolve().is_relative_to(plugin_dir.resolve()):
-                            sys.modules.pop(key, None)
-                    except (ValueError, TypeError):
-                        continue
+                for key, _ in self._iter_plugin_bare_modules(plugin_dir, before_keys):
+                    sys.modules.pop(key, None)
                 raise
 
             self._loaded_modules[plugin_id] = module
