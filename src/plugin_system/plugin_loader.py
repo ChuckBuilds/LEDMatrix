@@ -254,7 +254,12 @@ class PluginLoader:
         for mod_name, mod in self._iter_plugin_bare_modules(plugin_dir, before_keys):
             namespaced = f"_plg_{safe_id}_{mod_name}"
             sys.modules[namespaced] = mod
-            sys.modules.pop(mod_name, None)
+            # Keep sys.modules[mod_name] as an alias to the same object.
+            # Removing it would cause lazy intra-plugin imports (e.g. a
+            # deferred ``import scroll_display`` inside a method) to
+            # re-import from disk and create a second, inconsistent copy
+            # of the module.  The next plugin's exec_module will naturally
+            # overwrite the bare entry with its own version.
             namespaced_names.add(namespaced)
             self.logger.debug(
                 "Namespace-isolated module '%s' -> '%s' for plugin %s",
