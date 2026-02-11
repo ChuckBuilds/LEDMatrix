@@ -17,6 +17,7 @@
 
 ## Plugin Store Architecture
 - Official plugins live in the `ledmatrix-plugins` monorepo (not individual repos)
+- Plugin repo naming convention: `ledmatrix-<plugin-id>` (e.g., `ledmatrix-football-scoreboard`)
 - `plugins.json` registry at `https://raw.githubusercontent.com/ChuckBuilds/ledmatrix-plugins/main/plugins.json`
 - Store manager (`src/plugin_system/store_manager.py`) handles install/update/uninstall
 - Monorepo plugins are installed via ZIP extraction (no `.git` directory)

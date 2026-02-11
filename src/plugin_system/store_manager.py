@@ -1174,7 +1174,7 @@ class PluginStoreManager:
             if '/archive/refs/heads/' in download_url:
                 parts = download_url.split('/archive/refs/heads/')
                 repo_url = parts[0]
-                branch = parts[1].rstrip('.zip')
+                branch = parts[1].removesuffix('.zip')
                 return repo_url, branch
         except (IndexError, AttributeError):
             pass
@@ -1998,7 +1998,6 @@ class PluginStoreManager:
             try:
                 local_manifest_path = plugin_path / "manifest.json"
                 if local_manifest_path.exists():
-                    import json
                     with open(local_manifest_path, 'r', encoding='utf-8') as f:
                         local_manifest = json.load(f)
                     local_version = local_manifest.get('version', '')

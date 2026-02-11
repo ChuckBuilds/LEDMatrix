@@ -20,11 +20,16 @@ def main():
         return 1
 
     print(f"Updating {MONOREPO_DIR}...")
-    result = subprocess.run(
-        ["git", "-C", str(MONOREPO_DIR), "pull"],
-        capture_output=True,
-        text=True,
-    )
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(MONOREPO_DIR), "pull"],
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+    except subprocess.TimeoutExpired:
+        print(f"Error: git pull timed out after 120 seconds for {MONOREPO_DIR}")
+        return 1
 
     if result.returncode == 0:
         print(result.stdout.strip())

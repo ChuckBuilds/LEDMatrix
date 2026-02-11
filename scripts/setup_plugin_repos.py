@@ -17,13 +17,13 @@ PLUGIN_REPOS_DIR = PROJECT_ROOT / "plugin-repos"
 MONOREPO_PLUGINS = PROJECT_ROOT.parent / "ledmatrix-plugins" / "plugins"
 
 
-def parse_json_with_trailing_commas(text):
+def parse_json_with_trailing_commas(text: str) -> dict:
     """Parse JSON that may have trailing commas."""
     text = re.sub(r",\s*([}\]])", r"\1", text)
     return json.loads(text)
 
 
-def create_symlinks():
+def create_symlinks() -> bool:
     """Create symlinks in plugin-repos/ pointing to monorepo plugin dirs."""
     if not MONOREPO_PLUGINS.exists():
         print(f"Error: Monorepo plugins directory not found: {MONOREPO_PLUGINS}")
@@ -34,7 +34,7 @@ def create_symlinks():
     created = 0
     skipped = 0
 
-    print(f"Setting up plugin symlinks...")
+    print("Setting up plugin symlinks...")
     print(f"  Source: {MONOREPO_PLUGINS}")
     print(f"  Links:  {PLUGIN_REPOS_DIR}")
     print()
@@ -46,8 +46,12 @@ def create_symlinks():
         if not manifest_path.exists():
             continue
 
-        with open(manifest_path, "r", encoding="utf-8") as f:
-            manifest = parse_json_with_trailing_commas(f.read())
+        try:
+            with open(manifest_path, "r", encoding="utf-8") as f:
+                manifest = parse_json_with_trailing_commas(f.read())
+        except (OSError, json.JSONDecodeError) as e:
+            print(f"  {plugin_dir.name} - failed to read {manifest_path}: {e}")
+            continue
         plugin_id = manifest.get("id", plugin_dir.name)
         link_path = PLUGIN_REPOS_DIR / plugin_id
 
