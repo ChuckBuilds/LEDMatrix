@@ -1403,10 +1403,8 @@ function renderInstalledPlugins(plugins) {
                     </div>
                     <div class="text-sm text-gray-600 space-y-1.5 mb-3">
                         <p class="flex items-center"><i class="fas fa-user mr-2 text-gray-400 w-4"></i>${escapeHtml(plugin.author || 'Unknown')}</p>
-                        <p class="flex items-center"><i class="fas fa-code-branch mr-2 text-gray-400 w-4"></i>${formatCommit(plugin.last_commit, plugin.branch)}</p>
-                        <p class="flex items-center"><i class="fas fa-calendar mr-2 text-gray-400 w-4"></i>${formatDate(plugin.last_updated)}</p>
+                        ${plugin.version ? `<p class="flex items-center"><i class="fas fa-tag mr-2 text-gray-400 w-4"></i>v${escapeHtml(plugin.version)}</p>` : ''}
                         <p class="flex items-center"><i class="fas fa-folder mr-2 text-gray-400 w-4"></i>${escapeHtml(plugin.category || 'General')}</p>
-                        ${plugin.stars ? `<p class="flex items-center"><i class="fas fa-star mr-2 text-gray-400 w-4"></i>${plugin.stars} stars</p>` : ''}
                     </div>
                     <p class="text-sm text-gray-700 leading-relaxed">${escapeHtml(plugin.description || 'No description available')}</p>
                 </div>
@@ -5263,10 +5261,8 @@ function renderPluginStore(plugins) {
                     </div>
                     <div class="text-sm text-gray-600 space-y-1.5 mb-3">
                         <p class="flex items-center"><i class="fas fa-user mr-2 text-gray-400 w-4"></i>${escapeHtml(plugin.author || 'Unknown')}</p>
-                        <p class="flex items-center"><i class="fas fa-code-branch mr-2 text-gray-400 w-4"></i>${formatCommit(plugin.last_commit, plugin.branch)}</p>
-                        <p class="flex items-center"><i class="fas fa-calendar mr-2 text-gray-400 w-4"></i>${formatDate(plugin.last_updated)}</p>
-                        <p class="flex items-center"><i class="fas fa-tag mr-2 text-gray-400 w-4"></i>${escapeHtml(plugin.category || 'General')}</p>
-                        <p class="flex items-center"><i class="fas fa-star mr-2 text-gray-400 w-4"></i>${plugin.stars || 0} stars</p>
+                        ${plugin.version ? `<p class="flex items-center"><i class="fas fa-tag mr-2 text-gray-400 w-4"></i>v${escapeHtml(plugin.version)}</p>` : ''}
+                        <p class="flex items-center"><i class="fas fa-folder mr-2 text-gray-400 w-4"></i>${escapeHtml(plugin.category || 'General')}</p>
                     </div>
                     <p class="text-sm text-gray-700 leading-relaxed">${escapeHtml(plugin.description || 'No description available')}</p>
                 </div>

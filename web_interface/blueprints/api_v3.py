@@ -1775,6 +1775,7 @@ def get_installed_plugins():
             plugins.append({
                 'id': plugin_id,
                 'name': plugin_info.get('name', plugin_id),
+                'version': plugin_info.get('version', ''),
                 'author': plugin_info.get('author', 'Unknown'),
                 'category': plugin_info.get('category', 'General'),
                 'description': plugin_info.get('description', 'No description available'),
@@ -3150,6 +3151,7 @@ def list_plugin_store():
                 'last_commit': plugin.get('last_commit') or plugin.get('last_commit_sha'),
                 'last_commit_message': plugin.get('last_commit_message'),
                 'last_commit_author': plugin.get('last_commit_author'),
+                'version': plugin.get('latest_version') or plugin.get('version', ''),
                 'branch': plugin.get('branch') or plugin.get('default_branch'),
                 'default_branch': plugin.get('default_branch'),
                 'plugin_path': plugin.get('plugin_path', '')
