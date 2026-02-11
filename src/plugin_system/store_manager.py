@@ -560,7 +560,9 @@ class PluginStoreManager:
                         enhanced_plugin['last_commit_branch'] = commit_info.get('branch')
 
                     # Fetch manifest from GitHub for additional metadata (description, etc.)
-                    github_manifest = self._fetch_manifest_from_github(repo_url, branch)
+                    plugin_subpath = plugin.get('plugin_path', '')
+                    manifest_rel = f"{plugin_subpath}/manifest.json" if plugin_subpath else "manifest.json"
+                    github_manifest = self._fetch_manifest_from_github(repo_url, branch, manifest_rel)
                     if github_manifest:
                         if 'last_updated' in github_manifest and not enhanced_plugin.get('last_updated'):
                             enhanced_plugin['last_updated'] = github_manifest['last_updated']
@@ -1856,7 +1858,23 @@ class PluginStoreManager:
             remote_sha = plugin_info_remote.get('last_commit_sha')
             remote_branch = plugin_info_remote.get('branch') or plugin_info_remote.get('default_branch')
 
-            # If we get here, plugin is not a git repo but is in registry - reinstall
+            # Compare local manifest version against registry latest_version
+            # to avoid unnecessary reinstalls for monorepo plugins
+            try:
+                local_manifest_path = plugin_path / "manifest.json"
+                if local_manifest_path.exists():
+                    import json
+                    with open(local_manifest_path, 'r', encoding='utf-8') as f:
+                        local_manifest = json.load(f)
+                    local_version = local_manifest.get('version', '')
+                    remote_version = plugin_info_remote.get('latest_version', '')
+                    if local_version and remote_version and local_version == remote_version:
+                        self.logger.info(f"Plugin {plugin_id} already at latest version {local_version}")
+                        return True
+            except Exception as e:
+                self.logger.debug(f"Could not compare versions for {plugin_id}: {e}")
+
+            # Plugin is not a git repo but is in registry and has a newer version - reinstall
             self.logger.info(f"Plugin {plugin_id} not installed via git; re-installing latest archive")
 
             # Remove directory and reinstall fresh
