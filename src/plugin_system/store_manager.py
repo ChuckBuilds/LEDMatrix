@@ -1539,22 +1539,41 @@ class PluginStoreManager:
                 # Plugin is a git repository - try to update via git
                 local_branch = git_info.get('branch') or 'main'
                 local_sha = git_info.get('sha')
-                
+
                 # Try to get remote info from registry (optional)
                 self.fetch_registry(force_refresh=True)
                 plugin_info_remote = self.get_plugin_info(plugin_id, fetch_latest_from_github=True)
                 remote_branch = None
                 remote_sha = None
-                
+
                 if plugin_info_remote:
                     remote_branch = plugin_info_remote.get('branch') or plugin_info_remote.get('default_branch')
                     remote_sha = plugin_info_remote.get('last_commit_sha')
-                    
+
+                    # Check if the local git remote still matches the registry repo URL.
+                    # After monorepo migration, old clones point to archived individual repos
+                    # while the registry now points to the monorepo. Detect this and reinstall.
+                    registry_repo = plugin_info_remote.get('repo', '')
+                    local_remote = git_info.get('remote_url', '')
+                    # Normalize for comparison: strip trailing slashes and .git suffix
+                    def _normalize_url(url):
+                        url = url.rstrip('/')
+                        if url.endswith('.git'):
+                            url = url[:-4]
+                        return url.lower()
+                    if local_remote and registry_repo and _normalize_url(local_remote) != _normalize_url(registry_repo):
+                        self.logger.info(
+                            f"Plugin {plugin_id} git remote ({local_remote}) differs from registry ({registry_repo}). "
+                            f"Reinstalling from registry to migrate to new source."
+                        )
+                        shutil.rmtree(plugin_path, ignore_errors=True)
+                        return self.install_plugin(plugin_id)
+
                     # Check if already up to date
                     if remote_sha and local_sha and remote_sha.startswith(local_sha):
                         self.logger.info(f"Plugin {plugin_id} already matches remote commit {remote_sha[:7]}")
                         return True
-                
+
                 # Update via git pull
                 self.logger.info(f"Updating {plugin_id} via git pull (local branch: {local_branch})...")
                 try:
