@@ -1265,10 +1265,20 @@ class PluginStoreManager:
             target_path.mkdir(parents=True, exist_ok=True)
 
             prefix_len = len(prefix)
+            target_root = target_path.resolve()
             for entry in file_entries:
                 # Relative path within the plugin directory
                 rel_path = entry['path'][prefix_len:]
                 dest_file = target_path / rel_path
+
+                # Guard against path traversal
+                if not dest_file.resolve().is_relative_to(target_root):
+                    self.logger.error(
+                        f"Path traversal detected: {entry['path']!r} resolves outside target directory"
+                    )
+                    if target_path.exists():
+                        shutil.rmtree(target_path, ignore_errors=True)
+                    return False
 
                 # Create parent directories
                 dest_file.parent.mkdir(parents=True, exist_ok=True)
