@@ -5541,7 +5541,7 @@ def upload_font():
             delete_cached('fonts_catalog')
         except ImportError as e:
             logger.warning("[FontUpload] Cache module not available: %s", e)
-        except Exception as e:
+        except Exception:
             logger.error("[FontUpload] Failed to clear fonts_catalog cache", exc_info=True)
 
         return jsonify({
@@ -5775,7 +5775,7 @@ def delete_font(font_family: str) -> tuple[Response, int] | Response:
             delete_cached('fonts_catalog')
         except ImportError as e:
             logger.warning("[FontDelete] Cache module not available: %s", e)
-        except Exception as e:
+        except Exception:
             logger.error("[FontDelete] Failed to clear fonts_catalog cache", exc_info=True)
 
         return jsonify({
