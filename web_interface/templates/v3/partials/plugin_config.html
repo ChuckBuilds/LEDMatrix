@@ -537,7 +537,7 @@
             {% else %}
             {% set str_widget = prop.get('x-widget') or prop.get('x_widget') %}
             {% set str_value = value if value is not none else (prop.default if prop.default is defined else '') %}
-            {% if str_widget in ['text-input', 'textarea', 'select-dropdown', 'toggle-switch', 'radio-group', 'date-picker', 'slider', 'color-picker', 'email-input', 'url-input', 'password-input'] %}
+            {% if str_widget in ['text-input', 'textarea', 'select-dropdown', 'toggle-switch', 'radio-group', 'date-picker', 'slider', 'color-picker', 'email-input', 'url-input', 'password-input', 'font-selector'] %}
                 {# Render widget container #}
                 <div id="{{ field_id }}_container" class="{{ str_widget }}-container"></div>
                 <script>

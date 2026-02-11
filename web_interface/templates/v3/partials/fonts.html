@@ -28,14 +28,14 @@
     <!-- Font Upload -->
     <div class="bg-gray-50 rounded-lg p-4 mb-8">
         <h3 class="text-md font-medium text-gray-900 mb-4">Upload Custom Fonts</h3>
-        <p class="text-sm text-gray-600 mb-4">Upload your own TTF or BDF font files to use in your LED matrix display.</p>
+        <p class="text-sm text-gray-600 mb-4">Upload your own TTF, OTF, or BDF font files to use in your LED matrix display.</p>
 
         <div class="font-upload-area" id="font-upload-area">
             <div class="upload-dropzone" id="upload-dropzone">
                 <i class="fas fa-cloud-upload-alt text-3xl text-gray-400 mb-3"></i>
                 <p class="text-gray-600">Drag and drop font files here, or click to select</p>
-                <p class="text-sm text-gray-500">Supports .ttf and .bdf files</p>
-                <input type="file" id="font-file-input" accept=".ttf,.bdf" multiple style="display: none;">
+                <p class="text-sm text-gray-500">Supports .ttf, .otf, and .bdf files</p>
+                <input type="file" id="font-file-input" accept=".ttf,.otf,.bdf" multiple style="display: none;">
             </div>
         </div>
 
@@ -49,8 +49,8 @@
                 <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div>
                         <label class="block text-sm font-medium text-gray-700 mb-1">Font Family Name</label>
-                        <input type="text" id="upload-font-family" class="form-control" placeholder="e.g., my_custom_font">
-                        <p class="text-sm text-gray-600 mt-1">Custom name for this font (letters, numbers, underscores only)</p>
+                        <input type="text" id="upload-font-family" class="form-control" placeholder="e.g., my-custom-font">
+                        <p class="text-sm text-gray-600 mt-1">Custom name for this font (letters, numbers, underscores, hyphens)</p>
                     </div>
                     <div class="flex items-end">
                         <button type="button" id="upload-fonts-btn" class="btn bg-blue-600 hover:bg-blue-700 text-white px-4 py-2">
@@ -112,9 +112,7 @@
                 <label class="block text-sm font-medium text-gray-700 mb-1">Font Family</label>
                 <select id="override-family" class="form-control text-sm">
                     <option value="">Use default</option>
-                    <option value="press_start">Press Start 2P</option>
-                    <option value="four_by_six">4x6 Font</option>
-                    <option value="matrix_light_6">Matrix Light 6</option>
+                    <!-- Dynamically populated from font catalog -->
                 </select>
             </div>
 
@@ -152,7 +150,10 @@
         <h3 class="text-md font-medium text-gray-900 mb-4">Font Preview</h3>
         <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-2 2xl:grid-cols-2 gap-6">
             <div>
-                <canvas id="font-preview-canvas" width="400" height="100" class="border border-gray-300 bg-black rounded"></canvas>
+                <div id="font-preview-container" class="border border-gray-300 bg-black rounded p-4 min-h-[100px] flex items-center justify-center">
+                    <img id="font-preview-image" src="" alt="Font preview" class="max-w-full" style="display: none;">
+                    <span id="font-preview-loading" class="text-gray-400">Select a font to preview</span>
+                </div>
             </div>
             <div class="space-y-3">
                 <div>
@@ -163,9 +164,7 @@
                     <div>
                         <label class="block text-sm font-medium text-gray-700 mb-1">Font Family</label>
                         <select id="preview-family" class="form-control text-sm">
-                            <option value="press_start">Press Start 2P</option>
-                            <option value="four_by_six">4x6 Font</option>
-                            <option value="matrix_light_6">Matrix Light 6</option>
+                            <!-- Dynamically populated from font catalog -->
                         </select>
                     </div>
                     <div>
@@ -209,27 +208,43 @@
     window.fontTokens = window.fontTokens || {};
     window.fontOverrides = window.fontOverrides || {};
     window.selectedFontFiles = window.selectedFontFiles || [];
-    
+
     // Create references that can be reassigned
     var fontCatalog = window.fontCatalog;
     var fontTokens = window.fontTokens;
     var fontOverrides = window.fontOverrides;
     var selectedFontFiles = window.selectedFontFiles;
 
+    // Base URL for API calls (shared scope)
+    var baseUrl = window.location.origin;
+
+    // Retry counter for initialization
+    var initRetryCount = 0;
+    var MAX_INIT_RETRIES = 50; // 5 seconds max (50 * 100ms)
+
 function initializeFontsTab() {
     // Allow re-initialization on each HTMX content swap
     // The window._fontsScriptLoaded guard prevents function redeclaration
     const detectedEl = document.getElementById('detected-fonts');
     const availableEl = document.getElementById('available-fonts');
-    
+
     if (!detectedEl || !availableEl) {
+        initRetryCount++;
+        if (initRetryCount >= MAX_INIT_RETRIES) {
+            console.error('Fonts tab elements not found after max retries, giving up');
+            return;
+        }
         console.log('Fonts tab elements not found, retrying...', {
             detectedFonts: !!detectedEl,
-            availableFonts: !!availableEl
+            availableFonts: !!availableEl,
+            attempt: initRetryCount
         });
         setTimeout(initializeFontsTab, 100);
         return;
     }
+
+    // Reset retry counter on successful init
+    initRetryCount = 0;
     
     // showNotification is provided by the notification widget (notification.js)
     // Fallback only if widget hasn't loaded yet
@@ -368,7 +383,6 @@ async function loadFontData() {
 
     try {
         // Use absolute URLs to ensure they work when loaded via HTMX
-        const baseUrl = window.location.origin;
         const [catalogRes, tokensRes, overridesRes] = await Promise.all([
             fetch(`${baseUrl}/api/v3/fonts/catalog`),
             fetch(`${baseUrl}/api/v3/fonts/tokens`),
@@ -488,21 +502,146 @@ function updateAvailableFontsDisplay() {
         return;
     }
 
-    const lines = Object.entries(fontCatalog).map(([name, fontInfo]) => {
+    const fontEntries = Object.entries(fontCatalog).map(([name, fontInfo]) => {
         const fontPath = typeof fontInfo === 'string' ? fontInfo : (fontInfo?.path || '');
-        // Only prefix with "assets/fonts/" if path is a bare filename (no "/" and doesn't start with "assets/")
-        // If path is absolute (starts with "/") or already has "assets/" prefix, use as-is
-        const fullPath = (fontPath.startsWith('/') || fontPath.startsWith('assets/')) 
-            ? fontPath 
-            : `assets/fonts/${fontPath}`;
-        return `${name}: ${fullPath}`;
+        const filename = typeof fontInfo === 'object' ? (fontInfo.filename || name) : name;
+        const displayName = typeof fontInfo === 'object' ? (fontInfo.display_name || name) : name;
+        const fontType = typeof fontInfo === 'object' ? (fontInfo.type || '').toUpperCase() : '';
+        // Use is_system flag from API (single source of truth)
+        const isSystem = typeof fontInfo === 'object' ? (fontInfo.is_system === true) : false;
+        return { name, filename, displayName, fontType, fontPath, isSystem };
+    }).sort((a, b) => a.displayName.localeCompare(b.displayName));
+
+    // Build list using DOM APIs to prevent XSS
+    container.innerHTML = '';
+    fontEntries.forEach(font => {
+        const row = document.createElement('div');
+        row.className = 'flex items-center justify-between py-1 border-b border-gray-700 last:border-0';
+
+        const nameSpan = document.createElement('span');
+        nameSpan.className = 'truncate flex-1';
+        nameSpan.textContent = font.displayName;
+
+        if (font.fontType) {
+            const typeSpan = document.createElement('span');
+            typeSpan.className = 'text-gray-500 ml-1';
+            typeSpan.textContent = `(${font.fontType})`;
+            nameSpan.appendChild(typeSpan);
+        }
+
+        row.appendChild(nameSpan);
+
+        if (font.isSystem) {
+            const systemBadge = document.createElement('span');
+            systemBadge.className = 'text-gray-600 text-xs ml-2';
+            systemBadge.textContent = '[system]';
+            row.appendChild(systemBadge);
+        } else {
+            const deleteBtn = document.createElement('button');
+            deleteBtn.className = 'text-red-400 hover:text-red-300 text-xs ml-2';
+            deleteBtn.title = 'Delete font';
+            deleteBtn.textContent = '[delete]';
+            deleteBtn.dataset.fontName = font.name;
+            deleteBtn.addEventListener('click', function() {
+                deleteFont(this.dataset.fontName);
+            });
+            row.appendChild(deleteBtn);
+        }
+
+        container.appendChild(row);
     });
-    container.textContent = lines.join('\n');
+}
+
+async function deleteFont(fontFamily) {
+    if (!confirm(`Are you sure you want to delete the font "${fontFamily}"? This action cannot be undone.`)) {
+        return;
+    }
+
+    try {
+        const response = await fetch(`${baseUrl}/api/v3/fonts/${encodeURIComponent(fontFamily)}`, {
+            method: 'DELETE'
+        });
+
+        if (!response.ok) {
+            const text = await response.text();
+            let message;
+            try {
+                const errorData = JSON.parse(text);
+                message = errorData.message || `Server error: ${response.status}`;
+            } catch {
+                message = `Server error: ${response.status}`;
+            }
+            showNotification(message, 'error');
+            return;
+        }
+
+        const data = await response.json();
+
+        if (data.status === 'success') {
+            showNotification(data.message || `Font "${fontFamily}" deleted successfully`, 'success');
+            // Refresh font data and UI
+            await loadFontData();
+            populateFontSelects();
+            // Clear font-selector widget cache if available
+            if (typeof window.clearFontSelectorCache === 'function') {
+                window.clearFontSelectorCache();
+            }
+        } else {
+            showNotification(data.message || `Failed to delete font "${fontFamily}"`, 'error');
+        }
+    } catch (error) {
+        console.error('Error deleting font:', error);
+        showNotification(`Error deleting font: ${error.message}`, 'error');
+    }
 }
 
 function populateFontSelects() {
-    // This would populate the select options with actual font data
-    // For now, using placeholder options
+    // Populate font family dropdowns from catalog
+    const overrideSelect = document.getElementById('override-family');
+    const previewSelect = document.getElementById('preview-family');
+
+    if (!overrideSelect || !previewSelect) return;
+
+    // Get font entries sorted by display name
+    const fontEntries = Object.entries(fontCatalog).map(([key, info]) => {
+        const filename = typeof info === 'object' ? (info.filename || key) : key;
+        const displayName = typeof info === 'object' ? (info.display_name || key) : key;
+        const fontType = typeof info === 'object' ? (info.type || 'unknown').toUpperCase() : '';
+        return { key, filename, displayName, fontType };
+    }).sort((a, b) => a.displayName.localeCompare(b.displayName));
+
+    // Build options using DOM APIs to prevent XSS
+    // Clear and add default option for override select
+    overrideSelect.innerHTML = '';
+    const defaultOption = document.createElement('option');
+    defaultOption.value = '';
+    defaultOption.textContent = 'Use default';
+    overrideSelect.appendChild(defaultOption);
+
+    // Clear preview select
+    previewSelect.innerHTML = '';
+
+    // Add font options to both selects
+    fontEntries.forEach(font => {
+        const typeLabel = font.fontType ? ` (${font.fontType})` : '';
+
+        const overrideOpt = document.createElement('option');
+        overrideOpt.value = font.filename;
+        overrideOpt.textContent = font.displayName + typeLabel;
+        overrideSelect.appendChild(overrideOpt);
+
+        const previewOpt = document.createElement('option');
+        previewOpt.value = font.filename;
+        previewOpt.textContent = font.displayName + typeLabel;
+        previewSelect.appendChild(previewOpt);
+    });
+
+    // Select first font in preview if available
+    if (fontEntries.length > 0) {
+        previewSelect.value = fontEntries[0].filename;
+    }
+
+    console.log(`Populated font selects with ${fontEntries.length} fonts`);
 }
 
 async function addFontOverride() {
@@ -536,6 +675,19 @@ async function addFontOverride() {
             })
         });
 
+        if (!response.ok) {
+            const text = await response.text();
+            let message;
+            try {
+                const errorData = JSON.parse(text);
+                message = errorData.message || `Server error: ${response.status}`;
+            } catch {
+                message = `Server error: ${response.status}`;
+            }
+            showNotification('Error adding font override: ' + message, 'error');
+            return;
+        }
+
         const data = await response.json();
         if (data.status === 'success') {
             showNotification('Font override added successfully', 'success');
@@ -564,6 +716,19 @@ async function deleteFontOverride(elementKey) {
             method: 'DELETE'
         });
 
+        if (!response.ok) {
+            const text = await response.text();
+            let message;
+            try {
+                const errorData = JSON.parse(text);
+                message = errorData.message || `Server error: ${response.status}`;
+            } catch {
+                message = `Server error: ${response.status}`;
+            }
+            showNotification('Error removing font override: ' + message, 'error');
+            return;
+        }
+
         const data = await response.json();
         if (data.status === 'success') {
             showNotification('Font override removed successfully', 'success');
@@ -587,7 +752,9 @@ function displayCurrentOverrides() {
         return;
     }
 
-    container.innerHTML = Object.entries(fontOverrides).map(([elementKey, override]) => {
+    // Build list using DOM APIs to prevent XSS
+    container.innerHTML = '';
+    Object.entries(fontOverrides).forEach(([elementKey, override]) => {
         const elementName = getElementDisplayName(elementKey);
         const settings = [];
 
@@ -600,18 +767,37 @@ function displayCurrentOverrides() {
             settings.push(`Size: ${override.size_px}px`);
         }
 
-        return `
-            <div class="flex items-center justify-between p-3 bg-white rounded border">
-                <div>
-                    <div class="font-medium text-gray-900">${elementName}</div>
-                    <div class="text-sm text-gray-600">${settings.join(', ')}</div>
-                </div>
-                <button onclick="deleteFontOverride('${elementKey}')" class="btn bg-red-600 hover:bg-red-700 text-white px-3 py-1 text-sm">
-                    <i class="fas fa-trash mr-1"></i>Remove
-                </button>
-            </div>
-        `;
-    }).join('');
+        const row = document.createElement('div');
+        row.className = 'flex items-center justify-between p-3 bg-white rounded border';
+
+        const infoDiv = document.createElement('div');
+
+        const nameDiv = document.createElement('div');
+        nameDiv.className = 'font-medium text-gray-900';
+        nameDiv.textContent = elementName;
+
+        const settingsDiv = document.createElement('div');
+        settingsDiv.className = 'text-sm text-gray-600';
+        settingsDiv.textContent = settings.join(', ');
+
+        infoDiv.appendChild(nameDiv);
+        infoDiv.appendChild(settingsDiv);
+
+        const deleteBtn = document.createElement('button');
+        deleteBtn.className = 'btn bg-red-600 hover:bg-red-700 text-white px-3 py-1 text-sm';
+        const trashIcon = document.createElement('i');
+        trashIcon.className = 'fas fa-trash mr-1';
+        deleteBtn.appendChild(trashIcon);
+        deleteBtn.appendChild(document.createTextNode('Remove'));
+        deleteBtn.dataset.elementKey = elementKey;
+        deleteBtn.addEventListener('click', function() {
+            deleteFontOverride(this.dataset.elementKey);
+        });
+
+        row.appendChild(infoDiv);
+        row.appendChild(deleteBtn);
+        container.appendChild(row);
+    });
 }
 
 function getElementDisplayName(elementKey) {
@@ -639,30 +825,75 @@ function getFontDisplayName(fontKey) {
     return names[fontKey] || fontKey;
 }
 
-function updateFontPreview() {
-    const canvas = document.getElementById('font-preview-canvas');
-    const text = document.getElementById('preview-text').value || 'Sample Text';
-    const family = document.getElementById('preview-family').value;
-    const size = document.getElementById('preview-size').value;
+async function updateFontPreview() {
+    const previewImage = document.getElementById('font-preview-image');
+    const loadingText = document.getElementById('font-preview-loading');
+    const textInput = document.getElementById('preview-text');
+    const familySelect = document.getElementById('preview-family');
+    const sizeSelect = document.getElementById('preview-size');
 
-    if (!canvas) return;
+    if (!previewImage || !loadingText) return;
 
-    const ctx = canvas.getContext('2d');
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    const text = textInput?.value || 'Sample Text 123';
+    const family = familySelect?.value || '';
+    const sizeToken = sizeSelect?.value || 'md';
+    const sizePx = fontTokens[sizeToken] || 10;
 
-    // Set background
-    ctx.fillStyle = '#000000';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    if (!family) {
+        previewImage.style.display = 'none';
+        loadingText.style.display = 'block';
+        loadingText.textContent = 'Select a font to preview';
+        return;
+    }
 
-    // Set font properties
-    const fontSize = fontTokens[size] || 8;
-    ctx.fillStyle = '#ffffff';
-    ctx.font = `${fontSize}px monospace`;
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
+    // Show loading state
+    loadingText.textContent = 'Loading preview...';
+    loadingText.style.display = 'block';
+    previewImage.style.display = 'none';
 
-    // Draw text in center
-    ctx.fillText(text, canvas.width / 2, canvas.height / 2);
+    try {
+        const params = new URLSearchParams({
+            font: family,
+            text: text,
+            size: sizePx,
+            bg: '000000',
+            fg: 'ffffff'
+        });
+
+        const response = await fetch(`${baseUrl}/api/v3/fonts/preview?${params}`);
+
+        if (!response.ok) {
+            const text = await response.text();
+            let message;
+            try {
+                const errorData = JSON.parse(text);
+                message = errorData.message || `Server error: ${response.status}`;
+            } catch {
+                message = `Server error: ${response.status}`;
+            }
+            loadingText.textContent = message;
+            loadingText.style.display = 'block';
+            previewImage.style.display = 'none';
+            return;
+        }
+
+        const data = await response.json();
+
+        if (data.status === 'success' && data.data?.image) {
+            previewImage.src = data.data.image;
+            previewImage.style.display = 'block';
+            loadingText.style.display = 'none';
+        } else {
+            loadingText.textContent = data.message || 'Failed to load preview';
+            loadingText.style.display = 'block';
+            previewImage.style.display = 'none';
+        }
+    } catch (error) {
+        console.error('Error loading font preview:', error);
+        loadingText.textContent = 'Error loading preview';
+        loadingText.style.display = 'block';
+        previewImage.style.display = 'none';
+    }
 }
 
 function initializeFontUpload() {
@@ -671,13 +902,14 @@ function initializeFontUpload() {
 
 function handleFileSelection(event) {
     const files = Array.from(event.target.files);
+    const validExtensions = ['ttf', 'otf', 'bdf'];
     const validFiles = files.filter(file => {
         const extension = file.name.toLowerCase().split('.').pop();
-        return extension === 'ttf' || extension === 'bdf';
+        return validExtensions.includes(extension);
     });
 
     if (validFiles.length === 0) {
-        showNotification('Please select valid .ttf or .bdf font files', 'warning');
+        showNotification('Please select valid .ttf, .otf, or .bdf font files', 'warning');
         return;
     }
 
@@ -696,18 +928,26 @@ function showUploadForm() {
     const selectedFilesContainer = document.getElementById('selected-files');
     const fontFamilyInput = document.getElementById('upload-font-family');
 
-    // Show selected files
-    selectedFilesContainer.innerHTML = selectedFontFiles.map(file => `
-        <div class="flex items-center justify-between p-2 bg-gray-100 rounded">
-            <span class="text-sm">${file.name} (${(file.size / 1024).toFixed(1)} KB)</span>
-        </div>
-    `).join('');
+    // Show selected files using DOM APIs to prevent XSS
+    selectedFilesContainer.innerHTML = '';
+    selectedFontFiles.forEach(file => {
+        const row = document.createElement('div');
+        row.className = 'flex items-center justify-between p-2 bg-gray-100 rounded';
+
+        const span = document.createElement('span');
+        span.className = 'text-sm';
+        span.textContent = `${file.name} (${(file.size / 1024).toFixed(1)} KB)`;
+
+        row.appendChild(span);
+        selectedFilesContainer.appendChild(row);
+    });
 
     // Auto-generate font family name from first file
     if (selectedFontFiles.length === 1) {
         const filename = selectedFontFiles[0].name;
         const nameWithoutExt = filename.substring(0, filename.lastIndexOf('.'));
-        fontFamilyInput.value = nameWithoutExt.toLowerCase().replace(/[^a-z0-9]/g, '_');
+        // Preserve hyphens, convert other special chars to underscores
+        fontFamilyInput.value = nameWithoutExt.toLowerCase().replace(/[^a-z0-9-]/g, '_');
     }
 
     uploadForm.style.display = 'block';
@@ -734,9 +974,9 @@ async function uploadSelectedFonts() {
         return;
     }
 
-    // Validate font family name
-    if (!/^[a-z0-9_]+$/i.test(fontFamily)) {
-        showNotification('Font family name can only contain letters, numbers, and underscores', 'warning');
+    // Validate font family name (must match backend validation)
+    if (!/^[a-z0-9_-]+$/i.test(fontFamily)) {
+        showNotification('Font family name can only contain letters, numbers, underscores, and hyphens', 'warning');
         return;
     }
 
@@ -754,6 +994,19 @@ async function uploadSelectedFonts() {
                 method: 'POST',
                 body: formData
             });
+
+            if (!response.ok) {
+                const text = await response.text();
+                let message;
+                try {
+                    const errorData = JSON.parse(text);
+                    message = errorData.message || `Server error: ${response.status}`;
+                } catch {
+                    message = `Server error: ${response.status}`;
+                }
+                showNotification(`Error uploading "${file.name}": ${message}`, 'error');
+                continue;
+            }
 
             const data = await response.json();
 
@@ -773,6 +1026,10 @@ async function uploadSelectedFonts() {
         populateFontSelects();
         cancelFontUpload();
         hideUploadProgress();
+        // Clear font-selector widget cache so new fonts appear in plugin configs
+        if (typeof window.clearFontSelectorCache === 'function') {
+            window.clearFontSelectorCache();
+        }
 
     } catch (error) {
         console.error('Error uploading fonts:', error);
@@ -850,7 +1107,12 @@ function updateUploadProgress(percent) {
     border: 1px solid #d1d5db;
 }
 
-#font-preview-canvas {
+#font-preview-container {
+    max-width: 100%;
+    min-height: 100px;
+}
+
+#font-preview-image {
     max-width: 100%;
     height: auto;
 }
