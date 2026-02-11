@@ -1733,7 +1733,9 @@ class PluginStoreManager:
                             f"Plugin {plugin_id} git remote ({local_remote}) differs from registry ({registry_repo}). "
                             f"Reinstalling from registry to migrate to new source."
                         )
-                        shutil.rmtree(plugin_path, ignore_errors=True)
+                        if not self._safe_remove_directory(plugin_path):
+                            self.logger.error(f"Failed to remove old plugin directory for {plugin_id}")
+                            return False
                         return self.install_plugin(plugin_id)
 
                     # Check if already up to date
