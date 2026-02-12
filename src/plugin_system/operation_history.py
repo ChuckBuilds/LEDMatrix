@@ -167,6 +167,13 @@ class OperationHistory:
         
         return history[:limit]
     
+    def clear_history(self) -> None:
+        """Clear all operation history records."""
+        with self._lock:
+            self._history.clear()
+            self._save_history()
+        self.logger.info("Operation history cleared")
+
     def _save_history(self) -> None:
         """Save history to file."""
         if not self.history_file:
