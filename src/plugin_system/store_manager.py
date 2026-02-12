@@ -1235,7 +1235,7 @@ class PluginStoreManager:
                 return False
 
             # Step 2: Filter for files in the target subdirectory
-            prefix = f"{plugin_subpath}/"
+            prefix = f"{plugin_subpath.strip('/')}/"
             file_entries = [
                 entry for entry in tree_data.get('tree', [])
                 if entry['path'].startswith(prefix) and entry['type'] == 'blob'
@@ -1348,9 +1348,10 @@ class PluginStoreManager:
                     if not member_dest.is_relative_to(temp_extract_resolved):
                         self.logger.error(
                             f"Zip-slip detected: member {member!r} resolves outside "
-                            f"temp directory, skipping"
+                            f"temp directory, aborting"
                         )
-                        continue
+                        shutil.rmtree(temp_extract, ignore_errors=True)
+                        return False
                     zip_ref.extract(member, temp_extract)
 
                 source_plugin_dir = temp_extract / root_dir / plugin_subpath
@@ -1410,8 +1411,18 @@ class PluginStoreManager:
                     # Find the root directory in the zip
                     root_dir = zip_contents[0].split('/')[0]
                     
-                    # Extract to temp location
+                    # Extract to temp location with zip-slip protection
                     temp_extract = Path(tempfile.mkdtemp())
+                    temp_extract_resolved = temp_extract.resolve()
+                    for member in zip_ref.namelist():
+                        member_dest = (temp_extract / member).resolve()
+                        if not member_dest.is_relative_to(temp_extract_resolved):
+                            self.logger.error(
+                                f"Zip-slip detected: member {member!r} resolves outside "
+                                f"temp directory, aborting"
+                            )
+                            shutil.rmtree(temp_extract, ignore_errors=True)
+                            return False
                     zip_ref.extractall(temp_extract)
                     
                     # Move contents from root_dir to target
@@ -2044,7 +2055,9 @@ class PluginStoreManager:
             self.logger.info(f"Plugin {plugin_id} not installed via git; re-installing latest archive")
 
             # Remove directory and reinstall fresh
-            shutil.rmtree(plugin_path, ignore_errors=True)
+            if not self._safe_remove_directory(plugin_path):
+                self.logger.error(f"Failed to remove old plugin directory for {plugin_id}")
+                return False
             return self.install_plugin(plugin_id)
 
         except Exception as e:
