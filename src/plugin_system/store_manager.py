@@ -1235,7 +1235,7 @@ class PluginStoreManager:
                 return False
 
             # Step 2: Filter for files in the target subdirectory
-            prefix = f"{plugin_subpath}/"
+            prefix = f"{plugin_subpath.strip('/')}/"
             file_entries = [
                 entry for entry in tree_data.get('tree', [])
                 if entry['path'].startswith(prefix) and entry['type'] == 'blob'
@@ -1411,8 +1411,18 @@ class PluginStoreManager:
                     # Find the root directory in the zip
                     root_dir = zip_contents[0].split('/')[0]
                     
-                    # Extract to temp location
+                    # Extract to temp location with zip-slip protection
                     temp_extract = Path(tempfile.mkdtemp())
+                    temp_extract_resolved = temp_extract.resolve()
+                    for member in zip_ref.namelist():
+                        member_dest = (temp_extract / member).resolve()
+                        if not member_dest.is_relative_to(temp_extract_resolved):
+                            self.logger.error(
+                                f"Zip-slip detected: member {member!r} resolves outside "
+                                f"temp directory, aborting"
+                            )
+                            shutil.rmtree(temp_extract, ignore_errors=True)
+                            return False
                     zip_ref.extractall(temp_extract)
                     
                     # Move contents from root_dir to target
