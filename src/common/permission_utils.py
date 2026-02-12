@@ -265,12 +265,12 @@ def sudo_remove_directory(path: Path, allowed_bases: Optional[list] = None) -> b
 
     try:
         result = subprocess.run(
-            ['sudo', '-n', bash_path, str(helper_script), str(path)],
+            ['sudo', '-n', bash_path, str(helper_script), str(resolved)],
             capture_output=True,
             text=True,
             timeout=30
         )
-        if result.returncode == 0 and not path.exists():
+        if result.returncode == 0 and not resolved.exists():
             logger.info(f"Successfully removed {path} via sudo helper")
             return True
         else:

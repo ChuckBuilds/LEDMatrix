@@ -23,56 +23,92 @@ if [ "$EUID" -eq 0 ]; then
     exit 1
 fi
 
-# Get the full paths to commands
-PYTHON_PATH=$(command -v python3)
-SYSTEMCTL_PATH=$(command -v systemctl)
-REBOOT_PATH=$(command -v reboot)
-POWEROFF_PATH=$(command -v poweroff)
-BASH_PATH=$(command -v bash)
-JOURNALCTL_PATH=$(command -v journalctl)
+# Get the full paths to commands and validate each one
+MISSING_CMDS=()
+
+PYTHON_PATH=$(command -v python3)   || true
+SYSTEMCTL_PATH=$(command -v systemctl) || true
+REBOOT_PATH=$(command -v reboot)    || true
+POWEROFF_PATH=$(command -v poweroff)  || true
+BASH_PATH=$(command -v bash)        || true
+JOURNALCTL_PATH=$(command -v journalctl) || true
 SAFE_RM_PATH="$PROJECT_ROOT/scripts/fix_perms/safe_plugin_rm.sh"
+
+# Validate required commands (systemctl, bash, python3 are essential)
+for CMD_NAME in SYSTEMCTL_PATH BASH_PATH PYTHON_PATH; do
+    CMD_VAL="${!CMD_NAME}"
+    if [ -z "$CMD_VAL" ]; then
+        MISSING_CMDS+=("$CMD_NAME")
+    fi
+done
+
+if [ ${#MISSING_CMDS[@]} -gt 0 ]; then
+    echo "Error: Required commands not found: ${MISSING_CMDS[*]}" >&2
+    echo "Cannot generate valid sudoers configuration without these." >&2
+    exit 1
+fi
+
+# Validate helper script exists
+if [ ! -f "$SAFE_RM_PATH" ]; then
+    echo "Error: Safe plugin removal helper not found: $SAFE_RM_PATH" >&2
+    exit 1
+fi
 
 echo "Command paths:"
 echo "  Python: $PYTHON_PATH"
 echo "  Systemctl: $SYSTEMCTL_PATH"
-echo "  Reboot: $REBOOT_PATH"
-echo "  Poweroff: $POWEROFF_PATH"
+echo "  Reboot: ${REBOOT_PATH:-(not found, skipping)}"
+echo "  Poweroff: ${POWEROFF_PATH:-(not found, skipping)}"
 echo "  Bash: $BASH_PATH"
-echo "  Journalctl: $JOURNALCTL_PATH"
+echo "  Journalctl: ${JOURNALCTL_PATH:-(not found, skipping)}"
 echo "  Safe plugin rm: $SAFE_RM_PATH"
 
 # Create a temporary sudoers file
 TEMP_SUDOERS="/tmp/ledmatrix_web_sudoers_$$"
 
-cat > "$TEMP_SUDOERS" << EOF
-# LED Matrix Web Interface passwordless sudo configuration
-# This allows the web interface user to run specific commands without a password
+{
+    echo "# LED Matrix Web Interface passwordless sudo configuration"
+    echo "# This allows the web interface user to run specific commands without a password"
+    echo ""
+    echo "# Allow $WEB_USER to run specific commands without a password for the LED Matrix web interface"
 
-# Allow $WEB_USER to run specific commands without a password for the LED Matrix web interface
-$WEB_USER ALL=(ALL) NOPASSWD: $REBOOT_PATH
-$WEB_USER ALL=(ALL) NOPASSWD: $POWEROFF_PATH
-$WEB_USER ALL=(ALL) NOPASSWD: $SYSTEMCTL_PATH start ledmatrix.service
-$WEB_USER ALL=(ALL) NOPASSWD: $SYSTEMCTL_PATH stop ledmatrix.service
-$WEB_USER ALL=(ALL) NOPASSWD: $SYSTEMCTL_PATH restart ledmatrix.service
-$WEB_USER ALL=(ALL) NOPASSWD: $SYSTEMCTL_PATH enable ledmatrix.service
-$WEB_USER ALL=(ALL) NOPASSWD: $SYSTEMCTL_PATH disable ledmatrix.service
-$WEB_USER ALL=(ALL) NOPASSWD: $SYSTEMCTL_PATH status ledmatrix.service
-$WEB_USER ALL=(ALL) NOPASSWD: $SYSTEMCTL_PATH is-active ledmatrix
-$WEB_USER ALL=(ALL) NOPASSWD: $SYSTEMCTL_PATH is-active ledmatrix.service
-$WEB_USER ALL=(ALL) NOPASSWD: $SYSTEMCTL_PATH start ledmatrix-web
-$WEB_USER ALL=(ALL) NOPASSWD: $SYSTEMCTL_PATH stop ledmatrix-web
-$WEB_USER ALL=(ALL) NOPASSWD: $SYSTEMCTL_PATH restart ledmatrix-web
-$WEB_USER ALL=(ALL) NOPASSWD: $JOURNALCTL_PATH -u ledmatrix.service *
-$WEB_USER ALL=(ALL) NOPASSWD: $JOURNALCTL_PATH -u ledmatrix *
-$WEB_USER ALL=(ALL) NOPASSWD: $JOURNALCTL_PATH -t ledmatrix *
-$WEB_USER ALL=(ALL) NOPASSWD: $PYTHON_PATH $PROJECT_DIR/display_controller.py
-$WEB_USER ALL=(ALL) NOPASSWD: $BASH_PATH $PROJECT_DIR/start_display.sh
-$WEB_USER ALL=(ALL) NOPASSWD: $BASH_PATH $PROJECT_DIR/stop_display.sh
+    # Optional: reboot/poweroff (non-critical — skip if not found)
+    if [ -n "$REBOOT_PATH" ]; then
+        echo "$WEB_USER ALL=(ALL) NOPASSWD: $REBOOT_PATH"
+    fi
+    if [ -n "$POWEROFF_PATH" ]; then
+        echo "$WEB_USER ALL=(ALL) NOPASSWD: $POWEROFF_PATH"
+    fi
 
-# Allow web user to remove plugin directories via vetted helper script
-# The helper validates that the target path resolves inside plugin-repos/ or plugins/
-$WEB_USER ALL=(ALL) NOPASSWD: $BASH_PATH $SAFE_RM_PATH *
-EOF
+    # Required: systemctl
+    echo "$WEB_USER ALL=(ALL) NOPASSWD: $SYSTEMCTL_PATH start ledmatrix.service"
+    echo "$WEB_USER ALL=(ALL) NOPASSWD: $SYSTEMCTL_PATH stop ledmatrix.service"
+    echo "$WEB_USER ALL=(ALL) NOPASSWD: $SYSTEMCTL_PATH restart ledmatrix.service"
+    echo "$WEB_USER ALL=(ALL) NOPASSWD: $SYSTEMCTL_PATH enable ledmatrix.service"
+    echo "$WEB_USER ALL=(ALL) NOPASSWD: $SYSTEMCTL_PATH disable ledmatrix.service"
+    echo "$WEB_USER ALL=(ALL) NOPASSWD: $SYSTEMCTL_PATH status ledmatrix.service"
+    echo "$WEB_USER ALL=(ALL) NOPASSWD: $SYSTEMCTL_PATH is-active ledmatrix"
+    echo "$WEB_USER ALL=(ALL) NOPASSWD: $SYSTEMCTL_PATH is-active ledmatrix.service"
+    echo "$WEB_USER ALL=(ALL) NOPASSWD: $SYSTEMCTL_PATH start ledmatrix-web"
+    echo "$WEB_USER ALL=(ALL) NOPASSWD: $SYSTEMCTL_PATH stop ledmatrix-web"
+    echo "$WEB_USER ALL=(ALL) NOPASSWD: $SYSTEMCTL_PATH restart ledmatrix-web"
+
+    # Optional: journalctl (non-critical — skip if not found)
+    if [ -n "$JOURNALCTL_PATH" ]; then
+        echo "$WEB_USER ALL=(ALL) NOPASSWD: $JOURNALCTL_PATH -u ledmatrix.service *"
+        echo "$WEB_USER ALL=(ALL) NOPASSWD: $JOURNALCTL_PATH -u ledmatrix *"
+        echo "$WEB_USER ALL=(ALL) NOPASSWD: $JOURNALCTL_PATH -t ledmatrix *"
+    fi
+
+    # Required: python3, bash
+    echo "$WEB_USER ALL=(ALL) NOPASSWD: $PYTHON_PATH $PROJECT_DIR/display_controller.py"
+    echo "$WEB_USER ALL=(ALL) NOPASSWD: $BASH_PATH $PROJECT_DIR/start_display.sh"
+    echo "$WEB_USER ALL=(ALL) NOPASSWD: $BASH_PATH $PROJECT_DIR/stop_display.sh"
+    echo ""
+    echo "# Allow web user to remove plugin directories via vetted helper script"
+    echo "# The helper validates that the target path resolves inside plugin-repos/ or plugins/"
+    echo "$WEB_USER ALL=(ALL) NOPASSWD: $BASH_PATH $SAFE_RM_PATH *"
+} > "$TEMP_SUDOERS"
 
 echo ""
 echo "Generated sudoers configuration:"
