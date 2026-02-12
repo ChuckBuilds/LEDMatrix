@@ -814,7 +814,7 @@ class PluginStoreManager:
             manifest_path = plugin_path / "manifest.json"
             if not manifest_path.exists():
                 self.logger.error(f"No manifest.json found in plugin: {plugin_id}")
-                shutil.rmtree(plugin_path, ignore_errors=True)
+                self._safe_remove_directory(plugin_path)
                 return False
 
             try:
@@ -825,7 +825,7 @@ class PluginStoreManager:
                 manifest_plugin_id = manifest.get('id')
                 if not manifest_plugin_id:
                     self.logger.error(f"Plugin manifest missing 'id' field")
-                    shutil.rmtree(plugin_path, ignore_errors=True)
+                    self._safe_remove_directory(plugin_path)
                     return False
                 
                 # If manifest ID doesn't match directory name, rename directory to match manifest
@@ -837,7 +837,7 @@ class PluginStoreManager:
                     correct_path = self.plugins_dir / manifest_plugin_id
                     if correct_path.exists():
                         self.logger.warning(f"Target directory {manifest_plugin_id} already exists, removing it")
-                        shutil.rmtree(correct_path)
+                        self._safe_remove_directory(correct_path)
                     shutil.move(str(plugin_path), str(correct_path))
                     plugin_path = correct_path
                     manifest_path = plugin_path / "manifest.json"
@@ -865,7 +865,7 @@ class PluginStoreManager:
 
                 if missing:
                     self.logger.error(f"Plugin manifest missing required fields for {plugin_id}: {', '.join(missing)}")
-                    shutil.rmtree(plugin_path, ignore_errors=True)
+                    self._safe_remove_directory(plugin_path)
                     return False
 
                 if 'entry_point' not in manifest:
@@ -879,7 +879,7 @@ class PluginStoreManager:
 
             except Exception as manifest_error:
                 self.logger.error(f"Failed to read/validate manifest for {plugin_id}: {manifest_error}")
-                shutil.rmtree(plugin_path, ignore_errors=True)
+                self._safe_remove_directory(plugin_path)
                 return False
 
             if not self._install_dependencies(plugin_path):
@@ -892,7 +892,7 @@ class PluginStoreManager:
         except Exception as e:
             self.logger.error(f"Error installing plugin {plugin_id}: {e}", exc_info=True)
             if plugin_path.exists():
-                shutil.rmtree(plugin_path, ignore_errors=True)
+                self._safe_remove_directory(plugin_path)
             return False
     
     def install_from_url(self, repo_url: str, plugin_id: str = None, plugin_path: str = None, branch: Optional[str] = None) -> Dict[str, Any]:
@@ -1110,7 +1110,7 @@ class PluginStoreManager:
                 last_error = e
                 self.logger.debug(f"Git clone failed for branch {try_branch}: {e}")
                 if target_path.exists():
-                    shutil.rmtree(target_path)
+                    self._safe_remove_directory(target_path)
 
         # Try default branch (Git's configured default) as last resort
         try:
@@ -1127,7 +1127,7 @@ class PluginStoreManager:
         except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError) as e:
             last_error = e
             if target_path.exists():
-                shutil.rmtree(target_path)
+                self._safe_remove_directory(target_path)
 
         self.logger.error(f"Git clone failed for all attempted branches: {last_error}")
         return None
@@ -1157,7 +1157,7 @@ class PluginStoreManager:
             self.logger.info(f"API-based install failed for {plugin_subpath}, falling back to ZIP download")
             # Ensure no partial files remain before ZIP fallback
             if target_path.exists():
-                shutil.rmtree(target_path, ignore_errors=True)
+                self._safe_remove_directory(target_path)
 
         # Fallback: download full ZIP and extract subdirectory
         return self._install_from_monorepo_zip(download_url, plugin_subpath, target_path)
@@ -1277,7 +1277,7 @@ class PluginStoreManager:
                         f"Path traversal detected: {entry['path']!r} resolves outside target directory"
                     )
                     if target_path.exists():
-                        shutil.rmtree(target_path, ignore_errors=True)
+                        self._safe_remove_directory(target_path)
                     return False
 
                 # Create parent directories
@@ -1290,7 +1290,7 @@ class PluginStoreManager:
                     self.logger.error(f"Failed to download {entry['path']}: HTTP {file_response.status_code}")
                     # Clean up partial download
                     if target_path.exists():
-                        shutil.rmtree(target_path, ignore_errors=True)
+                        self._safe_remove_directory(target_path)
                     return False
 
                 dest_file.write_bytes(file_response.content)
@@ -1302,7 +1302,7 @@ class PluginStoreManager:
             self.logger.debug(f"API-based monorepo install failed: {e}")
             # Clean up partial download
             if target_path.exists():
-                shutil.rmtree(target_path, ignore_errors=True)
+                self._safe_remove_directory(target_path)
             return False
 
     def _install_from_monorepo_zip(self, download_url: str, plugin_subpath: str, target_path: Path) -> bool:
@@ -1362,7 +1362,7 @@ class PluginStoreManager:
                 ensure_directory_permissions(target_path.parent, get_plugin_dir_mode())
                 # Ensure target doesn't exist to prevent shutil.move nesting
                 if target_path.exists():
-                    shutil.rmtree(target_path, ignore_errors=True)
+                    self._safe_remove_directory(target_path)
                 shutil.move(str(source_plugin_dir), str(target_path))
 
             return True
@@ -1566,70 +1566,63 @@ class PluginStoreManager:
     
     def _safe_remove_directory(self, path: Path) -> bool:
         """
-        Safely remove a directory, handling permission errors for __pycache__ directories.
-        
-        This function attempts to remove a directory and handles permission errors
-        gracefully, especially for __pycache__ directories that may have been created
-        by Python with different permissions.
-        
+        Safely remove a directory, handling permission errors for root-owned files.
+
+        Attempts removal in three stages:
+        1. Normal shutil.rmtree()
+        2. Fix permissions via os.chmod() then retry (works for same-owner files)
+        3. Use sudo rm -rf as last resort (works for root-owned __pycache__, etc.)
+
         Args:
             path: Path to directory to remove
-            
+
         Returns:
             True if directory was removed successfully, False otherwise
         """
         if not path.exists():
             return True  # Already removed
-        
+
+        # Stage 1: Try normal removal
         try:
-            # First, try normal removal
             shutil.rmtree(path)
             return True
-        except PermissionError as e:
-            # Handle permission errors, especially for __pycache__ directories
-            self.logger.warning(f"Permission error removing {path}: {e}. Attempting to fix permissions...")
-            
-            try:
-                # Try to fix permissions on __pycache__ directories recursively
-                import stat
-                for root, dirs, files in os.walk(path):
-                    root_path = Path(root)
-                    try:
-                        # Make directory writable
-                        os.chmod(root_path, stat.S_IRWXU | stat.S_IRWXG | stat.S_IRWXO)
-                    except (OSError, PermissionError):
-                        pass
-                    
-                    # Fix file permissions
-                    for file in files:
-                        file_path = root_path / file
-                        try:
-                            os.chmod(file_path, stat.S_IRWXU | stat.S_IRWXG | stat.S_IRWXO)
-                        except (OSError, PermissionError):
-                            pass
-                
-                # Try removal again after fixing permissions
-                shutil.rmtree(path)
-                self.logger.info(f"Successfully removed {path} after fixing permissions")
-                return True
-            except Exception as e2:
-                self.logger.error(f"Failed to remove {path} even after fixing permissions: {e2}")
-                # Last resort: try with ignore_errors
-                try:
-                    shutil.rmtree(path, ignore_errors=True)
-                    # Check if it actually got removed
-                    if not path.exists():
-                        self.logger.warning(f"Removed {path} with ignore_errors=True (some files may remain)")
-                        return True
-                    else:
-                        self.logger.error(f"Could not remove {path} even with ignore_errors")
-                        return False
-                except Exception as e3:
-                    self.logger.error(f"Final removal attempt failed for {path}: {e3}")
-                    return False
+        except PermissionError:
+            self.logger.warning(f"Permission error removing {path}, attempting chmod fix...")
         except Exception as e:
             self.logger.error(f"Unexpected error removing {path}: {e}")
             return False
+
+        # Stage 2: Try chmod + retry (works when we own the files)
+        try:
+            import stat
+            for root, dirs, files in os.walk(path):
+                root_path = Path(root)
+                try:
+                    os.chmod(root_path, stat.S_IRWXU | stat.S_IRWXG | stat.S_IRWXO)
+                except (OSError, PermissionError):
+                    pass
+                for file in files:
+                    try:
+                        os.chmod(root_path / file, stat.S_IRWXU | stat.S_IRWXG | stat.S_IRWXO)
+                    except (OSError, PermissionError):
+                        pass
+            shutil.rmtree(path)
+            self.logger.info(f"Removed {path} after fixing permissions")
+            return True
+        except (PermissionError, OSError):
+            self.logger.warning(f"chmod fix failed for {path}, attempting sudo removal...")
+
+        # Stage 3: Use sudo rm -rf (for root-owned __pycache__, data/.cache, etc.)
+        from src.common.permission_utils import sudo_remove_directory
+        if sudo_remove_directory(path):
+            return True
+
+        # Final check — maybe partial removal got everything
+        if not path.exists():
+            return True
+
+        self.logger.error(f"All removal strategies failed for {path}")
+        return False
     
     def _find_plugin_path(self, plugin_id: str) -> Optional[Path]:
         """
@@ -2044,7 +2037,9 @@ class PluginStoreManager:
             self.logger.info(f"Plugin {plugin_id} not installed via git; re-installing latest archive")
 
             # Remove directory and reinstall fresh
-            shutil.rmtree(plugin_path, ignore_errors=True)
+            if not self._safe_remove_directory(plugin_path):
+                self.logger.error(f"Failed to remove old plugin directory for {plugin_id}")
+                return False
             return self.install_plugin(plugin_id)
 
         except Exception as e:

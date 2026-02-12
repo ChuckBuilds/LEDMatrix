@@ -4,6 +4,11 @@ import sys
 import os
 import argparse
 
+# Prevent Python from creating __pycache__ directories in plugin dirs.
+# The root service loads plugins via importlib, and root-owned __pycache__
+# files block the web service (non-root) from updating/uninstalling plugins.
+sys.dont_write_bytecode = True
+
 # Add project directory to Python path (needed before importing src modules)
 project_dir = os.path.dirname(os.path.abspath(__file__))
 if project_dir not in sys.path:

@@ -8,6 +8,7 @@ files that need to be accessible by both root service and web user.
 
 import os
 import logging
+import subprocess
 from pathlib import Path
 from typing import Optional
 
@@ -192,9 +193,47 @@ def get_plugin_dir_mode() -> int:
 def get_cache_dir_mode() -> int:
     """
     Return permission mode for cache directories.
-    
+
     Returns:
         Permission mode: 0o2775 (rwxrwxr-x + sticky bit) for group-writable cache directories
     """
     return 0o2775  # rwxrwsr-x (setgid + group writable)
+
+
+def sudo_remove_directory(path: Path) -> bool:
+    """
+    Remove a directory using sudo as a last resort.
+
+    Used when normal removal fails due to root-owned files (e.g., __pycache__
+    directories created by the root ledmatrix service). Requires a sudoers rule
+    allowing the current user to run 'rm -rf' on the specific path.
+
+    Args:
+        path: Directory path to remove
+
+    Returns:
+        True if removal succeeded, False otherwise
+    """
+    try:
+        result = subprocess.run(
+            ['sudo', '-n', '/usr/bin/rm', '-rf', str(path)],
+            capture_output=True,
+            text=True,
+            timeout=30
+        )
+        if result.returncode == 0 and not path.exists():
+            logger.info(f"Successfully removed {path} via sudo")
+            return True
+        else:
+            logger.error(f"sudo rm failed for {path}: {result.stderr.strip()}")
+            return False
+    except subprocess.TimeoutExpired:
+        logger.error(f"sudo rm timed out for {path}")
+        return False
+    except FileNotFoundError:
+        logger.error("sudo command not found on system")
+        return False
+    except Exception as e:
+        logger.error(f"Unexpected error during sudo rm for {path}: {e}")
+        return False
 

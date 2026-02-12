@@ -10,9 +10,11 @@ echo "Configuring passwordless sudo access for LED Matrix Web Interface..."
 # Get the current user (should be the user running the web interface)
 WEB_USER=$(whoami)
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "$PROJECT_DIR/../.." && pwd)"
 
 echo "Detected web interface user: $WEB_USER"
 echo "Project directory: $PROJECT_DIR"
+echo "Project root: $PROJECT_ROOT"
 
 # Check if running as root
 if [ "$EUID" -eq 0 ]; then
@@ -28,6 +30,8 @@ REBOOT_PATH=$(which reboot)
 POWEROFF_PATH=$(which poweroff)
 BASH_PATH=$(which bash)
 JOURNALCTL_PATH=$(which journalctl)
+RM_PATH=$(which rm)
+FIND_PATH=$(which find)
 
 echo "Command paths:"
 echo "  Python: $PYTHON_PATH"
@@ -36,6 +40,8 @@ echo "  Reboot: $REBOOT_PATH"
 echo "  Poweroff: $POWEROFF_PATH"
 echo "  Bash: $BASH_PATH"
 echo "  Journalctl: $JOURNALCTL_PATH"
+echo "  Rm: $RM_PATH"
+echo "  Find: $FIND_PATH"
 
 # Create a temporary sudoers file
 TEMP_SUDOERS="/tmp/ledmatrix_web_sudoers_$$"
@@ -64,6 +70,12 @@ $WEB_USER ALL=(ALL) NOPASSWD: $JOURNALCTL_PATH -t ledmatrix *
 $WEB_USER ALL=(ALL) NOPASSWD: $PYTHON_PATH $PROJECT_DIR/display_controller.py
 $WEB_USER ALL=(ALL) NOPASSWD: $BASH_PATH $PROJECT_DIR/start_display.sh
 $WEB_USER ALL=(ALL) NOPASSWD: $BASH_PATH $PROJECT_DIR/stop_display.sh
+
+# Allow web user to remove plugin directories (needed when root-owned __pycache__ blocks update/uninstall)
+$WEB_USER ALL=(ALL) NOPASSWD: $RM_PATH -rf $PROJECT_ROOT/plugin-repos/*
+$WEB_USER ALL=(ALL) NOPASSWD: $RM_PATH -rf $PROJECT_ROOT/plugins/*
+$WEB_USER ALL=(ALL) NOPASSWD: $FIND_PATH $PROJECT_ROOT/plugin-repos -type d -name __pycache__ -user root -exec $RM_PATH -rf {} +
+$WEB_USER ALL=(ALL) NOPASSWD: $FIND_PATH $PROJECT_ROOT/plugins -type d -name __pycache__ -user root -exec $RM_PATH -rf {} +
 EOF
 
 echo ""
@@ -81,6 +93,7 @@ echo "- View system logs via journalctl"
 echo "- Run display_controller.py directly"
 echo "- Execute start_display.sh and stop_display.sh"
 echo "- Reboot and shutdown the system"
+echo "- Remove plugin directories (for update/uninstall when root-owned files block deletion)"
 echo ""
 
 # Ask for confirmation
