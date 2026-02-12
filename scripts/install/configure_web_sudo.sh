@@ -24,14 +24,13 @@ if [ "$EUID" -eq 0 ]; then
 fi
 
 # Get the full paths to commands
-PYTHON_PATH=$(which python3)
-SYSTEMCTL_PATH=$(which systemctl)
-REBOOT_PATH=$(which reboot)
-POWEROFF_PATH=$(which poweroff)
-BASH_PATH=$(which bash)
-JOURNALCTL_PATH=$(which journalctl)
-RM_PATH=$(which rm)
-FIND_PATH=$(which find)
+PYTHON_PATH=$(command -v python3)
+SYSTEMCTL_PATH=$(command -v systemctl)
+REBOOT_PATH=$(command -v reboot)
+POWEROFF_PATH=$(command -v poweroff)
+BASH_PATH=$(command -v bash)
+JOURNALCTL_PATH=$(command -v journalctl)
+SAFE_RM_PATH="$PROJECT_ROOT/scripts/fix_perms/safe_plugin_rm.sh"
 
 echo "Command paths:"
 echo "  Python: $PYTHON_PATH"
@@ -40,8 +39,7 @@ echo "  Reboot: $REBOOT_PATH"
 echo "  Poweroff: $POWEROFF_PATH"
 echo "  Bash: $BASH_PATH"
 echo "  Journalctl: $JOURNALCTL_PATH"
-echo "  Rm: $RM_PATH"
-echo "  Find: $FIND_PATH"
+echo "  Safe plugin rm: $SAFE_RM_PATH"
 
 # Create a temporary sudoers file
 TEMP_SUDOERS="/tmp/ledmatrix_web_sudoers_$$"
@@ -71,11 +69,9 @@ $WEB_USER ALL=(ALL) NOPASSWD: $PYTHON_PATH $PROJECT_DIR/display_controller.py
 $WEB_USER ALL=(ALL) NOPASSWD: $BASH_PATH $PROJECT_DIR/start_display.sh
 $WEB_USER ALL=(ALL) NOPASSWD: $BASH_PATH $PROJECT_DIR/stop_display.sh
 
-# Allow web user to remove plugin directories (needed when root-owned __pycache__ blocks update/uninstall)
-$WEB_USER ALL=(ALL) NOPASSWD: $RM_PATH -rf $PROJECT_ROOT/plugin-repos/*
-$WEB_USER ALL=(ALL) NOPASSWD: $RM_PATH -rf $PROJECT_ROOT/plugins/*
-$WEB_USER ALL=(ALL) NOPASSWD: $FIND_PATH $PROJECT_ROOT/plugin-repos -type d -name __pycache__ -user root -exec $RM_PATH -rf {} +
-$WEB_USER ALL=(ALL) NOPASSWD: $FIND_PATH $PROJECT_ROOT/plugins -type d -name __pycache__ -user root -exec $RM_PATH -rf {} +
+# Allow web user to remove plugin directories via vetted helper script
+# The helper validates that the target path resolves inside plugin-repos/ or plugins/
+$WEB_USER ALL=(ALL) NOPASSWD: $BASH_PATH $SAFE_RM_PATH *
 EOF
 
 echo ""

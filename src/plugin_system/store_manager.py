@@ -7,6 +7,7 @@ from both the official registry and custom GitHub repositories.
 
 import os
 import json
+import stat
 import subprocess
 import shutil
 import zipfile
@@ -837,7 +838,9 @@ class PluginStoreManager:
                     correct_path = self.plugins_dir / manifest_plugin_id
                     if correct_path.exists():
                         self.logger.warning(f"Target directory {manifest_plugin_id} already exists, removing it")
-                        self._safe_remove_directory(correct_path)
+                        if not self._safe_remove_directory(correct_path):
+                            self.logger.error(f"Failed to remove existing directory {correct_path}, cannot rename plugin")
+                            return False
                     shutil.move(str(plugin_path), str(correct_path))
                     plugin_path = correct_path
                     manifest_path = plugin_path / "manifest.json"
@@ -1053,8 +1056,8 @@ class PluginStoreManager:
         finally:
             # Cleanup temp directory if it still exists
             if temp_dir and temp_dir.exists():
-                shutil.rmtree(temp_dir)
-    
+                shutil.rmtree(temp_dir, ignore_errors=True)
+
     def _detect_class_name(self, manager_file: Path) -> Optional[str]:
         """
         Attempt to auto-detect the plugin class name from the manager file.
@@ -1594,16 +1597,15 @@ class PluginStoreManager:
 
         # Stage 2: Try chmod + retry (works when we own the files)
         try:
-            import stat
-            for root, dirs, files in os.walk(path):
+            for root, _dirs, files in os.walk(path):
                 root_path = Path(root)
                 try:
-                    os.chmod(root_path, stat.S_IRWXU | stat.S_IRWXG | stat.S_IRWXO)
+                    os.chmod(root_path, stat.S_IRWXU)
                 except (OSError, PermissionError):
                     pass
                 for file in files:
                     try:
-                        os.chmod(root_path / file, stat.S_IRWXU | stat.S_IRWXG | stat.S_IRWXO)
+                        os.chmod(root_path / file, stat.S_IRWXU)
                     except (OSError, PermissionError):
                         pass
             shutil.rmtree(path)
