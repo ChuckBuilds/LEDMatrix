@@ -5289,7 +5289,7 @@ function renderPluginStore(plugins) {
                     <button onclick='if(window.installPlugin){const branchInput = document.getElementById("branch-input-${plugin.id.replace(/[^a-zA-Z0-9]/g, '-')}"); window.installPlugin(${escapeJs(plugin.id)}, branchInput?.value?.trim() || null)}else{console.error("installPlugin not available")}' class="btn bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-md text-sm flex-1 font-semibold">
                         <i class="fas fa-download mr-2"></i>Install
                     </button>
-                    <button onclick='${plugin.repo ? `window.open(${escapeJs(plugin.plugin_path ? plugin.repo + "/tree/" + (plugin.default_branch || plugin.branch || "main") + "/" + encodeURI(plugin.plugin_path) : plugin.repo)}, "_blank")` : `void(0)`}' ${plugin.repo ? '' : 'disabled'} class="btn bg-gray-600 hover:bg-gray-700 text-white px-4 py-2 rounded-md text-sm flex-1 font-semibold${plugin.repo ? '' : ' opacity-50 cursor-not-allowed'}">
+                    <button onclick='${plugin.repo ? `window.open(${escapeJs(plugin.plugin_path ? plugin.repo + "/tree/" + encodeURIComponent(plugin.default_branch || plugin.branch || "main") + "/" + plugin.plugin_path.split("/").map(encodeURIComponent).join("/") : plugin.repo)}, "_blank")` : `void(0)`}' ${plugin.repo ? '' : 'disabled'} class="btn bg-gray-600 hover:bg-gray-700 text-white px-4 py-2 rounded-md text-sm flex-1 font-semibold${plugin.repo ? '' : ' opacity-50 cursor-not-allowed'}">
                         <i class="fas fa-external-link-alt mr-2"></i>View
                     </button>
                 </div>

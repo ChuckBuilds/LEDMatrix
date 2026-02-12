@@ -1348,9 +1348,10 @@ class PluginStoreManager:
                     if not member_dest.is_relative_to(temp_extract_resolved):
                         self.logger.error(
                             f"Zip-slip detected: member {member!r} resolves outside "
-                            f"temp directory, skipping"
+                            f"temp directory, aborting"
                         )
-                        continue
+                        shutil.rmtree(temp_extract, ignore_errors=True)
+                        return False
                     zip_ref.extract(member, temp_extract)
 
                 source_plugin_dir = temp_extract / root_dir / plugin_subpath
@@ -2044,7 +2045,7 @@ class PluginStoreManager:
             self.logger.info(f"Plugin {plugin_id} not installed via git; re-installing latest archive")
 
             # Remove directory and reinstall fresh
-            shutil.rmtree(plugin_path, ignore_errors=True)
+            self._safe_remove_directory(plugin_path)
             return self.install_plugin(plugin_id)
 
         except Exception as e:

@@ -18,7 +18,11 @@ MONOREPO_PLUGINS = PROJECT_ROOT.parent / "ledmatrix-plugins" / "plugins"
 
 
 def parse_json_with_trailing_commas(text: str) -> dict:
-    """Parse JSON that may have trailing commas."""
+    """Parse JSON that may have trailing commas.
+
+    Note: The regex also matches commas inside string values (e.g., "hello, }").
+    This is fine for manifest files but may corrupt complex JSON with such patterns.
+    """
     text = re.sub(r",\s*([}\]])", r"\1", text)
     return json.loads(text)
 
