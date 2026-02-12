@@ -20,17 +20,14 @@
                 <option value="uninstall">Uninstall</option>
                 <option value="enable">Enable</option>
                 <option value="disable">Disable</option>
-                <option value="config_save">Config Save</option>
+                <option value="configure">Configure</option>
             </select>
 
             <!-- Filter by Status -->
             <select id="history-status-filter" class="form-control text-sm">
                 <option value="">All Statuses</option>
-                <option value="completed">Completed</option>
                 <option value="success">Success</option>
                 <option value="failed">Failed</option>
-                <option value="error">Error</option>
-                <option value="in_progress">In Progress</option>
             </select>
 
             <!-- Search -->
@@ -101,12 +98,22 @@
     let allHistory = [];
     let filteredHistory = [];
 
+    // Normalize status values so both server-side conventions match filter values.
+    // The server may return "completed" or "success" for successful operations,
+    // and "error" or "failed" for failures.
+    function normalizeStatus(status) {
+        const s = (status || '').toLowerCase();
+        if (s === 'completed' || s === 'success') return 'success';
+        if (s === 'error' || s === 'failed') return 'failed';
+        return s;
+    }
+
     // Load operation history
     async function loadHistory() {
         try {
             const response = await fetch('/api/v3/plugins/operation/history?limit=1000');
             const data = await response.json();
-            
+
             if (data.status === 'success') {
                 allHistory = data.data || [];
                 applyFilters();
@@ -130,7 +137,7 @@
         filteredHistory = allHistory.filter(record => {
             if (pluginFilter && record.plugin_id !== pluginFilter) return false;
             if (typeFilter && record.operation_type !== typeFilter) return false;
-            if (statusFilter && record.status !== statusFilter) return false;
+            if (statusFilter && normalizeStatus(record.status) !== statusFilter) return false;
             if (searchTerm) {
                 const searchable = [
                     record.operation_type,
@@ -171,12 +178,27 @@
         tbody.innerHTML = pageData.map(record => {
             const timestamp = new Date(record.timestamp || record.created_at || Date.now());
             const timeStr = timestamp.toLocaleString();
-            const statusClass = getStatusClass(record.status);
+            const normalized = normalizeStatus(record.status);
+            const statusClass = getStatusClass(normalized);
             const operationType = record.operation_type || 'unknown';
             const pluginId = record.plugin_id || '-';
             const user = record.user || '-';
-            const details = record.details ? JSON.stringify(record.details, null, 2) : '';
             const error = record.error ? `<div class="text-red-600 text-xs mt-1">${escapeHtml(record.error)}</div>` : '';
+
+            // Build a concise details summary
+            let detailsSummary = '';
+            const d = record.details;
+            if (d) {
+                const parts = [];
+                if (d.version) parts.push(`v${d.version}`);
+                if (d.branch) parts.push(`branch: ${d.branch}`);
+                if (d.commit) parts.push(`commit: ${String(d.commit).substring(0, 7)}`);
+                if (d.previous_commit && d.commit && d.previous_commit !== d.commit) {
+                    parts.push(`from: ${String(d.previous_commit).substring(0, 7)}`);
+                }
+                if (d.preserve_config !== undefined) parts.push(d.preserve_config ? 'config preserved' : 'config removed');
+                detailsSummary = parts.length > 0 ? `<span class="text-xs text-gray-500">${escapeHtml(parts.join(' | '))}</span>` : '';
+            }
 
             return `
                 <tr class="hover:bg-gray-50">
@@ -189,12 +211,12 @@
                     <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">${escapeHtml(pluginId)}</td>
                     <td class="px-6 py-4 whitespace-nowrap text-sm">
                         <span class="px-2 py-1 text-xs font-medium rounded ${statusClass}">
-                            ${escapeHtml(record.status || 'unknown')}
+                            ${escapeHtml(normalized)}
                         </span>
                     </td>
                     <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">${escapeHtml(user)}</td>
                     <td class="px-6 py-4 text-sm text-gray-500">
-                        ${details ? `<details class="cursor-pointer"><summary class="text-blue-600 hover:text-blue-800">View Details</summary><pre class="mt-2 text-xs bg-gray-100 p-2 rounded overflow-auto max-h-32">${escapeHtml(details)}</pre></details>` : '-'}
+                        ${detailsSummary || '-'}
                         ${error}
                     </td>
                 </tr>
@@ -215,14 +237,8 @@
 
     // Helper functions
     function getStatusClass(status) {
-        const statusLower = (status || '').toLowerCase();
-        if (statusLower === 'success' || statusLower === 'completed') {
-            return 'bg-green-100 text-green-800';
-        } else if (statusLower === 'failed' || statusLower === 'error') {
-            return 'bg-red-100 text-red-800';
-        } else if (statusLower === 'in_progress' || statusLower === 'pending') {
-            return 'bg-yellow-100 text-yellow-800';
-        }
+        if (status === 'success') return 'bg-green-100 text-green-800';
+        if (status === 'failed') return 'bg-red-100 text-red-800';
         return 'bg-gray-100 text-gray-800';
     }
 
@@ -234,10 +250,12 @@
             return 'bg-purple-100 text-purple-800';
         } else if (typeLower === 'uninstall') {
             return 'bg-red-100 text-red-800';
-        } else if (typeLower === 'enable' || typeLower === 'disable') {
-            return 'bg-yellow-100 text-yellow-800';
-        } else if (typeLower === 'config_save') {
+        } else if (typeLower === 'enable') {
             return 'bg-green-100 text-green-800';
+        } else if (typeLower === 'disable') {
+            return 'bg-yellow-100 text-yellow-800';
+        } else if (typeLower === 'configure') {
+            return 'bg-teal-100 text-teal-800';
         }
         return 'bg-gray-100 text-gray-800';
     }
@@ -268,7 +286,7 @@
                 const response = await fetch('/api/v3/plugins/installed');
                 data = await response.json();
             }
-            
+
             if (data.status === 'success' && data.data) {
                 const select = document.getElementById('history-plugin-filter');
                 if (select) {
@@ -297,10 +315,20 @@
 
         const clearBtn = document.getElementById('clear-history-btn');
         if (clearBtn) {
-            clearBtn.addEventListener('click', () => {
+            clearBtn.addEventListener('click', async () => {
                 if (confirm('Are you sure you want to clear the operation history? This cannot be undone.')) {
-                    // TODO: Implement clear history API endpoint
-                    showError('Clear history not yet implemented');
+                    try {
+                        const response = await fetch('/api/v3/plugins/operation/history', { method: 'DELETE' });
+                        const data = await response.json();
+                        if (data.status === 'success') {
+                            allHistory = [];
+                            applyFilters();
+                        } else {
+                            showError(data.message || 'Failed to clear history');
+                        }
+                    } catch (error) {
+                        showError('Error clearing history');
+                    }
                 }
             });
         }
@@ -352,13 +380,6 @@
     }
 
     // Initialize
-    document.addEventListener('DOMContentLoaded', () => {
-        setupEventListeners();
-        populatePluginFilter();
-        loadHistory();
-    });
-
-    // Also initialize if script runs after DOM is ready
     if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', () => {
             setupEventListeners();
@@ -372,4 +393,3 @@
     }
 })();
 </script>
-
