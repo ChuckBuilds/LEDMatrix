@@ -19,6 +19,8 @@ from pathlib import Path
 from typing import List, Dict, Optional, Any
 import logging
 
+from src.common.permission_utils import sudo_remove_directory
+
 try:
     import jsonschema
     from jsonschema import Draft7Validator, ValidationError
@@ -1365,7 +1367,9 @@ class PluginStoreManager:
                 ensure_directory_permissions(target_path.parent, get_plugin_dir_mode())
                 # Ensure target doesn't exist to prevent shutil.move nesting
                 if target_path.exists():
-                    self._safe_remove_directory(target_path)
+                    if not self._safe_remove_directory(target_path):
+                        self.logger.error(f"Cannot remove existing target {target_path} for monorepo install")
+                        return False
                 shutil.move(str(source_plugin_dir), str(target_path))
 
             return True
@@ -1589,11 +1593,8 @@ class PluginStoreManager:
         try:
             shutil.rmtree(path)
             return True
-        except PermissionError:
+        except OSError:
             self.logger.warning(f"Permission error removing {path}, attempting chmod fix...")
-        except Exception as e:
-            self.logger.error(f"Unexpected error removing {path}: {e}")
-            return False
 
         # Stage 2: Try chmod + retry (works when we own the files)
         try:
@@ -1615,7 +1616,6 @@ class PluginStoreManager:
             self.logger.warning(f"chmod fix failed for {path}, attempting sudo removal...")
 
         # Stage 3: Use sudo rm -rf (for root-owned __pycache__, data/.cache, etc.)
-        from src.common.permission_utils import sudo_remove_directory
         if sudo_remove_directory(path):
             return True
 

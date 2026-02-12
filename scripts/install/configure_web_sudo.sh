@@ -103,6 +103,15 @@ fi
 
 # Apply the configuration using visudo
 echo "Applying sudoers configuration..."
+# Harden the helper script: root-owned, not writable by web user
+echo "Hardening safe_plugin_rm.sh ownership..."
+if ! sudo chown root:root "$SAFE_RM_PATH"; then
+    echo "Warning: Could not set ownership on $SAFE_RM_PATH"
+fi
+if ! sudo chmod 755 "$SAFE_RM_PATH"; then
+    echo "Warning: Could not set permissions on $SAFE_RM_PATH"
+fi
+
 if sudo cp "$TEMP_SUDOERS" /etc/sudoers.d/ledmatrix_web; then
     echo "Configuration applied successfully!"
     echo ""

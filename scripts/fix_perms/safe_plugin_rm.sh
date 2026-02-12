@@ -22,9 +22,10 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
 # Allowed base directories (resolved, no trailing slash)
+# Use --canonicalize-missing so this works even if the dirs don't exist yet
 ALLOWED_BASES=(
-    "$(realpath "$PROJECT_ROOT/plugin-repos")"
-    "$(realpath "$PROJECT_ROOT/plugins")"
+    "$(realpath --canonicalize-missing "$PROJECT_ROOT/plugin-repos")"
+    "$(realpath --canonicalize-missing "$PROJECT_ROOT/plugins")"
 )
 
 # Resolve the target path (follow symlinks)
@@ -57,4 +58,4 @@ for BASE in "${ALLOWED_BASES[@]}"; do
 done
 
 # All checks passed — remove the target
-rm -rf "$RESOLVED_TARGET"
+rm -rf -- "$RESOLVED_TARGET"

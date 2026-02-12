@@ -8,6 +8,7 @@ files that need to be accessible by both root service and web user.
 
 import os
 import logging
+import shutil as _shutil
 import subprocess
 from pathlib import Path
 from typing import Optional
@@ -260,9 +261,11 @@ def sudo_remove_directory(path: Path, allowed_bases: Optional[list] = None) -> b
         logger.error(f"Safe removal helper not found: {helper_script}")
         return False
 
+    bash_path = _shutil.which('bash') or '/bin/bash'
+
     try:
         result = subprocess.run(
-            ['sudo', '-n', '/bin/bash', str(helper_script), str(path)],
+            ['sudo', '-n', bash_path, str(helper_script), str(path)],
             capture_output=True,
             text=True,
             timeout=30
