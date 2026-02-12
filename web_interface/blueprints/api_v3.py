@@ -54,6 +54,23 @@ SYSTEM_FONTS = frozenset([
 
 api_v3 = Blueprint('api_v3', __name__)
 
+def _get_plugin_version(plugin_id: str) -> str:
+    """Read the installed version from a plugin's manifest.json.
+
+    Returns the version string on success, or '' if the manifest
+    cannot be read (missing, corrupt, permission denied, etc.).
+    """
+    manifest_path = Path(api_v3.plugin_store_manager.plugins_dir) / plugin_id / "manifest.json"
+    try:
+        with open(manifest_path, 'r', encoding='utf-8') as f:
+            manifest = json.load(f)
+        return manifest.get('version', '')
+    except (FileNotFoundError, PermissionError, OSError) as e:
+        logger.warning("[PluginVersion] Could not read manifest for %s at %s: %s", plugin_id, manifest_path, e)
+    except json.JSONDecodeError as e:
+        logger.warning("[PluginVersion] Invalid JSON in manifest for %s at %s: %s", plugin_id, manifest_path, e)
+    return ''
+
 def _ensure_cache_manager():
     """Ensure cache manager is initialized."""
     global cache_manager
@@ -2114,10 +2131,9 @@ def toggle_plugin():
         # Log operation
         if api_v3.operation_history:
             api_v3.operation_history.record_operation(
-                "toggle",
+                "enable" if enabled else "disable",
                 plugin_id=plugin_id,
-                status="success" if enabled else "disabled",
-                details={"enabled": enabled}
+                status="success"
             )
 
         # If plugin is loaded, also call its lifecycle methods
@@ -2143,8 +2159,9 @@ def toggle_plugin():
         from src.web_interface.errors import WebInterfaceError
         error = WebInterfaceError.from_exception(e, ErrorCode.PLUGIN_OPERATION_CONFLICT)
         if api_v3.operation_history:
+            toggle_type = "enable" if ('data' in locals() and data.get('enabled')) else "disable"
             api_v3.operation_history.record_operation(
-                "toggle",
+                toggle_type,
                 plugin_id=data.get('plugin_id') if 'data' in locals() else None,
                 status="failed",
                 error=str(e)
@@ -2188,35 +2205,53 @@ def get_operation_status(operation_id):
         )
 
 @api_v3.route('/plugins/operation/history', methods=['GET'])
-def get_operation_history():
-    """Get operation history"""
-    try:
-        if not api_v3.operation_queue:
-            return error_response(
-                ErrorCode.SYSTEM_ERROR,
-                'Operation queue not initialized',
-                status_code=500
-            )
-
-        limit = request.args.get('limit', 50, type=int)
-        plugin_id = request.args.get('plugin_id')
-
-        history = api_v3.operation_queue.get_operation_history(limit=limit)
-
-        # Filter by plugin_id if provided
-        if plugin_id:
-            history = [op for op in history if op.plugin_id == plugin_id]
-
-        return success_response(data=[op.to_dict() for op in history])
-    except Exception as e:
-        from src.web_interface.errors import WebInterfaceError
-        error = WebInterfaceError.from_exception(e, ErrorCode.SYSTEM_ERROR)
+def get_operation_history() -> Response:
+    """Get operation history from the audit log."""
+    if not api_v3.operation_history:
         return error_response(
-            error.error_code,
-            error.message,
-            details=error.details,
+            ErrorCode.SYSTEM_ERROR,
+            'Operation history not initialized',
             status_code=500
         )
+
+    try:
+        limit = request.args.get('limit', 50, type=int)
+        plugin_id = request.args.get('plugin_id')
+        operation_type = request.args.get('operation_type')
+    except (ValueError, TypeError) as e:
+        return error_response(ErrorCode.INVALID_INPUT, f'Invalid query parameter: {e}', status_code=400)
+
+    try:
+        history = api_v3.operation_history.get_history(
+            limit=limit,
+            plugin_id=plugin_id,
+            operation_type=operation_type
+        )
+    except (AttributeError, RuntimeError) as e:
+        from src.web_interface.errors import WebInterfaceError
+        error = WebInterfaceError.from_exception(e, ErrorCode.SYSTEM_ERROR)
+        return error_response(error.error_code, error.message, details=error.details, status_code=500)
+
+    return success_response(data=[record.to_dict() for record in history])
+
+@api_v3.route('/plugins/operation/history', methods=['DELETE'])
+def clear_operation_history() -> Response:
+    """Clear operation history."""
+    if not api_v3.operation_history:
+        return error_response(
+            ErrorCode.SYSTEM_ERROR,
+            'Operation history not initialized',
+            status_code=500
+        )
+
+    try:
+        api_v3.operation_history.clear_history()
+    except (OSError, RuntimeError) as e:
+        from src.web_interface.errors import WebInterfaceError
+        error = WebInterfaceError.from_exception(e, ErrorCode.SYSTEM_ERROR)
+        return error_response(error.error_code, error.message, details=error.details, status_code=500)
+
+    return success_response(message='Operation history cleared')
 
 @api_v3.route('/plugins/state', methods=['GET'])
 def get_plugin_state():
@@ -2608,13 +2643,16 @@ def update_plugin():
                     {'last_updated': datetime.now()}
                 )
             if api_v3.operation_history:
+                version = _get_plugin_version(plugin_id)
                 api_v3.operation_history.record_operation(
                     "update",
                     plugin_id=plugin_id,
                     status="success",
                     details={
-                        "last_updated": updated_last_updated,
-                        "commit": updated_commit
+                        "version": version,
+                        "previous_commit": current_commit[:7] if current_commit else None,
+                        "commit": updated_commit[:7] if updated_commit else None,
+                        "branch": updated_branch
                     }
                 )
 
@@ -2649,7 +2687,11 @@ def update_plugin():
                     "update",
                     plugin_id=plugin_id,
                     status="failed",
-                    error=error_msg
+                    error=error_msg,
+                    details={
+                        "previous_commit": current_commit[:7] if current_commit else None,
+                        "branch": current_branch
+                    }
                 )
 
             import traceback
@@ -2874,10 +2916,12 @@ def install_plugin():
 
                     # Record in history
                     if api_v3.operation_history:
+                        version = _get_plugin_version(plugin_id)
                         api_v3.operation_history.record_operation(
                             "install",
                             plugin_id=plugin_id,
-                            status="success"
+                            status="success",
+                            details={"version": version, "branch": branch}
                         )
 
                     branch_msg = f" (branch: {branch})" if branch else ""
@@ -2896,7 +2940,8 @@ def install_plugin():
                             "install",
                             plugin_id=plugin_id,
                             status="failed",
-                            error=error_msg
+                            error=error_msg,
+                            details={"branch": branch}
                         )
 
                     raise Exception(error_msg)
@@ -2926,7 +2971,13 @@ def install_plugin():
                 if api_v3.plugin_state_manager:
                     api_v3.plugin_state_manager.set_plugin_installed(plugin_id)
                 if api_v3.operation_history:
-                    api_v3.operation_history.record_operation("install", plugin_id=plugin_id, status="success")
+                    version = _get_plugin_version(plugin_id)
+                    api_v3.operation_history.record_operation(
+                        "install",
+                        plugin_id=plugin_id,
+                        status="success",
+                        details={"version": version, "branch": branch}
+                    )
 
                 branch_msg = f" (branch: {branch})" if branch else ""
                 return success_response(message=f'Plugin {plugin_id} installed successfully{branch_msg}')
@@ -2937,6 +2988,15 @@ def install_plugin():
                 plugin_info = api_v3.plugin_store_manager.get_plugin_info(plugin_id)
                 if not plugin_info:
                     error_msg += ' (plugin not found in registry)'
+
+                if api_v3.operation_history:
+                    api_v3.operation_history.record_operation(
+                        "install",
+                        plugin_id=plugin_id,
+                        status="failed",
+                        error=error_msg,
+                        details={"branch": branch}
+                    )
 
                 return error_response(
                     ErrorCode.PLUGIN_INSTALL_FAILED,
