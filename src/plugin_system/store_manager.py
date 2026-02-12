@@ -2045,7 +2045,9 @@ class PluginStoreManager:
             self.logger.info(f"Plugin {plugin_id} not installed via git; re-installing latest archive")
 
             # Remove directory and reinstall fresh
-            self._safe_remove_directory(plugin_path)
+            if not self._safe_remove_directory(plugin_path):
+                self.logger.error(f"Failed to remove old plugin directory for {plugin_id}")
+                return False
             return self.install_plugin(plugin_id)
 
         except Exception as e:
