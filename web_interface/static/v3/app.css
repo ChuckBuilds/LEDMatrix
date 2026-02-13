@@ -102,6 +102,7 @@ body {
 
 /* Utility classes */
 .bg-gray-50 { background-color: #f9fafb; }
+.bg-gray-100 { background-color: #f3f4f6; }
 .bg-white { background-color: #ffffff; }
 .bg-gray-900 { background-color: #111827; }
 .bg-green-500 { background-color: #10b981; }
