@@ -103,8 +103,6 @@ body {
 .bg-white { background-color: #ffffff; }
 .bg-gray-800 { background-color: #1f2937; }
 .bg-gray-900 { background-color: #111827; }
-.bg-red-900 { background-color: #7f1d1d; }
-.bg-yellow-900 { background-color: #78350f; }
 .bg-green-500 { background-color: #10b981; }
 .bg-red-500 { background-color: #ef4444; }
 .bg-blue-500 { background-color: #3b82f6; }
@@ -114,8 +112,11 @@ body {
 .bg-blue-600 { background-color: #2563eb; }
 .bg-yellow-600 { background-color: #d97706; }
 .bg-gray-200 { background-color: #e5e7eb; }
-.bg-opacity-10 { --bg-opacity: 0.1; }
-.bg-opacity-30 { --bg-opacity: 0.3; }
+
+/* Log level row backgrounds (subtle tints on dark log container) */
+.log-level-error { background-color: rgb(127 29 29 / 10%); }
+.log-level-warning { background-color: rgb(120 53 15 / 10%); }
+.log-level-debug { background-color: rgb(31 41 55 / 30%); }
 
 .text-gray-100 { color: #f3f4f6; }
 .text-gray-200 { color: #e5e7eb; }
