@@ -32,6 +32,56 @@
     --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
 }
 
+/* Dark Theme Overrides */
+[data-theme="dark"] {
+    --color-primary: #3b82f6;
+    --color-primary-hover: #60a5fa;
+    --color-secondary: #10b981;
+    --color-secondary-hover: #34d399;
+    --color-accent: #8b5cf6;
+    --color-accent-hover: #a78bfa;
+    --color-background: #111827;
+    --color-surface: #1f2937;
+    --color-text-primary: #f9fafb;
+    --color-text-secondary: #d1d5db;
+    --color-text-tertiary: #9ca3af;
+    --color-border: #374151;
+    --color-border-light: #1f2937;
+    --color-success: #34d399;
+    --color-success-bg: #064e3b;
+    --color-error: #f87171;
+    --color-error-bg: #7f1d1d;
+    --color-warning: #fbbf24;
+    --color-warning-bg: #78350f;
+    --color-info: #60a5fa;
+    --color-info-bg: #1e3a5f;
+    --color-purple-bg: #2e1065;
+    --color-purple-text: #c4b5fd;
+    --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.3);
+    --shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.4), 0 1px 2px 0 rgba(0, 0, 0, 0.3);
+    --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.4), 0 2px 4px -1px rgba(0, 0, 0, 0.3);
+    --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.4), 0 4px 6px -2px rgba(0, 0, 0, 0.3);
+}
+
+/* Dark Mode - Utility Class Overrides */
+[data-theme="dark"] .bg-white { background-color: #1f2937; }
+[data-theme="dark"] .bg-gray-50 { background-color: #111827; }
+[data-theme="dark"] .bg-gray-200 { background-color: #374151; }
+
+[data-theme="dark"] .text-gray-900 { color: #f9fafb; }
+[data-theme="dark"] .text-gray-600 { color: #9ca3af; }
+[data-theme="dark"] .text-gray-500 { color: #9ca3af; }
+[data-theme="dark"] .text-gray-400 { color: #9ca3af; }
+[data-theme="dark"] .text-green-600 { color: #34d399; }
+[data-theme="dark"] .text-red-600 { color: #f87171; }
+
+[data-theme="dark"] .border-gray-200 { border-color: #374151; }
+[data-theme="dark"] .border-gray-300 { border-color: #4b5563; }
+
+[data-theme="dark"] .hover\:bg-gray-50:hover { background-color: #374151; }
+[data-theme="dark"] .hover\:text-gray-700:hover { color: #e5e7eb; }
+[data-theme="dark"] .hover\:border-gray-300:hover { border-color: #6b7280; }
+
 /* Base styles */
 * {
     box-sizing: border-box;
@@ -752,4 +802,159 @@ button.bg-white {
         padding-left: 0.75rem;
         padding-right: 0.75rem;
     }
+}
+
+/* ==========================================================
+   Dark Mode - Component Overrides
+   ========================================================== */
+
+/* Body background */
+[data-theme="dark"] body {
+    background-color: var(--color-background);
+    color: var(--color-text-primary);
+}
+
+/* Header */
+[data-theme="dark"] header {
+    background-color: #1f2937;
+    border-color: #374151;
+}
+
+/* Form controls */
+[data-theme="dark"] .form-control {
+    background-color: #374151;
+    color: #f9fafb;
+    border-color: #4b5563;
+}
+
+[data-theme="dark"] .form-control:focus {
+    border-color: var(--color-primary);
+    outline-color: rgba(59, 130, 246, 0.3);
+}
+
+[data-theme="dark"] .form-control:disabled {
+    background-color: #1f2937;
+}
+
+/* Buttons with bg-white */
+[data-theme="dark"] button.bg-white {
+    background-color: #374151 !important;
+    color: #f9fafb !important;
+}
+
+/* Nav tabs */
+[data-theme="dark"] .nav-tab:not(.nav-tab-active) {
+    color: #d1d5db;
+}
+
+[data-theme="dark"] .nav-tab:not(.nav-tab-active) i {
+    color: #d1d5db;
+}
+
+[data-theme="dark"] .nav-tab:not(.nav-tab-active):hover {
+    color: #f9fafb;
+    background-color: #374151;
+    border-bottom-color: #6b7280;
+}
+
+[data-theme="dark"] .nav-tab:not(.nav-tab-active):hover i {
+    color: #f9fafb;
+}
+
+[data-theme="dark"] .nav-tab-active {
+    color: #93c5fd;
+    border-bottom-color: #3b82f6;
+    background: linear-gradient(135deg, rgba(59, 130, 246, 0.15) 0%, rgba(59, 130, 246, 0.05) 100%);
+}
+
+[data-theme="dark"] .nav-tab-active i {
+    color: #93c5fd;
+}
+
+/* Section header */
+[data-theme="dark"] .section-header {
+    background: linear-gradient(135deg, rgba(31, 41, 55, 0.9) 0%, rgba(17, 24, 39, 0.9) 100%);
+}
+
+/* Status indicators */
+[data-theme="dark"] .status-indicator.success {
+    background-color: #064e3b;
+    color: #6ee7b7;
+}
+
+[data-theme="dark"] .status-indicator.error {
+    background-color: #7f1d1d;
+    color: #fca5a5;
+}
+
+[data-theme="dark"] .status-indicator.warning {
+    background-color: #78350f;
+    color: #fcd34d;
+}
+
+/* Skeleton loading */
+[data-theme="dark"] .skeleton {
+    background-color: #374151;
+}
+
+/* Scrollbar */
+[data-theme="dark"] ::-webkit-scrollbar-track {
+    background: #1f2937;
+}
+
+[data-theme="dark"] ::-webkit-scrollbar-thumb {
+    background: #4b5563;
+}
+
+[data-theme="dark"] ::-webkit-scrollbar-thumb:hover {
+    background: #6b7280;
+}
+
+/* Log panel - slightly deeper than surface for contrast */
+[data-theme="dark"] #logs-container {
+    background-color: #0f1623;
+    border-color: #374151;
+}
+
+[data-theme="dark"] #logs-display,
+[data-theme="dark"] #logs-loading,
+[data-theme="dark"] #logs-empty {
+    background-color: #0f1623;
+}
+
+/* Warning/info boxes used in various partials */
+[data-theme="dark"] .bg-yellow-50 { background-color: #422006; }
+[data-theme="dark"] .border-yellow-200 { border-color: #78350f; }
+[data-theme="dark"] .text-yellow-800 { color: #fcd34d; }
+[data-theme="dark"] .text-yellow-700 { color: #fbbf24; }
+[data-theme="dark"] .text-yellow-600 { color: #fbbf24; }
+[data-theme="dark"] .bg-blue-50 { background-color: #1e3a5f; }
+[data-theme="dark"] .border-blue-200 { border-color: #1e40af; }
+[data-theme="dark"] .text-blue-800 { color: #93c5fd; }
+[data-theme="dark"] .text-blue-700 { color: #93c5fd; }
+[data-theme="dark"] .bg-red-50 { background-color: #450a0a; }
+[data-theme="dark"] .border-red-200 { border-color: #7f1d1d; }
+[data-theme="dark"] .text-red-800 { color: #fca5a5; }
+[data-theme="dark"] .text-red-700 { color: #fca5a5; }
+[data-theme="dark"] .bg-green-50 { background-color: #022c22; }
+[data-theme="dark"] .border-green-200 { border-color: #064e3b; }
+[data-theme="dark"] .text-green-800 { color: #6ee7b7; }
+[data-theme="dark"] .text-green-700 { color: #6ee7b7; }
+
+/* Theme toggle button */
+.theme-toggle-btn {
+    font-size: 1.1rem;
+    line-height: 1;
+    cursor: pointer;
+    border: none;
+    background: transparent;
+    color: #4b5563;
+}
+
+.theme-toggle-btn:hover {
+    opacity: 0.8;
+}
+
+[data-theme="dark"] .theme-toggle-btn {
+    color: #fbbf24;
 }

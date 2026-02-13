@@ -366,7 +366,7 @@ function renderLogs() {
         logElement.className = `log-entry py-1 px-2 hover:bg-gray-800 rounded transition-colors duration-150 ${getLogLevelClass(log.level)}`;
         logElement.innerHTML = `
             <div class="flex items-start gap-3 text-xs font-mono">
-                <span class="log-timestamp text-gray-500 flex-shrink-0 w-32">${escapeHtml(log.timestamp)}</span>
+                <span class="log-timestamp text-gray-400 flex-shrink-0 w-32">${escapeHtml(log.timestamp)}</span>
                 <span class="log-level flex-shrink-0 px-2 py-0.5 rounded text-xs font-semibold ${getLogLevelBadgeClass(log.level)}">${log.level}</span>
                 <span class="log-message flex-1 ${getLogLevelTextClass(log.level)} break-words">${escapeHtml(log.message)}</span>
             </div>

@@ -5,6 +5,53 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>LED Matrix Control Panel - v3</title>
 
+    <!-- Theme initialization (must run before CSS to prevent flash) -->
+    <script>
+    (function() {
+        var saved = localStorage.getItem('theme');
+        var theme = saved || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+        document.documentElement.setAttribute('data-theme', theme);
+
+        // Theme toggle function
+        window.toggleTheme = function() {
+            var current = document.documentElement.getAttribute('data-theme');
+            var next = current === 'dark' ? 'light' : 'dark';
+            document.documentElement.setAttribute('data-theme', next);
+            localStorage.setItem('theme', next);
+            window.updateThemeIcon(next);
+        };
+
+        // Update icon visibility based on current theme
+        window.updateThemeIcon = function(theme) {
+            var darkIcon = document.getElementById('theme-icon-dark');
+            var lightIcon = document.getElementById('theme-icon-light');
+            if (darkIcon && lightIcon) {
+                if (theme === 'dark') {
+                    darkIcon.classList.add('hidden');
+                    lightIcon.classList.remove('hidden');
+                } else {
+                    darkIcon.classList.remove('hidden');
+                    lightIcon.classList.add('hidden');
+                }
+            }
+        };
+
+        // Initialize icon once DOM is ready
+        document.addEventListener('DOMContentLoaded', function() {
+            window.updateThemeIcon(document.documentElement.getAttribute('data-theme') || 'light');
+        });
+
+        // Listen for OS theme changes (only when no explicit user preference)
+        window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', function(e) {
+            if (!localStorage.getItem('theme')) {
+                var t = e.matches ? 'dark' : 'light';
+                document.documentElement.setAttribute('data-theme', t);
+                window.updateThemeIcon(t);
+            }
+        });
+    })();
+    </script>
+
     <!-- Resource hints for CDN resources -->
     <link rel="preconnect" href="https://unpkg.com" crossorigin>
     <link rel="preconnect" href="https://cdnjs.cloudflare.com" crossorigin>
@@ -1309,8 +1356,18 @@
                     </h1>
                 </div>
 
-                <!-- Connection status -->
+                <!-- Connection status and theme toggle -->
                 <div class="flex items-center space-x-4">
+                    <!-- Theme toggle -->
+                    <button id="theme-toggle"
+                            onclick="toggleTheme()"
+                            class="theme-toggle-btn p-2 rounded-md"
+                            title="Toggle dark mode"
+                            aria-label="Toggle dark mode">
+                        <i class="fas fa-moon" id="theme-icon-dark"></i>
+                        <i class="fas fa-sun hidden" id="theme-icon-light"></i>
+                    </button>
+
                     <div id="connection-status" class="flex items-center space-x-2 text-sm">
                         <div class="w-2 h-2 bg-red-500 rounded-full"></div>
                         <span class="text-gray-600">Disconnected</span>
