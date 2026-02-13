@@ -26,11 +26,61 @@
     --color-info-bg: #dbeafe;
     --color-purple-bg: #f3e8ff;
     --color-purple-text: #6b21a8;
-    --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
-    --shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px 0 rgba(0, 0, 0, 0.06);
-    --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
-    --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+    --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 5%);
+    --shadow: 0 1px 3px 0 rgb(0 0 0 / 10%), 0 1px 2px 0 rgb(0 0 0 / 6%);
+    --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 10%), 0 2px 4px -1px rgb(0 0 0 / 6%);
+    --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 10%), 0 4px 6px -2px rgb(0 0 0 / 5%);
 }
+
+/* Dark Theme Overrides */
+[data-theme="dark"] {
+    --color-primary: #3b82f6;
+    --color-primary-hover: #60a5fa;
+    --color-secondary: #10b981;
+    --color-secondary-hover: #34d399;
+    --color-accent: #8b5cf6;
+    --color-accent-hover: #a78bfa;
+    --color-background: #111827;
+    --color-surface: #1f2937;
+    --color-text-primary: #f9fafb;
+    --color-text-secondary: #d1d5db;
+    --color-text-tertiary: #9ca3af;
+    --color-border: #374151;
+    --color-border-light: #1f2937;
+    --color-success: #34d399;
+    --color-success-bg: #064e3b;
+    --color-error: #f87171;
+    --color-error-bg: #7f1d1d;
+    --color-warning: #fbbf24;
+    --color-warning-bg: #78350f;
+    --color-info: #60a5fa;
+    --color-info-bg: #1e3a5f;
+    --color-purple-bg: #2e1065;
+    --color-purple-text: #c4b5fd;
+    --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 30%);
+    --shadow: 0 1px 3px 0 rgb(0 0 0 / 40%), 0 1px 2px 0 rgb(0 0 0 / 30%);
+    --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 40%), 0 2px 4px -1px rgb(0 0 0 / 30%);
+    --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 40%), 0 4px 6px -2px rgb(0 0 0 / 30%);
+}
+
+/* Dark Mode - Utility Class Overrides */
+[data-theme="dark"] .bg-white { background-color: var(--color-surface); }
+[data-theme="dark"] .bg-gray-50 { background-color: var(--color-background); }
+[data-theme="dark"] .bg-gray-200 { background-color: var(--color-border); }
+
+[data-theme="dark"] .text-gray-900 { color: var(--color-text-primary); }
+[data-theme="dark"] .text-gray-600 { color: var(--color-text-tertiary); }
+[data-theme="dark"] .text-gray-500 { color: var(--color-text-tertiary); }
+[data-theme="dark"] .text-gray-400 { color: var(--color-text-tertiary); }
+[data-theme="dark"] .text-green-600 { color: var(--color-success); }
+[data-theme="dark"] .text-red-600 { color: var(--color-error); }
+
+[data-theme="dark"] .border-gray-200 { border-color: var(--color-border); }
+[data-theme="dark"] .border-gray-300 { border-color: #4b5563; }
+
+[data-theme="dark"] .hover\:bg-gray-50:hover { background-color: var(--color-border); }
+[data-theme="dark"] .hover\:text-gray-700:hover { color: #e5e7eb; }
+[data-theme="dark"] .hover\:border-gray-300:hover { border-color: #6b7280; }
 
 /* Base styles */
 * {
@@ -422,7 +472,7 @@ a, button, input, select, textarea {
 .btn:focus {
     outline: 2px solid transparent;
     outline-offset: 2px;
-    box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.3);
+    box-shadow: 0 0 0 3px rgb(37 99 235 / 30%);
 }
 
 /* Global button text contrast fix: Ensure buttons with white backgrounds have dark text */
@@ -460,7 +510,7 @@ button.bg-white {
 .form-control:focus {
     border-color: var(--color-primary);
     /* Using outline instead of box-shadow for focus state (better performance) */
-    outline: 2px solid rgba(37, 99, 235, 0.2);
+    outline: 2px solid rgb(37 99 235 / 20%);
     outline-offset: 2px;
 }
 
@@ -599,7 +649,7 @@ button.bg-white {
 
 /* Section Headers with Subtle Gradients */
 .section-header {
-    background: linear-gradient(135deg, rgba(255, 255, 255, 0.9) 0%, rgba(249, 250, 251, 0.9) 100%);
+    background: linear-gradient(135deg, rgb(255 255 255 / 90%) 0%, rgb(249 250 251 / 90%) 100%);
     border-bottom: 1px solid var(--color-border);
     padding: 1rem 0;
     margin-bottom: 1.5rem;
@@ -634,7 +684,7 @@ button.bg-white {
 
 /* Enhanced Modal Styling */
 .modal-backdrop {
-    background-color: rgba(0, 0, 0, 0.5);
+    background-color: rgb(0 0 0 / 50%);
     /* Removed backdrop-filter: blur() for better performance on Raspberry Pi */
     transition: opacity 0.2s ease;
 }
@@ -731,8 +781,8 @@ button.bg-white {
     font-weight: 600;
     border-bottom-width: 3px;
     border-bottom-color: #2563eb; /* border-blue-600 */
-    background: linear-gradient(135deg, rgba(37, 99, 235, 0.1) 0%, rgba(59, 130, 246, 0.05) 100%);
-    box-shadow: 0 2px 4px rgba(37, 99, 235, 0.1);
+    background: linear-gradient(135deg, rgb(37 99 235 / 10%) 0%, rgb(59 130 246 / 5%) 100%);
+    box-shadow: 0 2px 4px rgb(37 99 235 / 10%);
 }
 
 .nav-tab-active i {
@@ -752,4 +802,158 @@ button.bg-white {
         padding-left: 0.75rem;
         padding-right: 0.75rem;
     }
+}
+
+/* ==========================================================
+   Dark Mode - Component Overrides
+   ========================================================== */
+
+/* Header */
+[data-theme="dark"] header {
+    background-color: var(--color-surface);
+    border-color: var(--color-border);
+}
+
+/* Form controls */
+[data-theme="dark"] .form-control {
+    background-color: var(--color-border);
+    color: var(--color-text-primary);
+    border-color: #4b5563;
+}
+
+[data-theme="dark"] .form-control:focus {
+    border-color: var(--color-primary);
+    outline-color: rgb(59 130 246 / 30%);
+}
+
+[data-theme="dark"] .form-control:disabled {
+    background-color: var(--color-surface);
+}
+
+/* Buttons with bg-white */
+[data-theme="dark"] button.bg-white {
+    background-color: var(--color-border) !important;
+    color: var(--color-text-primary) !important;
+}
+
+/* Nav tabs */
+[data-theme="dark"] .nav-tab:not(.nav-tab-active) {
+    color: var(--color-text-secondary);
+}
+
+[data-theme="dark"] .nav-tab:not(.nav-tab-active) i {
+    color: var(--color-text-secondary);
+}
+
+[data-theme="dark"] .nav-tab:not(.nav-tab-active):hover {
+    color: var(--color-text-primary);
+    background-color: var(--color-border);
+    border-bottom-color: #6b7280;
+}
+
+[data-theme="dark"] .nav-tab:not(.nav-tab-active):hover i {
+    color: var(--color-text-primary);
+}
+
+[data-theme="dark"] .nav-tab-active {
+    color: #93c5fd;
+    border-bottom-color: #3b82f6;
+    background: linear-gradient(135deg, rgb(59 130 246 / 15%) 0%, rgb(59 130 246 / 5%) 100%);
+}
+
+[data-theme="dark"] .nav-tab-active i {
+    color: #93c5fd;
+}
+
+/* Section header */
+[data-theme="dark"] .section-header {
+    background: linear-gradient(135deg, rgb(31 41 55 / 90%) 0%, rgb(17 24 39 / 90%) 100%);
+}
+
+/* Status indicators */
+[data-theme="dark"] .status-indicator.success {
+    background-color: #064e3b;
+    color: #6ee7b7;
+}
+
+[data-theme="dark"] .status-indicator.error {
+    background-color: #7f1d1d;
+    color: #fca5a5;
+}
+
+[data-theme="dark"] .status-indicator.warning {
+    background-color: #78350f;
+    color: #fcd34d;
+}
+
+/* Skeleton loading */
+[data-theme="dark"] .skeleton {
+    background-color: var(--color-border);
+}
+
+/* Scrollbar */
+[data-theme="dark"] ::-webkit-scrollbar-track {
+    background: var(--color-surface);
+}
+
+[data-theme="dark"] ::-webkit-scrollbar-thumb {
+    background: #4b5563;
+}
+
+[data-theme="dark"] ::-webkit-scrollbar-thumb:hover {
+    background: #6b7280;
+}
+
+/* Log panel - slightly deeper than surface for contrast */
+[data-theme="dark"] #logs-container {
+    background-color: #0f1623;
+    border-color: var(--color-border);
+}
+
+[data-theme="dark"] #logs-display,
+[data-theme="dark"] #logs-loading,
+[data-theme="dark"] #logs-empty {
+    background-color: #0f1623;
+}
+
+/* Warning/info boxes used in various partials */
+[data-theme="dark"] .bg-yellow-50 { background-color: #422006; }
+[data-theme="dark"] .border-yellow-200 { border-color: #78350f; }
+[data-theme="dark"] .text-yellow-800 { color: #fcd34d; }
+[data-theme="dark"] .text-yellow-700 { color: #fbbf24; }
+[data-theme="dark"] .text-yellow-600 { color: #fbbf24; }
+[data-theme="dark"] .bg-blue-50 { background-color: #1e3a5f; }
+[data-theme="dark"] .border-blue-200 { border-color: #1e40af; }
+[data-theme="dark"] .text-blue-800 { color: #93c5fd; }
+[data-theme="dark"] .text-blue-700 { color: #93c5fd; }
+[data-theme="dark"] .bg-red-50 { background-color: #450a0a; }
+[data-theme="dark"] .border-red-200 { border-color: #7f1d1d; }
+[data-theme="dark"] .text-red-800 { color: #fca5a5; }
+[data-theme="dark"] .text-red-700 { color: #fca5a5; }
+[data-theme="dark"] .bg-green-50 { background-color: #022c22; }
+[data-theme="dark"] .border-green-200 { border-color: #064e3b; }
+[data-theme="dark"] .text-green-800 { color: #6ee7b7; }
+[data-theme="dark"] .text-green-700 { color: #6ee7b7; }
+
+/* Theme toggle button */
+.theme-toggle-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 44px;
+    min-height: 44px;
+    font-size: 1.1rem;
+    line-height: 1;
+    cursor: pointer;
+    border: none;
+    background: transparent;
+    color: #4b5563;
+}
+
+.theme-toggle-btn:hover {
+    opacity: 0.8;
+}
+
+[data-theme="dark"] .theme-toggle-btn {
+    color: #fbbf24;
 }
