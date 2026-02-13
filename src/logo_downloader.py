@@ -148,7 +148,13 @@ class LogoDownloader:
     
     def get_logo_directory(self, league: str) -> str:
         """Get the logo directory for a given league."""
-        directory = LogoDownloader.LOGO_DIRECTORIES.get(league, f'assets/sports/{league}_logos')
+        directory = LogoDownloader.LOGO_DIRECTORIES.get(league)
+        if not directory:
+            # Custom soccer leagues share the same logo directory as predefined ones
+            if league.startswith('soccer_'):
+                directory = 'assets/sports/soccer_logos'
+            else:
+                directory = f'assets/sports/{league}_logos'
         path = Path(directory)
         if not path.is_absolute():
             project_root = Path(__file__).resolve().parents[1]
@@ -238,18 +244,21 @@ class LogoDownloader:
             logger.error(f"Unexpected error downloading logo for {team_abbreviation}: {e}")
             return False
     
+    def _resolve_api_url(self, league: str) -> Optional[str]:
+        """Resolve the ESPN API teams URL for a league, with dynamic fallback for custom soccer leagues."""
+        api_url = self.API_ENDPOINTS.get(league)
+        if not api_url and league.startswith('soccer_'):
+            league_code = league[len('soccer_'):]
+            api_url = f'https://site.api.espn.com/apis/site/v2/sports/soccer/{league_code}/teams'
+            logger.info(f"Using dynamic ESPN endpoint for custom soccer league: {league}")
+        return api_url
+
     def fetch_teams_data(self, league: str) -> Optional[Dict]:
         """Fetch team data from ESPN API for a specific league."""
-        api_url = self.API_ENDPOINTS.get(league)
+        api_url = self._resolve_api_url(league)
         if not api_url:
-            # Dynamically construct URL for custom soccer leagues
-            if league.startswith('soccer_'):
-                league_code = league[len('soccer_'):]
-                api_url = f'https://site.api.espn.com/apis/site/v2/sports/soccer/{league_code}/teams'
-                logger.info(f"Using dynamic ESPN endpoint for custom soccer league: {league}")
-            else:
-                logger.error(f"No API endpoint configured for league: {league}")
-                return None
+            logger.error(f"No API endpoint configured for league: {league}")
+            return None
         
         try:
             logger.info(f"Fetching team data for {league} from ESPN API...")
@@ -269,16 +278,10 @@ class LogoDownloader:
     
     def fetch_single_team(self, league: str, team_id: str) -> Optional[Dict]:
         """Fetch team data from ESPN API for a specific league."""
-        api_url = self.API_ENDPOINTS.get(league)
+        api_url = self._resolve_api_url(league)
         if not api_url:
-            # Dynamically construct URL for custom soccer leagues
-            if league.startswith('soccer_'):
-                league_code = league[len('soccer_'):]
-                api_url = f'https://site.api.espn.com/apis/site/v2/sports/soccer/{league_code}/teams'
-                logger.info(f"Using dynamic ESPN endpoint for custom soccer league: {league}")
-            else:
-                logger.error(f"No API endpoint configured for league: {league}")
-                return None
+            logger.error(f"No API endpoint configured for league: {league}")
+            return None
         
         try:
             logger.info(f"Fetching team data for team {team_id} in {league} from ESPN API...")
@@ -582,7 +585,7 @@ class LogoDownloader:
         total_failed = 0
         
         for league in leagues:
-            if league not in self.API_ENDPOINTS:
+            if not self._resolve_api_url(league):
                 logger.warning(f"Skipping unknown league: {league}")
                 continue
             
