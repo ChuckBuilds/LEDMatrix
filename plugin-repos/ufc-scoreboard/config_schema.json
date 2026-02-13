@@ -1,0 +1,570 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "UFC Scoreboard Plugin Configuration",
+  "description": "Configuration schema for the UFC Scoreboard plugin - displays live, recent, and upcoming UFC fights with fighter headshots, records, and odds. Based on original work by Alex Resnick (legoguy1000).",
+  "type": "object",
+  "properties": {
+    "enabled": {
+      "type": "boolean",
+      "default": true,
+      "description": "Enable or disable the UFC scoreboard plugin"
+    },
+    "display_duration": {
+      "type": "number",
+      "default": 30,
+      "minimum": 5,
+      "maximum": 300,
+      "description": "Duration in seconds for the display controller to show this plugin mode before rotating to next plugin"
+    },
+    "update_interval": {
+      "type": "integer",
+      "default": 3600,
+      "minimum": 30,
+      "maximum": 86400,
+      "description": "How often to fetch new data in seconds"
+    },
+    "game_display_duration": {
+      "type": "number",
+      "default": 15,
+      "minimum": 3,
+      "maximum": 60,
+      "description": "Duration in seconds to show each individual fight before rotating to the next fight within the same mode"
+    },
+    "ufc": {
+      "type": "object",
+      "title": "UFC Settings",
+      "description": "Configuration for UFC fights",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable UFC fights"
+        },
+        "favorite_fighters": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "List of favorite fighter full names (e.g., 'Islam Makhachev', 'Jon Jones')"
+        },
+        "favorite_weight_classes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "List of favorite weight class abbreviations (e.g., 'LW', 'HW', 'WW', 'MW', 'FW', 'BW', 'FLW', 'LHW', 'WSW', 'WFW', 'WBW', 'WFLW')"
+        },
+        "display_modes": {
+          "type": "object",
+          "title": "Display Modes",
+          "description": "Control which fight types to show and how they display",
+          "properties": {
+            "show_live": {
+              "type": "boolean",
+              "default": true,
+              "description": "Show live UFC fights"
+            },
+            "show_recent": {
+              "type": "boolean",
+              "default": true,
+              "description": "Show recently completed UFC fights"
+            },
+            "show_upcoming": {
+              "type": "boolean",
+              "default": true,
+              "description": "Show upcoming UFC fights"
+            },
+            "live_display_mode": {
+              "type": "string",
+              "enum": ["switch", "scroll"],
+              "default": "switch",
+              "description": "Display mode for live fights: 'switch' rotates fights one at a time, 'scroll' scrolls all fights horizontally"
+            },
+            "recent_display_mode": {
+              "type": "string",
+              "enum": ["switch", "scroll"],
+              "default": "switch",
+              "description": "Display mode for recent fights"
+            },
+            "upcoming_display_mode": {
+              "type": "string",
+              "enum": ["switch", "scroll"],
+              "default": "switch",
+              "description": "Display mode for upcoming fights"
+            }
+          }
+        },
+        "live_priority": {
+          "type": "boolean",
+          "default": true,
+          "description": "Give live fights priority over other modes. When enabled, live fights will interrupt the normal mode rotation and be displayed immediately when available."
+        },
+        "live_game_duration": {
+          "type": "integer",
+          "default": 30,
+          "minimum": 10,
+          "maximum": 120,
+          "description": "Duration in seconds to display each live fight before rotating to the next live fight"
+        },
+        "recent_game_duration": {
+          "type": "number",
+          "default": 15,
+          "description": "Duration in seconds to show each recent fight before rotating. Falls back to game_display_duration if not set."
+        },
+        "upcoming_game_duration": {
+          "type": "number",
+          "default": 15,
+          "description": "Duration in seconds to show each upcoming fight before rotating. Falls back to game_display_duration if not set."
+        },
+        "live_update_interval": {
+          "type": "integer",
+          "default": 30,
+          "minimum": 5,
+          "maximum": 300,
+          "description": "How often to update live fight data (seconds)"
+        },
+        "game_limits": {
+          "type": "object",
+          "title": "Fight Limits",
+          "description": "Control how many fights to show",
+          "properties": {
+            "recent_games_to_show": {
+              "type": "integer",
+              "default": 5,
+              "minimum": 1,
+              "maximum": 20,
+              "description": "Number of recent fights to display. With favorites: N per favorite fighter. Without favorites: N total."
+            },
+            "upcoming_games_to_show": {
+              "type": "integer",
+              "default": 5,
+              "minimum": 1,
+              "maximum": 20,
+              "description": "Number of upcoming fights to display. With favorites: N per favorite fighter. Without favorites: N total."
+            }
+          }
+        },
+        "display_options": {
+          "type": "object",
+          "title": "Display Options",
+          "description": "Additional information to show on fight cards",
+          "properties": {
+            "show_records": {
+              "type": "boolean",
+              "default": true,
+              "description": "Show fighter records (e.g., 22-7-0)"
+            },
+            "show_odds": {
+              "type": "boolean",
+              "default": true,
+              "description": "Show betting odds (moneyline)"
+            },
+            "show_fighter_names": {
+              "type": "boolean",
+              "default": true,
+              "description": "Show fighter short names near headshots"
+            },
+            "show_fight_class": {
+              "type": "boolean",
+              "default": true,
+              "description": "Show weight class abbreviation (e.g., LW, HW)"
+            }
+          }
+        },
+        "filtering": {
+          "type": "object",
+          "title": "Filtering Options",
+          "description": "Control which fights are shown",
+          "properties": {
+            "show_favorite_fighters_only": {
+              "type": "boolean",
+              "default": false,
+              "description": "Only show fights involving favorite fighters or weight classes"
+            },
+            "show_all_live": {
+              "type": "boolean",
+              "default": true,
+              "description": "Show all live fights regardless of favorites"
+            }
+          }
+        },
+        "dynamic_duration": {
+          "type": "object",
+          "title": "Dynamic Duration Settings",
+          "description": "Configure dynamic duration settings for UFC fights. When enabled, the display duration adapts based on the number of available fights.",
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "default": false,
+              "description": "Enable dynamic duration for UFC fights"
+            },
+            "min_duration_seconds": {
+              "type": "number",
+              "minimum": 10,
+              "maximum": 300,
+              "default": 30,
+              "description": "Minimum total duration in seconds, even if few fights are available"
+            },
+            "max_duration_seconds": {
+              "type": "number",
+              "minimum": 60,
+              "maximum": 600,
+              "description": "Maximum total duration in seconds, even if many fights are available"
+            },
+            "modes": {
+              "type": "object",
+              "title": "Per-Mode Settings",
+              "description": "Configure dynamic duration for specific modes",
+              "properties": {
+                "live": {
+                  "type": "object",
+                  "properties": {
+                    "enabled": {
+                      "type": "boolean",
+                      "default": false,
+                      "description": "Enable dynamic duration for live fights"
+                    },
+                    "min_duration_seconds": {
+                      "type": "number",
+                      "minimum": 10,
+                      "maximum": 300,
+                      "description": "Minimum duration for live mode"
+                    },
+                    "max_duration_seconds": {
+                      "type": "number",
+                      "minimum": 60,
+                      "maximum": 600,
+                      "description": "Maximum duration for live mode"
+                    }
+                  }
+                },
+                "recent": {
+                  "type": "object",
+                  "properties": {
+                    "enabled": {
+                      "type": "boolean",
+                      "default": false,
+                      "description": "Enable dynamic duration for recent fights"
+                    },
+                    "min_duration_seconds": {
+                      "type": "number",
+                      "minimum": 10,
+                      "maximum": 300,
+                      "description": "Minimum duration for recent mode"
+                    },
+                    "max_duration_seconds": {
+                      "type": "number",
+                      "minimum": 60,
+                      "maximum": 600,
+                      "description": "Maximum duration for recent mode"
+                    }
+                  }
+                },
+                "upcoming": {
+                  "type": "object",
+                  "properties": {
+                    "enabled": {
+                      "type": "boolean",
+                      "default": false,
+                      "description": "Enable dynamic duration for upcoming fights"
+                    },
+                    "min_duration_seconds": {
+                      "type": "number",
+                      "minimum": 10,
+                      "maximum": 300,
+                      "description": "Minimum duration for upcoming mode"
+                    },
+                    "max_duration_seconds": {
+                      "type": "number",
+                      "minimum": 60,
+                      "maximum": 600,
+                      "description": "Maximum duration for upcoming mode"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "customization": {
+      "type": "object",
+      "title": "Display Customization",
+      "description": "Customize fonts and element positioning for fight card display",
+      "properties": {
+        "fighter_name_text": {
+          "type": "object",
+          "title": "Fighter Name Font",
+          "properties": {
+            "font": {
+              "type": "string",
+              "default": "assets/fonts/4x6-font.ttf",
+              "description": "Font file path for fighter names"
+            },
+            "font_size": {
+              "type": "integer",
+              "default": 6,
+              "minimum": 4,
+              "maximum": 16,
+              "description": "Font size for fighter names"
+            }
+          },
+          "additionalProperties": false
+        },
+        "status_text": {
+          "type": "object",
+          "title": "Status/Round Text Font",
+          "properties": {
+            "font": {
+              "type": "string",
+              "default": "assets/fonts/tom-thumb.bdf",
+              "description": "Font file path for round/status text"
+            },
+            "font_size": {
+              "type": "integer",
+              "default": 8,
+              "minimum": 4,
+              "maximum": 16,
+              "description": "Font size for round/status text"
+            }
+          },
+          "additionalProperties": false
+        },
+        "result_text": {
+          "type": "object",
+          "title": "Result Text Font",
+          "properties": {
+            "font": {
+              "type": "string",
+              "default": "assets/fonts/PressStart2P-Regular.ttf",
+              "description": "Font file path for fight result"
+            },
+            "font_size": {
+              "type": "integer",
+              "default": 10,
+              "minimum": 6,
+              "maximum": 16,
+              "description": "Font size for fight result"
+            }
+          },
+          "additionalProperties": false
+        },
+        "detail_text": {
+          "type": "object",
+          "title": "Detail Text Font",
+          "properties": {
+            "font": {
+              "type": "string",
+              "default": "assets/fonts/4x6-font.ttf",
+              "description": "Font file path for detail text (odds, records, etc.)"
+            },
+            "font_size": {
+              "type": "integer",
+              "default": 6,
+              "minimum": 4,
+              "maximum": 12,
+              "description": "Font size for detail text"
+            }
+          },
+          "additionalProperties": false
+        },
+        "layout": {
+          "type": "object",
+          "title": "Layout Positioning",
+          "description": "Adjust X,Y coordinate offsets for elements. Values are relative to default positions. Use negative values to move left/up, positive to move right/down.",
+          "properties": {
+            "fighter1_image": {
+              "type": "object",
+              "title": "Fighter 1 Headshot (Right Side)",
+              "properties": {
+                "x_offset": {
+                  "type": "integer",
+                  "default": 0,
+                  "description": "Horizontal offset from default position (default: 0)"
+                },
+                "y_offset": {
+                  "type": "integer",
+                  "default": 0,
+                  "description": "Vertical offset from default position (default: 0)"
+                }
+              },
+              "additionalProperties": false
+            },
+            "fighter2_image": {
+              "type": "object",
+              "title": "Fighter 2 Headshot (Left Side)",
+              "properties": {
+                "x_offset": {
+                  "type": "integer",
+                  "default": 0,
+                  "description": "Horizontal offset from default position (default: 0)"
+                },
+                "y_offset": {
+                  "type": "integer",
+                  "default": 0,
+                  "description": "Vertical offset from default position (default: 0)"
+                }
+              },
+              "additionalProperties": false
+            },
+            "status_text": {
+              "type": "object",
+              "title": "Status/Round Text",
+              "properties": {
+                "x_offset": {
+                  "type": "integer",
+                  "default": 0,
+                  "description": "Horizontal offset from center (default: 0)"
+                },
+                "y_offset": {
+                  "type": "integer",
+                  "default": 0,
+                  "description": "Vertical offset from top (default: 0)"
+                }
+              },
+              "additionalProperties": false
+            },
+            "result_text": {
+              "type": "object",
+              "title": "Fight Result Text",
+              "properties": {
+                "x_offset": {
+                  "type": "integer",
+                  "default": 0,
+                  "description": "Horizontal offset from center (default: 0)"
+                },
+                "y_offset": {
+                  "type": "integer",
+                  "default": 0,
+                  "description": "Vertical offset from center (default: 0)"
+                }
+              },
+              "additionalProperties": false
+            },
+            "fight_class": {
+              "type": "object",
+              "title": "Weight Class Text",
+              "properties": {
+                "x_offset": {
+                  "type": "integer",
+                  "default": 0,
+                  "description": "Horizontal offset from center (default: 0)"
+                },
+                "y_offset": {
+                  "type": "integer",
+                  "default": 0,
+                  "description": "Vertical offset from default position (default: 0)"
+                }
+              },
+              "additionalProperties": false
+            },
+            "date": {
+              "type": "object",
+              "title": "Fight Date",
+              "properties": {
+                "x_offset": {
+                  "type": "integer",
+                  "default": 0,
+                  "description": "Horizontal offset from center (default: 0)"
+                },
+                "y_offset": {
+                  "type": "integer",
+                  "default": 0,
+                  "description": "Vertical offset from default position (default: 0)"
+                }
+              },
+              "additionalProperties": false
+            },
+            "time": {
+              "type": "object",
+              "title": "Fight Time",
+              "properties": {
+                "x_offset": {
+                  "type": "integer",
+                  "default": 0,
+                  "description": "Horizontal offset from center (default: 0)"
+                },
+                "y_offset": {
+                  "type": "integer",
+                  "default": 0,
+                  "description": "Vertical offset from date position (default: 0)"
+                }
+              },
+              "additionalProperties": false
+            },
+            "records": {
+              "type": "object",
+              "title": "Fighter Records",
+              "properties": {
+                "fighter1_x_offset": {
+                  "type": "integer",
+                  "default": 0,
+                  "description": "Fighter 1 record horizontal offset from right (default: 0)"
+                },
+                "fighter2_x_offset": {
+                  "type": "integer",
+                  "default": 0,
+                  "description": "Fighter 2 record horizontal offset from left (default: 0)"
+                },
+                "y_offset": {
+                  "type": "integer",
+                  "default": 0,
+                  "description": "Vertical offset from bottom (default: 0)"
+                }
+              },
+              "additionalProperties": false
+            },
+            "odds": {
+              "type": "object",
+              "title": "Betting Odds",
+              "properties": {
+                "x_offset": {
+                  "type": "integer",
+                  "default": 0,
+                  "description": "Horizontal offset from default position (default: 0)"
+                },
+                "y_offset": {
+                  "type": "integer",
+                  "default": 0,
+                  "description": "Vertical offset from default position (default: 0)"
+                }
+              },
+              "additionalProperties": false
+            },
+            "fighter_names": {
+              "type": "object",
+              "title": "Fighter Name Labels",
+              "properties": {
+                "fighter1_x_offset": {
+                  "type": "integer",
+                  "default": 0,
+                  "description": "Fighter 1 name horizontal offset from right (default: 0)"
+                },
+                "fighter2_x_offset": {
+                  "type": "integer",
+                  "default": 0,
+                  "description": "Fighter 2 name horizontal offset from left (default: 0)"
+                },
+                "y_offset": {
+                  "type": "integer",
+                  "default": 0,
+                  "description": "Vertical offset from top (default: 0)"
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "x-propertyOrder": ["fighter1_image", "fighter2_image", "status_text", "result_text", "fight_class", "date", "time", "records", "odds", "fighter_names"],
+          "additionalProperties": false
+        }
+      },
+      "x-propertyOrder": ["fighter_name_text", "status_text", "result_text", "detail_text", "layout"],
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false,
+  "required": ["enabled"]
+}

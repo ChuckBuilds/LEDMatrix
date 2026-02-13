@@ -1,0 +1,5 @@
+# UFC Scoreboard Plugin Requirements
+# All dependencies are provided by LEDMatrix core:
+# requests>=2.25.0       - API calls
+# pytz>=2021.1           - Timezone handling
+# Pillow>=8.0.0          - Image manipulation
