@@ -101,6 +101,7 @@ body {
 /* Utility classes */
 .bg-gray-50 { background-color: #f9fafb; }
 .bg-white { background-color: #ffffff; }
+.bg-gray-800 { background-color: #1f2937; }
 .bg-gray-900 { background-color: #111827; }
 .bg-green-500 { background-color: #10b981; }
 .bg-red-500 { background-color: #ef4444; }
@@ -112,16 +113,27 @@ body {
 .bg-yellow-600 { background-color: #d97706; }
 .bg-gray-200 { background-color: #e5e7eb; }
 
+/* Log level row backgrounds (subtle tints on dark log container) */
+.log-level-error { background-color: rgb(127 29 29 / 10%); }
+.log-level-warning { background-color: rgb(120 53 15 / 10%); }
+.log-level-debug { background-color: rgb(31 41 55 / 30%); }
+
+.text-gray-100 { color: #f3f4f6; }
+.text-gray-200 { color: #e5e7eb; }
+.text-gray-300 { color: #d1d5db; }
 .text-gray-900 { color: #111827; }
 .text-gray-600 { color: #374151; }
 .text-gray-500 { color: #4b5563; }
 .text-gray-400 { color: #6b7280; }
+.text-red-300 { color: #fca5a5; }
+.text-yellow-300 { color: #fcd34d; }
 .text-white { color: #ffffff; }
 .text-green-600 { color: #059669; }
 .text-red-600 { color: #dc2626; }
 
 .border-gray-200 { border-color: #e5e7eb; }
 .border-gray-300 { border-color: #d1d5db; }
+.border-gray-700 { border-color: #374151; }
 .border-transparent { border-color: transparent; }
 
 .rounded-lg { border-radius: 0.5rem; }
@@ -249,6 +261,7 @@ h4 { font-size: 1.125rem; }
 .hover\:bg-green-700:hover { background-color: #047857; }
 .hover\:bg-red-700:hover { background-color: #b91c1c; }
 .hover\:bg-gray-50:hover { background-color: #f9fafb; }
+.hover\:bg-gray-800:hover { background-color: #1f2937; }
 .hover\:bg-yellow-700:hover { background-color: #b45309; }
 .hover\:text-gray-700:hover { color: #374151; }
 .hover\:border-gray-300:hover { border-color: #d1d5db; }

@@ -380,10 +380,10 @@ function renderLogs() {
 function getLogLevelClass(level) {
     // Background color for the entire log entry row
     const classes = {
-        'ERROR': 'bg-red-900 bg-opacity-10',
-        'WARNING': 'bg-yellow-900 bg-opacity-10',
+        'ERROR': 'log-level-error',
+        'WARNING': 'log-level-warning',
         'INFO': '',
-        'DEBUG': 'bg-gray-800 bg-opacity-30'
+        'DEBUG': 'log-level-debug'
     };
     return classes[level] || '';
 }
