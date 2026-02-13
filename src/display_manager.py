@@ -82,6 +82,7 @@ class DisplayManager:
             options.pixel_mapper_config = hardware_config.get('pixel_mapper_config', '')
             options.row_address_type = hardware_config.get('row_address_type', 0)
             options.multiplexing = hardware_config.get('multiplexing', 0)
+            options.panel_type = hardware_config.get('panel_type', '')
             options.disable_hardware_pulsing = hardware_config.get('disable_hardware_pulsing', False)
             options.show_refresh_rate = hardware_config.get('show_refresh_rate', False)
             options.limit_refresh_rate_hz = hardware_config.get('limit_refresh_rate_hz', 90)

@@ -94,6 +94,61 @@
                 </div>
             </div>
 
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div class="form-group">
+                    <label for="led_rgb_sequence" class="block text-sm font-medium text-gray-700">LED RGB Sequence</label>
+                    <select id="led_rgb_sequence" name="led_rgb_sequence" class="form-control">
+                        <option value="RGB" {% if main_config.display.hardware.get('led_rgb_sequence', 'RGB') == "RGB" %}selected{% endif %}>RGB</option>
+                        <option value="RBG" {% if main_config.display.hardware.get('led_rgb_sequence', 'RGB') == "RBG" %}selected{% endif %}>RBG</option>
+                        <option value="GRB" {% if main_config.display.hardware.get('led_rgb_sequence', 'RGB') == "GRB" %}selected{% endif %}>GRB</option>
+                        <option value="GBR" {% if main_config.display.hardware.get('led_rgb_sequence', 'RGB') == "GBR" %}selected{% endif %}>GBR</option>
+                        <option value="BRG" {% if main_config.display.hardware.get('led_rgb_sequence', 'RGB') == "BRG" %}selected{% endif %}>BRG</option>
+                        <option value="BGR" {% if main_config.display.hardware.get('led_rgb_sequence', 'RGB') == "BGR" %}selected{% endif %}>BGR</option>
+                    </select>
+                    <p class="mt-1 text-sm text-gray-600">Color channel order for your LED panels</p>
+                </div>
+
+                <div class="form-group">
+                    <label for="multiplexing" class="block text-sm font-medium text-gray-700">Multiplexing</label>
+                    <select id="multiplexing" name="multiplexing" class="form-control">
+                        <option value="0" {% if main_config.display.hardware.get('multiplexing', 0)|int == 0 %}selected{% endif %}>0 - Direct</option>
+                        <option value="1" {% if main_config.display.hardware.get('multiplexing', 0)|int == 1 %}selected{% endif %}>1 - Stripe</option>
+                        <option value="2" {% if main_config.display.hardware.get('multiplexing', 0)|int == 2 %}selected{% endif %}>2 - Checkered</option>
+                        <option value="3" {% if main_config.display.hardware.get('multiplexing', 0)|int == 3 %}selected{% endif %}>3 - Spiral</option>
+                        <option value="4" {% if main_config.display.hardware.get('multiplexing', 0)|int == 4 %}selected{% endif %}>4 - ZStripe</option>
+                        <option value="5" {% if main_config.display.hardware.get('multiplexing', 0)|int == 5 %}selected{% endif %}>5 - ZnMirrorZStripe</option>
+                        <option value="6" {% if main_config.display.hardware.get('multiplexing', 0)|int == 6 %}selected{% endif %}>6 - Coreman</option>
+                        <option value="7" {% if main_config.display.hardware.get('multiplexing', 0)|int == 7 %}selected{% endif %}>7 - Kaler2Scan</option>
+                        <option value="8" {% if main_config.display.hardware.get('multiplexing', 0)|int == 8 %}selected{% endif %}>8 - ZStripeUneven</option>
+                        <option value="9" {% if main_config.display.hardware.get('multiplexing', 0)|int == 9 %}selected{% endif %}>9 - P10-128x4-Z</option>
+                        <option value="10" {% if main_config.display.hardware.get('multiplexing', 0)|int == 10 %}selected{% endif %}>10 - QiangLiQ8</option>
+                        <option value="11" {% if main_config.display.hardware.get('multiplexing', 0)|int == 11 %}selected{% endif %}>11 - InversedZStripe</option>
+                        <option value="12" {% if main_config.display.hardware.get('multiplexing', 0)|int == 12 %}selected{% endif %}>12 - P10Outdoor1R1G1B v1</option>
+                        <option value="13" {% if main_config.display.hardware.get('multiplexing', 0)|int == 13 %}selected{% endif %}>13 - P10Outdoor1R1G1B v2</option>
+                        <option value="14" {% if main_config.display.hardware.get('multiplexing', 0)|int == 14 %}selected{% endif %}>14 - P10Outdoor1R1G1B v3</option>
+                        <option value="15" {% if main_config.display.hardware.get('multiplexing', 0)|int == 15 %}selected{% endif %}>15 - P10CoremanMapper</option>
+                        <option value="16" {% if main_config.display.hardware.get('multiplexing', 0)|int == 16 %}selected{% endif %}>16 - P8Outdoor1R1G1B</option>
+                        <option value="17" {% if main_config.display.hardware.get('multiplexing', 0)|int == 17 %}selected{% endif %}>17 - FlippedStripe</option>
+                        <option value="18" {% if main_config.display.hardware.get('multiplexing', 0)|int == 18 %}selected{% endif %}>18 - P10-32x16-HalfScan</option>
+                        <option value="19" {% if main_config.display.hardware.get('multiplexing', 0)|int == 19 %}selected{% endif %}>19 - P10-32x16-QuarterScan</option>
+                        <option value="20" {% if main_config.display.hardware.get('multiplexing', 0)|int == 20 %}selected{% endif %}>20 - P3Outdoor-64x64</option>
+                        <option value="21" {% if main_config.display.hardware.get('multiplexing', 0)|int == 21 %}selected{% endif %}>21 - DoubleZMultiplex</option>
+                        <option value="22" {% if main_config.display.hardware.get('multiplexing', 0)|int == 22 %}selected{% endif %}>22 - P4Outdoor-80x40</option>
+                    </select>
+                    <p class="mt-1 text-sm text-gray-600">Multiplexing scheme for your LED panels</p>
+                </div>
+
+                <div class="form-group">
+                    <label for="panel_type" class="block text-sm font-medium text-gray-700">Panel Type</label>
+                    <select id="panel_type" name="panel_type" class="form-control">
+                        <option value="" {% if not main_config.display.hardware.get('panel_type', '') %}selected{% endif %}>Standard</option>
+                        <option value="FM6126A" {% if main_config.display.hardware.get('panel_type', '') == "FM6126A" %}selected{% endif %}>FM6126A</option>
+                        <option value="FM6127" {% if main_config.display.hardware.get('panel_type', '') == "FM6127" %}selected{% endif %}>FM6127</option>
+                    </select>
+                    <p class="mt-1 text-sm text-gray-600">Special panel chipset initialization (use Standard unless your panel requires it)</p>
+                </div>
+            </div>
+
             <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div class="form-group">
                     <label for="gpio_slowdown" class="block text-sm font-medium text-gray-700">GPIO Slowdown</label>

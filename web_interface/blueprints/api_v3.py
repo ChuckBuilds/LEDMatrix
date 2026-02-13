@@ -702,7 +702,7 @@ def save_main_config():
         display_fields = ['rows', 'cols', 'chain_length', 'parallel', 'brightness', 'hardware_mapping',
                          'gpio_slowdown', 'scan_mode', 'disable_hardware_pulsing', 'inverse_colors', 'show_refresh_rate',
                          'pwm_bits', 'pwm_dither_bits', 'pwm_lsb_nanoseconds', 'limit_refresh_rate_hz', 'use_short_date_format',
-                         'max_dynamic_duration_seconds']
+                         'max_dynamic_duration_seconds', 'led_rgb_sequence', 'multiplexing', 'panel_type']
 
         if any(k in data for k in display_fields):
             if 'display' not in current_config:
@@ -714,10 +714,12 @@ def save_main_config():
 
             # Handle hardware settings
             for field in ['rows', 'cols', 'chain_length', 'parallel', 'brightness', 'hardware_mapping', 'scan_mode',
-                         'pwm_bits', 'pwm_dither_bits', 'pwm_lsb_nanoseconds', 'limit_refresh_rate_hz']:
+                         'pwm_bits', 'pwm_dither_bits', 'pwm_lsb_nanoseconds', 'limit_refresh_rate_hz',
+                         'led_rgb_sequence', 'multiplexing', 'panel_type']:
                 if field in data:
                     if field in ['rows', 'cols', 'chain_length', 'parallel', 'brightness', 'scan_mode',
-                               'pwm_bits', 'pwm_dither_bits', 'pwm_lsb_nanoseconds', 'limit_refresh_rate_hz']:
+                               'pwm_bits', 'pwm_dither_bits', 'pwm_lsb_nanoseconds', 'limit_refresh_rate_hz',
+                               'multiplexing']:
                         current_config['display']['hardware'][field] = int(data[field])
                     else:
                         current_config['display']['hardware'][field] = data[field]
