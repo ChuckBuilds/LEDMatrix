@@ -8,6 +8,8 @@ files that need to be accessible by both root service and web user.
 
 import os
 import logging
+import shutil as _shutil
+import subprocess
 from pathlib import Path
 from typing import Optional
 
@@ -192,9 +194,96 @@ def get_plugin_dir_mode() -> int:
 def get_cache_dir_mode() -> int:
     """
     Return permission mode for cache directories.
-    
+
     Returns:
         Permission mode: 0o2775 (rwxrwxr-x + sticky bit) for group-writable cache directories
     """
     return 0o2775  # rwxrwsr-x (setgid + group writable)
+
+
+def sudo_remove_directory(path: Path, allowed_bases: Optional[list] = None) -> bool:
+    """
+    Remove a directory using sudo as a last resort.
+
+    Used when normal removal fails due to root-owned files (e.g., __pycache__
+    directories created by the root ledmatrix service). Delegates to the
+    safe_plugin_rm.sh helper which validates the path is inside allowed
+    plugin directories.
+
+    Before invoking sudo, this function also validates that the resolved
+    path is a descendant of at least one allowed base directory.
+
+    Args:
+        path: Directory path to remove
+        allowed_bases: List of allowed parent directories. If None, defaults
+            to plugin-repos/ and plugins/ under the project root.
+
+    Returns:
+        True if removal succeeded, False otherwise
+    """
+    # Determine project root (permission_utils.py is at src/common/)
+    project_root = Path(__file__).resolve().parent.parent.parent
+
+    if allowed_bases is None:
+        allowed_bases = [
+            project_root / "plugin-repos",
+            project_root / "plugins",
+        ]
+
+    # Resolve the target path to prevent symlink/traversal tricks
+    try:
+        resolved = path.resolve()
+    except (OSError, ValueError) as e:
+        logger.error(f"Cannot resolve path {path}: {e}")
+        return False
+
+    # Validate the resolved path is a strict child of an allowed base
+    is_allowed = False
+    for base in allowed_bases:
+        try:
+            base_resolved = base.resolve()
+            if resolved != base_resolved and resolved.is_relative_to(base_resolved):
+                is_allowed = True
+                break
+        except (OSError, ValueError):
+            continue
+
+    if not is_allowed:
+        logger.error(
+            f"sudo_remove_directory DENIED: {resolved} is not inside "
+            f"allowed bases {[str(b) for b in allowed_bases]}"
+        )
+        return False
+
+    # Use the safe_plugin_rm.sh helper which does its own validation
+    helper_script = project_root / "scripts" / "fix_perms" / "safe_plugin_rm.sh"
+    if not helper_script.exists():
+        logger.error(f"Safe removal helper not found: {helper_script}")
+        return False
+
+    bash_path = _shutil.which('bash') or '/bin/bash'
+
+    try:
+        result = subprocess.run(
+            ['sudo', '-n', bash_path, str(helper_script), str(resolved)],
+            capture_output=True,
+            text=True,
+            timeout=30
+        )
+        if result.returncode == 0 and not resolved.exists():
+            logger.info(f"Successfully removed {path} via sudo helper")
+            return True
+        else:
+            stderr = result.stderr.strip()
+            logger.error(f"sudo helper failed for {path}: {stderr}")
+            return False
+    except subprocess.TimeoutExpired:
+        logger.error(f"sudo helper timed out for {path}")
+        return False
+    except FileNotFoundError:
+        logger.error("sudo command not found on system")
+        return False
+    except Exception as e:
+        logger.error(f"Unexpected error during sudo helper for {path}: {e}")
+        return False
 
