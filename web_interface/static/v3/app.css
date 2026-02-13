@@ -66,6 +66,7 @@
 /* Dark Mode - Utility Class Overrides */
 [data-theme="dark"] .bg-white { background-color: var(--color-surface); }
 [data-theme="dark"] .bg-gray-50 { background-color: var(--color-background); }
+[data-theme="dark"] .bg-gray-100 { background-color: var(--color-surface); }
 [data-theme="dark"] .bg-gray-200 { background-color: var(--color-border); }
 
 [data-theme="dark"] .text-gray-900 { color: var(--color-text-primary); }
@@ -79,6 +80,7 @@
 [data-theme="dark"] .border-gray-300 { border-color: #4b5563; }
 
 [data-theme="dark"] .hover\:bg-gray-50:hover { background-color: var(--color-border); }
+[data-theme="dark"] .hover\:bg-gray-200:hover { background-color: #4b5563; }
 [data-theme="dark"] .hover\:text-gray-700:hover { color: #e5e7eb; }
 [data-theme="dark"] .hover\:border-gray-300:hover { border-color: #6b7280; }
 
@@ -100,6 +102,7 @@ body {
 
 /* Utility classes */
 .bg-gray-50 { background-color: #f9fafb; }
+.bg-gray-100 { background-color: #f3f4f6; }
 .bg-white { background-color: #ffffff; }
 .bg-gray-800 { background-color: #1f2937; }
 .bg-gray-900 { background-color: #111827; }
