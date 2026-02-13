@@ -242,8 +242,14 @@ class LogoDownloader:
         """Fetch team data from ESPN API for a specific league."""
         api_url = self.API_ENDPOINTS.get(league)
         if not api_url:
-            logger.error(f"No API endpoint configured for league: {league}")
-            return None
+            # Dynamically construct URL for custom soccer leagues
+            if league.startswith('soccer_'):
+                league_code = league[len('soccer_'):]
+                api_url = f'https://site.api.espn.com/apis/site/v2/sports/soccer/{league_code}/teams'
+                logger.info(f"Using dynamic ESPN endpoint for custom soccer league: {league}")
+            else:
+                logger.error(f"No API endpoint configured for league: {league}")
+                return None
         
         try:
             logger.info(f"Fetching team data for {league} from ESPN API...")
@@ -265,8 +271,14 @@ class LogoDownloader:
         """Fetch team data from ESPN API for a specific league."""
         api_url = self.API_ENDPOINTS.get(league)
         if not api_url:
-            logger.error(f"No API endpoint configured for league: {league}")
-            return None
+            # Dynamically construct URL for custom soccer leagues
+            if league.startswith('soccer_'):
+                league_code = league[len('soccer_'):]
+                api_url = f'https://site.api.espn.com/apis/site/v2/sports/soccer/{league_code}/teams'
+                logger.info(f"Using dynamic ESPN endpoint for custom soccer league: {league}")
+            else:
+                logger.error(f"No API endpoint configured for league: {league}")
+                return None
         
         try:
             logger.info(f"Fetching team data for team {team_id} in {league} from ESPN API...")
