@@ -3606,14 +3606,31 @@ def _set_nested_value(config, key_path, value):
     parts = key_path.split('.')
     current = config
 
-    # Navigate/create intermediate dicts
+    # Navigate/create intermediate dicts (or index into existing lists)
     for i, part in enumerate(parts[:-1]):
-        if part not in current:
+        if isinstance(current, list) and part.isdigit():
+            # Navigate into existing array items by index, preserving other properties
+            idx = int(part)
+            while len(current) <= idx:
+                current.append({})
+            if not isinstance(current[idx], dict):
+                current[idx] = {}
+            current = current[idx]
+        elif isinstance(current, dict) and part in current and isinstance(current[part], list):
+            # Preserve existing list — next part should be a numeric index
+            current = current[part]
+        elif isinstance(current, dict) and part not in current:
             current[part] = {}
-        elif not isinstance(current[part], dict):
-            # If the existing value is not a dict, replace it with a dict
+            current = current[part]
+        elif isinstance(current, dict) and not isinstance(current[part], (dict, list)):
+            # If the existing value is not a dict or list, replace it with a dict
             current[part] = {}
-        current = current[part]
+            current = current[part]
+        elif isinstance(current, dict):
+            current = current[part]
+        else:
+            # Fallback: create dict for unexpected types
+            break
 
     # Set the final value (don't overwrite with empty dict if value is None and we want to preserve structure)
     if value is not None or parts[-1] not in current:
