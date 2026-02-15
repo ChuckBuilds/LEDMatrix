@@ -186,6 +186,9 @@ def _load_plugins_partial():
                 # Get all installed plugin info
                 all_plugin_info = pages_v3.plugin_manager.get_all_plugin_info()
 
+                # Load config once before the loop (not per-plugin)
+                full_config = pages_v3.config_manager.load_config() if pages_v3.config_manager else {}
+
                 # Format for the web interface
                 for plugin_info in all_plugin_info:
                     plugin_id = plugin_info.get('id')
@@ -206,7 +209,6 @@ def _load_plugins_partial():
                     # Read from config file first, fall back to plugin instance if config doesn't have the key
                     enabled = None
                     if pages_v3.config_manager:
-                        full_config = pages_v3.config_manager.load_config()
                         plugin_config = full_config.get(plugin_id, {})
                         # Check if 'enabled' key exists in config (even if False)
                         if 'enabled' in plugin_config:
@@ -221,8 +223,8 @@ def _load_plugins_partial():
                             # Default to True if no config key and plugin not loaded (matches BasePlugin default)
                             enabled = True
 
-                    # Get verified status from store registry
-                    store_info = pages_v3.plugin_store_manager.get_plugin_info(plugin_id)
+                    # Get verified status from store registry (no GitHub API calls needed)
+                    store_info = pages_v3.plugin_store_manager.get_registry_info(plugin_id)
                     verified = store_info.get('verified', False) if store_info else False
 
                     last_updated = plugin_info.get('last_updated')
