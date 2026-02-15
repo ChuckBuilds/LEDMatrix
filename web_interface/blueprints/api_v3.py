@@ -1737,6 +1737,9 @@ def get_installed_plugins():
         # Get all installed plugin info from the plugin manager
         all_plugin_info = api_v3.plugin_manager.get_all_plugin_info()
 
+        # Load config once before the loop (not per-plugin)
+        full_config = api_v3.config_manager.load_config() if api_v3.config_manager else {}
+
         # Format for the web interface
         plugins = []
         for plugin_info in all_plugin_info:
@@ -1758,7 +1761,6 @@ def get_installed_plugins():
             # Read from config file first, fall back to plugin instance if config doesn't have the key
             enabled = None
             if api_v3.config_manager:
-                full_config = api_v3.config_manager.load_config()
                 plugin_config = full_config.get(plugin_id, {})
                 # Check if 'enabled' key exists in config (even if False)
                 if 'enabled' in plugin_config:
@@ -1773,8 +1775,8 @@ def get_installed_plugins():
                     # Default to True if no config key and plugin not loaded (matches BasePlugin default)
                     enabled = True
 
-            # Get verified status from store registry (if available)
-            store_info = api_v3.plugin_store_manager.get_plugin_info(plugin_id)
+            # Get verified status from store registry (no GitHub API calls needed)
+            store_info = api_v3.plugin_store_manager.get_registry_info(plugin_id)
             verified = store_info.get('verified', False) if store_info else False
 
             # Get local git info for installed plugin (actual installed commit)
