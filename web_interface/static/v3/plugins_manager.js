@@ -1682,16 +1682,12 @@ function startOnDemandStatusPolling() {
 
 window.loadOnDemandStatus = loadOnDemandStatus;
 
-function runUpdateAllPlugins() {
+async function runUpdateAllPlugins() {
     console.log('[runUpdateAllPlugins] Button clicked, checking for updates...');
     const button = document.getElementById('update-all-plugins-btn');
 
     if (!button) {
-        if (typeof showNotification === 'function') {
-            showNotification('Unable to locate bulk update controls. Refresh the Plugin Manager tab.', 'error');
-        } else {
-            console.error('update-all-plugins-btn element not found');
-        }
+        showNotification('Unable to locate bulk update controls. Refresh the Plugin Manager tab.', 'error');
         return;
     }
 
@@ -1699,12 +1695,9 @@ function runUpdateAllPlugins() {
         return;
     }
 
-    if (typeof window.updateAllPlugins !== 'function') {
-        if (typeof showNotification === 'function') {
-            showNotification('Bulk update handler unavailable. Refresh the Plugin Manager tab.', 'error');
-        } else {
-            console.error('window.updateAllPlugins is not defined');
-        }
+    const plugins = Array.isArray(window.installedPlugins) ? window.installedPlugins : [];
+    if (!plugins.length) {
+        showNotification('No installed plugins to update.', 'warning');
         return;
     }
 
@@ -1712,47 +1705,58 @@ function runUpdateAllPlugins() {
     button.dataset.running = 'true';
     button.disabled = true;
     button.classList.add('opacity-60', 'cursor-wait');
-    button.innerHTML = '<i class="fas fa-sync fa-spin mr-2"></i>Checking...';
 
-    const onProgress = (current, total, pluginId) => {
-        button.innerHTML = `<i class="fas fa-sync fa-spin mr-2"></i>Updating ${current}/${total}...`;
-    };
+    let updated = 0, upToDate = 0, failed = 0;
 
-    Promise.resolve(window.updateAllPlugins(onProgress))
-        .then(results => {
-            if (!results || !results.length) {
-                showNotification('No plugins to update.', 'info');
-                return;
-            }
-            let updated = 0, upToDate = 0, failed = 0;
-            for (const r of results) {
-                if (!r.success) {
-                    failed++;
-                } else if (r.result && r.result.message && r.result.message.includes('already up to date')) {
-                    upToDate++;
+    try {
+        for (let i = 0; i < plugins.length; i++) {
+            const plugin = plugins[i];
+            const pluginId = plugin.id;
+            button.innerHTML = `<i class="fas fa-sync fa-spin mr-2"></i>Updating ${i + 1}/${plugins.length}...`;
+
+            try {
+                const response = await fetch('/api/v3/plugins/update', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ plugin_id: pluginId })
+                });
+                const data = await response.json();
+
+                if (data.status === 'success') {
+                    if (data.message && data.message.includes('already up to date')) {
+                        upToDate++;
+                    } else {
+                        updated++;
+                    }
                 } else {
-                    updated++;
+                    failed++;
                 }
+            } catch (error) {
+                failed++;
+                console.error(`Error updating ${pluginId}:`, error);
             }
-            const parts = [];
-            if (updated > 0) parts.push(`${updated} updated`);
-            if (upToDate > 0) parts.push(`${upToDate} already up to date`);
-            if (failed > 0) parts.push(`${failed} failed`);
-            const type = failed > 0 ? (updated > 0 ? 'warning' : 'error') : 'success';
-            showNotification(parts.join(', '), type);
-        })
-        .catch(error => {
-            console.error('Error updating all plugins:', error);
-            if (typeof showNotification === 'function') {
-                showNotification('Error updating all plugins: ' + error.message, 'error');
-            }
-        })
-        .finally(() => {
-            button.innerHTML = originalContent;
-            button.disabled = false;
-            button.classList.remove('opacity-60', 'cursor-wait');
-            button.dataset.running = 'false';
-        });
+        }
+
+        // Refresh plugin list once at the end
+        if (updated > 0) {
+            loadInstalledPlugins(true);
+        }
+
+        const parts = [];
+        if (updated > 0) parts.push(`${updated} updated`);
+        if (upToDate > 0) parts.push(`${upToDate} already up to date`);
+        if (failed > 0) parts.push(`${failed} failed`);
+        const type = failed > 0 ? (updated > 0 ? 'warning' : 'error') : 'success';
+        showNotification(parts.join(', '), type);
+    } catch (error) {
+        console.error('Bulk plugin update failed:', error);
+        showNotification('Failed to update all plugins: ' + error.message, 'error');
+    } finally {
+        button.innerHTML = originalContent;
+        button.disabled = false;
+        button.classList.remove('opacity-60', 'cursor-wait');
+        button.dataset.running = 'false';
+    }
 }
 
 // Initialize on-demand modal setup (runs unconditionally since modal is in base.html)
