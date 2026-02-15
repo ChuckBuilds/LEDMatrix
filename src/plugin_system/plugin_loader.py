@@ -228,6 +228,43 @@ class PluginLoader:
                 continue
         return result
 
+    def _evict_stale_bare_modules(self, plugin_dir: Path) -> dict:
+        """Temporarily remove bare-name sys.modules entries from other plugins.
+
+        Before exec_module, scan the current plugin directory for .py files.
+        For each, if sys.modules has a bare-name entry whose ``__file__`` lives
+        in a *different* directory, remove it so Python's import system will
+        load the current plugin's version instead of reusing the stale cache.
+
+        Returns:
+            Dict mapping evicted module names to their module objects
+            (for restoration on error).
+        """
+        resolved_dir = plugin_dir.resolve()
+        evicted: dict = {}
+
+        for py_file in plugin_dir.glob("*.py"):
+            mod_name = py_file.stem
+            if mod_name.startswith("_"):
+                continue
+            existing = sys.modules.get(mod_name)
+            if existing is None:
+                continue
+            existing_file = getattr(existing, "__file__", None)
+            if not existing_file:
+                continue
+            try:
+                if not Path(existing_file).resolve().is_relative_to(resolved_dir):
+                    evicted[mod_name] = sys.modules.pop(mod_name)
+                    self.logger.debug(
+                        "Evicted stale module '%s' (from %s) before loading plugin in %s",
+                        mod_name, existing_file, plugin_dir,
+                    )
+            except (ValueError, TypeError):
+                continue
+
+        return evicted
+
     def _namespace_plugin_modules(
         self, plugin_id: str, plugin_dir: Path, before_keys: set
     ) -> None:
@@ -254,12 +291,13 @@ class PluginLoader:
         for mod_name, mod in self._iter_plugin_bare_modules(plugin_dir, before_keys):
             namespaced = f"_plg_{safe_id}_{mod_name}"
             sys.modules[namespaced] = mod
-            # Keep sys.modules[mod_name] as an alias to the same object.
-            # Removing it would cause lazy intra-plugin imports (e.g. a
-            # deferred ``import scroll_display`` inside a method) to
-            # re-import from disk and create a second, inconsistent copy
-            # of the module.  The next plugin's exec_module will naturally
-            # overwrite the bare entry with its own version.
+            # Remove the bare sys.modules entry.  The module object stays
+            # alive via the namespaced key and all existing Python-level
+            # bindings (``from scroll_display import X`` already bound X
+            # to the class object).  Leaving bare entries would cause the
+            # NEXT plugin's exec_module to find the cached entry and reuse
+            # it instead of loading its own version.
+            sys.modules.pop(mod_name, None)
             namespaced_names.add(namespaced)
             self.logger.debug(
                 "Namespace-isolated module '%s' -> '%s' for plugin %s",
@@ -345,6 +383,11 @@ class PluginLoader:
             # _namespace_plugin_modules and error cleanup only target
             # sub-modules, not the main module entry itself.
             before_keys = set(sys.modules.keys())
+
+            # Evict stale bare-name modules from other plugin directories
+            # so Python's import system loads fresh copies from this plugin.
+            evicted = self._evict_stale_bare_modules(plugin_dir)
+
             try:
                 spec.loader.exec_module(module)
 
@@ -352,6 +395,10 @@ class PluginLoader:
                 # cannot collide with identically-named modules from other plugins
                 self._namespace_plugin_modules(plugin_id, plugin_dir, before_keys)
             except Exception:
+                # Restore evicted modules so other plugins are unaffected
+                for evicted_name, evicted_mod in evicted.items():
+                    if evicted_name not in sys.modules:
+                        sys.modules[evicted_name] = evicted_mod
                 # Clean up the partially-initialized main module and any
                 # bare-name sub-modules that were added during exec_module
                 # so they don't leak into subsequent plugin loads.
