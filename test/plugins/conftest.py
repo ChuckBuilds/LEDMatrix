@@ -21,8 +21,23 @@ os.environ['EMULATOR'] = 'true'
 
 @pytest.fixture
 def plugins_dir():
-    """Get the plugins directory path."""
-    return project_root / 'plugins'
+    """Get the plugins directory path.
+
+    Checks plugins/ first, then falls back to plugin-repos/
+    for monorepo development environments.
+    """
+    plugins_path = project_root / 'plugins'
+    plugin_repos_path = project_root / 'plugin-repos'
+
+    # Prefer plugins/ if it has actual plugin directories
+    if plugins_path.exists() and any(
+        p for p in plugins_path.iterdir()
+        if p.is_dir() and not p.name.startswith('.')
+    ):
+        return plugins_path
+    elif plugin_repos_path.exists():
+        return plugin_repos_path
+    return plugins_path
 
 
 @pytest.fixture
@@ -102,3 +117,10 @@ def get_plugin_config_schema(plugin_id: str, plugins_dir: Path) -> Dict[str, Any
         with open(schema_path, 'r') as f:
             return json.load(f)
     return None
+
+
+@pytest.fixture
+def visual_display_manager():
+    """Create a VisualTestDisplayManager that renders real pixels for visual testing."""
+    from src.plugin_system.testing import VisualTestDisplayManager
+    return VisualTestDisplayManager(width=128, height=32)

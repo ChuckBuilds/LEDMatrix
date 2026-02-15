@@ -142,8 +142,8 @@ def main():
     """Main entry point."""
     parser = argparse.ArgumentParser(description='Run LEDMatrix plugin tests')
     parser.add_argument('--plugin', '-p', help='Test specific plugin ID')
-    parser.add_argument('--plugins-dir', '-d', default='plugins', 
-                       help='Plugins directory (default: plugins)')
+    parser.add_argument('--plugins-dir', '-d', default=None,
+                       help='Plugins directory (default: auto-detect plugins/ or plugin-repos/)')
     parser.add_argument('--runner', '-r', choices=['unittest', 'pytest', 'auto'],
                        default='auto', help='Test runner to use (default: auto)')
     parser.add_argument('--verbose', '-v', action='store_true',
@@ -153,7 +153,22 @@ def main():
     
     args = parser.parse_args()
     
-    plugins_dir = Path(args.plugins_dir)
+    if args.plugins_dir:
+        plugins_dir = Path(args.plugins_dir)
+    else:
+        # Auto-detect: prefer plugins/ if it has content, then plugin-repos/
+        plugins_path = PROJECT_ROOT / 'plugins'
+        plugin_repos_path = PROJECT_ROOT / 'plugin-repos'
+        if plugins_path.exists() and any(
+            p for p in plugins_path.iterdir()
+            if p.is_dir() and not p.name.startswith('.')
+        ):
+            plugins_dir = plugins_path
+        elif plugin_repos_path.exists():
+            plugins_dir = plugin_repos_path
+        else:
+            plugins_dir = plugins_path
+
     if not plugins_dir.exists():
         print(f"Error: Plugins directory not found: {plugins_dir}")
         return 1

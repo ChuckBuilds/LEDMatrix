@@ -1,0 +1,585 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LEDMatrix Dev Preview</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@json-editor/json-editor@latest/dist/jsoneditor.min.js"></script>
+    <style>
+        :root {
+            --bg-primary: #0f172a;
+            --bg-secondary: #1e293b;
+            --bg-tertiary: #334155;
+            --text-primary: #f1f5f9;
+            --text-secondary: #94a3b8;
+            --border-color: #475569;
+            --accent: #3b82f6;
+        }
+
+        [data-theme="light"] {
+            --bg-primary: #f8fafc;
+            --bg-secondary: #ffffff;
+            --bg-tertiary: #f1f5f9;
+            --text-primary: #1e293b;
+            --text-secondary: #64748b;
+            --border-color: #e2e8f0;
+            --accent: #3b82f6;
+        }
+
+        body {
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            font-family: 'Inter', system-ui, -apple-system, sans-serif;
+        }
+
+        .panel {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 0.75rem;
+        }
+
+        /* JSON Editor theme overrides */
+        .je-object__container, .je-indented-panel {
+            background: var(--bg-tertiary) !important;
+            border-color: var(--border-color) !important;
+            border-radius: 0.5rem !important;
+            padding: 0.75rem !important;
+            margin-bottom: 0.5rem !important;
+        }
+
+        .je-header, .je-object__title {
+            color: var(--text-primary) !important;
+            font-size: 0.875rem !important;
+        }
+
+        .je-form-input-label {
+            color: var(--text-secondary) !important;
+            font-size: 0.8rem !important;
+        }
+
+        div[data-schematype] input[type="text"],
+        div[data-schematype] input[type="number"],
+        div[data-schematype] select,
+        div[data-schematype] textarea {
+            background: var(--bg-primary) !important;
+            color: var(--text-primary) !important;
+            border: 1px solid var(--border-color) !important;
+            border-radius: 0.375rem !important;
+            padding: 0.375rem 0.5rem !important;
+            font-size: 0.8rem !important;
+        }
+
+        div[data-schematype] input[type="text"]:focus,
+        div[data-schematype] input[type="number"]:focus,
+        div[data-schematype] select:focus,
+        div[data-schematype] textarea:focus {
+            outline: none !important;
+            border-color: var(--accent) !important;
+            box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.3) !important;
+        }
+
+        /* Hide JSON Editor action buttons we don't need */
+        .je-object__controls .json-editor-btn-collapse,
+        .je-object__controls .json-editor-btn-edit_properties,
+        .json-editor-btn-edit {
+            display: none !important;
+        }
+
+        .json-editor-btn-add, .json-editor-btn-delete,
+        .json-editor-btn-moveup, .json-editor-btn-movedown {
+            background: var(--bg-tertiary) !important;
+            color: var(--text-secondary) !important;
+            border: 1px solid var(--border-color) !important;
+            border-radius: 0.25rem !important;
+            padding: 0.125rem 0.375rem !important;
+            font-size: 0.7rem !important;
+        }
+
+        /* Display preview */
+        #displayPreview {
+            image-rendering: pixelated;
+            image-rendering: -moz-crisp-edges;
+            image-rendering: crisp-edges;
+            background: #000;
+        }
+
+        .preview-container {
+            background: repeating-conic-gradient(#1a1a2e 0% 25%, #16162a 0% 50%) 50% / 20px 20px;
+            border-radius: 0.5rem;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 200px;
+            padding: 1.5rem;
+        }
+
+        /* Grid overlay */
+        #gridCanvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            pointer-events: none;
+        }
+
+        /* Toggle switch */
+        .toggle-switch {
+            position: relative;
+            width: 2.5rem;
+            height: 1.25rem;
+            background: var(--bg-tertiary);
+            border-radius: 9999px;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+
+        .toggle-switch.active {
+            background: var(--accent);
+        }
+
+        .toggle-switch::after {
+            content: '';
+            position: absolute;
+            top: 2px;
+            left: 2px;
+            width: 1rem;
+            height: 1rem;
+            background: white;
+            border-radius: 9999px;
+            transition: transform 0.2s;
+        }
+
+        .toggle-switch.active::after {
+            transform: translateX(1.25rem);
+        }
+
+        /* Scrollbar */
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: var(--bg-primary); }
+        ::-webkit-scrollbar-thumb { background: var(--border-color); border-radius: 3px; }
+    </style>
+</head>
+<body class="min-h-screen">
+    <!-- Header -->
+    <header class="border-b" style="border-color: var(--border-color); background: var(--bg-secondary);">
+        <div class="max-w-[1800px] mx-auto px-4 py-3 flex items-center justify-between">
+            <div class="flex items-center gap-3">
+                <div class="w-3 h-3 rounded-full bg-green-500"></div>
+                <h1 class="text-lg font-semibold" style="color: var(--text-primary);">LEDMatrix Dev Preview</h1>
+            </div>
+            <div class="flex items-center gap-4">
+                <span class="text-xs" style="color: var(--text-secondary);" id="statusText">Ready</span>
+                <button onclick="toggleTheme()" class="px-3 py-1.5 rounded-lg text-xs font-medium"
+                        style="background: var(--bg-tertiary); color: var(--text-secondary); border: 1px solid var(--border-color);">
+                    Theme
+                </button>
+            </div>
+        </div>
+    </header>
+
+    <!-- Main layout -->
+    <div class="max-w-[1800px] mx-auto px-4 py-4 flex gap-4" style="height: calc(100vh - 57px);">
+
+        <!-- Left panel: Plugin selection + Config -->
+        <div class="w-[420px] flex-shrink-0 flex flex-col gap-4 overflow-y-auto" style="max-height: 100%;">
+
+            <!-- Plugin selector -->
+            <div class="panel p-4">
+                <label class="block text-xs font-medium mb-2" style="color: var(--text-secondary);">Plugin</label>
+                <select id="pluginSelect" onchange="onPluginChange()"
+                        class="w-full px-3 py-2 rounded-lg text-sm"
+                        style="background: var(--bg-primary); color: var(--text-primary); border: 1px solid var(--border-color);">
+                    <option value="">Select a plugin...</option>
+                </select>
+                <p id="pluginDescription" class="mt-2 text-xs" style="color: var(--text-secondary);"></p>
+            </div>
+
+            <!-- Dimensions -->
+            <div class="panel p-4">
+                <label class="block text-xs font-medium mb-2" style="color: var(--text-secondary);">Display Dimensions</label>
+                <div class="flex gap-2 items-center">
+                    <input type="number" id="displayWidth" value="128" min="1" max="512"
+                           class="w-20 px-2 py-1.5 rounded text-sm text-center"
+                           style="background: var(--bg-primary); color: var(--text-primary); border: 1px solid var(--border-color);"
+                           onchange="onConfigChange()">
+                    <span class="text-sm" style="color: var(--text-secondary);">x</span>
+                    <input type="number" id="displayHeight" value="32" min="1" max="256"
+                           class="w-20 px-2 py-1.5 rounded text-sm text-center"
+                           style="background: var(--bg-primary); color: var(--text-primary); border: 1px solid var(--border-color);"
+                           onchange="onConfigChange()">
+                    <span class="text-xs ml-2" style="color: var(--text-secondary);">px</span>
+                </div>
+            </div>
+
+            <!-- Config form -->
+            <div class="panel p-4 flex-1">
+                <div class="flex items-center justify-between mb-3">
+                    <label class="text-xs font-medium" style="color: var(--text-secondary);">Configuration</label>
+                    <button onclick="resetConfig()" class="px-2 py-1 rounded text-xs"
+                            style="background: var(--bg-tertiary); color: var(--text-secondary); border: 1px solid var(--border-color);">
+                        Reset
+                    </button>
+                </div>
+                <div id="configEditor"></div>
+                <p id="configPlaceholder" class="text-xs italic" style="color: var(--text-secondary);">
+                    Select a plugin to load its configuration.
+                </p>
+            </div>
+
+            <!-- Mock data -->
+            <details class="panel">
+                <summary class="px-4 py-3 cursor-pointer text-xs font-medium" style="color: var(--text-secondary);">
+                    Mock Data (for API-dependent plugins)
+                </summary>
+                <div class="px-4 pb-4">
+                    <textarea id="mockDataInput" rows="6" placeholder='{"cache_key": {"data": "value"}}'
+                              class="w-full px-3 py-2 rounded-lg text-xs font-mono"
+                              style="background: var(--bg-primary); color: var(--text-primary); border: 1px solid var(--border-color); resize: vertical;"
+                              onchange="onConfigChange()"></textarea>
+                    <p class="mt-1 text-xs" style="color: var(--text-secondary);">
+                        JSON object with cache keys. Find keys by searching plugin's manager.py for cache_manager.set() calls.
+                    </p>
+                </div>
+            </details>
+
+            <!-- Render button -->
+            <div class="flex gap-2">
+                <button onclick="renderPlugin()" id="renderBtn"
+                        class="flex-1 px-4 py-2.5 rounded-lg text-sm font-medium text-white"
+                        style="background: var(--accent);">
+                    Render
+                </button>
+            </div>
+        </div>
+
+        <!-- Right panel: Display preview -->
+        <div class="flex-1 flex flex-col gap-4 min-w-0">
+            <!-- Preview -->
+            <div class="panel p-4 flex-1 flex flex-col">
+                <div class="flex items-center justify-between mb-3">
+                    <span class="text-xs font-medium" style="color: var(--text-secondary);">Display Preview</span>
+                    <div class="flex items-center gap-4">
+                        <span class="text-xs" style="color: var(--text-secondary);" id="renderTimeText"></span>
+                    </div>
+                </div>
+
+                <!-- Preview image -->
+                <div class="flex-1 flex items-center justify-center">
+                    <div class="preview-container w-full" id="previewWrapper">
+                        <div style="position: relative; display: inline-block;" id="previewFrame">
+                            <img id="displayPreview" alt="Plugin display preview"
+                                 style="display: none; border: 1px solid var(--border-color);">
+                            <canvas id="gridCanvas" style="display: none;"></canvas>
+                            <p id="previewPlaceholder" class="text-sm" style="color: var(--text-secondary);">
+                                Select a plugin and click Render to preview.
+                            </p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Controls -->
+                <div class="flex items-center gap-6 mt-4 pt-3" style="border-top: 1px solid var(--border-color);">
+                    <!-- Zoom -->
+                    <div class="flex items-center gap-2 flex-1">
+                        <label class="text-xs whitespace-nowrap" style="color: var(--text-secondary);">Zoom</label>
+                        <input type="range" id="zoomSlider" min="1" max="16" value="8" step="1"
+                               oninput="updateZoom()" class="flex-1" style="accent-color: var(--accent);">
+                        <span class="text-xs w-8 text-right" style="color: var(--text-primary);" id="zoomLabel">8x</span>
+                    </div>
+
+                    <!-- Grid toggle -->
+                    <div class="flex items-center gap-2">
+                        <label class="text-xs" style="color: var(--text-secondary);">Grid</label>
+                        <div class="toggle-switch" id="gridToggle" onclick="toggleGrid()"></div>
+                    </div>
+
+                    <!-- Auto-refresh toggle -->
+                    <div class="flex items-center gap-2">
+                        <label class="text-xs" style="color: var(--text-secondary);">Auto</label>
+                        <div class="toggle-switch active" id="autoRefreshToggle" onclick="toggleAutoRefresh()"></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Warnings/Errors -->
+            <div id="messagesPanel" class="panel p-3 hidden">
+                <div id="messagesList" class="text-xs font-mono space-y-1"></div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // ---------- State ----------
+        let jsonEditor = null;
+        let currentPluginId = null;
+        let autoRefresh = true;
+        let showGrid = false;
+        let debounceTimer = null;
+        let currentImageWidth = 128;
+        let currentImageHeight = 32;
+
+        // ---------- Init ----------
+        document.addEventListener('DOMContentLoaded', async () => {
+            // Load theme
+            const saved = localStorage.getItem('devPreviewTheme');
+            if (saved) document.documentElement.dataset.theme = saved;
+
+            // Load plugins
+            const res = await fetch('/api/plugins');
+            const data = await res.json();
+            const select = document.getElementById('pluginSelect');
+            data.plugins.forEach(p => {
+                const opt = document.createElement('option');
+                opt.value = p.id;
+                opt.textContent = `${p.name} (${p.id})`;
+                select.appendChild(opt);
+            });
+        });
+
+        // ---------- Plugin selection ----------
+        async function onPluginChange() {
+            const pluginId = document.getElementById('pluginSelect').value;
+            if (!pluginId) {
+                if (jsonEditor) { jsonEditor.destroy(); jsonEditor = null; }
+                document.getElementById('configPlaceholder').style.display = 'block';
+                document.getElementById('pluginDescription').textContent = '';
+                currentPluginId = null;
+                return;
+            }
+            currentPluginId = pluginId;
+
+            // Load schema and defaults
+            const [schemaRes, defaultsRes, pluginsRes] = await Promise.all([
+                fetch(`/api/plugins/${pluginId}/schema`),
+                fetch(`/api/plugins/${pluginId}/defaults`),
+                fetch('/api/plugins'),
+            ]);
+
+            const schemaData = await schemaRes.json();
+            const defaultsData = await defaultsRes.json();
+            const pluginsData = await pluginsRes.json();
+
+            // Show description
+            const plugin = pluginsData.plugins.find(p => p.id === pluginId);
+            document.getElementById('pluginDescription').textContent =
+                plugin ? plugin.description : '';
+
+            // Build config editor
+            document.getElementById('configPlaceholder').style.display = 'none';
+            if (jsonEditor) jsonEditor.destroy();
+
+            const schema = schemaData.schema || { type: 'object', properties: {} };
+
+            // Remove properties we don't want in the dev form
+            const excluded = ['enabled', 'update_interval', 'display_duration'];
+            excluded.forEach(k => { if (schema.properties) delete schema.properties[k]; });
+
+            jsonEditor = new JSONEditor(document.getElementById('configEditor'), {
+                schema: schema,
+                startval: defaultsData.defaults || {},
+                theme: 'barebones',
+                iconlib: null,
+                disable_collapse: true,
+                disable_edit_json: true,
+                disable_properties: true,
+                disable_array_reorder: false,
+                no_additional_properties: true,
+                show_errors: 'change',
+                compact: true,
+            });
+
+            jsonEditor.on('change', () => {
+                if (autoRefresh) onConfigChange();
+            });
+
+            // Auto-render on plugin change
+            if (autoRefresh) renderPlugin();
+        }
+
+        // ---------- Config change (debounced) ----------
+        function onConfigChange() {
+            if (!autoRefresh) return;
+            clearTimeout(debounceTimer);
+            debounceTimer = setTimeout(renderPlugin, 500);
+        }
+
+        function resetConfig() {
+            if (!currentPluginId) return;
+            onPluginChange(); // Reload defaults
+        }
+
+        // ---------- Render ----------
+        async function renderPlugin() {
+            if (!currentPluginId) return;
+
+            const btn = document.getElementById('renderBtn');
+            const statusText = document.getElementById('statusText');
+            btn.disabled = true;
+            btn.textContent = 'Rendering...';
+            statusText.textContent = 'Rendering...';
+
+            const config = jsonEditor ? jsonEditor.getValue() : {};
+            config.enabled = true;
+
+            // Parse mock data
+            let mockData = {};
+            const mockInput = document.getElementById('mockDataInput').value.trim();
+            if (mockInput) {
+                try { mockData = JSON.parse(mockInput); }
+                catch (e) { showMessages([], [`Mock data JSON error: ${e.message}`]); }
+            }
+
+            const width = parseInt(document.getElementById('displayWidth').value) || 128;
+            const height = parseInt(document.getElementById('displayHeight').value) || 32;
+
+            try {
+                const res = await fetch('/api/render', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        plugin_id: currentPluginId,
+                        config: config,
+                        width: width,
+                        height: height,
+                        mock_data: mockData,
+                    }),
+                });
+
+                const data = await res.json();
+
+                if (data.error) {
+                    showMessages([data.error], []);
+                    statusText.textContent = 'Error';
+                    return;
+                }
+
+                // Update preview
+                const img = document.getElementById('displayPreview');
+                img.src = data.image;
+                img.style.display = 'block';
+                document.getElementById('previewPlaceholder').style.display = 'none';
+                currentImageWidth = data.width;
+                currentImageHeight = data.height;
+                updateZoom();
+
+                // Show render time
+                document.getElementById('renderTimeText').textContent =
+                    `${data.render_time_ms}ms`;
+
+                // Show warnings/errors
+                showMessages(data.errors || [], data.warnings || []);
+                statusText.textContent = data.errors?.length ? 'Errors' : 'Rendered';
+
+            } catch (e) {
+                showMessages([`Network error: ${e.message}`], []);
+                statusText.textContent = 'Error';
+            } finally {
+                btn.disabled = false;
+                btn.textContent = 'Render';
+            }
+        }
+
+        // ---------- Zoom ----------
+        function updateZoom() {
+            const zoom = parseInt(document.getElementById('zoomSlider').value);
+            document.getElementById('zoomLabel').textContent = `${zoom}x`;
+
+            const img = document.getElementById('displayPreview');
+            if (img.style.display !== 'none') {
+                img.style.width = `${currentImageWidth * zoom}px`;
+                img.style.height = `${currentImageHeight * zoom}px`;
+            }
+            updateGrid();
+        }
+
+        // ---------- Grid overlay ----------
+        function toggleGrid() {
+            showGrid = !showGrid;
+            document.getElementById('gridToggle').classList.toggle('active', showGrid);
+            updateGrid();
+        }
+
+        function updateGrid() {
+            const canvas = document.getElementById('gridCanvas');
+            const img = document.getElementById('displayPreview');
+
+            if (!showGrid || img.style.display === 'none') {
+                canvas.style.display = 'none';
+                return;
+            }
+
+            const zoom = parseInt(document.getElementById('zoomSlider').value);
+            const w = currentImageWidth * zoom;
+            const h = currentImageHeight * zoom;
+
+            canvas.width = w;
+            canvas.height = h;
+            canvas.style.display = 'block';
+            canvas.style.width = `${w}px`;
+            canvas.style.height = `${h}px`;
+
+            const ctx = canvas.getContext('2d');
+            ctx.clearRect(0, 0, w, h);
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.15)';
+            ctx.lineWidth = 0.5;
+
+            // Vertical lines
+            for (let x = 0; x <= currentImageWidth; x++) {
+                ctx.beginPath();
+                ctx.moveTo(x * zoom, 0);
+                ctx.lineTo(x * zoom, h);
+                ctx.stroke();
+            }
+
+            // Horizontal lines
+            for (let y = 0; y <= currentImageHeight; y++) {
+                ctx.beginPath();
+                ctx.moveTo(0, y * zoom);
+                ctx.lineTo(w, y * zoom);
+                ctx.stroke();
+            }
+        }
+
+        // ---------- Auto-refresh toggle ----------
+        function toggleAutoRefresh() {
+            autoRefresh = !autoRefresh;
+            document.getElementById('autoRefreshToggle').classList.toggle('active', autoRefresh);
+        }
+
+        // ---------- Theme ----------
+        function toggleTheme() {
+            const html = document.documentElement;
+            const current = html.dataset.theme || 'dark';
+            const next = current === 'dark' ? 'light' : 'dark';
+            html.dataset.theme = next;
+            localStorage.setItem('devPreviewTheme', next);
+        }
+
+        // ---------- Messages ----------
+        function showMessages(errors, warnings) {
+            const panel = document.getElementById('messagesPanel');
+            const list = document.getElementById('messagesList');
+            list.innerHTML = '';
+
+            if (!errors.length && !warnings.length) {
+                panel.classList.add('hidden');
+                return;
+            }
+
+            panel.classList.remove('hidden');
+            errors.forEach(msg => {
+                const div = document.createElement('div');
+                div.className = 'text-red-400';
+                div.textContent = `Error: ${msg}`;
+                list.appendChild(div);
+            });
+            warnings.forEach(msg => {
+                const div = document.createElement('div');
+                div.className = 'text-yellow-400';
+                div.textContent = `Warning: ${msg}`;
+                list.appendChild(div);
+            });
+        }
+    </script>
+</body>
+</html>
