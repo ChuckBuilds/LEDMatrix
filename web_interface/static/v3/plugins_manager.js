@@ -1682,15 +1682,13 @@ function startOnDemandStatusPolling() {
 
 window.loadOnDemandStatus = loadOnDemandStatus;
 
-function runUpdateAllPlugins() {
+async function runUpdateAllPlugins() {
     console.log('[runUpdateAllPlugins] Button clicked, checking for updates...');
     const button = document.getElementById('update-all-plugins-btn');
 
     if (!button) {
         if (typeof showNotification === 'function') {
             showNotification('Unable to locate bulk update controls. Refresh the Plugin Manager tab.', 'error');
-        } else {
-            console.error('update-all-plugins-btn element not found');
         }
         return;
     }
@@ -1699,12 +1697,9 @@ function runUpdateAllPlugins() {
         return;
     }
 
-    if (typeof window.updateAllPlugins !== 'function') {
-        if (typeof showNotification === 'function') {
-            showNotification('Bulk update handler unavailable. Refresh the Plugin Manager tab.', 'error');
-        } else {
-            console.error('window.updateAllPlugins is not defined');
-        }
+    const plugins = Array.isArray(window.installedPlugins) ? window.installedPlugins : [];
+    if (!plugins.length) {
+        showNotification('No installed plugins to update.', 'warning');
         return;
     }
 
@@ -1712,47 +1707,71 @@ function runUpdateAllPlugins() {
     button.dataset.running = 'true';
     button.disabled = true;
     button.classList.add('opacity-60', 'cursor-wait');
-    button.innerHTML = '<i class="fas fa-sync fa-spin mr-2"></i>Checking...';
 
-    const onProgress = (current, total, pluginId) => {
-        button.innerHTML = `<i class="fas fa-sync fa-spin mr-2"></i>Updating ${current}/${total}...`;
-    };
+    const results = [];
 
-    Promise.resolve(window.updateAllPlugins(onProgress))
-        .then(results => {
-            if (!results || !results.length) {
-                showNotification('No plugins to update.', 'info');
-                return;
-            }
-            let updated = 0, upToDate = 0, failed = 0;
-            for (const r of results) {
-                if (!r.success) {
-                    failed++;
-                } else if (r.result && r.result.message && r.result.message.includes('already up to date')) {
-                    upToDate++;
+    try {
+        for (let i = 0; i < plugins.length; i++) {
+            const plugin = plugins[i];
+            button.innerHTML = `<i class="fas fa-sync fa-spin mr-2"></i>Updating ${i + 1}/${plugins.length}...`;
+
+            try {
+                const response = await fetch(`/api/v3/plugins/update`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ plugin_id: plugin.id })
+                });
+                const data = await response.json();
+                if (data.status === 'success') {
+                    results.push({ pluginId: plugin.id, success: true, result: data.data || data });
                 } else {
-                    updated++;
+                    results.push({ pluginId: plugin.id, success: false, error: data.message || 'Unknown error' });
                 }
+            } catch (error) {
+                results.push({ pluginId: plugin.id, success: false, error: error.message });
             }
-            const parts = [];
-            if (updated > 0) parts.push(`${updated} updated`);
-            if (upToDate > 0) parts.push(`${upToDate} already up to date`);
-            if (failed > 0) parts.push(`${failed} failed`);
-            const type = failed > 0 ? (updated > 0 ? 'warning' : 'error') : 'success';
-            showNotification(parts.join(', '), type);
-        })
-        .catch(error => {
-            console.error('Error updating all plugins:', error);
-            if (typeof showNotification === 'function') {
-                showNotification('Error updating all plugins: ' + error.message, 'error');
+        }
+
+        let updated = 0, upToDate = 0, failed = 0;
+        for (const r of results) {
+            if (!r.success) {
+                failed++;
+            } else if (r.result && r.result.message && r.result.message.includes('already up to date')) {
+                upToDate++;
+            } else {
+                updated++;
             }
-        })
-        .finally(() => {
-            button.innerHTML = originalContent;
-            button.disabled = false;
-            button.classList.remove('opacity-60', 'cursor-wait');
-            button.dataset.running = 'false';
-        });
+        }
+
+        const parts = [];
+        if (updated > 0) parts.push(`${updated} updated`);
+        if (upToDate > 0) parts.push(`${upToDate} already up to date`);
+        if (failed > 0) parts.push(`${failed} failed`);
+        const type = failed > 0 ? (updated > 0 ? 'warning' : 'error') : 'success';
+        showNotification(parts.join(', '), type);
+
+        // Refresh plugin list after updates
+        if (updated > 0) {
+            const appComponent = window.Alpine
+                ? (() => { const el = document.querySelector('[x-data="app()"]'); return el && el._x_dataStack && el._x_dataStack[0]; })()
+                : null;
+            if (appComponent && typeof appComponent.loadInstalledPlugins === 'function') {
+                await appComponent.loadInstalledPlugins();
+            } else if (window.pluginManager && typeof window.pluginManager.loadInstalledPlugins === 'function') {
+                await window.pluginManager.loadInstalledPlugins();
+            } else {
+                loadInstalledPlugins(true);
+            }
+        }
+    } catch (error) {
+        console.error('Error updating all plugins:', error);
+        showNotification('Error updating all plugins: ' + error.message, 'error');
+    } finally {
+        button.innerHTML = originalContent;
+        button.disabled = false;
+        button.classList.remove('opacity-60', 'cursor-wait');
+        button.dataset.running = 'false';
+    }
 }
 
 // Initialize on-demand modal setup (runs unconditionally since modal is in base.html)

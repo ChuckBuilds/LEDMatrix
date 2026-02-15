@@ -92,12 +92,22 @@ const PluginInstallManager = {
         const plugins = window.PluginStateManager.installedPlugins;
         const results = [];
 
+        // Call the API endpoint directly to avoid per-plugin refreshes
         for (let i = 0; i < plugins.length; i++) {
             const plugin = plugins[i];
             if (onProgress) onProgress(i + 1, plugins.length, plugin.id);
             try {
-                const result = await window.PluginAPI.updatePlugin(plugin.id);
-                results.push({ pluginId: plugin.id, success: true, result });
+                const response = await fetch('/api/v3/plugins/update', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ plugin_id: plugin.id })
+                });
+                const data = await response.json();
+                if (data.status === 'success') {
+                    results.push({ pluginId: plugin.id, success: true, result: data.data || data });
+                } else {
+                    results.push({ pluginId: plugin.id, success: false, error: data.message || 'Unknown error' });
+                }
             } catch (error) {
                 results.push({ pluginId: plugin.id, success: false, error });
             }
@@ -117,6 +127,5 @@ if (typeof module !== 'undefined' && module.exports) {
     module.exports = PluginInstallManager;
 } else {
     window.PluginInstallManager = PluginInstallManager;
-    window.updateAllPlugins = (onProgress) => PluginInstallManager.updateAll(onProgress);
 }
 
