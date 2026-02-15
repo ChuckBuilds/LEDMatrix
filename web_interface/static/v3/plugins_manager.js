@@ -1712,9 +1712,35 @@ function runUpdateAllPlugins() {
     button.dataset.running = 'true';
     button.disabled = true;
     button.classList.add('opacity-60', 'cursor-wait');
-    button.innerHTML = '<i class="fas fa-sync fa-spin mr-2"></i>Updating...';
+    button.innerHTML = '<i class="fas fa-sync fa-spin mr-2"></i>Checking...';
 
-    Promise.resolve(window.updateAllPlugins())
+    const onProgress = (current, total, pluginId) => {
+        button.innerHTML = `<i class="fas fa-sync fa-spin mr-2"></i>Updating ${current}/${total}...`;
+    };
+
+    Promise.resolve(window.updateAllPlugins(onProgress))
+        .then(results => {
+            if (!results || !results.length) {
+                showNotification('No plugins to update.', 'info');
+                return;
+            }
+            let updated = 0, upToDate = 0, failed = 0;
+            for (const r of results) {
+                if (!r.success) {
+                    failed++;
+                } else if (r.result && r.result.message && r.result.message.includes('already up to date')) {
+                    upToDate++;
+                } else {
+                    updated++;
+                }
+            }
+            const parts = [];
+            if (updated > 0) parts.push(`${updated} updated`);
+            if (upToDate > 0) parts.push(`${upToDate} already up to date`);
+            if (failed > 0) parts.push(`${failed} failed`);
+            const type = failed > 0 ? (updated > 0 ? 'warning' : 'error') : 'success';
+            showNotification(parts.join(', '), type);
+        })
         .catch(error => {
             console.error('Error updating all plugins:', error);
             if (typeof showNotification === 'function') {
