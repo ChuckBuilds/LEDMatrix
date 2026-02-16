@@ -870,7 +870,7 @@ window.currentPluginConfig = null;
         filterNew: false,
         filterInstalled: null,   // null = all, true = installed only, false = not installed only
         filterAuthors: [],
-        filterTags: [],
+        filterCategories: [],
 
         persist() {
             localStorage.setItem('storeSort', this.sort);
@@ -882,7 +882,7 @@ window.currentPluginConfig = null;
             this.filterNew = false;
             this.filterInstalled = null;
             this.filterAuthors = [];
-            this.filterTags = [];
+            this.filterCategories = [];
             this.persist();
         },
 
@@ -892,7 +892,7 @@ window.currentPluginConfig = null;
             if (this.filterNew) count++;
             if (this.filterInstalled !== null) count++;
             count += this.filterAuthors.length;
-            count += this.filterTags.length;
+            count += this.filterCategories.length;
             return count;
         }
     };
@@ -5191,19 +5191,20 @@ function setupStoreFilterListeners() {
     }
 
     // Tag pills (event delegation on container)
-    const tagsPills = document.getElementById('filter-tags-pills');
-    if (tagsPills && !tagsPills._listenerSetup) {
-        tagsPills._listenerSetup = true;
-        tagsPills.addEventListener('click', (e) => {
-            const pill = e.target.closest('.tag-filter-pill');
+    // Category pills (event delegation on container)
+    const catsPills = document.getElementById('filter-categories-pills');
+    if (catsPills && !catsPills._listenerSetup) {
+        catsPills._listenerSetup = true;
+        catsPills.addEventListener('click', (e) => {
+            const pill = e.target.closest('.category-filter-pill');
             if (!pill) return;
-            const tag = pill.dataset.tag;
-            const idx = storeFilterState.filterTags.indexOf(tag);
+            const cat = pill.dataset.category;
+            const idx = storeFilterState.filterCategories.indexOf(cat);
             if (idx >= 0) {
-                storeFilterState.filterTags.splice(idx, 1);
+                storeFilterState.filterCategories.splice(idx, 1);
                 pill.dataset.active = 'false';
             } else {
-                storeFilterState.filterTags.push(tag);
+                storeFilterState.filterCategories.push(cat);
                 pill.dataset.active = 'true';
             }
             applyStoreFiltersAndSort();
@@ -5233,7 +5234,7 @@ function setupStoreFilterListeners() {
             }
             const auth = document.getElementById('filter-author');
             if (auth) auth.value = '';
-            document.querySelectorAll('.tag-filter-pill').forEach(p => {
+            document.querySelectorAll('.category-filter-pill').forEach(p => {
                 p.dataset.active = 'false';
             });
             applyStoreFiltersAndSort();
@@ -5265,11 +5266,9 @@ function applyStoreFiltersAndSort() {
         const authorSet = new Set(storeFilterState.filterAuthors);
         plugins = plugins.filter(p => authorSet.has(p.author));
     }
-    if (storeFilterState.filterTags.length > 0) {
-        const tagSet = new Set(storeFilterState.filterTags);
-        plugins = plugins.filter(p =>
-            p.tags && p.tags.some(t => tagSet.has(t))
-        );
+    if (storeFilterState.filterCategories.length > 0) {
+        const catSet = new Set(storeFilterState.filterCategories);
+        plugins = plugins.filter(p => catSet.has(p.category));
     }
 
     // Apply sort
@@ -5289,8 +5288,9 @@ function applyStoreFiltersAndSort() {
             break;
         case 'newest':
             plugins.sort((a, b) => {
-                const dateA = a.last_updated_iso || a.last_updated || '';
-                const dateB = b.last_updated_iso || b.last_updated || '';
+                // Prefer static per-plugin last_updated over GitHub pushed_at (which is repo-wide)
+                const dateA = a.last_updated || a.last_updated_iso || '';
+                const dateB = b.last_updated || b.last_updated_iso || '';
                 return dateB.localeCompare(dateA);
             });
             break;
@@ -5332,19 +5332,17 @@ function populateFilterControls() {
         authorSelect.value = currentVal;
     }
 
-    // Collect unique tags sorted by frequency (most common first)
-    const tagCounts = {};
-    pluginStoreCache.forEach(p => {
-        (p.tags || []).forEach(t => { tagCounts[t] = (tagCounts[t] || 0) + 1; });
-    });
-    const tags = Object.keys(tagCounts).sort((a, b) => tagCounts[b] - tagCounts[a]);
+    // Collect unique categories sorted alphabetically
+    const categories = [...new Set(
+        pluginStoreCache.map(p => p.category).filter(Boolean)
+    )].sort();
 
-    const tagsContainer = document.getElementById('filter-tags-container');
-    const tagsPills = document.getElementById('filter-tags-pills');
-    if (tagsContainer && tagsPills && tags.length > 0) {
-        tagsContainer.classList.remove('hidden');
-        tagsPills.innerHTML = tags.map(tag =>
-            `<button class="tag-filter-pill badge badge-info cursor-pointer" data-tag="${escapeHtml(tag)}" data-active="${storeFilterState.filterTags.includes(tag)}">${escapeHtml(tag)}</button>`
+    const catsContainer = document.getElementById('filter-categories-container');
+    const catsPills = document.getElementById('filter-categories-pills');
+    if (catsContainer && catsPills && categories.length > 0) {
+        catsContainer.classList.remove('hidden');
+        catsPills.innerHTML = categories.map(cat =>
+            `<button class="category-filter-pill badge badge-info cursor-pointer" data-category="${escapeHtml(cat)}" data-active="${storeFilterState.filterCategories.includes(cat)}">${escapeHtml(cat)}</button>`
         ).join('');
     }
 }

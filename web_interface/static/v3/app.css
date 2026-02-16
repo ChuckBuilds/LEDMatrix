@@ -684,14 +684,14 @@ button.bg-white {
     opacity: 0.85;
 }
 
-/* Tag Filter Pills */
-.tag-filter-pill {
+/* Category Filter Pills */
+.category-filter-pill {
     cursor: pointer;
     user-select: none;
     transition: all 0.15s ease;
 }
 
-.tag-filter-pill[data-active="true"] {
+.category-filter-pill[data-active="true"] {
     background-color: var(--color-info-bg);
     border-color: var(--color-info);
     color: var(--color-info);
