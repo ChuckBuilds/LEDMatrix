@@ -5127,16 +5127,20 @@ function restartDisplay() {
 // --- Store Filter/Sort Functions ---
 
 function setupStoreFilterListeners() {
+    console.log('[FILTER SETUP] setupStoreFilterListeners() called');
     // Sort dropdown
     const sortSelect = document.getElementById('store-sort');
+    console.log('[FILTER SETUP] store-sort element:', !!sortSelect, 'listenerSetup:', sortSelect?._listenerSetup);
     if (sortSelect && !sortSelect._listenerSetup) {
         sortSelect._listenerSetup = true;
         sortSelect.value = storeFilterState.sort;
         sortSelect.addEventListener('change', () => {
+            console.log('[FILTER] Sort changed to:', sortSelect.value, 'cache:', !!pluginStoreCache);
             storeFilterState.sort = sortSelect.value;
             storeFilterState.persist();
             applyStoreFiltersAndSort();
         });
+        console.log('[FILTER SETUP] Sort listener attached');
     }
 
     // Verified filter toggle
@@ -5193,9 +5197,11 @@ function setupStoreFilterListeners() {
     // Tag pills (event delegation on container)
     // Category pills (event delegation on container)
     const catsPills = document.getElementById('filter-categories-pills');
+    console.log('[FILTER SETUP] filter-categories-pills element:', catsPills, 'listenerSetup:', catsPills?._listenerSetup);
     if (catsPills && !catsPills._listenerSetup) {
         catsPills._listenerSetup = true;
         catsPills.addEventListener('click', (e) => {
+            console.log('[FILTER] Category pill click, target:', e.target, 'closest:', e.target.closest('.category-filter-pill'));
             const pill = e.target.closest('.category-filter-pill');
             if (!pill) return;
             const cat = pill.dataset.category;
@@ -5207,8 +5213,10 @@ function setupStoreFilterListeners() {
                 storeFilterState.filterCategories.push(cat);
                 pill.dataset.active = 'true';
             }
+            console.log('[FILTER] Categories now:', storeFilterState.filterCategories, 'cache size:', pluginStoreCache?.length);
             applyStoreFiltersAndSort();
         });
+        console.log('[FILTER SETUP] Category pill listener attached');
     }
 
     // Clear filters button
@@ -5243,7 +5251,8 @@ function setupStoreFilterListeners() {
 }
 
 function applyStoreFiltersAndSort() {
-    if (!pluginStoreCache) return;
+    console.log('[FILTER] applyStoreFiltersAndSort called, cache:', pluginStoreCache?.length, 'state:', JSON.stringify(storeFilterState));
+    if (!pluginStoreCache) { console.log('[FILTER] No cache, returning'); return; }
 
     let plugins = [...pluginStoreCache];
     const installedIds = new Set(
