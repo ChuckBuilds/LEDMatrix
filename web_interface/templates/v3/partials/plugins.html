@@ -165,6 +165,68 @@
                     </button>
                 </div>
             </div>
+
+            <!-- Sort & Filter Controls -->
+            <div id="store-filter-bar" class="mb-4 space-y-3">
+                <!-- Row 1: Sort + Quick Filters -->
+                <div class="flex flex-wrap items-center gap-3">
+                    <!-- Sort Dropdown -->
+                    <div class="flex items-center gap-2">
+                        <label for="store-sort" class="text-sm font-medium text-gray-700 whitespace-nowrap">
+                            <i class="fas fa-sort mr-1"></i>Sort:
+                        </label>
+                        <select id="store-sort" class="text-sm px-3 py-1.5 border border-gray-300 rounded-lg shadow-sm focus:ring-blue-500 focus:border-blue-500">
+                            <option value="a-z">A &rarr; Z</option>
+                            <option value="z-a">Z &rarr; A</option>
+                            <option value="verified">Verified First</option>
+                            <option value="newest">Recently Updated</option>
+                            <option value="category">Category</option>
+                        </select>
+                    </div>
+
+                    <!-- Divider -->
+                    <div class="h-6 w-px bg-gray-300"></div>
+
+                    <!-- Quick Filter Toggles -->
+                    <div class="flex items-center gap-2 flex-wrap">
+                        <span class="text-sm font-medium text-gray-700">Filter:</span>
+                        <button id="filter-verified" type="button" class="filter-pill text-xs px-3 py-1.5 rounded-full border border-gray-300 bg-white hover:bg-gray-50 transition-colors" data-active="false">
+                            <i class="fas fa-check-circle mr-1"></i>Verified
+                        </button>
+                        <button id="filter-new" type="button" class="filter-pill text-xs px-3 py-1.5 rounded-full border border-gray-300 bg-white hover:bg-gray-50 transition-colors" data-active="false">
+                            <i class="fas fa-sparkles mr-1"></i>New
+                        </button>
+                        <button id="filter-installed" type="button" class="filter-pill text-xs px-3 py-1.5 rounded-full border border-gray-300 bg-white hover:bg-gray-50 transition-colors" data-active="false">
+                            <i class="fas fa-download mr-1"></i><span>All</span>
+                        </button>
+                    </div>
+
+                    <!-- Divider -->
+                    <div class="h-6 w-px bg-gray-300"></div>
+
+                    <!-- Author Dropdown -->
+                    <select id="filter-author" class="text-sm px-3 py-1.5 border border-gray-300 rounded-lg shadow-sm focus:ring-blue-500 focus:border-blue-500">
+                        <option value="">All Authors</option>
+                    </select>
+
+                    <!-- Clear Filters + Badge -->
+                    <button id="clear-filters-btn" type="button" class="hidden text-xs px-3 py-1.5 rounded-full bg-red-100 text-red-700 hover:bg-red-200 transition-colors font-medium">
+                        <i class="fas fa-times mr-1"></i>Clear Filters
+                        <span id="filter-count-badge" class="ml-1 inline-flex items-center justify-center bg-red-600 text-white rounded-full w-5 h-5 text-xs font-bold">0</span>
+                    </button>
+                </div>
+
+                <!-- Row 2: Tag Pills (populated dynamically) -->
+                <div id="filter-tags-container" class="hidden">
+                    <div class="flex items-center gap-2 flex-wrap">
+                        <span class="text-xs font-medium text-gray-600 whitespace-nowrap">Tags:</span>
+                        <div id="filter-tags-pills" class="flex flex-wrap gap-1.5">
+                            <!-- Dynamically populated tag pills -->
+                        </div>
+                    </div>
+                </div>
+            </div>
+
             <div id="plugin-store-grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-6">
                 <!-- Loading skeleton -->
                 <div class="store-loading col-span-full">

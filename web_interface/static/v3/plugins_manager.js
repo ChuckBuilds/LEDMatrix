@@ -863,6 +863,40 @@ window.currentPluginConfig = null;
     let currentOnDemandPluginId = null;
     let hasLoadedOnDemandStatus = false;
 
+    // Store filter/sort state
+    const storeFilterState = {
+        sort: localStorage.getItem('storeSort') || 'a-z',
+        filterVerified: false,
+        filterNew: false,
+        filterInstalled: null,   // null = all, true = installed only, false = not installed only
+        filterAuthors: [],
+        filterTags: [],
+
+        persist() {
+            localStorage.setItem('storeSort', this.sort);
+        },
+
+        reset() {
+            this.sort = 'a-z';
+            this.filterVerified = false;
+            this.filterNew = false;
+            this.filterInstalled = null;
+            this.filterAuthors = [];
+            this.filterTags = [];
+            this.persist();
+        },
+
+        activeCount() {
+            let count = 0;
+            if (this.filterVerified) count++;
+            if (this.filterNew) count++;
+            if (this.filterInstalled !== null) count++;
+            count += this.filterAuthors.length;
+            count += this.filterTags.length;
+            return count;
+        }
+    };
+
     // Shared on-demand status store (mirrors Alpine store when available)
     window.__onDemandStore = window.__onDemandStore || {
         loading: true,
@@ -1105,13 +1139,15 @@ function initializePluginPageWhenReady() {
         document.body.addEventListener('htmx:afterSwap', function(event) {
             const target = event.detail.target;
             // Check if plugins content was swapped in
-            if (target.id === 'plugins-content' || 
-                target.querySelector('#installed-plugins-grid') ||
-                document.getElementById('installed-plugins-grid')) {
+            if (target.id === 'plugins-content' ||
+                target.querySelector('[data-plugins-loaded]')) {
                 console.log('HTMX swap detected for plugins, initializing...');
-                // Reset initialization flag to allow re-initialization after HTMX swap
+                // Reset initialization flags to allow re-initialization after HTMX swap
                 window.pluginManager.initialized = false;
                 window.pluginManager.initializing = false;
+                pluginsInitialized = false;
+                pluginLoadCache.data = null;
+                pluginLoadCache.promise = null;
                 initTimer = setTimeout(attemptInit, 100);
             }
         }, { once: false }); // Allow multiple swaps
@@ -1172,7 +1208,10 @@ function initializePlugins() {
         categorySelect._listenerSetup = true;
         categorySelect.addEventListener('change', searchPluginStore);
     }
-    
+
+    // Setup store sort/filter controls
+    setupStoreFilterListeners();
+
     // Setup GitHub installation handlers
     console.log('[initializePlugins] About to call setupGitHubInstallHandlers...');
     if (typeof setupGitHubInstallHandlers === 'function') {
@@ -1682,6 +1721,8 @@ function startOnDemandStatusPolling() {
 
 window.loadOnDemandStatus = loadOnDemandStatus;
 
+let updateAllRunning = false;
+
 async function runUpdateAllPlugins() {
     console.log('[runUpdateAllPlugins] Button clicked, checking for updates...');
     const button = document.getElementById('update-all-plugins-btn');
@@ -1691,7 +1732,7 @@ async function runUpdateAllPlugins() {
         return;
     }
 
-    if (button.dataset.running === 'true') {
+    if (updateAllRunning) {
         return;
     }
 
@@ -1702,7 +1743,7 @@ async function runUpdateAllPlugins() {
     }
 
     const originalContent = button.innerHTML;
-    button.dataset.running = 'true';
+    updateAllRunning = true;
     button.disabled = true;
     button.classList.add('opacity-60', 'cursor-wait');
 
@@ -1712,7 +1753,11 @@ async function runUpdateAllPlugins() {
         for (let i = 0; i < plugins.length; i++) {
             const plugin = plugins[i];
             const pluginId = plugin.id;
-            button.innerHTML = `<i class="fas fa-sync fa-spin mr-2"></i>Updating ${i + 1}/${plugins.length}...`;
+            // Re-fetch button in case DOM was replaced by HTMX swap
+            const btn = document.getElementById('update-all-plugins-btn');
+            if (btn) {
+                btn.innerHTML = `<i class="fas fa-sync fa-spin mr-2"></i>Updating ${i + 1}/${plugins.length}...`;
+            }
 
             try {
                 const response = await fetch('/api/v3/plugins/update', {
@@ -1752,10 +1797,13 @@ async function runUpdateAllPlugins() {
         console.error('Bulk plugin update failed:', error);
         showNotification('Failed to update all plugins: ' + error.message, 'error');
     } finally {
-        button.innerHTML = originalContent;
-        button.disabled = false;
-        button.classList.remove('opacity-60', 'cursor-wait');
-        button.dataset.running = 'false';
+        updateAllRunning = false;
+        const btn = document.getElementById('update-all-plugins-btn');
+        if (btn) {
+            btn.innerHTML = originalContent;
+            btn.disabled = false;
+            btn.classList.remove('opacity-60', 'cursor-wait');
+        }
     }
 }
 
@@ -5076,6 +5124,243 @@ function restartDisplay() {
     });
 }
 
+// --- Store Filter/Sort Functions ---
+
+function setupStoreFilterListeners() {
+    // Sort dropdown
+    const sortSelect = document.getElementById('store-sort');
+    if (sortSelect && !sortSelect._listenerSetup) {
+        sortSelect._listenerSetup = true;
+        sortSelect.value = storeFilterState.sort;
+        sortSelect.addEventListener('change', () => {
+            storeFilterState.sort = sortSelect.value;
+            storeFilterState.persist();
+            applyStoreFiltersAndSort();
+        });
+    }
+
+    // Verified filter toggle
+    const verifiedBtn = document.getElementById('filter-verified');
+    if (verifiedBtn && !verifiedBtn._listenerSetup) {
+        verifiedBtn._listenerSetup = true;
+        verifiedBtn.addEventListener('click', () => {
+            storeFilterState.filterVerified = !storeFilterState.filterVerified;
+            verifiedBtn.dataset.active = storeFilterState.filterVerified;
+            applyStoreFiltersAndSort();
+        });
+    }
+
+    // New filter toggle
+    const newBtn = document.getElementById('filter-new');
+    if (newBtn && !newBtn._listenerSetup) {
+        newBtn._listenerSetup = true;
+        newBtn.addEventListener('click', () => {
+            storeFilterState.filterNew = !storeFilterState.filterNew;
+            newBtn.dataset.active = storeFilterState.filterNew;
+            applyStoreFiltersAndSort();
+        });
+    }
+
+    // Installed filter (cycles: All -> Installed -> Not Installed -> All)
+    const installedBtn = document.getElementById('filter-installed');
+    if (installedBtn && !installedBtn._listenerSetup) {
+        installedBtn._listenerSetup = true;
+        installedBtn.addEventListener('click', () => {
+            const states = [null, true, false];
+            const labels = ['All', 'Installed', 'Not Installed'];
+            const icons = ['fa-download', 'fa-check', 'fa-times'];
+            const current = states.indexOf(storeFilterState.filterInstalled);
+            const next = (current + 1) % states.length;
+            storeFilterState.filterInstalled = states[next];
+            installedBtn.querySelector('span').textContent = labels[next];
+            installedBtn.querySelector('i').className = `fas ${icons[next]} mr-1`;
+            installedBtn.dataset.active = String(states[next] !== null);
+            applyStoreFiltersAndSort();
+        });
+    }
+
+    // Author dropdown
+    const authorSelect = document.getElementById('filter-author');
+    if (authorSelect && !authorSelect._listenerSetup) {
+        authorSelect._listenerSetup = true;
+        authorSelect.addEventListener('change', () => {
+            storeFilterState.filterAuthors = authorSelect.value
+                ? [authorSelect.value] : [];
+            applyStoreFiltersAndSort();
+        });
+    }
+
+    // Tag pills (event delegation on container)
+    const tagsPills = document.getElementById('filter-tags-pills');
+    if (tagsPills && !tagsPills._listenerSetup) {
+        tagsPills._listenerSetup = true;
+        tagsPills.addEventListener('click', (e) => {
+            const pill = e.target.closest('.tag-filter-pill');
+            if (!pill) return;
+            const tag = pill.dataset.tag;
+            const idx = storeFilterState.filterTags.indexOf(tag);
+            if (idx >= 0) {
+                storeFilterState.filterTags.splice(idx, 1);
+                pill.dataset.active = 'false';
+            } else {
+                storeFilterState.filterTags.push(tag);
+                pill.dataset.active = 'true';
+            }
+            applyStoreFiltersAndSort();
+        });
+    }
+
+    // Clear filters button
+    const clearBtn = document.getElementById('clear-filters-btn');
+    if (clearBtn && !clearBtn._listenerSetup) {
+        clearBtn._listenerSetup = true;
+        clearBtn.addEventListener('click', () => {
+            storeFilterState.reset();
+            // Reset all UI elements
+            const sort = document.getElementById('store-sort');
+            if (sort) sort.value = 'a-z';
+            const vBtn = document.getElementById('filter-verified');
+            if (vBtn) vBtn.dataset.active = 'false';
+            const nBtn = document.getElementById('filter-new');
+            if (nBtn) nBtn.dataset.active = 'false';
+            const iBtn = document.getElementById('filter-installed');
+            if (iBtn) {
+                iBtn.dataset.active = 'false';
+                const span = iBtn.querySelector('span');
+                if (span) span.textContent = 'All';
+                const icon = iBtn.querySelector('i');
+                if (icon) icon.className = 'fas fa-download mr-1';
+            }
+            const auth = document.getElementById('filter-author');
+            if (auth) auth.value = '';
+            document.querySelectorAll('.tag-filter-pill').forEach(p => {
+                p.dataset.active = 'false';
+            });
+            applyStoreFiltersAndSort();
+        });
+    }
+}
+
+function applyStoreFiltersAndSort() {
+    if (!pluginStoreCache) return;
+
+    let plugins = [...pluginStoreCache];
+    const installedIds = new Set(
+        (window.installedPlugins || []).map(p => p.id)
+    );
+
+    // Apply filters
+    if (storeFilterState.filterVerified) {
+        plugins = plugins.filter(p => p.verified);
+    }
+    if (storeFilterState.filterNew) {
+        plugins = plugins.filter(p => isNewPlugin(p.last_updated));
+    }
+    if (storeFilterState.filterInstalled === true) {
+        plugins = plugins.filter(p => installedIds.has(p.id));
+    } else if (storeFilterState.filterInstalled === false) {
+        plugins = plugins.filter(p => !installedIds.has(p.id));
+    }
+    if (storeFilterState.filterAuthors.length > 0) {
+        const authorSet = new Set(storeFilterState.filterAuthors);
+        plugins = plugins.filter(p => authorSet.has(p.author));
+    }
+    if (storeFilterState.filterTags.length > 0) {
+        const tagSet = new Set(storeFilterState.filterTags);
+        plugins = plugins.filter(p =>
+            p.tags && p.tags.some(t => tagSet.has(t))
+        );
+    }
+
+    // Apply sort
+    switch (storeFilterState.sort) {
+        case 'a-z':
+            plugins.sort((a, b) =>
+                (a.name || a.id).localeCompare(b.name || b.id));
+            break;
+        case 'z-a':
+            plugins.sort((a, b) =>
+                (b.name || b.id).localeCompare(a.name || a.id));
+            break;
+        case 'verified':
+            plugins.sort((a, b) =>
+                (b.verified ? 1 : 0) - (a.verified ? 1 : 0) ||
+                (a.name || a.id).localeCompare(b.name || b.id));
+            break;
+        case 'newest':
+            plugins.sort((a, b) => {
+                const dateA = a.last_updated_iso || a.last_updated || '';
+                const dateB = b.last_updated_iso || b.last_updated || '';
+                return dateB.localeCompare(dateA);
+            });
+            break;
+        case 'category':
+            plugins.sort((a, b) =>
+                (a.category || '').localeCompare(b.category || '') ||
+                (a.name || a.id).localeCompare(b.name || b.id));
+            break;
+    }
+
+    renderPluginStore(plugins);
+
+    // Update result count
+    const countEl = document.getElementById('store-count');
+    if (countEl) {
+        const total = pluginStoreCache.length;
+        const shown = plugins.length;
+        countEl.innerHTML = shown < total
+            ? `${shown} of ${total} shown`
+            : `${total} available`;
+    }
+
+    updateFilterCountBadge();
+}
+
+function populateFilterControls() {
+    if (!pluginStoreCache) return;
+
+    // Collect unique authors
+    const authors = [...new Set(
+        pluginStoreCache.map(p => p.author).filter(Boolean)
+    )].sort();
+
+    const authorSelect = document.getElementById('filter-author');
+    if (authorSelect) {
+        const currentVal = authorSelect.value;
+        authorSelect.innerHTML = '<option value="">All Authors</option>' +
+            authors.map(a => `<option value="${escapeHtml(a)}">${escapeHtml(a)}</option>`).join('');
+        authorSelect.value = currentVal;
+    }
+
+    // Collect unique tags sorted by frequency (most common first)
+    const tagCounts = {};
+    pluginStoreCache.forEach(p => {
+        (p.tags || []).forEach(t => { tagCounts[t] = (tagCounts[t] || 0) + 1; });
+    });
+    const tags = Object.keys(tagCounts).sort((a, b) => tagCounts[b] - tagCounts[a]);
+
+    const tagsContainer = document.getElementById('filter-tags-container');
+    const tagsPills = document.getElementById('filter-tags-pills');
+    if (tagsContainer && tagsPills && tags.length > 0) {
+        tagsContainer.classList.remove('hidden');
+        tagsPills.innerHTML = tags.map(tag =>
+            `<button class="tag-filter-pill badge badge-info cursor-pointer" data-tag="${escapeHtml(tag)}" data-active="${storeFilterState.filterTags.includes(tag)}">${escapeHtml(tag)}</button>`
+        ).join('');
+    }
+}
+
+function updateFilterCountBadge() {
+    const count = storeFilterState.activeCount();
+    const clearBtn = document.getElementById('clear-filters-btn');
+    const badge = document.getElementById('filter-count-badge');
+    if (clearBtn) {
+        clearBtn.classList.toggle('hidden', count === 0);
+    }
+    if (badge) {
+        badge.textContent = count;
+    }
+}
+
 function searchPluginStore(fetchCommitInfo = true) {
     pluginLog('[STORE] Searching plugin store...', { fetchCommitInfo });
     
@@ -5100,15 +5385,7 @@ function searchPluginStore(fetchCommitInfo = true) {
             console.error('plugin-store-grid element not found, cannot render cached plugins');
             // Don't return, let it fetch fresh data
         } else {
-            renderPluginStore(pluginStoreCache);
-            try {
-                const countEl = document.getElementById('store-count');
-                if (countEl) {
-                    countEl.innerHTML = `${pluginStoreCache.length} available`;
-                }
-            } catch (e) {
-                console.warn('Could not update store count:', e);
-            }
+            applyStoreFiltersAndSort();
             return;
         }
     }
@@ -5158,8 +5435,9 @@ function searchPluginStore(fetchCommitInfo = true) {
                     pluginStoreCache = plugins;
                     cacheTimestamp = Date.now();
                     console.log('Cached plugin store data');
+                    populateFilterControls();
                 }
-                
+
                 // Ensure plugin store grid exists before rendering
                 const storeGrid = document.getElementById('plugin-store-grid');
                 if (!storeGrid) {
@@ -5168,17 +5446,20 @@ function searchPluginStore(fetchCommitInfo = true) {
                     window.__pendingStorePlugins = plugins;
                     return;
                 }
-                
-                renderPluginStore(plugins);
 
-                // Update count - safely check element exists
-                try {
-                    const countEl = document.getElementById('store-count');
-                    if (countEl) {
-                        countEl.innerHTML = `${plugins.length} available`;
+                // Route through filter/sort pipeline if cache is available, otherwise render directly
+                if (pluginStoreCache) {
+                    applyStoreFiltersAndSort();
+                } else {
+                    renderPluginStore(plugins);
+                    try {
+                        const countEl = document.getElementById('store-count');
+                        if (countEl) {
+                            countEl.innerHTML = `${plugins.length} available`;
+                        }
+                    } catch (e) {
+                        console.warn('Could not update store count:', e);
                     }
-                } catch (e) {
-                    console.warn('Could not update store count:', e);
                 }
                 
                 // Ensure GitHub token collapse handler is attached after store is rendered
@@ -5279,7 +5560,17 @@ function renderPluginStore(plugins) {
         return JSON.stringify(text || '');
     };
 
-    container.innerHTML = plugins.map(plugin => `
+    // Build installed lookup for badges
+    const installedMap = new Map();
+    (window.installedPlugins || []).forEach(p => {
+        installedMap.set(p.id, p.version || '');
+    });
+
+    container.innerHTML = plugins.map(plugin => {
+        const isInstalled = installedMap.has(plugin.id);
+        const installedVersion = installedMap.get(plugin.id);
+        const hasUpdate = isInstalled && plugin.version && installedVersion && plugin.version !== installedVersion;
+        return `
         <div class="plugin-card">
             <div class="flex items-start justify-between mb-4">
                 <div class="flex-1 min-w-0">
@@ -5287,6 +5578,8 @@ function renderPluginStore(plugins) {
                         <h4 class="font-semibold text-gray-900 text-base">${escapeHtml(plugin.name || plugin.id)}</h4>
                         ${plugin.verified ? '<span class="badge badge-success"><i class="fas fa-check-circle mr-1"></i>Verified</span>' : ''}
                         ${isNewPlugin(plugin.last_updated) ? '<span class="badge badge-info"><i class="fas fa-sparkles mr-1"></i>New</span>' : ''}
+                        ${isInstalled ? '<span class="badge badge-success"><i class="fas fa-check mr-1"></i>Installed</span>' : ''}
+                        ${hasUpdate ? '<span class="badge badge-warning"><i class="fas fa-arrow-up mr-1"></i>Update</span>' : ''}
                         ${plugin._source === 'custom_repository' ? `<span class="badge badge-accent" title="From: ${escapeHtml(plugin._repository_name || plugin._repository_url || 'Custom Repository')}"><i class="fas fa-bookmark mr-1"></i>Custom</span>` : ''}
                     </div>
                     <div class="text-sm text-gray-600 space-y-1.5 mb-3">
@@ -5325,7 +5618,8 @@ function renderPluginStore(plugins) {
                 </div>
             </div>
         </div>
-    `).join('');
+    `;
+    }).join('');
 }
 
 // Expose functions to window for onclick handlers
