@@ -897,6 +897,9 @@ window.currentPluginConfig = null;
         }
     };
 
+    // Installed plugins sort state
+    let installedSort = localStorage.getItem('installedSort') || 'a-z';
+
     // Shared on-demand status store (mirrors Alpine store when available)
     window.__onDemandStore = window.__onDemandStore || {
         loading: true,
@@ -1010,7 +1013,7 @@ window.initPluginsPage = function() {
     // If we fetched data before the DOM existed, render it now
     if (window.__pendingInstalledPlugins) {
         console.log('[RENDER] Applying pending installed plugins data');
-        renderInstalledPlugins(window.__pendingInstalledPlugins);
+        sortAndRenderInstalledPlugins(window.__pendingInstalledPlugins);
         window.__pendingInstalledPlugins = null;
     }
     if (window.__pendingStorePlugins) {
@@ -1266,7 +1269,7 @@ function loadInstalledPlugins(forceRefresh = false) {
         }));
         pluginLog('[CACHE] Dispatched pluginsUpdated event from cache');
         // Still render to ensure UI is updated
-        renderInstalledPlugins(pluginLoadCache.data);
+        sortAndRenderInstalledPlugins(pluginLoadCache.data);
         return Promise.resolve(pluginLoadCache.data);
     }
 
@@ -1325,7 +1328,7 @@ function loadInstalledPlugins(forceRefresh = false) {
                     });
                 }
                 
-                renderInstalledPlugins(installedPlugins);
+                sortAndRenderInstalledPlugins(installedPlugins);
 
                 // Update count
                 const countEl = document.getElementById('installed-count');
@@ -1365,6 +1368,24 @@ function refreshInstalledPlugins() {
 // Expose loadInstalledPlugins on window.pluginManager for Alpine.js integration
 window.pluginManager.loadInstalledPlugins = loadInstalledPlugins;
 // Note: searchPluginStore will be exposed after its definition (see below)
+
+function sortAndRenderInstalledPlugins(plugins) {
+    const sorted = [...plugins].sort((a, b) => {
+        const nameA = (a.name || a.id || '').toLowerCase();
+        const nameB = (b.name || b.id || '').toLowerCase();
+        switch (installedSort) {
+            case 'z-a':
+                return nameB.localeCompare(nameA);
+            case 'enabled':
+                if (a.enabled !== b.enabled) return a.enabled ? -1 : 1;
+                return nameA.localeCompare(nameB);
+            case 'a-z':
+            default:
+                return nameA.localeCompare(nameB);
+        }
+    });
+    renderInstalledPlugins(sorted);
+}
 
 function renderInstalledPlugins(plugins) {
     const container = document.getElementById('installed-plugins-grid');
@@ -5085,7 +5106,7 @@ function handleUninstallSuccess(pluginId) {
     if (typeof installedPlugins !== 'undefined') {
         installedPlugins = updatedPlugins;
     }
-    renderInstalledPlugins(updatedPlugins);
+    sortAndRenderInstalledPlugins(updatedPlugins);
     showNotification(`Plugin uninstalled successfully`, 'success');
 
     // Also refresh from server to ensure consistency
@@ -5127,20 +5148,16 @@ function restartDisplay() {
 // --- Store Filter/Sort Functions ---
 
 function setupStoreFilterListeners() {
-    console.log('[FILTER SETUP] setupStoreFilterListeners() called');
     // Sort dropdown
     const sortSelect = document.getElementById('store-sort');
-    console.log('[FILTER SETUP] store-sort element:', !!sortSelect, 'listenerSetup:', sortSelect?._listenerSetup);
     if (sortSelect && !sortSelect._listenerSetup) {
         sortSelect._listenerSetup = true;
         sortSelect.value = storeFilterState.sort;
         sortSelect.addEventListener('change', () => {
-            console.log('[FILTER] Sort changed to:', sortSelect.value, 'cache:', !!pluginStoreCache);
             storeFilterState.sort = sortSelect.value;
             storeFilterState.persist();
             applyStoreFiltersAndSort();
         });
-        console.log('[FILTER SETUP] Sort listener attached');
     }
 
     // Verified filter toggle
@@ -5197,11 +5214,9 @@ function setupStoreFilterListeners() {
     // Tag pills (event delegation on container)
     // Category pills (event delegation on container)
     const catsPills = document.getElementById('filter-categories-pills');
-    console.log('[FILTER SETUP] filter-categories-pills element:', catsPills, 'listenerSetup:', catsPills?._listenerSetup);
     if (catsPills && !catsPills._listenerSetup) {
         catsPills._listenerSetup = true;
         catsPills.addEventListener('click', (e) => {
-            console.log('[FILTER] Category pill click, target:', e.target, 'closest:', e.target.closest('.category-filter-pill'));
             const pill = e.target.closest('.category-filter-pill');
             if (!pill) return;
             const cat = pill.dataset.category;
@@ -5213,10 +5228,8 @@ function setupStoreFilterListeners() {
                 storeFilterState.filterCategories.push(cat);
                 pill.dataset.active = 'true';
             }
-            console.log('[FILTER] Categories now:', storeFilterState.filterCategories, 'cache size:', pluginStoreCache?.length);
             applyStoreFiltersAndSort();
         });
-        console.log('[FILTER SETUP] Category pill listener attached');
     }
 
     // Clear filters button
@@ -5248,11 +5261,25 @@ function setupStoreFilterListeners() {
             applyStoreFiltersAndSort();
         });
     }
+
+    // Installed plugins sort dropdown
+    const installedSortSelect = document.getElementById('installed-sort');
+    if (installedSortSelect && !installedSortSelect._listenerSetup) {
+        installedSortSelect._listenerSetup = true;
+        installedSortSelect.value = installedSort;
+        installedSortSelect.addEventListener('change', () => {
+            installedSort = installedSortSelect.value;
+            localStorage.setItem('installedSort', installedSort);
+            const plugins = window.installedPlugins || [];
+            if (plugins.length > 0) {
+                sortAndRenderInstalledPlugins(plugins);
+            }
+        });
+    }
 }
 
 function applyStoreFiltersAndSort() {
-    console.log('[FILTER] applyStoreFiltersAndSort called, cache:', pluginStoreCache?.length, 'state:', JSON.stringify(storeFilterState));
-    if (!pluginStoreCache) { console.log('[FILTER] No cache, returning'); return; }
+    if (!pluginStoreCache) return;
 
     let plugins = [...pluginStoreCache];
     const installedIds = new Set(

@@ -28,6 +28,16 @@
                     <h3 class="text-lg font-bold text-gray-900">Installed Plugins</h3>
                     <span id="installed-count" class="text-sm text-gray-500 font-medium">0 installed</span>
                 </div>
+                <div class="flex items-center gap-2">
+                    <label for="installed-sort" class="text-sm font-medium text-gray-700 whitespace-nowrap">
+                        <i class="fas fa-sort mr-1"></i>Sort:
+                    </label>
+                    <select id="installed-sort" class="text-sm px-3 py-1.5 border border-gray-300 rounded-lg shadow-sm focus:ring-blue-500 focus:border-blue-500">
+                        <option value="a-z">A &rarr; Z</option>
+                        <option value="z-a">Z &rarr; A</option>
+                        <option value="enabled">Enabled First</option>
+                    </select>
+                </div>
             </div>
             <div id="installed-plugins-content" class="block">
                 <div id="installed-plugins-grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-6">
