@@ -144,6 +144,7 @@ body {
 
 .rounded-lg { border-radius: 0.5rem; }
 .rounded-md { border-radius: 0.375rem; }
+.rounded-full { border-radius: 9999px; }
 .rounded { border-radius: 0.25rem; }
 
 .shadow { box-shadow: var(--shadow); }
@@ -155,6 +156,7 @@ body {
 .p-4 { padding: 1rem; }
 .p-2 { padding: 0.5rem; }
 .px-4 { padding-left: 1rem; padding-right: 1rem; }
+.py-1\.5 { padding-top: 0.375rem; padding-bottom: 0.375rem; }
 .py-2 { padding-top: 0.5rem; padding-bottom: 0.5rem; }
 .py-3 { padding-top: 0.75rem; padding-bottom: 0.75rem; }
 .pb-4 { padding-bottom: 1rem; }
@@ -667,35 +669,27 @@ button.bg-white {
 }
 
 /* Filter Pill Toggle States */
-.filter-pill {
-    cursor: pointer;
-    user-select: none;
-    transition: all 0.15s ease;
-}
-
-.filter-pill[data-active="true"] {
-    background-color: var(--color-info-bg);
-    border-color: var(--color-info);
-    color: var(--color-info);
-    font-weight: 600;
-}
-
-.filter-pill[data-active="true"]:hover {
-    opacity: 0.85;
-}
-
-/* Category Filter Pills */
+.filter-pill,
 .category-filter-pill {
     cursor: pointer;
     user-select: none;
-    transition: all 0.15s ease;
+    transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease, box-shadow 0.15s ease, opacity 0.15s ease;
 }
 
+.filter-pill[data-active="true"],
 .category-filter-pill[data-active="true"] {
     background-color: var(--color-info-bg);
     border-color: var(--color-info);
     color: var(--color-info);
     font-weight: 600;
+}
+
+.filter-pill[data-active="true"]:hover,
+.category-filter-pill[data-active="true"]:hover {
+    opacity: 0.85;
+}
+
+.category-filter-pill[data-active="true"] {
     box-shadow: 0 0 0 1px var(--color-info);
 }
 

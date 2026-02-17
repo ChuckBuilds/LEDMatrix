@@ -5278,10 +5278,11 @@ function setupStoreFilterListeners() {
     }
 }
 
-function applyStoreFiltersAndSort() {
-    if (!pluginStoreCache) return;
+function applyStoreFiltersAndSort(basePlugins) {
+    const source = basePlugins || pluginStoreCache;
+    if (!source) return;
 
-    let plugins = [...pluginStoreCache];
+    let plugins = [...source];
     const installedIds = new Set(
         (window.installedPlugins || []).map(p => p.id)
     );
@@ -5342,7 +5343,7 @@ function applyStoreFiltersAndSort() {
     // Update result count
     const countEl = document.getElementById('store-count');
     if (countEl) {
-        const total = pluginStoreCache.length;
+        const total = source.length;
         const shown = plugins.length;
         countEl.innerHTML = shown < total
             ? `${shown} of ${total} shown`
@@ -5481,20 +5482,9 @@ function searchPluginStore(fetchCommitInfo = true) {
                     return;
                 }
 
-                // Route through filter/sort pipeline if cache is available, otherwise render directly
-                if (pluginStoreCache) {
-                    applyStoreFiltersAndSort();
-                } else {
-                    renderPluginStore(plugins);
-                    try {
-                        const countEl = document.getElementById('store-count');
-                        if (countEl) {
-                            countEl.innerHTML = `${plugins.length} available`;
-                        }
-                    } catch (e) {
-                        console.warn('Could not update store count:', e);
-                    }
-                }
+                // Route through filter/sort pipeline — pass fresh plugins
+                // so server-filtered results (query/category) aren't ignored
+                applyStoreFiltersAndSort(plugins);
                 
                 // Ensure GitHub token collapse handler is attached after store is rendered
                 // The button might not exist until the store content is loaded
@@ -5611,7 +5601,7 @@ function renderPluginStore(plugins) {
                     <div class="flex items-center flex-wrap gap-2 mb-2">
                         <h4 class="font-semibold text-gray-900 text-base">${escapeHtml(plugin.name || plugin.id)}</h4>
                         ${plugin.verified ? '<span class="badge badge-success"><i class="fas fa-check-circle mr-1"></i>Verified</span>' : ''}
-                        ${isNewPlugin(plugin.last_updated) ? '<span class="badge badge-info"><i class="fas fa-sparkles mr-1"></i>New</span>' : ''}
+                        ${isNewPlugin(plugin.last_updated) ? '<span class="badge badge-info"><i class="fas fa-star mr-1"></i>New</span>' : ''}
                         ${isInstalled ? '<span class="badge badge-success"><i class="fas fa-check mr-1"></i>Installed</span>' : ''}
                         ${hasUpdate ? '<span class="badge badge-warning"><i class="fas fa-arrow-up mr-1"></i>Update</span>' : ''}
                         ${plugin._source === 'custom_repository' ? `<span class="badge badge-accent" title="From: ${escapeHtml(plugin._repository_name || plugin._repository_url || 'Custom Repository')}"><i class="fas fa-bookmark mr-1"></i>Custom</span>` : ''}
