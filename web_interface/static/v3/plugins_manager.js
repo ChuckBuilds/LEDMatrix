@@ -5593,7 +5593,7 @@ function renderPluginStore(plugins) {
     container.innerHTML = plugins.map(plugin => {
         const isInstalled = installedMap.has(plugin.id);
         const installedVersion = installedMap.get(plugin.id);
-        const hasUpdate = isInstalled && plugin.version && installedVersion && plugin.version !== installedVersion;
+        const hasUpdate = isInstalled && plugin.version && installedVersion && isNewerVersion(plugin.version, installedVersion);
         return `
         <div class="plugin-card">
             <div class="flex items-start justify-between mb-4">
@@ -6352,6 +6352,20 @@ function formatCommit(commit, branch) {
         return shortCommit;
     }
     return 'Latest';
+}
+
+// Check if storeVersion is strictly newer than installedVersion (semver-aware)
+function isNewerVersion(storeVersion, installedVersion) {
+    const parse = (v) => (v || '').replace(/^v/, '').split('.').map(n => parseInt(n, 10) || 0);
+    const a = parse(storeVersion);
+    const b = parse(installedVersion);
+    const len = Math.max(a.length, b.length);
+    for (let i = 0; i < len; i++) {
+        const diff = (a[i] || 0) - (b[i] || 0);
+        if (diff > 0) return true;
+        if (diff < 0) return false;
+    }
+    return false;
 }
 
 // Check if plugin is new (updated within last 7 days)
