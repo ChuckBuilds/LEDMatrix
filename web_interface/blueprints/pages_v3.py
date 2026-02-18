@@ -438,26 +438,50 @@ def _load_plugin_config_partial(plugin_id):
 def _load_starlark_config_partial(app_id):
     """Load configuration partial for a Starlark app."""
     try:
-        starlark_plugin = pages_v3.plugin_manager.get_plugin('starlark-apps')
-        if not starlark_plugin:
-            return '<div class="text-yellow-600 p-4"><i class="fas fa-exclamation-triangle mr-2"></i>Starlark Apps plugin not loaded</div>', 404
+        starlark_plugin = pages_v3.plugin_manager.get_plugin('starlark-apps') if pages_v3.plugin_manager else None
 
-        app = starlark_plugin.apps.get(app_id)
-        if not app:
+        if starlark_plugin and hasattr(starlark_plugin, 'apps'):
+            app = starlark_plugin.apps.get(app_id)
+            if not app:
+                return f'<div class="text-red-500 p-4">Starlark app not found: {app_id}</div>', 404
+            return render_template(
+                'v3/partials/starlark_config.html',
+                app_id=app_id,
+                app_name=app.manifest.get('name', app_id),
+                app_enabled=app.is_enabled(),
+                render_interval=app.get_render_interval(),
+                display_duration=app.get_display_duration(),
+                config=app.config,
+                schema=app.schema,
+                has_frames=app.frames is not None,
+                frame_count=len(app.frames) if app.frames else 0,
+                last_render_time=app.last_render_time,
+            )
+
+        # Standalone: read from manifest file
+        manifest_file = Path(__file__).resolve().parent.parent.parent / 'starlark-apps' / 'manifest.json'
+        if not manifest_file.exists():
+            return f'<div class="text-red-500 p-4">Starlark app not found: {app_id}</div>', 404
+
+        with open(manifest_file, 'r') as f:
+            manifest = json.load(f)
+
+        app_data = manifest.get('apps', {}).get(app_id)
+        if not app_data:
             return f'<div class="text-red-500 p-4">Starlark app not found: {app_id}</div>', 404
 
         return render_template(
             'v3/partials/starlark_config.html',
             app_id=app_id,
-            app_name=app.manifest.get('name', app_id),
-            app_enabled=app.is_enabled(),
-            render_interval=app.get_render_interval(),
-            display_duration=app.get_display_duration(),
-            config=app.config,
-            schema=app.schema,
-            has_frames=app.frames is not None,
-            frame_count=len(app.frames) if app.frames else 0,
-            last_render_time=app.last_render_time,
+            app_name=app_data.get('name', app_id),
+            app_enabled=app_data.get('enabled', True),
+            render_interval=app_data.get('render_interval', 300),
+            display_duration=app_data.get('display_duration', 15),
+            config=app_data.get('config', {}),
+            schema=None,
+            has_frames=False,
+            frame_count=0,
+            last_render_time=None,
         )
 
     except Exception as e:
