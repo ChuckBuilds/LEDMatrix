@@ -1399,6 +1399,7 @@ function renderInstalledPlugins(plugins) {
                 <div class="flex-1 min-w-0">
                     <div class="flex items-center flex-wrap gap-2 mb-2">
                         <h4 class="font-semibold text-gray-900 text-base">${escapeHtml(plugin.name || plugin.id)}</h4>
+                        ${plugin.is_starlark_app ? '<span class="badge badge-warning"><i class="fas fa-star mr-1"></i>Starlark</span>' : ''}
                         ${plugin.verified ? '<span class="badge badge-success"><i class="fas fa-check-circle mr-1"></i>Verified</span>' : ''}
                     </div>
                     <div class="text-sm text-gray-600 space-y-1.5 mb-3">
@@ -1610,18 +1611,37 @@ function handlePluginAction(event) {
                 });
             break;
         case 'uninstall':
-            waitForFunction('uninstallPlugin', 10, 50)
-                .then(uninstallFunc => {
-                    uninstallFunc(pluginId);
-                })
-                .catch(error => {
-                    console.error('[EVENT DELEGATION]', error.message);
-                    if (typeof showNotification === 'function') {
-                        showNotification('Uninstall function not loaded. Please refresh the page.', 'error');
-                    } else {
-                        alert('Uninstall function not loaded. Please refresh the page.');
-                    }
-                });
+            if (pluginId.startsWith('starlark:')) {
+                // Starlark app uninstall uses dedicated endpoint
+                const starlarkAppId = pluginId.slice('starlark:'.length);
+                if (!confirm(`Uninstall Starlark app "${starlarkAppId}"?`)) break;
+                fetch(`/api/v3/starlark/apps/${encodeURIComponent(starlarkAppId)}`, {method: 'DELETE'})
+                    .then(r => r.json())
+                    .then(data => {
+                        if (data.status === 'success') {
+                            if (typeof showNotification === 'function') showNotification('Starlark app uninstalled', 'success');
+                            else alert('Starlark app uninstalled');
+                            if (typeof loadInstalledPlugins === 'function') loadInstalledPlugins();
+                            else if (typeof window.loadInstalledPlugins === 'function') window.loadInstalledPlugins();
+                        } else {
+                            alert('Uninstall failed: ' + (data.message || 'Unknown error'));
+                        }
+                    })
+                    .catch(err => alert('Uninstall failed: ' + err.message));
+            } else {
+                waitForFunction('uninstallPlugin', 10, 50)
+                    .then(uninstallFunc => {
+                        uninstallFunc(pluginId);
+                    })
+                    .catch(error => {
+                        console.error('[EVENT DELEGATION]', error.message);
+                        if (typeof showNotification === 'function') {
+                            showNotification('Uninstall function not loaded. Please refresh the page.', 'error');
+                        } else {
+                            alert('Uninstall function not loaded. Please refresh the page.');
+                        }
+                    });
+            }
             break;
     }
 }
@@ -7296,4 +7316,247 @@ setTimeout(function() {
         }
     }, 500);
 }, 200);
+
+// ─── Starlark Apps Integration ──────────────────────────────────────────────
+
+(function() {
+    'use strict';
+
+    let starlarkSectionVisible = false;
+    let starlarkAppsCache = null;
+
+    function initStarlarkSection() {
+        const toggleBtn = document.getElementById('toggle-starlark-section');
+        if (toggleBtn && !toggleBtn._starlarkInit) {
+            toggleBtn._starlarkInit = true;
+            toggleBtn.addEventListener('click', function() {
+                starlarkSectionVisible = !starlarkSectionVisible;
+                const content = document.getElementById('starlark-section-content');
+                const icon = document.getElementById('starlark-section-icon');
+                if (content) content.classList.toggle('hidden', !starlarkSectionVisible);
+                if (icon) {
+                    icon.classList.toggle('fa-chevron-down', !starlarkSectionVisible);
+                    icon.classList.toggle('fa-chevron-up', starlarkSectionVisible);
+                }
+                this.querySelector('span').textContent = starlarkSectionVisible ? 'Hide' : 'Show';
+                if (starlarkSectionVisible) {
+                    loadStarlarkStatus();
+                    loadStarlarkCategories();
+                }
+            });
+        }
+
+        const browseBtn = document.getElementById('starlark-browse-btn');
+        if (browseBtn && !browseBtn._starlarkInit) {
+            browseBtn._starlarkInit = true;
+            browseBtn.addEventListener('click', browseStarlarkApps);
+        }
+
+        const uploadBtn = document.getElementById('starlark-upload-btn');
+        if (uploadBtn && !uploadBtn._starlarkInit) {
+            uploadBtn._starlarkInit = true;
+            uploadBtn.addEventListener('click', function() {
+                const input = document.createElement('input');
+                input.type = 'file';
+                input.accept = '.star';
+                input.onchange = function(e) {
+                    if (e.target.files.length > 0) uploadStarlarkFile(e.target.files[0]);
+                };
+                input.click();
+            });
+        }
+    }
+
+    function loadStarlarkStatus() {
+        fetch('/api/v3/starlark/status')
+            .then(r => r.json())
+            .then(data => {
+                const banner = document.getElementById('starlark-pixlet-status');
+                if (!banner) return;
+                if (data.pixlet_available) {
+                    banner.innerHTML = `<div class="bg-green-50 border border-green-200 rounded-lg p-3 text-sm text-green-800">
+                        <i class="fas fa-check-circle mr-2"></i>Pixlet available${data.pixlet_version ? ' (' + escapeHtml(data.pixlet_version) + ')' : ''} &mdash; ${data.installed_apps || 0} app(s) installed
+                    </div>`;
+                } else {
+                    banner.innerHTML = `<div class="bg-yellow-50 border border-yellow-200 rounded-lg p-3 text-sm text-yellow-800">
+                        <i class="fas fa-exclamation-triangle mr-2"></i>Pixlet not installed.
+                        <button onclick="window.installPixlet()" class="ml-2 px-3 py-1 bg-blue-600 hover:bg-blue-700 text-white rounded text-xs font-semibold">Install Pixlet</button>
+                    </div>`;
+                }
+            })
+            .catch(err => console.error('Starlark status error:', err));
+    }
+
+    function loadStarlarkCategories() {
+        fetch('/api/v3/starlark/repository/categories')
+            .then(r => r.json())
+            .then(data => {
+                if (data.status !== 'success') return;
+                const select = document.getElementById('starlark-category');
+                if (!select) return;
+                select.innerHTML = '<option value="">All Categories</option>';
+                (data.categories || []).forEach(cat => {
+                    const opt = document.createElement('option');
+                    opt.value = cat;
+                    opt.textContent = cat;
+                    select.appendChild(opt);
+                });
+            })
+            .catch(err => console.error('Starlark categories error:', err));
+    }
+
+    function browseStarlarkApps() {
+        const search = (document.getElementById('starlark-search') || {}).value || '';
+        const category = (document.getElementById('starlark-category') || {}).value || '';
+        const grid = document.getElementById('starlark-apps-grid');
+        const countEl = document.getElementById('starlark-apps-count');
+
+        if (grid) grid.innerHTML = '<div class="col-span-full text-center py-8 text-gray-500"><i class="fas fa-spinner fa-spin mr-2"></i>Loading Tronbyte apps...</div>';
+
+        const params = new URLSearchParams();
+        if (search) params.set('search', search);
+        if (category) params.set('category', category);
+        params.set('limit', '50');
+
+        fetch('/api/v3/starlark/repository/browse?' + params.toString())
+            .then(r => r.json())
+            .then(data => {
+                if (data.status !== 'success') {
+                    if (grid) grid.innerHTML = `<div class="col-span-full text-center py-8 text-red-500"><i class="fas fa-exclamation-circle mr-2"></i>${escapeHtml(data.message || 'Failed to load')}</div>`;
+                    return;
+                }
+                starlarkAppsCache = data.apps;
+                if (countEl) countEl.textContent = `${data.count} apps`;
+                renderStarlarkApps(data.apps, grid);
+
+                if (data.rate_limit) {
+                    const rl = data.rate_limit;
+                    console.log(`[Starlark] GitHub rate limit: ${rl.remaining}/${rl.limit} remaining`);
+                }
+            })
+            .catch(err => {
+                console.error('Starlark browse error:', err);
+                if (grid) grid.innerHTML = '<div class="col-span-full text-center py-8 text-red-500"><i class="fas fa-exclamation-circle mr-2"></i>Error loading apps</div>';
+            });
+    }
+
+    function renderStarlarkApps(apps, grid) {
+        if (!grid) return;
+        if (!apps || apps.length === 0) {
+            grid.innerHTML = '<div class="col-span-full empty-state"><div class="empty-state-icon"><i class="fas fa-star"></i></div><p>No Starlark apps found</p></div>';
+            return;
+        }
+
+        grid.innerHTML = apps.map(app => `
+            <div class="plugin-card">
+                <div class="flex items-start justify-between mb-4">
+                    <div class="flex-1 min-w-0">
+                        <div class="flex items-center flex-wrap gap-2 mb-2">
+                            <h4 class="font-semibold text-gray-900 text-base">${escapeHtml(app.name || app.id)}</h4>
+                            <span class="badge badge-warning"><i class="fas fa-star mr-1"></i>Starlark</span>
+                        </div>
+                        <div class="text-sm text-gray-600 space-y-1.5 mb-3">
+                            ${app.author ? `<p class="flex items-center"><i class="fas fa-user mr-2 text-gray-400 w-4"></i>${escapeHtml(app.author)}</p>` : ''}
+                            ${app.category ? `<p class="flex items-center"><i class="fas fa-folder mr-2 text-gray-400 w-4"></i>${escapeHtml(app.category)}</p>` : ''}
+                        </div>
+                        <p class="text-sm text-gray-700 leading-relaxed">${escapeHtml(app.summary || app.desc || 'No description')}</p>
+                    </div>
+                </div>
+                <div style="display:flex; gap:0.5rem; margin-top:1rem; padding-top:1rem; border-top:1px solid #e5e7eb;">
+                    <button onclick="window.installStarlarkApp('${escapeHtml(app.id)}')" class="btn bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-md text-sm font-semibold" style="flex:1; display:flex; justify-content:center;">
+                        <i class="fas fa-download mr-2"></i>Install
+                    </button>
+                    <button onclick="window.open('https://github.com/tronbyt/apps/tree/main/apps/${encodeURIComponent(app.id)}', '_blank')" class="btn bg-gray-600 hover:bg-gray-700 text-white px-4 py-2 rounded-md text-sm font-semibold" style="display:flex; justify-content:center;">
+                        <i class="fas fa-external-link-alt mr-1"></i>View
+                    </button>
+                </div>
+            </div>
+        `).join('');
+    }
+
+    function escapeHtml(str) {
+        if (!str) return '';
+        const div = document.createElement('div');
+        div.textContent = str;
+        return div.innerHTML;
+    }
+
+    window.installStarlarkApp = function(appId) {
+        if (!confirm(`Install Starlark app "${appId}" from Tronbyte repository?`)) return;
+
+        fetch('/api/v3/starlark/repository/install', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({app_id: appId})
+        })
+        .then(r => r.json())
+        .then(data => {
+            if (data.status === 'success') {
+                alert(`Installed: ${data.message || appId}`);
+                // Refresh installed plugins to show the new starlark app
+                if (typeof loadInstalledPlugins === 'function') loadInstalledPlugins();
+                else if (typeof window.loadInstalledPlugins === 'function') window.loadInstalledPlugins();
+            } else {
+                alert(`Install failed: ${data.message || 'Unknown error'}`);
+            }
+        })
+        .catch(err => {
+            console.error('Install error:', err);
+            alert('Install failed: ' + err.message);
+        });
+    };
+
+    window.installPixlet = function() {
+        if (!confirm('Download and install Pixlet binary? This may take a few minutes.')) return;
+
+        fetch('/api/v3/starlark/install-pixlet', {method: 'POST'})
+            .then(r => r.json())
+            .then(data => {
+                if (data.status === 'success') {
+                    alert(data.message || 'Pixlet installed!');
+                    loadStarlarkStatus();
+                } else {
+                    alert('Pixlet install failed: ' + (data.message || 'Unknown error'));
+                }
+            })
+            .catch(err => alert('Pixlet install failed: ' + err.message));
+    };
+
+    function uploadStarlarkFile(file) {
+        const formData = new FormData();
+        formData.append('file', file);
+
+        const appId = file.name.replace('.star', '');
+        formData.append('app_id', appId);
+        formData.append('name', appId.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()));
+
+        fetch('/api/v3/starlark/upload', {method: 'POST', body: formData})
+            .then(r => r.json())
+            .then(data => {
+                if (data.status === 'success') {
+                    alert(`Uploaded: ${data.app_id}`);
+                    if (typeof loadInstalledPlugins === 'function') loadInstalledPlugins();
+                    else if (typeof window.loadInstalledPlugins === 'function') window.loadInstalledPlugins();
+                } else {
+                    alert('Upload failed: ' + (data.message || 'Unknown error'));
+                }
+            })
+            .catch(err => alert('Upload failed: ' + err.message));
+    }
+
+    // Initialize when plugins tab loads
+    const origInit = window.initializePlugins;
+    window.initializePlugins = function() {
+        if (origInit) origInit();
+        initStarlarkSection();
+    };
+
+    // Also try to init on DOMContentLoaded and on HTMX load
+    document.addEventListener('DOMContentLoaded', initStarlarkSection);
+    document.addEventListener('htmx:afterSwap', function(e) {
+        if (e.detail && e.detail.target && e.detail.target.id === 'plugins-content') {
+            initStarlarkSection();
+        }
+    });
+})();
 

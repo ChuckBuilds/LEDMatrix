@@ -179,6 +179,48 @@
             </div>
         </div>
         
+        <!-- Starlark Apps Section (Tronbyte Community Apps) -->
+        <div id="starlark-apps-section" class="border-t border-gray-200 pt-8 mt-8">
+            <div class="flex items-center justify-between mb-5 pb-3 border-b border-gray-200">
+                <div class="flex items-center gap-3">
+                    <h3 class="text-lg font-bold text-gray-900"><i class="fas fa-star text-yellow-500 mr-2"></i>Starlark Apps</h3>
+                    <span id="starlark-apps-count" class="text-sm text-gray-500 font-medium"></span>
+                </div>
+                <button id="toggle-starlark-section" class="text-sm text-blue-600 hover:text-blue-800 flex items-center font-medium transition-colors">
+                    <i class="fas fa-chevron-down mr-1" id="starlark-section-icon"></i>
+                    <span>Show</span>
+                </button>
+            </div>
+            <div id="starlark-section-content" class="hidden">
+                <p class="text-sm text-gray-600 mb-4">Browse and install Starlark apps from the <a href="https://github.com/tronbyt/apps" target="_blank" class="text-blue-600 hover:text-blue-800 underline">Tronbyte community repository</a>. Requires <strong>Pixlet</strong> binary.</p>
+
+                <!-- Pixlet Status Banner -->
+                <div id="starlark-pixlet-status" class="mb-4"></div>
+
+                <!-- Search/Filter -->
+                <div class="flex gap-3 mb-4">
+                    <input type="text" id="starlark-search" placeholder="Search Starlark apps..." class="form-control text-sm flex-[3] min-w-0 px-4 py-2.5 border border-gray-300 rounded-lg shadow-sm">
+                    <select id="starlark-category" class="form-control text-sm flex-1 px-3 py-2.5 border border-gray-300 rounded-lg shadow-sm">
+                        <option value="">All Categories</option>
+                    </select>
+                    <button id="starlark-browse-btn" class="btn bg-blue-600 hover:bg-blue-700 text-white px-5 py-2.5 rounded-lg whitespace-nowrap font-semibold shadow-sm">
+                        <i class="fas fa-search mr-2"></i>Browse
+                    </button>
+                </div>
+
+                <!-- Upload .star file -->
+                <div class="flex gap-3 mb-4">
+                    <button id="starlark-upload-btn" class="btn bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-md text-sm">
+                        <i class="fas fa-upload mr-2"></i>Upload .star File
+                    </button>
+                </div>
+
+                <!-- Starlark Apps Grid -->
+                <div id="starlark-apps-grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-6">
+                </div>
+            </div>
+        </div>
+
         <!-- Install from GitHub URL Section (Separate section, always visible) -->
         <div class="border-t border-gray-200 pt-8 mt-8">
             <div class="flex items-center justify-between mb-5 pb-3 border-b border-gray-200">

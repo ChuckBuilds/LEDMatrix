@@ -322,7 +322,11 @@ def _load_plugin_config_partial(plugin_id):
     try:
         if not pages_v3.plugin_manager:
             return '<div class="text-red-500 p-4">Plugin manager not available</div>', 500
-        
+
+        # Handle starlark app config (starlark:<app_id>)
+        if plugin_id.startswith('starlark:'):
+            return _load_starlark_config_partial(plugin_id[len('starlark:'):])
+
         # Try to get plugin info first
         plugin_info = pages_v3.plugin_manager.get_plugin_info(plugin_id)
         
@@ -429,3 +433,34 @@ def _load_plugin_config_partial(plugin_id):
         import traceback
         traceback.print_exc()
         return f'<div class="text-red-500 p-4">Error loading plugin config: {str(e)}</div>', 500
+
+
+def _load_starlark_config_partial(app_id):
+    """Load configuration partial for a Starlark app."""
+    try:
+        starlark_plugin = pages_v3.plugin_manager.get_plugin('starlark-apps')
+        if not starlark_plugin:
+            return '<div class="text-yellow-600 p-4"><i class="fas fa-exclamation-triangle mr-2"></i>Starlark Apps plugin not loaded</div>', 404
+
+        app = starlark_plugin.apps.get(app_id)
+        if not app:
+            return f'<div class="text-red-500 p-4">Starlark app not found: {app_id}</div>', 404
+
+        return render_template(
+            'v3/partials/starlark_config.html',
+            app_id=app_id,
+            app_name=app.manifest.get('name', app_id),
+            app_enabled=app.is_enabled(),
+            render_interval=app.get_render_interval(),
+            display_duration=app.get_display_duration(),
+            config=app.config,
+            schema=app.schema,
+            has_frames=app.frames is not None,
+            frame_count=len(app.frames) if app.frames else 0,
+            last_render_time=app.last_render_time,
+        )
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return f'<div class="text-red-500 p-4">Error loading starlark config: {str(e)}</div>', 500

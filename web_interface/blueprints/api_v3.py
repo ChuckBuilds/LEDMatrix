@@ -1852,6 +1852,31 @@ def get_installed_plugins():
                 'vegas_content_type': vegas_content_type
             })
 
+        # Append virtual entries for installed Starlark apps
+        starlark_plugin = api_v3.plugin_manager.get_plugin('starlark-apps')
+        if starlark_plugin and hasattr(starlark_plugin, 'apps'):
+            for app_id, app in starlark_plugin.apps.items():
+                plugins.append({
+                    'id': f'starlark:{app_id}',
+                    'name': app.manifest.get('name', app_id),
+                    'version': 'starlark',
+                    'author': app.manifest.get('author', 'Tronbyte Community'),
+                    'category': 'Starlark App',
+                    'description': app.manifest.get('summary', 'Starlark app'),
+                    'tags': ['starlark'],
+                    'enabled': app.is_enabled(),
+                    'verified': False,
+                    'loaded': True,
+                    'last_updated': None,
+                    'last_commit': None,
+                    'last_commit_message': None,
+                    'branch': None,
+                    'web_ui_actions': [],
+                    'vegas_mode': 'fixed',
+                    'vegas_content_type': 'multi',
+                    'is_starlark_app': True,
+                })
+
         return jsonify({'status': 'success', 'data': {'plugins': plugins}})
     except Exception as e:
         import traceback
@@ -2126,6 +2151,20 @@ def toggle_plugin():
                 config = api_v3.config_manager.load_config()
                 current_enabled = config.get(plugin_id, {}).get('enabled', False)
                 enabled = not current_enabled
+
+        # Handle starlark app toggle (starlark:<app_id> prefix)
+        if plugin_id.startswith('starlark:'):
+            starlark_app_id = plugin_id[len('starlark:'):]
+            starlark_plugin = api_v3.plugin_manager.get_plugin('starlark-apps')
+            if not starlark_plugin or starlark_app_id not in starlark_plugin.apps:
+                return jsonify({'status': 'error', 'message': f'Starlark app not found: {starlark_app_id}'}), 404
+            app = starlark_plugin.apps[starlark_app_id]
+            app.manifest['enabled'] = enabled
+            with open(starlark_plugin.manifest_file, 'r') as f:
+                manifest = json.load(f)
+            manifest['apps'][starlark_app_id]['enabled'] = enabled
+            starlark_plugin._save_manifest(manifest)
+            return jsonify({'status': 'success', 'message': f"Starlark app {'enabled' if enabled else 'disabled'}", 'enabled': enabled})
 
         # Check if plugin exists in manifests (discovered but may not be loaded)
         if plugin_id not in api_v3.plugin_manager.plugin_manifests:
@@ -6904,3 +6943,524 @@ def clear_old_errors():
             details=str(e),
             status_code=500
         )
+
+
+# ─── Starlark Apps API ──────────────────────────────────────────────────────
+
+def _get_tronbyte_repository_class():
+    """Import TronbyteRepository from plugin-repos directory."""
+    import importlib.util
+
+    module_path = PROJECT_ROOT / 'plugin-repos' / 'starlark-apps' / 'tronbyte_repository.py'
+    if not module_path.exists():
+        raise ImportError(f"TronbyteRepository module not found at {module_path}")
+
+    spec = importlib.util.spec_from_file_location("tronbyte_repository", module_path)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules["tronbyte_repository"] = module
+    spec.loader.exec_module(module)
+    return module.TronbyteRepository
+
+
+def _validate_and_sanitize_app_id(app_id, fallback_source=None):
+    """Validate and sanitize app_id to a safe slug."""
+    if not app_id and fallback_source:
+        app_id = fallback_source
+    if not app_id:
+        return None, "app_id is required"
+    if '..' in app_id or '/' in app_id or '\\' in app_id:
+        return None, "app_id contains invalid characters"
+
+    sanitized = re.sub(r'[^a-z0-9_]', '_', app_id.lower()).strip('_')
+    if not sanitized:
+        sanitized = f"app_{hashlib.sha256(app_id.encode()).hexdigest()[:12]}"
+    if sanitized[0].isdigit():
+        sanitized = f"app_{sanitized}"
+    return sanitized, None
+
+
+def _validate_timing_value(value, field_name, min_val=1, max_val=86400):
+    """Validate and coerce timing values."""
+    if value is None:
+        return None, None
+    try:
+        int_value = int(value)
+    except (ValueError, TypeError):
+        return None, f"{field_name} must be an integer"
+    if int_value < min_val:
+        return None, f"{field_name} must be at least {min_val}"
+    if int_value > max_val:
+        return None, f"{field_name} must be at most {max_val}"
+    return int_value, None
+
+
+def _get_starlark_plugin():
+    """Get the starlark-apps plugin instance, or None."""
+    if not api_v3.plugin_manager:
+        return None
+    return api_v3.plugin_manager.get_plugin('starlark-apps')
+
+
+@api_v3.route('/starlark/status', methods=['GET'])
+def get_starlark_status():
+    """Get Starlark plugin status and Pixlet availability."""
+    try:
+        if not api_v3.plugin_manager:
+            return jsonify({'status': 'error', 'message': 'Plugin manager not initialized', 'pixlet_available': False}), 500
+
+        starlark_plugin = _get_starlark_plugin()
+        if starlark_plugin:
+            info = starlark_plugin.get_info()
+            magnify_info = starlark_plugin.get_magnify_recommendation()
+            return jsonify({
+                'status': 'success',
+                'pixlet_available': info.get('pixlet_available', False),
+                'pixlet_version': info.get('pixlet_version'),
+                'installed_apps': info.get('installed_apps', 0),
+                'enabled_apps': info.get('enabled_apps', 0),
+                'current_app': info.get('current_app'),
+                'plugin_enabled': starlark_plugin.enabled,
+                'display_info': magnify_info
+            })
+
+        # Plugin not loaded - check Pixlet availability directly
+        import shutil
+        import platform
+
+        system = platform.system().lower()
+        machine = platform.machine().lower()
+        bin_dir = PROJECT_ROOT / 'bin' / 'pixlet'
+
+        pixlet_binary = None
+        if system == "linux":
+            if "aarch64" in machine or "arm64" in machine:
+                pixlet_binary = bin_dir / "pixlet-linux-arm64"
+            elif "x86_64" in machine or "amd64" in machine:
+                pixlet_binary = bin_dir / "pixlet-linux-amd64"
+        elif system == "darwin":
+            pixlet_binary = bin_dir / ("pixlet-darwin-arm64" if "arm64" in machine else "pixlet-darwin-amd64")
+
+        pixlet_available = (pixlet_binary and pixlet_binary.exists()) or shutil.which('pixlet') is not None
+
+        return jsonify({
+            'status': 'success',
+            'pixlet_available': pixlet_available,
+            'pixlet_version': None,
+            'installed_apps': 0,
+            'enabled_apps': 0,
+            'plugin_enabled': False,
+            'plugin_loaded': False,
+            'display_info': {}
+        })
+
+    except Exception as e:
+        logger.error(f"Error getting starlark status: {e}")
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+
+@api_v3.route('/starlark/apps', methods=['GET'])
+def get_starlark_apps():
+    """List all installed Starlark apps."""
+    try:
+        starlark_plugin = _get_starlark_plugin()
+        if not starlark_plugin:
+            return jsonify({'status': 'success', 'apps': [], 'count': 0, 'message': 'Plugin not loaded'})
+
+        apps_list = []
+        for app_id, app_instance in starlark_plugin.apps.items():
+            apps_list.append({
+                'id': app_id,
+                'name': app_instance.manifest.get('name', app_id),
+                'enabled': app_instance.is_enabled(),
+                'has_frames': app_instance.frames is not None,
+                'render_interval': app_instance.get_render_interval(),
+                'display_duration': app_instance.get_display_duration(),
+                'config': app_instance.config,
+                'has_schema': app_instance.schema is not None,
+                'last_render_time': app_instance.last_render_time
+            })
+
+        return jsonify({'status': 'success', 'apps': apps_list, 'count': len(apps_list)})
+
+    except Exception as e:
+        logger.error(f"Error getting starlark apps: {e}")
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+
+@api_v3.route('/starlark/apps/<app_id>', methods=['GET'])
+def get_starlark_app(app_id):
+    """Get details for a specific Starlark app."""
+    try:
+        starlark_plugin = _get_starlark_plugin()
+        if not starlark_plugin:
+            return jsonify({'status': 'error', 'message': 'Starlark Apps plugin not loaded'}), 404
+
+        app = starlark_plugin.apps.get(app_id)
+        if not app:
+            return jsonify({'status': 'error', 'message': f'App not found: {app_id}'}), 404
+
+        return jsonify({
+            'status': 'success',
+            'app': {
+                'id': app_id,
+                'name': app.manifest.get('name', app_id),
+                'enabled': app.is_enabled(),
+                'config': app.config,
+                'schema': app.schema,
+                'render_interval': app.get_render_interval(),
+                'display_duration': app.get_display_duration(),
+                'has_frames': app.frames is not None,
+                'frame_count': len(app.frames) if app.frames else 0,
+                'last_render_time': app.last_render_time,
+            }
+        })
+
+    except Exception as e:
+        logger.error(f"Error getting starlark app {app_id}: {e}")
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+
+@api_v3.route('/starlark/upload', methods=['POST'])
+def upload_starlark_app():
+    """Upload and install a new Starlark app."""
+    try:
+        starlark_plugin = _get_starlark_plugin()
+        if not starlark_plugin:
+            return jsonify({'status': 'error', 'message': 'Starlark Apps plugin not loaded'}), 404
+
+        if 'file' not in request.files:
+            return jsonify({'status': 'error', 'message': 'No file uploaded'}), 400
+
+        file = request.files['file']
+        if not file.filename or not file.filename.endswith('.star'):
+            return jsonify({'status': 'error', 'message': 'File must have .star extension'}), 400
+
+        app_name = request.form.get('name')
+        app_id_input = request.form.get('app_id')
+        filename_base = file.filename.replace('.star', '') if file.filename else None
+        app_id, app_id_error = _validate_and_sanitize_app_id(app_id_input, fallback_source=filename_base)
+        if app_id_error:
+            return jsonify({'status': 'error', 'message': f'Invalid app_id: {app_id_error}'}), 400
+
+        render_interval_input = request.form.get('render_interval')
+        render_interval = 300
+        if render_interval_input is not None:
+            render_interval, err = _validate_timing_value(render_interval_input, 'render_interval')
+            if err:
+                return jsonify({'status': 'error', 'message': err}), 400
+            render_interval = render_interval or 300
+
+        display_duration_input = request.form.get('display_duration')
+        display_duration = 15
+        if display_duration_input is not None:
+            display_duration, err = _validate_timing_value(display_duration_input, 'display_duration')
+            if err:
+                return jsonify({'status': 'error', 'message': err}), 400
+            display_duration = display_duration or 15
+
+        import tempfile
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.star') as tmp:
+            file.save(tmp.name)
+            temp_path = tmp.name
+
+        try:
+            metadata = {'name': app_name or app_id, 'render_interval': render_interval, 'display_duration': display_duration}
+            success = starlark_plugin.install_app(app_id, temp_path, metadata)
+            if success:
+                return jsonify({'status': 'success', 'message': f'App installed: {app_id}', 'app_id': app_id})
+            else:
+                return jsonify({'status': 'error', 'message': 'Failed to install app'}), 500
+        finally:
+            try:
+                os.unlink(temp_path)
+            except OSError:
+                pass
+
+    except Exception as e:
+        logger.error(f"Error uploading starlark app: {e}")
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+
+@api_v3.route('/starlark/apps/<app_id>', methods=['DELETE'])
+def uninstall_starlark_app(app_id):
+    """Uninstall a Starlark app."""
+    try:
+        starlark_plugin = _get_starlark_plugin()
+        if not starlark_plugin:
+            return jsonify({'status': 'error', 'message': 'Starlark Apps plugin not loaded'}), 404
+
+        success = starlark_plugin.uninstall_app(app_id)
+        if success:
+            return jsonify({'status': 'success', 'message': f'App uninstalled: {app_id}'})
+        else:
+            return jsonify({'status': 'error', 'message': 'Failed to uninstall app'}), 500
+
+    except Exception as e:
+        logger.error(f"Error uninstalling starlark app {app_id}: {e}")
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+
+@api_v3.route('/starlark/apps/<app_id>/config', methods=['GET'])
+def get_starlark_app_config(app_id):
+    """Get configuration for a Starlark app."""
+    try:
+        starlark_plugin = _get_starlark_plugin()
+        if not starlark_plugin:
+            return jsonify({'status': 'error', 'message': 'Plugin not loaded'}), 404
+
+        app = starlark_plugin.apps.get(app_id)
+        if not app:
+            return jsonify({'status': 'error', 'message': f'App not found: {app_id}'}), 404
+
+        return jsonify({'status': 'success', 'config': app.config, 'schema': app.schema})
+
+    except Exception as e:
+        logger.error(f"Error getting config for {app_id}: {e}")
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+
+@api_v3.route('/starlark/apps/<app_id>/config', methods=['PUT'])
+def update_starlark_app_config(app_id):
+    """Update configuration for a Starlark app."""
+    try:
+        starlark_plugin = _get_starlark_plugin()
+        if not starlark_plugin:
+            return jsonify({'status': 'error', 'message': 'Plugin not loaded'}), 404
+
+        app = starlark_plugin.apps.get(app_id)
+        if not app:
+            return jsonify({'status': 'error', 'message': f'App not found: {app_id}'}), 404
+
+        data = request.get_json()
+        if not data:
+            return jsonify({'status': 'error', 'message': 'No configuration provided'}), 400
+
+        if 'render_interval' in data:
+            val, err = _validate_timing_value(data['render_interval'], 'render_interval')
+            if err:
+                return jsonify({'status': 'error', 'message': err}), 400
+            data['render_interval'] = val
+
+        if 'display_duration' in data:
+            val, err = _validate_timing_value(data['display_duration'], 'display_duration')
+            if err:
+                return jsonify({'status': 'error', 'message': err}), 400
+            data['display_duration'] = val
+
+        app.config.update(data)
+        if app.save_config():
+            starlark_plugin._render_app(app, force=True)
+            return jsonify({'status': 'success', 'message': 'Configuration updated', 'config': app.config})
+        else:
+            return jsonify({'status': 'error', 'message': 'Failed to save configuration'}), 500
+
+    except Exception as e:
+        logger.error(f"Error updating config for {app_id}: {e}")
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+
+@api_v3.route('/starlark/apps/<app_id>/toggle', methods=['POST'])
+def toggle_starlark_app(app_id):
+    """Enable or disable a Starlark app."""
+    try:
+        starlark_plugin = _get_starlark_plugin()
+        if not starlark_plugin:
+            return jsonify({'status': 'error', 'message': 'Plugin not loaded'}), 404
+
+        app = starlark_plugin.apps.get(app_id)
+        if not app:
+            return jsonify({'status': 'error', 'message': f'App not found: {app_id}'}), 404
+
+        data = request.get_json() or {}
+        enabled = data.get('enabled')
+        if enabled is None:
+            enabled = not app.is_enabled()
+
+        app.manifest['enabled'] = enabled
+
+        with open(starlark_plugin.manifest_file, 'r') as f:
+            manifest = json.load(f)
+        manifest['apps'][app_id]['enabled'] = enabled
+        starlark_plugin._save_manifest(manifest)
+
+        return jsonify({'status': 'success', 'message': f"App {'enabled' if enabled else 'disabled'}", 'enabled': enabled})
+
+    except Exception as e:
+        logger.error(f"Error toggling app {app_id}: {e}")
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+
+@api_v3.route('/starlark/apps/<app_id>/render', methods=['POST'])
+def render_starlark_app(app_id):
+    """Force render a Starlark app."""
+    try:
+        starlark_plugin = _get_starlark_plugin()
+        if not starlark_plugin:
+            return jsonify({'status': 'error', 'message': 'Plugin not loaded'}), 404
+
+        app = starlark_plugin.apps.get(app_id)
+        if not app:
+            return jsonify({'status': 'error', 'message': f'App not found: {app_id}'}), 404
+
+        success = starlark_plugin._render_app(app, force=True)
+        if success:
+            return jsonify({'status': 'success', 'message': 'App rendered', 'frame_count': len(app.frames) if app.frames else 0})
+        else:
+            return jsonify({'status': 'error', 'message': 'Failed to render app'}), 500
+
+    except Exception as e:
+        logger.error(f"Error rendering app {app_id}: {e}")
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+
+@api_v3.route('/starlark/repository/browse', methods=['GET'])
+def browse_tronbyte_repository():
+    """Browse apps in the Tronbyte repository."""
+    try:
+        TronbyteRepository = _get_tronbyte_repository_class()
+
+        config = api_v3.config_manager.load_config() if api_v3.config_manager else {}
+        github_token = config.get('github_token')
+        repo = TronbyteRepository(github_token=github_token)
+
+        search_query = request.args.get('search', '')
+        category = request.args.get('category', 'all')
+        limit = max(1, min(request.args.get('limit', 50, type=int), 200))
+
+        apps = repo.list_apps_with_metadata(max_apps=limit)
+        if search_query:
+            apps = repo.search_apps(search_query, apps)
+        if category and category != 'all':
+            apps = repo.filter_by_category(category, apps)
+
+        rate_limit = repo.get_rate_limit_info()
+
+        return jsonify({
+            'status': 'success',
+            'apps': apps,
+            'count': len(apps),
+            'rate_limit': rate_limit,
+            'filters': {'search': search_query, 'category': category}
+        })
+
+    except Exception as e:
+        logger.error(f"Error browsing repository: {e}")
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+
+@api_v3.route('/starlark/repository/install', methods=['POST'])
+def install_from_tronbyte_repository():
+    """Install an app from the Tronbyte repository."""
+    try:
+        starlark_plugin = _get_starlark_plugin()
+        if not starlark_plugin:
+            return jsonify({'status': 'error', 'message': 'Plugin not loaded'}), 404
+
+        data = request.get_json()
+        if not data or 'app_id' not in data:
+            return jsonify({'status': 'error', 'message': 'app_id is required'}), 400
+
+        app_id, app_id_error = _validate_and_sanitize_app_id(data['app_id'])
+        if app_id_error:
+            return jsonify({'status': 'error', 'message': f'Invalid app_id: {app_id_error}'}), 400
+
+        TronbyteRepository = _get_tronbyte_repository_class()
+        import tempfile
+
+        config = api_v3.config_manager.load_config() if api_v3.config_manager else {}
+        github_token = config.get('github_token')
+        repo = TronbyteRepository(github_token=github_token)
+
+        success, metadata, error = repo.get_app_metadata(data['app_id'])
+        if not success:
+            return jsonify({'status': 'error', 'message': f'Failed to fetch app metadata: {error}'}), 404
+
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.star') as tmp:
+            temp_path = tmp.name
+
+        try:
+            success, error = repo.download_star_file(data['app_id'], Path(temp_path))
+            if not success:
+                return jsonify({'status': 'error', 'message': f'Failed to download app: {error}'}), 500
+
+            render_interval = data.get('render_interval', 300)
+            ri, err = _validate_timing_value(render_interval, 'render_interval')
+            if err:
+                return jsonify({'status': 'error', 'message': err}), 400
+            render_interval = ri or 300
+
+            display_duration = data.get('display_duration', 15)
+            dd, err = _validate_timing_value(display_duration, 'display_duration')
+            if err:
+                return jsonify({'status': 'error', 'message': err}), 400
+            display_duration = dd or 15
+
+            install_metadata = {
+                'name': metadata.get('name', app_id) if metadata else app_id,
+                'render_interval': render_interval,
+                'display_duration': display_duration
+            }
+
+            success = starlark_plugin.install_app(data['app_id'], temp_path, install_metadata)
+            if success:
+                return jsonify({'status': 'success', 'message': f'App installed: {metadata.get("name", app_id) if metadata else app_id}', 'app_id': app_id})
+            else:
+                return jsonify({'status': 'error', 'message': 'Failed to install app'}), 500
+        finally:
+            try:
+                os.unlink(temp_path)
+            except OSError:
+                pass
+
+    except Exception as e:
+        logger.error(f"Error installing from repository: {e}")
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+
+@api_v3.route('/starlark/repository/categories', methods=['GET'])
+def get_tronbyte_categories():
+    """Get list of available app categories."""
+    try:
+        TronbyteRepository = _get_tronbyte_repository_class()
+        config = api_v3.config_manager.load_config() if api_v3.config_manager else {}
+        repo = TronbyteRepository(github_token=config.get('github_token'))
+
+        apps = repo.list_apps_with_metadata(max_apps=100)
+        categories = sorted({app.get('category', '') for app in apps if app.get('category')})
+
+        return jsonify({'status': 'success', 'categories': categories})
+
+    except Exception as e:
+        logger.error(f"Error fetching categories: {e}")
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+
+@api_v3.route('/starlark/install-pixlet', methods=['POST'])
+def install_pixlet():
+    """Download and install Pixlet binary."""
+    try:
+        script_path = PROJECT_ROOT / 'scripts' / 'download_pixlet.sh'
+        if not script_path.exists():
+            return jsonify({'status': 'error', 'message': 'Installation script not found'}), 404
+
+        os.chmod(script_path, 0o755)
+
+        result = subprocess.run(
+            [str(script_path)],
+            cwd=str(PROJECT_ROOT),
+            capture_output=True,
+            text=True,
+            timeout=300
+        )
+
+        if result.returncode == 0:
+            logger.info("Pixlet downloaded successfully")
+            return jsonify({'status': 'success', 'message': 'Pixlet installed successfully!', 'output': result.stdout})
+        else:
+            return jsonify({'status': 'error', 'message': f'Failed to download Pixlet: {result.stderr}'}), 500
+
+    except subprocess.TimeoutExpired:
+        return jsonify({'status': 'error', 'message': 'Download timed out'}), 500
+    except Exception as e:
+        logger.error(f"Error installing Pixlet: {e}")
+        return jsonify({'status': 'error', 'message': str(e)}), 500

@@ -1,0 +1,160 @@
+<div class="space-y-6">
+    <!-- Header -->
+    <div class="flex items-center justify-between pb-4 border-b border-gray-200">
+        <div>
+            <h3 class="text-lg font-bold text-gray-900">
+                <i class="fas fa-star text-yellow-500 mr-2"></i>{{ app_name }}
+            </h3>
+            <p class="text-sm text-gray-500 mt-1">Starlark App &mdash; ID: {{ app_id }}</p>
+        </div>
+        <div class="flex items-center gap-3">
+            <span class="badge badge-warning"><i class="fas fa-star mr-1"></i>Starlark</span>
+            {% if app_enabled %}
+                <span class="badge badge-success">Enabled</span>
+            {% else %}
+                <span class="badge badge-error">Disabled</span>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- Status -->
+    <div class="bg-gray-50 rounded-lg p-4 border border-gray-200">
+        <h4 class="text-sm font-semibold text-gray-700 mb-3">Status</h4>
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+            <div>
+                <span class="text-gray-500">Frames:</span>
+                <span class="font-medium ml-1">{{ frame_count if has_frames else 'Not rendered' }}</span>
+            </div>
+            <div>
+                <span class="text-gray-500">Render Interval:</span>
+                <span class="font-medium ml-1">{{ render_interval }}s</span>
+            </div>
+            <div>
+                <span class="text-gray-500">Display Duration:</span>
+                <span class="font-medium ml-1">{{ display_duration }}s</span>
+            </div>
+            <div>
+                <span class="text-gray-500">Last Render:</span>
+                <span class="font-medium ml-1" id="starlark-last-render">{{ last_render_time }}</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Actions -->
+    <div class="flex gap-3">
+        <button onclick="forceRenderStarlarkApp('{{ app_id }}')"
+                class="btn bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md text-sm font-semibold">
+            <i class="fas fa-sync mr-2"></i>Force Render
+        </button>
+        <button onclick="toggleStarlarkApp('{{ app_id }}', {{ 'false' if app_enabled else 'true' }})"
+                class="btn {{ 'bg-red-600 hover:bg-red-700' if app_enabled else 'bg-green-600 hover:bg-green-700' }} text-white px-4 py-2 rounded-md text-sm font-semibold">
+            <i class="fas {{ 'fa-toggle-off' if app_enabled else 'fa-toggle-on' }} mr-2"></i>
+            {{ 'Disable' if app_enabled else 'Enable' }}
+        </button>
+    </div>
+
+    <!-- App-specific Config (if schema exists) -->
+    {% if schema %}
+    <div class="bg-white rounded-lg p-4 border border-gray-200">
+        <h4 class="text-sm font-semibold text-gray-700 mb-3">App Configuration</h4>
+        <div id="starlark-config-form" class="space-y-4">
+            {% for key, value in config.items() %}
+            <div class="form-group">
+                <label class="block text-sm font-medium text-gray-700 mb-1">{{ key }}</label>
+                <input type="text" class="form-control w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
+                       name="{{ key }}" value="{{ value }}"
+                       data-starlark-config="{{ key }}">
+            </div>
+            {% endfor %}
+            <button onclick="saveStarlarkConfig('{{ app_id }}')"
+                    class="btn bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md text-sm font-semibold">
+                <i class="fas fa-save mr-2"></i>Save Configuration
+            </button>
+        </div>
+    </div>
+    {% elif config %}
+    <div class="bg-white rounded-lg p-4 border border-gray-200">
+        <h4 class="text-sm font-semibold text-gray-700 mb-3">App Configuration</h4>
+        <div id="starlark-config-form" class="space-y-4">
+            {% for key, value in config.items() %}
+            <div class="form-group">
+                <label class="block text-sm font-medium text-gray-700 mb-1">{{ key }}</label>
+                <input type="text" class="form-control w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
+                       name="{{ key }}" value="{{ value }}"
+                       data-starlark-config="{{ key }}">
+            </div>
+            {% endfor %}
+            <button onclick="saveStarlarkConfig('{{ app_id }}')"
+                    class="btn bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md text-sm font-semibold">
+                <i class="fas fa-save mr-2"></i>Save Configuration
+            </button>
+        </div>
+    </div>
+    {% else %}
+    <div class="bg-gray-50 rounded-lg p-4 border border-gray-200 text-center text-gray-500 text-sm">
+        <i class="fas fa-info-circle mr-1"></i>This app has no configurable settings.
+    </div>
+    {% endif %}
+</div>
+
+<script>
+function forceRenderStarlarkApp(appId) {
+    fetch('/api/v3/starlark/apps/' + encodeURIComponent(appId) + '/render', {method: 'POST'})
+        .then(r => r.json())
+        .then(data => {
+            if (data.status === 'success') {
+                alert('Rendered successfully! ' + (data.frame_count || 0) + ' frame(s)');
+            } else {
+                alert('Render failed: ' + (data.message || 'Unknown error'));
+            }
+        })
+        .catch(err => alert('Render failed: ' + err.message));
+}
+
+function toggleStarlarkApp(appId, enabled) {
+    fetch('/api/v3/starlark/apps/' + encodeURIComponent(appId) + '/toggle', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({enabled: enabled})
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.status === 'success') {
+            // Reload the config partial to reflect new state
+            if (typeof loadInstalledPlugins === 'function') loadInstalledPlugins();
+            else if (typeof window.loadInstalledPlugins === 'function') window.loadInstalledPlugins();
+            // Reload this partial
+            const container = document.getElementById('plugin-config-starlark:' + appId);
+            if (container && window.htmx) {
+                htmx.ajax('GET', '/v3/partials/plugin-config/starlark:' + encodeURIComponent(appId), {target: container, swap: 'innerHTML'});
+            }
+        } else {
+            alert('Toggle failed: ' + (data.message || 'Unknown error'));
+        }
+    })
+    .catch(err => alert('Toggle failed: ' + err.message));
+}
+
+function saveStarlarkConfig(appId) {
+    const inputs = document.querySelectorAll('[data-starlark-config]');
+    const config = {};
+    inputs.forEach(input => {
+        config[input.getAttribute('data-starlark-config')] = input.value;
+    });
+
+    fetch('/api/v3/starlark/apps/' + encodeURIComponent(appId) + '/config', {
+        method: 'PUT',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(config)
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.status === 'success') {
+            alert('Configuration saved!');
+        } else {
+            alert('Save failed: ' + (data.message || 'Unknown error'));
+        }
+    })
+    .catch(err => alert('Save failed: ' + err.message));
+}
+</script>
