@@ -848,47 +848,47 @@ window.checkGitHubAuthStatus = function checkGitHubAuthStatus() {
         });
 };
 
+// ── Plugin Store State (global scope for access by top-level functions) ──────
+var pluginStoreCache = null;
+var cacheTimestamp = null;
+var CACHE_DURATION = 5 * 60 * 1000; // 5 minutes
+var storeFilteredList = [];
+var storeFilterState = {
+    sort: localStorage.getItem('storeSort') || 'a-z',
+    filterCategory: '',
+    filterInstalled: null,
+    searchQuery: '',
+    page: 1,
+    perPage: parseInt(localStorage.getItem('storePerPage')) || 12,
+    persist: function() {
+        localStorage.setItem('storeSort', this.sort);
+        localStorage.setItem('storePerPage', this.perPage);
+    },
+    reset: function() {
+        this.sort = 'a-z';
+        this.filterCategory = '';
+        this.filterInstalled = null;
+        this.searchQuery = '';
+        this.page = 1;
+    },
+    activeCount: function() {
+        var n = 0;
+        if (this.searchQuery) n++;
+        if (this.filterInstalled !== null) n++;
+        if (this.filterCategory) n++;
+        if (this.sort !== 'a-z') n++;
+        return n;
+    }
+};
+
 (function() {
     'use strict';
 
     if (_PLUGIN_DEBUG_EARLY) console.log('Plugin manager script starting...');
-    
+
     // Local variables for this instance
 let installedPlugins = [];
 window.currentPluginConfig = null;
-    let pluginStoreCache = null; // Cache for plugin store to speed up subsequent loads
-    let cacheTimestamp = null;
-    const CACHE_DURATION = 5 * 60 * 1000; // 5 minutes in milliseconds
-    let storeFilteredList = [];
-
-    // ── Plugin Store Filter State ───────────────────────────────────────────
-    const storeFilterState = {
-        sort: localStorage.getItem('storeSort') || 'a-z',
-        filterCategory: '',
-        filterInstalled: null,   // null=all, true=installed, false=not-installed
-        searchQuery: '',
-        page: 1,
-        perPage: parseInt(localStorage.getItem('storePerPage')) || 12,
-        persist() {
-            localStorage.setItem('storeSort', this.sort);
-            localStorage.setItem('storePerPage', this.perPage);
-        },
-        reset() {
-            this.sort = 'a-z';
-            this.filterCategory = '';
-            this.filterInstalled = null;
-            this.searchQuery = '';
-            this.page = 1;
-        },
-        activeCount() {
-            let n = 0;
-            if (this.searchQuery) n++;
-            if (this.filterInstalled !== null) n++;
-            if (this.filterCategory) n++;
-            if (this.sort !== 'a-z') n++;
-            return n;
-        }
-    };
     let onDemandStatusInterval = null;
     let currentOnDemandPluginId = null;
     let hasLoadedOnDemandStatus = false;
