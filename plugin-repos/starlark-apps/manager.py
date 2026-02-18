@@ -17,8 +17,8 @@ from PIL import Image
 
 from src.plugin_system.base_plugin import BasePlugin, VegasDisplayMode
 from src.logging_config import get_logger
-from .pixlet_renderer import PixletRenderer
-from .frame_extractor import FrameExtractor
+from pixlet_renderer import PixletRenderer
+from frame_extractor import FrameExtractor
 
 logger = get_logger(__name__)
 
