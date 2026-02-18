@@ -53,48 +53,50 @@
         </button>
     </div>
 
-    <!-- App-specific Config (if schema exists) -->
-    {% if schema %}
+    <!-- Timing Settings (always shown) -->
     <div class="bg-white rounded-lg p-4 border border-gray-200">
-        <h4 class="text-sm font-semibold text-gray-700 mb-3">App Configuration</h4>
+        <h4 class="text-sm font-semibold text-gray-700 mb-3">Timing Settings</h4>
         <div id="starlark-config-form" class="space-y-4">
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div class="form-group">
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Render Interval (seconds)</label>
+                    <input type="number" min="10" max="86400" step="1"
+                           class="form-control w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
+                           value="{{ render_interval }}"
+                           data-starlark-config="render_interval">
+                    <p class="text-xs text-gray-400 mt-1">How often the app re-renders (fetches new data)</p>
+                </div>
+                <div class="form-group">
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Display Duration (seconds)</label>
+                    <input type="number" min="1" max="3600" step="1"
+                           class="form-control w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
+                           value="{{ display_duration }}"
+                           data-starlark-config="display_duration">
+                    <p class="text-xs text-gray-400 mt-1">How long the app displays before rotating</p>
+                </div>
+            </div>
+
+            {% if schema or config %}
+            <hr class="border-gray-200 my-2">
+            <h4 class="text-sm font-semibold text-gray-700 mb-2">App Settings</h4>
             {% for key, value in config.items() %}
+            {% if key not in ('render_interval', 'display_duration') %}
             <div class="form-group">
                 <label class="block text-sm font-medium text-gray-700 mb-1">{{ key }}</label>
                 <input type="text" class="form-control w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
                        name="{{ key }}" value="{{ value }}"
                        data-starlark-config="{{ key }}">
             </div>
+            {% endif %}
             {% endfor %}
+            {% endif %}
+
             <button onclick="saveStarlarkConfig('{{ app_id }}')"
                     class="btn bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md text-sm font-semibold">
                 <i class="fas fa-save mr-2"></i>Save Configuration
             </button>
         </div>
     </div>
-    {% elif config %}
-    <div class="bg-white rounded-lg p-4 border border-gray-200">
-        <h4 class="text-sm font-semibold text-gray-700 mb-3">App Configuration</h4>
-        <div id="starlark-config-form" class="space-y-4">
-            {% for key, value in config.items() %}
-            <div class="form-group">
-                <label class="block text-sm font-medium text-gray-700 mb-1">{{ key }}</label>
-                <input type="text" class="form-control w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
-                       name="{{ key }}" value="{{ value }}"
-                       data-starlark-config="{{ key }}">
-            </div>
-            {% endfor %}
-            <button onclick="saveStarlarkConfig('{{ app_id }}')"
-                    class="btn bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md text-sm font-semibold">
-                <i class="fas fa-save mr-2"></i>Save Configuration
-            </button>
-        </div>
-    </div>
-    {% else %}
-    <div class="bg-gray-50 rounded-lg p-4 border border-gray-200 text-center text-gray-500 text-sm">
-        <i class="fas fa-info-circle mr-1"></i>This app has no configurable settings.
-    </div>
-    {% endif %}
 </div>
 
 <script>
@@ -139,7 +141,14 @@ function saveStarlarkConfig(appId) {
     const inputs = document.querySelectorAll('[data-starlark-config]');
     const config = {};
     inputs.forEach(input => {
-        config[input.getAttribute('data-starlark-config')] = input.value;
+        const key = input.getAttribute('data-starlark-config');
+        const val = input.value;
+        // Send timing fields as integers
+        if (key === 'render_interval' || key === 'display_duration') {
+            config[key] = parseInt(val, 10) || 0;
+        } else {
+            config[key] = val;
+        }
     });
 
     fetch('/api/v3/starlark/apps/' + encodeURIComponent(appId) + '/config', {
