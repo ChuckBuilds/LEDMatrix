@@ -859,6 +859,36 @@ window.currentPluginConfig = null;
     let pluginStoreCache = null; // Cache for plugin store to speed up subsequent loads
     let cacheTimestamp = null;
     const CACHE_DURATION = 5 * 60 * 1000; // 5 minutes in milliseconds
+    let storeFilteredList = [];
+
+    // ── Plugin Store Filter State ───────────────────────────────────────────
+    const storeFilterState = {
+        sort: localStorage.getItem('storeSort') || 'a-z',
+        filterCategory: '',
+        filterInstalled: null,   // null=all, true=installed, false=not-installed
+        searchQuery: '',
+        page: 1,
+        perPage: parseInt(localStorage.getItem('storePerPage')) || 12,
+        persist() {
+            localStorage.setItem('storeSort', this.sort);
+            localStorage.setItem('storePerPage', this.perPage);
+        },
+        reset() {
+            this.sort = 'a-z';
+            this.filterCategory = '';
+            this.filterInstalled = null;
+            this.searchQuery = '';
+            this.page = 1;
+        },
+        activeCount() {
+            let n = 0;
+            if (this.searchQuery) n++;
+            if (this.filterInstalled !== null) n++;
+            if (this.filterCategory) n++;
+            if (this.sort !== 'a-z') n++;
+            return n;
+        }
+    };
     let onDemandStatusInterval = null;
     let currentOnDemandPluginId = null;
     let hasLoadedOnDemandStatus = false;
@@ -981,8 +1011,10 @@ window.initPluginsPage = function() {
     }
     if (window.__pendingStorePlugins) {
         console.log('[RENDER] Applying pending plugin store data');
-        renderPluginStore(window.__pendingStorePlugins);
+        pluginStoreCache = window.__pendingStorePlugins;
+        cacheTimestamp = Date.now();
         window.__pendingStorePlugins = null;
+        applyStoreFiltersAndSort();
     }
 
     initializePlugins();
@@ -991,7 +1023,6 @@ window.initPluginsPage = function() {
     const refreshBtn = document.getElementById('refresh-plugins-btn');
     const updateAllBtn = document.getElementById('update-all-plugins-btn');
     const restartBtn = document.getElementById('restart-display-btn');
-    const searchBtn = document.getElementById('search-plugins-btn');
     const closeBtn = document.getElementById('close-plugin-config');
     const closeOnDemandModalBtn = document.getElementById('close-on-demand-modal');
     const cancelOnDemandBtn = document.getElementById('cancel-on-demand');
@@ -1019,10 +1050,13 @@ window.initPluginsPage = function() {
         document.getElementById('restart-display-btn').addEventListener('click', restartDisplay);
         console.log('[initPluginsPage] Attached restartDisplay listener');
     }
-    if (searchBtn) {
-        searchBtn.replaceWith(searchBtn.cloneNode(true));
-        document.getElementById('search-plugins-btn').addEventListener('click', searchPluginStore);
-    }
+    // Restore persisted store sort/perPage
+    const storeSortEl = document.getElementById('store-sort');
+    if (storeSortEl) storeSortEl.value = storeFilterState.sort;
+    const storePpEl = document.getElementById('store-per-page');
+    if (storePpEl) storePpEl.value = storeFilterState.perPage;
+    setupStoreFilterListeners();
+
     if (closeBtn) {
         closeBtn.replaceWith(closeBtn.cloneNode(true));
         document.getElementById('close-plugin-config').addEventListener('click', closePluginConfigModal);
@@ -5098,167 +5132,86 @@ function restartDisplay() {
 
 function searchPluginStore(fetchCommitInfo = true) {
     pluginLog('[STORE] Searching plugin store...', { fetchCommitInfo });
-    
-    // Safely get search values (elements may not exist yet)
-    const searchInput = document.getElementById('plugin-search');
-    const categorySelect = document.getElementById('plugin-category');
-    const query = searchInput ? searchInput.value : '';
-    const category = categorySelect ? categorySelect.value : '';
 
-    // For filtered searches (user typing), we can use cache to avoid excessive API calls
-    // For initial load or refresh, always fetch fresh metadata
-    const isFilteredSearch = query || category;
     const now = Date.now();
     const isCacheValid = pluginStoreCache && cacheTimestamp && (now - cacheTimestamp < CACHE_DURATION);
-    
-    // Only use cache for filtered searches that don't explicitly request fresh metadata
-    if (isFilteredSearch && isCacheValid && !fetchCommitInfo) {
-        console.log('Using cached plugin store data for filtered search');
-        // Ensure plugin store grid exists before rendering
+
+    // If cache is valid and we don't need fresh commit info, just re-filter
+    if (isCacheValid && !fetchCommitInfo) {
+        console.log('Using cached plugin store data');
         const storeGrid = document.getElementById('plugin-store-grid');
-        if (!storeGrid) {
-            console.error('plugin-store-grid element not found, cannot render cached plugins');
-            // Don't return, let it fetch fresh data
-        } else {
-            renderPluginStore(pluginStoreCache);
-            try {
-                const countEl = document.getElementById('store-count');
-                if (countEl) {
-                    countEl.innerHTML = `${pluginStoreCache.length} available`;
-                }
-            } catch (e) {
-                console.warn('Could not update store count:', e);
-            }
+        if (storeGrid) {
+            applyStoreFiltersAndSort();
             return;
         }
     }
 
-    // Show loading state - safely check element exists
+    // Show loading state
     try {
         const countEl = document.getElementById('store-count');
-        if (countEl) {
-            countEl.innerHTML = '<i class="fas fa-spinner fa-spin mr-1"></i>Loading...';
-        }
-    } catch (e) {
-        console.warn('Could not update store count:', e);
-    }
+        if (countEl) countEl.innerHTML = '<i class="fas fa-spinner fa-spin mr-1"></i>Loading...';
+    } catch (e) { /* ignore */ }
     showStoreLoading(true);
 
     let url = '/api/v3/plugins/store/list';
-    const params = new URLSearchParams();
-    if (query) params.append('query', query);
-    if (category) params.append('category', category);
-    // Always fetch fresh commit metadata unless explicitly disabled (for performance on repeated filtered searches)
     if (!fetchCommitInfo) {
-        params.append('fetch_commit_info', 'false');
-    }
-    // Note: fetch_commit_info defaults to true on the server side to keep metadata fresh
-
-    if (params.toString()) {
-        url += '?' + params.toString();
+        url += '?fetch_commit_info=false';
     }
 
     console.log('Store URL:', url);
 
     fetch(url)
-        .then(response => {
-            console.log('Store response:', response.status);
-            return response.json();
-        })
+        .then(response => response.json())
         .then(data => {
-            console.log('Store data:', data);
             showStoreLoading(false);
-            
+
             if (data.status === 'success') {
                 const plugins = data.data.plugins || [];
                 console.log('Store plugins count:', plugins.length);
-                
-                // Cache the results if no filters
-                if (!query && !category) {
-                    pluginStoreCache = plugins;
-                    cacheTimestamp = Date.now();
-                    console.log('Cached plugin store data');
-                }
-                
-                // Ensure plugin store grid exists before rendering
+
+                pluginStoreCache = plugins;
+                cacheTimestamp = Date.now();
+
                 const storeGrid = document.getElementById('plugin-store-grid');
                 if (!storeGrid) {
-                    // Defer rendering until plugin tab loads
                     pluginLog('[STORE] plugin-store-grid not ready, deferring render');
                     window.__pendingStorePlugins = plugins;
                     return;
                 }
-                
-                renderPluginStore(plugins);
 
-                // Update count - safely check element exists
+                // Update total count
                 try {
                     const countEl = document.getElementById('store-count');
-                    if (countEl) {
-                        countEl.innerHTML = `${plugins.length} available`;
-                    }
-                } catch (e) {
-                    console.warn('Could not update store count:', e);
-                }
-                
-                // Ensure GitHub token collapse handler is attached after store is rendered
-                // The button might not exist until the store content is loaded
-                console.log('[STORE] Checking for attachGithubTokenCollapseHandler...', {
-                    exists: typeof window.attachGithubTokenCollapseHandler,
-                    checkGitHubAuthStatus: typeof window.checkGitHubAuthStatus
-                });
+                    if (countEl) countEl.innerHTML = `${plugins.length} available`;
+                } catch (e) { /* ignore */ }
+
+                applyStoreFiltersAndSort();
+
+                // Re-attach GitHub token collapse handler after store render
                 if (window.attachGithubTokenCollapseHandler) {
-                    // Use requestAnimationFrame for faster execution (runs on next frame, ~16ms)
                     requestAnimationFrame(() => {
-                        console.log('[STORE] Re-attaching GitHub token collapse handler after store render');
-                        try {
-                            window.attachGithubTokenCollapseHandler();
-                        } catch (error) {
-                            console.error('[STORE] Error attaching collapse handler:', error);
-                        }
-                        // Also check auth status to update UI (already checked earlier, but refresh to be sure)
+                        try { window.attachGithubTokenCollapseHandler(); } catch (e) { /* ignore */ }
                         if (window.checkGitHubAuthStatus) {
-                            console.log('[STORE] Refreshing GitHub auth status after store render...');
-                            try {
-                                window.checkGitHubAuthStatus();
-                            } catch (error) {
-                                console.error('[STORE] Error calling checkGitHubAuthStatus:', error);
-                            }
-                        } else {
-                            console.warn('[STORE] checkGitHubAuthStatus not available');
+                            try { window.checkGitHubAuthStatus(); } catch (e) { /* ignore */ }
                         }
                     });
-                } else {
-                    console.warn('[STORE] attachGithubTokenCollapseHandler not available');
                 }
             } else {
                 showError('Failed to search plugin store: ' + data.message);
                 try {
                     const countEl = document.getElementById('store-count');
-                    if (countEl) {
-                        countEl.innerHTML = 'Error loading';
-                    }
-                } catch (e) {
-                    console.warn('Could not update store count:', e);
-                }
+                    if (countEl) countEl.innerHTML = 'Error loading';
+                } catch (e) { /* ignore */ }
             }
         })
         .catch(error => {
             console.error('Error searching plugin store:', error);
             showStoreLoading(false);
-            let errorMsg = 'Error searching plugin store: ' + error.message;
-            if (error.message && error.message.includes('Failed to Fetch')) {
-                errorMsg += ' - Please try refreshing your browser.';
-            }
-            showError(errorMsg);
+            showError('Error searching plugin store: ' + error.message);
             try {
                 const countEl = document.getElementById('store-count');
-                if (countEl) {
-                    countEl.innerHTML = 'Error loading';
-                }
-            } catch (e) {
-                console.warn('Could not update store count:', e);
-            }
+                if (countEl) countEl.innerHTML = 'Error loading';
+            } catch (e) { /* ignore */ }
         });
 }
 
@@ -5266,6 +5219,257 @@ function showStoreLoading(show) {
     const loading = document.querySelector('.store-loading');
     if (loading) {
         loading.style.display = show ? 'block' : 'none';
+    }
+}
+
+// ── Plugin Store: Client-Side Filter/Sort/Pagination ────────────────────────
+
+function isStorePluginInstalled(pluginId) {
+    return (window.installedPlugins || installedPlugins || []).some(p => p.id === pluginId);
+}
+
+function applyStoreFiltersAndSort(skipPageReset) {
+    if (!pluginStoreCache) return;
+    const st = storeFilterState;
+
+    let list = pluginStoreCache.slice();
+
+    // Text search
+    if (st.searchQuery) {
+        const q = st.searchQuery.toLowerCase();
+        list = list.filter(plugin => {
+            const hay = [
+                plugin.name, plugin.description, plugin.author,
+                plugin.id, plugin.category,
+                ...(plugin.tags || [])
+            ].filter(Boolean).join(' ').toLowerCase();
+            return hay.includes(q);
+        });
+    }
+
+    // Category filter
+    if (st.filterCategory) {
+        const cat = st.filterCategory.toLowerCase();
+        list = list.filter(plugin => (plugin.category || '').toLowerCase() === cat);
+    }
+
+    // Installed filter
+    if (st.filterInstalled === true) {
+        list = list.filter(plugin => isStorePluginInstalled(plugin.id));
+    } else if (st.filterInstalled === false) {
+        list = list.filter(plugin => !isStorePluginInstalled(plugin.id));
+    }
+
+    // Sort
+    list.sort((a, b) => {
+        const nameA = (a.name || a.id || '').toLowerCase();
+        const nameB = (b.name || b.id || '').toLowerCase();
+        switch (st.sort) {
+            case 'z-a': return nameB.localeCompare(nameA);
+            case 'category': {
+                const catCmp = (a.category || '').localeCompare(b.category || '');
+                return catCmp !== 0 ? catCmp : nameA.localeCompare(nameB);
+            }
+            case 'author': {
+                const authCmp = (a.author || '').localeCompare(b.author || '');
+                return authCmp !== 0 ? authCmp : nameA.localeCompare(nameB);
+            }
+            case 'newest': {
+                const dateA = a.last_updated ? new Date(a.last_updated).getTime() : 0;
+                const dateB = b.last_updated ? new Date(b.last_updated).getTime() : 0;
+                return dateB - dateA; // newest first
+            }
+            default: return nameA.localeCompare(nameB);
+        }
+    });
+
+    storeFilteredList = list;
+    if (!skipPageReset) st.page = 1;
+
+    renderStorePage();
+    updateStoreFilterUI();
+}
+
+function renderStorePage() {
+    const st = storeFilterState;
+    const total = storeFilteredList.length;
+    const totalPages = Math.max(1, Math.ceil(total / st.perPage));
+    if (st.page > totalPages) st.page = totalPages;
+
+    const start = (st.page - 1) * st.perPage;
+    const end = Math.min(start + st.perPage, total);
+    const pagePlugins = storeFilteredList.slice(start, end);
+
+    // Results info
+    const info = total > 0
+        ? `Showing ${start + 1}\u2013${end} of ${total} plugins`
+        : 'No plugins match your filters';
+    const infoEl = document.getElementById('store-results-info');
+    const infoElBot = document.getElementById('store-results-info-bottom');
+    if (infoEl) infoEl.textContent = info;
+    if (infoElBot) infoElBot.textContent = info;
+
+    // Pagination
+    renderStorePagination('store-pagination-top', totalPages, st.page);
+    renderStorePagination('store-pagination-bottom', totalPages, st.page);
+
+    // Grid
+    renderPluginStore(pagePlugins);
+}
+
+function renderStorePagination(containerId, totalPages, currentPage) {
+    const container = document.getElementById(containerId);
+    if (!container) return;
+
+    if (totalPages <= 1) { container.innerHTML = ''; return; }
+
+    const btnClass = 'px-3 py-1 text-sm rounded-md border transition-colors';
+    const activeClass = 'bg-blue-600 text-white border-blue-600';
+    const normalClass = 'bg-white text-gray-700 border-gray-300 hover:bg-gray-100 cursor-pointer';
+    const disabledClass = 'bg-gray-100 text-gray-400 border-gray-200 cursor-not-allowed';
+
+    let html = '';
+    html += `<button class="${btnClass} ${currentPage <= 1 ? disabledClass : normalClass}" data-store-page="${currentPage - 1}" ${currentPage <= 1 ? 'disabled' : ''}>&laquo;</button>`;
+
+    const pages = [];
+    pages.push(1);
+    if (currentPage > 3) pages.push('...');
+    for (let i = Math.max(2, currentPage - 1); i <= Math.min(totalPages - 1, currentPage + 1); i++) {
+        pages.push(i);
+    }
+    if (currentPage < totalPages - 2) pages.push('...');
+    if (totalPages > 1) pages.push(totalPages);
+
+    pages.forEach(p => {
+        if (p === '...') {
+            html += `<span class="px-2 py-1 text-sm text-gray-400">&hellip;</span>`;
+        } else {
+            html += `<button class="${btnClass} ${p === currentPage ? activeClass : normalClass}" data-store-page="${p}">${p}</button>`;
+        }
+    });
+
+    html += `<button class="${btnClass} ${currentPage >= totalPages ? disabledClass : normalClass}" data-store-page="${currentPage + 1}" ${currentPage >= totalPages ? 'disabled' : ''}>&raquo;</button>`;
+
+    container.innerHTML = html;
+
+    container.querySelectorAll('[data-store-page]').forEach(btn => {
+        btn.addEventListener('click', function() {
+            const p = parseInt(this.getAttribute('data-store-page'));
+            if (p >= 1 && p <= totalPages && p !== currentPage) {
+                storeFilterState.page = p;
+                renderStorePage();
+                const grid = document.getElementById('plugin-store-grid');
+                if (grid) grid.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            }
+        });
+    });
+}
+
+function updateStoreFilterUI() {
+    const st = storeFilterState;
+    const count = st.activeCount();
+
+    const badge = document.getElementById('store-active-filters');
+    const clearBtn = document.getElementById('store-clear-filters');
+    if (badge) {
+        badge.classList.toggle('hidden', count === 0);
+        badge.textContent = count + ' filter' + (count !== 1 ? 's' : '') + ' active';
+    }
+    if (clearBtn) clearBtn.classList.toggle('hidden', count === 0);
+
+    const instBtn = document.getElementById('store-filter-installed');
+    if (instBtn) {
+        if (st.filterInstalled === true) {
+            instBtn.innerHTML = '<i class="fas fa-check-circle mr-1 text-green-500"></i>Installed';
+            instBtn.classList.add('border-green-400', 'bg-green-50');
+            instBtn.classList.remove('border-gray-300', 'bg-white', 'border-red-400', 'bg-red-50');
+        } else if (st.filterInstalled === false) {
+            instBtn.innerHTML = '<i class="fas fa-times-circle mr-1 text-red-500"></i>Not Installed';
+            instBtn.classList.add('border-red-400', 'bg-red-50');
+            instBtn.classList.remove('border-gray-300', 'bg-white', 'border-green-400', 'bg-green-50');
+        } else {
+            instBtn.innerHTML = '<i class="fas fa-filter mr-1 text-gray-400"></i>All';
+            instBtn.classList.add('border-gray-300', 'bg-white');
+            instBtn.classList.remove('border-green-400', 'bg-green-50', 'border-red-400', 'bg-red-50');
+        }
+    }
+}
+
+function setupStoreFilterListeners() {
+    // Search with debounce
+    const searchEl = document.getElementById('plugin-search');
+    if (searchEl && !searchEl._storeFilterInit) {
+        searchEl._storeFilterInit = true;
+        let debounce = null;
+        searchEl.addEventListener('input', function() {
+            clearTimeout(debounce);
+            debounce = setTimeout(() => {
+                storeFilterState.searchQuery = this.value.trim();
+                applyStoreFiltersAndSort();
+            }, 300);
+        });
+    }
+
+    // Category dropdown
+    const catEl = document.getElementById('plugin-category');
+    if (catEl && !catEl._storeFilterInit) {
+        catEl._storeFilterInit = true;
+        catEl.addEventListener('change', function() {
+            storeFilterState.filterCategory = this.value;
+            applyStoreFiltersAndSort();
+        });
+    }
+
+    // Sort dropdown
+    const sortEl = document.getElementById('store-sort');
+    if (sortEl && !sortEl._storeFilterInit) {
+        sortEl._storeFilterInit = true;
+        sortEl.addEventListener('change', function() {
+            storeFilterState.sort = this.value;
+            storeFilterState.persist();
+            applyStoreFiltersAndSort();
+        });
+    }
+
+    // Installed toggle (cycle: all → installed → not-installed → all)
+    const instBtn = document.getElementById('store-filter-installed');
+    if (instBtn && !instBtn._storeFilterInit) {
+        instBtn._storeFilterInit = true;
+        instBtn.addEventListener('click', function() {
+            const st = storeFilterState;
+            if (st.filterInstalled === null) st.filterInstalled = true;
+            else if (st.filterInstalled === true) st.filterInstalled = false;
+            else st.filterInstalled = null;
+            applyStoreFiltersAndSort();
+        });
+    }
+
+    // Clear filters
+    const clearBtn = document.getElementById('store-clear-filters');
+    if (clearBtn && !clearBtn._storeFilterInit) {
+        clearBtn._storeFilterInit = true;
+        clearBtn.addEventListener('click', function() {
+            storeFilterState.reset();
+            const searchEl = document.getElementById('plugin-search');
+            if (searchEl) searchEl.value = '';
+            const catEl = document.getElementById('plugin-category');
+            if (catEl) catEl.value = '';
+            const sortEl = document.getElementById('store-sort');
+            if (sortEl) sortEl.value = 'a-z';
+            storeFilterState.persist();
+            applyStoreFiltersAndSort();
+        });
+    }
+
+    // Per-page selector
+    const ppEl = document.getElementById('store-per-page');
+    if (ppEl && !ppEl._storeFilterInit) {
+        ppEl._storeFilterInit = true;
+        ppEl.addEventListener('change', function() {
+            storeFilterState.perPage = parseInt(this.value) || 12;
+            storeFilterState.persist();
+            applyStoreFiltersAndSort();
+        });
     }
 }
 
@@ -5299,13 +5503,16 @@ function renderPluginStore(plugins) {
         return JSON.stringify(text || '');
     };
 
-    container.innerHTML = plugins.map(plugin => `
+    container.innerHTML = plugins.map(plugin => {
+        const installed = isStorePluginInstalled(plugin.id);
+        return `
         <div class="plugin-card">
             <div class="flex items-start justify-between mb-4">
                 <div class="flex-1 min-w-0">
-                    <div class="flex items-center flex-wrap gap-2 mb-2">
+                    <div class="flex items-center flex-wrap gap-1.5 mb-2">
                         <h4 class="font-semibold text-gray-900 text-base">${escapeHtml(plugin.name || plugin.id)}</h4>
                         ${plugin.verified ? '<span class="badge badge-success"><i class="fas fa-check-circle mr-1"></i>Verified</span>' : ''}
+                        ${installed ? '<span class="badge badge-success"><i class="fas fa-check mr-1"></i>Installed</span>' : ''}
                         ${isNewPlugin(plugin.last_updated) ? '<span class="badge badge-info"><i class="fas fa-sparkles mr-1"></i>New</span>' : ''}
                         ${plugin._source === 'custom_repository' ? `<span class="badge badge-accent" title="From: ${escapeHtml(plugin._repository_name || plugin._repository_url || 'Custom Repository')}"><i class="fas fa-bookmark mr-1"></i>Custom</span>` : ''}
                     </div>
@@ -5326,26 +5533,26 @@ function renderPluginStore(plugins) {
             ` : ''}
 
             <!-- Store Actions -->
-            <div class="mt-4 pt-4 border-t border-gray-200 space-y-2">
+            <div class="mt-auto pt-4 border-t border-gray-200 space-y-2">
                 <div class="flex items-center gap-2">
                     <label for="branch-input-${plugin.id.replace(/[^a-zA-Z0-9]/g, '-')}" class="text-xs text-gray-600 whitespace-nowrap">
                         <i class="fas fa-code-branch mr-1"></i>Branch:
                     </label>
-                    <input type="text" id="branch-input-${plugin.id.replace(/[^a-zA-Z0-9]/g, '-')}" 
-                           placeholder="main (default)" 
+                    <input type="text" id="branch-input-${plugin.id.replace(/[^a-zA-Z0-9]/g, '-')}"
+                           placeholder="main (default)"
                            class="flex-1 px-2 py-1 text-xs border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500">
                 </div>
                 <div class="flex gap-2">
-                    <button onclick='if(window.installPlugin){const branchInput = document.getElementById("branch-input-${plugin.id.replace(/[^a-zA-Z0-9]/g, '-')}"); window.installPlugin(${escapeJs(plugin.id)}, branchInput?.value?.trim() || null)}else{console.error("installPlugin not available")}' class="btn bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-md text-sm flex-1 font-semibold">
-                        <i class="fas fa-download mr-2"></i>Install
+                    <button onclick='if(window.installPlugin){const branchInput = document.getElementById("branch-input-${plugin.id.replace(/[^a-zA-Z0-9]/g, '-')}"); window.installPlugin(${escapeJs(plugin.id)}, branchInput?.value?.trim() || null)}else{console.error("installPlugin not available")}' class="btn ${installed ? 'bg-gray-500 hover:bg-gray-600' : 'bg-green-600 hover:bg-green-700'} text-white px-4 py-2 rounded-md text-sm flex-1 font-semibold">
+                        <i class="fas ${installed ? 'fa-redo' : 'fa-download'} mr-2"></i>${installed ? 'Reinstall' : 'Install'}
                     </button>
                     <button onclick='${plugin.repo ? `window.open(${escapeJs(plugin.plugin_path ? plugin.repo + "/tree/" + encodeURIComponent(plugin.default_branch || plugin.branch || "main") + "/" + plugin.plugin_path.split("/").map(encodeURIComponent).join("/") : plugin.repo)}, "_blank")` : `void(0)`}' ${plugin.repo ? '' : 'disabled'} class="btn bg-gray-600 hover:bg-gray-700 text-white px-4 py-2 rounded-md text-sm flex-1 font-semibold${plugin.repo ? '' : ' opacity-50 cursor-not-allowed'}">
                         <i class="fas fa-external-link-alt mr-2"></i>View
                     </button>
                 </div>
             </div>
-        </div>
-    `).join('');
+        </div>`;
+    }).join('');
 }
 
 // Expose functions to window for onclick handlers
@@ -5366,12 +5573,9 @@ window.installPlugin = function(pluginId, branch = null) {
     .then(data => {
         showNotification(data.message, data.status);
         if (data.status === 'success') {
-            // Refresh both installed plugins and store
+            // Refresh installed plugins list, then re-render store to update badges
             loadInstalledPlugins();
-            // Delay store refresh slightly to ensure DOM is ready
-            setTimeout(() => {
-                searchPluginStore();
-            }, 100);
+            setTimeout(() => applyStoreFiltersAndSort(true), 500);
         }
     })
     .catch(error => {
@@ -7323,8 +7527,59 @@ setTimeout(function() {
     'use strict';
 
     let starlarkSectionVisible = false;
-    let starlarkAppsCache = null;
+    let starlarkFullCache = null;       // All apps from server
+    let starlarkFilteredList = [];       // After filters applied
+    let starlarkDataLoaded = false;
 
+    // ── Filter State ────────────────────────────────────────────────────────
+    const starlarkFilterState = {
+        sort: localStorage.getItem('starlarkSort') || 'a-z',
+        filterInstalled: null,   // null=all, true=installed, false=not-installed
+        filterAuthor: '',
+        filterCategory: '',
+        searchQuery: '',
+        page: 1,
+        perPage: parseInt(localStorage.getItem('starlarkPerPage')) || 24,
+        persist() {
+            localStorage.setItem('starlarkSort', this.sort);
+            localStorage.setItem('starlarkPerPage', this.perPage);
+        },
+        reset() {
+            this.sort = 'a-z';
+            this.filterInstalled = null;
+            this.filterAuthor = '';
+            this.filterCategory = '';
+            this.searchQuery = '';
+            this.page = 1;
+        },
+        activeCount() {
+            let n = 0;
+            if (this.searchQuery) n++;
+            if (this.filterInstalled !== null) n++;
+            if (this.filterAuthor) n++;
+            if (this.filterCategory) n++;
+            if (this.sort !== 'a-z') n++;
+            return n;
+        }
+    };
+
+    // ── Helpers ─────────────────────────────────────────────────────────────
+    function escapeHtml(str) {
+        if (!str) return '';
+        const div = document.createElement('div');
+        div.textContent = str;
+        return div.innerHTML;
+    }
+
+    function isStarlarkInstalled(appId) {
+        // Check window.installedPlugins (populated by loadInstalledPlugins)
+        if (window.installedPlugins && Array.isArray(window.installedPlugins)) {
+            return window.installedPlugins.some(p => p.id === 'starlark:' + appId);
+        }
+        return false;
+    }
+
+    // ── Section Toggle + Init ───────────────────────────────────────────────
     function initStarlarkSection() {
         const toggleBtn = document.getElementById('toggle-starlark-section');
         if (toggleBtn && !toggleBtn._starlarkInit) {
@@ -7341,16 +7596,18 @@ setTimeout(function() {
                 this.querySelector('span').textContent = starlarkSectionVisible ? 'Hide' : 'Show';
                 if (starlarkSectionVisible) {
                     loadStarlarkStatus();
-                    loadStarlarkCategories();
+                    if (!starlarkDataLoaded) fetchStarlarkApps();
                 }
             });
         }
 
-        const browseBtn = document.getElementById('starlark-browse-btn');
-        if (browseBtn && !browseBtn._starlarkInit) {
-            browseBtn._starlarkInit = true;
-            browseBtn.addEventListener('click', browseStarlarkApps);
-        }
+        // Restore persisted sort/perPage
+        const sortEl = document.getElementById('starlark-sort');
+        if (sortEl) sortEl.value = starlarkFilterState.sort;
+        const ppEl = document.getElementById('starlark-per-page');
+        if (ppEl) ppEl.value = starlarkFilterState.perPage;
+
+        setupStarlarkFilterListeners();
 
         const uploadBtn = document.getElementById('starlark-upload-btn');
         if (uploadBtn && !uploadBtn._starlarkInit) {
@@ -7367,6 +7624,7 @@ setTimeout(function() {
         }
     }
 
+    // ── Status ──────────────────────────────────────────────────────────────
     function loadStarlarkStatus() {
         fetch('/api/v3/starlark/status')
             .then(r => r.json())
@@ -7387,52 +7645,60 @@ setTimeout(function() {
             .catch(err => console.error('Starlark status error:', err));
     }
 
-    function loadStarlarkCategories() {
-        fetch('/api/v3/starlark/repository/categories')
-            .then(r => r.json())
-            .then(data => {
-                if (data.status !== 'success') return;
-                const select = document.getElementById('starlark-category');
-                if (!select) return;
-                select.innerHTML = '<option value="">All Categories</option>';
-                (data.categories || []).forEach(cat => {
-                    const opt = document.createElement('option');
-                    opt.value = cat;
-                    opt.textContent = cat;
-                    select.appendChild(opt);
-                });
-            })
-            .catch(err => console.error('Starlark categories error:', err));
-    }
-
-    function browseStarlarkApps() {
-        const search = (document.getElementById('starlark-search') || {}).value || '';
-        const category = (document.getElementById('starlark-category') || {}).value || '';
+    // ── Bulk Fetch All Apps ─────────────────────────────────────────────────
+    function fetchStarlarkApps() {
         const grid = document.getElementById('starlark-apps-grid');
-        const countEl = document.getElementById('starlark-apps-count');
+        if (grid) {
+            grid.innerHTML = `<div class="col-span-full">
+                <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-4">
+                    ${Array(10).fill('<div class="bg-gray-200 rounded-lg p-4 h-48 animate-pulse"></div>').join('')}
+                </div>
+            </div>`;
+        }
 
-        if (grid) grid.innerHTML = '<div class="col-span-full text-center py-8 text-gray-500"><i class="fas fa-spinner fa-spin mr-2"></i>Loading Tronbyte apps...</div>';
-
-        const params = new URLSearchParams();
-        if (search) params.set('search', search);
-        if (category) params.set('category', category);
-        params.set('limit', '50');
-
-        fetch('/api/v3/starlark/repository/browse?' + params.toString())
+        fetch('/api/v3/starlark/repository/browse')
             .then(r => r.json())
             .then(data => {
                 if (data.status !== 'success') {
                     if (grid) grid.innerHTML = `<div class="col-span-full text-center py-8 text-red-500"><i class="fas fa-exclamation-circle mr-2"></i>${escapeHtml(data.message || 'Failed to load')}</div>`;
                     return;
                 }
-                starlarkAppsCache = data.apps;
+
+                starlarkFullCache = data.apps || [];
+                starlarkDataLoaded = true;
+
+                // Populate category dropdown
+                const catSelect = document.getElementById('starlark-category');
+                if (catSelect) {
+                    catSelect.innerHTML = '<option value="">All Categories</option>';
+                    (data.categories || []).forEach(cat => {
+                        const opt = document.createElement('option');
+                        opt.value = cat;
+                        opt.textContent = cat;
+                        catSelect.appendChild(opt);
+                    });
+                }
+
+                // Populate author dropdown
+                const authSelect = document.getElementById('starlark-filter-author');
+                if (authSelect) {
+                    authSelect.innerHTML = '<option value="">All Authors</option>';
+                    (data.authors || []).forEach(author => {
+                        const opt = document.createElement('option');
+                        opt.value = author;
+                        opt.textContent = author;
+                        authSelect.appendChild(opt);
+                    });
+                }
+
+                const countEl = document.getElementById('starlark-apps-count');
                 if (countEl) countEl.textContent = `${data.count} apps`;
-                renderStarlarkApps(data.apps, grid);
 
                 if (data.rate_limit) {
-                    const rl = data.rate_limit;
-                    console.log(`[Starlark] GitHub rate limit: ${rl.remaining}/${rl.limit} remaining`);
+                    console.log(`[Starlark] GitHub rate limit: ${data.rate_limit.remaining}/${data.rate_limit.limit} remaining` + (data.cached ? ' (cached)' : ''));
                 }
+
+                applyStarlarkFiltersAndSort();
             })
             .catch(err => {
                 console.error('Starlark browse error:', err);
@@ -7440,6 +7706,151 @@ setTimeout(function() {
             });
     }
 
+    // ── Apply Filters + Sort ────────────────────────────────────────────────
+    function applyStarlarkFiltersAndSort(skipPageReset) {
+        if (!starlarkFullCache) return;
+        const st = starlarkFilterState;
+
+        let list = starlarkFullCache.slice();
+
+        // Text search
+        if (st.searchQuery) {
+            const q = st.searchQuery.toLowerCase();
+            list = list.filter(app => {
+                const hay = [app.name, app.summary, app.desc, app.author, app.id, app.category]
+                    .filter(Boolean).join(' ').toLowerCase();
+                return hay.includes(q);
+            });
+        }
+
+        // Category filter
+        if (st.filterCategory) {
+            const cat = st.filterCategory.toLowerCase();
+            list = list.filter(app => (app.category || '').toLowerCase() === cat);
+        }
+
+        // Author filter
+        if (st.filterAuthor) {
+            list = list.filter(app => app.author === st.filterAuthor);
+        }
+
+        // Installed filter
+        if (st.filterInstalled === true) {
+            list = list.filter(app => isStarlarkInstalled(app.id));
+        } else if (st.filterInstalled === false) {
+            list = list.filter(app => !isStarlarkInstalled(app.id));
+        }
+
+        // Sort
+        list.sort((a, b) => {
+            const nameA = (a.name || a.id || '').toLowerCase();
+            const nameB = (b.name || b.id || '').toLowerCase();
+            switch (st.sort) {
+                case 'z-a': return nameB.localeCompare(nameA);
+                case 'category': {
+                    const catCmp = (a.category || '').localeCompare(b.category || '');
+                    return catCmp !== 0 ? catCmp : nameA.localeCompare(nameB);
+                }
+                case 'author': {
+                    const authCmp = (a.author || '').localeCompare(b.author || '');
+                    return authCmp !== 0 ? authCmp : nameA.localeCompare(nameB);
+                }
+                default: return nameA.localeCompare(nameB); // a-z
+            }
+        });
+
+        starlarkFilteredList = list;
+        if (!skipPageReset) st.page = 1;
+
+        renderStarlarkPage();
+        updateStarlarkFilterUI();
+    }
+
+    // ── Render Current Page ─────────────────────────────────────────────────
+    function renderStarlarkPage() {
+        const st = starlarkFilterState;
+        const total = starlarkFilteredList.length;
+        const totalPages = Math.max(1, Math.ceil(total / st.perPage));
+        if (st.page > totalPages) st.page = totalPages;
+
+        const start = (st.page - 1) * st.perPage;
+        const end = Math.min(start + st.perPage, total);
+        const pageApps = starlarkFilteredList.slice(start, end);
+
+        // Results info
+        const info = total > 0
+            ? `Showing ${start + 1}\u2013${end} of ${total} apps`
+            : 'No apps match your filters';
+        const infoEl = document.getElementById('starlark-results-info');
+        const infoElBot = document.getElementById('starlark-results-info-bottom');
+        if (infoEl) infoEl.textContent = info;
+        if (infoElBot) infoElBot.textContent = info;
+
+        // Pagination
+        renderStarlarkPagination('starlark-pagination-top', totalPages, st.page);
+        renderStarlarkPagination('starlark-pagination-bottom', totalPages, st.page);
+
+        // Grid
+        const grid = document.getElementById('starlark-apps-grid');
+        renderStarlarkApps(pageApps, grid);
+    }
+
+    // ── Pagination Controls ─────────────────────────────────────────────────
+    function renderStarlarkPagination(containerId, totalPages, currentPage) {
+        const container = document.getElementById(containerId);
+        if (!container) return;
+
+        if (totalPages <= 1) { container.innerHTML = ''; return; }
+
+        const btnClass = 'px-3 py-1 text-sm rounded-md border transition-colors';
+        const activeClass = 'bg-blue-600 text-white border-blue-600';
+        const normalClass = 'bg-white text-gray-700 border-gray-300 hover:bg-gray-100 cursor-pointer';
+        const disabledClass = 'bg-gray-100 text-gray-400 border-gray-200 cursor-not-allowed';
+
+        let html = '';
+
+        // Prev
+        html += `<button class="${btnClass} ${currentPage <= 1 ? disabledClass : normalClass}" data-starlark-page="${currentPage - 1}" ${currentPage <= 1 ? 'disabled' : ''}>&laquo;</button>`;
+
+        // Page numbers with ellipsis
+        const pages = [];
+        pages.push(1);
+        if (currentPage > 3) pages.push('...');
+        for (let i = Math.max(2, currentPage - 1); i <= Math.min(totalPages - 1, currentPage + 1); i++) {
+            pages.push(i);
+        }
+        if (currentPage < totalPages - 2) pages.push('...');
+        if (totalPages > 1) pages.push(totalPages);
+
+        pages.forEach(p => {
+            if (p === '...') {
+                html += `<span class="px-2 py-1 text-sm text-gray-400">&hellip;</span>`;
+            } else {
+                html += `<button class="${btnClass} ${p === currentPage ? activeClass : normalClass}" data-starlark-page="${p}">${p}</button>`;
+            }
+        });
+
+        // Next
+        html += `<button class="${btnClass} ${currentPage >= totalPages ? disabledClass : normalClass}" data-starlark-page="${currentPage + 1}" ${currentPage >= totalPages ? 'disabled' : ''}>&raquo;</button>`;
+
+        container.innerHTML = html;
+
+        // Event delegation for page buttons
+        container.querySelectorAll('[data-starlark-page]').forEach(btn => {
+            btn.addEventListener('click', function() {
+                const p = parseInt(this.getAttribute('data-starlark-page'));
+                if (p >= 1 && p <= totalPages && p !== currentPage) {
+                    starlarkFilterState.page = p;
+                    renderStarlarkPage();
+                    // Scroll to top of grid
+                    const grid = document.getElementById('starlark-apps-grid');
+                    if (grid) grid.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                }
+            });
+        });
+    }
+
+    // ── Card Rendering ──────────────────────────────────────────────────────
     function renderStarlarkApps(apps, grid) {
         if (!grid) return;
         if (!apps || apps.length === 0) {
@@ -7447,13 +7858,16 @@ setTimeout(function() {
             return;
         }
 
-        grid.innerHTML = apps.map(app => `
+        grid.innerHTML = apps.map(app => {
+            const installed = isStarlarkInstalled(app.id);
+            return `
             <div class="plugin-card">
                 <div class="flex items-start justify-between mb-4">
                     <div class="flex-1 min-w-0">
-                        <div class="flex items-center flex-wrap gap-2 mb-2">
+                        <div class="flex items-center flex-wrap gap-1.5 mb-2">
                             <h4 class="font-semibold text-gray-900 text-base">${escapeHtml(app.name || app.id)}</h4>
                             <span class="badge badge-warning"><i class="fas fa-star mr-1"></i>Starlark</span>
+                            ${installed ? '<span class="badge badge-success"><i class="fas fa-check mr-1"></i>Installed</span>' : ''}
                         </div>
                         <div class="text-sm text-gray-600 space-y-1.5 mb-3">
                             ${app.author ? `<p class="flex items-center"><i class="fas fa-user mr-2 text-gray-400 w-4"></i>${escapeHtml(app.author)}</p>` : ''}
@@ -7462,25 +7876,143 @@ setTimeout(function() {
                         <p class="text-sm text-gray-700 leading-relaxed">${escapeHtml(app.summary || app.desc || 'No description')}</p>
                     </div>
                 </div>
-                <div style="display:flex; gap:0.5rem; margin-top:1rem; padding-top:1rem; border-top:1px solid #e5e7eb;">
-                    <button onclick="window.installStarlarkApp('${escapeHtml(app.id)}')" class="btn bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-md text-sm font-semibold" style="flex:1; display:flex; justify-content:center;">
-                        <i class="fas fa-download mr-2"></i>Install
+                <div class="flex gap-2 mt-auto pt-3 border-t border-gray-200">
+                    <button onclick="window.installStarlarkApp('${escapeHtml(app.id)}')" class="btn ${installed ? 'bg-gray-500 hover:bg-gray-600' : 'bg-green-600 hover:bg-green-700'} text-white px-4 py-2 rounded-md text-sm font-semibold flex-1 flex justify-center items-center">
+                        <i class="fas ${installed ? 'fa-redo' : 'fa-download'} mr-2"></i>${installed ? 'Reinstall' : 'Install'}
                     </button>
-                    <button onclick="window.open('https://github.com/tronbyt/apps/tree/main/apps/${encodeURIComponent(app.id)}', '_blank')" class="btn bg-gray-600 hover:bg-gray-700 text-white px-4 py-2 rounded-md text-sm font-semibold" style="display:flex; justify-content:center;">
+                    <button onclick="window.open('https://github.com/tronbyt/apps/tree/main/apps/${encodeURIComponent(app.id)}', '_blank')" class="btn bg-gray-600 hover:bg-gray-700 text-white px-4 py-2 rounded-md text-sm font-semibold flex justify-center items-center">
                         <i class="fas fa-external-link-alt mr-1"></i>View
                     </button>
                 </div>
-            </div>
-        `).join('');
+            </div>`;
+        }).join('');
     }
 
-    function escapeHtml(str) {
-        if (!str) return '';
-        const div = document.createElement('div');
-        div.textContent = str;
-        return div.innerHTML;
+    // ── Filter UI Updates ───────────────────────────────────────────────────
+    function updateStarlarkFilterUI() {
+        const st = starlarkFilterState;
+        const count = st.activeCount();
+
+        const badge = document.getElementById('starlark-active-filters');
+        const clearBtn = document.getElementById('starlark-clear-filters');
+        if (badge) {
+            badge.classList.toggle('hidden', count === 0);
+            badge.textContent = count + ' filter' + (count !== 1 ? 's' : '') + ' active';
+        }
+        if (clearBtn) clearBtn.classList.toggle('hidden', count === 0);
+
+        // Update installed toggle button text
+        const instBtn = document.getElementById('starlark-filter-installed');
+        if (instBtn) {
+            if (st.filterInstalled === true) {
+                instBtn.innerHTML = '<i class="fas fa-check-circle mr-1 text-green-500"></i>Installed';
+                instBtn.classList.add('border-green-400', 'bg-green-50');
+                instBtn.classList.remove('border-gray-300', 'bg-white', 'border-red-400', 'bg-red-50');
+            } else if (st.filterInstalled === false) {
+                instBtn.innerHTML = '<i class="fas fa-times-circle mr-1 text-red-500"></i>Not Installed';
+                instBtn.classList.add('border-red-400', 'bg-red-50');
+                instBtn.classList.remove('border-gray-300', 'bg-white', 'border-green-400', 'bg-green-50');
+            } else {
+                instBtn.innerHTML = '<i class="fas fa-filter mr-1 text-gray-400"></i>All';
+                instBtn.classList.add('border-gray-300', 'bg-white');
+                instBtn.classList.remove('border-green-400', 'bg-green-50', 'border-red-400', 'bg-red-50');
+            }
+        }
     }
 
+    // ── Event Listeners ─────────────────────────────────────────────────────
+    function setupStarlarkFilterListeners() {
+        // Search with debounce
+        const searchEl = document.getElementById('starlark-search');
+        if (searchEl && !searchEl._starlarkInit) {
+            searchEl._starlarkInit = true;
+            let debounce = null;
+            searchEl.addEventListener('input', function() {
+                clearTimeout(debounce);
+                debounce = setTimeout(() => {
+                    starlarkFilterState.searchQuery = this.value.trim();
+                    applyStarlarkFiltersAndSort();
+                }, 300);
+            });
+        }
+
+        // Category dropdown
+        const catEl = document.getElementById('starlark-category');
+        if (catEl && !catEl._starlarkInit) {
+            catEl._starlarkInit = true;
+            catEl.addEventListener('change', function() {
+                starlarkFilterState.filterCategory = this.value;
+                applyStarlarkFiltersAndSort();
+            });
+        }
+
+        // Sort dropdown
+        const sortEl = document.getElementById('starlark-sort');
+        if (sortEl && !sortEl._starlarkInit) {
+            sortEl._starlarkInit = true;
+            sortEl.addEventListener('change', function() {
+                starlarkFilterState.sort = this.value;
+                starlarkFilterState.persist();
+                applyStarlarkFiltersAndSort();
+            });
+        }
+
+        // Author dropdown
+        const authEl = document.getElementById('starlark-filter-author');
+        if (authEl && !authEl._starlarkInit) {
+            authEl._starlarkInit = true;
+            authEl.addEventListener('change', function() {
+                starlarkFilterState.filterAuthor = this.value;
+                applyStarlarkFiltersAndSort();
+            });
+        }
+
+        // Installed toggle (cycle: all → installed → not-installed → all)
+        const instBtn = document.getElementById('starlark-filter-installed');
+        if (instBtn && !instBtn._starlarkInit) {
+            instBtn._starlarkInit = true;
+            instBtn.addEventListener('click', function() {
+                const st = starlarkFilterState;
+                if (st.filterInstalled === null) st.filterInstalled = true;
+                else if (st.filterInstalled === true) st.filterInstalled = false;
+                else st.filterInstalled = null;
+                applyStarlarkFiltersAndSort();
+            });
+        }
+
+        // Clear filters
+        const clearBtn = document.getElementById('starlark-clear-filters');
+        if (clearBtn && !clearBtn._starlarkInit) {
+            clearBtn._starlarkInit = true;
+            clearBtn.addEventListener('click', function() {
+                starlarkFilterState.reset();
+                // Reset UI elements
+                const searchEl = document.getElementById('starlark-search');
+                if (searchEl) searchEl.value = '';
+                const catEl = document.getElementById('starlark-category');
+                if (catEl) catEl.value = '';
+                const sortEl = document.getElementById('starlark-sort');
+                if (sortEl) sortEl.value = 'a-z';
+                const authEl = document.getElementById('starlark-filter-author');
+                if (authEl) authEl.value = '';
+                starlarkFilterState.persist();
+                applyStarlarkFiltersAndSort();
+            });
+        }
+
+        // Per-page selector
+        const ppEl = document.getElementById('starlark-per-page');
+        if (ppEl && !ppEl._starlarkInit) {
+            ppEl._starlarkInit = true;
+            ppEl.addEventListener('change', function() {
+                starlarkFilterState.perPage = parseInt(this.value) || 24;
+                starlarkFilterState.persist();
+                applyStarlarkFiltersAndSort();
+            });
+        }
+    }
+
+    // ── Install / Upload / Pixlet ───────────────────────────────────────────
     window.installStarlarkApp = function(appId) {
         if (!confirm(`Install Starlark app "${appId}" from Tronbyte repository?`)) return;
 
@@ -7493,9 +8025,11 @@ setTimeout(function() {
         .then(data => {
             if (data.status === 'success') {
                 alert(`Installed: ${data.message || appId}`);
-                // Refresh installed plugins to show the new starlark app
+                // Refresh installed plugins list
                 if (typeof loadInstalledPlugins === 'function') loadInstalledPlugins();
                 else if (typeof window.loadInstalledPlugins === 'function') window.loadInstalledPlugins();
+                // Re-render current page to update installed badges
+                setTimeout(() => applyStarlarkFiltersAndSort(true), 500);
             } else {
                 alert(`Install failed: ${data.message || 'Unknown error'}`);
             }
@@ -7537,6 +8071,7 @@ setTimeout(function() {
                     alert(`Uploaded: ${data.app_id}`);
                     if (typeof loadInstalledPlugins === 'function') loadInstalledPlugins();
                     else if (typeof window.loadInstalledPlugins === 'function') window.loadInstalledPlugins();
+                    setTimeout(() => applyStarlarkFiltersAndSort(true), 500);
                 } else {
                     alert('Upload failed: ' + (data.message || 'Unknown error'));
                 }
@@ -7544,14 +8079,13 @@ setTimeout(function() {
             .catch(err => alert('Upload failed: ' + err.message));
     }
 
-    // Initialize when plugins tab loads
+    // ── Bootstrap ───────────────────────────────────────────────────────────
     const origInit = window.initializePlugins;
     window.initializePlugins = function() {
         if (origInit) origInit();
         initStarlarkSection();
     };
 
-    // Also try to init on DOMContentLoaded and on HTMX load
     document.addEventListener('DOMContentLoaded', initStarlarkSection);
     document.addEventListener('htmx:afterSwap', function(e) {
         if (e.detail && e.detail.target && e.detail.target.id === 'plugins-content') {

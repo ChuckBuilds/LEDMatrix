@@ -147,24 +147,61 @@
                 </div>
                 </div>
             </div>
-            <div class="mb-6">
-                <div class="flex gap-3">
-                    <input type="text" id="plugin-search" placeholder="Search plugins by name, description, or tags..." class="form-control text-sm flex-[3] min-w-0 px-4 py-2.5 border border-gray-300 rounded-lg shadow-sm focus:shadow-md transition-shadow">
-                    <select id="plugin-category" class="form-control text-sm flex-1 px-3 py-2.5 border border-gray-300 rounded-lg shadow-sm focus:shadow-md transition-shadow">
-                        <option value="">All Categories</option>
-                        <option value="sports">Sports</option>
-                        <option value="content">Content</option>
-                        <option value="time">Time</option>
-                        <option value="weather">Weather</option>
-                        <option value="financial">Financial</option>
-                        <option value="media">Media</option>
-                        <option value="demo">Demo</option>
+            <!-- Search Row -->
+            <div class="flex gap-3 mb-4">
+                <input type="text" id="plugin-search" placeholder="Search plugins by name, description, or tags..." class="form-control text-sm flex-[3] min-w-0 px-4 py-2.5 border border-gray-300 rounded-lg shadow-sm focus:shadow-md transition-shadow">
+                <select id="plugin-category" class="form-control text-sm flex-1 px-3 py-2.5 border border-gray-300 rounded-lg shadow-sm focus:shadow-md transition-shadow">
+                    <option value="">All Categories</option>
+                    <option value="sports">Sports</option>
+                    <option value="content">Content</option>
+                    <option value="time">Time</option>
+                    <option value="weather">Weather</option>
+                    <option value="financial">Financial</option>
+                    <option value="media">Media</option>
+                    <option value="demo">Demo</option>
+                </select>
+            </div>
+
+            <!-- Sort & Filter Bar -->
+            <div id="store-filter-bar" class="flex flex-wrap items-center gap-3 mb-4 p-3 bg-gray-50 rounded-lg border border-gray-200">
+                <!-- Sort -->
+                <select id="store-sort" class="text-sm px-3 py-1.5 border border-gray-300 rounded-md bg-white">
+                    <option value="a-z">A → Z</option>
+                    <option value="z-a">Z → A</option>
+                    <option value="category">Category</option>
+                    <option value="author">Author</option>
+                    <option value="newest">Newest</option>
+                </select>
+
+                <div class="w-px h-6 bg-gray-300"></div>
+
+                <!-- Installed filter toggle -->
+                <button id="store-filter-installed" class="text-sm px-3 py-1.5 rounded-md border border-gray-300 bg-white hover:bg-gray-100 transition-colors" title="Cycle: All → Installed → Not Installed">
+                    <i class="fas fa-filter mr-1 text-gray-400"></i>All
+                </button>
+
+                <div class="flex-1"></div>
+
+                <!-- Active filter count + clear -->
+                <span id="store-active-filters" class="hidden text-xs text-blue-600 font-medium"></span>
+                <button id="store-clear-filters" class="hidden text-sm px-3 py-1.5 rounded-md border border-red-300 bg-white text-red-600 hover:bg-red-50 transition-colors">
+                    <i class="fas fa-times mr-1"></i>Clear Filters
+                </button>
+            </div>
+
+            <!-- Results Bar (top pagination) -->
+            <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
+                <span id="store-results-info" class="text-sm text-gray-600"></span>
+                <div class="flex items-center gap-3">
+                    <select id="store-per-page" class="text-sm px-2 py-1 border border-gray-300 rounded-md bg-white">
+                        <option value="12">12 per page</option>
+                        <option value="24">24 per page</option>
+                        <option value="48">48 per page</option>
                     </select>
-                    <button id="search-plugins-btn" class="btn bg-blue-600 hover:bg-blue-700 text-white px-5 py-2.5 rounded-lg whitespace-nowrap font-semibold shadow-sm">
-                        <i class="fas fa-search mr-2"></i>Search
-                    </button>
+                    <div id="store-pagination-top" class="flex items-center gap-1"></div>
                 </div>
             </div>
+
             <div id="plugin-store-grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-6">
                 <!-- Loading skeleton -->
                 <div class="store-loading col-span-full">
@@ -174,8 +211,14 @@
                         <div class="bg-gray-200 rounded-lg p-4 h-48 animate-pulse"></div>
                         <div class="bg-gray-200 rounded-lg p-4 h-48 animate-pulse"></div>
                         <div class="bg-gray-200 rounded-lg p-4 h-48 animate-pulse"></div>
+                    </div>
                 </div>
             </div>
+
+            <!-- Bottom Pagination -->
+            <div class="flex flex-wrap items-center justify-between gap-3 mt-4">
+                <span id="store-results-info-bottom" class="text-sm text-gray-600"></span>
+                <div id="store-pagination-bottom" class="flex items-center gap-1"></div>
             </div>
         </div>
         
@@ -197,26 +240,73 @@
                 <!-- Pixlet Status Banner -->
                 <div id="starlark-pixlet-status" class="mb-4"></div>
 
-                <!-- Search/Filter -->
+                <!-- Search Row -->
                 <div class="flex gap-3 mb-4">
-                    <input type="text" id="starlark-search" placeholder="Search Starlark apps..." class="form-control text-sm flex-[3] min-w-0 px-4 py-2.5 border border-gray-300 rounded-lg shadow-sm">
-                    <select id="starlark-category" class="form-control text-sm flex-1 px-3 py-2.5 border border-gray-300 rounded-lg shadow-sm">
+                    <input type="text" id="starlark-search" placeholder="Search by name, description, author..." class="form-control text-sm flex-[3] min-w-0 px-4 py-2.5 border border-gray-300 rounded-lg shadow-sm focus:shadow-md transition-shadow">
+                    <select id="starlark-category" class="form-control text-sm flex-1 px-3 py-2.5 border border-gray-300 rounded-lg shadow-sm focus:shadow-md transition-shadow">
                         <option value="">All Categories</option>
                     </select>
-                    <button id="starlark-browse-btn" class="btn bg-blue-600 hover:bg-blue-700 text-white px-5 py-2.5 rounded-lg whitespace-nowrap font-semibold shadow-sm">
-                        <i class="fas fa-search mr-2"></i>Browse
+                </div>
+
+                <!-- Sort & Filter Bar -->
+                <div id="starlark-filter-bar" class="flex flex-wrap items-center gap-3 mb-4 p-3 bg-gray-50 rounded-lg border border-gray-200">
+                    <!-- Sort -->
+                    <select id="starlark-sort" class="text-sm px-3 py-1.5 border border-gray-300 rounded-md bg-white">
+                        <option value="a-z">A → Z</option>
+                        <option value="z-a">Z → A</option>
+                        <option value="category">Category</option>
+                        <option value="author">Author</option>
+                    </select>
+
+                    <div class="w-px h-6 bg-gray-300"></div>
+
+                    <!-- Installed filter toggle -->
+                    <button id="starlark-filter-installed" class="text-sm px-3 py-1.5 rounded-md border border-gray-300 bg-white hover:bg-gray-100 transition-colors" title="Cycle: All → Installed → Not Installed">
+                        <i class="fas fa-filter mr-1 text-gray-400"></i>All
+                    </button>
+
+                    <!-- Author filter -->
+                    <select id="starlark-filter-author" class="text-sm px-3 py-1.5 border border-gray-300 rounded-md bg-white">
+                        <option value="">All Authors</option>
+                    </select>
+
+                    <div class="flex-1"></div>
+
+                    <!-- Active filter count + clear -->
+                    <span id="starlark-active-filters" class="hidden text-xs text-blue-600 font-medium"></span>
+                    <button id="starlark-clear-filters" class="hidden text-sm px-3 py-1.5 rounded-md border border-red-300 bg-white text-red-600 hover:bg-red-50 transition-colors">
+                        <i class="fas fa-times mr-1"></i>Clear Filters
                     </button>
                 </div>
 
-                <!-- Upload .star file -->
-                <div class="flex gap-3 mb-4">
-                    <button id="starlark-upload-btn" class="btn bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-md text-sm">
-                        <i class="fas fa-upload mr-2"></i>Upload .star File
-                    </button>
+                <!-- Results Bar (top pagination) -->
+                <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
+                    <span id="starlark-results-info" class="text-sm text-gray-600"></span>
+                    <div class="flex items-center gap-3">
+                        <select id="starlark-per-page" class="text-sm px-2 py-1 border border-gray-300 rounded-md bg-white">
+                            <option value="24">24 per page</option>
+                            <option value="48">48 per page</option>
+                            <option value="96">96 per page</option>
+                        </select>
+                        <div id="starlark-pagination-top" class="flex items-center gap-1"></div>
+                    </div>
                 </div>
 
                 <!-- Starlark Apps Grid -->
                 <div id="starlark-apps-grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-6">
+                </div>
+
+                <!-- Bottom Pagination -->
+                <div class="flex flex-wrap items-center justify-between gap-3 mt-4">
+                    <span id="starlark-results-info-bottom" class="text-sm text-gray-600"></span>
+                    <div id="starlark-pagination-bottom" class="flex items-center gap-1"></div>
+                </div>
+
+                <!-- Upload .star file -->
+                <div class="flex gap-3 mt-6 pt-4 border-t border-gray-200">
+                    <button id="starlark-upload-btn" class="btn bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-md text-sm">
+                        <i class="fas fa-upload mr-2"></i>Upload .star File
+                    </button>
                 </div>
             </div>
         </div>

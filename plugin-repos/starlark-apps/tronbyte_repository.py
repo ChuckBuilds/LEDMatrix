@@ -6,12 +6,18 @@ Fetches app listings, metadata, and downloads .star files.
 """
 
 import logging
+import time
 import requests
 import yaml
 from typing import Dict, Any, Optional, List, Tuple
 from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 logger = logging.getLogger(__name__)
+
+# Module-level cache for bulk app listing (survives across requests)
+_apps_cache = {'data': None, 'timestamp': 0, 'categories': [], 'authors': []}
+_CACHE_TTL = 7200  # 2 hours
 
 
 class TronbyteRepository:
@@ -231,6 +237,102 @@ class TronbyteRepository:
                 })
 
         return apps_with_metadata
+
+    def list_all_apps_cached(self) -> Dict[str, Any]:
+        """
+        Fetch ALL apps with metadata, using a module-level cache.
+
+        On first call (or after cache TTL expires), fetches the directory listing
+        via the GitHub API (1 call) then fetches all manifests in parallel via
+        raw.githubusercontent.com (not rate-limited). Results are cached for 2 hours.
+
+        Returns:
+            Dict with keys: apps, categories, authors, count, cached
+        """
+        global _apps_cache
+
+        now = time.time()
+        if _apps_cache['data'] is not None and (now - _apps_cache['timestamp']) < _CACHE_TTL:
+            return {
+                'apps': _apps_cache['data'],
+                'categories': _apps_cache['categories'],
+                'authors': _apps_cache['authors'],
+                'count': len(_apps_cache['data']),
+                'cached': True
+            }
+
+        # Fetch directory listing (1 GitHub API call)
+        success, app_dirs, error = self.list_apps()
+        if not success or not app_dirs:
+            logger.error(f"Failed to list apps for bulk fetch: {error}")
+            return {'apps': [], 'categories': [], 'authors': [], 'count': 0, 'cached': False}
+
+        logger.info(f"Bulk-fetching manifests for {len(app_dirs)} apps...")
+
+        def fetch_one(app_info):
+            """Fetch a single app's manifest (runs in thread pool)."""
+            app_id = app_info['id']
+            manifest_path = f"{self.APPS_PATH}/{app_id}/manifest.yaml"
+            content = self._fetch_raw_file(manifest_path)
+            if content:
+                try:
+                    metadata = yaml.safe_load(content)
+                    if not isinstance(metadata, dict):
+                        metadata = {}
+                    metadata['id'] = app_id
+                    metadata['repository_path'] = app_info.get('path', '')
+                    return metadata
+                except (yaml.YAMLError, TypeError):
+                    pass
+            # Fallback: minimal entry
+            return {
+                'id': app_id,
+                'name': app_id.replace('_', ' ').replace('-', ' ').title(),
+                'summary': 'No description available',
+                'repository_path': app_info.get('path', ''),
+            }
+
+        # Parallel manifest fetches via raw.githubusercontent.com (high rate limit)
+        apps_with_metadata = []
+        with ThreadPoolExecutor(max_workers=20) as executor:
+            futures = {executor.submit(fetch_one, info): info for info in app_dirs}
+            for future in as_completed(futures):
+                try:
+                    result = future.result(timeout=30)
+                    if result:
+                        apps_with_metadata.append(result)
+                except Exception as e:
+                    app_info = futures[future]
+                    logger.warning(f"Failed to fetch manifest for {app_info['id']}: {e}")
+                    apps_with_metadata.append({
+                        'id': app_info['id'],
+                        'name': app_info['id'].replace('_', ' ').replace('-', ' ').title(),
+                        'summary': 'No description available',
+                        'repository_path': app_info.get('path', ''),
+                    })
+
+        # Sort by name for consistent ordering
+        apps_with_metadata.sort(key=lambda a: (a.get('name') or a.get('id', '')).lower())
+
+        # Extract unique categories and authors
+        categories = sorted({a.get('category', '') for a in apps_with_metadata if a.get('category')})
+        authors = sorted({a.get('author', '') for a in apps_with_metadata if a.get('author')})
+
+        # Update cache
+        _apps_cache['data'] = apps_with_metadata
+        _apps_cache['timestamp'] = now
+        _apps_cache['categories'] = categories
+        _apps_cache['authors'] = authors
+
+        logger.info(f"Cached {len(apps_with_metadata)} apps ({len(categories)} categories, {len(authors)} authors)")
+
+        return {
+            'apps': apps_with_metadata,
+            'categories': categories,
+            'authors': authors,
+            'count': len(apps_with_metadata),
+            'cached': False
+        }
 
     def download_star_file(self, app_id: str, output_path: Path) -> Tuple[bool, Optional[str]]:
         """

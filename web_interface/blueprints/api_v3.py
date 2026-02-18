@@ -7469,7 +7469,12 @@ def render_starlark_app(app_id):
 
 @api_v3.route('/starlark/repository/browse', methods=['GET'])
 def browse_tronbyte_repository():
-    """Browse apps in the Tronbyte repository."""
+    """Browse all apps in the Tronbyte repository (bulk cached fetch).
+
+    Returns ALL apps with metadata, categories, and authors.
+    Filtering/sorting/pagination is handled client-side.
+    Results are cached server-side for 2 hours.
+    """
     try:
         TronbyteRepository = _get_tronbyte_repository_class()
 
@@ -7477,24 +7482,18 @@ def browse_tronbyte_repository():
         github_token = config.get('github_token')
         repo = TronbyteRepository(github_token=github_token)
 
-        search_query = request.args.get('search', '')
-        category = request.args.get('category', 'all')
-        limit = max(1, min(request.args.get('limit', 50, type=int), 200))
-
-        apps = repo.list_apps_with_metadata(max_apps=limit)
-        if search_query:
-            apps = repo.search_apps(search_query, apps)
-        if category and category != 'all':
-            apps = repo.filter_by_category(category, apps)
+        result = repo.list_all_apps_cached()
 
         rate_limit = repo.get_rate_limit_info()
 
         return jsonify({
             'status': 'success',
-            'apps': apps,
-            'count': len(apps),
+            'apps': result['apps'],
+            'categories': result['categories'],
+            'authors': result['authors'],
+            'count': result['count'],
+            'cached': result['cached'],
             'rate_limit': rate_limit,
-            'filters': {'search': search_query, 'category': category}
         })
 
     except Exception as e:
@@ -7574,16 +7573,15 @@ def install_from_tronbyte_repository():
 
 @api_v3.route('/starlark/repository/categories', methods=['GET'])
 def get_tronbyte_categories():
-    """Get list of available app categories."""
+    """Get list of available app categories (uses bulk cache)."""
     try:
         TronbyteRepository = _get_tronbyte_repository_class()
         config = api_v3.config_manager.load_config() if api_v3.config_manager else {}
         repo = TronbyteRepository(github_token=config.get('github_token'))
 
-        apps = repo.list_apps_with_metadata(max_apps=100)
-        categories = sorted({app.get('category', '') for app in apps if app.get('category')})
+        result = repo.list_all_apps_cached()
 
-        return jsonify({'status': 'success', 'categories': categories})
+        return jsonify({'status': 'success', 'categories': result['categories']})
 
     except Exception as e:
         logger.error(f"Error fetching categories: {e}")
