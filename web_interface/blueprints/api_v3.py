@@ -7374,8 +7374,38 @@ def update_starlark_app_config(app_id):
             app = starlark_plugin.apps.get(app_id)
             if not app:
                 return jsonify({'status': 'error', 'message': f'App not found: {app_id}'}), 404
+
+            # Extract timing keys from data before updating config (they belong in manifest, not config)
+            render_interval = data.pop('render_interval', None)
+            display_duration = data.pop('display_duration', None)
+
+            # Update config with non-timing fields only
             app.config.update(data)
+
+            # Update manifest with timing fields
+            timing_changed = False
+            if render_interval is not None:
+                app.manifest['render_interval'] = render_interval
+                timing_changed = True
+            if display_duration is not None:
+                app.manifest['display_duration'] = display_duration
+                timing_changed = True
             if app.save_config():
+                # Persist manifest if timing changed (same pattern as toggle endpoint)
+                if timing_changed:
+                    try:
+                        # Use safe manifest update to prevent race conditions
+                        timing_updates = {}
+                        if render_interval is not None:
+                            timing_updates['render_interval'] = render_interval
+                        if display_duration is not None:
+                            timing_updates['display_duration'] = display_duration
+
+                        def update_fn(manifest):
+                            manifest['apps'][app_id].update(timing_updates)
+                        starlark_plugin._update_manifest_safe(update_fn)
+                    except Exception as e:
+                        logger.warning(f"Failed to persist timing to manifest for {app_id}: {e}")
                 starlark_plugin._render_app(app, force=True)
                 return jsonify({'status': 'success', 'message': 'Configuration updated', 'config': app.config})
             else:
@@ -7418,10 +7448,10 @@ def toggle_starlark_app(app_id):
             if enabled is None:
                 enabled = not app.is_enabled()
             app.manifest['enabled'] = enabled
-            with open(starlark_plugin.manifest_file, 'r') as f:
-                manifest = json.load(f)
-            manifest['apps'][app_id]['enabled'] = enabled
-            starlark_plugin._save_manifest(manifest)
+            # Use safe manifest update to prevent race conditions
+            def update_fn(manifest):
+                manifest['apps'][app_id]['enabled'] = enabled
+            starlark_plugin._update_manifest_safe(update_fn)
             return jsonify({'status': 'success', 'message': f"App {'enabled' if enabled else 'disabled'}", 'enabled': enabled})
 
         # Standalone: update manifest directly

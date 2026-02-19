@@ -9,6 +9,7 @@ import json
 import logging
 import os
 import platform
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -250,11 +251,23 @@ class PixletRenderer:
             # Add configuration parameters
             if config:
                 for key, value in config.items():
+                    # Validate key format (alphanumeric + underscore only)
+                    if not re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', key):
+                        logger.warning(f"Skipping invalid config key: {key}")
+                        continue
+
                     # Convert value to string for CLI
                     if isinstance(value, bool):
                         value_str = "true" if value else "false"
                     else:
                         value_str = str(value)
+
+                    # Validate value doesn't contain shell metacharacters
+                    # Allow alphanumeric, spaces, and common safe chars: .-_:/@#,
+                    if not re.match(r'^[a-zA-Z0-9 .\-_:/@#,{}"\[\]]*$', value_str):
+                        logger.warning(f"Skipping config value with unsafe characters for key {key}: {value_str}")
+                        continue
+
                     cmd.extend(["-c", f"{key}={value_str}"])
 
             logger.debug(f"Executing Pixlet: {' '.join(cmd)}")

@@ -11,6 +11,7 @@ import json
 import os
 import re
 import time
+import fcntl
 from pathlib import Path
 from typing import Dict, Any, Optional, List, Tuple
 from PIL import Image
@@ -43,9 +44,12 @@ class StarlarkApp:
         self.schema_file = app_dir / "schema.json"
         self.cache_file = app_dir / "cached_render.webp"
 
-        # Load app configuration
+        # Load app configuration and schema
         self.config = self._load_config()
         self.schema = self._load_schema()
+
+        # Merge schema defaults into config for any missing fields
+        self._merge_schema_defaults()
 
         # Runtime state
         self.frames: Optional[List[Tuple[Image.Image, int]]] = None
@@ -73,9 +77,70 @@ class StarlarkApp:
                 logger.warning(f"Could not load schema for {self.app_id}: {e}")
         return None
 
+    def _merge_schema_defaults(self) -> None:
+        """
+        Merge schema default values into config for any missing fields.
+        This ensures existing apps get defaults when schemas are updated with new fields.
+        """
+        if not self.schema:
+            return
+
+        # Get fields from schema (handles both 'fields' and 'schema' keys)
+        fields = self.schema.get('fields') or self.schema.get('schema') or []
+        defaults_added = False
+
+        for field in fields:
+            if isinstance(field, dict) and 'id' in field and 'default' in field:
+                field_id = field['id']
+                # Only add if not already present in config
+                if field_id not in self.config:
+                    self.config[field_id] = field['default']
+                    defaults_added = True
+                    logger.debug(f"Added default value for {self.app_id}.{field_id}: {field['default']}")
+
+        # Save config if we added any defaults
+        if defaults_added:
+            self.save_config()
+
+    def _validate_config(self) -> Optional[str]:
+        """
+        Validate config values to prevent injection and ensure data integrity.
+
+        Returns:
+            Error message if validation fails, None if valid
+        """
+        for key, value in self.config.items():
+            # Validate key format
+            if not re.match(r'^[a-zA-Z_][a-zA-Z0-9_]{0,63}$', key):
+                return f"Invalid config key format: {key}"
+
+            # Validate location fields (JSON format)
+            if isinstance(value, str) and value.strip().startswith('{'):
+                try:
+                    loc = json.loads(value)
+                    if 'lat' in loc:
+                        lat = float(loc['lat'])
+                        if not -90 <= lat <= 90:
+                            return f"Latitude {lat} out of range [-90, 90] for key {key}"
+                    if 'lng' in loc:
+                        lng = float(loc['lng'])
+                        if not -180 <= lng <= 180:
+                            return f"Longitude {lng} out of range [-180, 180] for key {key}"
+                except (json.JSONDecodeError, ValueError, KeyError) as e:
+                    # Not a location field, that's fine
+                    pass
+
+        return None
+
     def save_config(self) -> bool:
-        """Save current configuration to file."""
+        """Save current configuration to file with validation."""
         try:
+            # Validate config before saving
+            error = self._validate_config()
+            if error:
+                logger.error(f"Config validation failed for {self.app_id}: {error}")
+                return False
+
             with open(self.config_file, 'w') as f:
                 json.dump(self.config, f, indent=2)
             return True
@@ -484,13 +549,63 @@ class StarlarkAppsPlugin(BasePlugin):
             self.logger.exception(f"Error loading apps manifest: {e}")
 
     def _save_manifest(self, manifest: Dict[str, Any]) -> bool:
-        """Save apps manifest to file."""
+        """
+        Save apps manifest to file with file locking to prevent race conditions.
+        Uses exclusive lock during write to prevent concurrent modifications.
+        """
         try:
-            with open(self.manifest_file, 'w') as f:
-                json.dump(manifest, f, indent=2)
+            # Use atomic write pattern: write to temp file, then rename
+            temp_file = self.manifest_file.with_suffix('.tmp')
+
+            with open(temp_file, 'w') as f:
+                # Acquire exclusive lock during write
+                fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+                try:
+                    json.dump(manifest, f, indent=2)
+                    f.flush()
+                    os.fsync(f.fileno())  # Ensure data is written to disk
+                finally:
+                    fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+
+            # Atomic rename (overwrites destination)
+            temp_file.replace(self.manifest_file)
             return True
         except Exception as e:
             self.logger.error(f"Error saving manifest: {e}")
+            # Clean up temp file if it exists
+            if temp_file.exists():
+                try:
+                    temp_file.unlink()
+                except:
+                    pass
+            return False
+
+    def _update_manifest_safe(self, updater_fn) -> bool:
+        """
+        Safely update manifest with file locking to prevent race conditions.
+
+        Args:
+            updater_fn: Function that takes manifest dict and modifies it in-place
+
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            # Read current manifest with shared lock
+            with open(self.manifest_file, 'r') as f:
+                fcntl.flock(f.fileno(), fcntl.LOCK_SH)
+                try:
+                    manifest = json.load(f)
+                finally:
+                    fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+
+            # Apply updates
+            updater_fn(manifest)
+
+            # Write back with exclusive lock (handled by _save_manifest)
+            return self._save_manifest(manifest)
+        except Exception as e:
+            self.logger.error(f"Error updating manifest: {e}")
             return False
 
     def update(self) -> None:
@@ -585,10 +700,14 @@ class StarlarkAppsPlugin(BasePlugin):
             magnify = self._get_effective_magnify()
             self.logger.debug(f"Using magnify={magnify} for {app.app_id}")
 
+            # Filter out LEDMatrix-internal timing keys before passing to pixlet
+            INTERNAL_KEYS = {'render_interval', 'display_duration'}
+            pixlet_config = {k: v for k, v in app.config.items() if k not in INTERNAL_KEYS}
+
             success, error = self.pixlet.render(
                 star_file=str(app.star_file),
                 output_path=str(app.cache_file),
-                config=app.config,
+                config=pixlet_config,
                 magnify=magnify
             )
 
@@ -697,10 +816,10 @@ class StarlarkAppsPlugin(BasePlugin):
 
             # Create app directory with resolved path
             app_dir = (self.apps_dir / safe_app_id).resolve()
-            app_dir.mkdir(parents=True, exist_ok=True)
 
-            # Verify path safety after mkdir
+            # Verify path safety BEFORE creating directories
             self._verify_path_safety(app_dir, self.apps_dir)
+            app_dir.mkdir(parents=True, exist_ok=True)
 
             # Copy .star file with sanitized app_id
             star_dest = app_dir / f"{safe_app_id}.star"
@@ -727,8 +846,13 @@ class StarlarkAppsPlugin(BasePlugin):
                 with open(schema_path, 'w') as f:
                     json.dump(schema, f, indent=2)
 
-            # Create default config
+            # Create default config — pre-populate with schema defaults
             default_config = {}
+            if schema:
+                fields = schema.get('fields') or schema.get('schema') or []
+                for field in fields:
+                    if isinstance(field, dict) and 'id' in field and 'default' in field:
+                        default_config[field['id']] = field['default']
             config_path = app_dir / "config.json"
             # Verify config path safety
             self._verify_path_safety(config_path, self.apps_dir)
@@ -736,11 +860,10 @@ class StarlarkAppsPlugin(BasePlugin):
                 json.dump(default_config, f, indent=2)
 
             # Update manifest (use safe_app_id as key to match directory)
-            with open(self.manifest_file, 'r') as f:
-                manifest = json.load(f)
+            def update_fn(manifest):
+                manifest["apps"][safe_app_id] = app_manifest
 
-            manifest["apps"][safe_app_id] = app_manifest
-            self._save_manifest(manifest)
+            self._update_manifest_safe(update_fn)
 
             # Create app instance (use safe_app_id for internal key, original for display)
             app = StarlarkApp(safe_app_id, app_dir, app_manifest)
@@ -782,12 +905,11 @@ class StarlarkAppsPlugin(BasePlugin):
                 shutil.rmtree(app.app_dir)
 
             # Update manifest
-            with open(self.manifest_file, 'r') as f:
-                manifest = json.load(f)
+            def update_fn(manifest):
+                if app_id in manifest["apps"]:
+                    del manifest["apps"][app_id]
 
-            if app_id in manifest["apps"]:
-                del manifest["apps"][app_id]
-                self._save_manifest(manifest)
+            self._update_manifest_safe(update_fn)
 
             self.logger.info(f"Uninstalled Starlark app: {app_id}")
             return True
