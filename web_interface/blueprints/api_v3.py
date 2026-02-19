@@ -6994,8 +6994,14 @@ def _get_tronbyte_repository_class():
         importlib.reload(sys.modules["tronbyte_repository"])
         return sys.modules["tronbyte_repository"].TronbyteRepository
 
-    spec = importlib.util.spec_from_file_location("tronbyte_repository", module_path)
+    spec = importlib.util.spec_from_file_location("tronbyte_repository", str(module_path))
+    if spec is None:
+        raise ImportError(f"Failed to create module spec for tronbyte_repository at {module_path}")
+
     module = importlib.util.module_from_spec(spec)
+    if module is None:
+        raise ImportError(f"Failed to create module from spec for tronbyte_repository")
+
     sys.modules["tronbyte_repository"] = module
     spec.loader.exec_module(module)
     return module.TronbyteRepository
@@ -7015,8 +7021,14 @@ def _get_pixlet_renderer_class():
         importlib.reload(sys.modules["pixlet_renderer"])
         return sys.modules["pixlet_renderer"].PixletRenderer
 
-    spec = importlib.util.spec_from_file_location("pixlet_renderer", module_path)
+    spec = importlib.util.spec_from_file_location("pixlet_renderer", str(module_path))
+    if spec is None:
+        raise ImportError(f"Failed to create module spec for pixlet_renderer at {module_path}")
+
     module = importlib.util.module_from_spec(spec)
+    if module is None:
+        raise ImportError(f"Failed to create module from spec for pixlet_renderer")
+
     sys.modules["pixlet_renderer"] = module
     spec.loader.exec_module(module)
     return module.PixletRenderer
