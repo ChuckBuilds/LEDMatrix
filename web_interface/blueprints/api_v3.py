@@ -7000,6 +7000,27 @@ def _get_tronbyte_repository_class():
     return module.TronbyteRepository
 
 
+def _get_pixlet_renderer_class():
+    """Import PixletRenderer from plugin-repos directory."""
+    import importlib.util
+    import importlib
+
+    module_path = PROJECT_ROOT / 'plugin-repos' / 'starlark-apps' / 'pixlet_renderer.py'
+    if not module_path.exists():
+        raise ImportError(f"PixletRenderer module not found at {module_path}")
+
+    # If already imported, reload to pick up code changes
+    if "pixlet_renderer" in sys.modules:
+        importlib.reload(sys.modules["pixlet_renderer"])
+        return sys.modules["pixlet_renderer"].PixletRenderer
+
+    spec = importlib.util.spec_from_file_location("pixlet_renderer", module_path)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules["pixlet_renderer"] = module
+    spec.loader.exec_module(module)
+    return module.PixletRenderer
+
+
 def _validate_and_sanitize_app_id(app_id, fallback_source=None):
     """Validate and sanitize app_id to a safe slug."""
     if not app_id and fallback_source:
@@ -7070,10 +7091,25 @@ def _write_starlark_manifest(manifest: dict) -> bool:
 def _install_star_file(app_id: str, star_file_path: str, metadata: dict) -> bool:
     """Install a .star file and update the manifest (standalone, no plugin needed)."""
     import shutil
+    import json
     app_dir = _STARLARK_APPS_DIR / app_id
     app_dir.mkdir(parents=True, exist_ok=True)
     dest = app_dir / f"{app_id}.star"
     shutil.copy2(star_file_path, str(dest))
+
+    # Try to extract schema using PixletRenderer
+    try:
+        PixletRenderer = _get_pixlet_renderer_class()
+        pixlet = PixletRenderer()
+        if pixlet.is_available():
+            _, schema, _ = pixlet.extract_schema(str(dest))
+            if schema:
+                schema_path = app_dir / "schema.json"
+                with open(schema_path, 'w') as f:
+                    json.dump(schema, f, indent=2)
+                logger.info(f"Extracted schema for {app_id}")
+    except Exception as e:
+        logger.warning(f"Failed to extract schema for {app_id}: {e}")
 
     manifest = _read_starlark_manifest()
     manifest.setdefault('apps', {})[app_id] = {
