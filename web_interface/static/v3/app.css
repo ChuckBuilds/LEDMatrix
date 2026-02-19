@@ -83,6 +83,9 @@
 [data-theme="dark"] .hover\:bg-gray-200:hover { background-color: #4b5563; }
 [data-theme="dark"] .hover\:text-gray-700:hover { color: #e5e7eb; }
 [data-theme="dark"] .hover\:border-gray-300:hover { border-color: #6b7280; }
+[data-theme="dark"] .bg-red-100 { background-color: #450a0a; }
+[data-theme="dark"] .text-red-700 { color: #fca5a5; }
+[data-theme="dark"] .hover\:bg-red-200:hover { background-color: #7f1d1d; }
 
 /* Base styles */
 * {
@@ -141,6 +144,7 @@ body {
 
 .rounded-lg { border-radius: 0.5rem; }
 .rounded-md { border-radius: 0.375rem; }
+.rounded-full { border-radius: 9999px; }
 .rounded { border-radius: 0.25rem; }
 
 .shadow { box-shadow: var(--shadow); }
@@ -152,6 +156,7 @@ body {
 .p-4 { padding: 1rem; }
 .p-2 { padding: 0.5rem; }
 .px-4 { padding-left: 1rem; padding-right: 1rem; }
+.py-1\.5 { padding-top: 0.375rem; padding-bottom: 0.375rem; }
 .py-2 { padding-top: 0.5rem; padding-bottom: 0.5rem; }
 .py-3 { padding-top: 0.75rem; padding-bottom: 0.75rem; }
 .pb-4 { padding-bottom: 1rem; }
@@ -199,6 +204,7 @@ body {
 .grid-cols-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .grid-cols-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .grid-cols-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.gap-1\.5 { gap: 0.375rem; }
 .gap-2 { gap: 0.5rem; }
 .gap-3 { gap: 0.75rem; }
 .gap-4 { gap: 1rem; }
@@ -661,6 +667,31 @@ button.bg-white {
 .badge-accent {
     background-color: var(--color-purple-bg);
     color: var(--color-purple-text);
+}
+
+/* Filter Pill Toggle States */
+.filter-pill,
+.category-filter-pill {
+    cursor: pointer;
+    user-select: none;
+    transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease, box-shadow 0.15s ease, opacity 0.15s ease;
+}
+
+.filter-pill[data-active="true"],
+.category-filter-pill[data-active="true"] {
+    background-color: var(--color-info-bg);
+    border-color: var(--color-info);
+    color: var(--color-info);
+    font-weight: 600;
+}
+
+.filter-pill[data-active="true"]:hover,
+.category-filter-pill[data-active="true"]:hover {
+    opacity: 0.85;
+}
+
+.category-filter-pill[data-active="true"] {
+    box-shadow: 0 0 0 1px var(--color-info);
 }
 
 /* Section Headers with Subtle Gradients */
