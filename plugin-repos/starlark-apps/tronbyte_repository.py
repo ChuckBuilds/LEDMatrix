@@ -462,6 +462,12 @@ class TronbyteRepository:
                 for file_item in dir_data:
                     if file_item.get('type') == 'file':
                         file_name = file_item.get('name')
+
+                        # Ensure file_name is a non-empty string before validation
+                        if not file_name or not isinstance(file_name, str):
+                            logger.warning(f"Skipping file with invalid name in {dir_name}: {file_item}")
+                            continue
+
                         # Validate filename for path traversal
                         if '..' in file_name or '/' in file_name or '\\' in file_name:
                             logger.warning(f"Skipping potentially unsafe file: {file_name}")

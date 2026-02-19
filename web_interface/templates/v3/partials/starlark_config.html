@@ -155,13 +155,13 @@
                                class="w-10 h-10 rounded border border-gray-300 cursor-pointer p-0.5"
                                value="{{ current_val or '#FFFFFF' }}"
                                data-starlark-color-picker="{{ field_id }}"
-                               oninput="document.querySelector('[data-starlark-config={{ field_id }}]').value = this.value">
+                               oninput="this.closest('.space-y-6').querySelector('[data-starlark-config={{ field_id }}]').value = this.value">
                         <input type="text"
                                class="form-control flex-1 px-3 py-2 border border-gray-300 rounded-md text-sm font-mono"
                                value="{{ current_val or '#FFFFFF' }}"
                                placeholder="#RRGGBB"
                                data-starlark-config="{{ field_id }}"
-                               oninput="var cp = document.querySelector('[data-starlark-color-picker={{ field_id }}]'); if(this.value.match(/^#[0-9a-fA-F]{6}$/)) cp.value = this.value;">
+                               oninput="var cp = this.closest('.space-y-6').querySelector('[data-starlark-color-picker={{ field_id }}]'); if(cp && this.value.match(/^#[0-9a-fA-F]{6}$/)) cp.value = this.value;">
                     </div>
                     {% if field_desc %}
                     <p class="text-xs text-gray-400 mt-1">{{ field_desc }}</p>
@@ -375,8 +375,15 @@ function toggleStarlarkApp(appId, enabled) {
 function saveStarlarkConfig(appId) {
     var config = {};
 
+    // Get container to scope queries (prevents conflicts if multiple modals open)
+    var container = document.getElementById('plugin-config-starlark:' + appId);
+    if (!container) {
+        console.error('Container not found for appId:', appId);
+        return;
+    }
+
     // Collect standard inputs (text, number, select, datetime, color text companion)
-    document.querySelectorAll('[data-starlark-config]').forEach(function(input) {
+    container.querySelectorAll('[data-starlark-config]').forEach(function(input) {
         var key = input.getAttribute('data-starlark-config');
         var type = input.getAttribute('data-starlark-type');
 
@@ -390,7 +397,7 @@ function saveStarlarkConfig(appId) {
     });
 
     // Collect location mini-form groups
-    document.querySelectorAll('[data-starlark-location-group]').forEach(function(group) {
+    container.querySelectorAll('[data-starlark-location-group]').forEach(function(group) {
         var fieldId = group.getAttribute('data-starlark-location-group');
         var loc = {};
         group.querySelectorAll('[data-starlark-location-field="' + fieldId + '"]').forEach(function(sub) {

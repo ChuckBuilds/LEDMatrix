@@ -7078,14 +7078,29 @@ def _read_starlark_manifest() -> dict:
 
 
 def _write_starlark_manifest(manifest: dict) -> bool:
-    """Write the starlark-apps manifest.json to disk."""
+    """Write the starlark-apps manifest.json to disk with atomic write."""
+    temp_file = None
     try:
         _STARLARK_APPS_DIR.mkdir(parents=True, exist_ok=True)
-        with open(_STARLARK_MANIFEST_FILE, 'w') as f:
+
+        # Atomic write pattern: write to temp file, then rename
+        temp_file = _STARLARK_MANIFEST_FILE.with_suffix('.tmp')
+        with open(temp_file, 'w') as f:
             json.dump(manifest, f, indent=2)
+            f.flush()
+            os.fsync(f.fileno())  # Ensure data is written to disk
+
+        # Atomic rename (overwrites destination)
+        temp_file.replace(_STARLARK_MANIFEST_FILE)
         return True
     except OSError as e:
         logger.error(f"Error writing starlark manifest: {e}")
+        # Clean up temp file if it exists
+        if temp_file and temp_file.exists():
+            try:
+                temp_file.unlink()
+            except Exception:
+                pass
         return False
 
 
@@ -7398,7 +7413,15 @@ def uninstall_starlark_app(app_id):
         else:
             # Standalone: remove app dir and manifest entry
             import shutil
-            app_dir = _STARLARK_APPS_DIR / app_id
+            app_dir = (_STARLARK_APPS_DIR / app_id).resolve()
+
+            # Path traversal check - ensure app_dir is within _STARLARK_APPS_DIR
+            try:
+                app_dir.relative_to(_STARLARK_APPS_DIR.resolve())
+            except ValueError:
+                logger.warning(f"Path traversal attempt in uninstall: {app_id}")
+                return jsonify({'status': 'error', 'message': 'Invalid app_id'}), 400
+
             if app_dir.exists():
                 shutil.rmtree(app_dir)
             manifest = _read_starlark_manifest()

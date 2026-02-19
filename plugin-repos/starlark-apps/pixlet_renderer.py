@@ -264,10 +264,11 @@ class PixletRenderer:
                     else:
                         value_str = str(value)
 
-                    # Validate value doesn't contain shell metacharacters
-                    # Allow alphanumeric, spaces, and common safe chars: .-_:/@#,
-                    if not re.match(r'^[a-zA-Z0-9 .\-_:/@#,{}"\[\]]*$', value_str):
-                        logger.warning(f"Skipping config value with unsafe characters for key {key}: {value_str}")
+                    # Validate value doesn't contain dangerous shell metacharacters
+                    # Block: backticks, $(), pipes, redirects, semicolons, ampersands, null bytes
+                    # Allow: most printable chars including spaces, quotes, brackets, braces
+                    if re.search(r'[`$|<>&;\x00]|\$\(', value_str):
+                        logger.warning(f"Skipping config value with unsafe shell characters for key {key}: {value_str}")
                         continue
 
                     # Add as positional argument (not -c flag)
@@ -469,7 +470,7 @@ class PixletRenderer:
 
     def _extract_get_schema_body(self, content: str) -> Optional[str]:
         """
-        Extract get_schema() function body.
+        Extract get_schema() function body using indentation-aware parsing.
 
         Args:
             content: .star file content
@@ -477,12 +478,45 @@ class PixletRenderer:
         Returns:
             Function body text, or None if not found
         """
-        # Find def get_schema():
-        pattern = r'def\s+get_schema\s*\(\s*\)\s*:(.*?)(?=\ndef\s|\Z)'
-        match = re.search(pattern, content, re.DOTALL)
+        # Find def get_schema(): line
+        pattern = r'^(\s*)def\s+get_schema\s*\(\s*\)\s*:'
+        match = re.search(pattern, content, re.MULTILINE)
 
-        if match:
-            return match.group(1)
+        if not match:
+            return None
+
+        # Get the indentation level of the function definition
+        func_indent = len(match.group(1))
+        func_start = match.end()
+
+        # Split content into lines starting after the function definition
+        lines_after = content[func_start:].split('\n')
+        body_lines = []
+
+        for line in lines_after:
+            # Skip empty lines
+            if not line.strip():
+                body_lines.append(line)
+                continue
+
+            # Calculate indentation of current line
+            stripped = line.lstrip()
+            line_indent = len(line) - len(stripped)
+
+            # If line has same or less indentation than function def, check if it's a top-level def
+            if line_indent <= func_indent:
+                # This is a line at the same or outer level - check if it's a function
+                if re.match(r'def\s+\w+', stripped):
+                    # Found next top-level function, stop here
+                    break
+                # Otherwise it might be a comment or other top-level code, stop anyway
+                break
+
+            # Line is indented more than function def, so it's part of the body
+            body_lines.append(line)
+
+        if body_lines:
+            return '\n'.join(body_lines)
         return None
 
     def _parse_schema_field(self, field_type: str, params_text: str, var_table: Dict) -> Optional[Dict[str, Any]]:
@@ -545,15 +579,24 @@ class PixletRenderer:
             field_dict['icon'] = icon_match.group(1)
 
         # default (can be string, bool, or variable reference)
-        default_match = re.search(r'default\s*=\s*([^,\)]+)', params_text)
+        # First try to match quoted strings (which may contain commas)
+        default_match = re.search(r'default\s*=\s*"([^"]*)"', params_text)
+        if not default_match:
+            # Try single quotes
+            default_match = re.search(r"default\s*=\s*'([^']*)'", params_text)
+        if not default_match:
+            # Fall back to unquoted value (stop at comma or closing paren)
+            default_match = re.search(r'default\s*=\s*([^,\)]+)', params_text)
+
         if default_match:
             default_value = default_match.group(1).strip()
             # Handle boolean
             if default_value in ('True', 'False'):
                 field_dict['default'] = default_value.lower()
-            # Handle string literal
-            elif default_value.startswith('"') and default_value.endswith('"'):
-                field_dict['default'] = default_value.strip('"')
+            # Handle string literal from first two patterns (already extracted without quotes)
+            elif re.search(r'default\s*=\s*["\']', params_text):
+                # This was a quoted string, use the captured content directly
+                field_dict['default'] = default_value
             # Handle variable reference (can't resolve, use as-is)
             else:
                 # Try to extract just the value if it's like options[0].value

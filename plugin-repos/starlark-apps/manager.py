@@ -553,6 +553,7 @@ class StarlarkAppsPlugin(BasePlugin):
         Save apps manifest to file with file locking to prevent race conditions.
         Uses exclusive lock during write to prevent concurrent modifications.
         """
+        temp_file = None
         try:
             # Use atomic write pattern: write to temp file, then rename
             temp_file = self.manifest_file.with_suffix('.tmp')
@@ -573,10 +574,10 @@ class StarlarkAppsPlugin(BasePlugin):
         except Exception as e:
             self.logger.error(f"Error saving manifest: {e}")
             # Clean up temp file if it exists
-            if temp_file.exists():
+            if temp_file and temp_file.exists():
                 try:
                     temp_file.unlink()
-                except:
+                except Exception:
                     pass
             return False
 
@@ -879,7 +880,9 @@ class StarlarkAppsPlugin(BasePlugin):
             def update_fn(manifest):
                 manifest["apps"][safe_app_id] = app_manifest
 
-            self._update_manifest_safe(update_fn)
+            if not self._update_manifest_safe(update_fn):
+                self.logger.error(f"Failed to update manifest for {app_id}")
+                return False
 
             # Create app instance (use safe_app_id for internal key, original for display)
             app = StarlarkApp(safe_app_id, app_dir, app_manifest)
@@ -913,19 +916,24 @@ class StarlarkAppsPlugin(BasePlugin):
             if self.current_app and self.current_app.app_id == app_id:
                 self.current_app = None
 
-            # Remove from apps dict
-            app = self.apps.pop(app_id)
+            # Get app reference before removing from dict
+            app = self.apps.get(app_id)
 
-            # Remove directory
-            if app.app_dir.exists():
-                shutil.rmtree(app.app_dir)
-
-            # Update manifest
+            # Update manifest FIRST (before modifying filesystem)
             def update_fn(manifest):
                 if app_id in manifest["apps"]:
                     del manifest["apps"][app_id]
 
-            self._update_manifest_safe(update_fn)
+            if not self._update_manifest_safe(update_fn):
+                self.logger.error(f"Failed to update manifest when uninstalling {app_id}")
+                return False
+
+            # Remove from apps dict
+            self.apps.pop(app_id)
+
+            # Remove directory (after manifest update succeeds)
+            if app and app.app_dir.exists():
+                shutil.rmtree(app.app_dir)
 
             self.logger.info(f"Uninstalled Starlark app: {app_id}")
             return True

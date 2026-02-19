@@ -1,6 +1,43 @@
+// ─── LocalStorage Safety Wrappers ────────────────────────────────────────────
+// Handles environments where localStorage is unavailable or restricted (private browsing, etc.)
+const safeLocalStorage = {
+    getItem(key) {
+        try {
+            if (typeof localStorage !== 'undefined') {
+                return safeLocalStorage.getItem(key);
+            }
+        } catch (e) {
+            console.warn(`safeLocalStorage.getItem failed for key "${key}":`, e.message);
+        }
+        return null;
+    },
+    setItem(key, value) {
+        try {
+            if (typeof localStorage !== 'undefined') {
+                safeLocalStorage.setItem(key, value);
+                return true;
+            }
+        } catch (e) {
+            console.warn(`safeLocalStorage.setItem failed for key "${key}":`, e.message);
+        }
+        return false;
+    },
+    removeItem(key) {
+        try {
+            if (typeof localStorage !== 'undefined') {
+                localStorage.removeItem(key);
+                return true;
+            }
+        } catch (e) {
+            console.warn(`localStorage.removeItem failed for key "${key}":`, e.message);
+        }
+        return false;
+    }
+};
+
 // Define critical functions immediately so they're available before any HTML is rendered
-// Debug logging controlled by localStorage.setItem('pluginDebug', 'true')
-const _PLUGIN_DEBUG_EARLY = typeof localStorage !== 'undefined' && localStorage.getItem('pluginDebug') === 'true';
+// Debug logging controlled by safeLocalStorage.setItem('pluginDebug', 'true')
+const _PLUGIN_DEBUG_EARLY = safeLocalStorage.getItem('pluginDebug') === 'true';
 if (_PLUGIN_DEBUG_EARLY) console.log('[PLUGINS SCRIPT] Defining configurePlugin and togglePlugin at top level...');
 
 // Expose on-demand functions early as stubs (will be replaced when IIFE runs)
@@ -865,7 +902,7 @@ window.currentPluginConfig = null;
 
     // Store filter/sort state
     const storeFilterState = {
-        sort: localStorage.getItem('storeSort') || 'a-z',
+        sort: safeLocalStorage.getItem('storeSort') || 'a-z',
         filterVerified: false,
         filterNew: false,
         filterInstalled: null,   // null = all, true = installed only, false = not installed only
@@ -873,7 +910,7 @@ window.currentPluginConfig = null;
         filterCategories: [],
 
         persist() {
-            localStorage.setItem('storeSort', this.sort);
+            safeLocalStorage.setItem('storeSort', this.sort);
         },
 
         reset() {
@@ -898,7 +935,7 @@ window.currentPluginConfig = null;
     };
 
     // Installed plugins sort state
-    let installedSort = localStorage.getItem('installedSort') || 'a-z';
+    let installedSort = safeLocalStorage.getItem('installedSort') || 'a-z';
 
     // Shared on-demand status store (mirrors Alpine store when available)
     window.__onDemandStore = window.__onDemandStore || {
@@ -1251,8 +1288,8 @@ const pluginLoadCache = {
     }
 };
 
-// Debug flag - set via localStorage.setItem('pluginDebug', 'true')
-const PLUGIN_DEBUG = typeof localStorage !== 'undefined' && localStorage.getItem('pluginDebug') === 'true';
+// Debug flag - set via safeLocalStorage.setItem('pluginDebug', 'true')
+const PLUGIN_DEBUG = typeof localStorage !== 'undefined' && safeLocalStorage.getItem('pluginDebug') === 'true';
 function pluginLog(...args) {
     if (PLUGIN_DEBUG) console.log(...args);
 }
@@ -5269,7 +5306,7 @@ function setupStoreFilterListeners() {
         installedSortSelect.value = installedSort;
         installedSortSelect.addEventListener('change', () => {
             installedSort = installedSortSelect.value;
-            localStorage.setItem('installedSort', installedSort);
+            safeLocalStorage.setItem('installedSort', installedSort);
             const plugins = window.installedPlugins || [];
             if (plugins.length > 0) {
                 sortAndRenderInstalledPlugins(plugins);
