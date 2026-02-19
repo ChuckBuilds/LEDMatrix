@@ -470,6 +470,16 @@ def _load_starlark_config_partial(app_id):
         if not app_data:
             return f'<div class="text-red-500 p-4">Starlark app not found: {app_id}</div>', 404
 
+        # Load schema from schema.json if it exists
+        schema = None
+        schema_file = Path(__file__).resolve().parent.parent.parent / 'starlark-apps' / app_id / 'schema.json'
+        if schema_file.exists():
+            try:
+                with open(schema_file, 'r') as f:
+                    schema = json.load(f)
+            except Exception as e:
+                print(f"Warning: Could not load schema for {app_id}: {e}")
+
         return render_template(
             'v3/partials/starlark_config.html',
             app_id=app_id,
@@ -478,7 +488,7 @@ def _load_starlark_config_partial(app_id):
             render_interval=app_data.get('render_interval', 300),
             display_duration=app_data.get('display_duration', 15),
             config=app_data.get('config', {}),
-            schema=None,
+            schema=schema,
             has_frames=False,
             frame_count=0,
             last_render_time=None,

@@ -9,6 +9,7 @@ import logging
 import time
 import requests
 import yaml
+import threading
 from typing import Dict, Any, Optional, List, Tuple
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -18,6 +19,7 @@ logger = logging.getLogger(__name__)
 # Module-level cache for bulk app listing (survives across requests)
 _apps_cache = {'data': None, 'timestamp': 0, 'categories': [], 'authors': []}
 _CACHE_TTL = 7200  # 2 hours
+_cache_lock = threading.Lock()
 
 
 class TronbyteRepository:
@@ -94,16 +96,17 @@ class TronbyteRepository:
             logger.error(f"Unexpected error: {e}")
             return None
 
-    def _fetch_raw_file(self, file_path: str, branch: Optional[str] = None) -> Optional[str]:
+    def _fetch_raw_file(self, file_path: str, branch: Optional[str] = None, binary: bool = False):
         """
         Fetch raw file content from repository.
 
         Args:
             file_path: Path to file in repository
             branch: Branch name (default: DEFAULT_BRANCH)
+            binary: If True, return bytes; if False, return text
 
         Returns:
-            File content as string, or None on error
+            File content as string/bytes, or None on error
         """
         branch = branch or self.DEFAULT_BRANCH
         url = f"{self.raw_url}/{self.REPO_OWNER}/{self.REPO_NAME}/{branch}/{file_path}"
@@ -111,7 +114,7 @@ class TronbyteRepository:
         try:
             response = self.session.get(url, timeout=10)
             if response.status_code == 200:
-                return response.text
+                return response.content if binary else response.text
             else:
                 logger.warning(f"Failed to fetch raw file: {file_path} ({response.status_code})")
                 return None
@@ -252,14 +255,17 @@ class TronbyteRepository:
         global _apps_cache
 
         now = time.time()
-        if _apps_cache['data'] is not None and (now - _apps_cache['timestamp']) < _CACHE_TTL:
-            return {
-                'apps': _apps_cache['data'],
-                'categories': _apps_cache['categories'],
-                'authors': _apps_cache['authors'],
-                'count': len(_apps_cache['data']),
-                'cached': True
-            }
+
+        # Check cache with lock (read-only check)
+        with _cache_lock:
+            if _apps_cache['data'] is not None and (now - _apps_cache['timestamp']) < _CACHE_TTL:
+                return {
+                    'apps': _apps_cache['data'],
+                    'categories': _apps_cache['categories'],
+                    'authors': _apps_cache['authors'],
+                    'count': len(_apps_cache['data']),
+                    'cached': True
+                }
 
         # Fetch directory listing (1 GitHub API call)
         success, app_dirs, error = self.list_apps()
@@ -282,8 +288,8 @@ class TronbyteRepository:
                     metadata['id'] = app_id
                     metadata['repository_path'] = app_info.get('path', '')
                     return metadata
-                except (yaml.YAMLError, TypeError):
-                    pass
+                except (yaml.YAMLError, TypeError) as e:
+                    logger.warning(f"Failed to parse manifest for {app_id}: {e}")
             # Fallback: minimal entry
             return {
                 'id': app_id,
@@ -294,7 +300,7 @@ class TronbyteRepository:
 
         # Parallel manifest fetches via raw.githubusercontent.com (high rate limit)
         apps_with_metadata = []
-        with ThreadPoolExecutor(max_workers=20) as executor:
+        with ThreadPoolExecutor(max_workers=5) as executor:
             futures = {executor.submit(fetch_one, info): info for info in app_dirs}
             for future in as_completed(futures):
                 try:
@@ -318,11 +324,12 @@ class TronbyteRepository:
         categories = sorted({a.get('category', '') for a in apps_with_metadata if a.get('category')})
         authors = sorted({a.get('author', '') for a in apps_with_metadata if a.get('author')})
 
-        # Update cache
-        _apps_cache['data'] = apps_with_metadata
-        _apps_cache['timestamp'] = now
-        _apps_cache['categories'] = categories
-        _apps_cache['authors'] = authors
+        # Update cache with lock
+        with _cache_lock:
+            _apps_cache['data'] = apps_with_metadata
+            _apps_cache['timestamp'] = now
+            _apps_cache['categories'] = categories
+            _apps_cache['authors'] = authors
 
         logger.info(f"Cached {len(apps_with_metadata)} apps ({len(categories)} categories, {len(authors)} authors)")
 
@@ -347,8 +354,15 @@ class TronbyteRepository:
         Returns:
             Tuple of (success, error_message)
         """
-        # Use provided filename or fall back to app_id.star
+        # Validate inputs for path traversal
+        if '..' in app_id or '/' in app_id or '\\' in app_id:
+            return False, f"Invalid app_id: contains path traversal characters"
+
         star_filename = filename or f"{app_id}.star"
+        if '..' in star_filename or '/' in star_filename or '\\' in star_filename:
+            return False, f"Invalid filename: contains path traversal characters"
+
+        # Use provided filename or fall back to app_id.star
         star_path = f"{self.APPS_PATH}/{app_id}/{star_filename}"
 
         content = self._fetch_raw_file(star_path)
@@ -388,6 +402,91 @@ class TronbyteRepository:
 
         files = [item['name'] for item in data if item.get('type') == 'file']
         return True, files, None
+
+    def download_app_assets(self, app_id: str, output_dir: Path) -> Tuple[bool, Optional[str]]:
+        """
+        Download all asset files (images, sources, etc.) for an app.
+
+        Args:
+            app_id: App identifier
+            output_dir: Directory to save assets to
+
+        Returns:
+            Tuple of (success, error_message)
+        """
+        # Validate app_id for path traversal
+        if '..' in app_id or '/' in app_id or '\\' in app_id:
+            return False, f"Invalid app_id: contains path traversal characters"
+
+        try:
+            # Get directory listing for the app
+            url = f"{self.base_url}/repos/{self.REPO_OWNER}/{self.REPO_NAME}/contents/{self.APPS_PATH}/{app_id}"
+            data = self._make_request(url)
+            if not data:
+                return False, f"Failed to fetch app directory listing"
+
+            if not isinstance(data, list):
+                return False, f"Invalid directory listing format"
+
+            # Find directories that contain assets (images, sources, etc.)
+            asset_dirs = []
+            for item in data:
+                if item.get('type') == 'dir':
+                    dir_name = item.get('name')
+                    # Common asset directory names in Tronbyte apps
+                    if dir_name in ('images', 'sources', 'fonts', 'assets'):
+                        asset_dirs.append((dir_name, item.get('url')))
+
+            if not asset_dirs:
+                # No asset directories, this is fine
+                return True, None
+
+            # Download each asset directory
+            for dir_name, dir_url in asset_dirs:
+                # Validate directory name for path traversal
+                if '..' in dir_name or '/' in dir_name or '\\' in dir_name:
+                    logger.warning(f"Skipping potentially unsafe directory: {dir_name}")
+                    continue
+
+                # Get files in this directory
+                dir_data = self._make_request(dir_url)
+                if not dir_data or not isinstance(dir_data, list):
+                    logger.warning(f"Could not list files in {app_id}/{dir_name}")
+                    continue
+
+                # Create local directory
+                local_dir = output_dir / dir_name
+                local_dir.mkdir(parents=True, exist_ok=True)
+
+                # Download each file
+                for file_item in dir_data:
+                    if file_item.get('type') == 'file':
+                        file_name = file_item.get('name')
+                        # Validate filename for path traversal
+                        if '..' in file_name or '/' in file_name or '\\' in file_name:
+                            logger.warning(f"Skipping potentially unsafe file: {file_name}")
+                            continue
+
+                        file_path = f"{self.APPS_PATH}/{app_id}/{dir_name}/{file_name}"
+                        content = self._fetch_raw_file(file_path, binary=True)
+                        if content:
+                            # Write binary content to file
+                            output_path = local_dir / file_name
+                            try:
+                                with open(output_path, 'wb') as f:
+                                    f.write(content)
+                                logger.debug(f"Downloaded asset: {dir_name}/{file_name}")
+                            except Exception as e:
+                                logger.warning(f"Failed to save {dir_name}/{file_name}: {e}")
+                        else:
+                            logger.warning(f"Failed to download {dir_name}/{file_name}")
+
+            logger.info(f"Downloaded assets for {app_id} ({len(asset_dirs)} directories)")
+            return True, None
+
+        except Exception as e:
+            logger.exception(f"Error downloading assets for {app_id}: {e}")
+            return False, f"Error downloading assets: {e}"
 
     def search_apps(self, query: str, apps_with_metadata: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """

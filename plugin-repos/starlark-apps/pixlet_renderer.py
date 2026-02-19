@@ -239,16 +239,15 @@ class PixletRenderer:
             return False, f"Star file not found: {star_file}"
 
         try:
-            # Build command
+            # Build command - config params must be POSITIONAL between star_file and flags
+            # Format: pixlet render <file.star> [key=value]... [flags]
             cmd = [
                 self.pixlet_binary,
                 "render",
-                star_file,
-                "-o", output_path,
-                "-m", str(magnify)
+                star_file
             ]
 
-            # Add configuration parameters
+            # Add configuration parameters as positional arguments (BEFORE flags)
             if config:
                 for key, value in config.items():
                     # Validate key format (alphanumeric + underscore only)
@@ -259,6 +258,9 @@ class PixletRenderer:
                     # Convert value to string for CLI
                     if isinstance(value, bool):
                         value_str = "true" if value else "false"
+                    elif isinstance(value, str) and (value.startswith('{') or value.startswith('[')):
+                        # JSON string - keep as-is, will be properly quoted by subprocess
+                        value_str = value
                     else:
                         value_str = str(value)
 
@@ -268,7 +270,14 @@ class PixletRenderer:
                         logger.warning(f"Skipping config value with unsafe characters for key {key}: {value_str}")
                         continue
 
-                    cmd.extend(["-c", f"{key}={value_str}"])
+                    # Add as positional argument (not -c flag)
+                    cmd.append(f"{key}={value_str}")
+
+            # Add flags AFTER positional config arguments
+            cmd.extend([
+                "-o", output_path,
+                "-m", str(magnify)
+            ])
 
             logger.debug(f"Executing Pixlet: {' '.join(cmd)}")
 

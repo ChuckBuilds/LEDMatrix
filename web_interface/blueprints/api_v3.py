@@ -10,6 +10,7 @@ import uuid
 import logging
 from datetime import datetime
 from pathlib import Path
+from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -2183,10 +2184,10 @@ def toggle_plugin():
             if starlark_plugin and starlark_app_id in starlark_plugin.apps:
                 app = starlark_plugin.apps[starlark_app_id]
                 app.manifest['enabled'] = enabled
-                with open(starlark_plugin.manifest_file, 'r') as f:
-                    manifest = json.load(f)
-                manifest['apps'][starlark_app_id]['enabled'] = enabled
-                starlark_plugin._save_manifest(manifest)
+                # Use safe manifest update to prevent race conditions
+                def update_fn(manifest):
+                    manifest['apps'][starlark_app_id]['enabled'] = enabled
+                starlark_plugin._update_manifest_safe(update_fn)
             else:
                 # Standalone: update manifest directly
                 manifest = _read_starlark_manifest()
@@ -7088,7 +7089,7 @@ def _write_starlark_manifest(manifest: dict) -> bool:
         return False
 
 
-def _install_star_file(app_id: str, star_file_path: str, metadata: dict) -> bool:
+def _install_star_file(app_id: str, star_file_path: str, metadata: dict, assets_dir: Optional[str] = None) -> bool:
     """Install a .star file and update the manifest (standalone, no plugin needed)."""
     import shutil
     import json
@@ -7097,7 +7098,21 @@ def _install_star_file(app_id: str, star_file_path: str, metadata: dict) -> bool
     dest = app_dir / f"{app_id}.star"
     shutil.copy2(star_file_path, str(dest))
 
+    # Copy asset directories if provided (images/, sources/, etc.)
+    if assets_dir and Path(assets_dir).exists():
+        assets_path = Path(assets_dir)
+        for item in assets_path.iterdir():
+            if item.is_dir():
+                # Copy entire directory (e.g., images/, sources/)
+                dest_dir = app_dir / item.name
+                if dest_dir.exists():
+                    shutil.rmtree(dest_dir)
+                shutil.copytree(item, dest_dir)
+                logger.debug(f"Copied assets directory: {item.name}")
+        logger.info(f"Installed assets for {app_id}")
+
     # Try to extract schema using PixletRenderer
+    schema = None
     try:
         PixletRenderer = _get_pixlet_renderer_class()
         pixlet = PixletRenderer()
@@ -7110,6 +7125,19 @@ def _install_star_file(app_id: str, star_file_path: str, metadata: dict) -> bool
                 logger.info(f"Extracted schema for {app_id}")
     except Exception as e:
         logger.warning(f"Failed to extract schema for {app_id}: {e}")
+
+    # Create default config — pre-populate with schema defaults
+    default_config = {}
+    if schema:
+        fields = schema.get('fields') or schema.get('schema') or []
+        for field in fields:
+            if isinstance(field, dict) and 'id' in field and 'default' in field:
+                default_config[field['id']] = field['default']
+
+    # Create config.json file
+    config_path = app_dir / "config.json"
+    with open(config_path, 'w') as f:
+        json.dump(default_config, f, indent=2)
 
     manifest = _read_starlark_manifest()
     manifest.setdefault('apps', {})[app_id] = {
@@ -7302,6 +7330,14 @@ def upload_starlark_app():
         if not file.filename or not file.filename.endswith('.star'):
             return jsonify({'status': 'error', 'message': 'File must have .star extension'}), 400
 
+        # Check file size (limit to 5MB for .star files)
+        file.seek(0, 2)  # Seek to end
+        file_size = file.tell()
+        file.seek(0)  # Reset to beginning
+        MAX_STAR_SIZE = 5 * 1024 * 1024  # 5MB
+        if file_size > MAX_STAR_SIZE:
+            return jsonify({'status': 'error', 'message': f'File too large (max 5MB, got {file_size/1024/1024:.1f}MB)'}), 400
+
         app_name = request.form.get('name')
         app_id_input = request.form.get('app_id')
         filename_base = file.filename.replace('.star', '') if file.filename else None
@@ -7390,12 +7426,32 @@ def get_starlark_app_config(app_id):
                 return jsonify({'status': 'error', 'message': f'App not found: {app_id}'}), 404
             return jsonify({'status': 'success', 'config': app.config, 'schema': app.schema})
 
-        # Standalone: read from manifest
-        manifest = _read_starlark_manifest()
-        app_data = manifest.get('apps', {}).get(app_id)
-        if not app_data:
+        # Standalone: read from config.json file
+        app_dir = _STARLARK_APPS_DIR / app_id
+        config_file = app_dir / "config.json"
+
+        if not app_dir.exists():
             return jsonify({'status': 'error', 'message': f'App not found: {app_id}'}), 404
-        return jsonify({'status': 'success', 'config': app_data.get('config', {}), 'schema': None})
+
+        config = {}
+        if config_file.exists():
+            try:
+                with open(config_file, 'r') as f:
+                    config = json.load(f)
+            except Exception as e:
+                logger.warning(f"Failed to load config for {app_id}: {e}")
+
+        # Load schema from schema.json
+        schema = None
+        schema_file = app_dir / "schema.json"
+        if schema_file.exists():
+            try:
+                with open(schema_file, 'r') as f:
+                    schema = json.load(f)
+            except Exception as e:
+                logger.warning(f"Failed to load schema for {app_id}: {e}")
+
+        return jsonify({'status': 'success', 'config': config, 'schema': schema})
 
     except Exception as e:
         logger.error(f"Error getting config for {app_id}: {e}")
@@ -7464,22 +7520,51 @@ def update_starlark_app_config(app_id):
             else:
                 return jsonify({'status': 'error', 'message': 'Failed to save configuration'}), 500
 
-        # Standalone: update manifest directly
+        # Standalone: update both config.json and manifest
         manifest = _read_starlark_manifest()
         app_data = manifest.get('apps', {}).get(app_id)
         if not app_data:
             return jsonify({'status': 'error', 'message': f'App not found: {app_id}'}), 404
 
+        # Extract timing keys (they go in manifest, not config.json)
+        render_interval = data.pop('render_interval', None)
+        display_duration = data.pop('display_duration', None)
+
+        # Update manifest with timing values
+        if render_interval is not None:
+            app_data['render_interval'] = render_interval
+        if display_duration is not None:
+            app_data['display_duration'] = display_duration
+
+        # Load current config from config.json
+        app_dir = _STARLARK_APPS_DIR / app_id
+        config_file = app_dir / "config.json"
+        current_config = {}
+        if config_file.exists():
+            try:
+                with open(config_file, 'r') as f:
+                    current_config = json.load(f)
+            except Exception as e:
+                logger.warning(f"Failed to load config for {app_id}: {e}")
+
+        # Update config with new values (excluding timing keys)
+        current_config.update(data)
+
+        # Write updated config to config.json
+        try:
+            with open(config_file, 'w') as f:
+                json.dump(current_config, f, indent=2)
+        except Exception as e:
+            logger.error(f"Failed to save config.json for {app_id}: {e}")
+            return jsonify({'status': 'error', 'message': f'Failed to save configuration: {e}'}), 500
+
+        # Also update manifest for backward compatibility
         app_data.setdefault('config', {}).update(data)
-        if 'render_interval' in data:
-            app_data['render_interval'] = data['render_interval']
-        if 'display_duration' in data:
-            app_data['display_duration'] = data['display_duration']
 
         if _write_starlark_manifest(manifest):
-            return jsonify({'status': 'success', 'message': 'Configuration updated', 'config': app_data.get('config', {})})
+            return jsonify({'status': 'success', 'message': 'Configuration updated', 'config': current_config})
         else:
-            return jsonify({'status': 'error', 'message': 'Failed to save configuration'}), 500
+            return jsonify({'status': 'error', 'message': 'Failed to save manifest'}), 500
 
     except Exception as e:
         logger.error(f"Error updating config for {app_id}: {e}")
@@ -7618,29 +7703,45 @@ def install_from_tronbyte_repository():
             if not success:
                 return jsonify({'status': 'error', 'message': f'Failed to download app: {error}'}), 500
 
-            render_interval = data.get('render_interval', 300)
-            ri, err = _validate_timing_value(render_interval, 'render_interval')
-            if err:
-                return jsonify({'status': 'error', 'message': err}), 400
-            render_interval = ri or 300
+            # Download assets (images, sources, etc.) to a temp directory
+            import tempfile
+            temp_assets_dir = tempfile.mkdtemp()
+            try:
+                success_assets, error_assets = repo.download_app_assets(data['app_id'], Path(temp_assets_dir))
+                # Asset download is non-critical - log warning but continue if it fails
+                if not success_assets:
+                    logger.warning(f"Failed to download assets for {data['app_id']}: {error_assets}")
 
-            display_duration = data.get('display_duration', 15)
-            dd, err = _validate_timing_value(display_duration, 'display_duration')
-            if err:
-                return jsonify({'status': 'error', 'message': err}), 400
-            display_duration = dd or 15
+                render_interval = data.get('render_interval', 300)
+                ri, err = _validate_timing_value(render_interval, 'render_interval')
+                if err:
+                    return jsonify({'status': 'error', 'message': err}), 400
+                render_interval = ri or 300
 
-            install_metadata = {
-                'name': metadata.get('name', app_id) if metadata else app_id,
-                'render_interval': render_interval,
-                'display_duration': display_duration
-            }
+                display_duration = data.get('display_duration', 15)
+                dd, err = _validate_timing_value(display_duration, 'display_duration')
+                if err:
+                    return jsonify({'status': 'error', 'message': err}), 400
+                display_duration = dd or 15
 
-            starlark_plugin = _get_starlark_plugin()
-            if starlark_plugin:
-                success = starlark_plugin.install_app(data['app_id'], temp_path, install_metadata)
-            else:
-                success = _install_star_file(data['app_id'], temp_path, install_metadata)
+                install_metadata = {
+                    'name': metadata.get('name', app_id) if metadata else app_id,
+                    'render_interval': render_interval,
+                    'display_duration': display_duration
+                }
+
+                starlark_plugin = _get_starlark_plugin()
+                if starlark_plugin:
+                    success = starlark_plugin.install_app(app_id, temp_path, install_metadata, assets_dir=temp_assets_dir)
+                else:
+                    success = _install_star_file(app_id, temp_path, install_metadata, assets_dir=temp_assets_dir)
+            finally:
+                # Clean up temp assets directory
+                import shutil
+                try:
+                    shutil.rmtree(temp_assets_dir)
+                except OSError:
+                    pass
 
             if success:
                 return jsonify({'status': 'success', 'message': f'App installed: {metadata.get("name", app_id) if metadata else app_id}', 'app_id': app_id})

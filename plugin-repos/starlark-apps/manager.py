@@ -796,7 +796,7 @@ class StarlarkAppsPlugin(BasePlugin):
         except Exception as e:
             self.logger.error(f"Error displaying frame: {e}")
 
-    def install_app(self, app_id: str, star_file_path: str, metadata: Optional[Dict[str, Any]] = None) -> bool:
+    def install_app(self, app_id: str, star_file_path: str, metadata: Optional[Dict[str, Any]] = None, assets_dir: Optional[str] = None) -> bool:
         """
         Install a new Starlark app.
 
@@ -804,6 +804,7 @@ class StarlarkAppsPlugin(BasePlugin):
             app_id: Unique identifier for the app
             star_file_path: Path to .star file to install
             metadata: Optional metadata (name, description, etc.)
+            assets_dir: Optional directory containing assets (images/, sources/, etc.)
 
         Returns:
             True if successful
@@ -826,6 +827,21 @@ class StarlarkAppsPlugin(BasePlugin):
             # Verify star_dest path safety
             self._verify_path_safety(star_dest, self.apps_dir)
             shutil.copy2(star_file_path, star_dest)
+
+            # Copy asset directories if provided (images/, sources/, etc.)
+            if assets_dir and Path(assets_dir).exists():
+                assets_path = Path(assets_dir)
+                for item in assets_path.iterdir():
+                    if item.is_dir():
+                        # Copy entire directory (e.g., images/, sources/)
+                        dest_dir = app_dir / item.name
+                        # Verify dest_dir path safety
+                        self._verify_path_safety(dest_dir, self.apps_dir)
+                        if dest_dir.exists():
+                            shutil.rmtree(dest_dir)
+                        shutil.copytree(item, dest_dir)
+                        self.logger.debug(f"Copied assets directory: {item.name}")
+                self.logger.info(f"Installed assets for {app_id}")
 
             # Create app manifest entry
             app_manifest = {
