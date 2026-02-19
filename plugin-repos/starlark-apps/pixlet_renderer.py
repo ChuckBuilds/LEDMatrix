@@ -305,7 +305,12 @@ class PixletRenderer:
 
     def extract_schema(self, star_file: str) -> Tuple[bool, Optional[Dict[str, Any]], Optional[str]]:
         """
-        Extract configuration schema from a .star file.
+        Extract configuration schema from a .star file by parsing source code.
+
+        Supports:
+        - Static field definitions (location, text, toggle, dropdown, color, datetime)
+        - Variable-referenced dropdown options
+        - Graceful degradation for unsupported field types
 
         Args:
             star_file: Path to .star file
@@ -313,47 +318,282 @@ class PixletRenderer:
         Returns:
             Tuple of (success: bool, schema: Optional[Dict], error: Optional[str])
         """
-        if not self.pixlet_binary:
-            return False, None, "Pixlet binary not found"
-
         if not os.path.isfile(star_file):
             return False, None, f"Star file not found: {star_file}"
 
         try:
-            # Use 'pixlet info' or 'pixlet serve' to extract schema
-            # Note: Schema extraction may vary by Pixlet version
-            cmd = [self.pixlet_binary, "serve", star_file, "--print-schema"]
+            # Read .star file
+            with open(star_file, 'r', encoding='utf-8') as f:
+                content = f.read()
 
-            logger.debug(f"Extracting schema: {' '.join(cmd)}")
+            # Parse schema from source
+            schema = self._parse_schema_from_source(content, star_file)
 
-            safe_cwd = self._get_safe_working_directory(star_file)
-            result = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                timeout=10,
-                cwd=safe_cwd  # Run in .star file directory (or None if relative path)
-            )
-
-            if result.returncode == 0:
-                # Parse JSON schema from output
-                try:
-                    schema = json.loads(result.stdout)
-                    logger.debug(f"Extracted schema from: {star_file}")
-                    return True, schema, None
-                except json.JSONDecodeError as e:
-                    error = f"Invalid schema JSON: {e}"
-                    logger.warning(error)
-                    return False, None, error
+            if schema:
+                field_count = len(schema.get('schema', []))
+                logger.debug(f"Extracted schema with {field_count} field(s) from: {star_file}")
+                return True, schema, None
             else:
-                # Schema extraction might not be supported
-                logger.debug(f"Schema extraction not available or failed: {result.stderr}")
-                return True, None, None  # Not an error, just no schema
+                # No schema found - not an error, app just doesn't have configuration
+                logger.debug(f"No schema found in: {star_file}")
+                return True, None, None
 
-        except subprocess.TimeoutExpired:
-            error = "Schema extraction timeout"
+        except UnicodeDecodeError as e:
+            error = f"File encoding error: {e}"
             logger.warning(error)
             return False, None, error
-        except (subprocess.SubprocessError, OSError):
-            logger.exception("Schema extraction exception")
-            return False, None, "Schema extraction failed - see logs for details"
+        except Exception as e:
+            logger.exception(f"Schema extraction failed for {star_file}")
+            return False, None, f"Schema extraction error: {str(e)}"
+
+    def _parse_schema_from_source(self, content: str, file_path: str) -> Optional[Dict[str, Any]]:
+        """
+        Parse get_schema() function from Starlark source code.
+
+        Args:
+            content: .star file content
+            file_path: Path to file (for logging)
+
+        Returns:
+            Schema dict with format {"version": "1", "schema": [...]}, or None
+        """
+        # Extract variable definitions (for dropdown options)
+        var_table = self._extract_variable_definitions(content)
+
+        # Extract get_schema() function body
+        schema_body = self._extract_get_schema_body(content)
+        if not schema_body:
+            return None
+
+        # Extract version
+        version_match = re.search(r'version\s*=\s*"([^"]+)"', schema_body)
+        version = version_match.group(1) if version_match else "1"
+
+        # Extract fields array from schema.Schema(...) - handle nested brackets
+        fields_start_match = re.search(r'fields\s*=\s*\[', schema_body)
+        if not fields_start_match:
+            # Empty schema or no fields
+            return {"version": version, "schema": []}
+
+        # Find matching closing bracket
+        bracket_count = 1
+        i = fields_start_match.end()
+        while i < len(schema_body) and bracket_count > 0:
+            if schema_body[i] == '[':
+                bracket_count += 1
+            elif schema_body[i] == ']':
+                bracket_count -= 1
+            i += 1
+
+        if bracket_count != 0:
+            # Unmatched brackets
+            return {"version": version, "schema": []}
+
+        fields_text = schema_body[fields_start_match.end():i-1]
+
+        # Parse individual fields
+        schema_fields = []
+        # Match schema.FieldType(...) patterns
+        field_pattern = r'schema\.(\w+)\s*\((.*?)\)'
+
+        # Find all field definitions (handle nested parentheses)
+        pos = 0
+        while pos < len(fields_text):
+            match = re.search(field_pattern, fields_text[pos:], re.DOTALL)
+            if not match:
+                break
+
+            field_type = match.group(1)
+            field_start = pos + match.start()
+            field_end = pos + match.end()
+
+            # Handle nested parentheses properly
+            paren_count = 1
+            i = pos + match.start() + len(f'schema.{field_type}(')
+            while i < len(fields_text) and paren_count > 0:
+                if fields_text[i] == '(':
+                    paren_count += 1
+                elif fields_text[i] == ')':
+                    paren_count -= 1
+                i += 1
+
+            field_params_text = fields_text[pos + match.start() + len(f'schema.{field_type}('):i-1]
+
+            # Parse field
+            field_dict = self._parse_schema_field(field_type, field_params_text, var_table)
+            if field_dict:
+                schema_fields.append(field_dict)
+
+            pos = i
+
+        return {
+            "version": version,
+            "schema": schema_fields
+        }
+
+    def _extract_variable_definitions(self, content: str) -> Dict[str, List[Dict]]:
+        """
+        Extract top-level variable assignments (for dropdown options).
+
+        Args:
+            content: .star file content
+
+        Returns:
+            Dict mapping variable names to their option lists
+        """
+        var_table = {}
+
+        # Find variable definitions like: variableName = [schema.Option(...), ...]
+        var_pattern = r'^(\w+)\s*=\s*\[(.*?schema\.Option.*?)\]'
+        matches = re.finditer(var_pattern, content, re.MULTILINE | re.DOTALL)
+
+        for match in matches:
+            var_name = match.group(1)
+            options_text = match.group(2)
+
+            # Parse schema.Option entries
+            options = self._parse_schema_options(options_text, {})
+            if options:
+                var_table[var_name] = options
+
+        return var_table
+
+    def _extract_get_schema_body(self, content: str) -> Optional[str]:
+        """
+        Extract get_schema() function body.
+
+        Args:
+            content: .star file content
+
+        Returns:
+            Function body text, or None if not found
+        """
+        # Find def get_schema():
+        pattern = r'def\s+get_schema\s*\(\s*\)\s*:(.*?)(?=\ndef\s|\Z)'
+        match = re.search(pattern, content, re.DOTALL)
+
+        if match:
+            return match.group(1)
+        return None
+
+    def _parse_schema_field(self, field_type: str, params_text: str, var_table: Dict) -> Optional[Dict[str, Any]]:
+        """
+        Parse individual schema field definition.
+
+        Args:
+            field_type: Field type (Location, Text, Toggle, etc.)
+            params_text: Field parameters text
+            var_table: Variable lookup table
+
+        Returns:
+            Field dict, or None if parse fails
+        """
+        # Map Pixlet field types to JSON typeOf
+        type_mapping = {
+            'Location': 'location',
+            'Text': 'text',
+            'Toggle': 'toggle',
+            'Dropdown': 'dropdown',
+            'Color': 'color',
+            'DateTime': 'datetime',
+            'OAuth2': 'oauth2',
+            'PhotoSelect': 'photo_select',
+            'LocationBased': 'location_based',
+            'Typeahead': 'typeahead',
+            'Generated': 'generated',
+        }
+
+        type_of = type_mapping.get(field_type, field_type.lower())
+
+        # Skip Generated fields (invisible meta-fields)
+        if type_of == 'generated':
+            return None
+
+        field_dict = {"typeOf": type_of}
+
+        # Extract common parameters
+        # id
+        id_match = re.search(r'id\s*=\s*"([^"]+)"', params_text)
+        if id_match:
+            field_dict['id'] = id_match.group(1)
+        else:
+            # id is required, skip field if missing
+            return None
+
+        # name
+        name_match = re.search(r'name\s*=\s*"([^"]+)"', params_text)
+        if name_match:
+            field_dict['name'] = name_match.group(1)
+
+        # desc
+        desc_match = re.search(r'desc\s*=\s*"([^"]+)"', params_text)
+        if desc_match:
+            field_dict['desc'] = desc_match.group(1)
+
+        # icon
+        icon_match = re.search(r'icon\s*=\s*"([^"]+)"', params_text)
+        if icon_match:
+            field_dict['icon'] = icon_match.group(1)
+
+        # default (can be string, bool, or variable reference)
+        default_match = re.search(r'default\s*=\s*([^,\)]+)', params_text)
+        if default_match:
+            default_value = default_match.group(1).strip()
+            # Handle boolean
+            if default_value in ('True', 'False'):
+                field_dict['default'] = default_value.lower()
+            # Handle string literal
+            elif default_value.startswith('"') and default_value.endswith('"'):
+                field_dict['default'] = default_value.strip('"')
+            # Handle variable reference (can't resolve, use as-is)
+            else:
+                # Try to extract just the value if it's like options[0].value
+                if '.' in default_value or '[' in default_value:
+                    # Complex expression, skip default
+                    pass
+                else:
+                    field_dict['default'] = default_value
+
+        # For dropdown, extract options
+        if type_of == 'dropdown':
+            options_match = re.search(r'options\s*=\s*([^,\)]+)', params_text)
+            if options_match:
+                options_ref = options_match.group(1).strip()
+                # Check if it's a variable reference
+                if options_ref in var_table:
+                    field_dict['options'] = var_table[options_ref]
+                # Or inline options
+                elif options_ref.startswith('['):
+                    # Find the full options array (handle nested brackets)
+                    # This is tricky, for now try to extract inline options
+                    inline_match = re.search(r'options\s*=\s*(\[.*?\])', params_text, re.DOTALL)
+                    if inline_match:
+                        options_text = inline_match.group(1)
+                        field_dict['options'] = self._parse_schema_options(options_text, var_table)
+
+        return field_dict
+
+    def _parse_schema_options(self, options_text: str, var_table: Dict) -> List[Dict[str, str]]:
+        """
+        Parse schema.Option list.
+
+        Args:
+            options_text: Text containing schema.Option(...) entries
+            var_table: Variable lookup table (not currently used)
+
+        Returns:
+            List of {"display": "...", "value": "..."} dicts
+        """
+        options = []
+
+        # Match schema.Option(display = "...", value = "...")
+        option_pattern = r'schema\.Option\s*\(\s*display\s*=\s*"([^"]+)"\s*,\s*value\s*=\s*"([^"]+)"\s*\)'
+        matches = re.finditer(option_pattern, options_text)
+
+        for match in matches:
+            options.append({
+                "display": match.group(1),
+                "value": match.group(2)
+            })
+
+        return options
