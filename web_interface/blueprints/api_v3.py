@@ -7558,7 +7558,9 @@ def install_from_tronbyte_repository():
             temp_path = tmp.name
 
         try:
-            success, error = repo.download_star_file(data['app_id'], Path(temp_path))
+            # Pass filename from metadata (e.g., "analog_clock.star" for analogclock app)
+            filename = metadata.get('filename') if metadata else None
+            success, error = repo.download_star_file(data['app_id'], Path(temp_path), filename=filename)
             if not success:
                 return jsonify({'status': 'error', 'message': f'Failed to download app: {error}'}), 500
 

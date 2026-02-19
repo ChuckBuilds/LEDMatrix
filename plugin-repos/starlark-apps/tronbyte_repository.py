@@ -334,22 +334,26 @@ class TronbyteRepository:
             'cached': False
         }
 
-    def download_star_file(self, app_id: str, output_path: Path) -> Tuple[bool, Optional[str]]:
+    def download_star_file(self, app_id: str, output_path: Path, filename: Optional[str] = None) -> Tuple[bool, Optional[str]]:
         """
         Download the .star file for an app.
 
         Args:
-            app_id: App identifier
+            app_id: App identifier (directory name)
             output_path: Where to save the .star file
+            filename: Optional specific filename from manifest (e.g., "analog_clock.star")
+                     If not provided, assumes {app_id}.star
 
         Returns:
             Tuple of (success, error_message)
         """
-        star_path = f"{self.APPS_PATH}/{app_id}/{app_id}.star"
+        # Use provided filename or fall back to app_id.star
+        star_filename = filename or f"{app_id}.star"
+        star_path = f"{self.APPS_PATH}/{app_id}/{star_filename}"
 
         content = self._fetch_raw_file(star_path)
         if not content:
-            return False, f"Failed to download .star file for {app_id}"
+            return False, f"Failed to download .star file for {app_id} (tried {star_filename})"
 
         try:
             output_path.parent.mkdir(parents=True, exist_ok=True)
