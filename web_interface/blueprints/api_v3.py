@@ -7259,6 +7259,17 @@ def get_starlark_app(app_id):
         app_data = manifest.get('apps', {}).get(app_id)
         if not app_data:
             return jsonify({'status': 'error', 'message': f'App not found: {app_id}'}), 404
+
+        # Load schema from schema.json if it exists
+        schema = None
+        schema_file = _STARLARK_APPS_DIR / app_id / 'schema.json'
+        if schema_file.exists():
+            try:
+                with open(schema_file, 'r') as f:
+                    schema = json.load(f)
+            except Exception as e:
+                logger.warning(f"Failed to load schema for {app_id}: {e}")
+
         return jsonify({
             'status': 'success',
             'app': {
@@ -7266,7 +7277,7 @@ def get_starlark_app(app_id):
                 'name': app_data.get('name', app_id),
                 'enabled': app_data.get('enabled', True),
                 'config': app_data.get('config', {}),
-                'schema': None,
+                'schema': schema,
                 'render_interval': app_data.get('render_interval', 300),
                 'display_duration': app_data.get('display_duration', 15),
                 'has_frames': False,
