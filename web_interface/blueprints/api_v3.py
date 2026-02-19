@@ -6982,10 +6982,16 @@ def clear_old_errors():
 def _get_tronbyte_repository_class():
     """Import TronbyteRepository from plugin-repos directory."""
     import importlib.util
+    import importlib
 
     module_path = PROJECT_ROOT / 'plugin-repos' / 'starlark-apps' / 'tronbyte_repository.py'
     if not module_path.exists():
         raise ImportError(f"TronbyteRepository module not found at {module_path}")
+
+    # If already imported, reload to pick up code changes
+    if "tronbyte_repository" in sys.modules:
+        importlib.reload(sys.modules["tronbyte_repository"])
+        return sys.modules["tronbyte_repository"].TronbyteRepository
 
     spec = importlib.util.spec_from_file_location("tronbyte_repository", module_path)
     module = importlib.util.module_from_spec(spec)
