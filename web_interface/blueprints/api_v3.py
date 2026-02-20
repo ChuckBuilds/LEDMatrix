@@ -7073,6 +7073,36 @@ def _get_starlark_plugin() -> Optional[Any]:
     return api_v3.plugin_manager.get_plugin('starlark-apps')
 
 
+def _validate_starlark_app_path(app_id: str) -> Tuple[bool, Optional[str]]:
+    """
+    Validate app_id for path traversal attacks before filesystem access.
+
+    Args:
+        app_id: App identifier from user input
+
+    Returns:
+        Tuple of (is_valid, error_message)
+    """
+    # Check for path traversal characters
+    if '..' in app_id or '/' in app_id or '\\' in app_id:
+        return False, f"Invalid app_id: contains path traversal characters"
+
+    # Construct and resolve the path
+    try:
+        app_path = (_STARLARK_APPS_DIR / app_id).resolve()
+        base_path = _STARLARK_APPS_DIR.resolve()
+
+        # Verify the resolved path is within the base directory
+        try:
+            app_path.relative_to(base_path)
+            return True, None
+        except ValueError:
+            return False, f"Invalid app_id: path traversal attempt"
+    except Exception as e:
+        logger.warning(f"Path validation error for app_id '{app_id}': {e}")
+        return False, f"Invalid app_id"
+
+
 # Starlark standalone helpers for web service (plugin not loaded)
 _STARLARK_APPS_DIR = PROJECT_ROOT / 'starlark-apps'
 _STARLARK_MANIFEST_FILE = _STARLARK_APPS_DIR / 'manifest.json'
@@ -7288,6 +7318,11 @@ def get_starlark_apps():
 def get_starlark_app(app_id):
     """Get details for a specific Starlark app."""
     try:
+        # Validate app_id before any filesystem access
+        is_valid, error_msg = _validate_starlark_app_path(app_id)
+        if not is_valid:
+            return jsonify({'status': 'error', 'message': error_msg}), 400
+
         starlark_plugin = _get_starlark_plugin()
         if starlark_plugin:
             app = starlark_plugin.apps.get(app_id)
@@ -7315,14 +7350,14 @@ def get_starlark_app(app_id):
         if not app_data:
             return jsonify({'status': 'error', 'message': f'App not found: {app_id}'}), 404
 
-        # Load schema from schema.json if it exists
+        # Load schema from schema.json if it exists (path already validated above)
         schema = None
         schema_file = _STARLARK_APPS_DIR / app_id / 'schema.json'
         if schema_file.exists():
             try:
                 with open(schema_file, 'r') as f:
                     schema = json.load(f)
-            except Exception as e:
+            except (OSError, json.JSONDecodeError) as e:
                 logger.warning(f"Failed to load schema for {app_id}: {e}")
 
         return jsonify({
@@ -7419,20 +7454,18 @@ def upload_starlark_app():
 def uninstall_starlark_app(app_id):
     """Uninstall a Starlark app."""
     try:
+        # Validate app_id before any filesystem access
+        is_valid, error_msg = _validate_starlark_app_path(app_id)
+        if not is_valid:
+            return jsonify({'status': 'error', 'message': error_msg}), 400
+
         starlark_plugin = _get_starlark_plugin()
         if starlark_plugin:
             success = starlark_plugin.uninstall_app(app_id)
         else:
-            # Standalone: remove app dir and manifest entry
+            # Standalone: remove app dir and manifest entry (path already validated)
             import shutil
-            app_dir = (_STARLARK_APPS_DIR / app_id).resolve()
-
-            # Path traversal check - ensure app_dir is within _STARLARK_APPS_DIR
-            try:
-                app_dir.relative_to(_STARLARK_APPS_DIR.resolve())
-            except ValueError:
-                logger.warning(f"Path traversal attempt in uninstall: {app_id}")
-                return jsonify({'status': 'error', 'message': 'Invalid app_id'}), 400
+            app_dir = _STARLARK_APPS_DIR / app_id
 
             if app_dir.exists():
                 shutil.rmtree(app_dir)
@@ -7454,6 +7487,11 @@ def uninstall_starlark_app(app_id):
 def get_starlark_app_config(app_id):
     """Get configuration for a Starlark app."""
     try:
+        # Validate app_id before any filesystem access
+        is_valid, error_msg = _validate_starlark_app_path(app_id)
+        if not is_valid:
+            return jsonify({'status': 'error', 'message': error_msg}), 400
+
         starlark_plugin = _get_starlark_plugin()
         if starlark_plugin:
             app = starlark_plugin.apps.get(app_id)
@@ -7461,7 +7499,7 @@ def get_starlark_app_config(app_id):
                 return jsonify({'status': 'error', 'message': f'App not found: {app_id}'}), 404
             return jsonify({'status': 'success', 'config': app.config, 'schema': app.schema})
 
-        # Standalone: read from config.json file
+        # Standalone: read from config.json file (path already validated)
         app_dir = _STARLARK_APPS_DIR / app_id
         config_file = app_dir / "config.json"
 
@@ -7473,7 +7511,7 @@ def get_starlark_app_config(app_id):
             try:
                 with open(config_file, 'r') as f:
                     config = json.load(f)
-            except Exception as e:
+            except (OSError, json.JSONDecodeError) as e:
                 logger.warning(f"Failed to load config for {app_id}: {e}")
 
         # Load schema from schema.json
@@ -7497,6 +7535,11 @@ def get_starlark_app_config(app_id):
 def update_starlark_app_config(app_id):
     """Update configuration for a Starlark app."""
     try:
+        # Validate app_id before any filesystem access
+        is_valid, error_msg = _validate_starlark_app_path(app_id)
+        if not is_valid:
+            return jsonify({'status': 'error', 'message': error_msg}), 400
+
         data = request.get_json()
         if not data:
             return jsonify({'status': 'error', 'message': 'No configuration provided'}), 400

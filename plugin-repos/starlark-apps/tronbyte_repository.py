@@ -75,25 +75,25 @@ class TronbyteRepository:
 
             if response.status_code == 403:
                 # Rate limit exceeded
-                logger.warning("GitHub API rate limit exceeded")
+                logger.warning("[Tronbyte Repo] GitHub API rate limit exceeded")
                 return None
             elif response.status_code == 404:
-                logger.warning(f"Resource not found: {url}")
+                logger.warning(f"[Tronbyte Repo] Resource not found: {url}")
                 return None
             elif response.status_code != 200:
-                logger.error(f"GitHub API error: {response.status_code}")
+                logger.error(f"[Tronbyte Repo] GitHub API error: {response.status_code}")
                 return None
 
             return response.json()
 
         except requests.Timeout:
-            logger.error(f"Request timeout: {url}")
+            logger.error(f"[Tronbyte Repo] Request timeout: {url}")
             return None
         except requests.RequestException as e:
-            logger.error(f"Request error: {e}")
+            logger.error(f"[Tronbyte Repo] Request error: {e}", exc_info=True)
             return None
-        except Exception as e:
-            logger.error(f"Unexpected error: {e}")
+        except (json.JSONDecodeError, ValueError) as e:
+            logger.error(f"[Tronbyte Repo] JSON parse error for {url}: {e}", exc_info=True)
             return None
 
     def _fetch_raw_file(self, file_path: str, branch: Optional[str] = None, binary: bool = False):
@@ -116,10 +116,13 @@ class TronbyteRepository:
             if response.status_code == 200:
                 return response.content if binary else response.text
             else:
-                logger.warning(f"Failed to fetch raw file: {file_path} ({response.status_code})")
+                logger.warning(f"[Tronbyte Repo] Failed to fetch raw file: {file_path} ({response.status_code})")
                 return None
-        except Exception as e:
-            logger.error(f"Error fetching raw file {file_path}: {e}")
+        except requests.Timeout:
+            logger.error(f"[Tronbyte Repo] Timeout fetching raw file: {file_path}")
+            return None
+        except requests.RequestException as e:
+            logger.error(f"[Tronbyte Repo] Network error fetching raw file {file_path}: {e}", exc_info=True)
             return None
 
     def list_apps(self) -> Tuple[bool, Optional[List[Dict[str, Any]]], Optional[str]]:
@@ -502,17 +505,17 @@ class TronbyteRepository:
                             try:
                                 with open(output_path, 'wb') as f:
                                     f.write(content)
-                                logger.debug(f"Downloaded asset: {dir_name}/{file_name}")
-                            except Exception as e:
-                                logger.warning(f"Failed to save {dir_name}/{file_name}: {e}")
+                                logger.debug(f"[Tronbyte Repo] Downloaded asset: {dir_name}/{file_name}")
+                            except OSError as e:
+                                logger.warning(f"[Tronbyte Repo] Failed to save {dir_name}/{file_name}: {e}", exc_info=True)
                         else:
                             logger.warning(f"Failed to download {dir_name}/{file_name}")
 
-            logger.info(f"Downloaded assets for {app_id} ({len(asset_dirs)} directories)")
+            logger.info(f"[Tronbyte Repo] Downloaded assets for {app_id} ({len(asset_dirs)} directories)")
             return True, None
 
-        except Exception as e:
-            logger.exception(f"Error downloading assets for {app_id}: {e}")
+        except (OSError, ValueError) as e:
+            logger.exception(f"[Tronbyte Repo] Error downloading assets for {app_id}: {e}")
             return False, f"Error downloading assets: {e}"
 
     def search_apps(self, query: str, apps_with_metadata: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
