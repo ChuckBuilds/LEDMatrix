@@ -7000,7 +7000,7 @@ def _get_tronbyte_repository_class() -> Type[Any]:
 
     module = importlib.util.module_from_spec(spec)
     if module is None:
-        raise ImportError(f"Failed to create module from spec for tronbyte_repository")
+        raise ImportError("Failed to create module from spec for tronbyte_repository")
 
     sys.modules["tronbyte_repository"] = module
     spec.loader.exec_module(module)
@@ -7027,7 +7027,7 @@ def _get_pixlet_renderer_class() -> Type[Any]:
 
     module = importlib.util.module_from_spec(spec)
     if module is None:
-        raise ImportError(f"Failed to create module from spec for pixlet_renderer")
+        raise ImportError("Failed to create module from spec for pixlet_renderer")
 
     sys.modules["pixlet_renderer"] = module
     spec.loader.exec_module(module)
@@ -7212,9 +7212,6 @@ def _install_star_file(app_id: str, star_file_path: str, metadata: Dict[str, Any
 def get_starlark_status():
     """Get Starlark plugin status and Pixlet availability."""
     try:
-        if not api_v3.plugin_manager:
-            return jsonify({'status': 'error', 'message': 'Plugin manager not initialized', 'pixlet_available': False}), 500
-
         starlark_plugin = _get_starlark_plugin()
         if starlark_plugin:
             info = starlark_plugin.get_info()
@@ -7445,9 +7442,9 @@ def upload_starlark_app():
             except OSError:
                 pass
 
-    except Exception as e:
-        logger.error(f"Error uploading starlark app: {e}")
-        return jsonify({'status': 'error', 'message': str(e)}), 500
+    except (ValueError, OSError, IOError) as e:
+        logger.exception("[Starlark] Error uploading starlark app")
+        return jsonify({'status': 'error', 'message': 'Failed to upload app'}), 500
 
 
 @api_v3.route('/starlark/apps/<app_id>', methods=['DELETE'])

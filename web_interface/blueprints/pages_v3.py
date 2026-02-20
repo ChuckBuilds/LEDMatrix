@@ -1,6 +1,9 @@
 from flask import Blueprint, render_template, request, redirect, url_for, flash, jsonify
 import json
+import logging
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 # Will be initialized when blueprint is registered
 config_manager = None
@@ -477,8 +480,8 @@ def _load_starlark_config_partial(app_id):
             try:
                 with open(schema_file, 'r') as f:
                     schema = json.load(f)
-            except Exception as e:
-                print(f"Warning: Could not load schema for {app_id}: {e}")
+            except (OSError, json.JSONDecodeError) as e:
+                logger.warning(f"[Pages V3] Could not load schema for {app_id}: {e}", exc_info=True)
 
         # Load config from config.json if it exists
         config = {}
@@ -487,8 +490,8 @@ def _load_starlark_config_partial(app_id):
             try:
                 with open(config_file, 'r') as f:
                     config = json.load(f)
-            except Exception as e:
-                print(f"Warning: Could not load config for {app_id}: {e}")
+            except (OSError, json.JSONDecodeError) as e:
+                logger.warning(f"[Pages V3] Could not load config for {app_id}: {e}", exc_info=True)
 
         return render_template(
             'v3/partials/starlark_config.html',
@@ -505,6 +508,5 @@ def _load_starlark_config_partial(app_id):
         )
 
     except Exception as e:
-        import traceback
-        traceback.print_exc()
+        logger.exception(f"[Pages V3] Error loading starlark config for {app_id}")
         return f'<div class="text-red-500 p-4">Error loading starlark config: {str(e)}</div>', 500
