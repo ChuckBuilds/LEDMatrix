@@ -362,6 +362,27 @@ class TronbyteRepository:
         if '..' in star_filename or '/' in star_filename or '\\' in star_filename:
             return False, f"Invalid filename: contains path traversal characters"
 
+        # Validate output_path to prevent path traversal
+        import tempfile
+        try:
+            resolved_output = output_path.resolve()
+            temp_dir = Path(tempfile.gettempdir()).resolve()
+
+            # Check if output_path is within the system temp directory
+            # Use try/except for compatibility with Python < 3.9 (is_relative_to)
+            try:
+                is_safe = resolved_output.is_relative_to(temp_dir)
+            except AttributeError:
+                # Fallback for Python < 3.9: compare string paths
+                is_safe = str(resolved_output).startswith(str(temp_dir) + '/')
+
+            if not is_safe:
+                logger.warning(f"Path traversal attempt in download_star_file: app_id={app_id}, output_path={output_path}")
+                return False, f"Invalid output_path for {app_id}: must be within temp directory"
+        except Exception as e:
+            logger.error(f"Error validating output_path for {app_id}: {e}")
+            return False, f"Invalid output_path for {app_id}"
+
         # Use provided filename or fall back to app_id.star
         star_path = f"{self.APPS_PATH}/{app_id}/{star_filename}"
 

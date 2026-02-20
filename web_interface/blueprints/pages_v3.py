@@ -480,6 +480,16 @@ def _load_starlark_config_partial(app_id):
             except Exception as e:
                 print(f"Warning: Could not load schema for {app_id}: {e}")
 
+        # Load config from config.json if it exists
+        config = {}
+        config_file = Path(__file__).resolve().parent.parent.parent / 'starlark-apps' / app_id / 'config.json'
+        if config_file.exists():
+            try:
+                with open(config_file, 'r') as f:
+                    config = json.load(f)
+            except Exception as e:
+                print(f"Warning: Could not load config for {app_id}: {e}")
+
         return render_template(
             'v3/partials/starlark_config.html',
             app_id=app_id,
@@ -487,7 +497,7 @@ def _load_starlark_config_partial(app_id):
             app_enabled=app_data.get('enabled', True),
             render_interval=app_data.get('render_interval', 300),
             display_duration=app_data.get('display_duration', 15),
-            config=app_data.get('config', {}),
+            config=config,
             schema=schema,
             has_frames=False,
             frame_count=0,

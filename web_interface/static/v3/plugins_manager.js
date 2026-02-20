@@ -7898,7 +7898,7 @@ setTimeout(function() {
         grid.innerHTML = apps.map(app => {
             const installed = isStarlarkInstalled(app.id);
             return `
-            <div class="plugin-card">
+            <div class="plugin-card" data-app-id="${escapeHtml(app.id)}">
                 <div class="flex items-start justify-between mb-4">
                     <div class="flex-1 min-w-0">
                         <div class="flex items-center flex-wrap gap-1.5 mb-2">
@@ -7914,15 +7914,34 @@ setTimeout(function() {
                     </div>
                 </div>
                 <div class="flex gap-2 mt-auto pt-3 border-t border-gray-200">
-                    <button onclick="window.installStarlarkApp('${escapeHtml(app.id)}')" class="btn ${installed ? 'bg-gray-500 hover:bg-gray-600' : 'bg-green-600 hover:bg-green-700'} text-white px-4 py-2 rounded-md text-sm font-semibold flex-1 flex justify-center items-center">
+                    <button data-action="install" class="btn ${installed ? 'bg-gray-500 hover:bg-gray-600' : 'bg-green-600 hover:bg-green-700'} text-white px-4 py-2 rounded-md text-sm font-semibold flex-1 flex justify-center items-center">
                         <i class="fas ${installed ? 'fa-redo' : 'fa-download'} mr-2"></i>${installed ? 'Reinstall' : 'Install'}
                     </button>
-                    <button onclick="window.open('https://github.com/tronbyt/apps/tree/main/apps/${encodeURIComponent(app.id)}', '_blank')" class="btn bg-gray-600 hover:bg-gray-700 text-white px-4 py-2 rounded-md text-sm font-semibold flex justify-center items-center">
+                    <button data-action="view" class="btn bg-gray-600 hover:bg-gray-700 text-white px-4 py-2 rounded-md text-sm font-semibold flex justify-center items-center">
                         <i class="fas fa-external-link-alt mr-1"></i>View
                     </button>
                 </div>
             </div>`;
         }).join('');
+
+        // Add delegated event listeners for install and view buttons
+        grid.addEventListener('click', function(e) {
+            const button = e.target.closest('button[data-action]');
+            if (!button) return;
+
+            const card = button.closest('.plugin-card');
+            if (!card) return;
+
+            const appId = card.dataset.appId;
+            if (!appId) return;
+
+            const action = button.dataset.action;
+            if (action === 'install') {
+                window.installStarlarkApp(appId);
+            } else if (action === 'view') {
+                window.open('https://github.com/tronbyt/apps/tree/main/apps/' + encodeURIComponent(appId), '_blank');
+            }
+        });
     }
 
     // ── Filter UI Updates ───────────────────────────────────────────────────

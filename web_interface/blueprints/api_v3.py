@@ -10,7 +10,7 @@ import uuid
 import logging
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Tuple, Dict, Any, Type
 
 logger = logging.getLogger(__name__)
 
@@ -6980,7 +6980,7 @@ def clear_old_errors():
 
 # ─── Starlark Apps API ──────────────────────────────────────────────────────
 
-def _get_tronbyte_repository_class():
+def _get_tronbyte_repository_class() -> Type[Any]:
     """Import TronbyteRepository from plugin-repos directory."""
     import importlib.util
     import importlib
@@ -7007,7 +7007,7 @@ def _get_tronbyte_repository_class():
     return module.TronbyteRepository
 
 
-def _get_pixlet_renderer_class():
+def _get_pixlet_renderer_class() -> Type[Any]:
     """Import PixletRenderer from plugin-repos directory."""
     import importlib.util
     import importlib
@@ -7034,7 +7034,7 @@ def _get_pixlet_renderer_class():
     return module.PixletRenderer
 
 
-def _validate_and_sanitize_app_id(app_id, fallback_source=None):
+def _validate_and_sanitize_app_id(app_id: Optional[str], fallback_source: Optional[str] = None) -> Tuple[Optional[str], Optional[str]]:
     """Validate and sanitize app_id to a safe slug."""
     if not app_id and fallback_source:
         app_id = fallback_source
@@ -7051,7 +7051,7 @@ def _validate_and_sanitize_app_id(app_id, fallback_source=None):
     return sanitized, None
 
 
-def _validate_timing_value(value, field_name, min_val=1, max_val=86400):
+def _validate_timing_value(value: Any, field_name: str, min_val: int = 1, max_val: int = 86400) -> Tuple[Optional[int], Optional[str]]:
     """Validate and coerce timing values."""
     if value is None:
         return None, None
@@ -7066,7 +7066,7 @@ def _validate_timing_value(value, field_name, min_val=1, max_val=86400):
     return int_value, None
 
 
-def _get_starlark_plugin():
+def _get_starlark_plugin() -> Optional[Any]:
     """Get the starlark-apps plugin instance, or None."""
     if not api_v3.plugin_manager:
         return None
@@ -7078,7 +7078,7 @@ _STARLARK_APPS_DIR = PROJECT_ROOT / 'starlark-apps'
 _STARLARK_MANIFEST_FILE = _STARLARK_APPS_DIR / 'manifest.json'
 
 
-def _read_starlark_manifest() -> dict:
+def _read_starlark_manifest() -> Dict[str, Any]:
     """Read the starlark-apps manifest.json directly from disk."""
     try:
         if _STARLARK_MANIFEST_FILE.exists():
@@ -7089,7 +7089,7 @@ def _read_starlark_manifest() -> dict:
     return {'apps': {}}
 
 
-def _write_starlark_manifest(manifest: dict) -> bool:
+def _write_starlark_manifest(manifest: Dict[str, Any]) -> bool:
     """Write the starlark-apps manifest.json to disk with atomic write."""
     temp_file = None
     try:
@@ -7116,7 +7116,7 @@ def _write_starlark_manifest(manifest: dict) -> bool:
         return False
 
 
-def _install_star_file(app_id: str, star_file_path: str, metadata: dict, assets_dir: Optional[str] = None) -> bool:
+def _install_star_file(app_id: str, star_file_path: str, metadata: Dict[str, Any], assets_dir: Optional[str] = None) -> bool:
     """Install a .star file and update the manifest (standalone, no plugin needed)."""
     import shutil
     import json

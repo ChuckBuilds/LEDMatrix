@@ -551,39 +551,59 @@ class StarlarkAppsPlugin(BasePlugin):
     def _save_manifest(self, manifest: Dict[str, Any]) -> bool:
         """
         Save apps manifest to file with file locking to prevent race conditions.
-        Uses exclusive lock during write to prevent concurrent modifications.
+        Acquires exclusive lock on manifest file before writing to prevent concurrent modifications.
         """
         temp_file = None
+        lock_fd = None
         try:
-            # Use atomic write pattern: write to temp file, then rename
-            temp_file = self.manifest_file.with_suffix('.tmp')
+            # Create parent directory if needed
+            self.manifest_file.parent.mkdir(parents=True, exist_ok=True)
 
-            with open(temp_file, 'w') as f:
-                # Acquire exclusive lock during write
-                fcntl.flock(f.fileno(), fcntl.LOCK_EX)
-                try:
+            # Open manifest file for locking (create if doesn't exist, don't truncate)
+            # Use os.open with O_CREAT | O_RDWR to create if missing, but don't truncate
+            lock_fd = os.open(str(self.manifest_file), os.O_CREAT | os.O_RDWR, 0o644)
+
+            # Acquire exclusive lock on manifest file BEFORE creating temp file
+            # This serializes all writers and prevents concurrent races
+            fcntl.flock(lock_fd, fcntl.LOCK_EX)
+
+            try:
+                # Now that we hold the lock, create and write temp file
+                temp_file = self.manifest_file.with_suffix('.tmp')
+
+                with open(temp_file, 'w') as f:
                     json.dump(manifest, f, indent=2)
                     f.flush()
                     os.fsync(f.fileno())  # Ensure data is written to disk
-                finally:
-                    fcntl.flock(f.fileno(), fcntl.LOCK_UN)
 
-            # Atomic rename (overwrites destination)
-            temp_file.replace(self.manifest_file)
-            return True
+                # Atomic rename (overwrites destination) while still holding lock
+                temp_file.replace(self.manifest_file)
+                return True
+            finally:
+                # Release lock
+                fcntl.flock(lock_fd, fcntl.LOCK_UN)
+                os.close(lock_fd)
+
         except Exception as e:
             self.logger.error(f"Error saving manifest: {e}")
             # Clean up temp file if it exists
-            if temp_file and temp_file.exists():
+            if temp_file is not None and temp_file.exists():
                 try:
                     temp_file.unlink()
-                except Exception:
-                    pass
+                except Exception as cleanup_exc:
+                    self.logger.warning(f"Failed to clean up temp file {temp_file}: {cleanup_exc}")
+            # Clean up lock fd if still open
+            if lock_fd is not None:
+                try:
+                    os.close(lock_fd)
+                except Exception as cleanup_exc:
+                    self.logger.warning(f"Failed to close lock file descriptor: {cleanup_exc}")
             return False
 
     def _update_manifest_safe(self, updater_fn) -> bool:
         """
         Safely update manifest with file locking to prevent race conditions.
+        Holds exclusive lock for entire read-modify-write cycle.
 
         Args:
             updater_fn: Function that takes manifest dict and modifies it in-place
@@ -591,22 +611,60 @@ class StarlarkAppsPlugin(BasePlugin):
         Returns:
             True if successful, False otherwise
         """
+        lock_fd = None
+        temp_file = None
         try:
-            # Read current manifest with shared lock
-            with open(self.manifest_file, 'r') as f:
-                fcntl.flock(f.fileno(), fcntl.LOCK_SH)
-                try:
-                    manifest = json.load(f)
-                finally:
-                    fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+            # Create parent directory if needed
+            self.manifest_file.parent.mkdir(parents=True, exist_ok=True)
 
-            # Apply updates
-            updater_fn(manifest)
+            # Open manifest file for locking (create if doesn't exist, don't truncate)
+            lock_fd = os.open(str(self.manifest_file), os.O_CREAT | os.O_RDWR, 0o644)
 
-            # Write back with exclusive lock (handled by _save_manifest)
-            return self._save_manifest(manifest)
+            # Acquire exclusive lock for entire read-modify-write cycle
+            fcntl.flock(lock_fd, fcntl.LOCK_EX)
+
+            try:
+                # Read current manifest while holding exclusive lock
+                if self.manifest_file.exists() and self.manifest_file.stat().st_size > 0:
+                    with open(self.manifest_file, 'r') as f:
+                        manifest = json.load(f)
+                else:
+                    # Empty or non-existent file, start with default structure
+                    manifest = {"apps": {}}
+
+                # Apply updates while still holding lock
+                updater_fn(manifest)
+
+                # Write back to temp file, then atomic replace (still holding lock)
+                temp_file = self.manifest_file.with_suffix('.tmp')
+                with open(temp_file, 'w') as f:
+                    json.dump(manifest, f, indent=2)
+                    f.flush()
+                    os.fsync(f.fileno())
+
+                # Atomic rename while still holding lock
+                temp_file.replace(self.manifest_file)
+                return True
+
+            finally:
+                # Release lock
+                fcntl.flock(lock_fd, fcntl.LOCK_UN)
+                os.close(lock_fd)
+
         except Exception as e:
             self.logger.error(f"Error updating manifest: {e}")
+            # Clean up temp file if it exists
+            if temp_file is not None and temp_file.exists():
+                try:
+                    temp_file.unlink()
+                except Exception as cleanup_exc:
+                    self.logger.warning(f"Failed to clean up temp file {temp_file}: {cleanup_exc}")
+            # Clean up lock fd if still open
+            if lock_fd is not None:
+                try:
+                    os.close(lock_fd)
+                except Exception as cleanup_exc:
+                    self.logger.warning(f"Failed to close lock file descriptor: {cleanup_exc}")
             return False
 
     def update(self) -> None:
