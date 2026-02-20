@@ -27,7 +27,7 @@ The Starlark Apps plugin for LEDMatrix enables you to run **Tidbyt/Tronbyte comm
 
 ### Architecture
 
-```
+```text
 ┌─────────────────────────────────────────────────────────┐
 │                    LEDMatrix System                      │
 │  ┌────────────────────────────────────────────────────┐ │
@@ -199,7 +199,7 @@ Tronbyte/Tidbyt apps are designed for **64×32 displays**. LEDMatrix automatical
 
 The plugin calculates optimal magnification based on your display:
 
-```
+```text
 magnify = floor(min(display_width / 64, display_height / 32))
 ```
 
@@ -250,7 +250,7 @@ Apps without extracted schemas can still run with default settings.
 
 ## File Structure
 
-```
+```text
 LEDMatrix/
 ├── plugin-repos/starlark-apps/     # Plugin source code
 │   ├── manager.py                  # Main plugin logic
@@ -378,7 +378,7 @@ Cached WebP files are stored in `starlark-apps/{app-id}/cached_render.webp`
 
 Balance number of enabled apps with display duration:
 - 5 apps × 15s = 75s full cycle
-- 20 apps × 15s = 300s (5min) cycle
+- 20 apps × 15s = 300s (5 min) cycle
 
 Long cycles may cause apps to render before being displayed.
 

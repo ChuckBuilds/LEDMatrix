@@ -63,7 +63,7 @@ class StarlarkApp:
             try:
                 with open(self.config_file, 'r') as f:
                     return json.load(f)
-            except Exception as e:
+            except (OSError, json.JSONDecodeError) as e:
                 logger.warning(f"Could not load config for {self.app_id}: {e}")
         return {}
 
@@ -73,7 +73,7 @@ class StarlarkApp:
             try:
                 with open(self.schema_file, 'r') as f:
                     return json.load(f)
-            except Exception as e:
+            except (OSError, json.JSONDecodeError) as e:
                 logger.warning(f"Could not load schema for {self.app_id}: {e}")
         return None
 
@@ -118,6 +118,11 @@ class StarlarkApp:
             if isinstance(value, str) and value.strip().startswith('{'):
                 try:
                     loc = json.loads(value)
+                except json.JSONDecodeError as e:
+                    return f"Invalid JSON for key {key}: {e}"
+
+                # Validate lat/lng if present
+                try:
                     if 'lat' in loc:
                         lat = float(loc['lat'])
                         if not -90 <= lat <= 90:
@@ -126,9 +131,8 @@ class StarlarkApp:
                         lng = float(loc['lng'])
                         if not -180 <= lng <= 180:
                             return f"Longitude {lng} out of range [-180, 180] for key {key}"
-                except (json.JSONDecodeError, ValueError, KeyError) as e:
-                    # Not a location field, that's fine
-                    pass
+                except ValueError as e:
+                    return f"Invalid numeric value for {key}: {e}"
 
         return None
 
@@ -584,8 +588,8 @@ class StarlarkAppsPlugin(BasePlugin):
                 fcntl.flock(lock_fd, fcntl.LOCK_UN)
                 os.close(lock_fd)
 
-        except Exception as e:
-            self.logger.error(f"Error saving manifest: {e}")
+        except (OSError, IOError, json.JSONDecodeError, ValueError) as e:
+            self.logger.exception("Error saving manifest while writing manifest file", exc_info=True)
             # Clean up temp file if it exists
             if temp_file is not None and temp_file.exists():
                 try:
@@ -651,8 +655,8 @@ class StarlarkAppsPlugin(BasePlugin):
                 fcntl.flock(lock_fd, fcntl.LOCK_UN)
                 os.close(lock_fd)
 
-        except Exception as e:
-            self.logger.error(f"Error updating manifest: {e}")
+        except (OSError, IOError, json.JSONDecodeError, ValueError) as e:
+            self.logger.exception("Error updating manifest during read-modify-write cycle", exc_info=True)
             # Clean up temp file if it exists
             if temp_file is not None and temp_file.exists():
                 try:

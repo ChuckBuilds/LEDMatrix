@@ -41,9 +41,9 @@ class PixletRenderer:
         self.pixlet_binary = self._find_pixlet_binary(pixlet_path)
 
         if self.pixlet_binary:
-            logger.info(f"Pixlet renderer initialized with binary: {self.pixlet_binary}")
+            logger.info(f"[Starlark Pixlet] Pixlet renderer initialized with binary: {self.pixlet_binary}")
         else:
-            logger.warning("Pixlet binary not found - rendering will fail")
+            logger.warning("[Starlark Pixlet] Pixlet binary not found - rendering will fail")
 
     def _find_pixlet_binary(self, explicit_path: Optional[str] = None) -> Optional[str]:
         """
@@ -280,7 +280,13 @@ class PixletRenderer:
                 "-m", str(magnify)
             ])
 
-            logger.debug(f"Executing Pixlet: {' '.join(cmd)}")
+            # Build sanitized command for logging (redact sensitive values)
+            sanitized_cmd = [self.pixlet_binary, "render", star_file]
+            if config:
+                config_keys = list(config.keys())
+                sanitized_cmd.append(f"[{len(config_keys)} config entries: {', '.join(config_keys)}]")
+            sanitized_cmd.extend(["-o", output_path, "-m", str(magnify)])
+            logger.debug(f"Executing Pixlet: {' '.join(sanitized_cmd)}")
 
             # Execute rendering
             safe_cwd = self._get_safe_working_directory(star_file)
@@ -373,6 +379,7 @@ class PixletRenderer:
         # Extract get_schema() function body
         schema_body = self._extract_get_schema_body(content)
         if not schema_body:
+            logger.debug(f"No get_schema() function found in {file_path}")
             return None
 
         # Extract version
@@ -397,6 +404,7 @@ class PixletRenderer:
 
         if bracket_count != 0:
             # Unmatched brackets
+            logger.warning(f"Unmatched brackets in schema fields for {file_path}")
             return {"version": version, "schema": []}
 
         fields_text = schema_body[fields_start_match.end():i-1]

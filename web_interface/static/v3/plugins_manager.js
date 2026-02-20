@@ -4,7 +4,7 @@ const safeLocalStorage = {
     getItem(key) {
         try {
             if (typeof localStorage !== 'undefined') {
-                return safeLocalStorage.getItem(key);
+                return localStorage.getItem(key);
             }
         } catch (e) {
             console.warn(`safeLocalStorage.getItem failed for key "${key}":`, e.message);
@@ -14,7 +14,7 @@ const safeLocalStorage = {
     setItem(key, value) {
         try {
             if (typeof localStorage !== 'undefined') {
-                safeLocalStorage.setItem(key, value);
+                localStorage.setItem(key, value);
                 return true;
             }
         } catch (e) {
@@ -7924,24 +7924,27 @@ setTimeout(function() {
             </div>`;
         }).join('');
 
-        // Add delegated event listeners for install and view buttons
-        grid.addEventListener('click', function(e) {
-            const button = e.target.closest('button[data-action]');
-            if (!button) return;
+        // Add delegated event listener only once (prevent duplicate handlers)
+        if (!grid.dataset.starlarkHandlerAttached) {
+            grid.addEventListener('click', function handleStarlarkGridClick(e) {
+                const button = e.target.closest('button[data-action]');
+                if (!button) return;
 
-            const card = button.closest('.plugin-card');
-            if (!card) return;
+                const card = button.closest('.plugin-card');
+                if (!card) return;
 
-            const appId = card.dataset.appId;
-            if (!appId) return;
+                const appId = card.dataset.appId;
+                if (!appId) return;
 
-            const action = button.dataset.action;
-            if (action === 'install') {
-                window.installStarlarkApp(appId);
-            } else if (action === 'view') {
-                window.open('https://github.com/tronbyt/apps/tree/main/apps/' + encodeURIComponent(appId), '_blank');
-            }
-        });
+                const action = button.dataset.action;
+                if (action === 'install') {
+                    window.installStarlarkApp(appId);
+                } else if (action === 'view') {
+                    window.open('https://github.com/tronbyt/apps/tree/main/apps/' + encodeURIComponent(appId), '_blank');
+                }
+            });
+            grid.dataset.starlarkHandlerAttached = 'true';
+        }
     }
 
     // ── Filter UI Updates ───────────────────────────────────────────────────
