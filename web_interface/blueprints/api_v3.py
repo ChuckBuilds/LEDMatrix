@@ -3488,9 +3488,14 @@ def _get_schema_property(schema, key_path):
     """
     Get the schema property for a given key path (supports dot notation).
 
+    Handles schema keys that themselves contain dots (e.g., "eng.1" in soccer
+    league configs) by trying progressively longer segment combinations when an
+    exact match for the current segment is not found.
+
     Args:
         schema: The JSON schema dict
         key_path: Dot-separated path like "customization.time_text.font"
+                  or "leagues.eng.1.favorite_teams" where "eng.1" is one key.
 
     Returns:
         The property schema dict or None if not found
@@ -3500,21 +3505,27 @@ def _get_schema_property(schema, key_path):
 
     parts = key_path.split('.')
     current = schema['properties']
+    i = 0
 
-    for i, part in enumerate(parts):
-        if part not in current:
-            return None
-
-        prop = current[part]
-
-        # If this is the last part, return the property
-        if i == len(parts) - 1:
-            return prop
-
-        # If this is an object with properties, navigate deeper
-        if isinstance(prop, dict) and 'properties' in prop:
-            current = prop['properties']
-        else:
+    while i < len(parts):
+        # Try progressively longer candidate keys starting at position i,
+        # longest first, to greedily match dotted property names (e.g. "eng.1").
+        matched = False
+        for j in range(len(parts), i, -1):
+            candidate = '.'.join(parts[i:j])
+            if candidate in current:
+                prop = current[candidate]
+                if j == len(parts):
+                    return prop  # Consumed all remaining parts — done
+                # Navigate deeper if this is an object with properties
+                if isinstance(prop, dict) and 'properties' in prop:
+                    current = prop['properties']
+                    i = j
+                    matched = True
+                    break
+                else:
+                    return None  # Can't navigate deeper
+        if not matched:
             return None
 
     return None
@@ -3691,30 +3702,52 @@ def _set_nested_value(config, key_path, value):
     Set a value in a nested dict using dot notation path.
     Handles existing nested dicts correctly by merging instead of replacing.
 
+    Handles config keys that themselves contain dots (e.g., "eng.1" in soccer
+    league configs) by trying progressively longer segment combinations against
+    existing dict keys before falling back to single-segment creation.
+
     Args:
         config: The config dict to modify
-        key_path: Dot-separated path (e.g., "customization.period_text.font")
+        key_path: Dot-separated path (e.g., "customization.period_text.font"
+                  or "leagues.eng.1.favorite_teams" where "eng.1" is one key)
         value: The value to set (or _SKIP_FIELD to skip setting)
     """
     # Skip setting if value is the sentinel
     if value is _SKIP_FIELD:
         return
-    
+
     parts = key_path.split('.')
     current = config
+    i = 0
 
-    # Navigate/create intermediate dicts
-    for i, part in enumerate(parts[:-1]):
-        if part not in current:
-            current[part] = {}
-        elif not isinstance(current[part], dict):
-            # If the existing value is not a dict, replace it with a dict
-            current[part] = {}
-        current = current[part]
+    # Navigate/create intermediate dicts, greedily matching dotted keys.
+    # We stop before the final part so we can set it as the leaf value.
+    while i < len(parts) - 1:
+        # Try progressively longer candidate keys (longest first) to match
+        # dict keys that contain dots themselves (e.g. "eng.1").
+        # Never consume the very last part (that's the leaf value key).
+        matched = False
+        for j in range(len(parts) - 1, i, -1):
+            candidate = '.'.join(parts[i:j])
+            if candidate in current and isinstance(current[candidate], dict):
+                current = current[candidate]
+                i = j
+                matched = True
+                break
+        if not matched:
+            # No existing dotted key matched; use single segment and create if needed
+            part = parts[i]
+            if part not in current:
+                current[part] = {}
+            elif not isinstance(current[part], dict):
+                current[part] = {}
+            current = current[part]
+            i += 1
 
-    # Set the final value (don't overwrite with empty dict if value is None and we want to preserve structure)
-    if value is not None or parts[-1] not in current:
-        current[parts[-1]] = value
+    # The remaining parts form the final key (may itself be dotted, e.g. "eng.1")
+    final_key = '.'.join(parts[i:])
+    if value is not None or final_key not in current:
+        current[final_key] = value
 
 
 def _set_missing_booleans_to_false(config, schema_props, form_keys, prefix='', config_node=None):
