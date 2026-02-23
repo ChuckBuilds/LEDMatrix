@@ -376,11 +376,6 @@ def save_main_config():
         if not data:
             return jsonify({'status': 'error', 'message': 'No data provided'}), 400
 
-        import logging
-        logging.error(f"DEBUG: save_main_config received data: {data}")
-        logging.error(f"DEBUG: Content-Type header: {request.content_type}")
-        logging.error(f"DEBUG: Headers: {dict(request.headers)}")
-
         # Merge with existing config (similar to original implementation)
         current_config = api_v3.config_manager.load_config()
 
@@ -4121,17 +4116,7 @@ def save_plugin_config():
         if plugin_id not in current_config:
             current_config[plugin_id] = {}
 
-        # Debug logging for live_priority before merge
-        if plugin_id == 'football-scoreboard':
-            print(f"[DEBUG] Before merge - current NFL live_priority: {current_config[plugin_id].get('nfl', {}).get('live_priority')}")
-            print(f"[DEBUG] Before merge - regular_config NFL live_priority: {regular_config.get('nfl', {}).get('live_priority')}")
-
         current_config[plugin_id] = deep_merge(current_config[plugin_id], regular_config)
-
-        # Debug logging for live_priority after merge
-        if plugin_id == 'football-scoreboard':
-            print(f"[DEBUG] After merge - NFL live_priority: {current_config[plugin_id].get('nfl', {}).get('live_priority')}")
-            print(f"[DEBUG] After merge - NCAA FB live_priority: {current_config[plugin_id].get('ncaa_fb', {}).get('live_priority')}")
 
         # Deep merge plugin secrets in secrets config
         if secrets_config:
@@ -6784,9 +6769,7 @@ def browse_tronbyte_repository():
         })
 
     except Exception as e:
-        logger.error(f"Error browsing repository: {e}")
-        import traceback
-        traceback.print_exc()
+        logger.error(f"Error browsing repository: {e}", exc_info=True)
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
 
@@ -6914,9 +6897,7 @@ def install_from_tronbyte_repository():
                 logger.warning(f"Failed to clean up temp file {temp_path}: {e}")
 
     except Exception as e:
-        logger.error(f"Error installing from repository: {e}")
-        import traceback
-        traceback.print_exc()
+        logger.error(f"Error installing from repository: {e}", exc_info=True)
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
 

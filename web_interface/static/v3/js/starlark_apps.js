@@ -39,7 +39,6 @@
         modalIds.forEach(modalId => {
             const modal = document.getElementById(modalId);
             if (modal && modal.parentElement !== document.body) {
-                console.log('[Starlark] Moving modal to body:', modalId);
                 document.body.appendChild(modal);
             }
         });
@@ -47,8 +46,6 @@
 
     // Define init function first
     function initStarlarkApps() {
-        console.log('[Starlark] initStarlarkApps called, initialized:', window.starlarkAppsInitialized);
-
         try {
             // Move modals to body so they can overlay the entire page
             moveModalsToBody();
@@ -58,11 +55,9 @@
                 window.starlarkAppsInitialized = true;
                 setupEventListeners();
                 setupRepositoryListeners();
-                console.log('[Starlark] Event listeners set up');
             }
 
             // Always load data when init is called (handles tab switching)
-            console.log('[Starlark] Loading status and apps...');
             loadStarlarkStatus();
             loadStarlarkApps();
         } catch (error) {
@@ -77,7 +72,6 @@
     // Let the HTML partial's script handle initialization for HTMX swaps
     if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', function() {
-            console.log('[Starlark] DOMContentLoaded, calling init');
             initStarlarkApps();
         });
     }
@@ -167,14 +161,11 @@
     }
 
     async function loadStarlarkStatus() {
-        console.log('[Starlark] loadStarlarkStatus called');
         try {
             const response = await fetch('/api/v3/starlark/status');
             const data = await response.json();
-            console.log('[Starlark] Status API response:', data);
 
             const banner = document.getElementById('pixlet-status-banner');
-            console.log('[Starlark] Banner element found:', !!banner);
             if (!banner) return;
 
             // Check if the plugin itself is not installed (different from Pixlet not being available)
@@ -736,8 +727,6 @@
     function showNotification(message, type) {
         if (typeof window.showNotification === 'function') {
             window.showNotification(message, type);
-        } else {
-            console.log(`[${type.toUpperCase()}] ${message}`);
         }
     }
 
@@ -747,10 +736,8 @@
 
     function setupRepositoryListeners() {
         const browseBtn = document.getElementById('browse-repository-btn');
-        console.log('[Starlark] Browse button found:', !!browseBtn);
         if (browseBtn) {
             browseBtn.addEventListener('click', openRepositoryBrowser);
-            console.log('[Starlark] Browse button event listener attached');
         }
 
         const applyFiltersBtn = document.getElementById('repo-apply-filters-btn');
@@ -769,7 +756,6 @@
     }
 
     function openRepositoryBrowser() {
-        console.log('[Starlark] openRepositoryBrowser called');
         const modal = document.getElementById('repository-browser-modal');
         if (!modal) return;
 
@@ -819,12 +805,9 @@
     };
 
     async function loadRepositoryCategories() {
-        console.log('[Starlark] loadRepositoryCategories called');
         try {
             const response = await fetch('/api/v3/starlark/repository/categories');
-            console.log('[Starlark] Categories API response status:', response.status);
             const data = await response.json();
-            console.log('[Starlark] Categories data:', data);
 
             if (data.status === 'success') {
                 repositoryCategories = data.categories;
@@ -849,12 +832,9 @@
     }
 
     async function loadRepositoryApps(search = '', category = 'all') {
-        console.log('[Starlark] loadRepositoryApps called with search:', search, 'category:', category);
         const loading = document.getElementById('repo-apps-loading');
         const grid = document.getElementById('repo-apps-grid');
         const empty = document.getElementById('repo-apps-empty');
-
-        console.log('[Starlark] Elements found - loading:', !!loading, 'grid:', !!grid, 'empty:', !!empty);
 
         if (loading) loading.classList.remove('hidden');
         if (grid) grid.classList.add('hidden');
@@ -866,12 +846,8 @@
             if (category && category !== 'all') params.append('category', category);
 
             const url = `/api/v3/starlark/repository/browse?${params}`;
-            console.log('[Starlark] Fetching repository apps from:', url);
             const response = await fetch(url);
-            console.log('[Starlark] Repository browse API response status:', response.status);
             const data = await response.json();
-            console.log('[Starlark] Repository browse API data:', data);
-            console.log('[Starlark] Number of apps received:', data.apps?.length || 0);
 
             if (data.status === 'error') {
                 showNotification(data.message, 'error');
@@ -889,27 +865,21 @@
             }
 
             repositoryApps = data.apps || [];
-            console.log('[Starlark] Rendering', repositoryApps.length, 'apps to grid');
 
             // Update rate limit info
             updateRateLimitInfo(data.rate_limit);
 
             // Hide loading
             if (loading) loading.classList.add('hidden');
-            console.log('[Starlark] Loading hidden');
 
             // Show apps or empty state
             if (repositoryApps.length === 0) {
-                console.log('[Starlark] No apps, showing empty state');
                 if (empty) empty.classList.remove('hidden');
             } else {
-                console.log('[Starlark] Rendering apps to grid element:', !!grid);
                 if (grid) {
                     const cardsHtml = repositoryApps.map(app => renderRepositoryAppCard(app)).join('');
-                    console.log('[Starlark] Generated HTML length:', cardsHtml.length);
                     grid.innerHTML = cardsHtml;
                     grid.classList.remove('hidden');
-                    console.log('[Starlark] Grid visible, grid children count:', grid.children.length);
                     // Set up event delegation for repository app cards
                     setupRepositoryAppEventDelegation(grid);
                 }
