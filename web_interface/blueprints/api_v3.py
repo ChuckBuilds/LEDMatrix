@@ -4962,8 +4962,6 @@ def execute_plugin_action():
         try:
             data = request.get_json(force=True) or {}
         except Exception as e:
-            import logging
-            logger = logging.getLogger(__name__)
             logger.error(f"Error parsing JSON in execute_plugin_action: {e}")
             return jsonify({
                 'status': 'error', 
@@ -5092,47 +5090,23 @@ sys.exit(proc.returncode)
             else:
                 # Regular script execution - pass params via stdin if provided
                 if action_params:
-                    # Pass params as JSON via stdin
-                    import tempfile
+                    # Pass params as JSON directly via stdin (no wrapper script needed)
                     import json as json_lib
-
-                    params_json = json_lib.dumps(action_params)
-                    with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as wrapper:
-                        wrapper.write(f'''import sys
-import subprocess
-import os
-import json
-
-# Set LEDMATRIX_ROOT
-os.environ['LEDMATRIX_ROOT'] = r"{PROJECT_ROOT}"
-
-# Run the script and provide params as JSON via stdin
-proc = subprocess.Popen(
-    [sys.executable, r"{script_file}"],
-    stdin=subprocess.PIPE,
-    stdout=subprocess.PIPE,
-    stderr=subprocess.STDOUT,
-    text=True,
-    env=os.environ
-)
-
-# Send params as JSON to stdin
-params = {params_json}
-stdout, _ = proc.communicate(input=json.dumps(params), timeout=120)
-print(stdout)
-sys.exit(proc.returncode)
-''')
-                        wrapper_path = wrapper.name
+                    params_stdin = json_lib.dumps(action_params)
 
                     try:
                         result = subprocess.run(
-                            ['python3', wrapper_path],
+                            ['python3', script_file],
+                            input=params_stdin,
                             capture_output=True,
                             text=True,
                             timeout=120,
                             env=env
                         )
-                        os.unlink(wrapper_path)
+
+                        # Log action results for debugging
+                        if result.returncode != 0:
+                            logger.warning(f"Plugin action {action_id} for {plugin_id} failed (exit {result.returncode}): stdout={result.stdout[:500]}, stderr={result.stderr[:500]}")
 
                         # Try to parse output as JSON
                         try:
@@ -5154,6 +5128,7 @@ sys.exit(proc.returncode)
                                     'output': result.stdout
                                 })
                             else:
+                                logger.error(f"Plugin action {action_id} for {plugin_id} returned non-JSON error: stdout={result.stdout[:500]}, stderr={result.stderr[:500]}")
                                 return jsonify({
                                     'status': 'error',
                                     'message': action_def.get('error_message', 'Action failed'),
