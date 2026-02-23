@@ -885,7 +885,7 @@ def save_main_config():
                             if 'properties' in schema:
                                 secret_fields = find_secret_fields(schema['properties'])
                     except Exception as e:
-                        print(f"Error reading schema for secret detection: {e}")
+                        logger.warning(f"Error reading schema for secret detection: {e}")
 
                 # Separate secrets from regular config (same logic as save_plugin_config)
                 def separate_secrets(config, secrets_set, prefix=''):
@@ -923,7 +923,7 @@ def save_main_config():
                         if 'enabled' not in regular_config:
                             regular_config['enabled'] = True
                     except Exception as e:
-                        print(f"Error preserving enabled state for {plugin_id}: {e}")
+                        logger.warning(f"Error preserving enabled state for {plugin_id}: {e}")
                         # Default to True on error to avoid disabling plugins
                         regular_config['enabled'] = True
 
@@ -958,7 +958,7 @@ def save_main_config():
                                 plugin_instance.on_config_change(plugin_full_config)
                 except Exception as hook_err:
                     # Don't fail the save if hook fails
-                    print(f"Warning: on_config_change failed for {plugin_id}: {hook_err}")
+                    logger.warning(f"on_config_change failed for {plugin_id}: {hook_err}")
 
         # Remove processed plugin keys from data (they're already in current_config)
         for key in plugin_keys_to_remove:

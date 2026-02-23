@@ -1330,17 +1330,7 @@ function loadInstalledPlugins(forceRefresh = false) {
                 pluginLoadCache.timestamp = Date.now();
                 
                 // Always update window.installedPlugins to ensure Alpine component can detect changes
-                const currentPlugins = Array.isArray(window.installedPlugins) ? window.installedPlugins : [];
-                const currentIds = currentPlugins.map(p => p.id).sort().join(',');
-                const newIds = installedPlugins.map(p => p.id).sort().join(',');
-                const pluginsChanged = currentIds !== newIds;
-                
-                if (pluginsChanged) {
-                    window.installedPlugins = installedPlugins;
-                } else {
-                    // Even if IDs haven't changed, update the array reference to trigger Alpine reactivity
-                    window.installedPlugins = installedPlugins;
-                }
+                window.installedPlugins = installedPlugins;
                 
                 // Dispatch event to notify Alpine component to update tabs
                 document.dispatchEvent(new CustomEvent('pluginsUpdated', {
