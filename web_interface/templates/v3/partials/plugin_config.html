@@ -11,8 +11,61 @@
     {% set description = prop.description if prop.description else '' %}
     {% set field_type = prop.type if prop.type is string else (prop.type[0] if prop.type is iterable else 'string') %}
     
+    {# Handle custom-html widget (e.g., file managers loaded from plugin directory) #}
+    {% set custom_widget = prop.get('x-widget') or prop.get('x_widget') %}
+    {% if custom_widget == 'custom-html' %}
+        {% set html_file = prop.get('x-html-file') or prop.get('x_html_file') %}
+        {% if html_file and plugin_id %}
+        <div class="form-group mb-4">
+            <label class="block text-sm font-medium text-gray-700 mb-1">{{ label }}</label>
+            {% if description %}<p class="text-sm text-gray-500 mb-2">{{ description }}</p>{% endif %}
+            <div id="{{ field_id }}_custom_html"
+                 data-plugin-id="{{ plugin_id }}"
+                 data-html-file="{{ html_file }}"
+                 class="custom-html-widget">
+                <div class="animate-pulse text-center py-4">
+                    <i class="fas fa-spinner fa-spin text-gray-400"></i>
+                    <p class="text-sm text-gray-500 mt-2">Loading...</p>
+                </div>
+            </div>
+        </div>
+        <script>
+        (function() {
+            function loadWidget() {
+                var container = document.getElementById('{{ field_id }}_custom_html');
+                if (!container) { setTimeout(loadWidget, 100); return; }
+                fetch('/api/v3/plugins/{{ plugin_id }}/static/{{ html_file }}')
+                    .then(function(response) {
+                        if (!response.ok) throw new Error('Failed to load: ' + response.statusText);
+                        return response.text();
+                    })
+                    .then(function(html) {
+                        container.innerHTML = html;
+                        var scripts = container.querySelectorAll('script');
+                        scripts.forEach(function(oldScript) {
+                            var newScript = document.createElement('script');
+                            Array.from(oldScript.attributes).forEach(function(attr) {
+                                newScript.setAttribute(attr.name, attr.value);
+                            });
+                            newScript.appendChild(document.createTextNode(oldScript.innerHTML));
+                            oldScript.parentNode.replaceChild(newScript, oldScript);
+                        });
+                    })
+                    .catch(function(error) {
+                        container.innerHTML = '<div class="text-sm text-red-600 p-4 border border-red-200 rounded"><i class="fas fa-exclamation-triangle mr-1"></i>Failed to load widget: ' + error.message + '</div>';
+                    });
+            }
+            if (document.readyState === 'loading') {
+                document.addEventListener('DOMContentLoaded', loadWidget);
+            } else {
+                setTimeout(loadWidget, 100);
+            }
+        })();
+        </script>
+        {% endif %}
+
     {# Handle nested objects - check for widget first #}
-    {% if field_type == 'object' %}
+    {% elif field_type == 'object' %}
         {% set obj_widget = prop.get('x-widget') or prop.get('x_widget') %}
         {% if obj_widget == 'schedule-picker' %}
             {# Schedule picker widget - renders enable/mode/times UI #}
@@ -775,15 +828,16 @@
             </div>
         </div>
         
-        {# Web UI Actions (if any) #}
+        {# Web UI Actions (if any) - only show actions that have a title (internal/API-only actions are hidden) #}
         {% if web_ui_actions %}
-        <div class="mt-6 pt-4 border-t border-gray-200">
+        <div class="mt-6 pt-4 border-t border-gray-200" id="plugin-actions-section-{{ plugin.id }}" style="display: none;">
             <h3 class="text-md font-medium text-gray-900 mb-3">Plugin Actions</h3>
-            {% if web_ui_actions[0].section_description %}
+            {% if web_ui_actions[0].get('section_description') %}
             <p class="text-sm text-gray-600 mb-4">{{ web_ui_actions[0].section_description }}</p>
             {% endif %}
             <div class="space-y-3">
                 {% for action in web_ui_actions %}
+                {% if action.get('title') %}
                 {% set action_id = "action-" ~ action.id ~ "-" ~ loop.index0 %}
                 {% set status_id = "action-status-" ~ action.id ~ "-" ~ loop.index0 %}
                 {% set bg_color = action.color or 'blue' %}
@@ -837,11 +891,23 @@
                     </div>
                     <div id="{{ status_id }}" class="mt-3 hidden"></div>
                 </div>
+                {% endif %}
                 {% endfor %}
             </div>
         </div>
+        <script>
+        (function() {
+            var section = document.getElementById('plugin-actions-section-{{ plugin.id }}');
+            if (section) {
+                var actionCards = section.querySelectorAll('.space-y-3 > div');
+                if (actionCards.length > 0) {
+                    section.style.display = '';
+                }
+            }
+        })();
+        </script>
         {% endif %}
-        
+
         {# Action Buttons #}
         <div class="flex justify-end space-x-3 mt-6 pt-6 border-t border-gray-200">
             <button type="button"

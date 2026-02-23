@@ -201,12 +201,13 @@ def _stop_display_service():
 
 @api_v3.route('/config/main', methods=['GET'])
 def get_main_config():
-    """Get main configuration"""
+    """Get main configuration (raw file only — secrets are never included)"""
     try:
         if not api_v3.config_manager:
             return jsonify({'status': 'error', 'message': 'Config manager not initialized'}), 500
 
-        config = api_v3.config_manager.load_config()
+        # Use raw file content to avoid returning secrets that load_config() merges in
+        config = api_v3.config_manager.get_raw_file_content('main')
         return jsonify({'status': 'success', 'data': config})
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)}), 500
@@ -652,11 +653,6 @@ def save_main_config():
         if not data:
             return jsonify({'status': 'error', 'message': 'No data provided'}), 400
 
-        import logging
-        logging.error(f"DEBUG: save_main_config received data: {data}")
-        logging.error(f"DEBUG: Content-Type header: {request.content_type}")
-        logging.error(f"DEBUG: Headers: {dict(request.headers)}")
-
         # Merge with existing config (similar to original implementation)
         current_config = api_v3.config_manager.load_config()
 
@@ -895,8 +891,8 @@ def save_main_config():
                         full_path = f"{prefix}.{key}" if prefix else key
                         if isinstance(value, dict):
                             nested_regular, nested_secrets = separate_secrets(value, secrets_set, full_path)
-                            if nested_regular:
-                                regular[key] = nested_regular
+                            # Always preserve the key in regular even if empty (maintains structure)
+                            regular[key] = nested_regular
                             if nested_secrets:
                                 secrets[key] = nested_secrets
                         elif full_path in secrets_set:
@@ -1014,13 +1010,27 @@ def save_main_config():
 
 @api_v3.route('/config/secrets', methods=['GET'])
 def get_secrets_config():
-    """Get secrets configuration"""
+    """Get secrets configuration (values masked for security)"""
     try:
         if not api_v3.config_manager:
             return jsonify({'status': 'error', 'message': 'Config manager not initialized'}), 500
 
         config = api_v3.config_manager.get_raw_file_content('secrets')
-        return jsonify({'status': 'success', 'data': config})
+
+        # Mask all secret values so they are never returned in plain text
+        def _mask_values(d):
+            masked = {}
+            for k, v in d.items():
+                if isinstance(v, dict):
+                    masked[k] = _mask_values(v)
+                elif isinstance(v, str) and v and not v.startswith('YOUR_'):
+                    masked[k] = '••••••••'
+                else:
+                    masked[k] = v
+            return masked
+
+        masked_config = _mask_values(config)
+        return jsonify({'status': 'success', 'data': masked_config})
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
@@ -2520,8 +2530,43 @@ def get_plugin_config():
         if not plugin_config:
             plugin_config = {
                 'enabled': True,
-                'display_duration': 30
+                'display_duration': 15
             }
+
+        # Mask secret fields (x-secret: true in schema) so API keys are not
+        # returned in plain text. Empty string signals "not set" to the UI;
+        # the POST handler will preserve existing secrets when empty is submitted.
+        if schema_mgr:
+            try:
+                schema = schema_mgr.load_schema(plugin_id, use_cache=True)
+                if schema and 'properties' in schema:
+                    def _find_secret_fields(properties, prefix=''):
+                        fields = set()
+                        for field_name, field_props in properties.items():
+                            full_path = f"{prefix}.{field_name}" if prefix else field_name
+                            if isinstance(field_props, dict) and field_props.get('x-secret', False):
+                                fields.add(full_path)
+                            if isinstance(field_props, dict) and field_props.get('type') == 'object' and 'properties' in field_props:
+                                fields.update(_find_secret_fields(field_props['properties'], full_path))
+                        return fields
+
+                    def _mask_secrets(config_dict, secrets_set, prefix=''):
+                        masked = {}
+                        for key, value in config_dict.items():
+                            full_path = f"{prefix}.{key}" if prefix else key
+                            if isinstance(value, dict):
+                                masked[key] = _mask_secrets(value, secrets_set, full_path)
+                            elif full_path in secrets_set:
+                                masked[key] = ''  # Replace secret value with empty string
+                            else:
+                                masked[key] = value
+                        return masked
+
+                    secret_fields = _find_secret_fields(schema['properties'])
+                    if secret_fields:
+                        plugin_config = _mask_secrets(plugin_config, secret_fields)
+            except Exception:
+                pass  # Best effort — don't fail the request if masking errors
 
         return success_response(data=plugin_config)
     except Exception as e:
@@ -2546,18 +2591,13 @@ def update_plugin():
             # JSON request
             data, error = validate_request_json(['plugin_id'])
             if error:
-                # Log what we received for debugging
-                print(f"[UPDATE] JSON validation failed. Content-Type: {content_type}")
-                print(f"[UPDATE] Request data: {request.data}")
-                print(f"[UPDATE] Request form: {request.form.to_dict()}")
+                logger.warning(f"Plugin update JSON validation failed. Content-Type: {content_type}")
                 return error
         else:
             # Form data or query string
             plugin_id = request.args.get('plugin_id') or request.form.get('plugin_id')
             if not plugin_id:
-                print(f"[UPDATE] Missing plugin_id. Content-Type: {content_type}")
-                print(f"[UPDATE] Query args: {request.args.to_dict()}")
-                print(f"[UPDATE] Form data: {request.form.to_dict()}")
+                logger.warning(f"Plugin update missing plugin_id. Content-Type: {content_type}")
                 return error_response(
                     ErrorCode.INVALID_INPUT,
                     'plugin_id required',
@@ -4534,20 +4574,11 @@ def save_plugin_config():
             enhanced_schema_for_filtering = _enhance_schema_with_core_properties(schema)
             plugin_config = _filter_config_by_schema(plugin_config, enhanced_schema_for_filtering)
 
-        # Debug logging for union type fields (temporary)
-        if 'rotation_settings' in plugin_config and 'random_seed' in plugin_config.get('rotation_settings', {}):
-            seed_value = plugin_config['rotation_settings']['random_seed']
-            logger.debug(f"After normalization, random_seed value: {repr(seed_value)}, type: {type(seed_value)}")
-
         # Validate configuration against schema before saving
         if schema:
-            # Log what we're validating for debugging
-            logger.info(f"Validating config for {plugin_id}")
-            logger.info(f"Config keys being validated: {list(plugin_config.keys())}")
-            logger.info(f"Full config: {plugin_config}")
+            logger.debug(f"Validating config for {plugin_id}, keys: {list(plugin_config.keys())}")
 
             # Get enhanced schema keys (including injected core properties)
-            # We need to create an enhanced schema to get the actual allowed keys
             import copy
             enhanced_schema = copy.deepcopy(schema)
             if "properties" not in enhanced_schema:
@@ -4557,31 +4588,19 @@ def save_plugin_config():
             core_properties = ["enabled", "display_duration", "live_priority"]
             for prop_name in core_properties:
                 if prop_name not in enhanced_schema["properties"]:
-                    # Add placeholder to get the full list of allowed keys
                     enhanced_schema["properties"][prop_name] = {"type": "any"}
 
             is_valid, validation_errors = schema_mgr.validate_config_against_schema(
                 plugin_config, schema, plugin_id
             )
             if not is_valid:
-                # Log validation errors for debugging
-                logger.error(f"Config validation failed for {plugin_id}")
-                logger.error(f"Validation errors: {validation_errors}")
-                logger.error(f"Config that failed: {plugin_config}")
-                logger.error(f"Schema properties: {list(enhanced_schema.get('properties', {}).keys())}")
-
-                # Also print to console for immediate visibility
-                import json
-                print(f"[ERROR] Config validation failed for {plugin_id}")
-                print(f"[ERROR] Validation errors: {validation_errors}")
-                print(f"[ERROR] Config keys: {list(plugin_config.keys())}")
-                print(f"[ERROR] Schema property keys: {list(enhanced_schema.get('properties', {}).keys())}")
+                logger.error(f"Config validation failed for {plugin_id}: {validation_errors}")
+                logger.error(f"Config keys: {list(plugin_config.keys())}, Schema keys: {list(enhanced_schema.get('properties', {}).keys())}")
 
                 # Log raw form data if this was a form submission
                 if 'application/json' not in (request.content_type or ''):
                     form_data = request.form.to_dict()
-                    print(f"[ERROR] Raw form data: {json.dumps({k: str(v)[:200] for k, v in form_data.items()}, indent=2)}")
-                    print(f"[ERROR] Parsed config: {json.dumps(plugin_config, indent=2, default=str)}")
+                    logger.debug(f"Raw form data keys: {list(form_data.keys())}")
                 return error_response(
                     ErrorCode.CONFIG_VALIDATION_FAILED,
                     'Configuration validation failed',
@@ -4612,8 +4631,8 @@ def save_plugin_config():
                 if isinstance(value, dict):
                     # Recursively handle nested dicts
                     nested_regular, nested_secrets = separate_secrets(value, secrets_set, full_path)
-                    if nested_regular:
-                        regular[key] = nested_regular
+                    # Always preserve the key in regular even if empty (maintains structure)
+                    regular[key] = nested_regular
                     if nested_secrets:
                         secrets[key] = nested_secrets
                 elif full_path in secrets_set:
@@ -4633,17 +4652,21 @@ def save_plugin_config():
         if plugin_id not in current_config:
             current_config[plugin_id] = {}
 
-        # Debug logging for live_priority before merge
-        if plugin_id == 'football-scoreboard':
-            print(f"[DEBUG] Before merge - current NFL live_priority: {current_config[plugin_id].get('nfl', {}).get('live_priority')}")
-            print(f"[DEBUG] Before merge - regular_config NFL live_priority: {regular_config.get('nfl', {}).get('live_priority')}")
-
         current_config[plugin_id] = deep_merge(current_config[plugin_id], regular_config)
 
-        # Debug logging for live_priority after merge
-        if plugin_id == 'football-scoreboard':
-            print(f"[DEBUG] After merge - NFL live_priority: {current_config[plugin_id].get('nfl', {}).get('live_priority')}")
-            print(f"[DEBUG] After merge - NCAA FB live_priority: {current_config[plugin_id].get('ncaa_fb', {}).get('live_priority')}")
+        # Filter out empty-string secret values so that the masked empty strings
+        # returned by the GET endpoint don't overwrite existing saved secrets.
+        def _filter_empty_secrets(d):
+            filtered = {}
+            for k, v in d.items():
+                if isinstance(v, dict):
+                    nested = _filter_empty_secrets(v)
+                    if nested:
+                        filtered[k] = nested
+                elif v is not None and v != '':
+                    filtered[k] = v
+            return filtered
+        secrets_config = _filter_empty_secrets(secrets_config)
 
         # Deep merge plugin secrets in secrets config
         if secrets_config:
@@ -4859,8 +4882,8 @@ def reset_plugin_config():
                 full_path = f"{prefix}.{key}" if prefix else key
                 if isinstance(value, dict):
                     nested_regular, nested_secrets = separate_secrets(value, secrets_set, full_path)
-                    if nested_regular:
-                        regular[key] = nested_regular
+                    # Always preserve the key in regular even if empty (maintains structure)
+                    regular[key] = nested_regular
                     if nested_secrets:
                         secrets[key] = nested_secrets
                 elif full_path in secrets_set:
@@ -4889,8 +4912,14 @@ def reset_plugin_config():
             # Replace all secrets with defaults
             current_secrets[plugin_id] = default_secrets
 
-        # Save updated configs
-        api_v3.config_manager.save_config(current_config)
+        # Save updated configs (atomic save to prevent corruption)
+        success, error_msg = _save_config_atomic(api_v3.config_manager, current_config, create_backup=True)
+        if not success:
+            return error_response(
+                ErrorCode.CONFIG_SAVE_FAILED,
+                f"Failed to reset configuration: {error_msg}",
+                status_code=500
+            )
         if default_secrets or not preserve_secrets:
             api_v3.config_manager.save_raw_file_content('secrets', current_secrets)
 

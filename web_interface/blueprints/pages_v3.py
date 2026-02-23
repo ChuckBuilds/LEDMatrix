@@ -384,6 +384,39 @@ def _load_plugin_config_partial(plugin_id):
                     schema = json.load(f)
             except Exception as e:
                 print(f"Warning: Could not load schema for {plugin_id}: {e}")
+
+        # Mask secret fields (x-secret: true) before passing config to the template.
+        # load_config() deep-merges secrets into the main config, so config may contain
+        # plain-text API keys. Replace them with '' so the form never renders them.
+        if schema and 'properties' in schema:
+            try:
+                def _find_secret_fields(properties, prefix=''):
+                    fields = set()
+                    for field_name, field_props in properties.items():
+                        full_path = f"{prefix}.{field_name}" if prefix else field_name
+                        if isinstance(field_props, dict) and field_props.get('x-secret', False):
+                            fields.add(full_path)
+                        if isinstance(field_props, dict) and field_props.get('type') == 'object' and 'properties' in field_props:
+                            fields.update(_find_secret_fields(field_props['properties'], full_path))
+                    return fields
+
+                def _mask_secrets(config_dict, secrets_set, prefix=''):
+                    masked = {}
+                    for key, value in config_dict.items():
+                        full_path = f"{prefix}.{key}" if prefix else key
+                        if isinstance(value, dict):
+                            masked[key] = _mask_secrets(value, secrets_set, full_path)
+                        elif full_path in secrets_set:
+                            masked[key] = ''
+                        else:
+                            masked[key] = value
+                    return masked
+
+                secret_fields = _find_secret_fields(schema['properties'])
+                if secret_fields:
+                    config = _mask_secrets(config, secret_fields)
+            except Exception:
+                pass  # Best effort — don't fail the render if masking errors
         
         # Get web UI actions from plugin manifest
         web_ui_actions = []
