@@ -30,12 +30,17 @@ def plugins_dir():
     plugin_repos_path = project_root / 'plugin-repos'
 
     # Prefer plugins/ if it has actual plugin directories
-    if plugins_path.exists() and any(
-        p for p in plugins_path.iterdir()
-        if p.is_dir() and not p.name.startswith('.')
-    ):
-        return plugins_path
-    elif plugin_repos_path.exists():
+    if plugins_path.exists():
+        try:
+            has_plugins = any(
+                p for p in plugins_path.iterdir()
+                if p.is_dir() and not p.name.startswith('.')
+            )
+            if has_plugins:
+                return plugins_path
+        except PermissionError:
+            pass
+    if plugin_repos_path.exists():
         return plugin_repos_path
     return plugins_path
 

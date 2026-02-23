@@ -85,11 +85,16 @@ const PluginInstallManager = {
      * @returns {Promise<Array>} Update results
      */
     async updateAll(onProgress) {
-        if (!window.PluginStateManager || !window.PluginStateManager.installedPlugins) {
-            throw new Error('Installed plugins not loaded');
-        }
+        // Prefer PluginStateManager if populated, fall back to window.installedPlugins
+        // (plugins_manager.js populates window.installedPlugins independently)
+        const stateManagerPlugins = window.PluginStateManager && window.PluginStateManager.installedPlugins;
+        const plugins = (stateManagerPlugins && stateManagerPlugins.length > 0)
+            ? stateManagerPlugins
+            : (window.installedPlugins || []);
 
-        const plugins = window.PluginStateManager.installedPlugins;
+        if (!plugins.length) {
+            return [];
+        }
         const results = [];
 
         for (let i = 0; i < plugins.length; i++) {

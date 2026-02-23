@@ -998,26 +998,17 @@ window.initPluginsPage = function() {
     const onDemandForm = document.getElementById('on-demand-form');
     const onDemandModal = document.getElementById('on-demand-modal');
 
-    console.log('[initPluginsPage] Setting up button listeners:', {
-        refreshBtn: !!refreshBtn,
-        updateAllBtn: !!updateAllBtn,
-        restartBtn: !!restartBtn
-    });
-
     if (refreshBtn) {
         refreshBtn.replaceWith(refreshBtn.cloneNode(true));
         document.getElementById('refresh-plugins-btn').addEventListener('click', refreshPlugins);
-        console.log('[initPluginsPage] Attached refreshPlugins listener');
     }
     if (updateAllBtn) {
         updateAllBtn.replaceWith(updateAllBtn.cloneNode(true));
         document.getElementById('update-all-plugins-btn').addEventListener('click', runUpdateAllPlugins);
-        console.log('[initPluginsPage] Attached runUpdateAllPlugins listener');
     }
     if (restartBtn) {
         restartBtn.replaceWith(restartBtn.cloneNode(true));
         document.getElementById('restart-display-btn').addEventListener('click', restartDisplay);
-        console.log('[initPluginsPage] Attached restartDisplay listener');
     }
     if (searchBtn) {
         searchBtn.replaceWith(searchBtn.cloneNode(true));
@@ -1064,28 +1055,22 @@ window.initPluginsPage = function() {
 
 // Consolidated initialization function
 function initializePluginPageWhenReady() {
-    console.log('Checking for plugin elements...');
     return window.initPluginsPage();
 }
 
 // Single initialization entry point
 (function() {
-    console.log('Plugin manager script loaded, setting up initialization...');
-    
     let initTimer = null;
-    
+
     function attemptInit() {
         // Clear any pending timer
         if (initTimer) {
             clearTimeout(initTimer);
             initTimer = null;
         }
-        
+
         // Try immediate initialization
-        if (initializePluginPageWhenReady()) {
-            console.log('Initialized immediately');
-            return;
-        }
+        initializePluginPageWhenReady();
     }
     
     // Strategy 1: Immediate check (for direct page loads)
@@ -1683,7 +1668,6 @@ function startOnDemandStatusPolling() {
 window.loadOnDemandStatus = loadOnDemandStatus;
 
 function runUpdateAllPlugins() {
-    console.log('[runUpdateAllPlugins] Button clicked, checking for updates...');
     const button = document.getElementById('update-all-plugins-btn');
 
     if (!button) {

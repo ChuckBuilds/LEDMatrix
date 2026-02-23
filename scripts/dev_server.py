@@ -213,7 +213,7 @@ def api_render():
             display_manager=display_manager,
             cache_manager=cache_manager,
             plugin_manager=plugin_manager,
-            install_deps=True,
+            install_deps=False,
         )
     except Exception as e:
         return jsonify({'error': f'Failed to load plugin: {e}'}), 500
