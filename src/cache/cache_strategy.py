@@ -206,8 +206,6 @@ class CacheStrategy:
 
         # Live sports data (only reached if key does NOT contain 'odds')
         if any(x in key_lower for x in ['live', 'current', 'scoreboard']):
-            if 'soccer' in key_lower:
-                return 'sports_live'  # Soccer live data is very time-sensitive
             return 'sports_live'
 
         # Weather data
