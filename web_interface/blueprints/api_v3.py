@@ -2533,40 +2533,29 @@ def get_plugin_config():
                 'display_duration': 15
             }
 
-        # Mask secret fields (x-secret: true in schema) so API keys are not
-        # returned in plain text. Empty string signals "not set" to the UI;
-        # the POST handler will preserve existing secrets when empty is submitted.
+        # Mask fields marked x-secret:true so API keys are never sent to the browser.
+        # The save endpoint (POST /plugins/config) already routes these to config_secrets.json;
+        # the GET path must not undo that protection by returning the merged secrets value.
         if schema_mgr:
             try:
-                schema = schema_mgr.load_schema(plugin_id, use_cache=True)
-                if schema and 'properties' in schema:
-                    def _find_secret_fields(properties, prefix=''):
-                        fields = set()
-                        for field_name, field_props in properties.items():
-                            full_path = f"{prefix}.{field_name}" if prefix else field_name
-                            if isinstance(field_props, dict) and field_props.get('x-secret', False):
-                                fields.add(full_path)
-                            if isinstance(field_props, dict) and field_props.get('type') == 'object' and 'properties' in field_props:
-                                fields.update(_find_secret_fields(field_props['properties'], full_path))
-                        return fields
-
-                    def _mask_secrets(config_dict, secrets_set, prefix=''):
-                        masked = {}
-                        for key, value in config_dict.items():
-                            full_path = f"{prefix}.{key}" if prefix else key
-                            if isinstance(value, dict):
-                                masked[key] = _mask_secrets(value, secrets_set, full_path)
-                            elif full_path in secrets_set:
-                                masked[key] = ''  # Replace secret value with empty string
-                            else:
-                                masked[key] = value
-                        return masked
-
-                    secret_fields = _find_secret_fields(schema['properties'])
-                    if secret_fields:
-                        plugin_config = _mask_secrets(plugin_config, secret_fields)
-            except Exception:
-                pass  # Best effort — don't fail the request if masking errors
+                schema_for_mask = schema_mgr.load_schema(plugin_id, use_cache=True)
+                if schema_for_mask and 'properties' in schema_for_mask:
+                    def _mask_secret_fields(cfg, props):
+                        result = dict(cfg)
+                        for fname, fprops in props.items():
+                            if fprops.get('x-secret', False):
+                                if fname in result and result[fname]:
+                                    result[fname] = ''
+                            elif fprops.get('type') == 'object' and 'properties' in fprops:
+                                if fname in result and isinstance(result[fname], dict):
+                                    result[fname] = _mask_secret_fields(
+                                        result[fname], fprops['properties']
+                                    )
+                        return result
+                    plugin_config = _mask_secret_fields(plugin_config, schema_for_mask['properties'])
+            except Exception as mask_err:
+                import logging as _logging
+                _logging.warning("Could not mask secret fields for %s: %s", plugin_id, mask_err)
 
         return success_response(data=plugin_config)
     except Exception as e:
@@ -4643,6 +4632,24 @@ def save_plugin_config():
             return regular, secrets
 
         regular_config, secrets_config = separate_secrets(plugin_config, secret_fields)
+
+        # Drop empty-string values from secrets_config.
+        # When get_plugin_config masks an x-secret field it returns '' so the
+        # browser never sees the real value.  If the user re-submits the form
+        # without entering a new value, '' comes back here — we must not
+        # overwrite the existing stored secret with an empty string.
+        def _drop_empty_secrets(d):
+            """Recursively remove empty-string entries from a secrets dict."""
+            result = {}
+            for k, v in d.items():
+                if isinstance(v, dict):
+                    nested = _drop_empty_secrets(v)
+                    if nested:
+                        result[k] = nested
+                elif v != '':
+                    result[k] = v
+            return result
+        secrets_config = _drop_empty_secrets(secrets_config)
 
         # Get current configs
         current_config = api_v3.config_manager.load_config()
