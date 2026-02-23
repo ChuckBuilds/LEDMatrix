@@ -193,19 +193,21 @@ class CacheStrategy:
             Data type string for strategy lookup
         """
         key_lower = key.lower()
-        
-        # Odds data — checked FIRST because odds keys may also contain 'live'/'current'
-        # (e.g. odds_espn_nba_game_123_live). The odds TTL (120s for live, 1800s for
-        # upcoming) must win over the generic sports_live TTL (30s) to avoid hitting
-        # the ESPN odds API every 30 seconds per game.
-        if 'odds' in key_lower:
-            # For live games, use shorter cache; for upcoming games, use longer cache
-            if any(x in key_lower for x in ['live', 'current']):
-                return 'odds_live'  # Live odds change more frequently (120s TTL)
-            return 'odds'  # Regular odds for upcoming games (1800s TTL)
 
-        # Live sports data (only reached if key does NOT contain 'odds')
+        # Odds data — checked before the generic 'live' block below because
+        # live-odds cache keys (e.g. odds_espn_basketball_nba_<id>_live) contain
+        # both 'odds' AND 'live'.  Without this ordering the 'live' check below
+        # would match first and return 'sports_live' (30 s TTL) instead of the
+        # correct 'odds_live' (120 s TTL).
+        if 'odds' in key_lower:
+            if any(x in key_lower for x in ['live', 'current']):
+                return 'odds_live'  # Live odds change more frequently
+            return 'odds'  # Regular odds for upcoming games
+
+        # Live sports data
         if any(x in key_lower for x in ['live', 'current', 'scoreboard']):
+            if 'soccer' in key_lower:
+                return 'sports_live'  # Soccer live data is very time-sensitive
             return 'sports_live'
 
         # Weather data
