@@ -1756,10 +1756,23 @@ class PluginStoreManager:
         if plugin_path is None or not plugin_path.exists():
             self.logger.error(f"Plugin not installed: {plugin_id}")
             return False
-        
+
         try:
             self.logger.info(f"Checking for updates to plugin {plugin_id}")
-            
+
+            # Check if this is a bundled/unmanaged plugin (no registry entry, no git remote)
+            # These are plugins shipped with LEDMatrix itself and updated via LEDMatrix updates.
+            metadata_path = plugin_path / ".plugin_metadata.json"
+            if metadata_path.exists():
+                try:
+                    with open(metadata_path, 'r', encoding='utf-8') as f:
+                        metadata = json.load(f)
+                    if metadata.get('install_type') == 'bundled':
+                        self.logger.info(f"Plugin {plugin_id} is a bundled plugin; updates are delivered via LEDMatrix itself")
+                        return True
+                except Exception:
+                    pass
+
             # First check if it's a git repository - if so, we can update directly
             git_info = self._get_local_git_info(plugin_path)
             
@@ -2026,8 +2039,10 @@ class PluginStoreManager:
             # (in case .git directory was removed but remote URL is still in config)
             repo_url = None
             try:
+                # Use --local to avoid inheriting the parent LEDMatrix repo's git config
+                # when the plugin directory lives inside the main repo (e.g. plugin-repos/).
                 remote_url_result = subprocess.run(
-                    ['git', '-C', str(plugin_path), 'config', '--get', 'remote.origin.url'],
+                    ['git', '-C', str(plugin_path), 'config', '--local', '--get', 'remote.origin.url'],
                     capture_output=True,
                     text=True,
                     timeout=10,
