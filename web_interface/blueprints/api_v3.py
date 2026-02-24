@@ -5135,8 +5135,6 @@ sys.exit(proc.returncode)
                                     'output': result.stdout + result.stderr
                                 }), 400
                     except subprocess.TimeoutExpired:
-                        if os.path.exists(wrapper_path):
-                            os.unlink(wrapper_path)
                         return jsonify({'status': 'error', 'message': 'Action timed out'}), 408
                 else:
                     # No params - check for OAuth flow first, then run script normally
