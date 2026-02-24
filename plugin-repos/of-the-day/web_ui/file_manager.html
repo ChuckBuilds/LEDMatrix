@@ -1,0 +1,1002 @@
+<div class="file-manager-container" onclick="event.stopPropagation();">
+    <!-- JSONEditor CSS -->
+    <link href="https://cdn.jsdelivr.net/npm/jsoneditor@latest/dist/jsoneditor.min.css" rel="stylesheet" type="text/css">
+    
+    <style>
+        .file-manager-container {
+            margin-top: 1rem;
+        }
+        
+        /* File Explorer Styles */
+        .file-explorer-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1.5rem;
+        }
+        
+        .file-list-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+            gap: 1rem;
+            margin-bottom: 1.5rem;
+        }
+        
+        .file-card {
+            border: 1px solid #e5e7eb;
+            border-radius: 0.5rem;
+            padding: 1rem;
+            background: #ffffff;
+            transition: all 0.2s;
+            cursor: pointer;
+        }
+        
+        .file-card:hover {
+            border-color: #3b82f6;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+            transform: translateY(-2px);
+        }
+        
+        .file-icon {
+            width: 48px;
+            height: 48px;
+            background: #eff6ff;
+            border-radius: 0.5rem;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin-bottom: 0.75rem;
+            color: #3b82f6;
+            font-size: 1.5rem;
+        }
+        
+        .file-name {
+            font-weight: 600;
+            color: #111827;
+            margin-bottom: 0.5rem;
+            word-break: break-word;
+        }
+        
+        .file-meta {
+            font-size: 0.75rem;
+            color: #6b7280;
+            margin-bottom: 0.75rem;
+            line-height: 1.5;
+        }
+        
+        .file-actions {
+            display: flex;
+            gap: 0.5rem;
+            margin-top: 0.75rem;
+            padding-top: 0.75rem;
+            border-top: 1px solid #e5e7eb;
+        }
+        
+        .upload-zone {
+            border: 2px dashed #d1d5db;
+            border-radius: 0.5rem;
+            padding: 2rem;
+            text-align: center;
+            background: #f9fafb;
+            cursor: pointer;
+            transition: all 0.2s;
+            margin-bottom: 1.5rem;
+        }
+        
+        .upload-zone:hover {
+            border-color: #3b82f6;
+            background: #eff6ff;
+        }
+        
+        .upload-zone.dragover {
+            border-color: #3b82f6;
+            background: #dbeafe;
+            border-style: solid;
+        }
+        
+        /* Modal Styles */
+        .modal {
+            display: none;
+            position: fixed;
+            z-index: 1000;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.5);
+            backdrop-filter: blur(2px);
+        }
+        
+        .modal-content {
+            background-color: #fff;
+            margin: 2% auto;
+            padding: 0;
+            border-radius: 0.5rem;
+            width: 90%;
+            max-width: 900px;
+            max-height: 90vh;
+            display: flex;
+            flex-direction: column;
+            box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1);
+        }
+        
+        .modal-header {
+            padding: 1.5rem;
+            border-bottom: 1px solid #e5e7eb;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        .modal-body {
+            padding: 1.5rem;
+            flex: 1;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+        }
+        
+        .modal-footer {
+            padding: 1rem 1.5rem;
+            border-top: 1px solid #e5e7eb;
+            display: flex;
+            justify-content: flex-end;
+            gap: 0.75rem;
+            background: #f9fafb;
+        }
+        
+        /* JSONEditor Container */
+        #jsoneditor-container {
+            flex: 1;
+            min-height: 400px;
+            border: 1px solid #e5e7eb;
+            border-radius: 0.25rem;
+            overflow: hidden;
+        }
+        
+        /* Button Styles */
+        .btn {
+            padding: 0.5rem 1rem;
+            border-radius: 0.375rem;
+            border: none;
+            cursor: pointer;
+            font-weight: 500;
+            font-size: 0.875rem;
+            transition: all 0.2s;
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+        
+        .btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        
+        .btn-primary {
+            background: #3b82f6;
+            color: white;
+        }
+        
+        .btn-primary:hover:not(:disabled) {
+            background: #2563eb;
+        }
+        
+        .btn-danger {
+            background: #ef4444;
+            color: white;
+        }
+        
+        .btn-danger:hover:not(:disabled) {
+            background: #dc2626;
+        }
+        
+        .btn-secondary {
+            background: #6b7280;
+            color: white;
+        }
+        
+        .btn-secondary:hover:not(:disabled) {
+            background: #4b5563;
+        }
+        
+        .btn-sm {
+            padding: 0.375rem 0.75rem;
+            font-size: 0.8125rem;
+        }
+        
+        .btn-icon {
+            padding: 0.375rem;
+            width: 32px;
+            height: 32px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+        }
+        
+        /* Loading State */
+        .loading-spinner {
+            display: inline-block;
+            width: 1rem;
+            height: 1rem;
+            border: 2px solid #f3f4f6;
+            border-top-color: currentColor;
+            border-radius: 50%;
+            animation: spin 0.6s linear infinite;
+        }
+        
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+        
+        /* Empty State */
+        .empty-state {
+            text-align: center;
+            padding: 3rem 1rem;
+            color: #6b7280;
+        }
+        
+        .empty-state-icon {
+            font-size: 3rem;
+            color: #d1d5db;
+            margin-bottom: 1rem;
+        }
+        
+        /* JSON Validation Error */
+        .json-error {
+            padding: 0.75rem;
+            background: #fef2f2;
+            border: 1px solid #fecaca;
+            border-radius: 0.375rem;
+            color: #991b1b;
+            font-size: 0.875rem;
+            margin-bottom: 1rem;
+        }
+
+        /* Toggle Switch Styles */
+        .toggle-container {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 0.75rem;
+            padding-bottom: 0.75rem;
+            border-bottom: 1px solid #e5e7eb;
+        }
+
+        .toggle-label {
+            font-size: 0.75rem;
+            color: #6b7280;
+            font-weight: 500;
+        }
+
+        .toggle-switch {
+            position: relative;
+            width: 44px;
+            height: 24px;
+        }
+
+        .toggle-switch input {
+            opacity: 0;
+            width: 0;
+            height: 0;
+        }
+
+        .toggle-slider {
+            position: absolute;
+            cursor: pointer;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-color: #d1d5db;
+            transition: 0.3s;
+            border-radius: 24px;
+        }
+
+        .toggle-slider:before {
+            position: absolute;
+            content: "";
+            height: 18px;
+            width: 18px;
+            left: 3px;
+            bottom: 3px;
+            background-color: white;
+            transition: 0.3s;
+            border-radius: 50%;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+        }
+
+        .toggle-switch input:checked + .toggle-slider {
+            background-color: #22c55e;
+        }
+
+        .toggle-switch input:checked + .toggle-slider:before {
+            transform: translateX(20px);
+        }
+
+        .toggle-switch input:disabled + .toggle-slider {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .file-card.disabled {
+            opacity: 0.6;
+        }
+
+        .file-card.disabled .file-icon {
+            background: #f3f4f6;
+            color: #9ca3af;
+        }
+    </style>
+
+    <!-- Header -->
+    <div class="file-explorer-header">
+        <div>
+            <h3 class="text-lg font-semibold text-gray-900 mb-1">File Explorer</h3>
+            <p class="text-sm text-gray-600">Manage JSON data files in <code class="text-xs bg-gray-100 px-1 rounded">of_the_day/</code> directory</p>
+        </div>
+        <button type="button" onclick="document.getElementById('file-input').click()" class="btn btn-primary">
+            <i class="fas fa-upload"></i>
+            Upload File
+        </button>
+    </div>
+
+    <!-- Upload Zone -->
+    <div id="upload-zone" class="upload-zone" 
+         ondrop="handleFileDrop(event)" 
+         ondragover="event.preventDefault()"
+         onclick="document.getElementById('file-input').click()">
+        <i class="fas fa-cloud-upload-alt text-3xl text-gray-400 mb-2"></i>
+        <p class="text-sm font-medium text-gray-700">Drag and drop JSON files here</p>
+        <p class="text-xs text-gray-500 mt-1">or click to browse • Keys must be day numbers (1-365)</p>
+        <input type="file" id="file-input" accept=".json" style="display: none;" onchange="handleFileSelect(event)">
+    </div>
+
+    <!-- File List -->
+    <div id="file-list-container">
+        <div class="text-center py-8">
+            <div class="loading-spinner mx-auto mb-2" style="color: #3b82f6;"></div>
+            <p class="text-sm text-gray-500">Loading files...</p>
+        </div>
+    </div>
+
+    <!-- Edit File Modal -->
+    <div id="edit-modal" class="modal" onclick="if(event.target === this) closeEditModal()">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 class="text-lg font-semibold text-gray-900" id="edit-modal-title">Edit File</h3>
+                <button type="button" onclick="closeEditModal()" class="text-gray-500 hover:text-gray-700 btn-icon">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+            <div class="modal-body">
+                <div id="json-error-container"></div>
+                <div id="jsoneditor-container"></div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" onclick="formatJson()" class="btn btn-secondary btn-sm">
+                    <i class="fas fa-align-left"></i>
+                    Format
+                </button>
+                <button type="button" onclick="validateJson()" class="btn btn-secondary btn-sm">
+                    <i class="fas fa-check-circle"></i>
+                    Validate
+                </button>
+                <div style="flex: 1;"></div>
+                <button type="button" onclick="closeEditModal()" class="btn btn-secondary">Cancel</button>
+                <button type="button" onclick="saveFile()" class="btn btn-primary" id="save-file-btn">
+                    <i class="fas fa-save"></i>
+                    Save
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Delete Confirmation Modal -->
+    <div id="delete-modal" class="modal" onclick="if(event.target === this) closeDeleteModal()">
+        <div class="modal-content" style="max-width: 400px;">
+            <div class="modal-header">
+                <h3 class="text-lg font-semibold text-gray-900">Delete File</h3>
+                <button type="button" onclick="closeDeleteModal()" class="text-gray-500 hover:text-gray-700 btn-icon">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+            <div class="modal-body">
+                <p class="text-gray-700 mb-4">
+                    Are you sure you want to delete <strong id="delete-filename"></strong>?
+                </p>
+                <p class="text-sm text-gray-600">
+                    This will permanently delete the file and remove it from your plugin configuration.
+                </p>
+            </div>
+            <div class="modal-footer">
+                <button type="button" onclick="closeDeleteModal()" class="btn btn-secondary">Cancel</button>
+                <button type="button" onclick="confirmDelete()" class="btn btn-danger" id="delete-file-btn">
+                    <i class="fas fa-trash"></i>
+                    Delete
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Create File Modal (kept for programmatic use) -->
+
+
+    <!-- JSONEditor JavaScript -->
+    <script src="https://cdn.jsdelivr.net/npm/jsoneditor@latest/dist/jsoneditor.min.js"></script>
+    
+    <script>
+        const PLUGIN_ID = 'of-the-day';
+        let currentEditingFile = null;
+        let jsonEditor = null;
+        let fileToDelete = null;
+
+        // Move modals to document.body so they are not inside the HTMX plugin config form.
+        // This prevents JSONEditor toolbar buttons (which lack type="button") from accidentally
+        // triggering the parent form's submit, and prevents modal destruction on form re-render.
+        function initModals() {
+            // Remove any modals previously moved to body by an earlier widget injection
+            document.querySelectorAll('[data-fm-modal]').forEach(function(el) {
+                el.remove();
+            });
+            // Move edit and delete modals from inside the form to document.body
+            var editModal = document.getElementById('edit-modal');
+            var deleteModal = document.getElementById('delete-modal');
+            if (editModal) {
+                editModal.setAttribute('data-fm-modal', '1');
+                document.body.appendChild(editModal);
+            }
+            if (deleteModal) {
+                deleteModal.setAttribute('data-fm-modal', '1');
+                document.body.appendChild(deleteModal);
+            }
+        }
+
+        // Initialize - handle both direct page load and dynamic injection
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', function() {
+                initModals();
+                loadFiles();
+                setupDragAndDrop();
+            });
+        } else {
+            // DOM already loaded (widget was injected dynamically)
+            initModals();
+            loadFiles();
+            setupDragAndDrop();
+        }
+
+        // Setup drag and drop visual feedback
+        function setupDragAndDrop() {
+            const zone = document.getElementById('upload-zone');
+            if (!zone) return;
+            
+            zone.addEventListener('dragover', function(e) {
+                e.preventDefault();
+                zone.classList.add('dragover');
+            });
+            
+            zone.addEventListener('dragleave', function(e) {
+                e.preventDefault();
+                zone.classList.remove('dragover');
+            });
+        }
+
+        // Load files list
+        async function loadFiles() {
+            try {
+                const response = await fetch('/api/v3/plugins/action', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        plugin_id: PLUGIN_ID,
+                        action_id: 'list-files'
+                    })
+                });
+                
+                if (!response.ok) {
+                    const errorText = await response.text();
+                    console.error('API error response:', errorText);
+                    showError('Failed to load files: HTTP ' + response.status);
+                    return;
+                }
+                
+                const contentType = response.headers.get('content-type');
+                if (!contentType || !contentType.includes('application/json')) {
+                    const text = await response.text();
+                    console.error('Non-JSON response:', text.substring(0, 200));
+                    showError('Server returned non-JSON response');
+                    return;
+                }
+                
+                const data = await response.json();
+                if (data.status === 'success') {
+                    renderFiles(data.files || []);
+                } else {
+                    showError('Failed to load files: ' + (data.message || 'Unknown error'));
+                }
+            } catch (error) {
+                console.error('Error loading files:', error);
+                showError('Error loading files: ' + error.message);
+                document.getElementById('file-list-container').innerHTML = 
+                    '<div class="empty-state"><div class="empty-state-icon"><i class="fas fa-exclamation-triangle"></i></div><p>Error loading files. Please refresh the page.</p></div>';
+            }
+        }
+
+        // Render file list
+        function renderFiles(files) {
+            const container = document.getElementById('file-list-container');
+            if (!container) {
+                console.error('File list container not found');
+                return;
+            }
+
+            if (!files || files.length === 0) {
+                container.innerHTML = `
+                    <div class="empty-state">
+                        <div class="empty-state-icon"><i class="fas fa-folder-open"></i></div>
+                        <p class="font-medium text-gray-900 mb-1">No files found</p>
+                        <p class="text-sm">Upload or create a JSON file to get started</p>
+                    </div>
+                `;
+                return;
+            }
+
+            container.innerHTML = `
+                <div class="file-list-grid">
+                    ${files.map(file => `
+                        <div class="file-card ${file.enabled === false ? 'disabled' : ''}" onclick="editFile('${file.filename}')">
+                            <div class="toggle-container" onclick="event.stopPropagation()">
+                                <span class="toggle-label">${file.enabled !== false ? 'Enabled' : 'Disabled'}</span>
+                                <label class="toggle-switch">
+                                    <input type="checkbox" ${file.enabled !== false ? 'checked' : ''}
+                                           onchange="toggleCategory('${file.category_name}', this.checked)">
+                                    <span class="toggle-slider"></span>
+                                </label>
+                            </div>
+                            <div class="file-icon">
+                                <i class="fas fa-file-code"></i>
+                            </div>
+                            <div class="file-name">${escapeHtml(file.display_name || file.filename)}</div>
+                            <div class="file-meta">
+                                <div><i class="fas fa-file mr-1"></i> ${escapeHtml(file.filename)}</div>
+                                <div><i class="fas fa-database mr-1"></i> ${file.entry_count || 0} entries</div>
+                                <div><i class="fas fa-weight-hanging mr-1"></i> ${formatFileSize(file.size || 0)}</div>
+                                <div><i class="fas fa-clock mr-1"></i> ${formatDate(file.modified || '')}</div>
+                            </div>
+                            <div class="file-actions" onclick="event.stopPropagation()">
+                                <button type="button" onclick="editFile('${file.filename}')" class="btn btn-primary btn-sm" style="flex: 1;">
+                                    <i class="fas fa-edit"></i>
+                                    Edit
+                                </button>
+                                <button type="button" onclick="showDeleteModal('${file.filename}')" class="btn btn-danger btn-sm">
+                                    <i class="fas fa-trash"></i>
+                                </button>
+                            </div>
+                        </div>
+                    `).join('')}
+                </div>
+            `;
+        }
+
+        // Handle file drop
+        function handleFileDrop(event) {
+            event.preventDefault();
+            const zone = document.getElementById('upload-zone');
+            zone.classList.remove('dragover');
+            
+            const files = event.dataTransfer.files;
+            if (files.length > 0) {
+                uploadFile(files[0]);
+            }
+        }
+
+        // Handle file select
+        function handleFileSelect(event) {
+            const file = event.target.files[0];
+            if (file) {
+                uploadFile(file);
+            }
+            // Reset input so same file can be selected again
+            event.target.value = '';
+        }
+
+        // Upload file
+        async function uploadFile(file) {
+            if (!file.name.endsWith('.json')) {
+                showError('Please upload a JSON file');
+                return;
+            }
+
+            try {
+                const fileContent = await file.text();
+                
+                // Validate JSON
+                try {
+                    JSON.parse(fileContent);
+                } catch (e) {
+                    showError('Invalid JSON file: ' + e.message);
+                    return;
+                }
+
+                const response = await fetch('/api/v3/plugins/action', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        plugin_id: PLUGIN_ID,
+                        action_id: 'upload-file',
+                        params: {
+                            filename: file.name,
+                            content: fileContent
+                        }
+                    })
+                });
+
+                if (!response.ok) {
+                    const errorText = await response.text();
+                    console.error('Upload API error:', errorText);
+                    showError('Upload failed: HTTP ' + response.status);
+                    return;
+                }
+                
+                const contentType = response.headers.get('content-type');
+                if (!contentType || !contentType.includes('application/json')) {
+                    const text = await response.text();
+                    console.error('Non-JSON upload response:', text.substring(0, 200));
+                    showError('Server returned non-JSON response');
+                    return;
+                }
+                
+                const data = await response.json();
+                if (data.status === 'success') {
+                    showSuccess('File uploaded successfully');
+                    loadFiles();
+                } else {
+                    showError('Upload failed: ' + (data.message || 'Unknown error'));
+                }
+            } catch (error) {
+                console.error('Error uploading file:', error);
+                showError('Error uploading file: ' + error.message);
+            }
+        }
+
+        // Edit file
+        async function editFile(filename) {
+            try {
+                const response = await fetch('/api/v3/plugins/action', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        plugin_id: PLUGIN_ID,
+                        action_id: 'get-file',
+                        params: { filename: filename }
+                    })
+                });
+
+                if (!response.ok) {
+                    const errorText = await response.text();
+                    console.error('Get file API error:', errorText);
+                    showError('Failed to load file: HTTP ' + response.status);
+                    return;
+                }
+                
+                const contentType = response.headers.get('content-type');
+                if (!contentType || !contentType.includes('application/json')) {
+                    const text = await response.text();
+                    console.error('Non-JSON get file response:', text.substring(0, 200));
+                    showError('Server returned non-JSON response');
+                    return;
+                }
+                
+                const data = await response.json();
+                if (data.status === 'success') {
+                    currentEditingFile = filename;
+                    document.getElementById('edit-modal-title').textContent = `Edit ${filename}`;
+                    
+                    // Initialize or update JSONEditor
+                    const container = document.getElementById('jsoneditor-container');
+                    if (!jsonEditor) {
+                        jsonEditor = new JSONEditor(container, {
+                            mode: 'code',
+                            modes: ['code', 'tree'],
+                            onChange: function() {
+                                clearJsonError();
+                            }
+                        });
+                    }
+                    
+                    // Set JSON content (data.content is already a parsed object from the API)
+                    // JSONEditor.set() can handle objects directly, it will format them
+                    jsonEditor.set(data.content);
+                    
+                    clearJsonError();
+                    document.getElementById('edit-modal').style.display = 'block';
+                } else {
+                    showError('Failed to load file: ' + (data.message || 'Unknown error'));
+                }
+            } catch (error) {
+                console.error('Error loading file:', error);
+                showError('Error loading file: ' + error.message);
+            }
+        }
+
+        // Close edit modal
+        function closeEditModal() {
+            document.getElementById('edit-modal').style.display = 'none';
+            currentEditingFile = null;
+            clearJsonError();
+        }
+
+        // Format JSON
+        function formatJson() {
+            if (!jsonEditor) return;
+            try {
+                const json = jsonEditor.get();
+                jsonEditor.set(json);
+                clearJsonError();
+                showSuccess('JSON formatted');
+            } catch (e) {
+                showJsonError('Cannot format invalid JSON: ' + e.message);
+            }
+        }
+
+        // Validate JSON
+        function validateJson() {
+            if (!jsonEditor) return;
+            try {
+                const json = jsonEditor.get();
+                JSON.stringify(json); // This will throw if invalid
+                clearJsonError();
+                showSuccess('JSON is valid');
+            } catch (e) {
+                showJsonError('Invalid JSON: ' + e.message);
+            }
+        }
+
+        // Show JSON error
+        function showJsonError(message) {
+            const container = document.getElementById('json-error-container');
+            container.innerHTML = `<div class="json-error"><i class="fas fa-exclamation-circle mr-2"></i>${escapeHtml(message)}</div>`;
+        }
+
+        // Clear JSON error
+        function clearJsonError() {
+            document.getElementById('json-error-container').innerHTML = '';
+        }
+
+        // Save file
+        async function saveFile() {
+            if (!currentEditingFile || !jsonEditor) return;
+
+            const saveBtn = document.getElementById('save-file-btn');
+            const originalText = saveBtn.innerHTML;
+            saveBtn.disabled = true;
+            saveBtn.innerHTML = '<span class="loading-spinner"></span> Saving...';
+
+            try {
+                // Get JSON content (in code mode, getText() returns the raw text, get() validates and parses)
+                let contentStr;
+                try {
+                    // Use get() to validate JSON - it throws if invalid
+                    const jsonObject = jsonEditor.get();
+                    // Format it nicely with proper indentation
+                    contentStr = JSON.stringify(jsonObject, null, 2);
+                } catch (e) {
+                    showJsonError('Invalid JSON: ' + e.message);
+                    saveBtn.disabled = false;
+                    saveBtn.innerHTML = originalText;
+                    return;
+                }
+
+                const response = await fetch('/api/v3/plugins/action', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        plugin_id: PLUGIN_ID,
+                        action_id: 'save-file',
+                        params: {
+                            filename: currentEditingFile,
+                            content: contentStr
+                        }
+                    })
+                });
+
+                if (!response.ok) {
+                    const errorText = await response.text();
+                    console.error('Save file API error:', errorText);
+                    showError('Save failed: HTTP ' + response.status);
+                    saveBtn.disabled = false;
+                    saveBtn.innerHTML = originalText;
+                    return;
+                }
+                
+                const contentType = response.headers.get('content-type');
+                if (!contentType || !contentType.includes('application/json')) {
+                    const text = await response.text();
+                    console.error('Non-JSON save response:', text.substring(0, 200));
+                    showError('Server returned non-JSON response');
+                    saveBtn.disabled = false;
+                    saveBtn.innerHTML = originalText;
+                    return;
+                }
+                
+                const data = await response.json();
+                if (data.status === 'success') {
+                    showSuccess('File saved successfully');
+                    closeEditModal();
+                    loadFiles();
+                } else {
+                    showError('Save failed: ' + (data.message || 'Unknown error'));
+                    saveBtn.disabled = false;
+                    saveBtn.innerHTML = originalText;
+                }
+            } catch (error) {
+                console.error('Error saving file:', error);
+                showError('Error saving file: ' + error.message);
+                saveBtn.disabled = false;
+                saveBtn.innerHTML = originalText;
+            }
+        }
+
+        // Show delete modal
+        function showDeleteModal(filename) {
+            fileToDelete = filename;
+            document.getElementById('delete-filename').textContent = filename;
+            document.getElementById('delete-modal').style.display = 'block';
+        }
+
+        // Close delete modal
+        function closeDeleteModal() {
+            document.getElementById('delete-modal').style.display = 'none';
+            fileToDelete = null;
+        }
+
+        // Confirm delete
+        async function confirmDelete() {
+            if (!fileToDelete) return;
+
+            const deleteBtn = document.getElementById('delete-file-btn');
+            const originalText = deleteBtn.innerHTML;
+            deleteBtn.disabled = true;
+            deleteBtn.innerHTML = '<span class="loading-spinner"></span> Deleting...';
+
+            try {
+                const response = await fetch('/api/v3/plugins/action', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        plugin_id: PLUGIN_ID,
+                        action_id: 'delete-file',
+                        params: { filename: fileToDelete }
+                    })
+                });
+
+                if (!response.ok) {
+                    const errorText = await response.text();
+                    console.error('Delete file API error:', errorText);
+                    showError('Delete failed: HTTP ' + response.status);
+                    deleteBtn.disabled = false;
+                    deleteBtn.innerHTML = originalText;
+                    return;
+                }
+                
+                const contentType = response.headers.get('content-type');
+                if (!contentType || !contentType.includes('application/json')) {
+                    const text = await response.text();
+                    console.error('Non-JSON delete response:', text.substring(0, 200));
+                    showError('Server returned non-JSON response');
+                    deleteBtn.disabled = false;
+                    deleteBtn.innerHTML = originalText;
+                    return;
+                }
+                
+                const data = await response.json();
+                if (data.status === 'success') {
+                    showSuccess('File deleted successfully');
+                    closeDeleteModal();
+                    loadFiles();
+                } else {
+                    showError('Delete failed: ' + (data.message || 'Unknown error'));
+                    deleteBtn.disabled = false;
+                    deleteBtn.innerHTML = originalText;
+                }
+            } catch (error) {
+                console.error('Error deleting file:', error);
+                showError('Error deleting file: ' + error.message);
+                deleteBtn.disabled = false;
+                deleteBtn.innerHTML = originalText;
+            }
+        }
+
+        // Create file functions removed - upload button replaces create modal
+
+        // Toggle category enabled/disabled
+        async function toggleCategory(categoryName, enabled) {
+            try {
+                const response = await fetch('/api/v3/plugins/action', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        plugin_id: PLUGIN_ID,
+                        action_id: 'toggle-category',
+                        params: {
+                            category_name: categoryName,
+                            enabled: enabled
+                        }
+                    })
+                });
+
+                if (!response.ok) {
+                    const errorText = await response.text();
+                    console.error('Toggle API error:', errorText);
+                    showError('Failed to toggle category: HTTP ' + response.status);
+                    loadFiles(); // Reload to reset toggle state
+                    return;
+                }
+
+                const contentType = response.headers.get('content-type');
+                if (!contentType || !contentType.includes('application/json')) {
+                    const text = await response.text();
+                    console.error('Non-JSON toggle response:', text.substring(0, 200));
+                    showError('Server returned non-JSON response');
+                    loadFiles();
+                    return;
+                }
+
+                const data = await response.json();
+                if (data.status === 'success') {
+                    showSuccess(data.message || `Category ${enabled ? 'enabled' : 'disabled'}`);
+                    loadFiles(); // Reload to update UI
+                } else {
+                    showError('Toggle failed: ' + (data.message || 'Unknown error'));
+                    loadFiles();
+                }
+            } catch (error) {
+                console.error('Error toggling category:', error);
+                showError('Error toggling category: ' + error.message);
+                loadFiles();
+            }
+        }
+
+        // Utility functions
+        function formatFileSize(bytes) {
+            if (bytes === 0) return '0 Bytes';
+            const k = 1024;
+            const sizes = ['Bytes', 'KB', 'MB'];
+            const i = Math.floor(Math.log(bytes) / Math.log(k));
+            return Math.round(bytes / Math.pow(k, i) * 100) / 100 + ' ' + sizes[i];
+        }
+
+        function formatDate(dateString) {
+            if (!dateString) return 'Unknown';
+            try {
+                const date = new Date(dateString);
+                return date.toLocaleDateString() + ' ' + date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+            } catch (e) {
+                return dateString;
+            }
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        function showSuccess(message) {
+            if (typeof showNotification === 'function') {
+                showNotification(message, 'success');
+            } else {
+                alert(message);
+            }
+        }
+
+        function showError(message) {
+            if (typeof showNotification === 'function') {
+                showNotification(message, 'error');
+            } else {
+                alert(message);
+            }
+        }
+    </script>
+</div>
