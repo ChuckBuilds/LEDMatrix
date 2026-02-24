@@ -54,6 +54,10 @@ class PluginStoreManager:
         self.github_cache = {}  # Cache for GitHub API responses
         self.cache_timeout = 3600  # 1 hour cache timeout
         self.registry_cache_timeout = 300  # 5 minutes for registry cache
+        self.commit_info_cache = {}  # Cache for latest commit info: {key: (timestamp, data)}
+        self.commit_cache_timeout = 300  # 5 minutes (same as registry)
+        self.manifest_cache = {}  # Cache for GitHub manifest fetches: {key: (timestamp, data)}
+        self.manifest_cache_timeout = 300  # 5 minutes
         self.github_token = self._load_github_token()
         self._token_validation_cache = {}  # Cache for token validation results: {token: (is_valid, timestamp, error_message)}
         self._token_validation_cache_timeout = 300  # 5 minutes cache for token validation
@@ -576,7 +580,7 @@ class PluginStoreManager:
 
         return results
     
-    def _fetch_manifest_from_github(self, repo_url: str, branch: str = "master", manifest_path: str = "manifest.json") -> Optional[Dict]:
+    def _fetch_manifest_from_github(self, repo_url: str, branch: str = "master", manifest_path: str = "manifest.json", force_refresh: bool = False) -> Optional[Dict]:
         """
         Fetch manifest.json directly from a GitHub repository.
 
@@ -585,6 +589,7 @@ class PluginStoreManager:
             branch: Branch name (default: master)
             manifest_path: Path to manifest within the repo (default: manifest.json).
                           For monorepo plugins this will be e.g. "plugins/football-scoreboard/manifest.json".
+            force_refresh: If True, bypass the cache.
 
         Returns:
             Manifest data or None if not found
@@ -603,24 +608,38 @@ class PluginStoreManager:
                     owner = parts[-2]
                     repo = parts[-1]
 
+                    # Check cache first
+                    cache_key = f"{owner}/{repo}:{branch}:{manifest_path}"
+                    if not force_refresh and cache_key in self.manifest_cache:
+                        cached_time, cached_data = self.manifest_cache[cache_key]
+                        if time.time() - cached_time < self.manifest_cache_timeout:
+                            return cached_data
+
                     raw_url = f"https://raw.githubusercontent.com/{owner}/{repo}/{branch}/{manifest_path}"
 
                     response = self._http_get_with_retries(raw_url, timeout=10)
                     if response.status_code == 200:
-                        return response.json()
+                        result = response.json()
+                        self.manifest_cache[cache_key] = (time.time(), result)
+                        return result
                     elif response.status_code == 404:
                         # Try main branch instead
                         if branch != "main":
                             raw_url = f"https://raw.githubusercontent.com/{owner}/{repo}/main/{manifest_path}"
                             response = self._http_get_with_retries(raw_url, timeout=10)
                             if response.status_code == 200:
-                                return response.json()
+                                result = response.json()
+                                self.manifest_cache[cache_key] = (time.time(), result)
+                                return result
+
+                    # Cache negative result
+                    self.manifest_cache[cache_key] = (time.time(), None)
         except Exception as e:
             self.logger.debug(f"Could not fetch manifest from GitHub for {repo_url}: {e}")
 
         return None
     
-    def _get_latest_commit_info(self, repo_url: str, branch: str = "main") -> Optional[Dict[str, Any]]:
+    def _get_latest_commit_info(self, repo_url: str, branch: str = "main", force_refresh: bool = False) -> Optional[Dict[str, Any]]:
         """Return metadata about the latest commit on the given branch."""
         try:
             if 'github.com' not in repo_url:
@@ -636,6 +655,13 @@ class PluginStoreManager:
 
             owner = parts[-2]
             repo = parts[-1]
+
+            # Check cache first
+            cache_key = f"{owner}/{repo}:{branch}"
+            if not force_refresh and cache_key in self.commit_info_cache:
+                cached_time, cached_data = self.commit_info_cache[cache_key]
+                if time.time() - cached_time < self.commit_cache_timeout:
+                    return cached_data
 
             branches_to_try = self._distinct_sequence([branch, 'main', 'master'])
 
@@ -659,7 +685,7 @@ class PluginStoreManager:
                     commit_author = commit_meta.get('author', {})
                     commit_date_iso = commit_author.get('date', '')
 
-                    return {
+                    result = {
                         'branch': branch_name,
                         'sha': commit_sha_full,
                         'short_sha': commit_sha_short,
@@ -668,6 +694,8 @@ class PluginStoreManager:
                         'author': commit_author.get('name', ''),
                         'message': commit_meta.get('message', ''),
                     }
+                    self.commit_info_cache[cache_key] = (time.time(), result)
+                    return result
 
                 if response.status_code == 403 and not self.github_token:
                     self.logger.debug("GitHub commit API rate limited (403). Consider adding a token.")
@@ -678,33 +706,37 @@ class PluginStoreManager:
             if last_error:
                 self.logger.debug(f"Unable to fetch commit info for {repo_url}: {last_error}")
 
+            # Cache negative result to avoid repeated failing calls
+            self.commit_info_cache[cache_key] = (time.time(), None)
+
         except Exception as e:
             self.logger.debug(f"Error fetching latest commit metadata for {repo_url}: {e}")
 
         return None
     
     
-    def get_plugin_info(self, plugin_id: str, fetch_latest_from_github: bool = True) -> Optional[Dict]:
+    def get_plugin_info(self, plugin_id: str, fetch_latest_from_github: bool = True, force_refresh: bool = False) -> Optional[Dict]:
         """
         Get detailed information about a plugin from the registry.
 
         GitHub provides authoritative metadata such as stars and the latest
         commit. The registry supplies descriptive information (name, id, repo URL).
-        
+
         Args:
             plugin_id: Plugin identifier
             fetch_latest_from_github: If True (default), augment with GitHub commit metadata.
-            
+            force_refresh: If True, bypass caches for commit/manifest data.
+
         Returns:
             Plugin metadata or None if not found
         """
         registry = self.fetch_registry()
         plugins = registry.get('plugins', []) or []
         plugin_info = next((p for p in plugins if p['id'] == plugin_id), None)
-        
+
         if not plugin_info:
             return None
-        
+
         if fetch_latest_from_github:
             repo_url = plugin_info.get('repo')
             if repo_url:
@@ -718,7 +750,7 @@ class PluginStoreManager:
                 plugin_info['last_updated'] = github_info.get('last_commit_date', plugin_info.get('last_updated'))
                 plugin_info['last_updated_iso'] = github_info.get('last_commit_iso', plugin_info.get('last_updated_iso'))
 
-                commit_info = self._get_latest_commit_info(repo_url, branch)
+                commit_info = self._get_latest_commit_info(repo_url, branch, force_refresh=force_refresh)
                 if commit_info:
                     plugin_info['last_commit'] = commit_info.get('short_sha')
                     plugin_info['last_commit_sha'] = commit_info.get('sha')
@@ -731,14 +763,31 @@ class PluginStoreManager:
 
                 plugin_subpath = plugin_info.get('plugin_path', '')
                 manifest_rel = f"{plugin_subpath}/manifest.json" if plugin_subpath else "manifest.json"
-                github_manifest = self._fetch_manifest_from_github(repo_url, branch, manifest_rel)
+                github_manifest = self._fetch_manifest_from_github(repo_url, branch, manifest_rel, force_refresh=force_refresh)
                 if github_manifest:
                     if 'last_updated' in github_manifest and not plugin_info.get('last_updated'):
                         plugin_info['last_updated'] = github_manifest['last_updated']
                     if 'description' in github_manifest:
                         plugin_info['description'] = github_manifest['description']
-        
+
         return plugin_info
+
+    def get_registry_info(self, plugin_id: str) -> Optional[Dict]:
+        """
+        Get plugin information from the registry cache only (no GitHub API calls).
+
+        Use this for lightweight lookups where only registry fields are needed
+        (e.g., verified status, latest_version).
+
+        Args:
+            plugin_id: Plugin identifier
+
+        Returns:
+            Plugin metadata from registry or None if not found
+        """
+        registry = self.fetch_registry()
+        plugins = registry.get('plugins', []) or []
+        return next((p for p in plugins if p.get('id') == plugin_id), None)
     
     def install_plugin(self, plugin_id: str, branch: Optional[str] = None) -> bool:
         """
@@ -754,7 +803,7 @@ class PluginStoreManager:
         branch_info = f" (branch: {branch})" if branch else " (latest branch head)"
         self.logger.info(f"Installing plugin: {plugin_id}{branch_info}")
 
-        plugin_info = self.get_plugin_info(plugin_id, fetch_latest_from_github=True)
+        plugin_info = self.get_plugin_info(plugin_id, fetch_latest_from_github=True, force_refresh=True)
         if not plugin_info:
             self.logger.error(f"Plugin not found in registry: {plugin_id}")
             return False
@@ -1721,7 +1770,7 @@ class PluginStoreManager:
 
                 # Try to get remote info from registry (optional)
                 self.fetch_registry(force_refresh=True)
-                plugin_info_remote = self.get_plugin_info(plugin_id, fetch_latest_from_github=True)
+                plugin_info_remote = self.get_plugin_info(plugin_id, fetch_latest_from_github=True, force_refresh=True)
                 remote_branch = None
                 remote_sha = None
 
@@ -1993,7 +2042,7 @@ class PluginStoreManager:
             # Try registry-based update
             self.logger.info(f"Plugin {plugin_id} is not a git repository, checking registry...")
             self.fetch_registry(force_refresh=True)
-            plugin_info_remote = self.get_plugin_info(plugin_id, fetch_latest_from_github=True)
+            plugin_info_remote = self.get_plugin_info(plugin_id, fetch_latest_from_github=True, force_refresh=True)
             
             # If not in registry but we have a repo URL, try reinstalling from that URL
             if not plugin_info_remote and repo_url:
