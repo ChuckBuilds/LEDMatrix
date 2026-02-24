@@ -44,3 +44,6 @@ plugins/*
 # Binary files and backups
 bin/pixlet/
 config/backups/
+
+# Starlark apps runtime storage (installed .star files and cached renders)
+/starlark-apps/

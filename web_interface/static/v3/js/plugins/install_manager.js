@@ -80,17 +80,17 @@ const PluginInstallManager = {
     
     /**
      * Update all plugins.
-     * 
+     *
      * @returns {Promise<Array>} Update results
      */
     async updateAll() {
         if (!window.PluginStateManager || !window.PluginStateManager.installedPlugins) {
             throw new Error('Installed plugins not loaded');
         }
-        
+
         const plugins = window.PluginStateManager.installedPlugins;
         const results = [];
-        
+
         for (const plugin of plugins) {
             try {
                 const result = await this.update(plugin.id);
@@ -99,7 +99,7 @@ const PluginInstallManager = {
                 results.push({ pluginId: plugin.id, success: false, error });
             }
         }
-        
+
         return results;
     }
 };

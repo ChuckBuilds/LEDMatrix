@@ -194,32 +194,33 @@ class CacheStrategy:
         """
         key_lower = key.lower()
         
-        # Live sports data
+        # Odds data — checked FIRST because odds keys may also contain 'live'/'current'
+        # (e.g. odds_espn_nba_game_123_live). The odds TTL (120s for live, 1800s for
+        # upcoming) must win over the generic sports_live TTL (30s) to avoid hitting
+        # the ESPN odds API every 30 seconds per game.
+        if 'odds' in key_lower:
+            # For live games, use shorter cache; for upcoming games, use longer cache
+            if any(x in key_lower for x in ['live', 'current']):
+                return 'odds_live'  # Live odds change more frequently (120s TTL)
+            return 'odds'  # Regular odds for upcoming games (1800s TTL)
+
+        # Live sports data (only reached if key does NOT contain 'odds')
         if any(x in key_lower for x in ['live', 'current', 'scoreboard']):
-            if 'soccer' in key_lower:
-                return 'sports_live'  # Soccer live data is very time-sensitive
             return 'sports_live'
-        
+
         # Weather data
         if 'weather' in key_lower:
             return 'weather_current'
-        
+
         # Market data
         if 'stock' in key_lower or 'crypto' in key_lower:
             if 'crypto' in key_lower:
                 return 'crypto'
             return 'stocks'
-        
+
         # News data
         if 'news' in key_lower:
             return 'news'
-        
-        # Odds data - differentiate between live and upcoming games
-        if 'odds' in key_lower:
-            # For live games, use shorter cache; for upcoming games, use longer cache
-            if any(x in key_lower for x in ['live', 'current']):
-                return 'odds_live'  # Live odds change more frequently
-            return 'odds'  # Regular odds for upcoming games
         
         # Sports schedules and team info
         if any(x in key_lower for x in ['schedule', 'team_map', 'league']):

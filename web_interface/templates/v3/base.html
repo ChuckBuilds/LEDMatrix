@@ -1375,7 +1375,7 @@
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
 
     <!-- Custom v3 styles -->
-    <link rel="stylesheet" href="{{ url_for('static', filename='v3/app.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='v3/app.css') }}?v=20260216b">
 </head>
 <body x-data="app()" class="bg-gray-50 min-h-screen">
     <!-- Header -->
@@ -5013,7 +5013,7 @@
     <script src="{{ url_for('static', filename='v3/js/widgets/plugin-loader.js') }}" defer></script>
     
     <!-- Legacy plugins_manager.js (for backward compatibility during migration) -->
-    <script src="{{ url_for('static', filename='v3/plugins_manager.js') }}?v=20250116a" defer></script>
+    <script src="{{ url_for('static', filename='v3/plugins_manager.js') }}?v=20260216b" defer></script>
     
     <!-- Custom feeds table helper functions -->
     <script>
