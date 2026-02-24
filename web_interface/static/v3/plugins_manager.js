@@ -5261,8 +5261,17 @@ function showStoreLoading(show) {
 
 // ── Plugin Store: Client-Side Filter/Sort/Pagination ────────────────────────
 
-function isStorePluginInstalled(pluginId) {
-    return (window.installedPlugins || installedPlugins || []).some(p => p.id === pluginId);
+function isStorePluginInstalled(pluginIdOrPlugin) {
+    const installed = window.installedPlugins || installedPlugins || [];
+    // Accept either a plain ID string or a store plugin object (which may have plugin_path)
+    if (typeof pluginIdOrPlugin === 'string') {
+        return installed.some(p => p.id === pluginIdOrPlugin);
+    }
+    const storeId = pluginIdOrPlugin.id;
+    // Derive the actual installed directory name from plugin_path (e.g. "plugins/ledmatrix-weather" → "ledmatrix-weather")
+    const pluginPath = pluginIdOrPlugin.plugin_path || '';
+    const pathDerivedId = pluginPath ? pluginPath.split('/').pop() : null;
+    return installed.some(p => p.id === storeId || (pathDerivedId && p.id === pathDerivedId));
 }
 
 function applyStoreFiltersAndSort(skipPageReset) {
@@ -5292,9 +5301,9 @@ function applyStoreFiltersAndSort(skipPageReset) {
 
     // Installed filter
     if (st.filterInstalled === true) {
-        list = list.filter(plugin => isStorePluginInstalled(plugin.id));
+        list = list.filter(plugin => isStorePluginInstalled(plugin));
     } else if (st.filterInstalled === false) {
-        list = list.filter(plugin => !isStorePluginInstalled(plugin.id));
+        list = list.filter(plugin => !isStorePluginInstalled(plugin));
     }
 
     // Sort
@@ -5541,7 +5550,7 @@ function renderPluginStore(plugins) {
     };
 
     container.innerHTML = plugins.map(plugin => {
-        const installed = isStorePluginInstalled(plugin.id);
+        const installed = isStorePluginInstalled(plugin);
         return `
         <div class="plugin-card">
             <div class="flex items-start justify-between mb-4">
@@ -6103,7 +6112,7 @@ function renderCustomRegistryPlugins(plugins, registryUrl) {
     };
     
     container.innerHTML = plugins.map(plugin => {
-        const isInstalled = installedPlugins.some(p => p.id === plugin.id);
+        const isInstalled = isStorePluginInstalled(plugin);
         const pluginIdJs = escapeJs(plugin.id);
         const escapedUrlJs = escapeJs(registryUrl);
         const pluginPathJs = escapeJs(plugin.plugin_path || '');
