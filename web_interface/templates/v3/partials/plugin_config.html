@@ -537,7 +537,40 @@
             {% else %}
             {% set str_widget = prop.get('x-widget') or prop.get('x_widget') %}
             {% set str_value = value if value is not none else (prop.default if prop.default is defined else '') %}
-            {% if str_widget in ['text-input', 'textarea', 'select-dropdown', 'toggle-switch', 'radio-group', 'date-picker', 'slider', 'color-picker', 'email-input', 'url-input', 'password-input', 'font-selector'] %}
+            {% if str_widget == 'file-upload' %}
+                {# Single-file upload widget for string fields (e.g., credentials.json) #}
+                {% set upload_config = prop.get('x-upload-config') or {} %}
+                {% set upload_endpoint = upload_config.get('upload_endpoint', '') %}
+                {% set target_filename = upload_config.get('target_filename', 'file.json') %}
+                {% set max_size_mb = upload_config.get('max_size_mb', 1) %}
+                {% set allowed_extensions = upload_config.get('allowed_extensions', ['.json']) %}
+                <div id="{{ field_id }}_upload_widget" class="mt-1">
+                    <div id="{{ field_id }}_drop_zone"
+                         class="border-2 border-dashed border-gray-300 rounded-lg p-4 text-center hover:border-blue-400 transition-colors cursor-pointer"
+                         ondrop="window.handleFileDrop(event, this.dataset.fieldId)"
+                         ondragover="event.preventDefault()"
+                         data-field-id="{{ field_id }}"
+                         onclick="document.getElementById('{{ field_id }}_file_input').click()">
+                        <input type="file"
+                               id="{{ field_id }}_file_input"
+                               accept="{{ allowed_extensions|join(',') }}"
+                               style="display: none;"
+                               data-field-id="{{ field_id }}"
+                               data-upload-endpoint="{{ upload_endpoint }}"
+                               data-target-filename="{{ target_filename }}"
+                               data-max-size-mb="{{ max_size_mb }}"
+                               onchange="window.handleSingleFileSelect(event, this.dataset.fieldId)">
+                        <i class="fas fa-cloud-upload-alt text-2xl text-gray-400 mb-1"></i>
+                        <p class="text-sm text-gray-600">Click to upload {{ target_filename }}</p>
+                        <p class="text-xs text-gray-500 mt-1">Max {{ max_size_mb }}MB ({{ allowed_extensions|join(', ') }})</p>
+                    </div>
+                    <div id="{{ field_id }}_upload_status" class="mt-2 text-xs text-gray-500"></div>
+                    <input type="hidden"
+                           id="{{ field_id }}"
+                           name="{{ full_key }}"
+                           value="{{ str_value }}">
+                </div>
+            {% elif str_widget in ['text-input', 'textarea', 'select-dropdown', 'toggle-switch', 'radio-group', 'date-picker', 'slider', 'color-picker', 'email-input', 'url-input', 'password-input', 'font-selector'] %}
                 {# Render widget container #}
                 <div id="{{ field_id }}_container" class="{{ str_widget }}-container"></div>
                 <script>

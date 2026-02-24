@@ -71,7 +71,12 @@
     window.handleFileDrop = function(event, fieldId) {
         event.preventDefault();
         const files = event.dataTransfer.files;
-        if (files.length > 0) {
+        if (files.length === 0) return;
+        // Route to single-file handler if this is a string file-upload widget
+        const fileInput = document.getElementById(`${fieldId}_file_input`);
+        if (fileInput && fileInput.dataset.uploadEndpoint) {
+            window.handleSingleFileUpload(fieldId, files[0]);
+        } else {
             window.handleFiles(fieldId, Array.from(files));
         }
     };
@@ -85,6 +90,83 @@
         const files = event.target.files;
         if (files.length > 0) {
             window.handleFiles(fieldId, Array.from(files));
+        }
+    };
+
+    /**
+     * Handle single-file select for string file-upload widgets (e.g. credentials.json)
+     * @param {Event} event - Change event
+     * @param {string} fieldId - Field ID
+     */
+    window.handleSingleFileSelect = function(event, fieldId) {
+        const files = event.target.files;
+        if (files.length > 0) {
+            window.handleSingleFileUpload(fieldId, files[0]);
+        }
+    };
+
+    /**
+     * Upload a single file for string file-upload widgets
+     * Reads upload config from data attributes on the file input element.
+     * @param {string} fieldId - Field ID
+     * @param {File} file - File to upload
+     */
+    window.handleSingleFileUpload = async function(fieldId, file) {
+        const fileInput = document.getElementById(`${fieldId}_file_input`);
+        if (!fileInput) return;
+
+        const uploadEndpoint = fileInput.dataset.uploadEndpoint;
+        const targetFilename = fileInput.dataset.targetFilename || 'file.json';
+        const maxSizeMB = parseFloat(fileInput.dataset.maxSizeMb || '1');
+
+        const statusDiv = document.getElementById(`${fieldId}_upload_status`);
+        const notifyFn = window.showNotification || console.log;
+
+        // Validate size
+        if (file.size > maxSizeMB * 1024 * 1024) {
+            notifyFn(`File exceeds ${maxSizeMB}MB limit`, 'error');
+            return;
+        }
+
+        if (statusDiv) {
+            statusDiv.innerHTML = '<i class="fas fa-spinner fa-spin mr-1"></i>Uploading...';
+            statusDiv.className = 'mt-2 text-xs text-gray-500';
+        }
+
+        const formData = new FormData();
+        formData.append('file', file);
+
+        try {
+            const response = await fetch(uploadEndpoint, {
+                method: 'POST',
+                body: formData
+            });
+            const data = await response.json();
+
+            if (data.status === 'success') {
+                if (statusDiv) {
+                    statusDiv.innerHTML = `<i class="fas fa-check-circle mr-1 text-green-600"></i><span class="text-green-600">Uploaded: ${targetFilename}</span>`;
+                    statusDiv.className = 'mt-2 text-xs';
+                }
+                // Update hidden input with the target filename
+                const hiddenInput = document.getElementById(fieldId);
+                if (hiddenInput) hiddenInput.value = targetFilename;
+                notifyFn(`${targetFilename} uploaded successfully`, 'success');
+            } else {
+                if (statusDiv) {
+                    statusDiv.innerHTML = `<i class="fas fa-exclamation-circle mr-1 text-red-600"></i><span class="text-red-600">Upload failed: ${data.message}</span>`;
+                    statusDiv.className = 'mt-2 text-xs';
+                }
+                notifyFn(`Upload failed: ${data.message}`, 'error');
+            }
+        } catch (error) {
+            if (statusDiv) {
+                statusDiv.innerHTML = `<i class="fas fa-exclamation-circle mr-1 text-red-600"></i><span class="text-red-600">Upload error: ${error.message}</span>`;
+                statusDiv.className = 'mt-2 text-xs';
+            }
+            notifyFn(`Upload error: ${error.message}`, 'error');
+        } finally {
+            if (fileInput) fileInput.value = '';
         }
     };
 
