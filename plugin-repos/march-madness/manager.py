@@ -86,7 +86,6 @@ class MarchMadnessPlugin(BasePlugin):
         super().__init__(plugin_id, config, display_manager, cache_manager, plugin_manager)
 
         # Config
-        self.is_enabled: bool = config.get("enabled", False)
         leagues_config = config.get("leagues", {})
         self.show_ncaam: bool = leagues_config.get("ncaam", True)
         self.show_ncaaw: bool = leagues_config.get("ncaaw", True)
@@ -203,8 +202,10 @@ class MarchMadnessPlugin(BasePlugin):
                 ratio = target_h / img.height
                 target_w = int(img.width * ratio)
                 self._round_logos[round_key] = img.resize((target_w, target_h), Image.Resampling.LANCZOS)
-            except Exception as e:
+            except (OSError, ValueError) as e:
                 self.logger.warning(f"Could not load round logo {filename}: {e}")
+            except Exception as e:
+                self.logger.exception(f"Unexpected error loading round logo {filename}: {e}")
 
         # March Madness logo
         mm_path = logo_dir / "MARCH_MADNESS.png"
@@ -214,8 +215,10 @@ class MarchMadnessPlugin(BasePlugin):
             ratio = target_h / img.height
             target_w = int(img.width * ratio)
             self._march_madness_logo = img.resize((target_w, target_h), Image.Resampling.LANCZOS)
-        except Exception as e:
+        except (OSError, ValueError) as e:
             self.logger.warning(f"Could not load March Madness logo: {e}")
+        except Exception as e:
+            self.logger.exception(f"Unexpected error loading March Madness logo: {e}")
 
     def _get_team_logo(self, abbr: str) -> Optional[Image.Image]:
         if abbr in self._team_logo_cache:
@@ -258,7 +261,8 @@ class MarchMadnessPlugin(BasePlugin):
                 continue
 
             cache_key = f"march_madness_{league_key}_scoreboard"
-            cached = self.cache_manager.get(cache_key, max_age=300)
+            cache_max_age = 60 if self._has_live_games else self.update_interval
+            cached = self.cache_manager.get(cache_key, max_age=cache_max_age)
             if cached:
                 all_games.extend(cached)
                 continue
@@ -354,7 +358,6 @@ class MarchMadnessPlugin(BasePlugin):
             pass
 
         # Period / clock for live games
-        situation = comp.get("situation", {})
         period = 0
         clock = ""
         period_text = ""
@@ -363,8 +366,14 @@ class MarchMadnessPlugin(BasePlugin):
             status_obj = comp.get("status", {})
             period = status_obj.get("period", 0)
             clock = status_obj.get("displayClock", "")
-            period_text = f"H{period}" if period <= 2 else f"OT{period - 2}"
-            if "halftime" in status_detail.lower():
+            detail_lower = status_detail.lower()
+            uses_quarters = league_key == "ncaaw" or "quarter" in detail_lower or detail_lower.startswith("q")
+            if period <= (4 if uses_quarters else 2):
+                period_text = f"Q{period}" if uses_quarters else f"H{period}"
+            else:
+                ot_num = period - (4 if uses_quarters else 2)
+                period_text = f"OT{ot_num}" if ot_num > 1 else "OT"
+            if "halftime" in detail_lower:
                 is_halftime = True
         elif state == "post":
             period_text = status.get("shortDetail", "Final")
@@ -714,7 +723,7 @@ class MarchMadnessPlugin(BasePlugin):
 
     def update(self) -> None:
         """Fetch and process tournament data."""
-        if not self.is_enabled:
+        if not self.enabled:
             return
 
         current_time = time.time()
@@ -748,7 +757,7 @@ class MarchMadnessPlugin(BasePlugin):
 
     def display(self, force_clear: bool = False) -> None:
         """Render one scroll frame."""
-        if not self.is_enabled:
+        if not self.enabled:
             return
 
         # Check for live update
@@ -849,7 +858,7 @@ class MarchMadnessPlugin(BasePlugin):
         return self.dynamic_duration
 
     def supports_dynamic_duration(self) -> bool:
-        if not self.is_enabled:
+        if not self.enabled:
             return False
         return self.dynamic_duration_enabled
 
