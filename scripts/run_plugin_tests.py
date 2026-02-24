@@ -159,10 +159,15 @@ def main():
         # Auto-detect: prefer plugins/ if it has content, then plugin-repos/
         plugins_path = PROJECT_ROOT / 'plugins'
         plugin_repos_path = PROJECT_ROOT / 'plugin-repos'
-        if plugins_path.exists() and any(
-            p for p in plugins_path.iterdir()
-            if p.is_dir() and not p.name.startswith('.')
-        ):
+        try:
+            has_plugins = plugins_path.exists() and any(
+                p for p in plugins_path.iterdir()
+                if p.is_dir() and not p.name.startswith('.')
+            )
+        except PermissionError:
+            print(f"Warning: cannot read {plugins_path}, falling back to plugin-repos/")
+            has_plugins = False
+        if has_plugins:
             plugins_dir = plugins_path
         elif plugin_repos_path.exists():
             plugins_dir = plugin_repos_path

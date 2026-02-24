@@ -87,8 +87,8 @@ class TestVisualDisplayManager:
         output = tmp_path / "test_render.png"
         vdm.save_snapshot(str(output))
         assert output.exists()
-        saved_img = Image.open(str(output))
-        assert saved_img.size == (128, 32)
+        with Image.open(str(output)) as saved_img:
+            assert saved_img.size == (128, 32)
 
     def test_get_image(self):
         vdm = VisualTestDisplayManager(width=128, height=32)

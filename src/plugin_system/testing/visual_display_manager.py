@@ -138,8 +138,8 @@ class VisualTestDisplayManager:
                 face = freetype.Face(bdf_path)
                 self.calendar_font = face
                 self.bdf_5x7_font = face
-            except Exception:
-                logger.debug("BDF font not available, using small_font as fallback")
+            except (ImportError, FileNotFoundError, OSError) as e:
+                logger.debug("BDF font not available, using small_font as fallback: %s", e)
                 self.calendar_font = self.small_font
                 self.bdf_5x7_font = self.small_font
 
@@ -147,11 +147,12 @@ class VisualTestDisplayManager:
             try:
                 xs_path = str(fonts_dir / '4x6-font.ttf')
                 self.extra_small_font = ImageFont.truetype(xs_path, 6)
-            except Exception:
+            except (FileNotFoundError, OSError) as e:
+                logger.debug("Extra small font not available, using fallback: %s", e)
                 self.extra_small_font = self.small_font
 
-        except Exception as e:
-            logger.debug(f"Font loading fallback: {e}")
+        except (FileNotFoundError, OSError) as e:
+            logger.debug("Font loading fallback: %s", e)
             self.regular_font = ImageFont.load_default()
             self.small_font = self.regular_font
             self.font = self.regular_font
@@ -173,9 +174,9 @@ class VisualTestDisplayManager:
         """No-op for hardware; marks that display was updated."""
         self.update_called = True
 
-    def draw_text(self, text: str, x: int = None, y: int = None,
-                  color: tuple = (255, 255, 255), small_font: bool = False,
-                  font=None, centered: bool = False):
+    def draw_text(self, text: str, x: Optional[int] = None, y: Optional[int] = None,
+                  color: Tuple[int, int, int] = (255, 255, 255), small_font: bool = False,
+                  font: Optional[Any] = None, centered: bool = False) -> None:
         """Draw text on the canvas, matching DisplayManager.draw_text() signature."""
         # Track the call
         self.draw_calls.append({
@@ -325,9 +326,9 @@ class VisualTestDisplayManager:
         """Draw a sun icon using yellow circles and lines."""
         self._draw_sun(x, y, size)
 
-    def draw_cloud(self, x: int, y: int, size: int = 16, color=(200, 200, 200)):
+    def draw_cloud(self, x: int, y: int, size: int = 16, color: Tuple[int, int, int] = (200, 200, 200)):
         """Draw a cloud icon."""
-        self._draw_cloud(x, y, size)
+        self._draw_cloud(x, y, size, color)
 
     def draw_rain(self, x: int, y: int, size: int = 16):
         """Draw rain icon with cloud and droplets."""
@@ -355,9 +356,9 @@ class VisualTestDisplayManager:
             end_y = center_y + int((radius + ray_length) * math.sin(rad))
             self.draw.line([start_x, start_y, end_x, end_y], fill=self.WEATHER_COLORS['sun'], width=2)
 
-    def _draw_cloud(self, x: int, y: int, size: int) -> None:
+    def _draw_cloud(self, x: int, y: int, size: int, color: Optional[Tuple[int, int, int]] = None) -> None:
         """Draw a cloud using multiple circles (internal weather icon version)."""
-        cloud_color = self.WEATHER_COLORS['cloud']
+        cloud_color = color if color is not None else self.WEATHER_COLORS['cloud']
         base_y = y + size // 2
         circle_radius = size // 4
         positions = [
@@ -498,6 +499,14 @@ class VisualTestDisplayManager:
         self.draw_calls = []
         self.image = Image.new('RGB', (self._width, self._height), (0, 0, 0))
         self.draw = ImageDraw.Draw(self.image)
+        self._scrolling_state = {
+            'is_scrolling': False,
+            'last_scroll_activity': 0,
+            'scroll_inactivity_threshold': 2.0,
+            'deferred_updates': [],
+            'max_deferred_updates': 50,
+            'deferred_update_ttl': 300.0,
+        }
 
     def cleanup(self):
         """Clean up resources."""

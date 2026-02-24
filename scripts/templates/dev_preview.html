@@ -289,14 +289,20 @@
 
                     <!-- Grid toggle -->
                     <div class="flex items-center gap-2">
-                        <label class="text-xs" style="color: var(--text-secondary);">Grid</label>
-                        <div class="toggle-switch" id="gridToggle" onclick="toggleGrid()"></div>
+                        <label class="text-xs" for="gridToggle" style="color: var(--text-secondary);">Grid</label>
+                        <button role="switch" aria-checked="false" aria-label="Toggle grid overlay"
+                                class="toggle-switch" id="gridToggle"
+                                onclick="toggleGrid()"
+                                onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleGrid();}"></button>
                     </div>
 
                     <!-- Auto-refresh toggle -->
                     <div class="flex items-center gap-2">
-                        <label class="text-xs" style="color: var(--text-secondary);">Auto</label>
-                        <div class="toggle-switch active" id="autoRefreshToggle" onclick="toggleAutoRefresh()"></div>
+                        <label class="text-xs" for="autoRefreshToggle" style="color: var(--text-secondary);">Auto</label>
+                        <button role="switch" aria-checked="true" aria-label="Toggle auto-refresh"
+                                class="toggle-switch active" id="autoRefreshToggle"
+                                onclick="toggleAutoRefresh()"
+                                onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleAutoRefresh();}"></button>
                     </div>
                 </div>
             </div>
@@ -495,7 +501,9 @@
         // ---------- Grid overlay ----------
         function toggleGrid() {
             showGrid = !showGrid;
-            document.getElementById('gridToggle').classList.toggle('active', showGrid);
+            const btn = document.getElementById('gridToggle');
+            btn.classList.toggle('active', showGrid);
+            btn.setAttribute('aria-checked', showGrid ? 'true' : 'false');
             updateGrid();
         }
 
@@ -543,7 +551,9 @@
         // ---------- Auto-refresh toggle ----------
         function toggleAutoRefresh() {
             autoRefresh = !autoRefresh;
-            document.getElementById('autoRefreshToggle').classList.toggle('active', autoRefresh);
+            const btn = document.getElementById('autoRefreshToggle');
+            btn.classList.toggle('active', autoRefresh);
+            btn.setAttribute('aria-checked', autoRefresh ? 'true' : 'false');
         }
 
         // ---------- Theme ----------

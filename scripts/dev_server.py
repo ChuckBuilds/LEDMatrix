@@ -18,7 +18,9 @@ import os
 import json
 import time
 import argparse
+import logging
 from pathlib import Path
+from typing import Any, Dict, List, Optional
 
 # Add project root to path
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -31,15 +33,23 @@ from flask import Flask, render_template, request, jsonify
 
 app = Flask(__name__, template_folder=str(Path(__file__).parent / 'templates'))
 
+logger = logging.getLogger(__name__)
+
 # Will be set from CLI args
-_extra_dirs = []
+_extra_dirs: List[str] = []
+
+# Render endpoint resource guards
+MAX_WIDTH = 512
+MAX_HEIGHT = 512
+MIN_WIDTH = 1
+MIN_HEIGHT = 1
 
 
 # --------------------------------------------------------------------------
 # Plugin discovery
 # --------------------------------------------------------------------------
 
-def get_search_dirs():
+def get_search_dirs() -> List[Path]:
     """Get all directories to search for plugins."""
     dirs = [
         PROJECT_ROOT / 'plugins',
@@ -50,27 +60,32 @@ def get_search_dirs():
     return dirs
 
 
-def discover_plugins():
+def discover_plugins() -> List[Dict[str, Any]]:
     """Discover all available plugins across search directories."""
-    plugins = []
-    seen_ids = set()
+    plugins: List[Dict[str, Any]] = []
+    seen_ids: set = set()
 
     for search_dir in get_search_dirs():
         if not search_dir.exists():
+            logger.debug("[Dev Server] Search dir missing, skipping: %s", search_dir)
             continue
         for item in sorted(search_dir.iterdir()):
-            if not item.is_dir() or item.name.startswith('.'):
+            if item.name.startswith('.') or not item.is_dir():
+                logger.debug("[Dev Server] Skipping non-plugin entry: %s", item)
                 continue
             manifest_path = item / 'manifest.json'
             if not manifest_path.exists():
+                logger.debug("[Dev Server] No manifest.json in %s, skipping", item)
                 continue
             try:
                 with open(manifest_path, 'r') as f:
-                    manifest = json.load(f)
-                plugin_id = manifest.get('id', item.name)
+                    manifest: Dict[str, Any] = json.load(f)
+                plugin_id: str = manifest.get('id', item.name)
                 if plugin_id in seen_ids:
+                    logger.debug("[Dev Server] Duplicate plugin_id '%s' at %s, skipping", plugin_id, item)
                     continue
                 seen_ids.add(plugin_id)
+                logger.debug("[Dev Server] Discovered plugin id=%s name=%s", plugin_id, manifest.get('name', plugin_id))
                 plugins.append({
                     'id': plugin_id,
                     'name': manifest.get('name', plugin_id),
@@ -80,13 +95,17 @@ def discover_plugins():
                     'source_dir': str(search_dir),
                     'plugin_dir': str(item),
                 })
-            except (json.JSONDecodeError, OSError):
+            except json.JSONDecodeError as e:
+                logger.warning("[Dev Server] JSON decode error in %s: %s", manifest_path, e)
+                continue
+            except OSError as e:
+                logger.warning("[Dev Server] OS error reading %s: %s", manifest_path, e)
                 continue
 
     return plugins
 
 
-def find_plugin_dir(plugin_id):
+def find_plugin_dir(plugin_id: str) -> Optional[Path]:
     """Find a plugin directory by ID."""
     from src.plugin_system.plugin_loader import PluginLoader
     loader = PluginLoader()
@@ -99,14 +118,14 @@ def find_plugin_dir(plugin_id):
     return None
 
 
-def load_config_defaults(plugin_dir):
+def load_config_defaults(plugin_dir: 'str | Path') -> Dict[str, Any]:
     """Extract default values from config_schema.json."""
     schema_path = Path(plugin_dir) / 'config_schema.json'
     if not schema_path.exists():
         return {}
     with open(schema_path, 'r') as f:
         schema = json.load(f)
-    defaults = {}
+    defaults: Dict[str, Any] = {}
     for key, prop in schema.get('properties', {}).items():
         if 'default' in prop:
             defaults[key] = prop['default']
@@ -166,10 +185,19 @@ def api_render():
 
     plugin_id = data['plugin_id']
     user_config = data.get('config', {})
-    width = data.get('width', 128)
-    height = data.get('height', 32)
     mock_data = data.get('mock_data', {})
     skip_update = data.get('skip_update', False)
+
+    try:
+        width = int(data.get('width', 128))
+        height = int(data.get('height', 32))
+    except (TypeError, ValueError):
+        return jsonify({'error': 'width and height must be integers'}), 400
+
+    if not (MIN_WIDTH <= width <= MAX_WIDTH):
+        return jsonify({'error': f'width must be between {MIN_WIDTH} and {MAX_WIDTH}'}), 400
+    if not (MIN_HEIGHT <= height <= MAX_HEIGHT):
+        return jsonify({'error': f'height must be between {MIN_HEIGHT} and {MAX_HEIGHT}'}), 400
 
     # Find plugin
     plugin_dir = find_plugin_dir(plugin_id)

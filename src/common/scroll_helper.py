@@ -261,7 +261,13 @@ class ScrollHelper:
         # total_scroll_width the last card has fully scrolled off the left edge.
         # Adding display_width here would cause 1-2 extra wrap-arounds on wide chains.
         required_total_distance = self.total_scroll_width
-        
+
+        # Guard: zero-width content has nothing to scroll — keep position at 0 and skip
+        # completion/wrap logic to avoid producing an invalid -1 position.
+        if required_total_distance == 0:
+            self.scroll_position = 0
+            return
+
         # Check completion FIRST (before wrap-around) to prevent visual loop
         # When dynamic duration is enabled and cycle is complete, stop at end instead of wrapping
         is_complete = self.total_distance_scrolled >= required_total_distance

@@ -17,6 +17,7 @@ import os
 import json
 import argparse
 from pathlib import Path
+from typing import Any, Dict, Optional, Sequence, Union
 
 # Add project root to path
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -25,8 +26,15 @@ sys.path.insert(0, str(PROJECT_ROOT))
 # Prevent hardware imports
 os.environ['EMULATOR'] = 'true'
 
+# Import logger after path setup so src.logging_config is importable
+from src.logging_config import get_logger  # noqa: E402
+logger = get_logger("[Render Plugin]")
 
-def find_plugin_dir(plugin_id, search_dirs):
+MIN_DIMENSION = 1
+MAX_DIMENSION = 512
+
+
+def find_plugin_dir(plugin_id: str, search_dirs: Sequence[Union[str, Path]]) -> Optional[Path]:
     """Find a plugin directory by searching multiple paths."""
     from src.plugin_system.plugin_loader import PluginLoader
     loader = PluginLoader()
@@ -36,11 +44,11 @@ def find_plugin_dir(plugin_id, search_dirs):
             continue
         result = loader.find_plugin_directory(plugin_id, search_path)
         if result:
-            return result
+            return Path(result)
     return None
 
 
-def load_manifest(plugin_dir):
+def load_manifest(plugin_dir: Path) -> Dict[str, Any]:
     """Load and return manifest.json from plugin directory."""
     manifest_path = plugin_dir / 'manifest.json'
     if not manifest_path.exists():
@@ -49,21 +57,22 @@ def load_manifest(plugin_dir):
         return json.load(f)
 
 
-def load_config_defaults(plugin_dir):
+def load_config_defaults(plugin_dir: Path) -> Dict[str, Any]:
     """Extract default values from config_schema.json."""
     schema_path = plugin_dir / 'config_schema.json'
     if not schema_path.exists():
         return {}
     with open(schema_path, 'r') as f:
         schema = json.load(f)
-    defaults = {}
+    defaults: Dict[str, Any] = {}
     for key, prop in schema.get('properties', {}).items():
         if 'default' in prop:
             defaults[key] = prop['default']
     return defaults
 
 
-def main():
+def main() -> int:
+    """Load a plugin, call update() + display(), and save the result as a PNG image."""
     parser = argparse.ArgumentParser(description='Render a plugin display to a PNG image')
     parser.add_argument('--plugin', '-p', required=True, help='Plugin ID to render')
     parser.add_argument('--plugin-dir', '-d', default=None,
@@ -81,6 +90,13 @@ def main():
 
     args = parser.parse_args()
 
+    if not (MIN_DIMENSION <= args.width <= MAX_DIMENSION):
+        print(f"Error: --width must be between {MIN_DIMENSION} and {MAX_DIMENSION} (got {args.width})")
+        raise SystemExit(1)
+    if not (MIN_DIMENSION <= args.height <= MAX_DIMENSION):
+        print(f"Error: --height must be between {MIN_DIMENSION} and {MAX_DIMENSION} (got {args.height})")
+        raise SystemExit(1)
+
     # Determine search directories
     if args.plugin_dir:
         search_dirs = [args.plugin_dir]
@@ -93,10 +109,10 @@ def main():
     # Find plugin
     plugin_dir = find_plugin_dir(args.plugin, search_dirs)
     if not plugin_dir:
-        print(f"Error: Plugin '{args.plugin}' not found in: {search_dirs}")
+        logger.error("Plugin '%s' not found in: %s", args.plugin, search_dirs)
         return 1
 
-    print(f"Found plugin at: {plugin_dir}")
+    logger.info("Found plugin at: %s", plugin_dir)
 
     # Load manifest
     manifest = load_manifest(Path(plugin_dir))
@@ -106,7 +122,7 @@ def main():
     try:
         user_config = json.loads(args.config)
     except json.JSONDecodeError as e:
-        print(f"Error: Invalid JSON config: {e}")
+        logger.error("Invalid JSON config: %s", e)
         return 1
 
     config = {'enabled': True}
@@ -118,7 +134,7 @@ def main():
     if args.mock_data:
         mock_data_path = Path(args.mock_data)
         if not mock_data_path.exists():
-            print(f"Error: Mock data file not found: {args.mock_data}")
+            logger.error("Mock data file not found: %s", args.mock_data)
             return 1
         with open(mock_data_path, 'r') as f:
             mock_data = json.load(f)
@@ -139,7 +155,7 @@ def main():
     loader = PluginLoader()
 
     try:
-        plugin_instance, module = loader.load_plugin(
+        plugin_instance, _module = loader.load_plugin(
             plugin_id=args.plugin,
             manifest=manifest,
             plugin_dir=Path(plugin_dir),
@@ -149,34 +165,32 @@ def main():
             plugin_manager=plugin_manager,
             install_deps=False,
         )
-    except Exception as e:
-        print(f"Error loading plugin: {e}")
+    except (ImportError, OSError, ValueError) as e:
+        logger.error("Error loading plugin '%s': %s", args.plugin, e)
         return 1
 
-    print(f"Plugin '{args.plugin}' loaded successfully")
+    logger.info("Plugin '%s' loaded successfully", args.plugin)
 
     # Run update() then display()
     if not args.skip_update:
         try:
             plugin_instance.update()
-            print("update() completed")
+            logger.debug("update() completed")
         except Exception as e:
-            print(f"Warning: update() raised: {e}")
-            print("Continuing to display()...")
+            logger.warning("update() raised: %s — continuing to display()", e)
 
     try:
         plugin_instance.display(force_clear=True)
-        print("display() completed")
+        logger.debug("display() completed")
     except Exception as e:
-        print(f"Error in display(): {e}")
+        logger.error("Error in display(): %s", e)
         return 1
 
     # Save the rendered image
     output_path = Path(args.output)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     display_manager.save_snapshot(str(output_path))
-    print(f"Rendered image saved to: {output_path}")
-    print(f"Dimensions: {args.width}x{args.height}")
+    logger.info("Rendered image saved to: %s (%dx%d)", output_path, args.width, args.height)
 
     return 0
 

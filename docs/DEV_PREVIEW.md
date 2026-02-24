@@ -80,7 +80,7 @@ python scripts/render_plugin.py --plugin football-scoreboard \
 
 Claude can run the render script, then read the output PNG (Claude is multimodal and can see images). This enables a visual feedback loop:
 
-```
+```bash
 Claude → bash: python scripts/render_plugin.py --plugin hello-world --output /tmp/render.png
 Claude → Read /tmp/render.png   ← Claude sees the actual rendered display
 Claude → (makes code changes based on what it sees)
