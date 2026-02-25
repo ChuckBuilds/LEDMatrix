@@ -1024,7 +1024,7 @@ def get_secrets_config():
             for k, v in d.items():
                 if isinstance(v, dict):
                     masked[k] = _mask_values(v)
-                elif isinstance(v, str) and v and not v.startswith('YOUR_'):
+                elif v not in (None, '') and not (isinstance(v, str) and v.startswith('YOUR_')):
                     masked[k] = '••••••••'
                 else:
                     masked[k] = v
@@ -2604,7 +2604,8 @@ def get_plugin_config():
         if not plugin_config:
             plugin_config = {
                 'enabled': True,
-                'display_duration': 15
+                'display_duration': 15,
+                'live_priority': False
             }
 
         # Mask fields marked x-secret:true so API keys are never sent to the browser.
@@ -4764,7 +4765,7 @@ def save_plugin_config():
                     nested = _drop_empty_secrets(v)
                     if nested:
                         result[k] = nested
-                elif v != '':
+                elif not (isinstance(v, str) and v.strip() == ''):
                     result[k] = v
             return result
         secrets_config = _drop_empty_secrets(secrets_config)
@@ -4788,7 +4789,7 @@ def save_plugin_config():
                     nested = _filter_empty_secrets(v)
                     if nested:
                         filtered[k] = nested
-                elif v is not None and v != '':
+                elif v is not None and not (isinstance(v, str) and v.strip() == ''):
                     filtered[k] = v
             return filtered
         secrets_config = _filter_empty_secrets(secrets_config)

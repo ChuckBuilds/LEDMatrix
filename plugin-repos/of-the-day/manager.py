@@ -48,9 +48,9 @@ class OfTheDayPlugin(BasePlugin):
         super().__init__(plugin_id, config, display_manager, cache_manager, plugin_manager)
         
         # Configuration
-        self.update_interval = config.get('update_interval', 3600)
-        self.display_rotate_interval = config.get('display_rotate_interval', 20)
-        self.subtitle_rotate_interval = config.get('subtitle_rotate_interval', 10)
+        self.update_interval = self._get_positive_float(config, 'update_interval', 3600)
+        self.display_rotate_interval = self._get_positive_float(config, 'display_rotate_interval', 20)
+        self.subtitle_rotate_interval = self._get_positive_float(config, 'subtitle_rotate_interval', 10)
         
         # Categories
         self.categories = config.get('categories', {})
@@ -90,7 +90,20 @@ class OfTheDayPlugin(BasePlugin):
         
         self.logger.info(f"Of The Day plugin initialized with {len(self.current_items)} categories")
     
-    def _register_fonts(self):
+    def _get_positive_float(self, config: Dict[str, Any], key: str, default: float) -> float:
+        """Coerce a config value to a positive float, falling back to default on invalid input."""
+        value = config.get(key, default)
+        try:
+            value_f = float(value)
+        except (TypeError, ValueError):
+            self.logger.warning(f"Invalid {key}='{value}', using default {default}")
+            return default
+        if value_f <= 0:
+            self.logger.warning(f"{key} must be > 0, using default {default}")
+            return default
+        return value_f
+
+    def _register_fonts(self) -> None:
         """Register fonts with the font manager."""
         try:
             if not hasattr(self.plugin_manager, 'font_manager'):
@@ -561,12 +574,14 @@ class OfTheDayPlugin(BasePlugin):
         # Load fonts - match old manager
         try:
             title_font = ImageFont.truetype('assets/fonts/PressStart2P-Regular.ttf', 8)
-        except:
+        except OSError as e:
+            self.logger.warning(f"Failed to load PressStart2P font: {e}, using fallback")
             title_font = self.display_manager.small_font if hasattr(self.display_manager, 'small_font') else ImageFont.load_default()
-        
+
         try:
             body_font = ImageFont.truetype('assets/fonts/4x6-font.ttf', 6)
-        except:
+        except OSError as e:
+            self.logger.warning(f"Failed to load 4x6 font: {e}, using fallback")
             body_font = self.display_manager.extra_small_font if hasattr(self.display_manager, 'extra_small_font') else ImageFont.load_default()
         
         # Get font heights
@@ -730,9 +745,9 @@ class OfTheDayPlugin(BasePlugin):
 
         # Update configuration
         self.config = config
-        self.update_interval = config.get('update_interval', 3600)
-        self.display_rotate_interval = config.get('display_rotate_interval', 20)
-        self.subtitle_rotate_interval = config.get('subtitle_rotate_interval', 10)
+        self.update_interval = self._get_positive_float(config, 'update_interval', 3600)
+        self.display_rotate_interval = self._get_positive_float(config, 'display_rotate_interval', 20)
+        self.subtitle_rotate_interval = self._get_positive_float(config, 'subtitle_rotate_interval', 10)
         self.categories = config.get('categories', {})
         self.category_order = config.get('category_order', [])
 
