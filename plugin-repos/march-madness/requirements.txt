@@ -1,4 +1,4 @@
 requests>=2.28.0
-Pillow>=9.0.0
+Pillow>=9.1.0
 pytz>=2022.1
 numpy>=1.24.0

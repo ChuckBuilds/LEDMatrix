@@ -1770,7 +1770,7 @@ class PluginStoreManager:
                     if metadata.get('install_type') == 'bundled':
                         self.logger.info(f"Plugin {plugin_id} is a bundled plugin; updates are delivered via LEDMatrix itself")
                         return True
-                except Exception as e:
+                except (OSError, ValueError) as e:
                     self.logger.debug(f"[PluginStore] Could not read metadata for {plugin_id} at {metadata_path}: {e}")
 
             # First check if it's a git repository - if so, we can update directly

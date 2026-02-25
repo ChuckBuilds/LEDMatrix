@@ -547,10 +547,14 @@
                 <div id="{{ field_id }}_upload_widget" class="mt-1">
                     <div id="{{ field_id }}_drop_zone"
                          class="border-2 border-dashed border-gray-300 rounded-lg p-4 text-center hover:border-blue-400 transition-colors cursor-pointer"
+                         role="button"
+                         tabindex="0"
+                         aria-label="Upload {{ target_filename }}"
                          ondrop="window.handleFileDrop(event, this.dataset.fieldId)"
                          ondragover="event.preventDefault()"
                          data-field-id="{{ field_id }}"
-                         onclick="document.getElementById('{{ field_id }}_file_input').click()">
+                         onclick="document.getElementById('{{ field_id }}_file_input').click()"
+                         onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();document.getElementById('{{ field_id }}_file_input').click();}">
                         <input type="file"
                                id="{{ field_id }}_file_input"
                                accept="{{ allowed_extensions|join(',') }}"
@@ -565,7 +569,7 @@
                         <p class="text-sm text-gray-600">Click to upload {{ target_filename }}</p>
                         <p class="text-xs text-gray-500 mt-1">Max {{ max_size_mb }}MB ({{ allowed_extensions|join(', ') }})</p>
                     </div>
-                    <div id="{{ field_id }}_upload_status" class="mt-2 text-xs text-gray-500"></div>
+                    <div id="{{ field_id }}_upload_status" class="mt-2 text-xs text-gray-500" aria-live="polite"></div>
                     <input type="hidden"
                            id="{{ field_id }}"
                            name="{{ full_key }}"

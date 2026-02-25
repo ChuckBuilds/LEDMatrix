@@ -238,7 +238,11 @@ class MarchMadnessPlugin(BasePlugin):
             img = img.resize((target_w, target_h), Image.Resampling.LANCZOS)
             self._team_logo_cache[abbr] = img
             return img
+        except (FileNotFoundError, OSError, ValueError):
+            self._team_logo_cache[abbr] = None
+            return None
         except Exception:
+            self.logger.exception(f"Unexpected error loading team logo for {abbr}")
             self._team_logo_cache[abbr] = None
             return None
 
@@ -713,10 +717,6 @@ class MarchMadnessPlugin(BasePlugin):
             item_gap=gap_width,
             element_gap=0,
         )
-
-        # Update cached arrays
-        self.scroll_helper.cached_image = self.ticker_image
-        self.scroll_helper.cached_array = np.array(self.ticker_image)
 
         self.total_scroll_width = self.scroll_helper.total_scroll_width
         self.dynamic_duration = self.scroll_helper.get_dynamic_duration()

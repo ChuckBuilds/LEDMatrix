@@ -74,7 +74,7 @@
         if (files.length === 0) return;
         // Route to single-file handler if this is a string file-upload widget
         const fileInput = document.getElementById(`${fieldId}_file_input`);
-        if (fileInput && fileInput.dataset.uploadEndpoint) {
+        if (fileInput && fileInput.dataset.uploadEndpoint && fileInput.dataset.uploadEndpoint.trim() !== '') {
             window.handleSingleFileUpload(fieldId, files[0]);
         } else {
             window.handleFiles(fieldId, Array.from(files));
@@ -144,8 +144,12 @@
         }
 
         if (statusDiv) {
-            statusDiv.innerHTML = '<i class="fas fa-spinner fa-spin mr-1"></i>Uploading...';
             statusDiv.className = 'mt-2 text-xs text-gray-500';
+            statusDiv.textContent = '';
+            const spinner = document.createElement('i');
+            spinner.className = 'fas fa-spinner fa-spin mr-1';
+            statusDiv.appendChild(spinner);
+            statusDiv.appendChild(document.createTextNode('Uploading...'));
         }
 
         const formData = new FormData();
@@ -164,8 +168,12 @@
 
             if (data.status === 'success') {
                 if (statusDiv) {
-                    statusDiv.innerHTML = `<i class="fas fa-check-circle mr-1 text-green-600"></i><span class="text-green-600">Uploaded: ${targetFilename}</span>`;
-                    statusDiv.className = 'mt-2 text-xs';
+                    statusDiv.className = 'mt-2 text-xs text-green-600';
+                    statusDiv.textContent = '';
+                    const icon = document.createElement('i');
+                    icon.className = 'fas fa-check-circle mr-1';
+                    statusDiv.appendChild(icon);
+                    statusDiv.appendChild(document.createTextNode(`Uploaded: ${targetFilename}`));
                 }
                 // Update hidden input with the target filename
                 const hiddenInput = document.getElementById(fieldId);
@@ -173,15 +181,23 @@
                 notifyFn(`${targetFilename} uploaded successfully`, 'success');
             } else {
                 if (statusDiv) {
-                    statusDiv.innerHTML = `<i class="fas fa-exclamation-circle mr-1 text-red-600"></i><span class="text-red-600">Upload failed: ${data.message}</span>`;
-                    statusDiv.className = 'mt-2 text-xs';
+                    statusDiv.className = 'mt-2 text-xs text-red-600';
+                    statusDiv.textContent = '';
+                    const icon = document.createElement('i');
+                    icon.className = 'fas fa-exclamation-circle mr-1';
+                    statusDiv.appendChild(icon);
+                    statusDiv.appendChild(document.createTextNode(`Upload failed: ${data.message}`));
                 }
                 notifyFn(`Upload failed: ${data.message}`, 'error');
             }
         } catch (error) {
             if (statusDiv) {
-                statusDiv.innerHTML = `<i class="fas fa-exclamation-circle mr-1 text-red-600"></i><span class="text-red-600">Upload error: ${error.message}</span>`;
-                statusDiv.className = 'mt-2 text-xs';
+                statusDiv.className = 'mt-2 text-xs text-red-600';
+                statusDiv.textContent = '';
+                const icon = document.createElement('i');
+                icon.className = 'fas fa-exclamation-circle mr-1';
+                statusDiv.appendChild(icon);
+                statusDiv.appendChild(document.createTextNode(`Upload error: ${error.message}`));
             }
             notifyFn(`Upload error: ${error.message}`, 'error');
         } finally {
