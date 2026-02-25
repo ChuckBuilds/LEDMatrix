@@ -19,7 +19,7 @@ import json
 import logging
 import time
 from datetime import date
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Tuple
 from PIL import Image, ImageDraw, ImageFont
 from pathlib import Path
 
@@ -78,6 +78,10 @@ class OfTheDayPlugin(BasePlugin):
         self.subtitle_color = (200, 200, 200)
         self.content_color = (180, 180, 180)
         self.background_color = (0, 0, 0)
+
+        # Cached fonts (loaded once to avoid per-frame disk I/O on Pi)
+        self._title_font: Optional[ImageFont.ImageFont] = None
+        self._body_font: Optional[ImageFont.ImageFont] = None
         
         # Load data files
         self._load_data_files()
@@ -102,6 +106,30 @@ class OfTheDayPlugin(BasePlugin):
             self.logger.warning(f"{key} must be > 0, using default {default}")
             return default
         return value_f
+
+    def _get_fonts(self) -> Tuple[ImageFont.ImageFont, ImageFont.ImageFont]:
+        """Return cached title and body fonts, loading them on first call."""
+        if self._title_font is None:
+            try:
+                self._title_font = ImageFont.truetype('assets/fonts/PressStart2P-Regular.ttf', 8)
+            except OSError as e:
+                self.logger.warning(f"Failed to load PressStart2P font: {e}, using fallback")
+                self._title_font = (
+                    self.display_manager.small_font
+                    if hasattr(self.display_manager, 'small_font')
+                    else ImageFont.load_default()
+                )
+        if self._body_font is None:
+            try:
+                self._body_font = ImageFont.truetype('assets/fonts/4x6-font.ttf', 6)
+            except OSError as e:
+                self.logger.warning(f"Failed to load 4x6 font: {e}, using fallback")
+                self._body_font = (
+                    self.display_manager.extra_small_font
+                    if hasattr(self.display_manager, 'extra_small_font')
+                    else ImageFont.load_default()
+                )
+        return self._title_font, self._body_font
 
     def _register_fonts(self) -> None:
         """Register fonts with the font manager."""
@@ -571,18 +599,8 @@ class OfTheDayPlugin(BasePlugin):
         # Use display_manager's image and draw directly
         draw = self.display_manager.draw
         
-        # Load fonts - match old manager
-        try:
-            title_font = ImageFont.truetype('assets/fonts/PressStart2P-Regular.ttf', 8)
-        except OSError as e:
-            self.logger.warning(f"Failed to load PressStart2P font: {e}, using fallback")
-            title_font = self.display_manager.small_font if hasattr(self.display_manager, 'small_font') else ImageFont.load_default()
-
-        try:
-            body_font = ImageFont.truetype('assets/fonts/4x6-font.ttf', 6)
-        except OSError as e:
-            self.logger.warning(f"Failed to load 4x6 font: {e}, using fallback")
-            body_font = self.display_manager.extra_small_font if hasattr(self.display_manager, 'extra_small_font') else ImageFont.load_default()
+        # Load fonts (cached after first call to avoid per-frame disk I/O)
+        title_font, body_font = self._get_fonts()
         
         # Get font heights
         try:
@@ -692,35 +710,39 @@ class OfTheDayPlugin(BasePlugin):
     
     def _display_no_data(self):
         """Display message when no data is available."""
+        self.display_manager.clear()
         img = Image.new('RGB', (self.display_manager.width,
                                self.display_manager.height),
                        self.background_color)
         draw = ImageDraw.Draw(img)
-        
+
         try:
             font = ImageFont.truetype('assets/fonts/4x6-font.ttf', 8)
-        except:
+        except OSError as e:
+            self.logger.warning(f"Failed to load 4x6 font: {e}, using fallback")
             font = ImageFont.load_default()
-        
+
         draw.text((5, 12), "No Data", font=font, fill=(200, 200, 200))
-        
+
         self.display_manager.image = img.copy()
         self.display_manager.update_display()
-    
+
     def _display_error(self):
         """Display error message."""
+        self.display_manager.clear()
         img = Image.new('RGB', (self.display_manager.width,
                                self.display_manager.height),
                        self.background_color)
         draw = ImageDraw.Draw(img)
-        
+
         try:
             font = ImageFont.truetype('assets/fonts/4x6-font.ttf', 8)
-        except:
+        except OSError as e:
+            self.logger.warning(f"Failed to load 4x6 font: {e}, using fallback")
             font = ImageFont.load_default()
-        
+
         draw.text((5, 12), "Error", font=font, fill=(255, 0, 0))
-        
+
         self.display_manager.image = img.copy()
         self.display_manager.update_display()
     

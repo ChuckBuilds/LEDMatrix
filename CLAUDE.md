@@ -8,7 +8,7 @@ LEDMatrix is a Raspberry Pi-based LED matrix display controller with a plugin ar
 
 ## Directory Structure
 
-```
+```text
 LEDMatrix/
 ├── run.py                          # Main entry point (display controller)
 ├── display_controller.py           # Legacy top-level shim (do not modify)
@@ -187,7 +187,7 @@ Copy from `config/config.template.json`. Key sections:
 
 ### Secrets Config: `config/config_secrets.json`
 Copy from `config/config_secrets.template.json`. Contains API keys:
-- `weather.api_key` — OpenWeatherMap
+- `ledmatrix-weather.api_key` — OpenWeatherMap
 - `music.SPOTIFY_CLIENT_ID` / `SPOTIFY_CLIENT_SECRET`
 - `github.api_token` — For private plugin repos / higher rate limits
 - `youtube.api_key` / `channel_id`
@@ -202,7 +202,7 @@ Config can be reloaded without restart. Set `LEDMATRIX_HOT_RELOAD=false` to disa
 ## Plugin System
 
 ### Plugin Lifecycle
-```
+```text
 UNLOADED → LOADED → ENABLED → RUNNING → (back to ENABLED)
                     ↓
                   ERROR
@@ -243,7 +243,7 @@ class MyPlugin(BasePlugin):
 - `get_info()` — Web UI status display
 
 ### Plugin File Structure
-```
+```text
 plugins/<plugin_id>/
 ├── manifest.json        # Plugin metadata (required)
 ├── config_schema.json   # JSON Schema Draft-7 for config (required)
@@ -363,6 +363,7 @@ def get_vegas_segment_width(self):
 - Plugin operations are serialized via `PluginOperationQueue` to prevent conflicts
 
 ### Key API Endpoints
+
 | Method | Path | Description |
 |--------|------|-------------|
 | GET | `/api/v3/config/main` | Read main config |
