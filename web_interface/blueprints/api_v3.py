@@ -6492,6 +6492,9 @@ def list_calendar_calendars():
             cal_id = cal.get('id') or cal.get('calendarId', '')
             if not isinstance(cal_id, str):
                 cal_id = str(cal_id) if cal_id else ''
+            if not cal_id:
+                logger.warning('list_calendar_calendars: skipping calendar entry with empty id: %r', cal)
+                continue
             summary = cal.get('summary', '')
             if not isinstance(summary, str):
                 summary = str(summary) if summary else ''
