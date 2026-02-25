@@ -304,6 +304,28 @@
                 {# Sentinel hidden input with bracket notation to allow clearing array to [] when all unchecked #}
                 {# This ensures the field is always submitted, even when all checkboxes are unchecked #}
                 <input type="hidden" name="{{ full_key }}[]" value="">
+            {% elif x_widget == 'google-calendar-picker' %}
+                {# Google Calendar picker — dynamically loads calendars from the API #}
+                {% set array_value = value if value is not none and value is iterable and value is not string else (prop.default if prop.default is defined and prop.default is iterable and prop.default is not string else []) %}
+                <div id="{{ field_id }}_container" class="google-calendar-picker-container mt-1"></div>
+                <script>
+                (function() {
+                    function initWidget() {
+                        if (!window.LEDMatrixWidgets) { setTimeout(initWidget, 50); return; }
+                        var widget = window.LEDMatrixWidgets.get('google-calendar-picker');
+                        if (!widget) { setTimeout(initWidget, 50); return; }
+                        var container = document.getElementById('{{ field_id }}_container');
+                        if (!container) return;
+                        var value = {{ array_value|tojson|safe }};
+                        widget.render(container, {}, value, { fieldId: '{{ field_id }}', pluginId: '{{ plugin_id }}', name: '{{ full_key }}' });
+                    }
+                    if (document.readyState === 'loading') {
+                        document.addEventListener('DOMContentLoaded', initWidget);
+                    } else {
+                        setTimeout(initWidget, 50);
+                    }
+                })();
+                </script>
             {% elif x_widget == 'day-selector' %}
                 {# Day selector widget for selecting days of the week #}
                 {% set array_value = value if value is not none and value is iterable and value is not string else (prop.default if prop.default is defined and prop.default is iterable and prop.default is not string else []) %}

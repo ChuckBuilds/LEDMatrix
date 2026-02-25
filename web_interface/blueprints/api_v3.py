@@ -6468,6 +6468,23 @@ def upload_calendar_credentials():
         print(error_details)
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
+@api_v3.route('/plugins/calendar/list-calendars', methods=['GET'])
+def list_calendar_calendars():
+    """Return Google Calendars accessible with the currently authenticated credentials."""
+    if not api_v3.plugin_manager:
+        return jsonify({'status': 'error', 'message': 'Plugin manager not available'}), 500
+    plugin = api_v3.plugin_manager.get_plugin('calendar')
+    if not plugin:
+        return jsonify({'status': 'error', 'message': 'Calendar plugin is not running. Enable it and save config first.'}), 404
+    if not hasattr(plugin, 'get_calendars'):
+        return jsonify({'status': 'error', 'message': 'Installed plugin version does not support calendar listing — update the plugin.'}), 400
+    try:
+        calendars = plugin.get_calendars()
+        return jsonify({'status': 'success', 'calendars': calendars})
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+
 @api_v3.route('/plugins/assets/delete', methods=['POST'])
 def delete_plugin_asset():
     """Delete an asset file for a plugin"""
