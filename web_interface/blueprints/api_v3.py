@@ -3589,6 +3589,9 @@ def _parse_form_value_with_schema(value, key_path, schema):
     return value
 
 
+MAX_LIST_EXPANSION = 1000
+
+
 def _set_nested_value(config, key_path, value):
     """
     Set a value in a nested dict using dot notation path.
@@ -3602,7 +3605,7 @@ def _set_nested_value(config, key_path, value):
     # Skip setting if value is the sentinel
     if value is _SKIP_FIELD:
         return
-    
+
     parts = key_path.split('.')
     current = config
 
@@ -3611,6 +3614,10 @@ def _set_nested_value(config, key_path, value):
         if isinstance(current, list) and part.isdigit():
             # Navigate into existing array items by index, preserving other properties
             idx = int(part)
+            if idx < 0 or idx >= MAX_LIST_EXPANSION:
+                raise ValueError(
+                    f"List index {idx} at path segment {part!r} exceeds MAX_LIST_EXPANSION={MAX_LIST_EXPANSION}"
+                )
             while len(current) <= idx:
                 current.append({})
             if not isinstance(current[idx], dict):
@@ -3629,10 +3636,15 @@ def _set_nested_value(config, key_path, value):
         elif isinstance(current, dict):
             current = current[part]
         else:
-            # Fallback: create dict for unexpected types
-            break
+            raise TypeError(
+                f"Unexpected type {type(current).__name__!r} at path segment {part!r} in key_path {key_path!r}"
+            )
 
     # Set the final value (don't overwrite with empty dict if value is None and we want to preserve structure)
+    if not isinstance(current, dict):
+        raise TypeError(
+            f"Cannot set key {parts[-1]!r}: expected dict at end of key_path {key_path!r}, got {type(current).__name__!r}"
+        )
     if value is not None or parts[-1] not in current:
         current[parts[-1]] = value
 
