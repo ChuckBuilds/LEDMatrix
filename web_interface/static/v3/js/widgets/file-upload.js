@@ -118,9 +118,24 @@
         const uploadEndpoint = fileInput.dataset.uploadEndpoint;
         const targetFilename = fileInput.dataset.targetFilename || 'file.json';
         const maxSizeMB = parseFloat(fileInput.dataset.maxSizeMb || '1');
+        const allowedExtensions = (fileInput.dataset.allowedExtensions || '.json')
+            .split(',').map(e => e.trim().toLowerCase());
 
         const statusDiv = document.getElementById(`${fieldId}_upload_status`);
         const notifyFn = window.showNotification || console.log;
+
+        // Guard: endpoint must be configured
+        if (!uploadEndpoint) {
+            notifyFn('No upload endpoint configured for this field', 'error');
+            return;
+        }
+
+        // Validate extension
+        const fileExt = '.' + file.name.split('.').pop().toLowerCase();
+        if (!allowedExtensions.includes(fileExt)) {
+            notifyFn(`File must be one of: ${allowedExtensions.join(', ')}`, 'error');
+            return;
+        }
 
         // Validate size
         if (file.size > maxSizeMB * 1024 * 1024) {
@@ -141,6 +156,10 @@
                 method: 'POST',
                 body: formData
             });
+            if (!response.ok) {
+                const body = await response.text();
+                throw new Error(`Server error ${response.status}: ${body}`);
+            }
             const data = await response.json();
 
             if (data.status === 'success') {

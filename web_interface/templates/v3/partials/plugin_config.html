@@ -559,6 +559,7 @@
                                data-upload-endpoint="{{ upload_endpoint }}"
                                data-target-filename="{{ target_filename }}"
                                data-max-size-mb="{{ max_size_mb }}"
+                               data-allowed-extensions="{{ allowed_extensions|join(',') }}"
                                onchange="window.handleSingleFileSelect(event, this.dataset.fieldId)">
                         <i class="fas fa-cloud-upload-alt text-2xl text-gray-400 mb-1"></i>
                         <p class="text-sm text-gray-600">Click to upload {{ target_filename }}</p>

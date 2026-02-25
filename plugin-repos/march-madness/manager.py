@@ -103,6 +103,11 @@ class MarchMadnessPlugin(BasePlugin):
         self.dynamic_duration_enabled: bool = display_options.get("dynamic_duration", True)
         self.min_duration: int = display_options.get("min_duration", 30)
         self.max_duration: int = display_options.get("max_duration", 300)
+        if self.min_duration > self.max_duration:
+            self.logger.warning(
+                f"min_duration ({self.min_duration}) > max_duration ({self.max_duration}); swapping values"
+            )
+            self.min_duration, self.max_duration = self.max_duration, self.min_duration
 
         data_settings = config.get("data_settings", {})
         self.update_interval: int = data_settings.get("update_interval", 300)
@@ -204,8 +209,8 @@ class MarchMadnessPlugin(BasePlugin):
                 self._round_logos[round_key] = img.resize((target_w, target_h), Image.Resampling.LANCZOS)
             except (OSError, ValueError) as e:
                 self.logger.warning(f"Could not load round logo {filename}: {e}")
-            except Exception as e:
-                self.logger.exception(f"Unexpected error loading round logo {filename}: {e}")
+            except Exception:
+                self.logger.exception(f"Unexpected error loading round logo {filename}")
 
         # March Madness logo
         mm_path = logo_dir / "MARCH_MADNESS.png"
@@ -217,8 +222,8 @@ class MarchMadnessPlugin(BasePlugin):
             self._march_madness_logo = img.resize((target_w, target_h), Image.Resampling.LANCZOS)
         except (OSError, ValueError) as e:
             self.logger.warning(f"Could not load March Madness logo: {e}")
-        except Exception as e:
-            self.logger.exception(f"Unexpected error loading March Madness logo: {e}")
+        except Exception:
+            self.logger.exception("Unexpected error loading March Madness logo")
 
     def _get_team_logo(self, abbr: str) -> Optional[Image.Image]:
         if abbr in self._team_logo_cache:
@@ -285,8 +290,8 @@ class MarchMadnessPlugin(BasePlugin):
                 self.logger.info(f"Fetched {len(league_games)} {league_key} tournament games")
                 all_games.extend(league_games)
 
-            except Exception as e:
-                self.logger.error(f"Error fetching {league_key} tournament data: {e}")
+            except Exception:
+                self.logger.exception(f"Error fetching {league_key} tournament data")
 
         return all_games
 
@@ -696,6 +701,10 @@ class MarchMadnessPlugin(BasePlugin):
                 self.scroll_helper.clear_cache()
             return
 
+        if not self.scroll_helper:
+            self.ticker_image = None
+            return
+
         gap_width = 16
 
         # Use ScrollHelper to create the scrolling image
@@ -759,24 +768,6 @@ class MarchMadnessPlugin(BasePlugin):
         """Render one scroll frame."""
         if not self.enabled:
             return
-
-        # Check for live update
-        current_time = time.time()
-        interval = 60 if self._has_live_games else self.update_interval
-        if current_time - self.last_update >= interval:
-            with self._update_lock:
-                self.last_update = current_time
-                try:
-                    games = self._fetch_tournament_data()
-                    self._has_live_games = any(g["is_live"] for g in games)
-                    self.games_data = games
-                    # Preserve scroll position during live updates
-                    old_pos = self.scroll_helper.scroll_position if self.scroll_helper else 0
-                    self._create_ticker_image()
-                    if self.scroll_helper and self.ticker_image:
-                        self.scroll_helper.scroll_position = min(old_pos, self.ticker_image.width - 1)
-                except Exception as e:
-                    self.logger.error(f"Live update error: {e}", exc_info=True)
 
         if force_clear or self._display_start_time is None:
             self._display_start_time = time.time()
@@ -913,4 +904,7 @@ class MarchMadnessPlugin(BasePlugin):
         if self.scroll_helper:
             self.scroll_helper.clear_cache()
         self._team_logo_cache.clear()
+        if self.session:
+            self.session.close()
+            self.session = None
         super().cleanup()
