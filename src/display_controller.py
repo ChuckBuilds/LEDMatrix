@@ -436,14 +436,17 @@ class DisplayController:
 
     def _check_schedule(self):
         """Check if display should be active based on schedule."""
-        schedule_config = self.config.get('schedule', {})
-        
+        # Get fresh config from config_service to support hot-reload
+        current_config = self.config_service.get_config()
+
+        schedule_config = current_config.get('schedule', {})
+
         # If schedule config doesn't exist or is empty, default to always active
         if not schedule_config:
             self.is_display_active = True
             self._was_display_active = True  # Track previous state for schedule change detection
             return
-        
+
         # Check if schedule is explicitly disabled
         # Default to True (schedule enabled) if 'enabled' key is missing for backward compatibility
         if 'enabled' in schedule_config and not schedule_config.get('enabled', True):
@@ -453,7 +456,7 @@ class DisplayController:
             return
 
         # Get configured timezone, default to UTC
-        timezone_str = self.config.get('timezone', 'UTC')
+        timezone_str = current_config.get('timezone', 'UTC')
         try:
             tz = pytz.timezone(timezone_str)
         except pytz.UnknownTimeZoneError:
@@ -551,15 +554,18 @@ class DisplayController:
             Target brightness level (dim_brightness if in dim period,
             normal brightness otherwise)
         """
+        # Get fresh config from config_service to support hot-reload
+        current_config = self.config_service.get_config()
+
         # Get normal brightness from config
-        normal_brightness = self.config.get('display', {}).get('hardware', {}).get('brightness', 90)
+        normal_brightness = current_config.get('display', {}).get('hardware', {}).get('brightness', 90)
 
         # If display is OFF via schedule, don't process dim schedule
         if not self.is_display_active:
             self.is_dimmed = False
             return normal_brightness
 
-        dim_config = self.config.get('dim_schedule', {})
+        dim_config = current_config.get('dim_schedule', {})
 
         # If dim schedule doesn't exist or is disabled, use normal brightness
         if not dim_config or not dim_config.get('enabled', False):
@@ -567,7 +573,7 @@ class DisplayController:
             return normal_brightness
 
         # Get configured timezone
-        timezone_str = self.config.get('timezone', 'UTC')
+        timezone_str = current_config.get('timezone', 'UTC')
         try:
             tz = pytz.timezone(timezone_str)
         except pytz.UnknownTimeZoneError:

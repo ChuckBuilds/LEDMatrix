@@ -6,6 +6,7 @@ with special support for FCS teams and other NCAA divisions.
 """
 
 import os
+import re
 import time
 import logging
 import requests
@@ -146,6 +147,9 @@ class LogoDownloader:
         
         return variations
     
+    # Allowlist for league names used in filesystem paths: alphanumerics, underscores, dashes only
+    _SAFE_LEAGUE_RE = re.compile(r'^[a-z0-9_-]+$')
+
     def get_logo_directory(self, league: str) -> str:
         """Get the logo directory for a given league."""
         directory = LogoDownloader.LOGO_DIRECTORIES.get(league)
@@ -154,6 +158,10 @@ class LogoDownloader:
             if league.startswith('soccer_'):
                 directory = 'assets/sports/soccer_logos'
             else:
+                # Validate league before using it in a filesystem path
+                if not self._SAFE_LEAGUE_RE.match(league):
+                    logger.warning(f"Rejecting unsafe league name for directory construction: {league!r}")
+                    raise ValueError(f"Unsafe league name: {league!r}")
                 directory = f'assets/sports/{league}_logos'
         path = Path(directory)
         if not path.is_absolute():
@@ -244,11 +252,17 @@ class LogoDownloader:
             logger.error(f"Unexpected error downloading logo for {team_abbreviation}: {e}")
             return False
     
+    # Allowlist for the league_code segment interpolated into ESPN API URLs
+    _SAFE_LEAGUE_CODE_RE = re.compile(r'^[a-z0-9_-]+$')
+
     def _resolve_api_url(self, league: str) -> Optional[str]:
         """Resolve the ESPN API teams URL for a league, with dynamic fallback for custom soccer leagues."""
         api_url = self.API_ENDPOINTS.get(league)
         if not api_url and league.startswith('soccer_'):
             league_code = league[len('soccer_'):]
+            if not self._SAFE_LEAGUE_CODE_RE.match(league_code):
+                logger.warning(f"Rejecting unsafe league_code for ESPN URL construction: {league_code!r}")
+                return None
             api_url = f'https://site.api.espn.com/apis/site/v2/sports/soccer/{league_code}/teams'
             logger.info(f"Using dynamic ESPN endpoint for custom soccer league: {league}")
         return api_url

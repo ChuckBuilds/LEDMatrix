@@ -84,7 +84,7 @@ class BaseOddsManager:
         except Exception as e:
             self.logger.warning(f"Failed to load BaseOddsManager configuration: {e}")
     
-    def get_odds(self, sport: str | None, league: str | None, event_id: str, 
+    def get_odds(self, sport: str | None, league: str | None, event_id: str,
                  update_interval_seconds: int = None) -> Optional[Dict[str, Any]]:
         """
         Fetch odds data for a specific game.
@@ -94,13 +94,13 @@ class BaseOddsManager:
             league: League name (e.g., 'nfl', 'nba')
             event_id: ESPN event ID
             update_interval_seconds: Override default update interval
-            
+
         Returns:
             Dictionary containing odds data or None if unavailable
         """
         if sport is None or league is None:
             raise ValueError("Sport and League cannot be None")
-            
+
         # Use provided interval or default
         interval = update_interval_seconds or self.update_interval
         cache_key = f"odds_espn_{sport}_{league}_{event_id}"
@@ -143,12 +143,12 @@ class BaseOddsManager:
                 self.logger.debug("No odds data available for this game")
             
             if odds_data:
-                self.cache_manager.set(cache_key, odds_data)
-                self.logger.info(f"Saved odds data to cache for {cache_key}")
+                self.cache_manager.set(cache_key, odds_data, ttl=interval)
+                self.logger.info(f"Saved odds data to cache for {cache_key} with TTL {interval}s")
             else:
                 self.logger.debug(f"No odds data available for {cache_key}")
                 # Cache the fact that no odds are available to avoid repeated API calls
-                self.cache_manager.set(cache_key, {"no_odds": True})
+                self.cache_manager.set(cache_key, {"no_odds": True}, ttl=interval)
             
             return odds_data
 
@@ -208,34 +208,34 @@ class BaseOddsManager:
     def get_odds_for_games(self, games: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """
         Fetch odds for multiple games efficiently.
-        
+
         Args:
             games: List of game dictionaries with sport, league, and id
-            
+
         Returns:
             List of games with odds data added
         """
         games_with_odds = []
-        
+
         for game in games:
             try:
                 sport = game.get('sport')
                 league = game.get('league')
                 event_id = game.get('id')
-                
+
                 if sport and league and event_id:
                     odds_data = self.get_odds(sport, league, event_id)
                     game['odds'] = odds_data
                 else:
                     game['odds'] = None
-                    
+
                 games_with_odds.append(game)
-                
+
             except Exception as e:
                 self.logger.error(f"Error fetching odds for game {game.get('id', 'unknown')}: {e}")
                 game['odds'] = None
                 games_with_odds.append(game)
-        
+
         return games_with_odds
     
     def is_odds_available(self, odds_data: Optional[Dict[str, Any]]) -> bool:

@@ -81,23 +81,36 @@ const PluginInstallManager = {
     /**
      * Update all plugins.
      *
+     * @param {Function} onProgress - Optional callback(index, total, pluginId) for progress updates
      * @returns {Promise<Array>} Update results
      */
-    async updateAll() {
-        if (!window.PluginStateManager || !window.PluginStateManager.installedPlugins) {
-            throw new Error('Installed plugins not loaded');
-        }
+    async updateAll(onProgress) {
+        // Prefer PluginStateManager if populated, fall back to window.installedPlugins
+        // (plugins_manager.js populates window.installedPlugins independently)
+        const stateManagerPlugins = window.PluginStateManager && window.PluginStateManager.installedPlugins;
+        const plugins = (stateManagerPlugins && stateManagerPlugins.length > 0)
+            ? stateManagerPlugins
+            : (window.installedPlugins || []);
 
-        const plugins = window.PluginStateManager.installedPlugins;
+        if (!plugins.length) {
+            return [];
+        }
         const results = [];
 
-        for (const plugin of plugins) {
+        for (let i = 0; i < plugins.length; i++) {
+            const plugin = plugins[i];
+            if (onProgress) onProgress(i + 1, plugins.length, plugin.id);
             try {
-                const result = await this.update(plugin.id);
+                const result = await window.PluginAPI.updatePlugin(plugin.id);
                 results.push({ pluginId: plugin.id, success: true, result });
             } catch (error) {
                 results.push({ pluginId: plugin.id, success: false, error });
             }
+        }
+
+        // Reload plugin list once at the end
+        if (window.PluginStateManager) {
+            await window.PluginStateManager.loadInstalledPlugins();
         }
 
         return results;
@@ -109,5 +122,6 @@ if (typeof module !== 'undefined' && module.exports) {
     module.exports = PluginInstallManager;
 } else {
     window.PluginInstallManager = PluginInstallManager;
+    window.updateAllPlugins = (onProgress) => PluginInstallManager.updateAll(onProgress);
 }
 

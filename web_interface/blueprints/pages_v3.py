@@ -1,6 +1,9 @@
 from flask import Blueprint, render_template, request, redirect, url_for, flash, jsonify
 import json
+import logging
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 # Will be initialized when blueprint is registered
 config_manager = None
@@ -322,7 +325,11 @@ def _load_plugin_config_partial(plugin_id):
     try:
         if not pages_v3.plugin_manager:
             return '<div class="text-red-500 p-4">Plugin manager not available</div>', 500
-        
+
+        # Handle starlark app config (starlark:<app_id>)
+        if plugin_id.startswith('starlark:'):
+            return _load_starlark_config_partial(plugin_id[len('starlark:'):])
+
         # Try to get plugin info first
         plugin_info = pages_v3.plugin_manager.get_plugin_info(plugin_id)
         
@@ -429,3 +436,77 @@ def _load_plugin_config_partial(plugin_id):
         import traceback
         traceback.print_exc()
         return f'<div class="text-red-500 p-4">Error loading plugin config: {str(e)}</div>', 500
+
+
+def _load_starlark_config_partial(app_id):
+    """Load configuration partial for a Starlark app."""
+    try:
+        starlark_plugin = pages_v3.plugin_manager.get_plugin('starlark-apps') if pages_v3.plugin_manager else None
+
+        if starlark_plugin and hasattr(starlark_plugin, 'apps'):
+            app = starlark_plugin.apps.get(app_id)
+            if not app:
+                return f'<div class="text-red-500 p-4">Starlark app not found: {app_id}</div>', 404
+            return render_template(
+                'v3/partials/starlark_config.html',
+                app_id=app_id,
+                app_name=app.manifest.get('name', app_id),
+                app_enabled=app.is_enabled(),
+                render_interval=app.get_render_interval(),
+                display_duration=app.get_display_duration(),
+                config=app.config,
+                schema=app.schema,
+                has_frames=app.frames is not None,
+                frame_count=len(app.frames) if app.frames else 0,
+                last_render_time=app.last_render_time,
+            )
+
+        # Standalone: read from manifest file
+        manifest_file = Path(__file__).resolve().parent.parent.parent / 'starlark-apps' / 'manifest.json'
+        if not manifest_file.exists():
+            return f'<div class="text-red-500 p-4">Starlark app not found: {app_id}</div>', 404
+
+        with open(manifest_file, 'r') as f:
+            manifest = json.load(f)
+
+        app_data = manifest.get('apps', {}).get(app_id)
+        if not app_data:
+            return f'<div class="text-red-500 p-4">Starlark app not found: {app_id}</div>', 404
+
+        # Load schema from schema.json if it exists
+        schema = None
+        schema_file = Path(__file__).resolve().parent.parent.parent / 'starlark-apps' / app_id / 'schema.json'
+        if schema_file.exists():
+            try:
+                with open(schema_file, 'r') as f:
+                    schema = json.load(f)
+            except (OSError, json.JSONDecodeError) as e:
+                logger.warning(f"[Pages V3] Could not load schema for {app_id}: {e}", exc_info=True)
+
+        # Load config from config.json if it exists
+        config = {}
+        config_file = Path(__file__).resolve().parent.parent.parent / 'starlark-apps' / app_id / 'config.json'
+        if config_file.exists():
+            try:
+                with open(config_file, 'r') as f:
+                    config = json.load(f)
+            except (OSError, json.JSONDecodeError) as e:
+                logger.warning(f"[Pages V3] Could not load config for {app_id}: {e}", exc_info=True)
+
+        return render_template(
+            'v3/partials/starlark_config.html',
+            app_id=app_id,
+            app_name=app_data.get('name', app_id),
+            app_enabled=app_data.get('enabled', True),
+            render_interval=app_data.get('render_interval', 300),
+            display_duration=app_data.get('display_duration', 15),
+            config=config,
+            schema=schema,
+            has_frames=False,
+            frame_count=0,
+            last_render_time=None,
+        )
+
+    except Exception as e:
+        logger.exception(f"[Pages V3] Error loading starlark config for {app_id}")
+        return f'<div class="text-red-500 p-4">Error loading starlark config: {str(e)}</div>', 500
