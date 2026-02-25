@@ -52,7 +52,7 @@ def install_via_pip(package_name):
     try:
         print(f"Installing {package_name} via pip...")
         subprocess.check_call([
-            sys.executable, '-m', 'pip', 'install', '--break-system-packages', package_name
+            sys.executable, '-m', 'pip', 'install', '--break-system-packages', '--prefer-binary', package_name
         ])
         print(f"Successfully installed {package_name} via pip")
         return True
