@@ -1,0 +1,100 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "title": "Starlark Apps Plugin Configuration",
+  "description": "Configuration for managing Starlark (.star) apps",
+  "properties": {
+    "enabled": {
+      "type": "boolean",
+      "description": "Enable or disable the Starlark apps system",
+      "default": true
+    },
+    "pixlet_path": {
+      "type": "string",
+      "description": "Path to Pixlet binary (auto-detected if empty)",
+      "default": ""
+    },
+    "render_timeout": {
+      "type": "number",
+      "description": "Maximum time in seconds for rendering a .star app",
+      "default": 30,
+      "minimum": 5,
+      "maximum": 120
+    },
+    "cache_rendered_output": {
+      "type": "boolean",
+      "description": "Cache rendered WebP output to reduce CPU usage",
+      "default": true
+    },
+    "cache_ttl": {
+      "type": "number",
+      "description": "Cache time-to-live in seconds",
+      "default": 300,
+      "minimum": 60,
+      "maximum": 3600
+    },
+    "default_frame_delay": {
+      "type": "number",
+      "description": "Default delay between frames in milliseconds (if not specified by app)",
+      "default": 50,
+      "minimum": 16,
+      "maximum": 1000
+    },
+    "scale_output": {
+      "type": "boolean",
+      "description": "Scale app output to match display dimensions",
+      "default": true
+    },
+    "scale_method": {
+      "type": "string",
+      "enum": ["nearest", "bilinear", "bicubic", "lanczos"],
+      "description": "Scaling algorithm (nearest=pixel-perfect, lanczos=smoothest)",
+      "default": "nearest"
+    },
+    "magnify": {
+      "type": "integer",
+      "description": "Pixlet magnification factor (0=auto, 1=64x32, 2=128x64, 3=192x96, etc.)",
+      "default": 0,
+      "minimum": 0,
+      "maximum": 8
+    },
+    "center_small_output": {
+      "type": "boolean",
+      "description": "Center small apps on large displays instead of stretching",
+      "default": false
+    },
+    "background_render": {
+      "type": "boolean",
+      "description": "Render apps in background to avoid display delays",
+      "default": true
+    },
+    "auto_refresh_apps": {
+      "type": "boolean",
+      "description": "Automatically refresh apps at their specified intervals",
+      "default": true
+    },
+    "transition": {
+      "type": "object",
+      "description": "Transition settings for app display",
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": ["redraw", "fade", "slide", "wipe"],
+          "default": "fade"
+        },
+        "speed": {
+          "type": "integer",
+          "description": "Transition speed (1-10)",
+          "default": 3,
+          "minimum": 1,
+          "maximum": 10
+        },
+        "enabled": {
+          "type": "boolean",
+          "default": true
+        }
+      }
+    }
+  },
+  "additionalProperties": false
+}

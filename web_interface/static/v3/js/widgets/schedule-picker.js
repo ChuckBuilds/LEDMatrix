@@ -567,5 +567,4 @@
     window.LEDMatrixWidgets.get('schedule-picker').getDefaultSchedule = getDefaultSchedule;
     window.LEDMatrixWidgets.get('schedule-picker').normalizeSchedule = normalizeSchedule;
 
-    console.log('[SchedulePickerWidget] Schedule picker widget registered');
 })();

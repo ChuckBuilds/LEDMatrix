@@ -1,0 +1,456 @@
+<div class="space-y-6">
+    <!-- Header -->
+    <div class="flex items-center justify-between pb-4 border-b border-gray-200">
+        <div>
+            <h3 class="text-lg font-bold text-gray-900">
+                <i class="fas fa-star text-yellow-500 mr-2"></i>{{ app_name }}
+            </h3>
+            <p class="text-sm text-gray-500 mt-1">Starlark App &mdash; ID: {{ app_id }}</p>
+        </div>
+        <div class="flex items-center gap-3">
+            <span class="badge badge-warning"><i class="fas fa-star mr-1"></i>Starlark</span>
+            {% if app_enabled %}
+                <span class="badge badge-success">Enabled</span>
+            {% else %}
+                <span class="badge badge-error">Disabled</span>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- Status -->
+    <div class="bg-gray-50 rounded-lg p-4 border border-gray-200">
+        <h4 class="text-sm font-semibold text-gray-700 mb-3">Status</h4>
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+            <div>
+                <span class="text-gray-500">Frames:</span>
+                <span class="font-medium ml-1">{{ frame_count if has_frames else 'Not rendered' }}</span>
+            </div>
+            <div>
+                <span class="text-gray-500">Render Interval:</span>
+                <span class="font-medium ml-1">{{ render_interval }}s</span>
+            </div>
+            <div>
+                <span class="text-gray-500">Display Duration:</span>
+                <span class="font-medium ml-1">{{ display_duration }}s</span>
+            </div>
+            <div>
+                <span class="text-gray-500">Last Render:</span>
+                <span class="font-medium ml-1" id="starlark-last-render">{{ last_render_time }}</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Actions -->
+    <div class="flex gap-3">
+        <button onclick="forceRenderStarlarkApp('{{ app_id }}')"
+                class="btn bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md text-sm font-semibold">
+            <i class="fas fa-sync mr-2"></i>Force Render
+        </button>
+        <button onclick="toggleStarlarkApp('{{ app_id }}', {{ 'false' if app_enabled else 'true' }})"
+                class="btn {{ 'bg-red-600 hover:bg-red-700' if app_enabled else 'bg-green-600 hover:bg-green-700' }} text-white px-4 py-2 rounded-md text-sm font-semibold">
+            <i class="fas {{ 'fa-toggle-off' if app_enabled else 'fa-toggle-on' }} mr-2"></i>
+            {{ 'Disable' if app_enabled else 'Enable' }}
+        </button>
+    </div>
+
+    <!-- Configuration -->
+    <div class="bg-white rounded-lg p-4 border border-gray-200">
+        <h4 class="text-sm font-semibold text-gray-700 mb-3">Timing Settings</h4>
+        <div id="starlark-config-form" class="space-y-4">
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div class="form-group">
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Render Interval (seconds)</label>
+                    <input type="number" min="10" max="86400" step="1"
+                           class="form-control w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
+                           value="{{ render_interval }}"
+                           data-starlark-config="render_interval">
+                    <p class="text-xs text-gray-400 mt-1">How often the app re-renders (fetches new data)</p>
+                </div>
+                <div class="form-group">
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Display Duration (seconds)</label>
+                    <input type="number" min="1" max="3600" step="1"
+                           class="form-control w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
+                           value="{{ display_duration }}"
+                           data-starlark-config="display_duration">
+                    <p class="text-xs text-gray-400 mt-1">How long the app displays before rotating</p>
+                </div>
+            </div>
+
+            {# ── Schema-driven App Settings ── #}
+            {% set fields = [] %}
+            {% if schema %}
+                {% if schema.fields is defined %}
+                    {% set fields = schema.fields %}
+                {% elif schema.schema is defined and schema.schema is iterable and schema.schema is not string %}
+                    {% set fields = schema.schema %}
+                {% endif %}
+            {% endif %}
+
+            {% if fields %}
+            <hr class="border-gray-200 my-2">
+            <h4 class="text-sm font-semibold text-gray-700 mb-2">App Settings</h4>
+
+            {% for field in fields %}
+                {% if field.typeOf is defined and field.id is defined %}
+                {% set field_id = field.id %}
+                {% set field_type = field.typeOf %}
+                {% set field_name = field.name or field_id %}
+                {% set field_desc = field.desc or '' %}
+                {% set field_default = field.default if field.default is defined else '' %}
+                {% set current_val = config.get(field_id, field_default) if config else field_default %}
+
+                {# ── text ── #}
+                {% if field_type == 'text' %}
+                <div class="form-group">
+                    <label class="block text-sm font-medium text-gray-700 mb-1">{{ field_name }}</label>
+                    <input type="text"
+                           class="form-control w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
+                           value="{{ current_val }}"
+                           placeholder="{{ field_desc }}"
+                           data-starlark-config="{{ field_id }}">
+                    {% if field_desc %}
+                    <p class="text-xs text-gray-400 mt-1">{{ field_desc }}</p>
+                    {% endif %}
+                </div>
+
+                {# ── dropdown ── #}
+                {% elif field_type == 'dropdown' %}
+                <div class="form-group">
+                    <label class="block text-sm font-medium text-gray-700 mb-1">{{ field_name }}</label>
+                    <select class="form-control w-full px-3 py-2 border border-gray-300 rounded-md text-sm bg-white"
+                            data-starlark-config="{{ field_id }}">
+                        {% for opt in (field.options or []) %}
+                        <option value="{{ opt.value }}" {{ 'selected' if current_val|string == opt.value|string else '' }}>
+                            {{ opt.display }}
+                        </option>
+                        {% endfor %}
+                    </select>
+                    {% if field_desc %}
+                    <p class="text-xs text-gray-400 mt-1">{{ field_desc }}</p>
+                    {% endif %}
+                </div>
+
+                {# ── toggle ── #}
+                {% elif field_type == 'toggle' %}
+                <div class="form-group">
+                    <label class="flex items-center gap-2 text-sm font-medium text-gray-700 cursor-pointer">
+                        <input type="checkbox"
+                               class="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                               data-starlark-config="{{ field_id }}"
+                               data-starlark-type="toggle"
+                               {{ 'checked' if (current_val is sameas true or current_val|string|lower in ('true', '1', 'yes')) else '' }}>
+                        {{ field_name }}
+                    </label>
+                    {% if field_desc %}
+                    <p class="text-xs text-gray-400 mt-1 ml-6">{{ field_desc }}</p>
+                    {% endif %}
+                </div>
+
+                {# ── color ── #}
+                {% elif field_type == 'color' %}
+                <div class="form-group">
+                    <label class="block text-sm font-medium text-gray-700 mb-1">{{ field_name }}</label>
+                    <div class="flex items-center gap-2">
+                        <input type="color"
+                               class="w-10 h-10 rounded border border-gray-300 cursor-pointer p-0.5"
+                               value="{{ current_val or '#FFFFFF' }}"
+                               data-starlark-color-picker="{{ field_id }}"
+                               oninput="this.closest('.space-y-6').querySelector('[data-starlark-config={{ field_id }}]').value = this.value">
+                        <input type="text"
+                               class="form-control flex-1 px-3 py-2 border border-gray-300 rounded-md text-sm font-mono"
+                               value="{{ current_val or '#FFFFFF' }}"
+                               placeholder="#RRGGBB"
+                               data-starlark-config="{{ field_id }}"
+                               oninput="var cp = this.closest('.space-y-6').querySelector('[data-starlark-color-picker={{ field_id }}]'); if(cp && this.value.match(/^#[0-9a-fA-F]{6}$/)) cp.value = this.value;">
+                    </div>
+                    {% if field_desc %}
+                    <p class="text-xs text-gray-400 mt-1">{{ field_desc }}</p>
+                    {% endif %}
+                </div>
+
+                {# ── datetime ── #}
+                {% elif field_type == 'datetime' %}
+                <div class="form-group">
+                    <label class="block text-sm font-medium text-gray-700 mb-1">{{ field_name }}</label>
+                    <input type="datetime-local"
+                           class="form-control w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
+                           value="{{ current_val }}"
+                           data-starlark-config="{{ field_id }}">
+                    {% if field_desc %}
+                    <p class="text-xs text-gray-400 mt-1">{{ field_desc }}</p>
+                    {% endif %}
+                </div>
+
+                {# ── location (mini-form) ── #}
+                {% elif field_type == 'location' %}
+                <div class="form-group" data-starlark-location-group="{{ field_id }}" data-starlark-location-value="{{ current_val }}">
+                    <label class="block text-sm font-medium text-gray-700 mb-1">{{ field_name }}</label>
+                    <div class="grid grid-cols-1 md:grid-cols-3 gap-2">
+                        <div>
+                            <input type="number" step="any" min="-90" max="90"
+                                   class="form-control w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
+                                   placeholder="Latitude"
+                                   data-starlark-location-field="{{ field_id }}"
+                                   data-starlark-location-key="lat">
+                        </div>
+                        <div>
+                            <input type="number" step="any" min="-180" max="180"
+                                   class="form-control w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
+                                   placeholder="Longitude"
+                                   data-starlark-location-field="{{ field_id }}"
+                                   data-starlark-location-key="lng">
+                        </div>
+                        <div>
+                            <input type="text"
+                                   class="form-control w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
+                                   placeholder="Timezone (e.g. America/New_York)"
+                                   data-starlark-location-field="{{ field_id }}"
+                                   data-starlark-location-key="timezone">
+                        </div>
+                    </div>
+                    {% if field_desc %}
+                    <p class="text-xs text-gray-400 mt-1">{{ field_desc }}</p>
+                    {% endif %}
+                </div>
+
+                {# ── oauth2 (unsupported) ── #}
+                {% elif field_type == 'oauth2' %}
+                <div class="form-group">
+                    <label class="block text-sm font-medium text-gray-700 mb-1">{{ field_name }}</label>
+                    <div class="bg-yellow-50 border border-yellow-200 rounded-md p-3 text-sm text-yellow-800" data-starlark-unsupported>
+                        <i class="fas fa-exclamation-triangle mr-1"></i>
+                        This app requires OAuth2 authentication, which is not supported in standalone mode.
+                    </div>
+                    {% if field_desc %}
+                    <p class="text-xs text-gray-400 mt-1">{{ field_desc }}</p>
+                    {% endif %}
+                </div>
+
+                {# ── photo_select (unsupported) ── #}
+                {% elif field_type == 'photo_select' %}
+                <div class="form-group">
+                    <label class="block text-sm font-medium text-gray-700 mb-1">{{ field_name }}</label>
+                    <div class="bg-yellow-50 border border-yellow-200 rounded-md p-3 text-sm text-yellow-800" data-starlark-unsupported>
+                        <i class="fas fa-exclamation-triangle mr-1"></i>
+                        Photo upload is not supported in this interface.
+                    </div>
+                </div>
+
+                {# ── generated (hidden meta-field, skip) ── #}
+                {% elif field_type == 'generated' %}
+                    {# Invisible — generated fields are handled server-side by Pixlet #}
+
+                {# ── typeahead / location_based (text fallback with note) ── #}
+                {% elif field_type in ('typeahead', 'location_based') %}
+                <div class="form-group">
+                    <label class="block text-sm font-medium text-gray-700 mb-1">{{ field_name }}</label>
+                    <input type="text"
+                           class="form-control w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
+                           value="{{ current_val }}"
+                           placeholder="{{ field_desc }}"
+                           data-starlark-config="{{ field_id }}">
+                    <p class="text-xs text-yellow-600 mt-1">
+                        <i class="fas fa-info-circle mr-1"></i>
+                        This field normally uses autocomplete which requires a Pixlet server. Enter the value manually.
+                    </p>
+                    {% if field_desc %}
+                    <p class="text-xs text-gray-400 mt-1">{{ field_desc }}</p>
+                    {% endif %}
+                </div>
+
+                {# ── unknown type (text fallback) ── #}
+                {% else %}
+                <div class="form-group">
+                    <label class="block text-sm font-medium text-gray-700 mb-1">{{ field_name }}</label>
+                    <input type="text"
+                           class="form-control w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
+                           value="{{ current_val }}"
+                           placeholder="{{ field_desc }}"
+                           data-starlark-config="{{ field_id }}">
+                    {% if field_desc %}
+                    <p class="text-xs text-gray-400 mt-1">{{ field_desc }}</p>
+                    {% endif %}
+                </div>
+                {% endif %}
+
+                {% endif %}{# end field.typeOf and field.id check #}
+            {% endfor %}
+
+            {# Also show any config keys NOT in the schema (user-added or legacy) #}
+            {% if config %}
+                {% set schema_ids = [] %}
+                {% for f in fields %}
+                    {% if f.id is defined %}
+                        {% if schema_ids.append(f.id) %}{% endif %}
+                    {% endif %}
+                {% endfor %}
+                {% for key, value in config.items() %}
+                    {% if key not in ('render_interval', 'display_duration') and key not in schema_ids %}
+                    <div class="form-group">
+                        <label class="block text-sm font-medium text-gray-700 mb-1">{{ key }} <span class="text-xs text-gray-400">(custom)</span></label>
+                        <input type="text" class="form-control w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
+                               value="{{ value }}"
+                               data-starlark-config="{{ key }}">
+                    </div>
+                    {% endif %}
+                {% endfor %}
+            {% endif %}
+
+            {# ── No schema: fall back to raw config key/value pairs ── #}
+            {% elif config %}
+            <hr class="border-gray-200 my-2">
+            <h4 class="text-sm font-semibold text-gray-700 mb-2">App Settings</h4>
+            {% for key, value in config.items() %}
+                {% if key not in ('render_interval', 'display_duration') %}
+                <div class="form-group">
+                    <label class="block text-sm font-medium text-gray-700 mb-1">{{ key }}</label>
+                    <input type="text" class="form-control w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
+                           value="{{ value }}"
+                           data-starlark-config="{{ key }}">
+                </div>
+                {% endif %}
+            {% endfor %}
+            {% endif %}
+
+            <button onclick="saveStarlarkConfig('{{ app_id }}')"
+                    class="btn bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md text-sm font-semibold">
+                <i class="fas fa-save mr-2"></i>Save Configuration
+            </button>
+        </div>
+    </div>
+</div>
+
+<script>
+function forceRenderStarlarkApp(appId) {
+    fetch('/api/v3/starlark/apps/' + encodeURIComponent(appId) + '/render', {method: 'POST'})
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            if (data.status === 'success') {
+                if (typeof showNotification === 'function') {
+                    showNotification('Rendered successfully! ' + (data.frame_count || 0) + ' frame(s)', 'success');
+                } else {
+                    alert('Rendered successfully! ' + (data.frame_count || 0) + ' frame(s)');
+                }
+            } else {
+                var msg = 'Render failed: ' + (data.message || 'Unknown error');
+                if (typeof showNotification === 'function') showNotification(msg, 'error');
+                else alert(msg);
+            }
+        })
+        .catch(function(err) {
+            var msg = 'Render failed: ' + err.message;
+            if (typeof showNotification === 'function') showNotification(msg, 'error');
+            else alert(msg);
+        });
+}
+
+function toggleStarlarkApp(appId, enabled) {
+    fetch('/api/v3/starlark/apps/' + encodeURIComponent(appId) + '/toggle', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({enabled: enabled})
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+        if (data.status === 'success') {
+            if (typeof loadInstalledPlugins === 'function') loadInstalledPlugins();
+            else if (typeof window.loadInstalledPlugins === 'function') window.loadInstalledPlugins();
+            var container = document.getElementById('plugin-config-starlark:' + appId);
+            if (container && window.htmx) {
+                htmx.ajax('GET', '/v3/partials/plugin-config/starlark:' + encodeURIComponent(appId), {target: container, swap: 'innerHTML'});
+            }
+        } else {
+            var msg = 'Toggle failed: ' + (data.message || 'Unknown error');
+            if (typeof showNotification === 'function') showNotification(msg, 'error');
+            else alert(msg);
+        }
+    })
+    .catch(function(err) {
+        var msg = 'Toggle failed: ' + err.message;
+        if (typeof showNotification === 'function') showNotification(msg, 'error');
+        else alert(msg);
+    });
+}
+
+function saveStarlarkConfig(appId) {
+    var config = {};
+
+    // Get container to scope queries (prevents conflicts if multiple modals open)
+    var container = document.getElementById('plugin-config-starlark:' + appId);
+    if (!container) {
+        console.error('Container not found for appId:', appId);
+        return;
+    }
+
+    // Collect standard inputs (text, number, select, datetime, color text companion)
+    container.querySelectorAll('[data-starlark-config]').forEach(function(input) {
+        var key = input.getAttribute('data-starlark-config');
+        var type = input.getAttribute('data-starlark-type');
+
+        if (key === 'render_interval' || key === 'display_duration') {
+            config[key] = parseInt(input.value, 10) || 0;
+        } else if (type === 'toggle') {
+            config[key] = input.checked ? 'true' : 'false';
+        } else {
+            config[key] = input.value;
+        }
+    });
+
+    // Collect location mini-form groups
+    container.querySelectorAll('[data-starlark-location-group]').forEach(function(group) {
+        var fieldId = group.getAttribute('data-starlark-location-group');
+        var loc = {};
+        group.querySelectorAll('[data-starlark-location-field="' + fieldId + '"]').forEach(function(sub) {
+            var locKey = sub.getAttribute('data-starlark-location-key');
+            if (sub.value) loc[locKey] = sub.value;
+        });
+        if (Object.keys(loc).length > 0) {
+            config[fieldId] = JSON.stringify(loc);
+        }
+    });
+
+    fetch('/api/v3/starlark/apps/' + encodeURIComponent(appId) + '/config', {
+        method: 'PUT',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(config)
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+        if (data.status === 'success') {
+            if (typeof showNotification === 'function') showNotification('Configuration saved!', 'success');
+            else alert('Configuration saved!');
+            // Reload partial to reflect updated status
+            var container = document.getElementById('plugin-config-starlark:' + appId);
+            if (container && window.htmx) {
+                htmx.ajax('GET', '/v3/partials/plugin-config/starlark:' + encodeURIComponent(appId), {target: container, swap: 'innerHTML'});
+            }
+        } else {
+            var msg = 'Save failed: ' + (data.message || 'Unknown error');
+            if (typeof showNotification === 'function') showNotification(msg, 'error');
+            else alert(msg);
+        }
+    })
+    .catch(function(err) {
+        var msg = 'Save failed: ' + err.message;
+        if (typeof showNotification === 'function') showNotification(msg, 'error');
+        else alert(msg);
+    });
+}
+
+// Pre-fill location fields from stored JSON config values
+(function() {
+    document.querySelectorAll('[data-starlark-location-group]').forEach(function(group) {
+        var fieldId = group.getAttribute('data-starlark-location-group');
+        // Find the hidden or stored value — look for a data attribute with the raw JSON
+        var rawVal = group.getAttribute('data-starlark-location-value');
+        if (!rawVal) return;
+        try {
+            var loc = JSON.parse(rawVal);
+            group.querySelectorAll('[data-starlark-location-field="' + fieldId + '"]').forEach(function(sub) {
+                var locKey = sub.getAttribute('data-starlark-location-key');
+                if (loc[locKey] !== undefined) sub.value = loc[locKey];
+            });
+        } catch(e) { /* not valid JSON, ignore */ }
+    });
+})();
+</script>

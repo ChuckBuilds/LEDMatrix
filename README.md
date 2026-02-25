@@ -142,7 +142,7 @@ The system supports live, recent, and upcoming game information for multiple spo
 (2x in a horizontal chain is recommended)
 - [Adafruit 64×32](https://www.adafruit.com/product/2278) – designed for 128×32 but works with dynamic scaling on many displays (pixel pitch is user preference)
 - [Waveshare 64×32](https://amzn.to/3Kw55jK) - Does not require E addressable pad
-- [Waveshare 92×46](https://amzn.to/4bydNcv) – higher resolution, requires soldering the **E addressable pad** on the [Adafruit RGB Bonnet](https://www.adafruit.com/product/3211) to “8” **OR** toggling the DIP switch on the Adafruit Triple LED Matrix Bonnet *(no soldering required!)*  
+- [Waveshare 96×48](https://amzn.to/4bydNcv) – higher resolution, requires soldering the **E addressable pad** on the [Adafruit RGB Bonnet](https://www.adafruit.com/product/3211) to “8” **OR** toggling the DIP switch on the Adafruit Triple LED Matrix Bonnet *(no soldering required!)*  
   > Amazon Affiliate Link – ChuckBuilds receives a small commission on purchases  
 
 ### Power Supply
@@ -156,7 +156,7 @@ The system supports live, recent, and upcoming game information for multiple spo
 ![DSC00079](https://github.com/user-attachments/assets/4282d07d-dfa2-4546-8422-ff1f3a9c0703)
 
 ## Possibly required depending on the display you are using.
-- Some LED Matrix displays require an "E" addressable line to draw the display properly. The [64x32 Adafruit display](https://www.adafruit.com/product/2278) does NOT require the E addressable line, however the [92x46 Waveshare display](https://amzn.to/4pQdezE) DOES require the "E" Addressable line.
+- Some LED Matrix displays require an "E" addressable line to draw the display properly. The [64x32 Adafruit display](https://www.adafruit.com/product/2278) does NOT require the E addressable line, however the [96x48 Waveshare display](https://amzn.to/4pQdezE) DOES require the "E" Addressable line.
 - Various ways to enable this depending on your Bonnet / HAT.
 
 Your display will look like it is "sort of" working but still messed up. 
