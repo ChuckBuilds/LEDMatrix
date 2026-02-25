@@ -71,7 +71,12 @@
     window.handleFileDrop = function(event, fieldId) {
         event.preventDefault();
         const files = event.dataTransfer.files;
-        if (files.length > 0) {
+        if (files.length === 0) return;
+        // Route to single-file handler if this is a string file-upload widget
+        const fileInput = document.getElementById(`${fieldId}_file_input`);
+        if (fileInput && fileInput.dataset.uploadEndpoint && fileInput.dataset.uploadEndpoint.trim() !== '') {
+            window.handleSingleFileUpload(fieldId, files[0]);
+        } else {
             window.handleFiles(fieldId, Array.from(files));
         }
     };
@@ -85,6 +90,118 @@
         const files = event.target.files;
         if (files.length > 0) {
             window.handleFiles(fieldId, Array.from(files));
+        }
+    };
+
+    /**
+     * Handle single-file select for string file-upload widgets (e.g. credentials.json)
+     * @param {Event} event - Change event
+     * @param {string} fieldId - Field ID
+     */
+    window.handleSingleFileSelect = function(event, fieldId) {
+        const files = event.target.files;
+        if (files.length > 0) {
+            window.handleSingleFileUpload(fieldId, files[0]);
+        }
+    };
+
+    /**
+     * Upload a single file for string file-upload widgets
+     * Reads upload config from data attributes on the file input element.
+     * @param {string} fieldId - Field ID
+     * @param {File} file - File to upload
+     */
+    window.handleSingleFileUpload = async function(fieldId, file) {
+        const fileInput = document.getElementById(`${fieldId}_file_input`);
+        if (!fileInput) return;
+
+        const uploadEndpoint = fileInput.dataset.uploadEndpoint;
+        const targetFilename = fileInput.dataset.targetFilename || 'file.json';
+        const maxSizeMB = parseFloat(fileInput.dataset.maxSizeMb || '1');
+        const allowedExtensions = (fileInput.dataset.allowedExtensions || '.json')
+            .split(',').map(e => e.trim().toLowerCase());
+
+        const statusDiv = document.getElementById(`${fieldId}_upload_status`);
+        const notifyFn = window.showNotification || console.log;
+
+        // Guard: endpoint must be configured
+        if (!uploadEndpoint) {
+            notifyFn('No upload endpoint configured for this field', 'error');
+            return;
+        }
+
+        // Validate extension
+        const fileExt = '.' + file.name.split('.').pop().toLowerCase();
+        if (!allowedExtensions.includes(fileExt)) {
+            notifyFn(`File must be one of: ${allowedExtensions.join(', ')}`, 'error');
+            return;
+        }
+
+        // Validate size
+        if (file.size > maxSizeMB * 1024 * 1024) {
+            notifyFn(`File exceeds ${maxSizeMB}MB limit`, 'error');
+            return;
+        }
+
+        if (statusDiv) {
+            statusDiv.className = 'mt-2 text-xs text-gray-500';
+            statusDiv.textContent = '';
+            const spinner = document.createElement('i');
+            spinner.className = 'fas fa-spinner fa-spin mr-1';
+            statusDiv.appendChild(spinner);
+            statusDiv.appendChild(document.createTextNode('Uploading...'));
+        }
+
+        const formData = new FormData();
+        formData.append('file', file);
+
+        try {
+            const response = await fetch(uploadEndpoint, {
+                method: 'POST',
+                body: formData
+            });
+            if (!response.ok) {
+                const body = await response.text();
+                throw new Error(`Server error ${response.status}: ${body}`);
+            }
+            const data = await response.json();
+
+            if (data.status === 'success') {
+                if (statusDiv) {
+                    statusDiv.className = 'mt-2 text-xs text-green-600';
+                    statusDiv.textContent = '';
+                    const icon = document.createElement('i');
+                    icon.className = 'fas fa-check-circle mr-1';
+                    statusDiv.appendChild(icon);
+                    statusDiv.appendChild(document.createTextNode(`Uploaded: ${targetFilename}`));
+                }
+                // Update hidden input with the target filename
+                const hiddenInput = document.getElementById(fieldId);
+                if (hiddenInput) hiddenInput.value = targetFilename;
+                notifyFn(`${targetFilename} uploaded successfully`, 'success');
+            } else {
+                if (statusDiv) {
+                    statusDiv.className = 'mt-2 text-xs text-red-600';
+                    statusDiv.textContent = '';
+                    const icon = document.createElement('i');
+                    icon.className = 'fas fa-exclamation-circle mr-1';
+                    statusDiv.appendChild(icon);
+                    statusDiv.appendChild(document.createTextNode(`Upload failed: ${data.message}`));
+                }
+                notifyFn(`Upload failed: ${data.message}`, 'error');
+            }
+        } catch (error) {
+            if (statusDiv) {
+                statusDiv.className = 'mt-2 text-xs text-red-600';
+                statusDiv.textContent = '';
+                const icon = document.createElement('i');
+                icon.className = 'fas fa-exclamation-circle mr-1';
+                statusDiv.appendChild(icon);
+                statusDiv.appendChild(document.createTextNode(`Upload error: ${error.message}`));
+            }
+            notifyFn(`Upload error: ${error.message}`, 'error');
+        } finally {
+            if (fileInput) fileInput.value = '';
         }
     };
 

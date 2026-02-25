@@ -45,3 +45,20 @@ repos:
         args: [--ignore-missing-imports, --no-error-summary]
         pass_filenames: false
         files: ^src/
+
+  - repo: https://github.com/PyCQA/bandit
+    rev: 1.8.3
+    hooks:
+      - id: bandit
+        args:
+          - '-r'
+          - '-ll'
+          - '-c'
+          - 'bandit.yaml'
+          - '-x'
+          - './tests,./test,./venv,./.venv,./scripts/prove_security.py,./rpi-rgb-led-matrix-master'
+
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.24.3
+    hooks:
+      - id: gitleaks

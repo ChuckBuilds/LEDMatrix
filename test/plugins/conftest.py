@@ -8,7 +8,7 @@ import sys
 import json
 from pathlib import Path
 from unittest.mock import MagicMock, Mock
-from typing import Dict, Any
+from typing import Any, Dict, Generator, Optional
 
 # Add project root to path
 project_root = Path(__file__).parent.parent.parent
@@ -20,13 +20,33 @@ os.environ['EMULATOR'] = 'true'
 
 
 @pytest.fixture
-def plugins_dir():
-    """Get the plugins directory path."""
-    return project_root / 'plugins'
+def plugins_dir() -> Path:
+    """Get the plugins directory path.
+
+    Checks plugins/ first, then falls back to plugin-repos/
+    for monorepo development environments.
+    """
+    plugins_path = project_root / 'plugins'
+    plugin_repos_path = project_root / 'plugin-repos'
+
+    # Prefer plugins/ if it has actual plugin directories
+    if plugins_path.exists():
+        try:
+            has_plugins = any(
+                p for p in plugins_path.iterdir()
+                if p.is_dir() and not p.name.startswith('.')
+            )
+            if has_plugins:
+                return plugins_path
+        except PermissionError:
+            pass
+    if plugin_repos_path.exists():
+        return plugin_repos_path
+    return plugins_path
 
 
 @pytest.fixture
-def mock_display_manager():
+def mock_display_manager() -> Any:
     """Create a mock DisplayManager for plugin tests."""
     mock = MagicMock()
     mock.width = 128
@@ -44,7 +64,7 @@ def mock_display_manager():
 
 
 @pytest.fixture
-def mock_cache_manager():
+def mock_cache_manager() -> Any:
     """Create a mock CacheManager for plugin tests."""
     mock = MagicMock()
     mock._memory_cache = {}
@@ -68,7 +88,7 @@ def mock_cache_manager():
 
 
 @pytest.fixture
-def mock_plugin_manager():
+def mock_plugin_manager() -> Any:
     """Create a mock PluginManager for plugin tests."""
     mock = MagicMock()
     mock.plugins = {}
@@ -77,7 +97,7 @@ def mock_plugin_manager():
 
 
 @pytest.fixture
-def base_plugin_config():
+def base_plugin_config() -> Dict[str, Any]:
     """Base configuration for plugins."""
     return {
         'enabled': True,
@@ -102,3 +122,10 @@ def get_plugin_config_schema(plugin_id: str, plugins_dir: Path) -> Dict[str, Any
         with open(schema_path, 'r') as f:
             return json.load(f)
     return None
+
+
+@pytest.fixture
+def visual_display_manager() -> Any:
+    """Create a VisualTestDisplayManager that renders real pixels for visual testing."""
+    from src.plugin_system.testing import VisualTestDisplayManager
+    return VisualTestDisplayManager(width=128, height=32)

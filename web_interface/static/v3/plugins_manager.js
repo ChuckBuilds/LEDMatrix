@@ -1066,26 +1066,17 @@ window.initPluginsPage = function() {
     const onDemandForm = document.getElementById('on-demand-form');
     const onDemandModal = document.getElementById('on-demand-modal');
 
-    console.log('[initPluginsPage] Setting up button listeners:', {
-        refreshBtn: !!refreshBtn,
-        updateAllBtn: !!updateAllBtn,
-        restartBtn: !!restartBtn
-    });
-
     if (refreshBtn) {
         refreshBtn.replaceWith(refreshBtn.cloneNode(true));
         document.getElementById('refresh-plugins-btn').addEventListener('click', refreshPlugins);
-        console.log('[initPluginsPage] Attached refreshPlugins listener');
     }
     if (updateAllBtn) {
         updateAllBtn.replaceWith(updateAllBtn.cloneNode(true));
         document.getElementById('update-all-plugins-btn').addEventListener('click', runUpdateAllPlugins);
-        console.log('[initPluginsPage] Attached runUpdateAllPlugins listener');
     }
     if (restartBtn) {
         restartBtn.replaceWith(restartBtn.cloneNode(true));
         document.getElementById('restart-display-btn').addEventListener('click', restartDisplay);
-        console.log('[initPluginsPage] Attached restartDisplay listener');
     }
     // Restore persisted store sort/perPage
     const storeSortEl = document.getElementById('store-sort');
@@ -1135,28 +1126,22 @@ window.initPluginsPage = function() {
 
 // Consolidated initialization function
 function initializePluginPageWhenReady() {
-    console.log('Checking for plugin elements...');
     return window.initPluginsPage();
 }
 
 // Single initialization entry point
 (function() {
-    console.log('Plugin manager script loaded, setting up initialization...');
-    
     let initTimer = null;
-    
+
     function attemptInit() {
         // Clear any pending timer
         if (initTimer) {
             clearTimeout(initTimer);
             initTimer = null;
         }
-        
+
         // Try immediate initialization
-        if (initializePluginPageWhenReady()) {
-            console.log('Initialized immediately');
-            return;
-        }
+        initializePluginPageWhenReady();
     }
     
     // Strategy 1: Immediate check (for direct page loads)
@@ -1763,8 +1748,7 @@ function startOnDemandStatusPolling() {
 
 window.loadOnDemandStatus = loadOnDemandStatus;
 
-async function runUpdateAllPlugins() {
-    console.log('[runUpdateAllPlugins] Button clicked, checking for updates...');
+function runUpdateAllPlugins() {
     const button = document.getElementById('update-all-plugins-btn');
 
     if (!button) {
@@ -1786,58 +1770,47 @@ async function runUpdateAllPlugins() {
     button.dataset.running = 'true';
     button.disabled = true;
     button.classList.add('opacity-60', 'cursor-wait');
+    button.innerHTML = '<i class="fas fa-sync fa-spin mr-2"></i>Checking...';
 
-    let updated = 0, upToDate = 0, failed = 0;
+    const onProgress = (current, total, pluginId) => {
+        button.innerHTML = `<i class="fas fa-sync fa-spin mr-2"></i>Updating ${current}/${total}...`;
+    };
 
-    try {
-        for (let i = 0; i < plugins.length; i++) {
-            const plugin = plugins[i];
-            const pluginId = plugin.id;
-            button.innerHTML = `<i class="fas fa-sync fa-spin mr-2"></i>Updating ${i + 1}/${plugins.length}...`;
-
-            try {
-                const response = await fetch('/api/v3/plugins/update', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ plugin_id: pluginId })
-                });
-                const data = await response.json();
-
-                if (data.status === 'success') {
-                    if (data.message && data.message.includes('already up to date')) {
-                        upToDate++;
-                    } else {
-                        updated++;
-                    }
-                } else {
-                    failed++;
-                }
-            } catch (error) {
-                failed++;
-                console.error(`Error updating ${pluginId}:`, error);
+    Promise.resolve(window.updateAllPlugins(onProgress))
+        .then(results => {
+            if (!results || !results.length) {
+                showNotification('No plugins to update.', 'info');
+                return;
             }
-        }
-
-        // Refresh plugin list once at the end
-        if (updated > 0) {
-            loadInstalledPlugins(true);
-        }
-
-        const parts = [];
-        if (updated > 0) parts.push(`${updated} updated`);
-        if (upToDate > 0) parts.push(`${upToDate} already up to date`);
-        if (failed > 0) parts.push(`${failed} failed`);
-        const type = failed > 0 ? (updated > 0 ? 'warning' : 'error') : 'success';
-        showNotification(parts.join(', '), type);
-    } catch (error) {
-        console.error('Bulk plugin update failed:', error);
-        showNotification('Failed to update all plugins: ' + error.message, 'error');
-    } finally {
-        button.innerHTML = originalContent;
-        button.disabled = false;
-        button.classList.remove('opacity-60', 'cursor-wait');
-        button.dataset.running = 'false';
-    }
+            let updated = 0, upToDate = 0, failed = 0;
+            for (const r of results) {
+                if (!r.success) {
+                    failed++;
+                } else if (r.result && r.result.message && r.result.message.includes('already up to date')) {
+                    upToDate++;
+                } else {
+                    updated++;
+                }
+            }
+            const parts = [];
+            if (updated > 0) parts.push(`${updated} updated`);
+            if (upToDate > 0) parts.push(`${upToDate} already up to date`);
+            if (failed > 0) parts.push(`${failed} failed`);
+            const type = failed > 0 ? (updated > 0 ? 'warning' : 'error') : 'success';
+            showNotification(parts.join(', '), type);
+        })
+        .catch(error => {
+            console.error('Error updating all plugins:', error);
+            if (typeof showNotification === 'function') {
+                showNotification('Error updating all plugins: ' + error.message, 'error');
+            }
+        })
+        .finally(() => {
+            button.innerHTML = originalContent;
+            button.disabled = false;
+            button.classList.remove('opacity-60', 'cursor-wait');
+            button.dataset.running = 'false';
+        });
 }
 
 // Initialize on-demand modal setup (runs unconditionally since modal is in base.html)
@@ -5251,8 +5224,17 @@ function showStoreLoading(show) {
 
 // ── Plugin Store: Client-Side Filter/Sort/Pagination ────────────────────────
 
-function isStorePluginInstalled(pluginId) {
-    return (window.installedPlugins || installedPlugins || []).some(p => p.id === pluginId);
+function isStorePluginInstalled(pluginIdOrPlugin) {
+    const installed = window.installedPlugins || installedPlugins || [];
+    // Accept either a plain ID string or a store plugin object (which may have plugin_path)
+    if (typeof pluginIdOrPlugin === 'string') {
+        return installed.some(p => p.id === pluginIdOrPlugin);
+    }
+    const storeId = pluginIdOrPlugin.id;
+    // Derive the actual installed directory name from plugin_path (e.g. "plugins/ledmatrix-weather" → "ledmatrix-weather")
+    const pluginPath = pluginIdOrPlugin.plugin_path || '';
+    const pathDerivedId = pluginPath ? pluginPath.split('/').pop() : null;
+    return installed.some(p => p.id === storeId || (pathDerivedId && p.id === pathDerivedId));
 }
 
 function applyStoreFiltersAndSort(skipPageReset) {
@@ -5282,9 +5264,9 @@ function applyStoreFiltersAndSort(skipPageReset) {
 
     // Installed filter
     if (st.filterInstalled === true) {
-        list = list.filter(plugin => isStorePluginInstalled(plugin.id));
+        list = list.filter(plugin => isStorePluginInstalled(plugin));
     } else if (st.filterInstalled === false) {
-        list = list.filter(plugin => !isStorePluginInstalled(plugin.id));
+        list = list.filter(plugin => !isStorePluginInstalled(plugin));
     }
 
     // Sort
@@ -5531,7 +5513,7 @@ function renderPluginStore(plugins) {
     };
 
     container.innerHTML = plugins.map(plugin => {
-        const installed = isStorePluginInstalled(plugin.id);
+        const installed = isStorePluginInstalled(plugin);
         return `
         <div class="plugin-card">
             <div class="flex items-start justify-between mb-4">
@@ -6093,7 +6075,7 @@ function renderCustomRegistryPlugins(plugins, registryUrl) {
     };
     
     container.innerHTML = plugins.map(plugin => {
-        const isInstalled = installedPlugins.some(p => p.id === plugin.id);
+        const isInstalled = isStorePluginInstalled(plugin);
         const pluginIdJs = escapeJs(plugin.id);
         const escapedUrlJs = escapeJs(registryUrl);
         const pluginPathJs = escapeJs(plugin.plugin_path || '');

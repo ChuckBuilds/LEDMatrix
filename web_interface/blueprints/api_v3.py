@@ -3726,6 +3726,9 @@ def _parse_form_value_with_schema(value, key_path, schema):
     return value
 
 
+MAX_LIST_EXPANSION = 1000
+
+
 def _set_nested_value(config, key_path, value):
     """
     Set a value in a nested dict using dot notation path.
@@ -3752,6 +3755,10 @@ def _set_nested_value(config, key_path, value):
     # Navigate/create intermediate dicts, greedily matching dotted keys.
     # We stop before the final part so we can set it as the leaf value.
     while i < len(parts) - 1:
+        if not isinstance(current, dict):
+            raise TypeError(
+                f"Unexpected type {type(current).__name__!r} at path segment {parts[i]!r} in key_path {key_path!r}"
+            )
         # Try progressively longer candidate keys (longest first) to match
         # dict keys that contain dots themselves (e.g. "eng.1").
         # Never consume the very last part (that's the leaf value key).
@@ -3774,6 +3781,10 @@ def _set_nested_value(config, key_path, value):
             i += 1
 
     # The remaining parts form the final key (may itself be dotted, e.g. "eng.1")
+    if not isinstance(current, dict):
+        raise TypeError(
+            f"Cannot set key at end of key_path {key_path!r}: expected dict, got {type(current).__name__!r}"
+        )
     final_key = '.'.join(parts[i:])
     if value is not None or final_key not in current:
         current[final_key] = value
