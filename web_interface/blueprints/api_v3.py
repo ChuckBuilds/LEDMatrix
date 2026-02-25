@@ -5139,7 +5139,13 @@ def execute_plugin_action():
             if not script_path:
                 return jsonify({'status': 'error', 'message': 'Script path not defined for action'}), 400
 
-            script_file = Path(plugin_dir) / script_path
+            script_file = (Path(plugin_dir) / script_path).resolve()
+            plugin_dir_resolved = Path(plugin_dir).resolve()
+            try:
+                script_file.relative_to(plugin_dir_resolved)
+            except ValueError:
+                return jsonify({'status': 'error', 'message': 'Invalid script path'}), 400
+
             if not script_file.exists():
                 return jsonify({'status': 'error', 'message': f'Script not found: {script_path}'}), 404
 
@@ -5181,7 +5187,7 @@ sys.exit(proc.returncode)
 
                 try:
                     result = subprocess.run(
-                        ['python3', wrapper_path],
+                        [sys.executable, wrapper_path],
                         capture_output=True,
                         text=True,
                         timeout=120,
@@ -5214,7 +5220,7 @@ sys.exit(proc.returncode)
 
                     try:
                         result = subprocess.run(
-                            ['python3', script_file],
+                            [sys.executable, str(script_file)],
                             input=params_stdin,
                             capture_output=True,
                             text=True,
@@ -5313,7 +5319,7 @@ sys.exit(proc.returncode)
                     else:
                         # Simple script execution
                         result = subprocess.run(
-                            ['python3', str(script_file)],
+                            [sys.executable, str(script_file)],
                             capture_output=True,
                             text=True,
                             timeout=60,
@@ -5424,7 +5430,7 @@ sys.exit(proc.returncode)
 
             try:
                 result = subprocess.run(
-                    ['python3', wrapper_path],
+                    [sys.executable, wrapper_path],
                     capture_output=True,
                     text=True,
                     timeout=120,
@@ -5531,7 +5537,7 @@ def authenticate_ytm():
 
         # Run the authentication script
         result = subprocess.run(
-            ['python3', str(auth_script)],
+            [sys.executable, str(auth_script)],
             capture_output=True,
             text=True,
             timeout=60,

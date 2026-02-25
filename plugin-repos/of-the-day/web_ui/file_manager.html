@@ -545,12 +545,12 @@
             container.innerHTML = `
                 <div class="file-list-grid">
                     ${files.map(file => `
-                        <div class="file-card ${file.enabled === false ? 'disabled' : ''}" onclick="editFile('${file.filename}')">
+                        <div class="file-card ${file.enabled === false ? 'disabled' : ''}" onclick="editFile('${escapeJsString(file.filename)}')">
                             <div class="toggle-container" onclick="event.stopPropagation()">
                                 <span class="toggle-label">${file.enabled !== false ? 'Enabled' : 'Disabled'}</span>
                                 <label class="toggle-switch">
                                     <input type="checkbox" ${file.enabled !== false ? 'checked' : ''}
-                                           onchange="toggleCategory('${file.category_name}', this.checked)">
+                                           onchange="toggleCategory('${escapeJsString(file.category_name)}', this.checked)">
                                     <span class="toggle-slider"></span>
                                 </label>
                             </div>
@@ -565,11 +565,11 @@
                                 <div><i class="fas fa-clock mr-1"></i> ${formatDate(file.modified || '')}</div>
                             </div>
                             <div class="file-actions" onclick="event.stopPropagation()">
-                                <button type="button" onclick="editFile('${file.filename}')" class="btn btn-primary btn-sm" style="flex: 1;">
+                                <button type="button" onclick="editFile('${escapeJsString(file.filename)}')" class="btn btn-primary btn-sm" style="flex: 1;">
                                     <i class="fas fa-edit"></i>
                                     Edit
                                 </button>
-                                <button type="button" onclick="showDeleteModal('${file.filename}')" class="btn btn-danger btn-sm">
+                                <button type="button" onclick="showDeleteModal('${escapeJsString(file.filename)}')" class="btn btn-danger btn-sm">
                                     <i class="fas fa-trash"></i>
                                 </button>
                             </div>
@@ -981,6 +981,14 @@
             const div = document.createElement('div');
             div.textContent = text;
             return div.innerHTML;
+        }
+
+        function escapeJsString(text) {
+            return String(text)
+                .replace(/\\/g, '\\\\')
+                .replace(/'/g, "\\'")
+                .replace(/\n/g, '\\n')
+                .replace(/\r/g, '\\r');
         }
 
         function showSuccess(message) {

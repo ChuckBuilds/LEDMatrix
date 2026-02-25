@@ -5,6 +5,7 @@ Receives category_name and optional enabled state via stdin as JSON.
 """
 
 import os
+import re
 import json
 import sys
 from pathlib import Path
@@ -31,6 +32,13 @@ if not category_name:
     print(json.dumps({
         'status': 'error',
         'message': 'category_name is required'
+    }))
+    sys.exit(1)
+
+if not re.fullmatch(r'[a-z0-9_-]+', category_name, flags=re.IGNORECASE):
+    print(json.dumps({
+        'status': 'error',
+        'message': 'category_name must contain only letters, numbers, "_" or "-"'
     }))
     sys.exit(1)
 
@@ -70,8 +78,18 @@ if category_name not in categories:
 
 # Determine new enabled state
 if 'enabled' in params:
-    # Explicit state provided
-    new_enabled = bool(params['enabled'])
+    # Explicit state provided — accept bool or "true"/"false" string
+    enabled_value = params['enabled']
+    if isinstance(enabled_value, bool):
+        new_enabled = enabled_value
+    elif isinstance(enabled_value, str) and enabled_value.lower() in ('true', 'false'):
+        new_enabled = enabled_value.lower() == 'true'
+    else:
+        print(json.dumps({
+            'status': 'error',
+            'message': 'enabled must be a boolean or "true"/"false" string'
+        }))
+        sys.exit(1)
 else:
     # Toggle current state
     current_enabled = categories[category_name].get('enabled', True)
@@ -87,7 +105,7 @@ try:
     config_file.parent.mkdir(parents=True, exist_ok=True)
     with open(config_file, 'w', encoding='utf-8') as f:
         json.dump(config, f, indent=2, ensure_ascii=False)
-except Exception as e:
+except (OSError, TypeError) as e:
     print(json.dumps({
         'status': 'error',
         'message': f'Failed to save config: {str(e)}'

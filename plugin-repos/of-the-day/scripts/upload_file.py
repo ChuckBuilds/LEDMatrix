@@ -34,7 +34,14 @@ try:
             'message': 'File must be a JSON file (.json)'
         }))
         sys.exit(1)
-    
+
+    if '..' in filename or '/' in filename or '\\' in filename:
+        print(json.dumps({
+            'status': 'error',
+            'message': 'Invalid filename'
+        }))
+        sys.exit(1)
+
     # Validate JSON content
     try:
         data = json.loads(content)

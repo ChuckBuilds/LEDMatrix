@@ -425,7 +425,7 @@ def _load_plugin_config_partial(plugin_id):
                 if secret_fields:
                     config = _mask_secrets(config, secret_fields)
             except Exception:
-                pass  # Best effort — don't fail the render if masking errors
+                raise  # Fail closed — do not silently leak secrets
         
         # Get web UI actions from plugin manifest
         web_ui_actions = []
