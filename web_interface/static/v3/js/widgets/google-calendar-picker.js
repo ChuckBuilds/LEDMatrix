@@ -39,6 +39,12 @@
             hiddenInput.name = name;
             hiddenInput.value = currentIds.join(', ');
 
+            // Current selection summary — kept in sync whenever the hidden value changes
+            const summary = document.createElement('p');
+            summary.id = fieldId + '_summary';
+            summary.className = 'text-xs text-gray-400 mt-1';
+            summary.textContent = 'Currently selected: ' + currentIds.join(', ');
+
             // "Load My Calendars" button
             const btn = document.createElement('button');
             btn.type = 'button';
@@ -46,18 +52,13 @@
             btn.className = 'px-3 py-1.5 text-sm bg-blue-600 hover:bg-blue-700 text-white rounded-md flex items-center gap-1.5';
             btn.innerHTML = '<i class="fas fa-calendar-alt"></i> Load My Calendars';
             btn.addEventListener('click', function () {
-                loadCalendars(fieldId, currentIds, hiddenInput, listContainer, btn);
+                loadCalendars(fieldId, hiddenInput, listContainer, btn, summary);
             });
 
             // Status / list area
             const listContainer = document.createElement('div');
             listContainer.id = fieldId + '_list';
             listContainer.className = 'mt-2';
-
-            // Current selection summary (shown before loading)
-            const summary = document.createElement('p');
-            summary.className = 'text-xs text-gray-400 mt-1';
-            summary.textContent = 'Currently selected: ' + currentIds.join(', ');
 
             container.appendChild(btn);
             container.appendChild(summary);
@@ -84,8 +85,7 @@
     /**
      * Fetch calendar list from backend and render checkboxes.
      */
-    function loadCalendars(fieldId, currentIds, hiddenInput, listContainer, btn) {
-        // Show spinner
+    function loadCalendars(fieldId, hiddenInput, listContainer, btn, summary) {
         btn.disabled = true;
         btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Loading...';
         listContainer.innerHTML = '';
@@ -94,14 +94,13 @@
             .then(function (r) { return r.json(); })
             .then(function (data) {
                 btn.disabled = false;
-                btn.innerHTML = '<i class="fas fa-sync-alt"></i> Refresh Calendars';
-
                 if (data.status !== 'success') {
+                    btn.innerHTML = '<i class="fas fa-calendar-alt"></i> Load My Calendars';
                     showError(listContainer, data.message || 'Failed to load calendars.');
                     return;
                 }
-
-                renderCheckboxes(fieldId, data.calendars, currentIds, hiddenInput, listContainer);
+                btn.innerHTML = '<i class="fas fa-sync-alt"></i> Refresh Calendars';
+                renderCheckboxes(fieldId, data.calendars, hiddenInput, listContainer, summary);
             })
             .catch(function (err) {
                 btn.disabled = false;
@@ -111,9 +110,9 @@
     }
 
     /**
-     * Render a checklist of calendars, pre-checking those in currentIds.
+     * Render a checklist of calendars, pre-checking those already in the hidden input.
      */
-    function renderCheckboxes(fieldId, calendars, currentIds, hiddenInput, listContainer) {
+    function renderCheckboxes(fieldId, calendars, hiddenInput, listContainer, summary) {
         listContainer.innerHTML = '';
 
         if (!calendars || calendars.length === 0) {
@@ -124,9 +123,13 @@
         const wrapper = document.createElement('div');
         wrapper.className = 'mt-2 space-y-1.5 border border-gray-700 rounded-md p-3 bg-gray-800';
 
-        // Track selected IDs — start from what's currently in the hidden input
-        // (may include manually-typed IDs not in the API response)
-        let selectedIds = hiddenInput.value.split(',').map(s => s.trim()).filter(Boolean);
+        // Track selected IDs — seed from the hidden input so manually-typed IDs are preserved
+        let selectedIds = hiddenInput.value.split(',').map(function (s) { return s.trim(); }).filter(Boolean);
+
+        function syncHiddenAndSummary() {
+            hiddenInput.value = selectedIds.join(', ');
+            summary.textContent = 'Currently selected: ' + (selectedIds.length ? selectedIds.join(', ') : '(none)');
+        }
 
         calendars.forEach(function (cal) {
             const isChecked = selectedIds.includes(cal.id);
@@ -153,7 +156,7 @@
                         window.showNotification('At least one calendar must be selected.', 'warning');
                     }
                 }
-                hiddenInput.value = selectedIds.join(', ');
+                syncHiddenAndSummary();
             });
 
             const nameSpan = document.createElement('span');

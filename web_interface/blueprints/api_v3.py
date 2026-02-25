@@ -6479,10 +6479,25 @@ def list_calendar_calendars():
     if not hasattr(plugin, 'get_calendars'):
         return jsonify({'status': 'error', 'message': 'Installed plugin version does not support calendar listing — update the plugin.'}), 400
     try:
-        calendars = plugin.get_calendars()
+        raw = plugin.get_calendars()
+        if not hasattr(raw, '__iter__'):
+            logger.error('list_calendar_calendars: get_calendars() returned non-iterable: %r', type(raw))
+            return jsonify({'status': 'error', 'message': 'Unable to load calendars from the plugin. Please check plugin configuration and try again.'}), 500
+        calendars = [
+            {
+                'id': cal.get('id') or cal.get('calendarId', ''),
+                'summary': cal.get('summary', ''),
+                'primary': bool(cal.get('primary', False)),
+            }
+            for cal in raw
+        ]
         return jsonify({'status': 'success', 'calendars': calendars})
-    except Exception as e:
-        return jsonify({'status': 'error', 'message': str(e)}), 500
+    except (ValueError, TypeError, KeyError) as e:
+        logger.exception('list_calendar_calendars: error normalising calendar data for plugin=calendar')
+        return jsonify({'status': 'error', 'message': 'Unable to load calendars from the plugin. Please check plugin configuration and try again.'}), 500
+    except Exception:
+        logger.exception('list_calendar_calendars: unexpected error for plugin=calendar')
+        return jsonify({'status': 'error', 'message': 'Unable to load calendars from the plugin. Please check plugin configuration and try again.'}), 500
 
 
 @api_v3.route('/plugins/assets/delete', methods=['POST'])

@@ -306,11 +306,26 @@
                 <input type="hidden" name="{{ full_key }}[]" value="">
             {% elif x_widget == 'google-calendar-picker' %}
                 {# Google Calendar picker — dynamically loads calendars from the API #}
-                {% set array_value = value if value is not none and value is iterable and value is not string else (prop.default if prop.default is defined and prop.default is iterable and prop.default is not string else []) %}
+                {# Normalise: if value is a string (legacy comma-separated), split it; otherwise fall back to default or [] #}
+                {% if value is not none and value is string and value %}
+                    {% set array_value = value.split(',') | map('trim') | list %}
+                {% elif value is not none and value is iterable and value is not string %}
+                    {% set array_value = value %}
+                {% elif prop.default is defined and prop.default is string and prop.default %}
+                    {% set array_value = prop.default.split(',') | map('trim') | list %}
+                {% elif prop.default is defined and prop.default is iterable and prop.default is not string %}
+                    {% set array_value = prop.default %}
+                {% else %}
+                    {% set array_value = [] %}
+                {% endif %}
                 <div id="{{ field_id }}_container" class="google-calendar-picker-container mt-1"></div>
                 <script>
                 (function() {
+                    var MAX_RETRIES = 40;
+                    var retries = 0;
                     function initWidget() {
+                        if (retries >= MAX_RETRIES) { return; }
+                        retries++;
                         if (!window.LEDMatrixWidgets) { setTimeout(initWidget, 50); return; }
                         var widget = window.LEDMatrixWidgets.get('google-calendar-picker');
                         if (!widget) { setTimeout(initWidget, 50); return; }
