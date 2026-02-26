@@ -1631,6 +1631,7 @@ def start_on_demand_display():
         # This ensures the request is available when the service starts/restarts
         cache = _ensure_cache_manager()
         request_id = data.get('request_id') or str(uuid.uuid4())
+        now = time.time()
         request_payload = {
             'request_id': request_id,
             'action': 'start',
@@ -1638,9 +1639,24 @@ def start_on_demand_display():
             'mode': resolved_mode,
             'duration': duration,
             'pinned': pinned,
-            'timestamp': time.time()
+            'timestamp': now
         }
         cache.set('display_on_demand_request', request_payload)
+
+        # Also write display_on_demand_config so that the restarted service loads
+        # the correct plugin at startup (it reads this key during __init__ to decide
+        # which plugin to load; a stale entry from a previous session would otherwise
+        # cause it to load the wrong plugin and reject the real-time request).
+        config_ttl = min(3600, int(duration)) if duration else 3600
+        config_payload = {
+            'plugin_id': resolved_plugin,
+            'mode': resolved_mode,
+            'duration': duration,
+            'pinned': pinned,
+            'requested_at': now,
+            'expires_at': now + config_ttl,
+        }
+        cache.set('display_on_demand_config', config_payload, ttl=config_ttl)
 
         # Check if display service is running (or will be started)
         service_status = _get_display_service_status()

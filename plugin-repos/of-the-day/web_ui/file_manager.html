@@ -361,7 +361,7 @@
     </div>
 
     <!-- Edit File Modal -->
-    <div id="edit-modal" class="modal" onclick="if(event.target === this) closeEditModal()">
+    <div id="edit-modal" class="modal" style="display:none" onclick="if(event.target === this) closeEditModal()">
         <div class="modal-content">
             <div class="modal-header">
                 <h3 class="text-lg font-semibold text-gray-900" id="edit-modal-title">Edit File</h3>
@@ -393,7 +393,7 @@
     </div>
 
     <!-- Delete Confirmation Modal -->
-    <div id="delete-modal" class="modal" onclick="if(event.target === this) closeDeleteModal()">
+    <div id="delete-modal" class="modal" style="display:none" onclick="if(event.target === this) closeDeleteModal()">
         <div class="modal-content" style="max-width: 400px;">
             <div class="modal-header">
                 <h3 class="text-lg font-semibold text-gray-900">Delete File</h3>
@@ -452,16 +452,55 @@
             }
         }
 
+        // Cleanup function to remove orphaned modals and free resources
+        function cleanupFileManager() {
+            document.querySelectorAll('[data-fm-modal]').forEach(function(el) {
+                el.remove();
+            });
+            if (jsonEditor) {
+                try { jsonEditor.destroy(); } catch(e) {}
+                jsonEditor = null;
+            }
+            currentEditingFile = null;
+            fileToDelete = null;
+        }
+
+        // Watch for container removal from DOM (e.g. Alpine x-if tab switching)
+        // so we can clean up modals that were moved to document.body
+        function setupContainerCleanupObserver() {
+            var container = document.querySelector('.file-manager-container');
+            if (!container) return;
+            var watchTarget = container.closest('.custom-html-widget') || container.parentElement;
+            if (!watchTarget || !watchTarget.parentElement) return;
+
+            var observer = new MutationObserver(function(mutations) {
+                for (var i = 0; i < mutations.length; i++) {
+                    var removed = mutations[i].removedNodes;
+                    for (var j = 0; j < removed.length; j++) {
+                        if (removed[j] === watchTarget ||
+                            (removed[j].contains && removed[j].contains(watchTarget))) {
+                            cleanupFileManager();
+                            observer.disconnect();
+                            return;
+                        }
+                    }
+                }
+            });
+            observer.observe(watchTarget.parentElement, { childList: true, subtree: true });
+        }
+
         // Initialize - handle both direct page load and dynamic injection
         if (document.readyState === 'loading') {
             document.addEventListener('DOMContentLoaded', function() {
                 initModals();
+                setupContainerCleanupObserver();
                 loadFiles();
                 setupDragAndDrop();
             });
         } else {
             // DOM already loaded (widget was injected dynamically)
             initModals();
+            setupContainerCleanupObserver();
             loadFiles();
             setupDragAndDrop();
         }

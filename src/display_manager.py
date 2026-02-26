@@ -389,6 +389,7 @@ class DisplayManager:
                 
                 # Load with freetype for proper BDF handling
                 face = freetype.Face(self.calendar_font_path)
+                face.set_pixel_sizes(0, 7)  # Initialize size metrics for BDF
                 logger.info(f"5x7 calendar font loaded successfully from {self.calendar_font_path}")
                 logger.info(f"Calendar font size: {face.size.height >> 6} pixels")
                 
@@ -404,6 +405,19 @@ class DisplayManager:
             # to a new attribute for specific use, e.g., in MusicManager.
             self.bdf_5x7_font = self.calendar_font 
             logger.info(f"Assigned calendar_font (type: {type(self.bdf_5x7_font).__name__}) to bdf_5x7_font.")
+
+            # Load 4x6 BDF font for compact body text (of-the-day descriptions, etc.)
+            try:
+                bdf_4x6_path = "assets/fonts/4x6.bdf"
+                if not os.path.exists(bdf_4x6_path):
+                    raise FileNotFoundError(f"Font file not found at {bdf_4x6_path}")
+                face_4x6 = freetype.Face(bdf_4x6_path)
+                face_4x6.set_pixel_sizes(0, 6)
+                self.bdf_4x6_font = face_4x6
+                logger.info("4x6 BDF font loaded successfully")
+            except Exception as font_err:
+                logger.error(f"Failed to load 4x6 BDF font: {font_err}")
+                self.bdf_4x6_font = getattr(self, 'bdf_5x7_font', self.small_font)
 
             # Load 4x6 font as extra_small_font
             try:
@@ -427,6 +441,8 @@ class DisplayManager:
                 self.extra_small_font = self.regular_font
             if not hasattr(self, 'bdf_5x7_font'): # Ensure bdf_5x7_font also gets a fallback
                 self.bdf_5x7_font = self.regular_font
+            if not hasattr(self, 'bdf_4x6_font'):
+                self.bdf_4x6_font = self.regular_font
 
 
     def get_text_width(self, text, font):

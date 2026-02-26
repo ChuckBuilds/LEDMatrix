@@ -7,7 +7,6 @@ Shows "visit web ui at http://[deviceID]:5000"
 API Version: 1.0.0
 """
 
-import logging
 import os
 import socket
 import subprocess
@@ -17,8 +16,9 @@ from typing import Dict, Any, Optional
 from PIL import Image, ImageDraw, ImageFont
 
 from src.plugin_system.base_plugin import BasePlugin
+from src.logging_config import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class WebUIInfoPlugin(BasePlugin):
@@ -301,7 +301,7 @@ class WebUIInfoPlugin(BasePlugin):
             try:
                 self.display_manager.clear()
                 self.display_manager.update_display()
-            except:
+            except Exception:
                 pass
     
     def get_display_duration(self) -> float:
