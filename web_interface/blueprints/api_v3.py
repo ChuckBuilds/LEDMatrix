@@ -4774,14 +4774,14 @@ def save_plugin_config():
         # without entering a new value, '' comes back here — we must not
         # overwrite the existing stored secret with an empty string.
         def _drop_empty_secrets(d):
-            """Recursively remove empty-string entries from a secrets dict."""
+            """Recursively remove empty-string/whitespace/None entries from a secrets dict."""
             result = {}
             for k, v in d.items():
                 if isinstance(v, dict):
                     nested = _drop_empty_secrets(v)
                     if nested:
                         result[k] = nested
-                elif not (isinstance(v, str) and v.strip() == ''):
+                elif v is not None and not (isinstance(v, str) and v.strip() == ''):
                     result[k] = v
             return result
         secrets_config = _drop_empty_secrets(secrets_config)

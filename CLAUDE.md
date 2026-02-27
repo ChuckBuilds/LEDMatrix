@@ -522,6 +522,77 @@ mypy src/ --config-file mypy.ini
 
 ---
 
+## CodeRabbit Review Checklist
+
+CodeRabbit performs comprehensive AI-powered code reviews covering 40+ industry-standard tools. Use this checklist during development to catch issues before review:
+
+### Security (Critical)
+
+- **Path Traversal**: Validate all user-provided file/directory paths; reject `..`, `/`, `\` in filenames; use `pathlib.Path.resolve().relative_to()` to ensure paths stay confined
+- **Command Injection**: Never use user input in shell commands; use `subprocess` with list args, never strings; use `sys.executable` instead of hardcoded `python3`
+- **XSS in Templates/HTML**: Escape all user-provided data in inline JavaScript; use helper functions like `escapeJsString()` for filenames in `onclick`/`onchange` handlers
+- **Secret Exposure**: Never return secrets in API responses; mask `x-secret` config fields with empty strings in GET endpoints; filter empty-string values in POST to preserve existing secrets
+- **Input Validation**: Validate enum/category values against allowlists (regex: `[a-z0-9_-]+`); validate boolean inputs (accept both `bool` type and `"true"`/`"false"` strings); enforce file extensions (`.json`) before path checks
+- **Access Control**: Implement fail-closed error handling for sensitive operations (raise exceptions rather than silent `pass` on secret masking failures)
+
+### Error Handling & Robustness
+
+- **Bare Except Blocks**: Replace `except:` with specific exception types (`OSError`, `TypeError`, `ValueError`, `json.JSONDecodeError`, etc.); add `self.logger.warning()` or `.error()` for diagnostics
+- **Broad Exception Catches**: Narrow `except Exception` to targeted types; unhandled edge cases should fail explicitly, not silently
+- **Type Coercion**: Validate config values before use; create helper functions for type validation (e.g., `_get_positive_float()` that coerces and validates numeric config)
+- **None/Empty Checks**: Use `.get()` for dict access with defaults; check for whitespace-only strings (`v.strip() == ''`), not just empty strings; validate before subscript access
+
+### Code Quality & Performance
+
+- **Resource Caching**: Load fonts, images, and other expensive resources once and cache as instance variables; don't call `ImageFont.truetype()` or disk I/O in hot loops (like `display()` on Pi)
+- **Dead Code**: Remove unused imports, variables, and unreachable code paths; Ruff/pylint will catch these, but review for logical dead code CodeRabbit identifies
+- **Redundant Assignments**: Don't assign values that are immediately overwritten; consolidate initialization steps
+- **Disk I/O in Loops**: Move file operations outside loop bodies; cache file contents in memory or use disk cache with TTL strategies
+- **Type Hints**: Add type annotations to all public function signatures (parameters and return types); use `Tuple`, `Optional`, `List`, etc. from `typing`
+
+### Configuration & Hot-Reload
+
+- **Config Validation**: Validate all config values on load and on `on_config_change()`; provide sensible defaults in code, not config
+- **Hot-Reload Support**: Implement `on_config_change(new_config)` if config can be modified via web UI; re-initialize resources if config changes (e.g., fonts, API keys)
+- **Default Values**: Return complete default configs (including all required fields) when no user config exists; don't return partial configs
+
+### API Design & Public Interface
+
+- **Private Methods**: Use `_leading_underscore` for internal methods; review class interface for unnecessary public exposure
+- **Consistent Defaults**: Use the same default values in multiple places (schemas, code fallbacks, API responses); store defaults in constants to avoid duplication
+- **Method Documentation**: Write docstrings for non-trivial methods, especially those affecting display/state; clarify intent of `force_clear`, config parameters, etc.
+
+### Thread Safety & State Management
+
+- **Blocking Operations**: Be cautious with `time.sleep()` in hot loops; use non-blocking patterns or event loops for long delays
+- **State Isolation**: Store state in instance variables, not globals; ensure plugin instances don't share mutable state
+- **Resource Cleanup**: Implement `cleanup()` method for long-lived resources (connections, threads, file handles); ensure cleanup runs on unload
+
+### Markdown Documentation
+
+- **Code Blocks**: Add language identifiers to fenced code blocks (e.g., ` ```python `, ` ```json `, ` ```text `)
+- **Spacing**: Add blank lines before tables and complex structures (markdown linting MD040, MD058)
+
+### Common CodeRabbit Patterns
+
+CodeRabbit identifies architectural issues that go beyond linter reach:
+
+- **God Classes**: Classes with too many responsibilities; consider breaking into focused helper classes
+- **Primitive Obsession**: Using raw strings/dicts for complex concepts; create dataclasses or enums
+- **Shotgun Surgery**: Changes affecting many files with minimal per-file changes; suggests architectural refactoring
+- **Circular Dependencies**: Import cycles that block modular reuse; review import hierarchy
+- **Missing Test Coverage**: Identify untested code paths; write tests for error handling and edge cases
+- **Performance Anti-Patterns**: O(n) lookups in loops, inefficient data structures, memory leaks
+
+### Review Workflow
+
+1. **Before creating a PR**: Run CodeRabbit review locally (if available) or expect it on GitHub
+2. **During development**: Reference this checklist to catch common issues early
+3. **On CodeRabbit feedback**: Categorize as **security** (critical), **bug** (major), **minor** (style/optimization), or **nitpick** (taste)
+4. **Addressing findings**: Create a new commit (not amend) for each category of fixes; reference the CodeRabbit categories in commit messages
+
+---
+
 ## Key Source Files for Common Tasks
 
 | Task | File |
