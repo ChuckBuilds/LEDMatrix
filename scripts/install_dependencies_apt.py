@@ -48,11 +48,17 @@ def install_via_apt(package_name):
         return False
 
 def install_via_pip(package_name):
-    """Install a package via pip with --break-system-packages."""
+    """Install a package via pip with --break-system-packages and --prefer-binary.
+
+    --break-system-packages allows pip to install into the system Python on
+    Debian/Ubuntu-based systems without a virtual environment.
+    --prefer-binary prefers pre-built wheels over source distributions to avoid
+    exhausting /tmp space during compilation.
+    """
     try:
         print(f"Installing {package_name} via pip...")
         subprocess.check_call([
-            sys.executable, '-m', 'pip', 'install', '--break-system-packages', package_name
+            sys.executable, '-m', 'pip', 'install', '--break-system-packages', '--prefer-binary', package_name
         ])
         print(f"Successfully installed {package_name} via pip")
         return True

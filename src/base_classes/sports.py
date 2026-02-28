@@ -598,7 +598,7 @@ class SportsCore(ABC):
     def _fetch_todays_games(self) -> Optional[Dict]:
         """Fetch only today's games for live updates (not entire season)."""
         try:
-            tz = pytz.timezone("EST")
+            tz = pytz.timezone("America/New_York")  # Use full name (not "EST") for DST support
             now = datetime.now(tz)
             yesterday = now - timedelta(days=1)
             formatted_date = now.strftime("%Y%m%d")

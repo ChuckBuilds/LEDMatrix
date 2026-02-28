@@ -6500,6 +6500,50 @@ def upload_calendar_credentials():
         print(error_details)
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
+@api_v3.route('/plugins/calendar/list-calendars', methods=['GET'])
+def list_calendar_calendars():
+    """Return Google Calendars accessible with the currently authenticated credentials."""
+    if not api_v3.plugin_manager:
+        return jsonify({'status': 'error', 'message': 'Plugin manager not available'}), 500
+    plugin = api_v3.plugin_manager.get_plugin('calendar')
+    if not plugin:
+        return jsonify({'status': 'error', 'message': 'Calendar plugin is not running. Enable it and save config first.'}), 404
+    if not hasattr(plugin, 'get_calendars'):
+        return jsonify({'status': 'error', 'message': 'Installed plugin version does not support calendar listing — update the plugin.'}), 400
+    try:
+        raw = plugin.get_calendars()
+        import collections.abc
+        if not isinstance(raw, (list, tuple)):
+            logger.error('list_calendar_calendars: get_calendars() returned non-sequence type %r', type(raw))
+            return jsonify({'status': 'error', 'message': 'Unable to load calendars from the plugin. Please check plugin configuration and try again.'}), 500
+        calendars = []
+        for cal in raw:
+            if not isinstance(cal, collections.abc.Mapping):
+                logger.warning('list_calendar_calendars: skipping malformed calendar entry (type=%r): %r', type(cal), cal)
+                continue
+            cal_id = cal.get('id') or cal.get('calendarId', '')
+            if not isinstance(cal_id, str):
+                cal_id = str(cal_id) if cal_id else ''
+            if not cal_id:
+                logger.warning('list_calendar_calendars: skipping calendar entry with empty id: %r', cal)
+                continue
+            summary = cal.get('summary', '')
+            if not isinstance(summary, str):
+                summary = str(summary) if summary else ''
+            calendars.append({
+                'id': cal_id,
+                'summary': summary,
+                'primary': bool(cal.get('primary', False)),
+            })
+        return jsonify({'status': 'success', 'calendars': calendars})
+    except (ValueError, TypeError, KeyError):
+        logger.exception('list_calendar_calendars: error normalising calendar data for plugin=calendar')
+        return jsonify({'status': 'error', 'message': 'Unable to load calendars from the plugin. Please check plugin configuration and try again.'}), 500
+    except Exception:
+        logger.exception('list_calendar_calendars: unexpected error for plugin=calendar')
+        return jsonify({'status': 'error', 'message': 'Unable to load calendars from the plugin. Please check plugin configuration and try again.'}), 500
+
+
 @api_v3.route('/plugins/assets/delete', methods=['POST'])
 def delete_plugin_asset():
     """Delete an asset file for a plugin"""
