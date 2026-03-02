@@ -2,6 +2,7 @@ from flask import Blueprint, render_template, request, redirect, url_for, flash,
 import json
 import logging
 from pathlib import Path
+from src.web_interface.secret_helpers import mask_secret_fields
 
 logger = logging.getLogger(__name__)
 
@@ -405,11 +406,15 @@ def _load_plugin_config_partial(plugin_id):
             except Exception as e:
                 print(f"Warning: Could not load manifest for {plugin_id}: {e}")
         
+        # Mask secret fields before rendering template (fail closed — never leak secrets)
+        if schema and 'properties' in schema:
+            config = mask_secret_fields(config, schema['properties'])
+
         # Determine enabled status
         enabled = config.get('enabled', True)
         if plugin_instance:
             enabled = plugin_instance.enabled
-        
+
         # Build plugin data for template
         plugin_data = {
             'id': plugin_id,

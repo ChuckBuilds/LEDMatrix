@@ -24,6 +24,13 @@ from src.web_interface.validators import (
     validate_numeric_range, validate_string_length, sanitize_plugin_config
 )
 from src.error_aggregator import get_error_aggregator
+from src.web_interface.secret_helpers import (
+    find_secret_fields,
+    mask_all_secret_values,
+    mask_secret_fields,
+    remove_empty_secrets,
+    separate_secrets,
+)
 
 # Will be initialized when blueprint is registered
 config_manager = None
@@ -866,18 +873,6 @@ def save_main_config():
                         plugins_dir = PROJECT_ROOT / plugins_dir_name
                 schema_path = plugins_dir / plugin_id / 'config_schema.json'
 
-                def find_secret_fields(properties, prefix=''):
-                    """Recursively find fields marked with x-secret: true"""
-                    fields = set()
-                    for field_name, field_props in properties.items():
-                        full_path = f"{prefix}.{field_name}" if prefix else field_name
-                        if field_props.get('x-secret', False):
-                            fields.add(full_path)
-                        # Check nested objects
-                        if field_props.get('type') == 'object' and 'properties' in field_props:
-                            fields.update(find_secret_fields(field_props['properties'], full_path))
-                    return fields
-
                 if schema_path.exists():
                     try:
                         with open(schema_path, 'r', encoding='utf-8') as f:
@@ -886,25 +881,6 @@ def save_main_config():
                                 secret_fields = find_secret_fields(schema['properties'])
                     except Exception as e:
                         logger.warning(f"Error reading schema for secret detection: {e}")
-
-                # Separate secrets from regular config (same logic as save_plugin_config)
-                def separate_secrets(config, secrets_set, prefix=''):
-                    """Recursively separate secret fields from regular config"""
-                    regular = {}
-                    secrets = {}
-                    for key, value in config.items():
-                        full_path = f"{prefix}.{key}" if prefix else key
-                        if isinstance(value, dict):
-                            nested_regular, nested_secrets = separate_secrets(value, secrets_set, full_path)
-                            if nested_regular:
-                                regular[key] = nested_regular
-                            if nested_secrets:
-                                secrets[key] = nested_secrets
-                        elif full_path in secrets_set:
-                            secrets[key] = value
-                        else:
-                            regular[key] = value
-                    return regular, secrets
 
                 regular_config, secrets_config = separate_secrets(plugin_config, secret_fields)
 
@@ -1021,7 +997,8 @@ def get_secrets_config():
             return jsonify({'status': 'error', 'message': 'Config manager not initialized'}), 500
 
         config = api_v3.config_manager.get_raw_file_content('secrets')
-        return jsonify({'status': 'success', 'data': config})
+        masked = mask_all_secret_values(config)
+        return jsonify({'status': 'success', 'data': masked})
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
@@ -2596,6 +2573,14 @@ def get_plugin_config():
                 'enabled': True,
                 'display_duration': 30
             }
+
+        # Mask secret fields before returning to prevent exposing API keys
+        # Fail closed — if masking fails, return an error rather than leak secrets
+        schema_mgr = api_v3.schema_manager
+        if schema_mgr:
+            schema_for_mask = schema_mgr.load_schema(plugin_id, use_cache=True)
+            if schema_for_mask and 'properties' in schema_for_mask:
+                plugin_config = mask_secret_fields(plugin_config, schema_for_mask['properties'])
 
         return success_response(data=plugin_config)
     except Exception as e:
@@ -4399,21 +4384,6 @@ def save_plugin_config():
 
         # Find secret fields (supports nested schemas)
         secret_fields = set()
-
-        def find_secret_fields(properties, prefix=''):
-            """Recursively find fields marked with x-secret: true"""
-            fields = set()
-            if not isinstance(properties, dict):
-                return fields
-            for field_name, field_props in properties.items():
-                full_path = f"{prefix}.{field_name}" if prefix else field_name
-                if isinstance(field_props, dict) and field_props.get('x-secret', False):
-                    fields.add(full_path)
-                # Check nested objects
-                if isinstance(field_props, dict) and field_props.get('type') == 'object' and 'properties' in field_props:
-                    fields.update(find_secret_fields(field_props['properties'], full_path))
-            return fields
-
         if schema and 'properties' in schema:
             secret_fields = find_secret_fields(schema['properties'])
 
@@ -4719,29 +4689,11 @@ def save_plugin_config():
                 )
 
         # Separate secrets from regular config (handles nested configs)
-        def separate_secrets(config, secrets_set, prefix=''):
-            """Recursively separate secret fields from regular config"""
-            regular = {}
-            secrets = {}
-
-            for key, value in config.items():
-                full_path = f"{prefix}.{key}" if prefix else key
-
-                if isinstance(value, dict):
-                    # Recursively handle nested dicts
-                    nested_regular, nested_secrets = separate_secrets(value, secrets_set, full_path)
-                    if nested_regular:
-                        regular[key] = nested_regular
-                    if nested_secrets:
-                        secrets[key] = nested_secrets
-                elif full_path in secrets_set:
-                    secrets[key] = value
-                else:
-                    regular[key] = value
-
-            return regular, secrets
-
         regular_config, secrets_config = separate_secrets(plugin_config, secret_fields)
+
+        # Filter empty-string secret values to avoid overwriting existing secrets
+        # (GET endpoint masks secrets to '', POST sends them back as '')
+        secrets_config = remove_empty_secrets(secrets_config)
 
         # Get current configs
         current_config = api_v3.config_manager.load_config()
@@ -4952,41 +4904,10 @@ def reset_plugin_config():
         schema = schema_mgr.load_schema(plugin_id, use_cache=True)
         secret_fields = set()
 
-        def find_secret_fields(properties, prefix=''):
-            """Recursively find fields marked with x-secret: true"""
-            fields = set()
-            if not isinstance(properties, dict):
-                return fields
-            for field_name, field_props in properties.items():
-                full_path = f"{prefix}.{field_name}" if prefix else field_name
-                if isinstance(field_props, dict) and field_props.get('x-secret', False):
-                    fields.add(full_path)
-                if isinstance(field_props, dict) and field_props.get('type') == 'object' and 'properties' in field_props:
-                    fields.update(find_secret_fields(field_props['properties'], full_path))
-            return fields
-
         if schema and 'properties' in schema:
             secret_fields = find_secret_fields(schema['properties'])
 
         # Separate defaults into regular and secret configs
-        def separate_secrets(config, secrets_set, prefix=''):
-            """Recursively separate secret fields from regular config"""
-            regular = {}
-            secrets = {}
-            for key, value in config.items():
-                full_path = f"{prefix}.{key}" if prefix else key
-                if isinstance(value, dict):
-                    nested_regular, nested_secrets = separate_secrets(value, secrets_set, full_path)
-                    if nested_regular:
-                        regular[key] = nested_regular
-                    if nested_secrets:
-                        secrets[key] = nested_secrets
-                elif full_path in secrets_set:
-                    secrets[key] = value
-                else:
-                    regular[key] = value
-            return regular, secrets
-
         default_regular, default_secrets = separate_secrets(defaults, secret_fields)
 
         # Update main config with defaults
