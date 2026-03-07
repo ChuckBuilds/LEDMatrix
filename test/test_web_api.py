@@ -29,7 +29,11 @@ def mock_config_manager():
     }
     mock.get_config_path.return_value = 'config/config.json'
     mock.get_secrets_path.return_value = 'config/config_secrets.json'
-    mock.get_raw_file_content.return_value = {'weather': {'api_key': 'test'}}
+    mock.get_raw_file_content.return_value = {
+        'display': {'brightness': 50},
+        'plugins': {},
+        'timezone': 'UTC'
+    }
     mock.save_config_atomic.return_value = MagicMock(
         status=MagicMock(value='success'),
         message=None
@@ -104,7 +108,7 @@ class TestConfigAPI:
         assert data.get('status') == 'success'
         assert 'data' in data
         assert 'display' in data['data']
-        mock_config_manager.load_config.assert_called_once()
+        mock_config_manager.get_raw_file_content.assert_called_once_with('main')
     
     def test_save_main_config(self, client, mock_config_manager):
         """Test saving main configuration."""
