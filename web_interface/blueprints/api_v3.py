@@ -5251,7 +5251,6 @@ sys.exit(proc.returncode)
                     # For OAuth flows, we might need to import the script as a module
                     if action_def.get('oauth_flow'):
                         # Import script as module to get auth URL
-                        import sys
                         import importlib.util
 
                         spec = importlib.util.spec_from_file_location("plugin_action", script_file)
@@ -5304,7 +5303,7 @@ sys.exit(proc.returncode)
                     else:
                         # Simple script execution
                         result = subprocess.run(
-                            ['python3', str(script_file)],
+                            [sys.executable, str(script_file)],
                             capture_output=True,
                             text=True,
                             timeout=60,
