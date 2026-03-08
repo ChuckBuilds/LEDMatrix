@@ -6622,22 +6622,9 @@ window.closeInstructionsModal = function() {
 }
 
 // ==================== File Upload Functions ====================
-// Make these globally accessible for use in base.html
-
-window.handleFileDrop = function(event, fieldId) {
-    event.preventDefault();
-    const files = event.dataTransfer.files;
-    if (files.length > 0) {
-        window.handleFiles(fieldId, Array.from(files));
-    }
-}
-
-window.handleFileSelect = function(event, fieldId) {
-    const files = event.target.files;
-    if (files.length > 0) {
-        window.handleFiles(fieldId, Array.from(files));
-    }
-}
+// Note: handleFileDrop, handleFileSelect, and handleFiles are defined in
+// file-upload.js widget which loads first. We only define supplementary
+// functions here that file-upload.js doesn't provide.
 
 window.handleCredentialsUpload = async function(event, fieldId, uploadEndpoint, targetFilename) {
     const file = event.target.files[0];
@@ -6706,91 +6693,7 @@ window.handleCredentialsUpload = async function(event, fieldId, uploadEndpoint, 
     }
 }
 
-window.handleFiles = async function(fieldId, files) {
-    const uploadConfig = window.getUploadConfig(fieldId);
-    const pluginId = uploadConfig.plugin_id || window.currentPluginConfig?.pluginId || 'static-image';
-    const maxFiles = uploadConfig.max_files || 10;
-    const maxSizeMB = uploadConfig.max_size_mb || 5;
-    const fileType = uploadConfig.file_type || 'image';
-    const customUploadEndpoint = uploadConfig.endpoint || '/api/v3/plugins/assets/upload';
-    
-    // Get current files list (works for both images and JSON)
-    const currentFiles = window.getCurrentImages ? window.getCurrentImages(fieldId) : [];
-    if (currentFiles.length + files.length > maxFiles) {
-        showNotification(`Maximum ${maxFiles} files allowed. You have ${currentFiles.length} and tried to add ${files.length}.`, 'error');
-        return;
-    }
-    
-    // Validate file types and sizes
-    const validFiles = [];
-    for (const file of files) {
-        if (file.size > maxSizeMB * 1024 * 1024) {
-            showNotification(`File ${file.name} exceeds ${maxSizeMB}MB limit`, 'error');
-            continue;
-        }
-        
-        if (fileType === 'json') {
-            // Validate JSON files
-            if (!file.name.toLowerCase().endsWith('.json')) {
-                showNotification(`File ${file.name} must be a JSON file (.json)`, 'error');
-                continue;
-            }
-        } else {
-            // Validate image files
-            const allowedTypes = ['image/png', 'image/jpeg', 'image/jpg', 'image/bmp', 'image/gif'];
-            if (!allowedTypes.includes(file.type)) {
-                showNotification(`File ${file.name} is not a valid image type`, 'error');
-                continue;
-            }
-        }
-        
-        validFiles.push(file);
-    }
-    
-    if (validFiles.length === 0) {
-        return;
-    }
-    
-    // Show upload progress
-    window.showUploadProgress(fieldId, validFiles.length);
-    
-    // Upload files
-    const formData = new FormData();
-    if (fileType !== 'json') {
-        formData.append('plugin_id', pluginId);
-    }
-    validFiles.forEach(file => formData.append('files', file));
-    
-    try {
-        const response = await fetch(customUploadEndpoint, {
-            method: 'POST',
-            body: formData
-        });
-        
-        const data = await response.json();
-        
-        if (data.status === 'success') {
-            // Add uploaded files to current list
-            const currentFiles = window.getCurrentImages ? window.getCurrentImages(fieldId) : [];
-            const newFiles = [...currentFiles, ...data.uploaded_files];
-            window.updateImageList(fieldId, newFiles);
-            
-            showNotification(`Successfully uploaded ${data.uploaded_files.length} ${fileType === 'json' ? 'file(s)' : 'image(s)'}`, 'success');
-        } else {
-            showNotification(`Upload failed: ${data.message}`, 'error');
-        }
-    } catch (error) {
-        console.error('Upload error:', error);
-        showNotification(`Upload error: ${error.message}`, 'error');
-    } finally {
-        window.hideUploadProgress(fieldId);
-        // Clear file input
-        const fileInput = document.getElementById(`${fieldId}_file_input`);
-        if (fileInput) {
-            fileInput.value = '';
-        }
-    }
-}
+// handleFiles is now defined exclusively in file-upload.js widget
 
 window.deleteUploadedImage = async function(fieldId, imageId, pluginId) {
     return window.deleteUploadedFile(fieldId, imageId, pluginId, 'image', null);
@@ -6833,16 +6736,30 @@ window.deleteUploadedFile = async function(fieldId, fileId, pluginId, fileType, 
 }
 
 window.getUploadConfig = function(fieldId) {
-    // Extract config from schema
+    // Strategy 1: Read from data attributes on the file input element
+    // This is the most reliable method for server-side rendered forms
+    const fileInput = document.getElementById(`${fieldId}_file_input`);
+    if (fileInput && fileInput.dataset.pluginId) {
+        const config = {};
+        if (fileInput.dataset.pluginId) config.plugin_id = fileInput.dataset.pluginId;
+        if (fileInput.dataset.uploadEndpoint) config.endpoint = fileInput.dataset.uploadEndpoint;
+        if (fileInput.dataset.fileType) config.file_type = fileInput.dataset.fileType;
+        if (fileInput.dataset.maxFiles) config.max_files = parseInt(fileInput.dataset.maxFiles, 10);
+        if (fileInput.dataset.maxSizeMb) config.max_size_mb = parseFloat(fileInput.dataset.maxSizeMb);
+        if (fileInput.dataset.allowedTypes) {
+            config.allowed_types = fileInput.dataset.allowedTypes.split(',').map(t => t.trim());
+        }
+        return config;
+    }
+
+    // Strategy 2: Extract config from schema (client-side rendered forms)
     const schema = window.currentPluginConfig?.schema;
     if (!schema || !schema.properties) return {};
-    
-    // Find the property that matches this fieldId
-    // FieldId is like "image_config_images" for "image_config.images"
+
     const key = fieldId.replace(/_/g, '.');
     const keys = key.split('.');
     let prop = schema.properties;
-    
+
     for (const k of keys) {
         if (prop && prop[k]) {
             prop = prop[k];
@@ -6855,22 +6772,22 @@ window.getUploadConfig = function(fieldId) {
             }
         }
     }
-    
+
     // If we found an array with x-widget, get its config
     if (prop && prop.type === 'array' && prop['x-widget'] === 'file-upload') {
         return prop['x-upload-config'] || {};
     }
-    
-    // Try to find nested images array
-    if (schema.properties && schema.properties.image_config && 
-        schema.properties.image_config.properties && 
+
+    // Try to find nested images array (legacy fallback)
+    if (schema.properties && schema.properties.image_config &&
+        schema.properties.image_config.properties &&
         schema.properties.image_config.properties.images) {
         const imagesProp = schema.properties.image_config.properties.images;
         if (imagesProp['x-widget'] === 'file-upload') {
             return imagesProp['x-upload-config'] || {};
         }
     }
-    
+
     return {};
 }
 

@@ -377,21 +377,40 @@
     };
 
     /**
-     * Get upload configuration from schema
+     * Get upload configuration for a file upload field.
+     * Priority: 1) data attributes on the file input element (server-rendered),
+     *           2) schema lookup via window.currentPluginConfig (client-rendered).
      * @param {string} fieldId - Field ID
      * @returns {Object} Upload configuration
      */
     window.getUploadConfig = function(fieldId) {
-        // Extract config from schema
+        // Strategy 1: Read from data attributes on the file input element
+        // This is the most reliable method for server-side rendered forms
+        const fileInput = document.getElementById(`${fieldId}_file_input`);
+        if (fileInput && fileInput.dataset.pluginId) {
+            const config = {};
+            if (fileInput.dataset.pluginId) config.plugin_id = fileInput.dataset.pluginId;
+            if (fileInput.dataset.uploadEndpoint) config.endpoint = fileInput.dataset.uploadEndpoint;
+            if (fileInput.dataset.fileType) config.file_type = fileInput.dataset.fileType;
+            if (fileInput.dataset.maxFiles) config.max_files = parseInt(fileInput.dataset.maxFiles, 10);
+            if (fileInput.dataset.maxSizeMb) config.max_size_mb = parseFloat(fileInput.dataset.maxSizeMb);
+            if (fileInput.dataset.allowedTypes) {
+                config.allowed_types = fileInput.dataset.allowedTypes.split(',').map(t => t.trim());
+            }
+            return config;
+        }
+
+        // Strategy 2: Extract config from schema (client-side rendered forms)
         const schema = window.currentPluginConfig?.schema;
         if (!schema || !schema.properties) return {};
-        
+
         // Find the property that matches this fieldId
-        // FieldId is like "image_config_images" for "image_config.images"
+        // FieldId is like "image_config_images" for "image_config.images" (client-side)
+        // or "static-image-images" for plugin "static-image", field "images" (server-side)
         const key = fieldId.replace(/_/g, '.');
         const keys = key.split('.');
         let prop = schema.properties;
-        
+
         for (const k of keys) {
             if (prop && prop[k]) {
                 prop = prop[k];
@@ -404,22 +423,22 @@
                 }
             }
         }
-        
+
         // If we found an array with x-widget, get its config
         if (prop && prop.type === 'array' && prop['x-widget'] === 'file-upload') {
             return prop['x-upload-config'] || {};
         }
-        
-        // Try to find nested images array
-        if (schema.properties && schema.properties.image_config && 
-            schema.properties.image_config.properties && 
+
+        // Try to find nested images array (legacy fallback)
+        if (schema.properties && schema.properties.image_config &&
+            schema.properties.image_config.properties &&
             schema.properties.image_config.properties.images) {
             const imagesProp = schema.properties.image_config.properties.images;
             if (imagesProp['x-widget'] === 'file-upload') {
                 return imagesProp['x-upload-config'] || {};
             }
         }
-        
+
         return {};
     };
 
