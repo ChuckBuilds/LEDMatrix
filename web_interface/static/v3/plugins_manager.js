@@ -6648,7 +6648,11 @@ window.handleCredentialsUpload = async function(event, fieldId, uploadEndpoint, 
     // Show upload status
     const statusEl = document.getElementById(fieldId + '_status');
     if (statusEl) {
-        statusEl.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>Uploading...';
+        statusEl.textContent = '';
+        const spinner = document.createElement('i');
+        spinner.className = 'fas fa-spinner fa-spin mr-2';
+        statusEl.appendChild(spinner);
+        statusEl.appendChild(document.createTextNode('Uploading...'));
     }
     
     // Create form data
@@ -6660,9 +6664,14 @@ window.handleCredentialsUpload = async function(event, fieldId, uploadEndpoint, 
             method: 'POST',
             body: formData
         });
-        
+
+        if (!response.ok) {
+            const body = await response.text();
+            throw new Error(`Server error ${response.status}: ${body}`);
+        }
+
         const data = await response.json();
-        
+
         if (data.status === 'success') {
             // Update hidden input with filename
             const hiddenInput = document.getElementById(fieldId + '_hidden');
@@ -6672,21 +6681,21 @@ window.handleCredentialsUpload = async function(event, fieldId, uploadEndpoint, 
             
             // Update status
             if (statusEl) {
-                statusEl.innerHTML = `✓ Uploaded: ${targetFilename || file.name}`;
+                statusEl.textContent = `✓ Uploaded: ${targetFilename || file.name}`;
                 statusEl.className = 'text-sm text-green-600';
             }
             
             showNotification('Credentials file uploaded successfully', 'success');
         } else {
             if (statusEl) {
-                statusEl.innerHTML = 'Upload failed - click to try again';
+                statusEl.textContent = 'Upload failed - click to try again';
                 statusEl.className = 'text-sm text-gray-600';
             }
             showNotification(data.message || 'Upload failed', 'error');
         }
     } catch (error) {
         if (statusEl) {
-            statusEl.innerHTML = 'Upload failed - click to try again';
+            statusEl.textContent = 'Upload failed - click to try again';
             statusEl.className = 'text-sm text-gray-600';
         }
         showNotification('Error uploading file: ' + error.message, 'error');
@@ -6716,9 +6725,14 @@ window.deleteUploadedFile = async function(fieldId, fileId, pluginId, fileType, 
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(requestBody)
         });
-        
+
+        if (!response.ok) {
+            const body = await response.text();
+            throw new Error(`Server error ${response.status}: ${body}`);
+        }
+
         const data = await response.json();
-        
+
         if (data.status === 'success') {
             // Remove from current list
             const currentFiles = window.getCurrentImages ? window.getCurrentImages(fieldId) : [];
@@ -6735,61 +6749,8 @@ window.deleteUploadedFile = async function(fieldId, fileId, pluginId, fileType, 
     }
 }
 
-window.getUploadConfig = function(fieldId) {
-    // Strategy 1: Read from data attributes on the file input element
-    // This is the most reliable method for server-side rendered forms
-    const fileInput = document.getElementById(`${fieldId}_file_input`);
-    if (fileInput && fileInput.dataset.pluginId) {
-        const config = {};
-        if (fileInput.dataset.pluginId) config.plugin_id = fileInput.dataset.pluginId;
-        if (fileInput.dataset.uploadEndpoint) config.endpoint = fileInput.dataset.uploadEndpoint;
-        if (fileInput.dataset.fileType) config.file_type = fileInput.dataset.fileType;
-        if (fileInput.dataset.maxFiles) config.max_files = parseInt(fileInput.dataset.maxFiles, 10);
-        if (fileInput.dataset.maxSizeMb) config.max_size_mb = parseFloat(fileInput.dataset.maxSizeMb);
-        if (fileInput.dataset.allowedTypes) {
-            config.allowed_types = fileInput.dataset.allowedTypes.split(',').map(t => t.trim());
-        }
-        return config;
-    }
-
-    // Strategy 2: Extract config from schema (client-side rendered forms)
-    const schema = window.currentPluginConfig?.schema;
-    if (!schema || !schema.properties) return {};
-
-    const key = fieldId.replace(/_/g, '.');
-    const keys = key.split('.');
-    let prop = schema.properties;
-
-    for (const k of keys) {
-        if (prop && prop[k]) {
-            prop = prop[k];
-            if (prop.properties && prop.type === 'object') {
-                prop = prop.properties;
-            } else if (prop.type === 'array' && prop['x-widget'] === 'file-upload') {
-                break;
-            } else {
-                break;
-            }
-        }
-    }
-
-    // If we found an array with x-widget, get its config
-    if (prop && prop.type === 'array' && prop['x-widget'] === 'file-upload') {
-        return prop['x-upload-config'] || {};
-    }
-
-    // Try to find nested images array (legacy fallback)
-    if (schema.properties && schema.properties.image_config &&
-        schema.properties.image_config.properties &&
-        schema.properties.image_config.properties.images) {
-        const imagesProp = schema.properties.image_config.properties.images;
-        if (imagesProp['x-widget'] === 'file-upload') {
-            return imagesProp['x-upload-config'] || {};
-        }
-    }
-
-    return {};
-}
+// getUploadConfig is defined in file-upload.js widget which loads first.
+// No override needed here — file-upload.js owns this function.
 
 window.getCurrentImages = function(fieldId) {
     const hiddenInput = document.getElementById(`${fieldId}_images_data`);

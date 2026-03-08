@@ -280,9 +280,14 @@
                 method: 'POST',
                 body: formData
             });
-            
+
+            if (!response.ok) {
+                const body = await response.text();
+                throw new Error(`Server error ${response.status}: ${body}`);
+            }
+
             const data = await response.json();
-            
+
             if (data.status === 'success') {
                 // Add uploaded files to current list
                 const currentFiles = window.getCurrentImages ? window.getCurrentImages(fieldId) : [];
@@ -348,9 +353,14 @@
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(requestBody)
             });
-            
+
+            if (!response.ok) {
+                const body = await response.text();
+                throw new Error(`Server error ${response.status}: ${body}`);
+            }
+
             const data = await response.json();
-            
+
             if (data.status === 'success') {
                 // Remove from current list - normalize types for comparison
                 const currentFiles = window.getCurrentImages ? window.getCurrentImages(fieldId) : [];
@@ -388,8 +398,9 @@
         // This is the most reliable method for server-side rendered forms
         const fileInput = document.getElementById(`${fieldId}_file_input`);
         if (fileInput && fileInput.dataset.pluginId) {
-            const config = {};
-            if (fileInput.dataset.pluginId) config.plugin_id = fileInput.dataset.pluginId;
+            const config = {
+                plugin_id: fileInput.dataset.pluginId
+            };
             if (fileInput.dataset.uploadEndpoint) config.endpoint = fileInput.dataset.uploadEndpoint;
             if (fileInput.dataset.fileType) config.file_type = fileInput.dataset.fileType;
             if (fileInput.dataset.maxFiles) config.max_files = parseInt(fileInput.dataset.maxFiles, 10);
