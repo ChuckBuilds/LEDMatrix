@@ -2575,12 +2575,24 @@ def get_plugin_config():
             }
 
         # Mask secret fields before returning to prevent exposing API keys
-        # Fail closed — if masking fails, return an error rather than leak secrets
+        # Fail closed — if schema unavailable, refuse to return unmasked config
         schema_mgr = api_v3.schema_manager
-        if schema_mgr:
-            schema_for_mask = schema_mgr.load_schema(plugin_id, use_cache=True)
-            if schema_for_mask and 'properties' in schema_for_mask:
-                plugin_config = mask_secret_fields(plugin_config, schema_for_mask['properties'])
+        if not schema_mgr:
+            return error_response(
+                ErrorCode.CONFIG_LOAD_FAILED,
+                f"Cannot safely return config for {plugin_id}: schema manager unavailable",
+                status_code=500
+            )
+
+        schema_for_mask = schema_mgr.load_schema(plugin_id, use_cache=True)
+        if not schema_for_mask or 'properties' not in schema_for_mask:
+            return error_response(
+                ErrorCode.CONFIG_LOAD_FAILED,
+                f"Cannot safely return config for {plugin_id}: schema unavailable for secret masking",
+                status_code=500
+            )
+
+        plugin_config = mask_secret_fields(plugin_config, schema_for_mask['properties'])
 
         return success_response(data=plugin_config)
     except Exception as e:

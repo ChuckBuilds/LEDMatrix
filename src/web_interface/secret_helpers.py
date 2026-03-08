@@ -11,6 +11,9 @@ from typing import Any, Dict, Set, Tuple
 def find_secret_fields(properties: Dict[str, Any], prefix: str = '') -> Set[str]:
     """Find all fields marked with ``x-secret: true`` in a JSON Schema properties dict.
 
+    Recurses into nested objects and array items to discover secrets at any
+    depth (e.g. ``accounts[].token``).
+
     Args:
         properties: The ``properties`` dict from a JSON Schema.
         prefix: Dot-separated prefix for nested field paths (used in recursion).
@@ -29,6 +32,13 @@ def find_secret_fields(properties: Dict[str, Any], prefix: str = '') -> Set[str]
             fields.add(full_path)
         if field_props.get('type') == 'object' and 'properties' in field_props:
             fields.update(find_secret_fields(field_props['properties'], full_path))
+        # Recurse into array items (e.g. accounts[].token)
+        if field_props.get('type') == 'array' and isinstance(field_props.get('items'), dict):
+            items_schema = field_props['items']
+            if items_schema.get('x-secret', False):
+                fields.add(f"{full_path}[]")
+            if items_schema.get('type') == 'object' and 'properties' in items_schema:
+                fields.update(find_secret_fields(items_schema['properties'], f"{full_path}[]"))
     return fields
 
 
@@ -39,7 +49,8 @@ def separate_secrets(
 
     Uses the set of dot-separated secret paths (from :func:`find_secret_fields`)
     to partition values.  Empty nested dicts are dropped from the regular
-    portion to match the original inline behavior.
+    portion to match the original inline behavior.  Handles array-item secrets
+    using ``[]`` notation in paths (e.g. ``accounts[].token``).
 
     Args:
         config: The full plugin config dict.
@@ -59,6 +70,30 @@ def separate_secrets(
                 regular[key] = nested_regular
             if nested_secrets:
                 secrets[key] = nested_secrets
+        elif isinstance(value, list):
+            # Check if array elements themselves are secrets
+            array_path = f"{full_path}[]"
+            if array_path in secret_paths:
+                secrets[key] = value
+            else:
+                # Check if array items have nested secret fields
+                has_nested = any(p.startswith(f"{array_path}.") for p in secret_paths)
+                if has_nested:
+                    reg_items = []
+                    sec_items = []
+                    for item in value:
+                        if isinstance(item, dict):
+                            r, s = separate_secrets(item, secret_paths, array_path)
+                            reg_items.append(r)
+                            sec_items.append(s)
+                        else:
+                            reg_items.append(item)
+                            sec_items.append({})
+                    regular[key] = reg_items
+                    if any(sec_items):
+                        secrets[key] = sec_items
+                else:
+                    regular[key] = value
         elif full_path in secret_paths:
             secrets[key] = value
         else:
@@ -69,9 +104,9 @@ def separate_secrets(
 def mask_secret_fields(config: Dict[str, Any], schema_properties: Dict[str, Any]) -> Dict[str, Any]:
     """Mask config values for fields marked ``x-secret: true`` in the schema.
 
-    Replaces each non-empty secret value with an empty string so that API
+    Replaces each present secret value with an empty string so that API
     responses never expose plain-text secrets.  Non-secret values are
-    returned unchanged.
+    returned unchanged.  Recurses into nested objects and array items.
 
     Args:
         config: The plugin config dict (may contain secret values).
@@ -86,11 +121,25 @@ def mask_secret_fields(config: Dict[str, Any], schema_properties: Dict[str, Any]
         if not isinstance(fprops, dict):
             continue
         if fprops.get('x-secret', False):
-            if fname in result and result[fname]:
+            # Mask any present value — including falsey ones like 0 or False
+            if fname in result and result[fname] is not None and result[fname] != '':
                 result[fname] = ''
         elif fprops.get('type') == 'object' and 'properties' in fprops:
             if fname in result and isinstance(result[fname], dict):
                 result[fname] = mask_secret_fields(result[fname], fprops['properties'])
+        elif fprops.get('type') == 'array' and isinstance(fprops.get('items'), dict):
+            items_schema = fprops['items']
+            if fname in result and isinstance(result[fname], list):
+                if items_schema.get('x-secret', False):
+                    # Entire array elements are secrets — mask each
+                    result[fname] = ['' for _ in result[fname]]
+                elif items_schema.get('type') == 'object' and 'properties' in items_schema:
+                    # Recurse into each array element's properties
+                    result[fname] = [
+                        mask_secret_fields(item, items_schema['properties'])
+                        if isinstance(item, dict) else item
+                        for item in result[fname]
+                    ]
     return result
 
 

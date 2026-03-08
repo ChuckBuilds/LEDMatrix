@@ -407,8 +407,10 @@ def _load_plugin_config_partial(plugin_id):
                 print(f"Warning: Could not load manifest for {plugin_id}: {e}")
         
         # Mask secret fields before rendering template (fail closed — never leak secrets)
-        if schema and 'properties' in schema:
-            config = mask_secret_fields(config, schema['properties'])
+        schema_properties = schema.get('properties') if isinstance(schema, dict) else None
+        if not isinstance(schema_properties, dict):
+            return '<div class="text-red-500 p-4">Error loading plugin config securely: schema unavailable.</div>', 500
+        config = mask_secret_fields(config, schema_properties)
 
         # Determine enabled status
         enabled = config.get('enabled', True)
