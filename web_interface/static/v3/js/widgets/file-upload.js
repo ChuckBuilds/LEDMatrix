@@ -72,9 +72,10 @@
         event.preventDefault();
         const files = event.dataTransfer.files;
         if (files.length === 0) return;
-        // Route to single-file handler if this is a string file-upload widget
+        // Route to single-file handler only for non-multiple string file-upload widgets
         const fileInput = document.getElementById(`${fieldId}_file_input`);
-        if (fileInput && fileInput.dataset.uploadEndpoint && fileInput.dataset.uploadEndpoint.trim() !== '') {
+        const isMultiple = fileInput && fileInput.dataset.multiple === 'true';
+        if (!isMultiple && fileInput && fileInput.dataset.uploadEndpoint && fileInput.dataset.uploadEndpoint.trim() !== '') {
             window.handleSingleFileUpload(fieldId, files[0]);
         } else {
             window.handleFiles(fieldId, Array.from(files));
@@ -394,19 +395,23 @@
      * @returns {Object} Upload configuration
      */
     window.getUploadConfig = function(fieldId) {
-        // Strategy 1: Read from data attributes on the file input element
-        // This is the most reliable method for server-side rendered forms
+        // Strategy 1: Read from data attributes on the file input element or
+        // the drop zone wrapper (which survives progress-helper re-renders)
         const fileInput = document.getElementById(`${fieldId}_file_input`);
-        if (fileInput && fileInput.dataset.pluginId) {
-            const config = {
-                plugin_id: fileInput.dataset.pluginId
-            };
-            if (fileInput.dataset.uploadEndpoint) config.endpoint = fileInput.dataset.uploadEndpoint;
-            if (fileInput.dataset.fileType) config.file_type = fileInput.dataset.fileType;
-            if (fileInput.dataset.maxFiles) config.max_files = parseInt(fileInput.dataset.maxFiles, 10);
-            if (fileInput.dataset.maxSizeMb) config.max_size_mb = parseFloat(fileInput.dataset.maxSizeMb);
-            if (fileInput.dataset.allowedTypes) {
-                config.allowed_types = fileInput.dataset.allowedTypes.split(',').map(t => t.trim());
+        const dropZone = document.getElementById(`${fieldId}_drop_zone`);
+        // Prefer file input; fall back to drop zone if input was removed by re-render
+        const configSource = (fileInput && fileInput.dataset.pluginId) ? fileInput
+            : (dropZone && dropZone.dataset.pluginId) ? dropZone
+            : null;
+        if (configSource) {
+            const ds = configSource.dataset;
+            const config = { plugin_id: ds.pluginId };
+            if (ds.uploadEndpoint) config.endpoint = ds.uploadEndpoint;
+            if (ds.fileType) config.file_type = ds.fileType;
+            if (ds.maxFiles) config.max_files = parseInt(ds.maxFiles, 10);
+            if (ds.maxSizeMb) config.max_size_mb = parseFloat(ds.maxSizeMb);
+            if (ds.allowedTypes) {
+                config.allowed_types = ds.allowedTypes.split(',').map(t => t.trim());
             }
             return config;
         }

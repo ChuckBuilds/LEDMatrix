@@ -6699,6 +6699,9 @@ window.handleCredentialsUpload = async function(event, fieldId, uploadEndpoint, 
             statusEl.className = 'text-sm text-gray-600';
         }
         showNotification('Error uploading file: ' + error.message, 'error');
+    } finally {
+        // Allow re-selecting the same file on the next attempt
+        event.target.value = '';
     }
 }
 
@@ -6734,11 +6737,23 @@ window.deleteUploadedFile = async function(fieldId, fileId, pluginId, fileType, 
         const data = await response.json();
 
         if (data.status === 'success') {
-            // Remove from current list
-            const currentFiles = window.getCurrentImages ? window.getCurrentImages(fieldId) : [];
-            const newFiles = currentFiles.filter(file => (file.id || file.category_name) !== fileId);
-            window.updateImageList(fieldId, newFiles);
-            
+            if (fileType === 'json') {
+                // For JSON files, remove the item's DOM element directly since
+                // updateImageList renders image-specific cards (thumbnails, scheduling)
+                const fileEl = document.getElementById(`file_${fileId.replace(/[^a-zA-Z0-9_-]/g, '_')}`);
+                if (fileEl) fileEl.remove();
+                // Also update the hidden data input
+                const currentFiles = window.getCurrentImages ? window.getCurrentImages(fieldId) : [];
+                const newFiles = currentFiles.filter(f => (f.file_id || f.category_name) !== fileId);
+                const hiddenInput = document.getElementById(`${fieldId}_images_data`);
+                if (hiddenInput) hiddenInput.value = JSON.stringify(newFiles);
+            } else {
+                // For images, use the full image list re-renderer
+                const currentFiles = window.getCurrentImages ? window.getCurrentImages(fieldId) : [];
+                const newFiles = currentFiles.filter(file => (file.id || file.category_name) !== fileId);
+                window.updateImageList(fieldId, newFiles);
+            }
+
             showNotification(`${fileType === 'json' ? 'File' : 'Image'} deleted successfully`, 'success');
         } else {
             showNotification(`Delete failed: ${data.message}`, 'error');
