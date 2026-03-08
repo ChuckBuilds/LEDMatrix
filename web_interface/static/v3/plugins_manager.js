@@ -6739,18 +6739,27 @@ window.deleteUploadedFile = async function(fieldId, fileId, pluginId, fileType, 
         if (data.status === 'success') {
             if (fileType === 'json') {
                 // For JSON files, remove the item's DOM element directly since
-                // updateImageList renders image-specific cards (thumbnails, scheduling)
-                const fileEl = document.getElementById(`file_${fileId.replace(/[^a-zA-Z0-9_-]/g, '_')}`);
+                // updateImageList renders image-specific cards (thumbnails, scheduling).
+                const fileEl = document.getElementById(`file_${fileId}`);
                 if (fileEl) fileEl.remove();
-                // Also update the hidden data input
+                // Update hidden data input — normalize identifiers to strings
+                // since JSON files may use id, file_id, or category_name
                 const currentFiles = window.getCurrentImages ? window.getCurrentImages(fieldId) : [];
-                const newFiles = currentFiles.filter(f => (f.file_id || f.category_name) !== fileId);
+                const fileIdStr = String(fileId);
+                const newFiles = currentFiles.filter(f => {
+                    const fid = String(f.id || f.file_id || f.category_name || '');
+                    return fid !== fileIdStr;
+                });
                 const hiddenInput = document.getElementById(`${fieldId}_images_data`);
                 if (hiddenInput) hiddenInput.value = JSON.stringify(newFiles);
             } else {
-                // For images, use the full image list re-renderer
+                // For images, use the full image list re-renderer — normalize to strings
                 const currentFiles = window.getCurrentImages ? window.getCurrentImages(fieldId) : [];
-                const newFiles = currentFiles.filter(file => (file.id || file.category_name) !== fileId);
+                const fileIdStr = String(fileId);
+                const newFiles = currentFiles.filter(file => {
+                    const fid = String(file.id || file.category_name || '');
+                    return fid !== fileIdStr;
+                });
                 window.updateImageList(fieldId, newFiles);
             }
 

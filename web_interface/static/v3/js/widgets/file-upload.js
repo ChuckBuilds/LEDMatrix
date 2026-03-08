@@ -73,9 +73,9 @@
         const files = event.dataTransfer.files;
         if (files.length === 0) return;
         // Route to single-file handler only for non-multiple string file-upload widgets
-        const fileInput = document.getElementById(`${fieldId}_file_input`);
-        const isMultiple = fileInput && fileInput.dataset.multiple === 'true';
-        if (!isMultiple && fileInput && fileInput.dataset.uploadEndpoint && fileInput.dataset.uploadEndpoint.trim() !== '') {
+        const configEl = getConfigSourceElement(fieldId);
+        const isMultiple = configEl && configEl.dataset.multiple === 'true';
+        if (!isMultiple && configEl && configEl.dataset.uploadEndpoint && configEl.dataset.uploadEndpoint.trim() !== '') {
             window.handleSingleFileUpload(fieldId, files[0]);
         } else {
             window.handleFiles(fieldId, Array.from(files));
@@ -112,14 +112,33 @@
      * @param {string} fieldId - Field ID
      * @param {File} file - File to upload
      */
-    window.handleSingleFileUpload = async function(fieldId, file) {
+    /**
+     * Resolve the config source element for a field, checking file input first
+     * then falling back to the drop zone wrapper (which survives re-renders).
+     * @param {string} fieldId - Field ID
+     * @returns {HTMLElement|null} Element with data attributes, or null
+     */
+    function getConfigSourceElement(fieldId) {
         const fileInput = document.getElementById(`${fieldId}_file_input`);
-        if (!fileInput) return;
+        if (fileInput && (fileInput.dataset.pluginId || fileInput.dataset.uploadEndpoint)) {
+            return fileInput;
+        }
+        const dropZone = document.getElementById(`${fieldId}_drop_zone`);
+        if (dropZone && (dropZone.dataset.pluginId || dropZone.dataset.uploadEndpoint)) {
+            return dropZone;
+        }
+        return null;
+    }
 
-        const uploadEndpoint = fileInput.dataset.uploadEndpoint;
-        const targetFilename = fileInput.dataset.targetFilename || 'file.json';
-        const maxSizeMB = parseFloat(fileInput.dataset.maxSizeMb || '1');
-        const allowedExtensions = (fileInput.dataset.allowedExtensions || '.json')
+    window.handleSingleFileUpload = async function(fieldId, file) {
+        // Read config from file input or drop zone fallback (survives re-renders)
+        const configEl = getConfigSourceElement(fieldId);
+        if (!configEl) return;
+
+        const uploadEndpoint = configEl.dataset.uploadEndpoint;
+        const targetFilename = configEl.dataset.targetFilename || 'file.json';
+        const maxSizeMB = parseFloat(configEl.dataset.maxSizeMb || '1');
+        const allowedExtensions = (configEl.dataset.allowedExtensions || '.json')
             .split(',').map(e => e.trim().toLowerCase());
 
         const statusDiv = document.getElementById(`${fieldId}_upload_status`);
@@ -396,16 +415,13 @@
      */
     window.getUploadConfig = function(fieldId) {
         // Strategy 1: Read from data attributes on the file input element or
-        // the drop zone wrapper (which survives progress-helper re-renders)
-        const fileInput = document.getElementById(`${fieldId}_file_input`);
-        const dropZone = document.getElementById(`${fieldId}_drop_zone`);
-        // Prefer file input; fall back to drop zone if input was removed by re-render
-        const configSource = (fileInput && fileInput.dataset.pluginId) ? fileInput
-            : (dropZone && dropZone.dataset.pluginId) ? dropZone
-            : null;
+        // the drop zone wrapper (which survives progress-helper re-renders).
+        // Accept any upload-related data attribute — not just pluginId.
+        const configSource = getConfigSourceElement(fieldId);
         if (configSource) {
             const ds = configSource.dataset;
-            const config = { plugin_id: ds.pluginId };
+            const config = {};
+            if (ds.pluginId) config.plugin_id = ds.pluginId;
             if (ds.uploadEndpoint) config.endpoint = ds.uploadEndpoint;
             if (ds.fileType) config.file_type = ds.fileType;
             if (ds.maxFiles) config.max_files = parseInt(ds.maxFiles, 10);
