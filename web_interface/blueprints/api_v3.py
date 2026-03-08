@@ -5147,7 +5147,7 @@ sys.exit(proc.returncode)
 
                 try:
                     result = subprocess.run(
-                        ['python3', wrapper_path],
+                        [sys.executable, wrapper_path],
                         capture_output=True,
                         text=True,
                         timeout=120,
@@ -5208,7 +5208,7 @@ sys.exit(proc.returncode)
 
                     try:
                         result = subprocess.run(
-                            ['python3', wrapper_path],
+                            [sys.executable, wrapper_path],
                             capture_output=True,
                             text=True,
                             timeout=120,
@@ -5251,7 +5251,6 @@ sys.exit(proc.returncode)
                     # For OAuth flows, we might need to import the script as a module
                     if action_def.get('oauth_flow'):
                         # Import script as module to get auth URL
-                        import sys
                         import importlib.util
 
                         spec = importlib.util.spec_from_file_location("plugin_action", script_file)
@@ -5304,7 +5303,7 @@ sys.exit(proc.returncode)
                     else:
                         # Simple script execution
                         result = subprocess.run(
-                            ['python3', str(script_file)],
+                            [sys.executable, str(script_file)],
                             capture_output=True,
                             text=True,
                             timeout=60,
@@ -5415,7 +5414,7 @@ sys.exit(proc.returncode)
 
             try:
                 result = subprocess.run(
-                    ['python3', wrapper_path],
+                    [sys.executable, wrapper_path],
                     capture_output=True,
                     text=True,
                     timeout=120,
@@ -5522,7 +5521,7 @@ def authenticate_ytm():
 
         # Run the authentication script
         result = subprocess.run(
-            ['python3', str(auth_script)],
+            [sys.executable, str(auth_script)],
             capture_output=True,
             text=True,
             timeout=60,
