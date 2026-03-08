@@ -5251,7 +5251,6 @@ sys.exit(proc.returncode)
                     # For OAuth flows, we might need to import the script as a module
                     if action_def.get('oauth_flow'):
                         # Import script as module to get auth URL
-                        import sys
                         import importlib.util
 
                         spec = importlib.util.spec_from_file_location("plugin_action", script_file)
@@ -5442,7 +5441,6 @@ sys.exit(proc.returncode)
         else:
             # Step 1: Get authorization URL
             # Import the script's functions directly to get the auth URL
-            import sys
             import importlib.util
 
             # Load the authentication script as a module
@@ -6216,15 +6214,15 @@ def upload_of_the_day_json():
             for key in json_data.keys():
                 try:
                     day_num = int(key)
-                    if day_num < 1 or day_num > 365:
+                    if day_num < 1 or day_num > 366:
                         return jsonify({
                             'status': 'error',
-                            'message': f'Day number {day_num} in {file.filename} is out of range (must be 1-365)'
+                            'message': f'Day number {day_num} in {file.filename} is out of range (must be 1-366)'
                         }), 400
                 except ValueError:
                     return jsonify({
                         'status': 'error',
-                        'message': f'Invalid key "{key}" in {file.filename}: must be a day number (1-365)'
+                        'message': f'Invalid key "{key}" in {file.filename}: must be a day number (1-366)'
                     }), 400
 
             # Generate safe filename from original (preserve user's filename)
