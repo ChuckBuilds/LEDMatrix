@@ -6207,7 +6207,7 @@ def upload_of_the_day_json():
             if not isinstance(json_data, dict):
                 return jsonify({
                     'status': 'error',
-                    'message': f'JSON in {file.filename} must be an object with day numbers (1-365) as keys'
+                    'message': f'JSON in {file.filename} must be an object with day numbers (1-366) as keys'
                 }), 400
 
             # Check if keys are valid day numbers
