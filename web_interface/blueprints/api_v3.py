@@ -5147,7 +5147,7 @@ sys.exit(proc.returncode)
 
                 try:
                     result = subprocess.run(
-                        ['python3', wrapper_path],
+                        [sys.executable, wrapper_path],
                         capture_output=True,
                         text=True,
                         timeout=120,
@@ -5208,7 +5208,7 @@ sys.exit(proc.returncode)
 
                     try:
                         result = subprocess.run(
-                            ['python3', wrapper_path],
+                            [sys.executable, wrapper_path],
                             capture_output=True,
                             text=True,
                             timeout=120,
@@ -5414,7 +5414,7 @@ sys.exit(proc.returncode)
 
             try:
                 result = subprocess.run(
-                    ['python3', wrapper_path],
+                    [sys.executable, wrapper_path],
                     capture_output=True,
                     text=True,
                     timeout=120,
@@ -5521,7 +5521,7 @@ def authenticate_ytm():
 
         # Run the authentication script
         result = subprocess.run(
-            ['python3', str(auth_script)],
+            [sys.executable, str(auth_script)],
             capture_output=True,
             text=True,
             timeout=60,
