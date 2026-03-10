@@ -6622,22 +6622,9 @@ window.closeInstructionsModal = function() {
 }
 
 // ==================== File Upload Functions ====================
-// Make these globally accessible for use in base.html
-
-window.handleFileDrop = function(event, fieldId) {
-    event.preventDefault();
-    const files = event.dataTransfer.files;
-    if (files.length > 0) {
-        window.handleFiles(fieldId, Array.from(files));
-    }
-}
-
-window.handleFileSelect = function(event, fieldId) {
-    const files = event.target.files;
-    if (files.length > 0) {
-        window.handleFiles(fieldId, Array.from(files));
-    }
-}
+// Note: handleFileDrop, handleFileSelect, and handleFiles are defined in
+// file-upload.js widget which loads first. We only define supplementary
+// functions here that file-upload.js doesn't provide.
 
 window.handleCredentialsUpload = async function(event, fieldId, uploadEndpoint, targetFilename) {
     const file = event.target.files[0];
@@ -6661,7 +6648,11 @@ window.handleCredentialsUpload = async function(event, fieldId, uploadEndpoint, 
     // Show upload status
     const statusEl = document.getElementById(fieldId + '_status');
     if (statusEl) {
-        statusEl.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>Uploading...';
+        statusEl.textContent = '';
+        const spinner = document.createElement('i');
+        spinner.className = 'fas fa-spinner fa-spin mr-2';
+        statusEl.appendChild(spinner);
+        statusEl.appendChild(document.createTextNode('Uploading...'));
     }
     
     // Create form data
@@ -6673,9 +6664,14 @@ window.handleCredentialsUpload = async function(event, fieldId, uploadEndpoint, 
             method: 'POST',
             body: formData
         });
-        
+
+        if (!response.ok) {
+            const body = await response.text();
+            throw new Error(`Server error ${response.status}: ${body}`);
+        }
+
         const data = await response.json();
-        
+
         if (data.status === 'success') {
             // Update hidden input with filename
             const hiddenInput = document.getElementById(fieldId + '_hidden');
@@ -6685,112 +6681,31 @@ window.handleCredentialsUpload = async function(event, fieldId, uploadEndpoint, 
             
             // Update status
             if (statusEl) {
-                statusEl.innerHTML = `✓ Uploaded: ${targetFilename || file.name}`;
+                statusEl.textContent = `✓ Uploaded: ${targetFilename || file.name}`;
                 statusEl.className = 'text-sm text-green-600';
             }
             
             showNotification('Credentials file uploaded successfully', 'success');
         } else {
             if (statusEl) {
-                statusEl.innerHTML = 'Upload failed - click to try again';
+                statusEl.textContent = 'Upload failed - click to try again';
                 statusEl.className = 'text-sm text-gray-600';
             }
             showNotification(data.message || 'Upload failed', 'error');
         }
     } catch (error) {
         if (statusEl) {
-            statusEl.innerHTML = 'Upload failed - click to try again';
+            statusEl.textContent = 'Upload failed - click to try again';
             statusEl.className = 'text-sm text-gray-600';
         }
         showNotification('Error uploading file: ' + error.message, 'error');
+    } finally {
+        // Allow re-selecting the same file on the next attempt
+        event.target.value = '';
     }
 }
 
-window.handleFiles = async function(fieldId, files) {
-    const uploadConfig = window.getUploadConfig(fieldId);
-    const pluginId = uploadConfig.plugin_id || window.currentPluginConfig?.pluginId || 'static-image';
-    const maxFiles = uploadConfig.max_files || 10;
-    const maxSizeMB = uploadConfig.max_size_mb || 5;
-    const fileType = uploadConfig.file_type || 'image';
-    const customUploadEndpoint = uploadConfig.endpoint || '/api/v3/plugins/assets/upload';
-    
-    // Get current files list (works for both images and JSON)
-    const currentFiles = window.getCurrentImages ? window.getCurrentImages(fieldId) : [];
-    if (currentFiles.length + files.length > maxFiles) {
-        showNotification(`Maximum ${maxFiles} files allowed. You have ${currentFiles.length} and tried to add ${files.length}.`, 'error');
-        return;
-    }
-    
-    // Validate file types and sizes
-    const validFiles = [];
-    for (const file of files) {
-        if (file.size > maxSizeMB * 1024 * 1024) {
-            showNotification(`File ${file.name} exceeds ${maxSizeMB}MB limit`, 'error');
-            continue;
-        }
-        
-        if (fileType === 'json') {
-            // Validate JSON files
-            if (!file.name.toLowerCase().endsWith('.json')) {
-                showNotification(`File ${file.name} must be a JSON file (.json)`, 'error');
-                continue;
-            }
-        } else {
-            // Validate image files
-            const allowedTypes = ['image/png', 'image/jpeg', 'image/jpg', 'image/bmp', 'image/gif'];
-            if (!allowedTypes.includes(file.type)) {
-                showNotification(`File ${file.name} is not a valid image type`, 'error');
-                continue;
-            }
-        }
-        
-        validFiles.push(file);
-    }
-    
-    if (validFiles.length === 0) {
-        return;
-    }
-    
-    // Show upload progress
-    window.showUploadProgress(fieldId, validFiles.length);
-    
-    // Upload files
-    const formData = new FormData();
-    if (fileType !== 'json') {
-        formData.append('plugin_id', pluginId);
-    }
-    validFiles.forEach(file => formData.append('files', file));
-    
-    try {
-        const response = await fetch(customUploadEndpoint, {
-            method: 'POST',
-            body: formData
-        });
-        
-        const data = await response.json();
-        
-        if (data.status === 'success') {
-            // Add uploaded files to current list
-            const currentFiles = window.getCurrentImages ? window.getCurrentImages(fieldId) : [];
-            const newFiles = [...currentFiles, ...data.uploaded_files];
-            window.updateImageList(fieldId, newFiles);
-            
-            showNotification(`Successfully uploaded ${data.uploaded_files.length} ${fileType === 'json' ? 'file(s)' : 'image(s)'}`, 'success');
-        } else {
-            showNotification(`Upload failed: ${data.message}`, 'error');
-        }
-    } catch (error) {
-        console.error('Upload error:', error);
-        showNotification(`Upload error: ${error.message}`, 'error');
-    } finally {
-        window.hideUploadProgress(fieldId);
-        // Clear file input
-        const fileInput = document.getElementById(`${fieldId}_file_input`);
-        if (fileInput) {
-            fileInput.value = '';
-        }
-    }
-}
+// handleFiles is now defined exclusively in file-upload.js widget
 
 window.deleteUploadedImage = async function(fieldId, imageId, pluginId) {
     return window.deleteUploadedFile(fieldId, imageId, pluginId, 'image', null);
@@ -6813,15 +6728,41 @@ window.deleteUploadedFile = async function(fieldId, fileId, pluginId, fileType, 
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(requestBody)
         });
-        
+
+        if (!response.ok) {
+            const body = await response.text();
+            throw new Error(`Server error ${response.status}: ${body}`);
+        }
+
         const data = await response.json();
-        
+
         if (data.status === 'success') {
-            // Remove from current list
-            const currentFiles = window.getCurrentImages ? window.getCurrentImages(fieldId) : [];
-            const newFiles = currentFiles.filter(file => (file.id || file.category_name) !== fileId);
-            window.updateImageList(fieldId, newFiles);
-            
+            if (fileType === 'json') {
+                // For JSON files, remove the item's DOM element directly since
+                // updateImageList renders image-specific cards (thumbnails, scheduling).
+                const fileEl = document.getElementById(`file_${fileId}`);
+                if (fileEl) fileEl.remove();
+                // Update hidden data input — normalize identifiers to strings
+                // since JSON files may use id, file_id, or category_name
+                const currentFiles = window.getCurrentImages ? window.getCurrentImages(fieldId) : [];
+                const fileIdStr = String(fileId);
+                const newFiles = currentFiles.filter(f => {
+                    const fid = String(f.id || f.file_id || f.category_name || '');
+                    return fid !== fileIdStr;
+                });
+                const hiddenInput = document.getElementById(`${fieldId}_images_data`);
+                if (hiddenInput) hiddenInput.value = JSON.stringify(newFiles);
+            } else {
+                // For images, use the full image list re-renderer — normalize to strings
+                const currentFiles = window.getCurrentImages ? window.getCurrentImages(fieldId) : [];
+                const fileIdStr = String(fileId);
+                const newFiles = currentFiles.filter(file => {
+                    const fid = String(file.id || file.category_name || '');
+                    return fid !== fileIdStr;
+                });
+                window.updateImageList(fieldId, newFiles);
+            }
+
             showNotification(`${fileType === 'json' ? 'File' : 'Image'} deleted successfully`, 'success');
         } else {
             showNotification(`Delete failed: ${data.message}`, 'error');
@@ -6832,47 +6773,8 @@ window.deleteUploadedFile = async function(fieldId, fileId, pluginId, fileType, 
     }
 }
 
-window.getUploadConfig = function(fieldId) {
-    // Extract config from schema
-    const schema = window.currentPluginConfig?.schema;
-    if (!schema || !schema.properties) return {};
-    
-    // Find the property that matches this fieldId
-    // FieldId is like "image_config_images" for "image_config.images"
-    const key = fieldId.replace(/_/g, '.');
-    const keys = key.split('.');
-    let prop = schema.properties;
-    
-    for (const k of keys) {
-        if (prop && prop[k]) {
-            prop = prop[k];
-            if (prop.properties && prop.type === 'object') {
-                prop = prop.properties;
-            } else if (prop.type === 'array' && prop['x-widget'] === 'file-upload') {
-                break;
-            } else {
-                break;
-            }
-        }
-    }
-    
-    // If we found an array with x-widget, get its config
-    if (prop && prop.type === 'array' && prop['x-widget'] === 'file-upload') {
-        return prop['x-upload-config'] || {};
-    }
-    
-    // Try to find nested images array
-    if (schema.properties && schema.properties.image_config && 
-        schema.properties.image_config.properties && 
-        schema.properties.image_config.properties.images) {
-        const imagesProp = schema.properties.image_config.properties.images;
-        if (imagesProp['x-widget'] === 'file-upload') {
-            return imagesProp['x-upload-config'] || {};
-        }
-    }
-    
-    return {};
-}
+// getUploadConfig is defined in file-upload.js widget which loads first.
+// No override needed here — file-upload.js owns this function.
 
 window.getCurrentImages = function(fieldId) {
     const hiddenInput = document.getElementById(`${fieldId}_images_data`);

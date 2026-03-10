@@ -192,18 +192,31 @@
                 
                 <div id="{{ field_id }}_upload_widget" class="mt-1">
                     <!-- File Upload Drop Zone -->
-                    <div id="{{ field_id }}_drop_zone" 
+                    <div id="{{ field_id }}_drop_zone"
                          class="border-2 border-dashed border-gray-300 rounded-lg p-6 text-center hover:border-blue-400 transition-colors cursor-pointer"
-                         ondrop="window.handleFileDrop(event, this.dataset.fieldId)" 
-                         ondragover="event.preventDefault()" 
+                         ondrop="window.handleFileDrop(event, this.dataset.fieldId)"
+                         ondragover="event.preventDefault()"
                          data-field-id="{{ field_id }}"
+                         data-plugin-id="{{ plugin_id_from_config }}"
+                         data-upload-endpoint="{{ upload_config.get('endpoint', '/api/v3/plugins/assets/upload') }}"
+                         data-file-type="{{ upload_config.get('file_type', 'image') }}"
+                         data-max-files="{{ max_files }}"
+                         data-max-size-mb="{{ max_size_mb }}"
+                         data-allowed-types="{{ allowed_types|join(',') }}"
                          onclick="document.getElementById('{{ field_id }}_file_input').click()">
-                        <input type="file" 
-                               id="{{ field_id }}_file_input" 
-                               multiple 
+                        <input type="file"
+                               id="{{ field_id }}_file_input"
+                               multiple
                                accept="{{ allowed_types|join(',') }}"
                                style="display: none;"
                                data-field-id="{{ field_id }}"
+                               data-plugin-id="{{ plugin_id_from_config }}"
+                               data-upload-endpoint="{{ upload_config.get('endpoint', '/api/v3/plugins/assets/upload') }}"
+                               data-file-type="{{ upload_config.get('file_type', 'image') }}"
+                               data-multiple="true"
+                               data-max-files="{{ max_files }}"
+                               data-max-size-mb="{{ max_size_mb }}"
+                               data-allowed-types="{{ allowed_types|join(',') }}"
                                onchange="window.handleFileSelect(event, this.dataset.fieldId)">
                         <i class="fas fa-cloud-upload-alt text-3xl text-gray-400 mb-2"></i>
                         <p class="text-sm text-gray-600">Drag and drop images here or click to browse</p>

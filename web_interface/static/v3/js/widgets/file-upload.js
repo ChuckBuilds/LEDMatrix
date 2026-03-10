@@ -72,9 +72,10 @@
         event.preventDefault();
         const files = event.dataTransfer.files;
         if (files.length === 0) return;
-        // Route to single-file handler if this is a string file-upload widget
-        const fileInput = document.getElementById(`${fieldId}_file_input`);
-        if (fileInput && fileInput.dataset.uploadEndpoint && fileInput.dataset.uploadEndpoint.trim() !== '') {
+        // Route to single-file handler only for non-multiple string file-upload widgets
+        const configEl = getConfigSourceElement(fieldId);
+        const isMultiple = configEl && configEl.dataset.multiple === 'true';
+        if (!isMultiple && configEl && configEl.dataset.uploadEndpoint && configEl.dataset.uploadEndpoint.trim() !== '') {
             window.handleSingleFileUpload(fieldId, files[0]);
         } else {
             window.handleFiles(fieldId, Array.from(files));
@@ -111,14 +112,33 @@
      * @param {string} fieldId - Field ID
      * @param {File} file - File to upload
      */
-    window.handleSingleFileUpload = async function(fieldId, file) {
+    /**
+     * Resolve the config source element for a field, checking file input first
+     * then falling back to the drop zone wrapper (which survives re-renders).
+     * @param {string} fieldId - Field ID
+     * @returns {HTMLElement|null} Element with data attributes, or null
+     */
+    function getConfigSourceElement(fieldId) {
         const fileInput = document.getElementById(`${fieldId}_file_input`);
-        if (!fileInput) return;
+        if (fileInput && (fileInput.dataset.pluginId || fileInput.dataset.uploadEndpoint)) {
+            return fileInput;
+        }
+        const dropZone = document.getElementById(`${fieldId}_drop_zone`);
+        if (dropZone && (dropZone.dataset.pluginId || dropZone.dataset.uploadEndpoint)) {
+            return dropZone;
+        }
+        return null;
+    }
 
-        const uploadEndpoint = fileInput.dataset.uploadEndpoint;
-        const targetFilename = fileInput.dataset.targetFilename || 'file.json';
-        const maxSizeMB = parseFloat(fileInput.dataset.maxSizeMb || '1');
-        const allowedExtensions = (fileInput.dataset.allowedExtensions || '.json')
+    window.handleSingleFileUpload = async function(fieldId, file) {
+        // Read config from file input or drop zone fallback (survives re-renders)
+        const configEl = getConfigSourceElement(fieldId);
+        if (!configEl) return;
+
+        const uploadEndpoint = configEl.dataset.uploadEndpoint;
+        const targetFilename = configEl.dataset.targetFilename || 'file.json';
+        const maxSizeMB = parseFloat(configEl.dataset.maxSizeMb || '1');
+        const allowedExtensions = (configEl.dataset.allowedExtensions || '.json')
             .split(',').map(e => e.trim().toLowerCase());
 
         const statusDiv = document.getElementById(`${fieldId}_upload_status`);
@@ -280,9 +300,14 @@
                 method: 'POST',
                 body: formData
             });
-            
+
+            if (!response.ok) {
+                const body = await response.text();
+                throw new Error(`Server error ${response.status}: ${body}`);
+            }
+
             const data = await response.json();
-            
+
             if (data.status === 'success') {
                 // Add uploaded files to current list
                 const currentFiles = window.getCurrentImages ? window.getCurrentImages(fieldId) : [];
@@ -348,9 +373,14 @@
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(requestBody)
             });
-            
+
+            if (!response.ok) {
+                const body = await response.text();
+                throw new Error(`Server error ${response.status}: ${body}`);
+            }
+
             const data = await response.json();
-            
+
             if (data.status === 'success') {
                 // Remove from current list - normalize types for comparison
                 const currentFiles = window.getCurrentImages ? window.getCurrentImages(fieldId) : [];
@@ -377,21 +407,42 @@
     };
 
     /**
-     * Get upload configuration from schema
+     * Get upload configuration for a file upload field.
+     * Priority: 1) data attributes on the file input element (server-rendered),
+     *           2) schema lookup via window.currentPluginConfig (client-rendered).
      * @param {string} fieldId - Field ID
      * @returns {Object} Upload configuration
      */
     window.getUploadConfig = function(fieldId) {
-        // Extract config from schema
+        // Strategy 1: Read from data attributes on the file input element or
+        // the drop zone wrapper (which survives progress-helper re-renders).
+        // Accept any upload-related data attribute — not just pluginId.
+        const configSource = getConfigSourceElement(fieldId);
+        if (configSource) {
+            const ds = configSource.dataset;
+            const config = {};
+            if (ds.pluginId) config.plugin_id = ds.pluginId;
+            if (ds.uploadEndpoint) config.endpoint = ds.uploadEndpoint;
+            if (ds.fileType) config.file_type = ds.fileType;
+            if (ds.maxFiles) config.max_files = parseInt(ds.maxFiles, 10);
+            if (ds.maxSizeMb) config.max_size_mb = parseFloat(ds.maxSizeMb);
+            if (ds.allowedTypes) {
+                config.allowed_types = ds.allowedTypes.split(',').map(t => t.trim());
+            }
+            return config;
+        }
+
+        // Strategy 2: Extract config from schema (client-side rendered forms)
         const schema = window.currentPluginConfig?.schema;
         if (!schema || !schema.properties) return {};
-        
+
         // Find the property that matches this fieldId
-        // FieldId is like "image_config_images" for "image_config.images"
+        // FieldId is like "image_config_images" for "image_config.images" (client-side)
+        // or "static-image-images" for plugin "static-image", field "images" (server-side)
         const key = fieldId.replace(/_/g, '.');
         const keys = key.split('.');
         let prop = schema.properties;
-        
+
         for (const k of keys) {
             if (prop && prop[k]) {
                 prop = prop[k];
@@ -404,22 +455,22 @@
                 }
             }
         }
-        
+
         // If we found an array with x-widget, get its config
         if (prop && prop.type === 'array' && prop['x-widget'] === 'file-upload') {
             return prop['x-upload-config'] || {};
         }
-        
-        // Try to find nested images array
-        if (schema.properties && schema.properties.image_config && 
-            schema.properties.image_config.properties && 
+
+        // Try to find nested images array (legacy fallback)
+        if (schema.properties && schema.properties.image_config &&
+            schema.properties.image_config.properties &&
             schema.properties.image_config.properties.images) {
             const imagesProp = schema.properties.image_config.properties.images;
             if (imagesProp['x-widget'] === 'file-upload') {
                 return imagesProp['x-upload-config'] || {};
             }
         }
-        
+
         return {};
     };
 
