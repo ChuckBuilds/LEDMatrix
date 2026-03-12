@@ -413,7 +413,7 @@ def save_schedule_config():
         return error_response(
             ErrorCode.CONFIG_SAVE_FAILED,
             f"Error saving schedule configuration: {str(e)}",
-            details=traceback.format_exc(),
+            details="Internal server error - check server logs",
             status_code=500
         )
 
@@ -634,7 +634,7 @@ def save_dim_schedule_config():
         return error_response(
             ErrorCode.CONFIG_SAVE_FAILED,
             f"Error saving dim schedule configuration: {str(e)}",
-            details=traceback.format_exc(),
+            details="Internal server error - check server logs",
             status_code=500
         )
 
@@ -985,7 +985,7 @@ def save_main_config():
         return error_response(
             ErrorCode.CONFIG_SAVE_FAILED,
             f"Error saving configuration: {e}",
-            details=traceback.format_exc(),
+            details="Internal server error - check server logs",
             status_code=500
         )
 
@@ -1037,7 +1037,7 @@ def save_raw_main_config():
             return error_response(
                 ErrorCode.CONFIG_SAVE_FAILED,
                 error_message,
-                details=traceback.format_exc(),
+                details="Internal server error - check server logs",
                 context={'config_path': e.config_path} if hasattr(e, 'config_path') and e.config_path else None,
                 status_code=500
             )
@@ -1046,7 +1046,7 @@ def save_raw_main_config():
             return error_response(
                 ErrorCode.UNKNOWN_ERROR,
                 error_message,
-                details=traceback.format_exc(),
+                details="Internal server error - check server logs",
                 status_code=500
             )
 
@@ -1470,10 +1470,8 @@ def execute_system_action():
 
     except Exception as e:
         import traceback
-        error_details = traceback.format_exc()
-        print(f"Error in execute_system_action: {str(e)}")
-        print(error_details)
-        return jsonify({'status': 'error', 'message': str(e), 'details': error_details}), 500
+        logger.error(f"Error in execute_system_action: {str(e)}\n{traceback.format_exc()}")
+        return jsonify({'status': 'error', 'message': str(e)}), 500
 
 @api_v3.route('/display/current', methods=['GET'])
 def get_display_current():
@@ -1882,10 +1880,8 @@ def get_installed_plugins():
         return jsonify({'status': 'success', 'data': {'plugins': plugins}})
     except Exception as e:
         import traceback
-        error_details = traceback.format_exc()
-        print(f"Error in get_installed_plugins: {str(e)}")
-        print(error_details)
-        return jsonify({'status': 'error', 'message': str(e), 'details': error_details}), 500
+        logger.error(f"Error in get_installed_plugins: {str(e)}\n{traceback.format_exc()}")
+        return jsonify({'status': 'error', 'message': str(e)}), 500
 
 @api_v3.route('/plugins/health', methods=['GET'])
 def get_plugin_health():
@@ -6069,7 +6065,7 @@ def upload_plugin_asset():
 
     except Exception as e:
         import traceback
-        return jsonify({'status': 'error', 'message': str(e), 'traceback': traceback.format_exc()}), 500
+        return jsonify({'status': 'error', 'message': str(e)}), 500
 
 @api_v3.route('/plugins/of-the-day/json/upload', methods=['POST'])
 def upload_of_the_day_json():
@@ -6219,7 +6215,7 @@ def upload_of_the_day_json():
 
     except Exception as e:
         import traceback
-        return jsonify({'status': 'error', 'message': str(e), 'traceback': traceback.format_exc()}), 500
+        return jsonify({'status': 'error', 'message': str(e)}), 500
 
 @api_v3.route('/plugins/of-the-day/json/delete', methods=['POST'])
 def delete_of_the_day_json():
@@ -6266,7 +6262,7 @@ def delete_of_the_day_json():
 
     except Exception as e:
         import traceback
-        return jsonify({'status': 'error', 'message': str(e), 'traceback': traceback.format_exc()}), 500
+        return jsonify({'status': 'error', 'message': str(e)}), 500
 
 @api_v3.route('/plugins/<plugin_id>/static/<path:file_path>', methods=['GET'])
 def serve_plugin_static(plugin_id, file_path):
@@ -6312,7 +6308,7 @@ def serve_plugin_static(plugin_id, file_path):
 
     except Exception as e:
         import traceback
-        return jsonify({'status': 'error', 'message': str(e), 'traceback': traceback.format_exc()}), 500
+        return jsonify({'status': 'error', 'message': str(e)}), 500
 
 
 @api_v3.route('/plugins/calendar/upload-credentials', methods=['POST'])
@@ -6484,7 +6480,7 @@ def delete_plugin_asset():
 
     except Exception as e:
         import traceback
-        return jsonify({'status': 'error', 'message': str(e), 'traceback': traceback.format_exc()}), 500
+        return jsonify({'status': 'error', 'message': str(e)}), 500
 
 @api_v3.route('/plugins/assets/list', methods=['GET'])
 def list_plugin_assets():
@@ -6512,7 +6508,7 @@ def list_plugin_assets():
 
     except Exception as e:
         import traceback
-        return jsonify({'status': 'error', 'message': str(e), 'traceback': traceback.format_exc()}), 500
+        return jsonify({'status': 'error', 'message': str(e)}), 500
 
 @api_v3.route('/logs', methods=['GET'])
 def get_logs():
