@@ -442,7 +442,7 @@ def system_status_generator():
                 try:
                     with open('/sys/class/thermal/thermal_zone0/temp', 'r') as f:
                         cpu_temp = round(float(f.read()) / 1000.0, 1)
-                except:
+                except (OSError, ValueError):
                     pass
                     
             except ImportError:
@@ -456,7 +456,7 @@ def system_status_generator():
                 result = subprocess.run(['systemctl', 'is-active', 'ledmatrix'], 
                                       capture_output=True, text=True, timeout=2)
                 service_active = result.stdout.strip() == 'active'
-            except:
+            except (subprocess.SubprocessError, OSError):
                 pass
             
             status = {
@@ -492,7 +492,7 @@ def display_preview_generator():
         parallel = main_config.get('display', {}).get('hardware', {}).get('parallel', 1)
         width = cols * chain_length
         height = rows * parallel
-    except:
+    except (KeyError, TypeError, ValueError):
         width = 128
         height = 64
     

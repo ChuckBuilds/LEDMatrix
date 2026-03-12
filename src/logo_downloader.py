@@ -237,7 +237,7 @@ class LogoDownloader:
                 logger.error(f"Downloaded file for {team_abbreviation} is not a valid image or conversion failed: {e}")
                 try:
                     os.remove(filepath)  # Remove invalid file
-                except:
+                except OSError:
                     pass
                 return False
             
@@ -642,10 +642,10 @@ class LogoDownloader:
             # Try to load a font, fallback to default
             try:
                 font = ImageFont.truetype("assets/fonts/PressStart2P-Regular.ttf", 12)
-            except:
+            except (OSError, IOError):
                 try:
                     font = ImageFont.load_default()
-                except:
+                except (OSError, IOError):
                     font = None
             
             # Draw team abbreviation
