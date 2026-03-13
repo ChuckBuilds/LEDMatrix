@@ -406,14 +406,11 @@ def save_schedule_config():
 
         return success_response(message='Schedule configuration saved successfully')
     except Exception as e:
-        import logging
-        import traceback
-        error_msg = f"Error saving schedule config: {str(e)}\n{traceback.format_exc()}"
-        logging.error(error_msg)
+        logger.exception("[ScheduleConfig] Failed to save schedule configuration")
         return error_response(
             ErrorCode.CONFIG_SAVE_FAILED,
-            f"Error saving schedule configuration: {str(e)}",
-            details=traceback.format_exc(),
+            "Error saving schedule configuration",
+            details="Internal server error - check server logs",
             status_code=500
         )
 
@@ -627,14 +624,11 @@ def save_dim_schedule_config():
 
         return success_response(message='Dim schedule configuration saved successfully')
     except Exception as e:
-        import logging
-        import traceback
-        error_msg = f"Error saving dim schedule config: {str(e)}\n{traceback.format_exc()}"
-        logging.error(error_msg)
+        logger.exception("[DimScheduleConfig] Failed to save dim schedule configuration")
         return error_response(
             ErrorCode.CONFIG_SAVE_FAILED,
-            f"Error saving dim schedule configuration: {str(e)}",
-            details=traceback.format_exc(),
+            "Error saving dim schedule configuration",
+            details="Internal server error - check server logs",
             status_code=500
         )
 
@@ -978,14 +972,11 @@ def save_main_config():
 
         return success_response(message='Configuration saved successfully')
     except Exception as e:
-        import logging
-        import traceback
-        error_msg = f"Error saving config: {str(e)}\n{traceback.format_exc()}"
-        logging.error(error_msg)
+        logger.exception("[Config] Failed to save configuration")
         return error_response(
             ErrorCode.CONFIG_SAVE_FAILED,
-            f"Error saving configuration: {e}",
-            details=traceback.format_exc(),
+            "Error saving configuration",
+            details="Internal server error - check server logs",
             status_code=500
         )
 
@@ -1021,32 +1012,20 @@ def save_raw_main_config():
     except json.JSONDecodeError as e:
         return jsonify({'status': 'error', 'message': f'Invalid JSON: {str(e)}'}), 400
     except Exception as e:
-        import logging
-        import traceback
         from src.exceptions import ConfigError
-
-        # Log the full error for debugging
-        error_msg = f"Error saving raw main config: {str(e)}\n{traceback.format_exc()}"
-        logging.error(error_msg)
-
-        # Extract more specific error message if it's a ConfigError
+        logger.exception("[RawConfig] Failed to save raw main config")
         if isinstance(e, ConfigError):
-            error_message = str(e)
-            if hasattr(e, 'config_path') and e.config_path:
-                error_message = f"{error_message} (config_path: {e.config_path})"
             return error_response(
                 ErrorCode.CONFIG_SAVE_FAILED,
-                error_message,
-                details=traceback.format_exc(),
-                context={'config_path': e.config_path} if hasattr(e, 'config_path') and e.config_path else None,
+                "Error saving raw main configuration",
+                details="Internal server error - check server logs",
                 status_code=500
             )
         else:
-            error_message = str(e) if str(e) else "An unexpected error occurred while saving the configuration"
             return error_response(
                 ErrorCode.UNKNOWN_ERROR,
-                error_message,
-                details=traceback.format_exc(),
+                "An unexpected error occurred while saving the configuration",
+                details="Internal server error - check server logs",
                 status_code=500
             )
 
@@ -1072,24 +1051,22 @@ def save_raw_secrets_config():
     except json.JSONDecodeError as e:
         return jsonify({'status': 'error', 'message': f'Invalid JSON: {str(e)}'}), 400
     except Exception as e:
-        import logging
-        import traceback
         from src.exceptions import ConfigError
-
-        # Log the full error for debugging
-        error_msg = f"Error saving raw secrets config: {str(e)}\n{traceback.format_exc()}"
-        logging.error(error_msg)
-
-        # Extract more specific error message if it's a ConfigError
+        logger.exception("[RawSecrets] Failed to save raw secrets config")
         if isinstance(e, ConfigError):
-            # ConfigError has a message attribute and may have context
-            error_message = str(e)
-            if hasattr(e, 'config_path') and e.config_path:
-                error_message = f"{error_message} (config_path: {e.config_path})"
+            return error_response(
+                ErrorCode.CONFIG_SAVE_FAILED,
+                "Error saving raw secrets configuration",
+                details="Internal server error - check server logs",
+                status_code=500
+            )
         else:
-            error_message = str(e) if str(e) else "An unexpected error occurred while saving the configuration"
-
-        return jsonify({'status': 'error', 'message': error_message}), 500
+            return error_response(
+                ErrorCode.UNKNOWN_ERROR,
+                "An unexpected error occurred while saving the configuration",
+                details="Internal server error - check server logs",
+                status_code=500
+            )
 
 @api_v3.route('/system/status', methods=['GET'])
 def get_system_status():
@@ -1470,10 +1447,8 @@ def execute_system_action():
 
     except Exception as e:
         import traceback
-        error_details = traceback.format_exc()
-        print(f"Error in execute_system_action: {str(e)}")
-        print(error_details)
-        return jsonify({'status': 'error', 'message': str(e), 'details': error_details}), 500
+        logger.exception("[SystemAction] Unexpected error")
+        return jsonify({'status': 'error', 'message': 'Internal server error - check server logs'}), 500
 
 @api_v3.route('/display/current', methods=['GET'])
 def get_display_current():
@@ -1882,10 +1857,8 @@ def get_installed_plugins():
         return jsonify({'status': 'success', 'data': {'plugins': plugins}})
     except Exception as e:
         import traceback
-        error_details = traceback.format_exc()
-        print(f"Error in get_installed_plugins: {str(e)}")
-        print(error_details)
-        return jsonify({'status': 'error', 'message': str(e), 'details': error_details}), 500
+        logger.exception("[Plugins] Error listing installed plugins")
+        return jsonify({'status': 'error', 'message': 'Internal server error - check server logs'}), 500
 
 @api_v3.route('/plugins/health', methods=['GET'])
 def get_plugin_health():
@@ -6068,8 +6041,8 @@ def upload_plugin_asset():
         })
 
     except Exception as e:
-        import traceback
-        return jsonify({'status': 'error', 'message': str(e), 'traceback': traceback.format_exc()}), 500
+        logger.exception("[API] Unexpected error")
+        return jsonify({'status': 'error', 'message': 'Internal server error - check server logs'}), 500
 
 @api_v3.route('/plugins/of-the-day/json/upload', methods=['POST'])
 def upload_of_the_day_json():
@@ -6218,8 +6191,8 @@ def upload_of_the_day_json():
         })
 
     except Exception as e:
-        import traceback
-        return jsonify({'status': 'error', 'message': str(e), 'traceback': traceback.format_exc()}), 500
+        logger.exception("[API] Unexpected error")
+        return jsonify({'status': 'error', 'message': 'Internal server error - check server logs'}), 500
 
 @api_v3.route('/plugins/of-the-day/json/delete', methods=['POST'])
 def delete_of_the_day_json():
@@ -6265,8 +6238,8 @@ def delete_of_the_day_json():
         })
 
     except Exception as e:
-        import traceback
-        return jsonify({'status': 'error', 'message': str(e), 'traceback': traceback.format_exc()}), 500
+        logger.exception("[API] Unexpected error")
+        return jsonify({'status': 'error', 'message': 'Internal server error - check server logs'}), 500
 
 @api_v3.route('/plugins/<plugin_id>/static/<path:file_path>', methods=['GET'])
 def serve_plugin_static(plugin_id, file_path):
@@ -6311,8 +6284,8 @@ def serve_plugin_static(plugin_id, file_path):
         return Response(content, mimetype=content_type)
 
     except Exception as e:
-        import traceback
-        return jsonify({'status': 'error', 'message': str(e), 'traceback': traceback.format_exc()}), 500
+        logger.exception("[API] Unexpected error")
+        return jsonify({'status': 'error', 'message': 'Internal server error - check server logs'}), 500
 
 
 @api_v3.route('/plugins/calendar/upload-credentials', methods=['POST'])
@@ -6483,8 +6456,8 @@ def delete_plugin_asset():
         return jsonify({'status': 'success', 'message': 'Image deleted successfully'})
 
     except Exception as e:
-        import traceback
-        return jsonify({'status': 'error', 'message': str(e), 'traceback': traceback.format_exc()}), 500
+        logger.exception("[API] Unexpected error")
+        return jsonify({'status': 'error', 'message': 'Internal server error - check server logs'}), 500
 
 @api_v3.route('/plugins/assets/list', methods=['GET'])
 def list_plugin_assets():
@@ -6511,8 +6484,8 @@ def list_plugin_assets():
         return jsonify({'status': 'success', 'data': {'assets': assets}})
 
     except Exception as e:
-        import traceback
-        return jsonify({'status': 'error', 'message': str(e), 'traceback': traceback.format_exc()}), 500
+        logger.exception("[API] Unexpected error")
+        return jsonify({'status': 'error', 'message': 'Internal server error - check server logs'}), 500
 
 @api_v3.route('/logs', methods=['GET'])
 def get_logs():
