@@ -6286,7 +6286,9 @@ def serve_plugin_static(plugin_id, file_path):
         requested_file = (plugin_dir / file_path).resolve()
 
         # Security check: ensure file is within plugin directory
-        if not str(requested_file).startswith(str(plugin_dir)):
+        try:
+            requested_file.relative_to(plugin_dir)
+        except ValueError:
             return jsonify({'status': 'error', 'message': 'Invalid file path'}), 403
 
         # Check if file exists
