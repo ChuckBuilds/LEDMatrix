@@ -1012,15 +1012,7 @@ def save_raw_main_config():
     except json.JSONDecodeError as e:
         return jsonify({'status': 'error', 'message': f'Invalid JSON: {str(e)}'}), 400
     except Exception as e:
-        import logging
-        import traceback
         from src.exceptions import ConfigError
-
-        # Log the full error for debugging
-        error_msg = f"Error saving raw main config: {str(e)}\n{traceback.format_exc()}"
-        logging.error(error_msg)
-
-        # Extract more specific error message if it's a ConfigError
         logger.exception("[RawConfig] Failed to save raw main config")
         if isinstance(e, ConfigError):
             return error_response(
@@ -1059,24 +1051,22 @@ def save_raw_secrets_config():
     except json.JSONDecodeError as e:
         return jsonify({'status': 'error', 'message': f'Invalid JSON: {str(e)}'}), 400
     except Exception as e:
-        import logging
-        import traceback
         from src.exceptions import ConfigError
-
-        # Log the full error for debugging
-        error_msg = f"Error saving raw secrets config: {str(e)}\n{traceback.format_exc()}"
-        logging.error(error_msg)
-
-        # Extract more specific error message if it's a ConfigError
+        logger.exception("[RawSecrets] Failed to save raw secrets config")
         if isinstance(e, ConfigError):
-            # ConfigError has a message attribute and may have context
-            error_message = str(e)
-            if hasattr(e, 'config_path') and e.config_path:
-                error_message = f"{error_message} (config_path: {e.config_path})"
+            return error_response(
+                ErrorCode.CONFIG_SAVE_FAILED,
+                "Error saving raw secrets configuration",
+                details="Internal server error - check server logs",
+                status_code=500
+            )
         else:
-            error_message = str(e) if str(e) else "An unexpected error occurred while saving the configuration"
-
-        return jsonify({'status': 'error', 'message': error_message}), 500
+            return error_response(
+                ErrorCode.UNKNOWN_ERROR,
+                "An unexpected error occurred while saving the configuration",
+                details="Internal server error - check server logs",
+                status_code=500
+            )
 
 @api_v3.route('/system/status', methods=['GET'])
 def get_system_status():
