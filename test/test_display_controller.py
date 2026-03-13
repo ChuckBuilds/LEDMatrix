@@ -209,11 +209,12 @@ class TestDisplayControllerSchedule:
     def test_schedule_disabled(self, test_display_controller):
         """Test when schedule is disabled."""
         controller = test_display_controller
-        controller.config = {"schedule": {"enabled": False}}
-        
+        schedule_config = {"schedule": {"enabled": False}}
+        controller.config_service.get_config.return_value = schedule_config
+
         controller._check_schedule()
         assert controller.is_display_active is True
-        
+
     def test_active_hours(self, test_display_controller):
         """Test active hours check."""
         controller = test_display_controller
@@ -222,15 +223,16 @@ class TestDisplayControllerSchedule:
             mock_datetime.now.return_value.strftime.return_value.lower.return_value = "monday"
             mock_datetime.now.return_value.time.return_value = datetime.strptime("12:00", "%H:%M").time()
             mock_datetime.strptime = datetime.strptime
-            
-            controller.config = {
+
+            schedule_config = {
                 "schedule": {
                     "enabled": True,
                     "start_time": "09:00",
                     "end_time": "17:00"
                 }
             }
-            
+            controller.config_service.get_config.return_value = schedule_config
+
             controller._check_schedule()
             assert controller.is_display_active is True
 
@@ -242,15 +244,16 @@ class TestDisplayControllerSchedule:
             mock_datetime.now.return_value.strftime.return_value.lower.return_value = "monday"
             mock_datetime.now.return_value.time.return_value = datetime.strptime("20:00", "%H:%M").time()
             mock_datetime.strptime = datetime.strptime
-            
-            controller.config = {
+
+            schedule_config = {
                 "schedule": {
                     "enabled": True,
                     "start_time": "09:00",
                     "end_time": "17:00"
                 }
             }
-            
+            controller.config_service.get_config.return_value = schedule_config
+
             controller._check_schedule()
             assert controller.is_display_active is False
             

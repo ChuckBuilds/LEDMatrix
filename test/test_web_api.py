@@ -29,7 +29,13 @@ def mock_config_manager():
     }
     mock.get_config_path.return_value = 'config/config.json'
     mock.get_secrets_path.return_value = 'config/config_secrets.json'
-    mock.get_raw_file_content.return_value = {'weather': {'api_key': 'test'}}
+    mock_config = {
+        'display': {'brightness': 50},
+        'plugins': {},
+        'timezone': 'UTC'
+    }
+    mock.load_config.return_value = mock_config
+    mock.get_raw_file_content.return_value = mock_config
     mock.save_config_atomic.return_value = MagicMock(
         status=MagicMock(value='success'),
         message=None
