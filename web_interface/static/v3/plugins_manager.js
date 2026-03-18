@@ -6747,7 +6747,9 @@ window.deleteUploadedFile = async function(fieldId, fileId, pluginId, fileType, 
                 const currentFiles = window.getCurrentImages ? window.getCurrentImages(fieldId) : [];
                 const fileIdStr = String(fileId);
                 const newFiles = currentFiles.filter(f => {
-                    const fid = String(f.id || f.file_id || f.category_name || '');
+                    // Match the same identifier logic as the renderer:
+                    // file.id || file.category_name || idx (see renderArrayField)
+                    const fid = String(f.id || f.category_name || '');
                     return fid !== fileIdStr;
                 });
                 const hiddenInput = document.getElementById(`${fieldId}_images_data`);
