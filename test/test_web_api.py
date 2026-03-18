@@ -391,17 +391,21 @@ class TestPluginsAPI:
     
     def test_get_plugin_config(self, client, mock_config_manager):
         """Test getting plugin configuration."""
+        # Plugin configs live at top-level keys (not under 'plugins')
         mock_config_manager.load_config.return_value = {
-            'plugins': {
-                'weather': {
-                    'enabled': True,
-                    'api_key': 'test_key'
-                }
+            'weather': {
+                'enabled': True,
+                'api_key': 'test_key'
             }
         }
-        
+
+        # Ensure schema manager returns serializable values
+        from web_interface.blueprints.api_v3 import api_v3
+        api_v3.schema_manager.generate_default_config.return_value = {'enabled': False}
+        api_v3.schema_manager.merge_with_defaults.side_effect = lambda config, defaults: {**defaults, **config}
+
         response = client.get('/api/v3/plugins/config?plugin_id=weather')
-        
+
         assert response.status_code == 200
         data = json.loads(response.data)
         assert 'enabled' in data or 'config' in data or 'data' in data
