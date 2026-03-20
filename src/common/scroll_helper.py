@@ -647,7 +647,11 @@ class ScrollHelper:
         # This ensures smooth scrolling after reset without jumping ahead
         self.last_update_time = now
         self.logger.debug("Scroll position reset")
-    
+
+    def reset(self) -> None:
+        """Alias for reset_scroll() for convenience."""
+        self.reset_scroll()
+
     def set_scrolling_image(self, image: Image.Image) -> None:
         """
         Set a pre-rendered scrolling image and initialize all required state.
