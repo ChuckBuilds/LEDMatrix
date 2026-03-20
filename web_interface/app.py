@@ -11,6 +11,7 @@ from datetime import datetime, timedelta
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.config_manager import ConfigManager
+from src.exceptions import ConfigError
 from src.plugin_system.plugin_manager import PluginManager
 from src.plugin_system.store_manager import PluginStoreManager
 from src.plugin_system.saved_repositories import SavedRepositoriesManager
@@ -492,7 +493,7 @@ def display_preview_generator():
         parallel = main_config.get('display', {}).get('hardware', {}).get('parallel', 1)
         width = cols * chain_length
         height = rows * parallel
-    except (KeyError, TypeError, ValueError):
+    except (KeyError, TypeError, ValueError, ConfigError):
         width = 128
         height = 64
     
