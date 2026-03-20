@@ -214,12 +214,40 @@ class WebInterfaceError:
         
         return cls(
             error_code=error_code,
-            message=str(exception),
+            message=cls._safe_message(error_code),
             details=cls._get_exception_details(exception),
             context=error_context,
             original_error=exception
         )
-    
+
+    @classmethod
+    def _safe_message(cls, error_code: ErrorCode) -> str:
+        """Get a safe, user-facing message for an error code."""
+        messages = {
+            ErrorCode.CONFIG_SAVE_FAILED: "Failed to save configuration",
+            ErrorCode.CONFIG_LOAD_FAILED: "Failed to load configuration",
+            ErrorCode.CONFIG_VALIDATION_FAILED: "Configuration validation failed",
+            ErrorCode.CONFIG_ROLLBACK_FAILED: "Failed to rollback configuration",
+            ErrorCode.PLUGIN_NOT_FOUND: "Plugin not found",
+            ErrorCode.PLUGIN_INSTALL_FAILED: "Failed to install plugin",
+            ErrorCode.PLUGIN_UPDATE_FAILED: "Failed to update plugin",
+            ErrorCode.PLUGIN_UNINSTALL_FAILED: "Failed to uninstall plugin",
+            ErrorCode.PLUGIN_LOAD_FAILED: "Failed to load plugin",
+            ErrorCode.PLUGIN_OPERATION_CONFLICT: "A plugin operation is already in progress",
+            ErrorCode.VALIDATION_ERROR: "Validation error",
+            ErrorCode.SCHEMA_VALIDATION_FAILED: "Schema validation failed",
+            ErrorCode.INVALID_INPUT: "Invalid input",
+            ErrorCode.NETWORK_ERROR: "Network error",
+            ErrorCode.API_ERROR: "API error",
+            ErrorCode.TIMEOUT: "Operation timed out",
+            ErrorCode.PERMISSION_DENIED: "Permission denied",
+            ErrorCode.FILE_PERMISSION_ERROR: "File permission error",
+            ErrorCode.SYSTEM_ERROR: "A system error occurred",
+            ErrorCode.SERVICE_UNAVAILABLE: "Service unavailable",
+            ErrorCode.UNKNOWN_ERROR: "An unexpected error occurred",
+        }
+        return messages.get(error_code, "An unexpected error occurred")
+
     @classmethod
     def _infer_error_code(cls, exception: Exception) -> ErrorCode:
         """Infer error code from exception type."""
