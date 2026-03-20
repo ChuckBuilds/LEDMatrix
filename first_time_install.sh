@@ -279,6 +279,11 @@ apt_install python3-pip python3-venv python3-dev python3-pil python3-pil.imagetk
 echo "Installing additional system dependencies..."
 apt_install git curl wget unzip
 
+# Install h3 via apt before pip — timezonefinder>=6.5.0 requires h3>=4 which has no
+# pre-built ARM wheel on PyPI, causing pip to attempt a source build that fails on
+# Raspberry Pi. python3-h3 is available in Debian Trixie repos and resolves this cleanly.
+apt_install python3-h3 || echo "⚠ python3-h3 not available via apt — pip will attempt source build for h3"
+
 echo "✓ System dependencies installed"
 echo ""
 
