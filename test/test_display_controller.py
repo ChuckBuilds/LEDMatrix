@@ -210,15 +210,13 @@ class TestDisplayControllerSchedule:
         """Test when schedule is disabled."""
         controller = test_display_controller
         schedule_config = {"schedule": {"enabled": False}}
-        controller.config_service.get_config.return_value = schedule_config
-
-        controller._check_schedule()
-        assert controller.is_display_active is True
+        with patch.object(controller.config_service, 'get_config', return_value=schedule_config):
+            controller._check_schedule()
+            assert controller.is_display_active is True
 
     def test_active_hours(self, test_display_controller):
         """Test active hours check."""
         controller = test_display_controller
-        # Mock datetime to be within active hours
         with patch('src.display_controller.datetime') as mock_datetime:
             mock_datetime.now.return_value.strftime.return_value.lower.return_value = "monday"
             mock_datetime.now.return_value.time.return_value = datetime.strptime("12:00", "%H:%M").time()
@@ -231,15 +229,13 @@ class TestDisplayControllerSchedule:
                     "end_time": "17:00"
                 }
             }
-            controller.config_service.get_config.return_value = schedule_config
-
-            controller._check_schedule()
-            assert controller.is_display_active is True
+            with patch.object(controller.config_service, 'get_config', return_value=schedule_config):
+                controller._check_schedule()
+                assert controller.is_display_active is True
 
     def test_inactive_hours(self, test_display_controller):
         """Test inactive hours check."""
         controller = test_display_controller
-        # Mock datetime to be outside active hours
         with patch('src.display_controller.datetime') as mock_datetime:
             mock_datetime.now.return_value.strftime.return_value.lower.return_value = "monday"
             mock_datetime.now.return_value.time.return_value = datetime.strptime("20:00", "%H:%M").time()
@@ -252,9 +248,8 @@ class TestDisplayControllerSchedule:
                     "end_time": "17:00"
                 }
             }
-            controller.config_service.get_config.return_value = schedule_config
-
-            controller._check_schedule()
-            assert controller.is_display_active is False
+            with patch.object(controller.config_service, 'get_config', return_value=schedule_config):
+                controller._check_schedule()
+                assert controller.is_display_active is False
             
 from datetime import datetime
