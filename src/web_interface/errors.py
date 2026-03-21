@@ -254,7 +254,7 @@ class WebInterfaceError:
         exception_name = type(exception).__name__
         
         if "Config" in exception_name:
-            return ErrorCode.CONFIG_SAVE_FAILED
+            return ErrorCode.CONFIG_LOAD_FAILED
         elif "Plugin" in exception_name:
             return ErrorCode.PLUGIN_LOAD_FAILED
         elif "Permission" in exception_name or "Access" in exception_name:

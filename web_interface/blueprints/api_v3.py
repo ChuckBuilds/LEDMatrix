@@ -17,6 +17,7 @@ logger = logging.getLogger(__name__)
 # Import new infrastructure
 from src.web_interface.api_helpers import success_response, error_response, validate_request_json
 from src.web_interface.errors import ErrorCode
+from src.exceptions import ConfigError
 from src.plugin_system.operation_types import OperationType
 from src.web_interface.logging_config import log_plugin_operation, log_config_change
 from src.web_interface.validators import (
@@ -440,32 +441,18 @@ def get_dim_schedule_config():
         })
 
         return success_response(data=dim_schedule_config)
-    except FileNotFoundError as e:
-        logger.error(f"[DIM SCHEDULE] Config file not found: {e}", exc_info=True)
+    except ConfigError as e:
+        logger.error(f"[DIM SCHEDULE] Config error: {e}", exc_info=True)
         return error_response(
             ErrorCode.CONFIG_LOAD_FAILED,
-            "Configuration file not found",
-            status_code=500
-        )
-    except json.JSONDecodeError as e:
-        logger.error(f"[DIM SCHEDULE] Invalid JSON in config file: {e}", exc_info=True)
-        return error_response(
-            ErrorCode.CONFIG_LOAD_FAILED,
-            "Configuration file contains invalid JSON",
-            status_code=500
-        )
-    except (IOError, OSError) as e:
-        logger.error(f"[DIM SCHEDULE] Error reading config file: {e}", exc_info=True)
-        return error_response(
-            ErrorCode.CONFIG_LOAD_FAILED,
-            f"Error reading configuration file: {str(e)}",
+            "Configuration file not found or invalid",
             status_code=500
         )
     except Exception as e:
         logger.error(f"[DIM SCHEDULE] Unexpected error loading config: {e}", exc_info=True)
         return error_response(
             ErrorCode.CONFIG_LOAD_FAILED,
-            f"Unexpected error loading dim schedule configuration: {str(e)}",
+            "Unexpected error loading dim schedule configuration",
             status_code=500
         )
 
@@ -653,10 +640,6 @@ def save_main_config():
 
         if not data:
             return jsonify({'status': 'error', 'message': 'No data provided'}), 400
-
-        logger.error(f"DEBUG: save_main_config received data: {data}")
-        logger.error(f"DEBUG: Content-Type header: {request.content_type}")
-        logger.error(f"DEBUG: Headers: {dict(request.headers)}")
 
         # Merge with existing config (similar to original implementation)
         current_config = api_v3.config_manager.load_config()
@@ -1012,7 +995,6 @@ def save_raw_main_config():
     except json.JSONDecodeError as e:
         return jsonify({'status': 'error', 'message': f'Invalid JSON: {str(e)}'}), 400
     except Exception as e:
-        from src.exceptions import ConfigError
         logger.exception("[RawConfig] Failed to save raw main config")
         if isinstance(e, ConfigError):
             return error_response(
@@ -1051,7 +1033,6 @@ def save_raw_secrets_config():
     except json.JSONDecodeError as e:
         return jsonify({'status': 'error', 'message': f'Invalid JSON: {str(e)}'}), 400
     except Exception as e:
-        from src.exceptions import ConfigError
         logger.exception("[RawSecrets] Failed to save raw secrets config")
         if isinstance(e, ConfigError):
             return error_response(
