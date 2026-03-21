@@ -2719,8 +2719,8 @@ def update_plugin():
                     }
                 )
 
-            logger.exception("[PluginUpdate] Update failed for %s: %s", plugin_id, error_msg)
-            
+            logger.error("[PluginUpdate] Update failed for %s: %s", plugin_id, error_msg)
+
             return error_response(
                 ErrorCode.PLUGIN_UPDATE_FAILED,
                 error_msg,
@@ -2729,8 +2729,7 @@ def update_plugin():
 
     except Exception as e:
         logger.exception("[PluginUpdate] Exception in update_plugin endpoint")
-        
-        logger.exception("[PluginUpdate] Unhandled exception")
+
         from src.web_interface.errors import WebInterfaceError
         error = WebInterfaceError.from_exception(e, ErrorCode.PLUGIN_UPDATE_FAILED)
         if api_v3.operation_history:
@@ -4566,15 +4565,17 @@ def save_plugin_config():
             if not is_valid:
                 # Log validation errors for debugging
                 logger.error(f"Config validation failed for {plugin_id}")
-                logger.error(f"Validation errors: {validation_errors}")
-                logger.error(f"Config that failed: {plugin_config}")
-                logger.error(f"Schema properties: {list(enhanced_schema.get('properties', {}).keys())}")
-
-                # Log raw form data if this was a form submission
+                logger.error(
+                    "[PluginConfig] Validation errors: %s | config keys: %s | schema keys: %s",
+                    validation_errors,
+                    list(plugin_config.keys()),
+                    list(enhanced_schema.get('properties', {}).keys()),
+                )
                 if 'application/json' not in (request.content_type or ''):
-                    form_data = request.form.to_dict()
-                    logger.error("[PluginConfig] Raw form data: %s", json.dumps({k: str(v)[:200] for k, v in form_data.items()}, indent=2))
-                    logger.error("[PluginConfig] Parsed config: %s", json.dumps(plugin_config, indent=2, default=str))
+                    logger.error(
+                        "[PluginConfig] Form field keys: %s",
+                        list(request.form.keys()),
+                    )
                 return error_response(
                     ErrorCode.CONFIG_VALIDATION_FAILED,
                     'Configuration validation failed',
