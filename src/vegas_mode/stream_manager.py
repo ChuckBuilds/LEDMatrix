@@ -217,6 +217,15 @@ class StreamManager:
         refreshed_segments = {}
         for plugin_id in updated_plugins:
             self.plugin_adapter.invalidate_cache(plugin_id)
+
+            # Clear the plugin's scroll_helper cache so the visual is rebuilt
+            # from fresh data (affects stocks, news, odds-ticker, etc.)
+            plugin = None
+            if hasattr(self.plugin_manager, 'plugins'):
+                plugin = self.plugin_manager.plugins.get(plugin_id)
+            if plugin:
+                self.plugin_adapter.invalidate_plugin_scroll_cache(plugin, plugin_id)
+
             segment = self._fetch_plugin_content(plugin_id)
             if segment:
                 refreshed_segments[plugin_id] = segment

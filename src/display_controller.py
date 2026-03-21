@@ -398,6 +398,12 @@ class DisplayController:
                 check_interval=10  # Check every 10 frames (~80ms at 125 FPS)
             )
 
+            # Set up plugin update tick to keep data fresh during Vegas mode
+            self.vegas_coordinator.set_update_tick(
+                self._tick_plugin_updates_for_vegas,
+                interval=1.0
+            )
+
             logger.info("Vegas mode coordinator initialized")
 
         except Exception as e:
@@ -433,6 +439,38 @@ class DisplayController:
             return True
 
         return False
+
+    def _tick_plugin_updates_for_vegas(self):
+        """
+        Run scheduled plugin updates and return IDs of plugins that were updated.
+
+        Called periodically by the Vegas coordinator to keep plugin data fresh
+        during Vegas mode. Returns a list of plugin IDs whose data changed so
+        Vegas can refresh their content in the scroll.
+
+        Returns:
+            List of updated plugin IDs, or None if no updates occurred
+        """
+        if not self.plugin_manager or not hasattr(self.plugin_manager, 'plugin_last_update'):
+            self._tick_plugin_updates()
+            return None
+
+        # Snapshot update timestamps before ticking
+        old_times = dict(self.plugin_manager.plugin_last_update)
+
+        # Run the scheduled updates
+        self._tick_plugin_updates()
+
+        # Detect which plugins were actually updated
+        updated = []
+        for plugin_id, new_time in self.plugin_manager.plugin_last_update.items():
+            if new_time > old_times.get(plugin_id, 0.0):
+                updated.append(plugin_id)
+
+        if updated:
+            logger.info("Vegas update tick: %d plugin(s) updated: %s", len(updated), updated)
+
+        return updated or None
 
     def _check_schedule(self):
         """Check if display should be active based on schedule."""
