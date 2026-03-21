@@ -408,22 +408,13 @@ class PluginAdapter:
             original_image = self.display_manager.image.copy()
             logger.info("[%s] Fallback: saved original display state", plugin_id)
 
-            # Ensure plugin has fresh data before capturing
-            # Try update() first (main data refresh for ESPN-style plugins),
-            # then fall back to update_data() for plugins that use that pattern
-            has_update = hasattr(plugin, 'update')
+            # Lightweight in-memory data refresh before capturing.
+            # Full update() is intentionally skipped here — the background
+            # update tick in the Vegas coordinator handles periodic API
+            # refreshes so we don't block the content-fetch thread.
             has_update_data = hasattr(plugin, 'update_data')
-            logger.info(
-                "[%s] Fallback: has update=%s, has update_data=%s",
-                plugin_id, has_update, has_update_data
-            )
-            if has_update:
-                try:
-                    plugin.update()
-                    logger.info("[%s] Fallback: update() called", plugin_id)
-                except (AttributeError, RuntimeError, OSError):
-                    logger.exception("[%s] Fallback: update() failed", plugin_id)
-            elif has_update_data:
+            logger.info("[%s] Fallback: has update_data=%s", plugin_id, has_update_data)
+            if has_update_data:
                 try:
                     plugin.update_data()
                     logger.info("[%s] Fallback: update_data() called", plugin_id)
@@ -596,11 +587,13 @@ class PluginAdapter:
 
     def invalidate_plugin_scroll_cache(self, plugin: 'BasePlugin', plugin_id: str) -> None:
         """
-        Clear a plugin's scroll_helper.cached_image so Vegas re-fetches fresh visuals.
+        Clear a plugin's scroll_helper cache so Vegas re-fetches fresh visuals.
 
-        Called after a plugin's data has been updated via update(). Without this,
-        plugins that use scroll_helper (stocks, news, odds-ticker, etc.) would
-        keep serving stale scroll images even after their data refreshes.
+        Uses scroll_helper.clear_cache() to reset all cached state (cached_image,
+        cached_array, total_scroll_width, scroll_position, etc.) — not just the
+        image.  Without this, plugins that use scroll_helper (stocks, news,
+        odds-ticker, etc.) would keep serving stale scroll images even after
+        their data refreshes.
 
         Args:
             plugin: Plugin instance
@@ -610,10 +603,9 @@ class PluginAdapter:
         if scroll_helper is None:
             return
 
-        cached_image = getattr(scroll_helper, 'cached_image', None)
-        if cached_image is not None:
-            scroll_helper.cached_image = None
-            logger.debug("[%s] Cleared scroll_helper.cached_image", plugin_id)
+        if getattr(scroll_helper, 'cached_image', None) is not None:
+            scroll_helper.clear_cache()
+            logger.debug("[%s] Cleared scroll_helper cache", plugin_id)
 
     def get_content_type(self, plugin: 'BasePlugin', plugin_id: str) -> str:
         """

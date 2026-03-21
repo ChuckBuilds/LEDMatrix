@@ -96,6 +96,7 @@ class VegasModeCoordinator:
         self._update_thread: Optional[threading.Thread] = None
         self._update_results: Optional[List[str]] = None
         self._update_results_lock = threading.Lock()
+        self._last_update_tick_time: float = 0.0
 
         # Config update tracking
         self._config_version = 0
@@ -334,7 +335,7 @@ class VegasModeCoordinator:
         last_fps_log_time = start_time
         fps_frame_count = 0
 
-        last_update_tick_time = start_time
+        self._last_update_tick_time = start_time
 
         logger.info("Starting Vegas iteration for %.1fs", duration)
 
@@ -379,29 +380,7 @@ class VegasModeCoordinator:
                     fps_frame_count = 0
 
                 # Periodic plugin update tick to keep data fresh (non-blocking)
-                # 1. Collect results from a previously completed background update
-                with self._update_results_lock:
-                    ready_results = self._update_results
-                    self._update_results = None
-                if ready_results:
-                    for pid in ready_results:
-                        self.mark_plugin_updated(pid)
-
-                # 2. Kick off a new background update if interval elapsed and none running
-                if (self._update_tick and
-                        current_time - last_update_tick_time >= self._update_tick_interval):
-                    thread_alive = (
-                        self._update_thread is not None
-                        and self._update_thread.is_alive()
-                    )
-                    if not thread_alive:
-                        last_update_tick_time = current_time
-                        self._update_thread = threading.Thread(
-                            target=self._run_update_tick_background,
-                            daemon=True,
-                            name="vegas-update-tick",
-                        )
-                        self._update_thread.start()
+                self._drive_background_updates()
 
                 if (self._interrupt_check and
                         frame_count % self._interrupt_check_interval == 0):
@@ -554,6 +533,38 @@ class VegasModeCoordinator:
                     "Background update thread did not finish within %.1fs", timeout
                 )
 
+    def _drive_background_updates(self) -> None:
+        """Collect finished background update results and launch new ticks.
+
+        Safe to call from both the main render loop and the static-pause
+        wait loop so that plugin data stays fresh regardless of which
+        code path is active.
+        """
+        # 1. Collect results from a previously completed background update
+        with self._update_results_lock:
+            ready_results = self._update_results
+            self._update_results = None
+        if ready_results:
+            for pid in ready_results:
+                self.mark_plugin_updated(pid)
+
+        # 2. Kick off a new background update if interval elapsed and none running
+        current_time = time.time()
+        if (self._update_tick and
+                current_time - self._last_update_tick_time >= self._update_tick_interval):
+            thread_alive = (
+                self._update_thread is not None
+                and self._update_thread.is_alive()
+            )
+            if not thread_alive:
+                self._last_update_tick_time = current_time
+                self._update_thread = threading.Thread(
+                    target=self._run_update_tick_background,
+                    daemon=True,
+                    name="vegas-update-tick",
+                )
+                self._update_thread.start()
+
     def mark_plugin_updated(self, plugin_id: str) -> None:
         """
         Notify that a plugin's data has been updated.
@@ -671,6 +682,9 @@ class VegasModeCoordinator:
                 if self._check_live_priority():
                     logger.info("Static pause interrupted by live priority")
                     return False
+
+                # Keep plugin data fresh during static pause
+                self._drive_background_updates()
 
                 # Sleep in small increments to remain responsive
                 time.sleep(0.1)
