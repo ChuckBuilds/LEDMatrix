@@ -1,34 +1,16 @@
-"""Tests for _dedup_unique_arrays in save_plugin_config.
+"""Tests for dedup_unique_arrays used by save_plugin_config.
 
 Validates that arrays with uniqueItems: true in the JSON schema have
 duplicates removed before validation, preventing spurious validation
 failures when form merging introduces duplicate entries.
+
+Tests import the production function from src.web_interface.validators
+to ensure they exercise the real code path.
 """
 
 import pytest
 
-
-def _dedup_unique_arrays(cfg: dict, schema_node: dict) -> None:
-    """Mirror of the inline function in api_v3.save_plugin_config."""
-    props = schema_node.get('properties', {})
-    for key, prop_schema in props.items():
-        if key not in cfg:
-            continue
-        prop_type = prop_schema.get('type')
-        if prop_type == 'array' and isinstance(cfg[key], list):
-            if prop_schema.get('uniqueItems'):
-                seen: list = []
-                for item in cfg[key]:
-                    if item not in seen:
-                        seen.append(item)
-                cfg[key] = seen
-            items_schema = prop_schema.get('items', {})
-            if isinstance(items_schema, dict) and items_schema.get('type') == 'object':
-                for element in cfg[key]:
-                    if isinstance(element, dict):
-                        _dedup_unique_arrays(element, items_schema)
-        elif prop_type == 'object' and isinstance(cfg[key], dict):
-            _dedup_unique_arrays(cfg[key], prop_schema)
+from src.web_interface.validators import dedup_unique_arrays as _dedup_unique_arrays
 
 
 class TestDedupUniqueArrays:
