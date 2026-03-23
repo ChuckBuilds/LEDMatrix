@@ -4612,6 +4612,28 @@ def save_plugin_config():
             seed_value = plugin_config['rotation_settings']['random_seed']
             logger.debug(f"After normalization, random_seed value: {repr(seed_value)}, type: {type(seed_value)}")
 
+        # Deduplicate arrays where schema specifies uniqueItems: true
+        # This prevents validation failures when form merging introduces duplicates
+        # (e.g., existing config has ['AAPL','FNMA'] and form adds 'FNMA' again)
+        def _dedup_unique_arrays(cfg: dict, schema_node: dict) -> None:
+            """Recursively deduplicate arrays with uniqueItems constraint."""
+            props = schema_node.get('properties', {})
+            for key, prop_schema in props.items():
+                if key not in cfg:
+                    continue
+                prop_type = prop_schema.get('type')
+                if prop_type == 'array' and prop_schema.get('uniqueItems') and isinstance(cfg[key], list):
+                    seen: list = []
+                    for item in cfg[key]:
+                        if item not in seen:
+                            seen.append(item)
+                    cfg[key] = seen
+                elif prop_type == 'object' and isinstance(cfg[key], dict):
+                    _dedup_unique_arrays(cfg[key], prop_schema)
+
+        if schema:
+            _dedup_unique_arrays(plugin_config, schema)
+
         # Validate configuration against schema before saving
         if schema:
             # Log what we're validating for debugging
