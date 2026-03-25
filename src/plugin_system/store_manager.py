@@ -1784,6 +1784,12 @@ class PluginStoreManager:
                 # Try to get remote info from registry (optional)
                 self.fetch_registry(force_refresh=True)
                 plugin_info_remote = self.get_plugin_info(plugin_id, fetch_latest_from_github=True, force_refresh=True)
+                # Try without 'ledmatrix-' prefix (monorepo migration)
+                if not plugin_info_remote and plugin_id.startswith('ledmatrix-'):
+                    alt_id = plugin_id[len('ledmatrix-'):]
+                    plugin_info_remote = self.get_plugin_info(alt_id, fetch_latest_from_github=True, force_refresh=True)
+                    if plugin_info_remote:
+                        self.logger.info(f"Plugin {plugin_id} found in registry as {alt_id}")
                 remote_branch = None
                 remote_sha = None
 
@@ -2058,7 +2064,16 @@ class PluginStoreManager:
             self.logger.info(f"Plugin {plugin_id} is not a git repository, checking registry...")
             self.fetch_registry(force_refresh=True)
             plugin_info_remote = self.get_plugin_info(plugin_id, fetch_latest_from_github=True, force_refresh=True)
-            
+
+            # If not found, try without 'ledmatrix-' prefix (monorepo migration)
+            registry_id = plugin_id
+            if not plugin_info_remote and plugin_id.startswith('ledmatrix-'):
+                alt_id = plugin_id[len('ledmatrix-'):]
+                plugin_info_remote = self.get_plugin_info(alt_id, fetch_latest_from_github=True, force_refresh=True)
+                if plugin_info_remote:
+                    registry_id = alt_id
+                    self.logger.info(f"Plugin {plugin_id} found in registry as {alt_id}")
+
             # If not in registry but we have a repo URL, try reinstalling from that URL
             if not plugin_info_remote and repo_url:
                 self.logger.info(f"Plugin {plugin_id} not in registry but has git remote URL. Reinstalling from {repo_url} to enable updates...")
@@ -2111,13 +2126,13 @@ class PluginStoreManager:
                 self.logger.debug(f"Could not compare versions for {plugin_id}: {e}")
 
             # Plugin is not a git repo but is in registry and has a newer version - reinstall
-            self.logger.info(f"Plugin {plugin_id} not installed via git; re-installing latest archive")
+            self.logger.info(f"Plugin {plugin_id} not installed via git; re-installing latest archive (registry id: {registry_id})")
 
             # Remove directory and reinstall fresh
             if not self._safe_remove_directory(plugin_path):
                 self.logger.error(f"Failed to remove old plugin directory for {plugin_id}")
                 return False
-            return self.install_plugin(plugin_id)
+            return self.install_plugin(registry_id)
 
         except Exception as e:
             import traceback
