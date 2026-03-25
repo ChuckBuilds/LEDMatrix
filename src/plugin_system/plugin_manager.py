@@ -14,6 +14,7 @@ import importlib.util
 import sys
 import subprocess
 import time
+import threading
 from pathlib import Path
 from typing import Dict, List, Optional, Any
 import logging
@@ -74,6 +75,10 @@ class PluginManager:
         self.state_manager = PluginStateManager(logger=self.logger)
         self.schema_manager = SchemaManager(plugins_dir=self.plugins_dir, logger=self.logger)
         
+        # Lock protecting plugin_manifests and plugin_directories from
+        # concurrent mutation (background reconciliation) and reads (requests).
+        self._discovery_lock = threading.RLock()
+
         # Active plugins
         self.plugins: Dict[str, Any] = {}
         self.plugin_manifests: Dict[str, Dict[str, Any]] = {}
@@ -94,23 +99,27 @@ class PluginManager:
     def _scan_directory_for_plugins(self, directory: Path) -> List[str]:
         """
         Scan a directory for plugins.
-        
+
         Args:
             directory: Directory to scan
-            
+
         Returns:
             List of plugin IDs found
         """
         plugin_ids = []
-        
+
         if not directory.exists():
             return plugin_ids
-        
+
+        # Build new state locally before acquiring lock
+        new_manifests: Dict[str, Dict[str, Any]] = {}
+        new_directories: Dict[str, Path] = {}
+
         try:
             for item in directory.iterdir():
                 if not item.is_dir():
                     continue
-                
+
                 manifest_path = item / "manifest.json"
                 if manifest_path.exists():
                     try:
@@ -119,18 +128,21 @@ class PluginManager:
                             plugin_id = manifest.get('id')
                             if plugin_id:
                                 plugin_ids.append(plugin_id)
-                                self.plugin_manifests[plugin_id] = manifest
-                                
-                                # Store directory mapping
-                                if not hasattr(self, 'plugin_directories'):
-                                    self.plugin_directories = {}
-                                self.plugin_directories[plugin_id] = item
+                                new_manifests[plugin_id] = manifest
+                                new_directories[plugin_id] = item
                     except (json.JSONDecodeError, PermissionError, OSError) as e:
                         self.logger.warning("Error reading manifest from %s: %s", manifest_path, e, exc_info=True)
                         continue
         except (OSError, PermissionError) as e:
             self.logger.error("Error scanning directory %s: %s", directory, e, exc_info=True)
-        
+
+        # Update shared state under lock
+        with self._discovery_lock:
+            self.plugin_manifests.update(new_manifests)
+            if not hasattr(self, 'plugin_directories'):
+                self.plugin_directories = {}
+            self.plugin_directories.update(new_directories)
+
         return plugin_ids
     
     def discover_plugins(self) -> List[str]:
@@ -459,7 +471,9 @@ class PluginManager:
         if manifest_path.exists():
             try:
                 with open(manifest_path, 'r', encoding='utf-8') as f:
-                    self.plugin_manifests[plugin_id] = json.load(f)
+                    manifest = json.load(f)
+                with self._discovery_lock:
+                    self.plugin_manifests[plugin_id] = manifest
             except Exception as e:
                 self.logger.error("Error reading manifest: %s", e, exc_info=True)
                 return False
@@ -506,10 +520,11 @@ class PluginManager:
         Returns:
             Dict with plugin information or None if not found
         """
-        manifest = self.plugin_manifests.get(plugin_id)
+        with self._discovery_lock:
+            manifest = self.plugin_manifests.get(plugin_id)
         if not manifest:
             return None
-        
+
         info = manifest.copy()
         
         # Add runtime information if plugin is loaded
@@ -533,7 +548,9 @@ class PluginManager:
         Returns:
             List of plugin info dictionaries
         """
-        return [info for info in [self.get_plugin_info(pid) for pid in self.plugin_manifests.keys()] if info]
+        with self._discovery_lock:
+            pids = list(self.plugin_manifests.keys())
+        return [info for info in [self.get_plugin_info(pid) for pid in pids] if info]
     
     def get_plugin_directory(self, plugin_id: str) -> Optional[str]:
         """
@@ -545,8 +562,9 @@ class PluginManager:
         Returns:
             Directory path as string or None if not found
         """
-        if hasattr(self, 'plugin_directories') and plugin_id in self.plugin_directories:
-            return str(self.plugin_directories[plugin_id])
+        with self._discovery_lock:
+            if hasattr(self, 'plugin_directories') and plugin_id in self.plugin_directories:
+                return str(self.plugin_directories[plugin_id])
         
         plugin_dir = self.plugins_dir / plugin_id
         if plugin_dir.exists():
@@ -568,10 +586,11 @@ class PluginManager:
         Returns:
             List of display mode names
         """
-        manifest = self.plugin_manifests.get(plugin_id)
+        with self._discovery_lock:
+            manifest = self.plugin_manifests.get(plugin_id)
         if not manifest:
             return []
-        
+
         display_modes = manifest.get('display_modes', [])
         if isinstance(display_modes, list):
             return display_modes
@@ -588,12 +607,14 @@ class PluginManager:
             Plugin identifier or None if not found.
         """
         normalized_mode = mode.strip().lower()
-        for plugin_id, manifest in self.plugin_manifests.items():
+        with self._discovery_lock:
+            manifests_snapshot = dict(self.plugin_manifests)
+        for plugin_id, manifest in manifests_snapshot.items():
             display_modes = manifest.get('display_modes')
             if isinstance(display_modes, list) and display_modes:
                 if any(m.lower() == normalized_mode for m in display_modes):
                     return plugin_id
-        
+
         return None
 
     def _get_plugin_update_interval(self, plugin_id: str, plugin_instance: Any) -> Optional[float]:

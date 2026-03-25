@@ -656,7 +656,7 @@ _reconciliation_started = False
 
 def _run_startup_reconciliation():
     """Run state reconciliation in background to auto-repair missing plugins."""
-    global _reconciliation_done
+    global _reconciliation_done, _reconciliation_started
     from src.logging_config import get_logger
     _logger = get_logger('reconciliation')
 
@@ -672,11 +672,16 @@ def _run_startup_reconciliation():
         result = reconciler.reconcile_state()
         if result.inconsistencies_found:
             _logger.info("[Reconciliation] %s", result.message)
-        if result.inconsistencies_fixed:
-            plugin_manager.discover_plugins()
-        _reconciliation_done = True
+        if result.reconciliation_successful:
+            if result.inconsistencies_fixed:
+                plugin_manager.discover_plugins()
+            _reconciliation_done = True
+        else:
+            _logger.warning("[Reconciliation] Finished with unresolved issues, will retry")
+            _reconciliation_started = False
     except Exception as e:
         _logger.error("[Reconciliation] Error: %s", e, exc_info=True)
+        _reconciliation_started = False
 
 # Initialize health monitor and run reconciliation on first request
 @app.before_request
