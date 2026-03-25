@@ -651,12 +651,40 @@ def _initialize_health_monitor():
     
     _health_monitor_initialized = True
 
-# Initialize health monitor on first request (using before_request for compatibility)
+_reconciliation_done = False
+
+def _run_startup_reconciliation():
+    """Run state reconciliation on startup to auto-repair missing plugins."""
+    global _reconciliation_done
+    if _reconciliation_done:
+        return
+    _reconciliation_done = True
+
+    try:
+        from src.plugin_system.state_reconciliation import StateReconciliation
+        reconciler = StateReconciliation(
+            state_manager=plugin_state_manager,
+            config_manager=config_manager,
+            plugin_manager=plugin_manager,
+            plugins_dir=plugins_dir,
+            store_manager=plugin_store_manager
+        )
+        result = reconciler.reconcile_state()
+        if result.inconsistencies_found:
+            print(f"[Reconciliation] {result.message}")
+        if result.inconsistencies_fixed:
+            plugin_manager.discover_plugins()
+    except Exception as e:
+        print(f"[Reconciliation] Error: {e}")
+
+# Initialize health monitor and run reconciliation on first request
 @app.before_request
 def check_health_monitor():
-    """Ensure health monitor is initialized on first request."""
+    """Ensure health monitor and reconciliation run on first request."""
     if not _health_monitor_initialized:
         _initialize_health_monitor()
+    if not _reconciliation_done:
+        _run_startup_reconciliation()
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000, debug=True)

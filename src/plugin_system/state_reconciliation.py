@@ -67,21 +67,24 @@ class StateReconciliation:
         state_manager: PluginStateManager,
         config_manager,
         plugin_manager,
-        plugins_dir: Path
+        plugins_dir: Path,
+        store_manager=None
     ):
         """
         Initialize reconciliation system.
-        
+
         Args:
             state_manager: PluginStateManager instance
             config_manager: ConfigManager instance
             plugin_manager: PluginManager instance
             plugins_dir: Path to plugins directory
+            store_manager: Optional PluginStoreManager for auto-repair
         """
         self.state_manager = state_manager
         self.config_manager = config_manager
         self.plugin_manager = plugin_manager
         self.plugins_dir = Path(plugins_dir)
+        self.store_manager = store_manager
         self.logger = get_logger(__name__)
     
     def reconcile_state(self) -> ReconciliationResult:
@@ -160,18 +163,34 @@ class StateReconciliation:
                 message=f"Reconciliation failed: {str(e)}"
             )
     
+    # Top-level config keys that are NOT plugins
+    _SYSTEM_CONFIG_KEYS = frozenset({
+        'web_display_autostart', 'timezone', 'location', 'display',
+        'plugin_system', 'vegas_scroll_speed', 'vegas_separator_width',
+        'vegas_target_fps', 'vegas_buffer_ahead', 'vegas_plugin_order',
+        'vegas_excluded_plugins', 'vegas_scroll_enabled', 'logging',
+        'dim_schedule', 'network', 'system', 'schedule',
+    })
+
     def _get_config_state(self) -> Dict[str, Dict[str, Any]]:
         """Get plugin state from config file."""
         state = {}
         try:
             config = self.config_manager.load_config()
             for plugin_id, plugin_config in config.items():
-                if isinstance(plugin_config, dict):
-                    state[plugin_id] = {
-                        'enabled': plugin_config.get('enabled', False),
-                        'version': plugin_config.get('version'),
-                        'exists_in_config': True
-                    }
+                if not isinstance(plugin_config, dict):
+                    continue
+                if plugin_id in self._SYSTEM_CONFIG_KEYS:
+                    continue
+                if 'enabled' not in plugin_config:
+                    continue
+                if '.standalone-backup-' in plugin_id:
+                    continue
+                state[plugin_id] = {
+                    'enabled': plugin_config.get('enabled', False),
+                    'version': plugin_config.get('version'),
+                    'exists_in_config': True
+                }
         except Exception as e:
             self.logger.warning(f"Error reading config state: {e}")
         return state
@@ -263,14 +282,15 @@ class StateReconciliation:
         
         # Check: Plugin in config but not on disk
         if config.get('exists_in_config') and not disk.get('exists_on_disk'):
+            can_repair = self.store_manager is not None
             inconsistencies.append(Inconsistency(
                 plugin_id=plugin_id,
                 inconsistency_type=InconsistencyType.PLUGIN_MISSING_ON_DISK,
                 description=f"Plugin {plugin_id} in config but not on disk",
-                fix_action=FixAction.MANUAL_FIX_REQUIRED,
+                fix_action=FixAction.AUTO_FIX if can_repair else FixAction.MANUAL_FIX_REQUIRED,
                 current_state={'exists_on_disk': False},
                 expected_state={'exists_on_disk': True},
-                can_auto_fix=False
+                can_auto_fix=can_repair
             ))
         
         # Check: Enabled state mismatch
@@ -303,6 +323,9 @@ class StateReconciliation:
                 self.logger.info(f"Fixed: Added {inconsistency.plugin_id} to config")
                 return True
             
+            elif inconsistency.inconsistency_type == InconsistencyType.PLUGIN_MISSING_ON_DISK:
+                return self._auto_repair_missing_plugin(inconsistency.plugin_id)
+
             elif inconsistency.inconsistency_type == InconsistencyType.PLUGIN_ENABLED_MISMATCH:
                 # Sync enabled state from state manager to config
                 expected_enabled = inconsistency.expected_state.get('enabled')
@@ -317,6 +340,34 @@ class StateReconciliation:
         except Exception as e:
             self.logger.error(f"Error fixing inconsistency: {e}", exc_info=True)
             return False
-        
+
+        return False
+
+    def _auto_repair_missing_plugin(self, plugin_id: str) -> bool:
+        """Attempt to reinstall a missing plugin from the store."""
+        if not self.store_manager:
+            return False
+
+        # Try the plugin_id as-is, then without 'ledmatrix-' prefix
+        candidates = [plugin_id]
+        if plugin_id.startswith('ledmatrix-'):
+            candidates.append(plugin_id[len('ledmatrix-'):])
+
+        for candidate_id in candidates:
+            try:
+                self.logger.info("[AutoRepair] Attempting to reinstall missing plugin: %s", candidate_id)
+                result = self.store_manager.install_plugin(candidate_id)
+                if isinstance(result, dict):
+                    success = result.get('success', False)
+                else:
+                    success = bool(result)
+
+                if success:
+                    self.logger.info("[AutoRepair] Successfully reinstalled plugin: %s (config key: %s)", candidate_id, plugin_id)
+                    return True
+            except Exception as e:
+                self.logger.error("[AutoRepair] Error reinstalling %s: %s", candidate_id, e, exc_info=True)
+
+        self.logger.warning("[AutoRepair] Could not reinstall %s from store", plugin_id)
         return False
 

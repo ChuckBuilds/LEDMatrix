@@ -33,6 +33,23 @@ from src.web_interface.secret_helpers import (
     separate_secrets,
 )
 
+import re
+
+_SECRET_KEY_PATTERN = re.compile(
+    r'(api_key|api_secret|password|secret|token|auth_key|credential)',
+    re.IGNORECASE,
+)
+
+def _conservative_mask_config(config):
+    """Mask string values whose keys look like secrets (no schema available)."""
+    result = dict(config)
+    for key, value in result.items():
+        if isinstance(value, dict):
+            result[key] = _conservative_mask_config(value)
+        elif isinstance(value, str) and value and _SECRET_KEY_PATTERN.search(key):
+            result[key] = ''
+    return result
+
 # Will be initialized when blueprint is registered
 config_manager = None
 plugin_manager = None
@@ -2505,24 +2522,14 @@ def get_plugin_config():
             }
 
         # Mask secret fields before returning to prevent exposing API keys
-        # Fail closed — if schema unavailable, refuse to return unmasked config
         schema_mgr = api_v3.schema_manager
-        if not schema_mgr:
-            return error_response(
-                ErrorCode.CONFIG_LOAD_FAILED,
-                f"Cannot safely return config for {plugin_id}: schema manager unavailable",
-                status_code=500
-            )
+        schema_for_mask = schema_mgr.load_schema(plugin_id, use_cache=True) if schema_mgr else None
 
-        schema_for_mask = schema_mgr.load_schema(plugin_id, use_cache=True)
-        if not schema_for_mask or 'properties' not in schema_for_mask:
-            return error_response(
-                ErrorCode.CONFIG_LOAD_FAILED,
-                f"Cannot safely return config for {plugin_id}: schema unavailable for secret masking",
-                status_code=500
-            )
-
-        plugin_config = mask_secret_fields(plugin_config, schema_for_mask['properties'])
+        if schema_for_mask and 'properties' in schema_for_mask:
+            plugin_config = mask_secret_fields(plugin_config, schema_for_mask['properties'])
+        else:
+            logger.warning("[PluginConfig] Schema unavailable for %s, applying conservative masking", plugin_id)
+            plugin_config = _conservative_mask_config(plugin_config)
 
         return success_response(data=plugin_config)
     except Exception as e:
