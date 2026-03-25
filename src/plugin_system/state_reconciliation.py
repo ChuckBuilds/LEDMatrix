@@ -184,8 +184,6 @@ class StateReconciliation:
                     continue
                 if 'enabled' not in plugin_config:
                     continue
-                if '.standalone-backup-' in plugin_id:
-                    continue
                 state[plugin_id] = {
                     'enabled': plugin_config.get('enabled', False),
                     'version': plugin_config.get('version'),
@@ -203,6 +201,8 @@ class StateReconciliation:
                 for plugin_dir in self.plugins_dir.iterdir():
                     if plugin_dir.is_dir():
                         plugin_id = plugin_dir.name
+                        if '.standalone-backup-' in plugin_id:
+                            continue
                         manifest_path = plugin_dir / "manifest.json"
                         if manifest_path.exists():
                             import json

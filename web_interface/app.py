@@ -652,13 +652,13 @@ def _initialize_health_monitor():
     _health_monitor_initialized = True
 
 _reconciliation_done = False
+_reconciliation_started = False
 
 def _run_startup_reconciliation():
-    """Run state reconciliation on startup to auto-repair missing plugins."""
+    """Run state reconciliation in background to auto-repair missing plugins."""
     global _reconciliation_done
-    if _reconciliation_done:
-        return
-    _reconciliation_done = True
+    from src.logging_config import get_logger
+    _logger = get_logger('reconciliation')
 
     try:
         from src.plugin_system.state_reconciliation import StateReconciliation
@@ -671,20 +671,24 @@ def _run_startup_reconciliation():
         )
         result = reconciler.reconcile_state()
         if result.inconsistencies_found:
-            print(f"[Reconciliation] {result.message}")
+            _logger.info("[Reconciliation] %s", result.message)
         if result.inconsistencies_fixed:
             plugin_manager.discover_plugins()
+        _reconciliation_done = True
     except Exception as e:
-        print(f"[Reconciliation] Error: {e}")
+        _logger.error("[Reconciliation] Error: %s", e, exc_info=True)
 
 # Initialize health monitor and run reconciliation on first request
 @app.before_request
 def check_health_monitor():
-    """Ensure health monitor and reconciliation run on first request."""
+    """Ensure health monitor is initialized; launch reconciliation in background."""
+    global _reconciliation_started
     if not _health_monitor_initialized:
         _initialize_health_monitor()
-    if not _reconciliation_done:
-        _run_startup_reconciliation()
+    if not _reconciliation_started:
+        _reconciliation_started = True
+        import threading
+        threading.Thread(target=_run_startup_reconciliation, daemon=True).start()
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000, debug=True)

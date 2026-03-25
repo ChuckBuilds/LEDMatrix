@@ -33,19 +33,25 @@ from src.web_interface.secret_helpers import (
     separate_secrets,
 )
 
-import re
-
 _SECRET_KEY_PATTERN = re.compile(
     r'(api_key|api_secret|password|secret|token|auth_key|credential)',
     re.IGNORECASE,
 )
 
-def _conservative_mask_config(config):
+def _conservative_mask_config(config, _parent_key=None):
     """Mask string values whose keys look like secrets (no schema available)."""
+    if isinstance(config, list):
+        return [
+            _conservative_mask_config(item, _parent_key) if isinstance(item, (dict, list))
+            else ('' if isinstance(item, str) and item and _parent_key and _SECRET_KEY_PATTERN.search(_parent_key) else item)
+            for item in config
+        ]
     result = dict(config)
     for key, value in result.items():
         if isinstance(value, dict):
             result[key] = _conservative_mask_config(value)
+        elif isinstance(value, list):
+            result[key] = _conservative_mask_config(value, key)
         elif isinstance(value, str) and value and _SECRET_KEY_PATTERN.search(key):
             result[key] = ''
     return result
@@ -2523,7 +2529,12 @@ def get_plugin_config():
 
         # Mask secret fields before returning to prevent exposing API keys
         schema_mgr = api_v3.schema_manager
-        schema_for_mask = schema_mgr.load_schema(plugin_id, use_cache=True) if schema_mgr else None
+        schema_for_mask = None
+        if schema_mgr:
+            try:
+                schema_for_mask = schema_mgr.load_schema(plugin_id, use_cache=True)
+            except Exception as e:
+                logger.error("[PluginConfig] Error loading schema for %s: %s", plugin_id, e, exc_info=True)
 
         if schema_for_mask and 'properties' in schema_for_mask:
             plugin_config = mask_secret_fields(plugin_config, schema_for_mask['properties'])
