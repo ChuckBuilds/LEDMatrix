@@ -182,10 +182,8 @@ class StateReconciliation:
                     continue
                 if plugin_id in self._SYSTEM_CONFIG_KEYS:
                     continue
-                if 'enabled' not in plugin_config:
-                    continue
                 state[plugin_id] = {
-                    'enabled': plugin_config.get('enabled', False),
+                    'enabled': plugin_config.get('enabled', True),
                     'version': plugin_config.get('version'),
                     'exists_in_config': True
                 }

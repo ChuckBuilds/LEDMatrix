@@ -402,7 +402,10 @@
                 content.setAttribute('data-loaded', 'true');
                 console.log('Loading plugins directly via fetch (HTMX fallback)...');
                 fetch('/v3/partials/plugins')
-                    .then(r => r.text())
+                    .then(r => {
+                        if (!r.ok) throw new Error(r.status + ' ' + r.statusText);
+                        return r.text();
+                    })
                     .then(html => {
                         content.innerHTML = html;
                         // Trigger full initialization chain
@@ -426,13 +429,9 @@
         setTimeout(() => {
             if (typeof htmx === 'undefined') {
                 console.warn('HTMX not loaded after 5 seconds, using direct fetch for plugins');
-                const appElement = document.querySelector('[x-data="app()"]');
-                if (appElement && appElement._x_dataStack && appElement._x_dataStack[0]) {
-                    const activeTab = appElement._x_dataStack[0].activeTab;
-                    if (activeTab === 'plugins') {
-                        loadPluginsDirect();
-                    }
-                }
+                // Load plugins tab content directly regardless of active tab,
+                // so it's ready when the user navigates to it
+                loadPluginsDirect();
             }
         }, 5000);
     </script>
@@ -976,7 +975,7 @@
             <!-- Second row - Plugin tabs (populated dynamically) -->
             <div id="plugin-tabs-row" class="border-b border-gray-200">
                 <nav class="-mb-px flex flex-wrap gap-y-2 gap-x-2 lg:gap-x-3 xl:gap-x-4">
-                    <button @click="activeTab = 'plugins'"
+                    <button @click="activeTab = 'plugins'; if (typeof htmx === 'undefined') { $nextTick(() => loadPluginsDirect()); }"
                             :class="activeTab === 'plugins' ? 'nav-tab-active' : ''"
                             class="nav-tab">
                         <i class="fas fa-plug"></i>Plugin Manager

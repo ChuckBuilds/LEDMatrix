@@ -653,8 +653,10 @@ def _initialize_health_monitor():
 
 _reconciliation_done = False
 _reconciliation_started = False
+import threading as _threading
+_reconciliation_lock = _threading.Lock()
 
-def _run_startup_reconciliation():
+def _run_startup_reconciliation() -> None:
     """Run state reconciliation in background to auto-repair missing plugins."""
     global _reconciliation_done, _reconciliation_started
     from src.logging_config import get_logger
@@ -678,10 +680,12 @@ def _run_startup_reconciliation():
             _reconciliation_done = True
         else:
             _logger.warning("[Reconciliation] Finished with unresolved issues, will retry")
-            _reconciliation_started = False
+            with _reconciliation_lock:
+                _reconciliation_started = False
     except Exception as e:
         _logger.error("[Reconciliation] Error: %s", e, exc_info=True)
-        _reconciliation_started = False
+        with _reconciliation_lock:
+            _reconciliation_started = False
 
 # Initialize health monitor and run reconciliation on first request
 @app.before_request
@@ -690,10 +694,10 @@ def check_health_monitor():
     global _reconciliation_started
     if not _health_monitor_initialized:
         _initialize_health_monitor()
-    if not _reconciliation_started:
-        _reconciliation_started = True
-        import threading
-        threading.Thread(target=_run_startup_reconciliation, daemon=True).start()
+    with _reconciliation_lock:
+        if not _reconciliation_started:
+            _reconciliation_started = True
+            _threading.Thread(target=_run_startup_reconciliation, daemon=True).start()
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000, debug=True)

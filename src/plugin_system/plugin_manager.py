@@ -136,11 +136,14 @@ class PluginManager:
         except (OSError, PermissionError) as e:
             self.logger.error("Error scanning directory %s: %s", directory, e, exc_info=True)
 
-        # Update shared state under lock
+        # Replace shared state under lock so uninstalled plugins don't linger
         with self._discovery_lock:
+            self.plugin_manifests.clear()
             self.plugin_manifests.update(new_manifests)
             if not hasattr(self, 'plugin_directories'):
                 self.plugin_directories = {}
+            else:
+                self.plugin_directories.clear()
             self.plugin_directories.update(new_directories)
 
         return plugin_ids

@@ -1785,11 +1785,13 @@ class PluginStoreManager:
                 self.fetch_registry(force_refresh=True)
                 plugin_info_remote = self.get_plugin_info(plugin_id, fetch_latest_from_github=True, force_refresh=True)
                 # Try without 'ledmatrix-' prefix (monorepo migration)
+                resolved_id = plugin_id
                 if not plugin_info_remote and plugin_id.startswith('ledmatrix-'):
                     alt_id = plugin_id[len('ledmatrix-'):]
                     plugin_info_remote = self.get_plugin_info(alt_id, fetch_latest_from_github=True, force_refresh=True)
                     if plugin_info_remote:
-                        self.logger.info(f"Plugin {plugin_id} found in registry as {alt_id}")
+                        resolved_id = alt_id
+                        self.logger.info(f"Plugin {plugin_id} found in registry as {resolved_id}")
                 remote_branch = None
                 remote_sha = None
 
@@ -1804,13 +1806,13 @@ class PluginStoreManager:
                     local_remote = git_info.get('remote_url', '')
                     if local_remote and registry_repo and self._normalize_repo_url(local_remote) != self._normalize_repo_url(registry_repo):
                         self.logger.info(
-                            f"Plugin {plugin_id} git remote ({local_remote}) differs from registry ({registry_repo}). "
+                            f"Plugin {resolved_id} git remote ({local_remote}) differs from registry ({registry_repo}). "
                             f"Reinstalling from registry to migrate to new source."
                         )
                         if not self._safe_remove_directory(plugin_path):
-                            self.logger.error(f"Failed to remove old plugin directory for {plugin_id}")
+                            self.logger.error(f"Failed to remove old plugin directory for {resolved_id}")
                             return False
-                        return self.install_plugin(plugin_id)
+                        return self.install_plugin(resolved_id)
 
                     # Check if already up to date
                     if remote_sha and local_sha and remote_sha.startswith(local_sha):
