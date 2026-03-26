@@ -643,13 +643,13 @@ class TestDottedKeyNormalization:
             content_type='application/json',
         )
 
-        if response.status_code == 200:
-            saved = mock_config_manager.save_config_atomic.call_args[0][0]
-            soccer_cfg = saved.get('soccer-scoreboard', {})
-            leagues = soccer_cfg.get('leagues', {})
-            assert 'eng.1' in leagues, f"Expected 'eng.1' key, got: {list(leagues.keys())}"
-            assert isinstance(leagues['eng.1'].get('favorite_teams'), list)
-            assert leagues['eng.1']['favorite_teams'] == ['Arsenal', 'Chelsea']
+        assert response.status_code == 200, f"Expected 200, got {response.status_code}: {response.data}"
+        saved = mock_config_manager.save_config_atomic.call_args[0][0]
+        soccer_cfg = saved.get('soccer-scoreboard', {})
+        leagues = soccer_cfg.get('leagues', {})
+        assert 'eng.1' in leagues, f"Expected 'eng.1' key, got: {list(leagues.keys())}"
+        assert isinstance(leagues['eng.1'].get('favorite_teams'), list)
+        assert leagues['eng.1']['favorite_teams'] == ['Arsenal', 'Chelsea']
 
     def test_save_plugin_config_none_array_gets_default(self, client, mock_config_manager):
         """None array fields under dotted-key parents are replaced with defaults."""
@@ -704,8 +704,9 @@ class TestDottedKeyNormalization:
             content_type='application/json',
         )
 
-        if response.status_code == 200:
-            saved = mock_config_manager.save_config_atomic.call_args[0][0]
-            soccer_cfg = saved.get('soccer-scoreboard', {})
-            teams = soccer_cfg.get('leagues', {}).get('eng.1', {}).get('favorite_teams')
-            assert isinstance(teams, list), f"Expected list, got: {type(teams)}"
+        assert response.status_code == 200, f"Expected 200, got {response.status_code}: {response.data}"
+        saved = mock_config_manager.save_config_atomic.call_args[0][0]
+        soccer_cfg = saved.get('soccer-scoreboard', {})
+        teams = soccer_cfg.get('leagues', {}).get('eng.1', {}).get('favorite_teams')
+        assert isinstance(teams, list), f"Expected list, got: {type(teams)}"
+        assert teams == [], f"Expected empty default list, got: {teams}"
