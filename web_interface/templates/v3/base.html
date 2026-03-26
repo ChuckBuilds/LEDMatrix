@@ -401,12 +401,15 @@
             if (content && !content.hasAttribute('data-loaded')) {
                 content.setAttribute('data-loaded', 'true');
                 console.log('Loading plugins directly via fetch (HTMX fallback)...');
-                fetch('/v3/partials/plugins')
+                const controller = new AbortController();
+                const timeout = setTimeout(() => controller.abort(), 10000);
+                fetch('/v3/partials/plugins', { signal: controller.signal })
                     .then(r => {
                         if (!r.ok) throw new Error(r.status + ' ' + r.statusText);
                         return r.text();
                     })
                     .then(html => {
+                        clearTimeout(timeout);
                         content.innerHTML = html;
                         // Trigger full initialization chain
                         if (window.pluginManager) {
@@ -418,6 +421,7 @@
                         }
                     })
                     .catch(err => {
+                        clearTimeout(timeout);
                         console.error('Failed to load plugins:', err);
                         content.removeAttribute('data-loaded');
                         content.innerHTML = '<div class="bg-red-50 border border-red-200 rounded-lg p-4"><p class="text-red-800">Failed to load Plugin Manager. Please refresh the page.</p></div>';
