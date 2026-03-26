@@ -1169,7 +1169,7 @@
             <!-- Plugins tab -->
             <div x-show="activeTab === 'plugins'" x-transition>
                 <div id="plugins-content" hx-get="/v3/partials/plugins" hx-trigger="revealed" hx-swap="innerHTML"
-                     hx-on::htmx:response-error="loadPluginsDirect()">
+                     hx-on::response-error="loadPluginsDirect()">
                     <div class="animate-pulse">
                         <div class="bg-white rounded-lg shadow p-6">
                             <div class="h-4 bg-gray-200 rounded w-1/4 mb-4"></div>

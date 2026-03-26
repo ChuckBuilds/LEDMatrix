@@ -119,6 +119,9 @@ class PluginManager:
             for item in directory.iterdir():
                 if not item.is_dir():
                     continue
+                # Skip backup directories so they don't overwrite live entries
+                if '.standalone-backup-' in item.name:
+                    continue
 
                 manifest_path = item / "manifest.json"
                 if manifest_path.exists():
