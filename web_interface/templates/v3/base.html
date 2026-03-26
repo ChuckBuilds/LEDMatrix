@@ -391,566 +391,51 @@
                     icon.classList.add('fa-chevron-right');
                 }
             };
-            
-            // Function to load plugins tab
-            window.loadPluginsTab = function() {
-                const content = document.getElementById('plugins-content');
-                if (content && !content.hasAttribute('data-loaded')) {
-                    content.setAttribute('data-loaded', 'true');
-                    console.log('Loading plugins directly via fetch...');
-                    
-                    fetch('/v3/partials/plugins')
-                        .then(r => r.text())
-                        .then(html => {
-                            // Parse HTML into a temporary container to extract scripts
-                            const tempDiv = document.createElement('div');
-                            tempDiv.innerHTML = html;
-                            
-                            // Extract scripts BEFORE inserting into DOM (browser may remove them)
-                            const scripts = Array.from(tempDiv.querySelectorAll('script'));
-                            console.log('Found', scripts.length, 'scripts to execute');
-                            
-                            // Insert content WITHOUT scripts first
-                            const scriptsToExecute = [];
-                            scripts.forEach(script => {
-                                scriptsToExecute.push({
-                                    content: script.textContent || script.innerHTML,
-                                    src: script.src,
-                                    type: script.type
-                                });
-                                script.remove(); // Remove from temp div
-                            });
-                            
-                            // Now insert the HTML (without scripts)
-                            content.innerHTML = tempDiv.innerHTML;
-                            console.log('Plugins HTML loaded, executing', scriptsToExecute.length, 'scripts...');
-                            
-                            // Execute scripts manually - ensure they run properly
-                            if (scriptsToExecute.length > 0) {
-                                try {
-                                    scriptsToExecute.forEach((scriptData, index) => {
-                                    try {
-                                        // Skip if script has no content and no src
-                                        const scriptContent = scriptData.content ? scriptData.content.trim() : '';
-                                        if (!scriptContent && !scriptData.src) {
-                                            return;
-                                        }
-                                        
-                                        // Log script info for debugging
-                                        if (scriptContent) {
-                                            const preview = scriptContent.substring(0, 100).replace(/\n/g, ' ');
-                                            console.log(`[SCRIPT ${index + 1}] Content preview: ${preview}... (${scriptContent.length} chars)`);
-                                            
-                                            // Check if this script defines our critical functions
-                                            if (scriptContent.includes('window.configurePlugin') || scriptContent.includes('window.togglePlugin')) {
-                                                console.log(`[SCRIPT ${index + 1}] ⚠️  This script should define configurePlugin/togglePlugin!`);
-                                            }
-                                        }
-                                        
-                                        // Only execute if we have valid content
-                                        if (scriptContent || scriptData.src) {
-                                            // For inline scripts, use appendChild for reliable execution
-                                            if (scriptContent && !scriptData.src) {
-                                                // For very large scripts (>100KB), try fallback methods first
-                                                // as appendChild can sometimes have issues with large scripts
-                                                const isLargeScript = scriptContent.length > 100000;
-                                                
-                                                if (isLargeScript) {
-                                                    console.log(`[SCRIPT ${index + 1}] Large script detected (${scriptContent.length} chars), trying fallback methods first...`);
-                                                    
-                                                    // Try Function constructor first for large scripts
-                                                    let executed = false;
-                                                    try {
-                                                        const func = new Function('window', scriptContent);
-                                                        func(window);
-                                                        console.log(`[SCRIPT ${index + 1}] ✓ Executed large script via Function constructor`);
-                                                        executed = true;
-                                                    } catch (funcError) {
-                                                        console.warn(`[SCRIPT ${index + 1}] Function constructor failed:`, funcError.message);
-                                                    }
-                                                    
-                                                    // If Function constructor failed, try indirect eval
-                                                    if (!executed) {
-                                                        try {
-                                                            (0, eval)(scriptContent);
-                                                            console.log(`[SCRIPT ${index + 1}] ✓ Executed large script via indirect eval`);
-                                                            executed = true;
-                                                        } catch (evalError) {
-                                                            console.warn(`[SCRIPT ${index + 1}] Indirect eval failed:`, evalError.message);
-                                                        }
-                                                    }
-                                                    
-                                                    // If both fallbacks worked, skip appendChild
-                                                    if (executed) {
-                                                        // Verify functions were defined
-                                                        setTimeout(() => {
-                                                            console.log(`[SCRIPT ${index + 1}] After fallback execution:`, {
-                                                                configurePlugin: typeof window.configurePlugin,
-                                                                togglePlugin: typeof window.togglePlugin
-                                                            });
-                                                        }, 50);
-                                                        return; // Skip to next script (use return, not continue, in forEach)
-                                                    }
-                                                }
-                                                
-                                                try {
-                                                    // Create new script element and append to head/body
-                                                    // This ensures proper execution context and window attachment
-                                                    const newScript = document.createElement('script');
-                                                    if (scriptData.type) {
-                                                        newScript.type = scriptData.type;
-                                                    }
-                                                    
-                                                    // Wrap in a promise to wait for execution
-                                                    const scriptPromise = new Promise((resolve, reject) => {
-                                                        // Set up error handler
-                                                        newScript.onerror = (error) => {
-                                                            reject(error);
-                                                        };
-                                                        
-                                                        // For inline scripts, execution happens synchronously when appended
-                                                        // But we'll use a small delay to ensure it completes
-                                                        try {
-                                                            // Set textContent (not innerHTML) to avoid execution issues
-                                                            // Note: We can't wrap in try-catch here as it would interfere with the script
-                                                            // Instead, we rely on the script's own error handling
-                                                            newScript.textContent = scriptContent;
-                                                            
-                                                            // Append to head for better execution context
-                                                            const target = document.head || document.body;
-                                                            if (target) {
-                                                                // Set up error handler to catch execution errors
-                                                                newScript.onerror = (error) => {
-                                                                    console.error(`[SCRIPT ${index + 1}] Execution error:`, error);
-                                                                    reject(error);
-                                                                };
-                                                                
-                                                                // Check before execution
-                                                                const beforeConfigurePlugin = typeof window.configurePlugin === 'function';
-                                                                const beforeTogglePlugin = typeof window.togglePlugin === 'function';
-                                                                
-                                                                // Declare variables in outer scope so setTimeout can access them
-                                                                let afterConfigurePlugin = beforeConfigurePlugin;
-                                                                let afterTogglePlugin = beforeTogglePlugin;
-                                                                
-                                                                // Append and execute (execution is synchronous for inline scripts)
-                                                                // Wrap in try-catch to catch any execution errors
-                                                                try {
-                                                                    target.appendChild(newScript);
-                                                                    
-                                                                    // Check immediately after append (inline scripts execute synchronously)
-                                                                    afterConfigurePlugin = typeof window.configurePlugin === 'function';
-                                                                    afterTogglePlugin = typeof window.togglePlugin === 'function';
-                                                                    
-                                                                    console.log(`[SCRIPT ${index + 1}] Immediate check after appendChild:`, {
-                                                                        configurePlugin: { before: beforeConfigurePlugin, after: afterConfigurePlugin },
-                                                                        togglePlugin: { before: beforeTogglePlugin, after: afterTogglePlugin }
-                                                                    });
-                                                                } catch (appendError) {
-                                                                    console.error(`[SCRIPT ${index + 1}] Error during appendChild:`, appendError);
-                                                                    console.error(`[SCRIPT ${index + 1}] Error message:`, appendError.message);
-                                                                    console.error(`[SCRIPT ${index + 1}] Error stack:`, appendError.stack);
-                                                                    
-                                                                    // Try fallback execution methods immediately
-                                                                    console.warn(`[SCRIPT ${index + 1}] Attempting fallback execution methods...`);
-                                                                    let executed = false;
-                                                                    
-                                                                    // Method 1: Function constructor
-                                                                    try {
-                                                                        const func = new Function('window', scriptContent);
-                                                                        func(window);
-                                                                        console.log(`[SCRIPT ${index + 1}] ✓ Executed via Function constructor (fallback)`);
-                                                                        executed = true;
-                                                                    } catch (funcError) {
-                                                                        console.warn(`[SCRIPT ${index + 1}] Function constructor failed:`, funcError.message);
-                                                                        if (funcError.stack) {
-                                                                            console.warn(`[SCRIPT ${index + 1}] Function constructor stack:`, funcError.stack);
-                                                                        }
-                                                                        // Try to find the line number if available
-                                                                        if (funcError.message.includes('line')) {
-                                                                            const lineMatch = funcError.message.match(/line (\d+)/);
-                                                                            if (lineMatch) {
-                                                                                const lineNum = parseInt(lineMatch[1]);
-                                                                                const lines = scriptContent.split('\n');
-                                                                                const start = Math.max(0, lineNum - 5);
-                                                                                const end = Math.min(lines.length, lineNum + 5);
-                                                                                console.warn(`[SCRIPT ${index + 1}] Context around error (lines ${start}-${end}):`, 
-                                                                                    lines.slice(start, end).join('\n'));
-                                                                            }
-                                                                        }
-                                                                    }
-                                                                    
-                                                                    // Method 2: Indirect eval
-                                                                    if (!executed) {
-                                                                        try {
-                                                                            (0, eval)(scriptContent);
-                                                                            console.log(`[SCRIPT ${index + 1}] ✓ Executed via indirect eval (fallback)`);
-                                                                            executed = true;
-                                                                        } catch (evalError) {
-                                                                            console.warn(`[SCRIPT ${index + 1}] Indirect eval failed:`, evalError.message);
-                                                                            if (evalError.stack) {
-                                                                                console.warn(`[SCRIPT ${index + 1}] Indirect eval stack:`, evalError.stack);
-                                                                            }
-                                                                        }
-                                                                    }
-                                                                    
-                                                                    // Check if functions are now defined
-                                                                    const fallbackConfigurePlugin = typeof window.configurePlugin === 'function';
-                                                                    const fallbackTogglePlugin = typeof window.togglePlugin === 'function';
-                                                                    
-                                                                    console.log(`[SCRIPT ${index + 1}] After fallback attempts:`, {
-                                                                        configurePlugin: fallbackConfigurePlugin,
-                                                                        togglePlugin: fallbackTogglePlugin,
-                                                                        executed: executed
-                                                                    });
-                                                                    
-                                                                    if (!executed) {
-                                                                        reject(appendError);
-                                                                    } else {
-                                                                        resolve();
-                                                                    }
-                                                                }
-                                                                
-                                                                // Also check after a small delay to catch any async definitions
-                                                                setTimeout(() => {
-                                                                    const delayedConfigurePlugin = typeof window.configurePlugin === 'function';
-                                                                    const delayedTogglePlugin = typeof window.togglePlugin === 'function';
-                                                                    
-                                                                    // Use the variables from the outer scope
-                                                                    if (delayedConfigurePlugin !== afterConfigurePlugin || delayedTogglePlugin !== afterTogglePlugin) {
-                                                                        console.log(`[SCRIPT ${index + 1}] Functions appeared after delay:`, {
-                                                                            configurePlugin: { immediate: afterConfigurePlugin, delayed: delayedConfigurePlugin },
-                                                                            togglePlugin: { immediate: afterTogglePlugin, delayed: delayedTogglePlugin }
-                                                                        });
-                                                                    }
-                                                                    
-                                                                    resolve();
-                                                                }, 100); // Small delay to catch any async definitions
-                                                            } else {
-                                                                reject(new Error('No target found for script execution'));
-                                                            }
-                                                        } catch (appendError) {
-                                                            reject(appendError);
-                                                        }
-                                                    });
-                                                    
-                                                    // Wait for script to execute (with timeout)
-                                                    Promise.race([
-                                                        scriptPromise,
-                                                        new Promise((_, reject) => setTimeout(() => reject(new Error('Script execution timeout')), 1000))
-                                                    ]).catch(error => {
-                                                        console.warn(`[SCRIPT ${index + 1}] Script execution issue, trying fallback:`, error);
-                                                        // Fallback: try multiple execution methods
-                                                        let executed = false;
-                                                        
-                                                        // Method 1: Function constructor with window in scope
-                                                        try {
-                                                            const func = new Function('window', scriptContent);
-                                                            func(window);
-                                                            console.log(`[SCRIPT ${index + 1}] Executed via Function constructor (fallback method 1)`);
-                                                            executed = true;
-                                                        } catch (funcError) {
-                                                            console.warn(`[SCRIPT ${index + 1}] Function constructor failed:`, funcError);
-                                                        }
-                                                        
-                                                        // Method 2: Direct eval in global scope (if method 1 failed)
-                                                        if (!executed) {
-                                                            try {
-                                                                // Use indirect eval to execute in global scope
-                                                                (0, eval)(scriptContent);
-                                                                console.log(`[SCRIPT ${index + 1}] Executed via indirect eval (fallback method 2)`);
-                                                                executed = true;
-                                                            } catch (evalError) {
-                                                                console.warn(`[SCRIPT ${index + 1}] Indirect eval failed:`, evalError);
-                                                            }
-                                                        }
-                                                        
-                                                        // Verify functions after fallback
-                                                        setTimeout(() => {
-                                                            console.log(`[SCRIPT ${index + 1}] After fallback execution:`, {
-                                                                configurePlugin: typeof window.configurePlugin,
-                                                                togglePlugin: typeof window.togglePlugin,
-                                                                executed: executed
-                                                            });
-                                                        }, 10);
-                                                        
-                                                        if (!executed) {
-                                                            console.error(`[SCRIPT ${index + 1}] All script execution methods failed`);
-                                                            console.error(`[SCRIPT ${index + 1}] Script content (first 500 chars):`, scriptContent.substring(0, 500));
-                                                        }
-                                                    });
-                                                } catch (appendError) {
-                                                    console.error('Failed to execute script:', appendError);
-                                                }
-                                            } else if (scriptData.src) {
-                                                // For external scripts, use appendChild
-                                                const newScript = document.createElement('script');
-                                                newScript.src = scriptData.src;
-                                                if (scriptData.type) {
-                                                    newScript.type = scriptData.type;
-                                                }
-                                                const target = document.head || document.body;
-                                                if (target) {
-                                                    target.appendChild(newScript);
-                                                }
-                                                console.log('Loaded external script', index + 1, 'of', scriptsToExecute.length);
-                                            }
-                                        }
-                                    } catch (scriptError) {
-                                        console.warn('Error executing script', index + 1, ':', scriptError);
-                                    }
-                                });
-                                
-                                // Wait a moment for scripts to execute, then verify functions are available
-                                // Use multiple checks to ensure scripts have time to execute
-                                let checkCount = 0;
-                                const maxChecks = 10;
-                                const checkInterval = setInterval(() => {
-                                    checkCount++;
-                                    const funcs = {
-                                        configurePlugin: typeof window.configurePlugin,
-                                        togglePlugin: typeof window.togglePlugin,
-                                        updatePlugin: typeof window.updatePlugin,
-                                        uninstallPlugin: typeof window.uninstallPlugin,
-                                        initializePlugins: typeof window.initializePlugins,
-                                        loadInstalledPlugins: typeof window.loadInstalledPlugins,
-                                        renderInstalledPlugins: typeof window.renderInstalledPlugins
-                                    };
-                                    
-                                    if (checkCount === 1 || checkCount === maxChecks) {
-                                        console.log('Verifying plugin functions after script execution (check', checkCount, '):', funcs);
-                                    }
-                                    
-                                    // Stop checking once critical functions are available or max checks reached
-                                    if ((funcs.configurePlugin === 'function' && funcs.togglePlugin === 'function') || checkCount >= maxChecks) {
-                                        clearInterval(checkInterval);
-                                        if (funcs.configurePlugin !== 'function' || funcs.togglePlugin !== 'function') {
-                                            console.error('Critical plugin functions not available after', checkCount, 'checks');
-                                        }
-                                    }
-                                }, 100);
-                                } catch (executionError) {
-                                    console.error('Script execution error:', executionError);
-                                }
-                            } else {
-                                console.log('No scripts found in loaded HTML');
-                            }
-                            
-                        // Wait for scripts to execute, then load plugins
-                        // CRITICAL: Wait for configurePlugin and togglePlugin to be defined before proceeding
-                        let attempts = 0;
-                        const maxAttempts = 20; // Increased to give more time
-                        const checkInterval = setInterval(() => {
-                            attempts++;
-                            
-                            // First, ensure critical functions are available
-                            const criticalFunctionsReady = 
-                                window.configurePlugin && typeof window.configurePlugin === 'function' &&
-                                window.togglePlugin && typeof window.togglePlugin === 'function';
-                            
-                            if (!criticalFunctionsReady && attempts < maxAttempts) {
-                                if (attempts % 5 === 0) { // Log every 5th attempt
-                                    console.log(`Waiting for critical functions... (attempt ${attempts}/${maxAttempts})`, {
-                                        configurePlugin: typeof window.configurePlugin,
-                                        togglePlugin: typeof window.togglePlugin
-                                    });
-                                }
-                                return; // Keep waiting
-                            }
-                            
-                            if (!criticalFunctionsReady) {
-                                console.error('Critical functions (configurePlugin, togglePlugin) not available after', maxAttempts, 'attempts');
-                                clearInterval(checkInterval);
-                                return;
-                            }
-                            
-                            console.log('Critical functions ready, proceeding with plugin initialization...');
-                            clearInterval(checkInterval);
-                            
-                            // Now try to call initializePlugins first (loads both installed and store)
-                            if (window.initializePlugins && typeof window.initializePlugins === 'function') {
-                                console.log('Found initializePlugins, calling it...');
-                                window.initializePlugins();
-                            } else if (window.loadInstalledPlugins && typeof window.loadInstalledPlugins === 'function') {
-                                console.log('Found loadInstalledPlugins, calling it...');
-                                window.loadInstalledPlugins();
-                                // Also try to load plugin store
-                                if (window.searchPluginStore && typeof window.searchPluginStore === 'function') {
-                                    setTimeout(() => window.searchPluginStore(true), 500);
-                                }
-                            } else if (window.pluginManager && window.pluginManager.loadInstalledPlugins) {
-                                console.log('Found pluginManager.loadInstalledPlugins, calling it...');
-                                window.pluginManager.loadInstalledPlugins();
-                                // Also try to load plugin store
-                                setTimeout(() => {
-                                    const searchFn = window.searchPluginStore || 
-                                                     (window.pluginManager && window.pluginManager.searchPluginStore);
-                                    if (searchFn && typeof searchFn === 'function') {
-                                        console.log('Loading plugin store...');
-                                        searchFn(true);
-                                    } else {
-                                        console.warn('searchPluginStore not available');
-                                    }
-                                }, 500);
-                            } else if (attempts >= maxAttempts) {
-                                    console.log('loadInstalledPlugins not found after', maxAttempts, 'attempts, fetching and rendering directly...');
-                                    clearInterval(checkInterval);
-                                    
-                                    // Load both installed plugins and plugin store
-                                    Promise.all([
-                                        // Use batched API requests for better performance
-                                        window.PluginAPI && window.PluginAPI.batch ? 
-                                            window.PluginAPI.batch([
-                                                {endpoint: '/plugins/installed', method: 'GET'},
-                                                {endpoint: '/plugins/store/list?fetch_commit_info=true', method: 'GET'}
-                                            ]).then(([installedRes, storeRes]) => {
-                                                return [installedRes, storeRes];
-                                            }) :
-                                            Promise.all([
-                                                getInstalledPluginsSafe(),
-                                                fetch('/api/v3/plugins/store/list?fetch_commit_info=true').then(r => r.json())
-                                            ])
-                                    ]).then(([installedData, storeData]) => {
-                                        console.log('Fetched plugins:', installedData);
-                                        console.log('Fetched store:', storeData);
-                                        
-                                        // Render installed plugins
-                                        if (installedData.status === 'success') {
-                                            const plugins = installedData.data.plugins || [];
-                                            const container = document.getElementById('installed-plugins-grid');
-                                            const countEl = document.getElementById('installed-count');
-                                                
-                                                // Try renderInstalledPlugins one more time
-                                                if (window.renderInstalledPlugins && typeof window.renderInstalledPlugins === 'function') {
-                                                    console.log('Using renderInstalledPlugins...');
-                                                    window.renderInstalledPlugins(plugins);
-                                } else if (container) {
-                                    console.log('renderInstalledPlugins not available, rendering full plugin cards manually...');
-                                    // Render full plugin cards with all information
-                                    const escapeHtml = function(text) {
-                                        if (!text) return '';
-                                        const div = document.createElement('div');
-                                        div.textContent = text;
-                                        return div.innerHTML;
-                                    };
-                                    const escapeAttr = function(text) {
-                                        return (text || '').replace(/'/g, "\\'").replace(/"/g, '&quot;');
-                                    };
-                                    const escapeJs = function(text) {
-                                        return JSON.stringify(text || '');
-                                    };
-                                    const formatCommit = function(commit, branch) {
-                                        if (!commit && !branch) return 'Unknown';
-                                        const shortCommit = commit ? String(commit).substring(0, 7) : '';
-                                        const branchText = branch ? String(branch) : '';
-                                        if (branchText && shortCommit) return branchText + ' · ' + shortCommit;
-                                        if (branchText) return branchText;
-                                        if (shortCommit) return shortCommit;
-                                        return 'Unknown';
-                                    };
-                                    const formatDate = function(dateString) {
-                                        if (!dateString) return 'Unknown';
-                                        try {
-                                            const date = new Date(dateString);
-                                            if (isNaN(date.getTime())) return 'Unknown';
-                                            const now = new Date();
-                                            const diffDays = Math.ceil(Math.abs(now - date) / (1000 * 60 * 60 * 24));
-                                            if (diffDays < 1) return 'Today';
-                                            if (diffDays < 2) return 'Yesterday';
-                                            if (diffDays < 7) return diffDays + ' days ago';
-                                            if (diffDays < 30) {
-                                                const weeks = Math.floor(diffDays / 7);
-                                                return weeks + (weeks === 1 ? ' week' : ' weeks') + ' ago';
-                                            }
-                                            return date.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
-                                        } catch (e) {
-                                            return 'Unknown';
-                                        }
-                                    };
-                                    container.innerHTML = plugins.map(function(p) {
-                                        const name = escapeHtml(p.name || p.id);
-                                        const desc = escapeHtml(p.description || 'No description available');
-                                        const author = escapeHtml(p.author || 'Unknown');
-                                        const category = escapeHtml(p.category || 'General');
-                                        const enabled = p.enabled ? 'checked' : '';
-                                        const enabledBool = Boolean(p.enabled);
-                                        const escapedId = escapeAttr(p.id);
-                                        const verified = p.verified ? '<span class="badge badge-success"><i class="fas fa-check-circle mr-1"></i>Verified</span>' : '';
-                                        const tags = (p.tags && p.tags.length > 0) ? '<div class="flex flex-wrap gap-1.5 mb-4">' + p.tags.map(function(tag) { return '<span class="badge badge-info">' + escapeHtml(tag) + '</span>'; }).join('') + '</div>' : '';
-                                        const escapedJsId = escapeJs(p.id);
-                                        return '<div class="plugin-card"><div class="flex items-start justify-between mb-4"><div class="flex-1 min-w-0"><div class="flex items-center flex-wrap gap-2 mb-2"><h4 class="font-semibold text-gray-900 text-base">' + name + '</h4>' + verified + '</div><div class="text-sm text-gray-600 space-y-1.5 mb-3"><p class="flex items-center"><i class="fas fa-user mr-2 text-gray-400 w-4"></i>' + author + '</p><p class="flex items-center"><i class="fas fa-code-branch mr-2 text-gray-400 w-4"></i>' + formatCommit(p.last_commit, p.branch) + '</p><p class="flex items-center"><i class="fas fa-calendar mr-2 text-gray-400 w-4"></i>' + formatDate(p.last_updated) + '</p><p class="flex items-center"><i class="fas fa-folder mr-2 text-gray-400 w-4"></i>' + category + '</p></div><p class="text-sm text-gray-700 leading-relaxed">' + desc + '</p></div><div class="flex-shrink-0 ml-4"><label class="relative inline-flex items-center cursor-pointer group"><input type="checkbox" class="sr-only peer" id="toggle-' + escapedId + '" ' + enabled + ' data-plugin-id="' + escapedId + '" data-action="toggle" onchange=\'if(window.togglePlugin){window.togglePlugin(' + escapedJsId + ', this.checked)}else{console.error("togglePlugin not available")}\'><div class="flex items-center gap-2 px-3 py-1.5 rounded-lg border-2 transition-all duration-200 ' + (enabledBool ? 'bg-green-50 border-green-500' : 'bg-gray-50 border-gray-300') + ' hover:shadow-md group-hover:scale-105"><div class="relative w-14 h-7 ' + (enabledBool ? 'bg-green-500' : 'bg-gray-300') + ' rounded-full peer peer-checked:bg-green-500 transition-colors duration-200 ease-in-out shadow-inner"><div class="absolute top-[3px] left-[3px] bg-white ' + (enabledBool ? 'translate-x-full' : '') + ' border-2 ' + (enabledBool ? 'border-green-500' : 'border-gray-400') + ' rounded-full h-5 w-5 transition-all duration-200 ease-in-out shadow-sm flex items-center justify-center">' + (enabledBool ? '<i class="fas fa-check text-green-600 text-xs"></i>' : '<i class="fas fa-times text-gray-400 text-xs"></i>') + '</div></div><span class="text-sm font-semibold ' + (enabledBool ? 'text-green-700' : 'text-gray-600') + ' flex items-center gap-1.5"><i class="fas ' + (enabledBool ? 'fa-toggle-on text-green-600' : 'fa-toggle-off text-gray-400') + '"></i><span>' + (enabledBool ? 'Enabled' : 'Disabled') + '</span></span></div></label></div></div>' + tags + '<div class="flex flex-wrap gap-2 mt-4 pt-4 border-t border-gray-200"><button onclick=\'if(window.configurePlugin){window.configurePlugin(' + escapedJsId + ')}else{console.error("configurePlugin not available")}\' class="btn bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md text-sm flex-1 font-semibold" data-plugin-id="' + escapedId + '" data-action="configure"><i class="fas fa-cog mr-2"></i>Configure</button><button onclick=\'if(window.updatePlugin){window.updatePlugin(' + escapedJsId + ')}else{console.error("updatePlugin not available")}\' class="btn bg-gray-600 hover:bg-gray-700 text-white px-4 py-2 rounded-md text-sm flex-1 font-semibold" data-plugin-id="' + escapedId + '" data-action="update"><i class="fas fa-sync mr-2"></i>Update</button><button onclick=\'if(window.uninstallPlugin){window.uninstallPlugin(' + escapedJsId + ')}else{console.error("uninstallPlugin not available")}\' class="btn bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-md text-sm flex-1 font-semibold" data-plugin-id="' + escapedId + '" data-action="uninstall"><i class="fas fa-trash mr-2"></i>Uninstall</button></div></div>';
-                                    }).join('');
-                                    if (countEl) countEl.textContent = plugins.length + ' installed';
-                                    window.installedPlugins = plugins;
-                                    console.log('Rendered', plugins.length, 'plugins with full cards');
-                                } else {
-                                    console.error('installed-plugins-grid container not found');
-                                }
-                                            }
-                                        
-                                        // Render plugin store
-                                        if (storeData.status === 'success') {
-                                            const storePlugins = storeData.data.plugins || [];
-                                            const storeContainer = document.getElementById('plugin-store-grid');
-                                            const storeCountEl = document.getElementById('store-count');
-                                            
-                                            if (storeContainer) {
-                                                // Try renderPluginStore if available
-                                                if (window.renderPluginStore && typeof window.renderPluginStore === 'function') {
-                                                    console.log('Using renderPluginStore...');
-                                                    window.renderPluginStore(storePlugins);
-                                                } else {
-                                                    // Manual rendering fallback
-                                                    console.log('renderPluginStore not available, rendering manually...');
-                                                    const escapeHtml = function(text) {
-                                                        if (!text) return '';
-                                                        const div = document.createElement('div');
-                                                        div.textContent = text;
-                                                        return div.innerHTML;
-                                                    };
-                                                    const escapeJs = function(text) {
-                                                        return JSON.stringify(text || '');
-                                                    };
-                                                    storeContainer.innerHTML = storePlugins.map(function(p) {
-                                                        const name = escapeHtml(p.name || p.id);
-                                                        const desc = escapeHtml(p.description || 'No description available');
-                                                        const author = escapeHtml(p.author || 'Unknown');
-                                                        const category = escapeHtml(p.category || 'General');
-                                                        const stars = p.stars || 0;
-                                                        const verified = p.verified ? '<span class="badge badge-success"><i class="fas fa-check-circle mr-1"></i>Verified</span>' : '';
-                                                        const escapedJsId = escapeJs(p.id);
-                                                        return '<div class="plugin-card"><div class="flex items-start justify-between mb-4"><div class="flex-1 min-w-0"><div class="flex items-center flex-wrap gap-2 mb-2"><h4 class="font-semibold text-gray-900 text-base">' + name + '</h4>' + verified + '</div><div class="text-sm text-gray-600 space-y-1.5 mb-3"><p class="flex items-center"><i class="fas fa-user mr-2 text-gray-400 w-4"></i>' + author + '</p><p class="flex items-center"><i class="fas fa-folder mr-2 text-gray-400 w-4"></i>' + category + '</p>' + (stars > 0 ? '<p class="flex items-center"><i class="fas fa-star mr-2 text-gray-400 w-4"></i>' + stars + ' stars</p>' : '') + '</div><p class="text-sm text-gray-700 leading-relaxed">' + desc + '</p></div></div><div class="flex flex-wrap gap-2 mt-4 pt-4 border-t border-gray-200"><button onclick=\'if(window.installPlugin){window.installPlugin(' + escapedJsId + ')}else{console.error("installPlugin not available")}\' class="btn bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-md text-sm flex-1 font-semibold"><i class="fas fa-download mr-2"></i>Install</button></div></div>';
-                                                    }).join('');
-                                                }
-                                                
-                                                if (storeCountEl) {
-                                                    storeCountEl.innerHTML = storePlugins.length + ' available';
-                                                }
-                                                console.log('Rendered', storePlugins.length, 'store plugins');
-                                            } else {
-                                                console.error('plugin-store-grid container not found');
-                                            }
-                                        } else {
-                                            console.error('Failed to load plugin store:', storeData.message);
-                                            const storeCountEl = document.getElementById('store-count');
-                                            if (storeCountEl) {
-                                                storeCountEl.innerHTML = '<span class="text-red-600">Error loading store</span>';
-                                            }
-                                        }
-                                    })
-                                    .catch(err => {
-                                        console.error('Error fetching plugins/store:', err);
-                                        // Still try to render installed plugins if store fails
-                                    });
-                                }
-                            }, 100); // Reduced from 200ms to 100ms for faster retries
-                        })
-                        .catch(err => console.error('Error loading plugins:', err));
-                }
-            };
         })();
     </script>
 
+    <!-- Fallback for loading plugins if HTMX fails -->
+    <script>
+        function loadPluginsDirect() {
+            const content = document.getElementById('plugins-content');
+            if (content && !content.hasAttribute('data-loaded')) {
+                content.setAttribute('data-loaded', 'true');
+                console.log('Loading plugins directly via fetch (HTMX fallback)...');
+                fetch('/v3/partials/plugins')
+                    .then(r => r.text())
+                    .then(html => {
+                        content.innerHTML = html;
+                        // Trigger full initialization chain
+                        if (window.pluginManager) {
+                            window.pluginManager.initialized = false;
+                            window.pluginManager.initializing = false;
+                        }
+                        if (window.initPluginsPage) {
+                            window.initPluginsPage();
+                        }
+                    })
+                    .catch(err => {
+                        console.error('Failed to load plugins:', err);
+                        content.removeAttribute('data-loaded');
+                        content.innerHTML = '<div class="bg-red-50 border border-red-200 rounded-lg p-4"><p class="text-red-800">Failed to load Plugin Manager. Please refresh the page.</p></div>';
+                    });
+            }
+        }
+
+        // Fallback if HTMX doesn't load within 5 seconds
+        setTimeout(() => {
+            if (typeof htmx === 'undefined') {
+                console.warn('HTMX not loaded after 5 seconds, using direct fetch for plugins');
+                const appElement = document.querySelector('[x-data="app()"]');
+                if (appElement && appElement._x_dataStack && appElement._x_dataStack[0]) {
+                    const activeTab = appElement._x_dataStack[0].activeTab;
+                    if (activeTab === 'plugins') {
+                        loadPluginsDirect();
+                    }
+                }
+            }
+        }, 5000);
+    </script>
     <!-- Alpine.js app function - defined early so it's available when Alpine initializes -->
     <script>
         // Helper function to get installed plugins with fallback
@@ -1491,7 +976,7 @@
             <!-- Second row - Plugin tabs (populated dynamically) -->
             <div id="plugin-tabs-row" class="border-b border-gray-200">
                 <nav class="-mb-px flex flex-wrap gap-y-2 gap-x-2 lg:gap-x-3 xl:gap-x-4">
-                    <button @click="activeTab = 'plugins'; $nextTick(() => { if (typeof htmx !== 'undefined' && !document.getElementById('plugins-content').hasAttribute('data-loaded')) { htmx.trigger('#plugins-content', 'load'); } })"
+                    <button @click="activeTab = 'plugins'"
                             :class="activeTab === 'plugins' ? 'nav-tab-active' : ''"
                             class="nav-tab">
                         <i class="fas fa-plug"></i>Plugin Manager
@@ -1683,10 +1168,9 @@
             </div>
 
             <!-- Plugins tab -->
-            <div x-show="activeTab === 'plugins'" 
-                 x-transition
-                 x-effect="if (activeTab === 'plugins') { window.loadPluginsTab && window.loadPluginsTab(); }">
-                <div id="plugins-content">
+            <div x-show="activeTab === 'plugins'" x-transition>
+                <div id="plugins-content" hx-get="/v3/partials/plugins" hx-trigger="revealed" hx-swap="innerHTML"
+                     hx-on::htmx:response-error="loadPluginsDirect()">
                     <div class="animate-pulse">
                         <div class="bg-white rounded-lg shadow p-6">
                             <div class="h-4 bg-gray-200 rounded w-1/4 mb-4"></div>

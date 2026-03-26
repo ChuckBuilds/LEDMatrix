@@ -1157,21 +1157,20 @@ function initializePluginPageWhenReady() {
     
     // Strategy 3: HTMX afterSwap event (for HTMX-loaded content)
     // This is the primary way plugins content is loaded
-    if (typeof htmx !== 'undefined') {
-        document.body.addEventListener('htmx:afterSwap', function(event) {
-            const target = event.detail.target;
-            // Check if plugins content was swapped in
-            if (target.id === 'plugins-content' || 
-                target.querySelector('#installed-plugins-grid') ||
-                document.getElementById('installed-plugins-grid')) {
-                console.log('HTMX swap detected for plugins, initializing...');
-                // Reset initialization flag to allow re-initialization after HTMX swap
-                window.pluginManager.initialized = false;
-                window.pluginManager.initializing = false;
-                initTimer = setTimeout(attemptInit, 100);
-            }
-        }, { once: false }); // Allow multiple swaps
-    }
+    // Register unconditionally — HTMX may load after this script (loaded dynamically from CDN)
+    // CustomEvent listeners work even before HTMX is available
+    document.body.addEventListener('htmx:afterSwap', function(event) {
+        const target = event.detail.target;
+        // Check if plugins content was swapped in (only match direct plugins content targets)
+        if (target.id === 'plugins-content' ||
+            target.querySelector('#installed-plugins-grid')) {
+            console.log('HTMX swap detected for plugins, initializing...');
+            // Reset initialization flag to allow re-initialization after HTMX swap
+            window.pluginManager.initialized = false;
+            window.pluginManager.initializing = false;
+            initTimer = setTimeout(attemptInit, 100);
+        }
+    }, { once: false }); // Allow multiple swaps
 })();
 
 // Initialization guard to prevent multiple initializations
