@@ -583,3 +583,129 @@ class TestAPIErrorHandling:
         response = client.get('/api/v3/display/on-demand/start')
         
         assert response.status_code in [200, 405]  # Depends on implementation
+
+
+class TestDottedKeyNormalization:
+    """Regression tests for fix_array_structures / ensure_array_defaults with dotted schema keys."""
+
+    def test_save_plugin_config_dotted_key_arrays(self, client, mock_config_manager):
+        """Nested dotted-key objects with numeric-keyed dicts are converted to arrays."""
+        from web_interface.blueprints.api_v3 import api_v3
+
+        api_v3.config_manager = mock_config_manager
+        mock_config_manager.load_config.return_value = {}
+
+        schema_mgr = MagicMock()
+        schema = {
+            'type': 'object',
+            'properties': {
+                'leagues': {
+                    'type': 'object',
+                    'properties': {
+                        'eng.1': {
+                            'type': 'object',
+                            'properties': {
+                                'enabled': {'type': 'boolean', 'default': True},
+                                'favorite_teams': {
+                                    'type': 'array',
+                                    'items': {'type': 'string'},
+                                    'default': [],
+                                },
+                            },
+                        },
+                    },
+                },
+            },
+        }
+        schema_mgr.load_schema.return_value = schema
+        schema_mgr.generate_default_config.return_value = {
+            'leagues': {'eng.1': {'enabled': True, 'favorite_teams': []}},
+        }
+        schema_mgr.merge_with_defaults.side_effect = lambda config, defaults: {**defaults, **config}
+        schema_mgr.validate_config_against_schema.return_value = []
+        api_v3.schema_manager = schema_mgr
+
+        request_data = {
+            'plugin_id': 'soccer-scoreboard',
+            'config': {
+                'leagues': {
+                    'eng.1': {
+                        'enabled': True,
+                        'favorite_teams': ['Arsenal', 'Chelsea'],
+                    },
+                },
+            },
+        }
+
+        response = client.post(
+            '/api/v3/plugins/config',
+            data=json.dumps(request_data),
+            content_type='application/json',
+        )
+
+        if response.status_code == 200:
+            saved = mock_config_manager.save_config_atomic.call_args[0][0]
+            soccer_cfg = saved.get('soccer-scoreboard', {})
+            leagues = soccer_cfg.get('leagues', {})
+            assert 'eng.1' in leagues, f"Expected 'eng.1' key, got: {list(leagues.keys())}"
+            assert isinstance(leagues['eng.1'].get('favorite_teams'), list)
+            assert leagues['eng.1']['favorite_teams'] == ['Arsenal', 'Chelsea']
+
+    def test_save_plugin_config_none_array_gets_default(self, client, mock_config_manager):
+        """None array fields under dotted-key parents are replaced with defaults."""
+        from web_interface.blueprints.api_v3 import api_v3
+
+        api_v3.config_manager = mock_config_manager
+        mock_config_manager.load_config.return_value = {}
+
+        schema_mgr = MagicMock()
+        schema = {
+            'type': 'object',
+            'properties': {
+                'leagues': {
+                    'type': 'object',
+                    'properties': {
+                        'eng.1': {
+                            'type': 'object',
+                            'properties': {
+                                'favorite_teams': {
+                                    'type': 'array',
+                                    'items': {'type': 'string'},
+                                    'default': [],
+                                },
+                            },
+                        },
+                    },
+                },
+            },
+        }
+        schema_mgr.load_schema.return_value = schema
+        schema_mgr.generate_default_config.return_value = {
+            'leagues': {'eng.1': {'favorite_teams': []}},
+        }
+        schema_mgr.merge_with_defaults.side_effect = lambda config, defaults: {**defaults, **config}
+        schema_mgr.validate_config_against_schema.return_value = []
+        api_v3.schema_manager = schema_mgr
+
+        request_data = {
+            'plugin_id': 'soccer-scoreboard',
+            'config': {
+                'leagues': {
+                    'eng.1': {
+                        'favorite_teams': None,
+                    },
+                },
+            },
+        }
+
+        response = client.post(
+            '/api/v3/plugins/config',
+            data=json.dumps(request_data),
+            content_type='application/json',
+        )
+
+        if response.status_code == 200:
+            saved = mock_config_manager.save_config_atomic.call_args[0][0]
+            soccer_cfg = saved.get('soccer-scoreboard', {})
+            teams = soccer_cfg.get('leagues', {}).get('eng.1', {}).get('favorite_teams')
+            assert isinstance(teams, list), f"Expected list, got: {type(teams)}"

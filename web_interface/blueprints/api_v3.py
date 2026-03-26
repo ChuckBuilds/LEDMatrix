@@ -4113,8 +4113,7 @@ def save_plugin_config():
                         nested_dict = config_dict.get(prop_key)
 
                         if nested_dict is None:
-                            if prop_key not in config_dict:
-                                config_dict[prop_key] = {}
+                            config_dict[prop_key] = {}
                             nested_dict = config_dict[prop_key]
 
                         if isinstance(nested_dict, dict):

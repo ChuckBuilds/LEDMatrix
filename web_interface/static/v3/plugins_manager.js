@@ -2334,6 +2334,15 @@ function dotToNested(obj, schema) {
         while (i < parts.length - 1) {
             let matched = false;
             if (currentSchema) {
+                // First, check if the full remaining tail is a leaf property
+                // (e.g., "eng.1" as a complete dotted key with no sub-properties)
+                const tailCandidate = parts.slice(i).join('.');
+                if (tailCandidate in currentSchema) {
+                    current[tailCandidate] = obj[key];
+                    matched = true;
+                    i = parts.length; // consumed all parts
+                    break;
+                }
                 // Try progressively longer candidates (longest first) to greedily
                 // match dotted property names like "eng.1"
                 for (let j = parts.length - 1; j > i; j--) {
@@ -4463,42 +4472,35 @@ function switchPluginConfigView(view) {
 function syncFormToJson() {
     const form = document.getElementById('plugin-config-form');
     if (!form) return;
-    
+
     const formData = new FormData(form);
-    const config = {};
-    
+    const flatConfig = {};
+
     // Get schema for type conversion
     const schema = currentPluginConfigState.schema;
-    
+
     for (let [key, value] of formData.entries()) {
         if (key === 'enabled') continue; // Skip enabled, managed separately
-        
-        // Handle nested keys (dot notation)
-        const keys = key.split('.');
-        let current = config;
-        for (let i = 0; i < keys.length - 1; i++) {
-            if (!current[keys[i]]) {
-                current[keys[i]] = {};
-            }
-            current = current[keys[i]];
-        }
-        
-        const finalKey = keys[keys.length - 1];
-        const prop = schema?.properties?.[finalKey] || (keys.length > 1 ? null : schema?.properties?.[key]);
-        
+
+        // Use schema-aware property lookup for type conversion
+        const prop = schema ? getSchemaProperty(schema, key) : null;
+
         // Type conversion based on schema
         if (prop?.type === 'array') {
-            current[finalKey] = value.split(',').map(item => item.trim()).filter(item => item.length > 0);
+            flatConfig[key] = value.split(',').map(item => item.trim()).filter(item => item.length > 0);
         } else if (prop?.type === 'integer' || key === 'display_duration') {
-            current[finalKey] = parseInt(value) || 0;
+            flatConfig[key] = parseInt(value) || 0;
         } else if (prop?.type === 'number') {
-            current[finalKey] = parseFloat(value) || 0;
+            flatConfig[key] = parseFloat(value) || 0;
         } else if (prop?.type === 'boolean') {
-            current[finalKey] = value === 'true' || value === true;
+            flatConfig[key] = value === 'true' || value === true;
         } else {
-            current[finalKey] = value;
+            flatConfig[key] = value;
         }
     }
+
+    // Convert flat dot-notation keys to nested object using schema-aware matching
+    const config = dotToNested(flatConfig, schema);
     
     // Deep merge with existing config to preserve nested structures
     function deepMerge(target, source) {
