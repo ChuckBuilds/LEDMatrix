@@ -2265,29 +2265,39 @@ window.showPluginConfigModal = function(pluginId, config) {
 }
 
 // Helper function to get the full property object from schema
+// Uses greedy longest-match to handle schema keys containing dots (e.g., "eng.1")
 function getSchemaProperty(schema, path) {
     if (!schema || !schema.properties) return null;
-    
+
     const parts = path.split('.');
     let current = schema.properties;
-    
-    for (let i = 0; i < parts.length; i++) {
-        const part = parts[i];
-        if (current && current[part]) {
-            if (i === parts.length - 1) {
-                // Last part - return the property
-                return current[part];
-            } else if (current[part].properties) {
-                // Navigate into nested object
-                current = current[part].properties;
-            } else {
-                return null;
+    let i = 0;
+
+    while (i < parts.length) {
+        let matched = false;
+        // Try progressively longer candidates, longest first
+        for (let j = parts.length; j > i; j--) {
+            const candidate = parts.slice(i, j).join('.');
+            if (current && current[candidate]) {
+                if (j === parts.length) {
+                    // Consumed all remaining parts — done
+                    return current[candidate];
+                }
+                if (current[candidate].properties) {
+                    current = current[candidate].properties;
+                    i = j;
+                    matched = true;
+                    break;
+                } else {
+                    return null; // Can't navigate deeper
+                }
             }
-        } else {
+        }
+        if (!matched) {
             return null;
         }
     }
-    
+
     return null;
 }
 
@@ -2311,23 +2321,58 @@ function escapeCssSelector(str) {
 }
 
 // Helper function to convert dot notation to nested object
-function dotToNested(obj) {
+// Uses schema-aware greedy matching to preserve dotted keys (e.g., "eng.1")
+function dotToNested(obj, schema) {
     const result = {};
-    
+
     for (const key in obj) {
         const parts = key.split('.');
         let current = result;
-        
-        for (let i = 0; i < parts.length - 1; i++) {
-            if (!current[parts[i]]) {
-                current[parts[i]] = {};
+        let currentSchema = (schema && schema.properties) ? schema.properties : null;
+        let i = 0;
+
+        while (i < parts.length - 1) {
+            let matched = false;
+            if (currentSchema) {
+                // Try progressively longer candidates (longest first) to greedily
+                // match dotted property names like "eng.1"
+                for (let j = parts.length - 1; j > i; j--) {
+                    const candidate = parts.slice(i, j).join('.');
+                    if (candidate in currentSchema) {
+                        if (!current[candidate]) {
+                            current[candidate] = {};
+                        }
+                        current = current[candidate];
+                        const schemaProp = currentSchema[candidate];
+                        currentSchema = (schemaProp && schemaProp.properties) ? schemaProp.properties : null;
+                        i = j;
+                        matched = true;
+                        break;
+                    }
+                }
             }
-            current = current[parts[i]];
+            if (!matched) {
+                // No schema match or no schema — use single segment
+                const part = parts[i];
+                if (!current[part]) {
+                    current[part] = {};
+                }
+                current = current[part];
+                if (currentSchema) {
+                    const schemaProp = currentSchema[part];
+                    currentSchema = (schemaProp && schemaProp.properties) ? schemaProp.properties : null;
+                } else {
+                    currentSchema = null;
+                }
+                i++;
+            }
         }
-        
-        current[parts[parts.length - 1]] = obj[key];
+
+        // Set the final key (remaining parts joined — may itself be dotted)
+        const finalKey = parts.slice(i).join('.');
+        current[finalKey] = obj[key];
     }
-    
+
     return result;
 }
 
@@ -2571,7 +2616,7 @@ function handlePluginConfigSubmit(e) {
     }
     
     // Convert dot notation to nested object
-    const config = dotToNested(flatConfig);
+    const config = dotToNested(flatConfig, schema);
     
     console.log('Flat config:', flatConfig);
     console.log('Nested config to save:', config);

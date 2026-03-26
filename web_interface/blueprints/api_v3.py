@@ -4024,225 +4024,101 @@ def save_plugin_config():
             
             # Post-process: Fix array fields that might have been incorrectly structured
             # This handles cases where array fields are stored as dicts (e.g., from indexed form fields)
-            def fix_array_structures(config_dict, schema_props, prefix=''):
-                """Recursively fix array structures (convert dicts with numeric keys to arrays, fix length issues)"""
+            def fix_array_structures(config_dict, schema_props):
+                """Recursively fix array structures (convert dicts with numeric keys to arrays, fix length issues).
+                config_dict is always the dict at the current nesting level."""
                 for prop_key, prop_schema in schema_props.items():
                     prop_type = prop_schema.get('type')
 
                     if prop_type == 'array':
-                        # Navigate to the field location
-                        if prefix:
-                            parent_parts = prefix.split('.')
-                            parent = config_dict
-                            for part in parent_parts:
-                                if isinstance(parent, dict) and part in parent:
-                                    parent = parent[part]
-                                else:
-                                    parent = None
-                                    break
-
-                            if parent is not None and isinstance(parent, dict) and prop_key in parent:
-                                current_value = parent[prop_key]
-                                # If it's a dict with numeric string keys, convert to array
-                                if isinstance(current_value, dict) and not isinstance(current_value, list):
-                                    try:
-                                        # Check if all keys are numeric strings (array indices)
-                                        keys = [k for k in current_value.keys()]
-                                        if all(k.isdigit() for k in keys):
-                                            # Convert to sorted array by index
-                                            sorted_keys = sorted(keys, key=int)
-                                            array_value = [current_value[k] for k in sorted_keys]
-                                            # Convert array elements to correct types based on schema
-                                            items_schema = prop_schema.get('items', {})
-                                            item_type = items_schema.get('type')
-                                            if item_type in ('number', 'integer'):
-                                                converted_array = []
-                                                for v in array_value:
-                                                    if isinstance(v, str):
-                                                        try:
-                                                            if item_type == 'integer':
-                                                                converted_array.append(int(v))
-                                                            else:
-                                                                converted_array.append(float(v))
-                                                        except (ValueError, TypeError):
-                                                            converted_array.append(v)
-                                                    else:
+                        if prop_key in config_dict:
+                            current_value = config_dict[prop_key]
+                            # If it's a dict with numeric string keys, convert to array
+                            if isinstance(current_value, dict) and not isinstance(current_value, list):
+                                try:
+                                    keys = list(current_value.keys())
+                                    if keys and all(str(k).isdigit() for k in keys):
+                                        sorted_keys = sorted(keys, key=lambda x: int(str(x)))
+                                        array_value = [current_value[k] for k in sorted_keys]
+                                        # Convert array elements to correct types based on schema
+                                        items_schema = prop_schema.get('items', {})
+                                        item_type = items_schema.get('type')
+                                        if item_type in ('number', 'integer'):
+                                            converted_array = []
+                                            for v in array_value:
+                                                if isinstance(v, str):
+                                                    try:
+                                                        if item_type == 'integer':
+                                                            converted_array.append(int(v))
+                                                        else:
+                                                            converted_array.append(float(v))
+                                                    except (ValueError, TypeError):
                                                         converted_array.append(v)
-                                                array_value = converted_array
-                                            parent[prop_key] = array_value
-                                            current_value = array_value  # Update for length check below
-                                    except (ValueError, KeyError, TypeError):
-                                        # Conversion failed, check if we should use default
-                                        pass
-
-                                # If it's an array, ensure correct types and check minItems
-                                if isinstance(current_value, list):
-                                    # First, ensure array elements are correct types
-                                    items_schema = prop_schema.get('items', {})
-                                    item_type = items_schema.get('type')
-                                    if item_type in ('number', 'integer'):
-                                        converted_array = []
-                                        for v in current_value:
-                                            if isinstance(v, str):
-                                                try:
-                                                    if item_type == 'integer':
-                                                        converted_array.append(int(v))
-                                                    else:
-                                                        converted_array.append(float(v))
-                                                except (ValueError, TypeError):
+                                                else:
                                                     converted_array.append(v)
-                                            else:
+                                            array_value = converted_array
+                                        config_dict[prop_key] = array_value
+                                        current_value = array_value  # Update for length check below
+                                except (ValueError, KeyError, TypeError) as e:
+                                    logger.debug(f"Failed to convert {prop_key} to array: {e}")
+
+                            # If it's an array, ensure correct types and check minItems
+                            if isinstance(current_value, list):
+                                # First, ensure array elements are correct types
+                                items_schema = prop_schema.get('items', {})
+                                item_type = items_schema.get('type')
+                                if item_type in ('number', 'integer'):
+                                    converted_array = []
+                                    for v in current_value:
+                                        if isinstance(v, str):
+                                            try:
+                                                if item_type == 'integer':
+                                                    converted_array.append(int(v))
+                                                else:
+                                                    converted_array.append(float(v))
+                                            except (ValueError, TypeError):
                                                 converted_array.append(v)
-                                        parent[prop_key] = converted_array
-                                        current_value = converted_array
+                                        else:
+                                            converted_array.append(v)
+                                    config_dict[prop_key] = converted_array
+                                    current_value = converted_array
 
-                                    # Then check minItems
-                                    min_items = prop_schema.get('minItems')
-                                    if min_items is not None and len(current_value) < min_items:
-                                        # Use default if available, otherwise keep as-is (validation will catch it)
-                                        default = prop_schema.get('default')
-                                        if default and isinstance(default, list) and len(default) >= min_items:
-                                            parent[prop_key] = default
-                        else:
-                            # Top-level field
-                            if prop_key in config_dict:
-                                current_value = config_dict[prop_key]
-                                # If it's a dict with numeric string keys, convert to array
-                                if isinstance(current_value, dict) and not isinstance(current_value, list):
-                                    try:
-                                        keys = list(current_value.keys())
-                                        if keys and all(str(k).isdigit() for k in keys):
-                                            sorted_keys = sorted(keys, key=lambda x: int(str(x)))
-                                            array_value = [current_value[k] for k in sorted_keys]
-                                            # Convert array elements to correct types based on schema
-                                            items_schema = prop_schema.get('items', {})
-                                            item_type = items_schema.get('type')
-                                            if item_type in ('number', 'integer'):
-                                                converted_array = []
-                                                for v in array_value:
-                                                    if isinstance(v, str):
-                                                        try:
-                                                            if item_type == 'integer':
-                                                                converted_array.append(int(v))
-                                                            else:
-                                                                converted_array.append(float(v))
-                                                        except (ValueError, TypeError):
-                                                            converted_array.append(v)
-                                                    else:
-                                                        converted_array.append(v)
-                                                array_value = converted_array
-                                            config_dict[prop_key] = array_value
-                                            current_value = array_value  # Update for length check below
-                                    except (ValueError, KeyError, TypeError) as e:
-                                        logger.debug(f"Failed to convert {prop_key} to array: {e}")
-                                        pass
-
-                                # If it's an array, ensure correct types and check minItems
-                                if isinstance(current_value, list):
-                                    # First, ensure array elements are correct types
-                                    items_schema = prop_schema.get('items', {})
-                                    item_type = items_schema.get('type')
-                                    if item_type in ('number', 'integer'):
-                                        converted_array = []
-                                        for v in current_value:
-                                            if isinstance(v, str):
-                                                try:
-                                                    if item_type == 'integer':
-                                                        converted_array.append(int(v))
-                                                    else:
-                                                        converted_array.append(float(v))
-                                                except (ValueError, TypeError):
-                                                    converted_array.append(v)
-                                            else:
-                                                converted_array.append(v)
-                                        config_dict[prop_key] = converted_array
-                                        current_value = converted_array
-
-                                    # Then check minItems
-                                    min_items = prop_schema.get('minItems')
-                                    if min_items is not None and len(current_value) < min_items:
-                                        default = prop_schema.get('default')
-                                        if default and isinstance(default, list) and len(default) >= min_items:
-                                            config_dict[prop_key] = default
+                                # Then check minItems
+                                min_items = prop_schema.get('minItems')
+                                if min_items is not None and len(current_value) < min_items:
+                                    default = prop_schema.get('default')
+                                    if default and isinstance(default, list) and len(default) >= min_items:
+                                        config_dict[prop_key] = default
 
                     # Recurse into nested objects
                     elif prop_type == 'object' and 'properties' in prop_schema:
-                        nested_prefix = f"{prefix}.{prop_key}" if prefix else prop_key
-                        if prefix:
-                            parent_parts = prefix.split('.')
-                            parent = config_dict
-                            for part in parent_parts:
-                                if isinstance(parent, dict) and part in parent:
-                                    parent = parent[part]
-                                else:
-                                    parent = None
-                                    break
-                            nested_dict = parent.get(prop_key) if parent is not None and isinstance(parent, dict) else None
-                        else:
-                            nested_dict = config_dict.get(prop_key)
+                        nested_dict = config_dict.get(prop_key)
 
                         if isinstance(nested_dict, dict):
-                            fix_array_structures(nested_dict, prop_schema['properties'], nested_prefix)
+                            fix_array_structures(nested_dict, prop_schema['properties'])
 
             # Also ensure array fields that are None get converted to empty arrays
-            def ensure_array_defaults(config_dict, schema_props, prefix=''):
-                """Recursively ensure array fields have defaults if None"""
+            def ensure_array_defaults(config_dict, schema_props):
+                """Recursively ensure array fields have defaults if None.
+                config_dict is always the dict at the current nesting level."""
                 for prop_key, prop_schema in schema_props.items():
                     prop_type = prop_schema.get('type')
 
                     if prop_type == 'array':
-                        if prefix:
-                            parent_parts = prefix.split('.')
-                            parent = config_dict
-                            for part in parent_parts:
-                                if isinstance(parent, dict) and part in parent:
-                                    parent = parent[part]
-                                else:
-                                    parent = None
-                                    break
-
-                            if parent is not None and isinstance(parent, dict):
-                                if prop_key not in parent or parent[prop_key] is None:
-                                    default = prop_schema.get('default', [])
-                                    parent[prop_key] = default if default else []
-                        else:
-                            if prop_key not in config_dict or config_dict[prop_key] is None:
-                                default = prop_schema.get('default', [])
-                                config_dict[prop_key] = default if default else []
+                        if prop_key not in config_dict or config_dict[prop_key] is None:
+                            default = prop_schema.get('default', [])
+                            config_dict[prop_key] = default if default else []
 
                     elif prop_type == 'object' and 'properties' in prop_schema:
-                        nested_prefix = f"{prefix}.{prop_key}" if prefix else prop_key
-                        if prefix:
-                            parent_parts = prefix.split('.')
-                            parent = config_dict
-                            for part in parent_parts:
-                                if isinstance(parent, dict) and part in parent:
-                                    parent = parent[part]
-                                else:
-                                    parent = None
-                                    break
-                            nested_dict = parent.get(prop_key) if parent is not None and isinstance(parent, dict) else None
-                        else:
-                            nested_dict = config_dict.get(prop_key)
+                        nested_dict = config_dict.get(prop_key)
 
                         if nested_dict is None:
-                            if prefix:
-                                parent_parts = prefix.split('.')
-                                parent = config_dict
-                                for part in parent_parts:
-                                    if part not in parent:
-                                        parent[part] = {}
-                                    parent = parent[part]
-                                if prop_key not in parent:
-                                    parent[prop_key] = {}
-                                nested_dict = parent[prop_key]
-                            else:
-                                if prop_key not in config_dict:
-                                    config_dict[prop_key] = {}
-                                nested_dict = config_dict[prop_key]
+                            if prop_key not in config_dict:
+                                config_dict[prop_key] = {}
+                            nested_dict = config_dict[prop_key]
 
                         if isinstance(nested_dict, dict):
-                            ensure_array_defaults(nested_dict, prop_schema['properties'], nested_prefix)
+                            ensure_array_defaults(nested_dict, prop_schema['properties'])
 
             if schema and 'properties' in schema:
                 # First, fix any dict structures that should be arrays
