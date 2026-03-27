@@ -215,9 +215,6 @@
     var fontOverrides = window.fontOverrides;
     var selectedFontFiles = window.selectedFontFiles;
 
-    // Base URL for API calls (shared scope)
-    var baseUrl = window.location.origin;
-
     // Retry counter for initialization
     var initRetryCount = 0;
     var MAX_INIT_RETRIES = 50; // 5 seconds max (50 * 100ms)
@@ -384,9 +381,9 @@ async function loadFontData() {
     try {
         // Use absolute URLs to ensure they work when loaded via HTMX
         const [catalogRes, tokensRes, overridesRes] = await Promise.all([
-            fetch(`${baseUrl}/api/v3/fonts/catalog`),
-            fetch(`${baseUrl}/api/v3/fonts/tokens`),
-            fetch(`${baseUrl}/api/v3/fonts/overrides`)
+            fetch(`/api/v3/fonts/catalog`),
+            fetch(`/api/v3/fonts/tokens`),
+            fetch(`/api/v3/fonts/overrides`)
         ]);
 
         // Check if all responses are successful
@@ -558,7 +555,7 @@ async function deleteFont(fontFamily) {
     }
 
     try {
-        const response = await fetch(`${baseUrl}/api/v3/fonts/${encodeURIComponent(fontFamily)}`, {
+        const response = await fetch(`/api/v3/fonts/${encodeURIComponent(fontFamily)}`, {
             method: 'DELETE'
         });
 
@@ -667,7 +664,7 @@ async function addFontOverride() {
             if (sizePx) overrideData.size_px = sizePx;
         }
 
-        const response = await fetch(`${baseUrl}/api/v3/fonts/overrides`, {
+        const response = await fetch(`/api/v3/fonts/overrides`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -712,7 +709,7 @@ async function deleteFontOverride(elementKey) {
     }
 
     try {
-        const response = await fetch(`${baseUrl}/api/v3/fonts/overrides/${elementKey}`, {
+        const response = await fetch(`/api/v3/fonts/overrides/${elementKey}`, {
             method: 'DELETE'
         });
 
@@ -860,7 +857,7 @@ async function updateFontPreview() {
             fg: 'ffffff'
         });
 
-        const response = await fetch(`${baseUrl}/api/v3/fonts/preview?${params}`);
+        const response = await fetch(`/api/v3/fonts/preview?${params}`);
 
         if (!response.ok) {
             const text = await response.text();
@@ -990,7 +987,7 @@ async function uploadSelectedFonts() {
             formData.append('font_file', file);
             formData.append('font_family', i === 0 ? fontFamily : `${fontFamily}_${i + 1}`);
 
-            const response = await fetch(`${baseUrl}/api/v3/fonts/upload`, {
+            const response = await fetch(`/api/v3/fonts/upload`, {
                 method: 'POST',
                 body: formData
             });
