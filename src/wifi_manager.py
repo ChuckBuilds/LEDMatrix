@@ -659,7 +659,7 @@ class WiFiManager:
         except (subprocess.TimeoutExpired, subprocess.SubprocessError, OSError):
             return False
     
-    def scan_networks(self, allow_cached: bool = True) -> List[WiFiNetwork]:
+    def scan_networks(self, allow_cached: bool = True) -> Tuple[List[WiFiNetwork], bool]:
         """
         Scan for available WiFi networks.
 
@@ -669,7 +669,7 @@ class WiFiManager:
         before AP mode was enabled.
 
         Returns:
-            List of WiFiNetwork objects
+            Tuple of (list of WiFiNetwork objects, was_cached bool)
         """
         try:
             ap_active = self._is_ap_mode_active()
@@ -681,7 +681,7 @@ class WiFiManager:
                 networks = self._scan_nmcli_cached()
                 if not networks and allow_cached:
                     networks = self._load_cached_scan()
-                return networks
+                return networks, True
 
             # Normal scan (not in AP mode)
             if self.has_nmcli:
@@ -696,11 +696,11 @@ class WiFiManager:
             if networks:
                 self._save_cached_scan(networks)
 
-            return networks
+            return networks, False
 
         except Exception as e:
             logger.error(f"Error scanning networks: {e}")
-            return []
+            return [], False
 
     def _scan_nmcli_cached(self) -> List[WiFiNetwork]:
         """Return nmcli's cached WiFi list without triggering a rescan."""
@@ -771,8 +771,7 @@ class WiFiManager:
         except Exception as e:
             logger.debug(f"Failed to load cached scan: {e}")
             return []
-                    # Log but don't fail - user can manually re-enable if needed
-    
+
     def _scan_nmcli(self) -> List[WiFiNetwork]:
         """Scan networks using nmcli"""
         networks = []
@@ -2333,7 +2332,7 @@ address=/detectportal.firefox.com/192.168.4.1
                 # Pre-cache a WiFi scan so the captive portal can show networks
                 try:
                     logger.info("Running pre-AP WiFi scan for captive portal cache...")
-                    networks = self.scan_networks(allow_cached=False)
+                    networks, _cached = self.scan_networks(allow_cached=False)
                     if networks:
                         self._save_cached_scan(networks)
                         logger.info(f"Cached {len(networks)} networks for captive portal")

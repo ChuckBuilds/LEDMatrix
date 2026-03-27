@@ -146,12 +146,13 @@ function doScan() {
           sel.appendChild(opt);
         }
         if (nets.length > 0) {
-          showMsg('Found ' + nets.length + ' network' + (nets.length > 1 ? 's' : ''), 'ok');
+          var msg = 'Found ' + nets.length + ' network' + (nets.length > 1 ? 's' : '');
+          if (data.cached) {
+            msg += ' \u2014 Showing cached networks. Connect to see the latest.';
+          }
+          showMsg(msg, data.cached ? 'info' : 'ok');
         } else {
-          showMsg('No networks found. Try scanning again.', 'info');
-        }
-        if (data.cached) {
-          showMsg('Showing cached networks. Connect to see the latest.', 'info');
+          showMsg('No networks found. ' + (data.cached ? 'Enter your network name manually.' : 'Try scanning again.'), 'info');
         }
       } else {
         showMsg(data.message || 'Scan failed', 'err');
@@ -204,15 +205,21 @@ function doConnect() {
   });
 }
 
-function checkNewIP(ssid) {
+var MAX_IP_RETRIES = 20;
+
+function checkNewIP(ssid, retriesLeft) {
+  if (retriesLeft === undefined) retriesLeft = MAX_IP_RETRIES;
+  if (retriesLeft <= 0) {
+    showSuccessFallback(ssid);
+    return;
+  }
   fetch('/api/v3/wifi/status')
     .then(function(r) { return r.json(); })
     .then(function(data) {
       if (data.status === 'success' && data.data && data.data.connected && data.data.ip_address) {
         showSuccess(data.data.ip_address);
       } else {
-        // Try again
-        setTimeout(function() { checkNewIP(ssid); }, 3000);
+        setTimeout(function() { checkNewIP(ssid, retriesLeft - 1); }, 3000);
       }
     })
     .catch(function() {

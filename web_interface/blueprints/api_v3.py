@@ -6372,8 +6372,7 @@ def scan_wifi_networks():
         from src.wifi_manager import WiFiManager
 
         wifi_manager = WiFiManager()
-        ap_active = wifi_manager._is_ap_mode_active()
-        networks = wifi_manager.scan_networks()
+        networks, was_cached = wifi_manager.scan_networks()
 
         networks_data = [
             {
@@ -6388,12 +6387,12 @@ def scan_wifi_networks():
         response_data = {
             'status': 'success',
             'data': networks_data,
-            'cached': ap_active,
+            'cached': was_cached,
         }
 
-        if ap_active and networks_data:
+        if was_cached and networks_data:
             response_data['message'] = f'Found {len(networks_data)} cached networks.'
-        elif ap_active and not networks_data:
+        elif was_cached and not networks_data:
             response_data['message'] = 'No cached networks available. Enter your network name manually.'
 
         return jsonify(response_data)

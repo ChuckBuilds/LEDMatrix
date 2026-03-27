@@ -62,6 +62,11 @@ $WEB_USER ALL=(ALL) NOPASSWD: $SYSTEMCTL_PATH start dnsmasq
 $WEB_USER ALL=(ALL) NOPASSWD: $SYSTEMCTL_PATH stop dnsmasq
 $WEB_USER ALL=(ALL) NOPASSWD: $SYSTEMCTL_PATH restart dnsmasq
 $WEB_USER ALL=(ALL) NOPASSWD: $SYSTEMCTL_PATH restart NetworkManager
+
+# Allow copying hostapd and dnsmasq config files into place
+$WEB_USER ALL=(ALL) NOPASSWD: /usr/bin/cp /tmp/hostapd.conf /etc/hostapd/hostapd.conf
+$WEB_USER ALL=(ALL) NOPASSWD: /usr/bin/cp /tmp/dnsmasq.conf /etc/dnsmasq.d/ledmatrix-captive.conf
+$WEB_USER ALL=(ALL) NOPASSWD: /usr/bin/rm -f /etc/dnsmasq.d/ledmatrix-captive.conf
 EOF
 
 echo "Generated sudoers configuration:"

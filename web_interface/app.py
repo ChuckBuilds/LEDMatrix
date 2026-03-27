@@ -1,5 +1,6 @@
 from flask import Flask, Blueprint, render_template, request, redirect, url_for, flash, jsonify, Response, send_from_directory
 import json
+import logging
 import os
 import sys
 import subprocess
@@ -246,8 +247,8 @@ def is_ap_mode_active():
         _ap_mode_cache['value'] = active
         _ap_mode_cache['timestamp'] = now
         return active
-    except Exception:
-        # On error, return last known value
+    except (subprocess.SubprocessError, OSError) as e:
+        logging.getLogger('web_interface').error(f"AP mode check failed: {e}")
         return _ap_mode_cache['value']
 
 # Captive portal detection endpoints
