@@ -1799,6 +1799,10 @@ class DisplayController:
                                         logger.info("Live priority detected during high-FPS loop: %s", live_mode)
                                         self.current_display_mode = live_mode
                                         self.force_change = True
+                                        try:
+                                            self.current_mode_index = self.available_modes.index(live_mode)
+                                        except ValueError:
+                                            pass
                                         break
 
                                 if self.current_display_mode != active_mode:
@@ -1872,6 +1876,10 @@ class DisplayController:
                                         logger.info("Live priority detected during display loop: %s", live_mode)
                                         self.current_display_mode = live_mode
                                         self.force_change = True
+                                        try:
+                                            self.current_mode_index = self.available_modes.index(live_mode)
+                                        except ValueError:
+                                            pass
                                         break
 
                                 if self.current_display_mode != active_mode:
