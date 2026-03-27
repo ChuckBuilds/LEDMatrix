@@ -1790,11 +1790,21 @@ class DisplayController:
                                 self._poll_on_demand_requests()
                                 self._check_on_demand_expiration()
 
+                                # Check for live priority every ~30s so live
+                                # games can interrupt long display durations
+                                elapsed = time.time() - start_time
+                                if not self.on_demand_active and (elapsed % 30.0) < display_interval:
+                                    live_mode = self._check_live_priority()
+                                    if live_mode and live_mode != active_mode:
+                                        logger.info("Live priority detected during high-FPS loop: %s", live_mode)
+                                        self.current_display_mode = live_mode
+                                        self.force_change = True
+                                        break
+
                                 if self.current_display_mode != active_mode:
                                     logger.debug("Mode changed during high-FPS loop, breaking early")
                                     break
 
-                                elapsed = time.time() - start_time
                                 if elapsed >= target_duration:
                                     logger.debug(
                                         "Reached high-FPS target duration %.2fs for mode %s",
@@ -1853,6 +1863,17 @@ class DisplayController:
 
                                 self._poll_on_demand_requests()
                                 self._check_on_demand_expiration()
+
+                                # Check for live priority every ~30s so live
+                                # games can interrupt long display durations
+                                if not self.on_demand_active and (elapsed % 30.0) < display_interval:
+                                    live_mode = self._check_live_priority()
+                                    if live_mode and live_mode != active_mode:
+                                        logger.info("Live priority detected during display loop: %s", live_mode)
+                                        self.current_display_mode = live_mode
+                                        self.force_change = True
+                                        break
+
                                 if self.current_display_mode != active_mode:
                                     logger.info("Mode changed during display loop from %s to %s, breaking early", active_mode, self.current_display_mode)
                                     break
