@@ -296,6 +296,11 @@ def _load_raw_json_partial():
     except Exception as e:
         return f"Error: {str(e)}", 500
 
+@pages_v3.route('/setup')
+def captive_setup():
+    """Lightweight captive portal setup page — self-contained, no frameworks."""
+    return render_template('v3/captive_setup.html')
+
 def _load_wifi_partial():
     """Load WiFi setup partial"""
     try:

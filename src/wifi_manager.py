@@ -25,7 +25,8 @@ Sudoers Requirements:
     ledpi ALL=(ALL) NOPASSWD: /usr/sbin/iptables
     ledpi ALL=(ALL) NOPASSWD: /usr/sbin/sysctl
     ledpi ALL=(ALL) NOPASSWD: /usr/bin/cp /tmp/hostapd.conf /etc/hostapd/hostapd.conf
-    ledpi ALL=(ALL) NOPASSWD: /usr/bin/cp /tmp/dnsmasq.conf /etc/dnsmasq.conf
+    ledpi ALL=(ALL) NOPASSWD: /usr/bin/cp /tmp/dnsmasq.conf /etc/dnsmasq.d/ledmatrix-captive.conf
+    ledpi ALL=(ALL) NOPASSWD: /usr/bin/rm -f /etc/dnsmasq.d/ledmatrix-captive.conf
 """
 
 import subprocess
@@ -58,7 +59,7 @@ def get_wifi_config_path():
     return Path(project_root) / "config" / "wifi_config.json"
 
 HOSTAPD_CONFIG_PATH = Path("/etc/hostapd/hostapd.conf")
-DNSMASQ_CONFIG_PATH = Path("/etc/dnsmasq.conf")
+DNSMASQ_CONFIG_PATH = Path("/etc/dnsmasq.d/ledmatrix-captive.conf")
 HOSTAPD_SERVICE = "hostapd"
 DNSMASQ_SERVICE = "dnsmasq"
 
@@ -658,33 +659,31 @@ class WiFiManager:
         except (subprocess.TimeoutExpired, subprocess.SubprocessError, OSError):
             return False
     
-    def scan_networks(self) -> List[WiFiNetwork]:
+    def scan_networks(self, allow_cached: bool = True) -> List[WiFiNetwork]:
         """
-        Scan for available WiFi networks
-        
-        If AP mode is active, it will be temporarily disabled during scanning
-        and re-enabled afterward. This is necessary because WiFi interfaces
-        in AP mode cannot scan for other networks.
-        
+        Scan for available WiFi networks.
+
+        When AP mode is active, returns cached scan results instead of
+        disabling AP (which would disconnect the user). Cached results
+        come from either nmcli's internal cache or a pre-scan file saved
+        before AP mode was enabled.
+
         Returns:
             List of WiFiNetwork objects
         """
-        ap_was_active = False
         try:
-            # Check if AP mode is active - if so, we need to disable it temporarily
-            ap_was_active = self._is_ap_mode_active()
-            
-            if ap_was_active:
-                logger.info("AP mode is active, temporarily disabling for WiFi scan...")
-                success, message = self.disable_ap_mode()
-                if not success:
-                    logger.warning(f"Failed to disable AP mode for scanning: {message}")
-                    # Continue anyway - scan might still work
-                else:
-                    # Wait for interface to switch modes
-                    time.sleep(3)
-            
-            # Perform the scan
+            ap_active = self._is_ap_mode_active()
+
+            if ap_active:
+                # Don't disable AP — user would lose their connection.
+                # Try nmcli cached results first (no rescan trigger).
+                logger.info("AP mode active — returning cached scan results")
+                networks = self._scan_nmcli_cached()
+                if not networks and allow_cached:
+                    networks = self._load_cached_scan()
+                return networks
+
+            # Normal scan (not in AP mode)
             if self.has_nmcli:
                 networks = self._scan_nmcli()
             elif self.has_iwlist:
@@ -692,22 +691,86 @@ class WiFiManager:
             else:
                 logger.error("No WiFi scanning tools available")
                 networks = []
-            
+
+            # Save results for later use in AP mode
+            if networks:
+                self._save_cached_scan(networks)
+
             return networks
-            
+
         except Exception as e:
             logger.error(f"Error scanning networks: {e}")
             return []
-        finally:
-            # Always try to restore AP mode if it was active before
-            if ap_was_active:
-                logger.info("Re-enabling AP mode after WiFi scan...")
-                time.sleep(1)  # Brief delay before re-enabling
-                success, message = self.enable_ap_mode()
-                if success:
-                    logger.info("AP mode re-enabled successfully after scan")
-                else:
-                    logger.warning(f"Failed to re-enable AP mode after scan: {message}")
+
+    def _scan_nmcli_cached(self) -> List[WiFiNetwork]:
+        """Return nmcli's cached WiFi list without triggering a rescan."""
+        networks = []
+        try:
+            result = subprocess.run(
+                ["nmcli", "-t", "-f", "SSID,SIGNAL,SECURITY,FREQ", "device", "wifi", "list"],
+                capture_output=True, text=True, timeout=5
+            )
+            if result.returncode != 0:
+                return []
+
+            seen_ssids = set()
+            for line in result.stdout.strip().split('\n'):
+                if not line or ':' not in line:
+                    continue
+                parts = line.split(':')
+                if len(parts) >= 3:
+                    ssid = parts[0].strip()
+                    if not ssid or ssid in seen_ssids:
+                        continue
+                    seen_ssids.add(ssid)
+                    try:
+                        signal = int(parts[1].strip())
+                        security = parts[2].strip() if len(parts) > 2 else "open"
+                        frequency_str = parts[3].strip() if len(parts) > 3 else "0"
+                        frequency_str = frequency_str.replace(" MHz", "").replace("MHz", "").strip()
+                        frequency = float(frequency_str) if frequency_str else 0.0
+                        if "WPA3" in security:
+                            sec_type = "wpa3"
+                        elif "WPA2" in security:
+                            sec_type = "wpa2"
+                        elif "WPA" in security:
+                            sec_type = "wpa"
+                        else:
+                            sec_type = "open"
+                        networks.append(WiFiNetwork(ssid=ssid, signal=signal, security=sec_type, frequency=frequency))
+                    except (ValueError, IndexError):
+                        continue
+            networks.sort(key=lambda x: x.signal, reverse=True)
+        except Exception as e:
+            logger.debug(f"nmcli cached list failed: {e}")
+        return networks
+
+    def _save_cached_scan(self, networks: List[WiFiNetwork]) -> None:
+        """Save scan results to a cache file for use during AP mode."""
+        try:
+            cache_path = get_wifi_config_path().parent / "cached_networks.json"
+            data = [{"ssid": n.ssid, "signal": n.signal, "security": n.security, "frequency": n.frequency} for n in networks]
+            with open(cache_path, 'w') as f:
+                json.dump({"timestamp": time.time(), "networks": data}, f)
+        except Exception as e:
+            logger.debug(f"Failed to save cached scan: {e}")
+
+    def _load_cached_scan(self) -> List[WiFiNetwork]:
+        """Load pre-cached scan results (saved before AP mode was enabled)."""
+        try:
+            cache_path = get_wifi_config_path().parent / "cached_networks.json"
+            if not cache_path.exists():
+                return []
+            with open(cache_path) as f:
+                data = json.load(f)
+            # Accept cache up to 10 minutes old
+            if time.time() - data.get("timestamp", 0) > 600:
+                return []
+            return [WiFiNetwork(ssid=n["ssid"], signal=n["signal"], security=n["security"], frequency=n.get("frequency", 0.0))
+                    for n in data.get("networks", [])]
+        except Exception as e:
+            logger.debug(f"Failed to load cached scan: {e}")
+            return []
                     # Log but don't fail - user can manually re-enable if needed
     
     def _scan_nmcli(self) -> List[WiFiNetwork]:
@@ -1999,26 +2062,16 @@ class WiFiManager:
                             timeout=10
                         )
                 
-                # Restore original dnsmasq config if backup exists (only for hostapd mode)
-                if hostapd_active:
-                    backup_path = f"{DNSMASQ_CONFIG_PATH}.backup"
-                    if os.path.exists(backup_path):
+                # Remove the drop-in captive portal config (only for hostapd mode)
+                if hostapd_active and DNSMASQ_CONFIG_PATH.exists():
+                    try:
                         subprocess.run(
-                            ["sudo", "cp", backup_path, str(DNSMASQ_CONFIG_PATH)],
-                            timeout=10
+                            ["sudo", "rm", "-f", str(DNSMASQ_CONFIG_PATH)],
+                            capture_output=True, timeout=5
                         )
-                        logger.info("Restored original dnsmasq config from backup")
-                    else:
-                        # No backup - clear the captive portal config
-                        # Create a minimal config that won't interfere
-                        minimal_config = "# dnsmasq config - restored to minimal\n"
-                        with open("/tmp/dnsmasq.conf", 'w') as f:
-                            f.write(minimal_config)
-                        subprocess.run(
-                            ["sudo", "cp", "/tmp/dnsmasq.conf", str(DNSMASQ_CONFIG_PATH)],
-                            timeout=10
-                        )
-                        logger.info("Cleared dnsmasq captive portal config")
+                        logger.info(f"Removed captive portal dnsmasq config: {DNSMASQ_CONFIG_PATH}")
+                    except Exception as e:
+                        logger.warning(f"Could not remove dnsmasq drop-in config: {e}")
                 
                 # Remove iptables port forwarding rules and disable IP forwarding (only for hostapd mode)
                 if hostapd_active:
@@ -2189,26 +2242,14 @@ ignore_broadcast_ssid=0
 
     def _create_dnsmasq_config(self):
         """
-        Create dnsmasq configuration file with captive portal DNS redirection.
+        Create dnsmasq drop-in configuration for captive portal DNS redirection.
 
-        Note: This will overwrite /etc/dnsmasq.conf. If dnsmasq is already in use
-        (e.g., for Pi-hole), this may break that service. A backup is created.
+        Writes to /etc/dnsmasq.d/ledmatrix-captive.conf so we don't overwrite
+        the main /etc/dnsmasq.conf (preserves Pi-hole, etc.).
         """
         try:
-            # Check for conflicts
-            conflict, conflict_msg = self._check_dnsmasq_conflict()
-            if conflict:
-                logger.warning(f"dnsmasq conflict detected: {conflict_msg}")
-                logger.warning("Proceeding anyway - backup will be created")
-
-            # Backup existing config
-            if DNSMASQ_CONFIG_PATH.exists():
-                subprocess.run(
-                    ["sudo", "cp", str(DNSMASQ_CONFIG_PATH), f"{DNSMASQ_CONFIG_PATH}.backup"],
-                    timeout=10
-                )
-                logger.info(f"Backed up existing dnsmasq config to {DNSMASQ_CONFIG_PATH}.backup")
-
+            # Using a drop-in file in /etc/dnsmasq.d/ to avoid overwriting the
+            # main /etc/dnsmasq.conf (which may belong to Pi-hole or other services).
             config_content = f"""interface={self._wifi_interface}
 dhcp-range=192.168.4.2,192.168.4.20,255.255.255.0,24h
 
@@ -2289,7 +2330,16 @@ address=/detectportal.firefox.com/192.168.4.1
                             self._disconnected_checks >= self._disconnected_checks_required)
             
             if should_have_ap and not ap_active:
-                # Should have AP but don't - enable AP mode (only if auto-enable is on and grace period passed)
+                # Pre-cache a WiFi scan so the captive portal can show networks
+                try:
+                    logger.info("Running pre-AP WiFi scan for captive portal cache...")
+                    networks = self.scan_networks(allow_cached=False)
+                    if networks:
+                        self._save_cached_scan(networks)
+                        logger.info(f"Cached {len(networks)} networks for captive portal")
+                except Exception as scan_err:
+                    logger.debug(f"Pre-AP scan failed (non-critical): {scan_err}")
+
                 logger.info(f"Enabling AP mode after {self._disconnected_checks} consecutive disconnected checks")
                 success, message = self.enable_ap_mode()
                 if success:

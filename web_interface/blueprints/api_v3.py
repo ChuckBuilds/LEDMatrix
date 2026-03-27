@@ -6363,24 +6363,18 @@ def get_wifi_status():
 
 @api_v3.route('/wifi/scan', methods=['GET'])
 def scan_wifi_networks():
-    """Scan for available WiFi networks
+    """Scan for available WiFi networks.
 
-    If AP mode is active, it will be temporarily disabled during scanning
-    and automatically re-enabled afterward. Users connected to the AP will
-    be briefly disconnected during this process.
+    When AP mode is active, returns cached scan results to avoid
+    disconnecting the user from the setup network.
     """
     try:
         from src.wifi_manager import WiFiManager
 
         wifi_manager = WiFiManager()
-
-        # Check if AP mode is active before scanning (for user notification)
-        ap_was_active = wifi_manager._is_ap_mode_active()
-
-        # Perform the scan (this will handle AP mode disabling/enabling internally)
+        ap_active = wifi_manager._is_ap_mode_active()
         networks = wifi_manager.scan_networks()
 
-        # Convert to dict format
         networks_data = [
             {
                 'ssid': net.ssid,
@@ -6393,16 +6387,14 @@ def scan_wifi_networks():
 
         response_data = {
             'status': 'success',
-            'data': networks_data
+            'data': networks_data,
+            'cached': ap_active,
         }
 
-        # Inform user if AP mode was temporarily disabled
-        if ap_was_active:
-            response_data['message'] = (
-                f'Found {len(networks_data)} networks. '
-                'Note: AP mode was temporarily disabled during scanning and has been re-enabled. '
-                'If you were connected to the setup network, you may need to reconnect.'
-            )
+        if ap_active and networks_data:
+            response_data['message'] = f'Found {len(networks_data)} cached networks.'
+        elif ap_active and not networks_data:
+            response_data['message'] = 'No cached networks available. Enter your network name manually.'
 
         return jsonify(response_data)
     except Exception as e:

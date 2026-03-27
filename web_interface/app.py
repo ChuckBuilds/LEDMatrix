@@ -225,48 +225,62 @@ def serve_plugin_asset(plugin_id, filename):
                 'message': 'Internal server error'
             }), 500
 
-# Helper function to check if AP mode is active
+# Cached AP mode check — avoids creating a WiFiManager per request
+_ap_mode_cache = {'value': False, 'timestamp': 0}
+_AP_MODE_CACHE_TTL = 5  # seconds
+
 def is_ap_mode_active():
     """
-    Check if access point mode is currently active.
-    
-    Returns:
-        bool: True if AP mode is active, False otherwise.
-              Returns False on error to avoid breaking normal operation.
+    Check if access point mode is currently active (cached, 5s TTL).
+    Uses a direct systemctl check instead of instantiating WiFiManager.
     """
+    now = time.time()
+    if (now - _ap_mode_cache['timestamp']) < _AP_MODE_CACHE_TTL:
+        return _ap_mode_cache['value']
     try:
-        wifi_manager = WiFiManager()
-        return wifi_manager._is_ap_mode_active()
-    except Exception as e:
-        # Log error but don't break normal operation
-        # Default to False so normal web interface works even if check fails
-        print(f"Warning: Could not check AP mode status: {e}")
-        return False
+        result = subprocess.run(
+            ['systemctl', 'is-active', 'hostapd'],
+            capture_output=True, text=True, timeout=2
+        )
+        active = result.stdout.strip() == 'active'
+        _ap_mode_cache['value'] = active
+        _ap_mode_cache['timestamp'] = now
+        return active
+    except Exception:
+        # On error, return last known value
+        return _ap_mode_cache['value']
 
 # Captive portal detection endpoints
-# These help devices detect that a captive portal is active
+# When AP mode is active, return responses that TRIGGER the captive portal popup.
+# When not in AP mode, return normal "success" responses so connectivity checks pass.
 @app.route('/hotspot-detect.html')
 def hotspot_detect():
     """iOS/macOS captive portal detection endpoint"""
-    # Return simple HTML that redirects to setup page
+    if is_ap_mode_active():
+        # Non-"Success" title triggers iOS captive portal popup
+        return redirect(url_for('pages_v3.captive_setup'), code=302)
     return '<HTML><HEAD><TITLE>Success</TITLE></HEAD><BODY>Success</BODY></HTML>', 200
 
 @app.route('/generate_204')
 def generate_204():
     """Android captive portal detection endpoint"""
-    # Return 204 No Content - Android checks for this
+    if is_ap_mode_active():
+        # Android expects 204 = "internet works". Non-204 triggers portal popup.
+        return redirect(url_for('pages_v3.captive_setup'), code=302)
     return '', 204
 
 @app.route('/connecttest.txt')
 def connecttest_txt():
     """Windows captive portal detection endpoint"""
-    # Return simple text response
+    if is_ap_mode_active():
+        return redirect(url_for('pages_v3.captive_setup'), code=302)
     return 'Microsoft Connect Test', 200
 
 @app.route('/success.txt')
 def success_txt():
     """Firefox captive portal detection endpoint"""
-    # Return simple text response
+    if is_ap_mode_active():
+        return redirect(url_for('pages_v3.captive_setup'), code=302)
     return 'success', 200
 
 # Initialize logging
@@ -367,10 +381,9 @@ def captive_portal_redirect():
     path = request.path
     
     # List of paths that should NOT be redirected (allow normal operation)
-    # This ensures the full web interface works normally when in AP mode
     allowed_paths = [
-        '/v3',  # Main interface and all sub-paths
-        '/api/v3/',  # All API endpoints (plugins, config, wifi, stream, etc.)
+        '/v3',  # Main interface and all sub-paths (includes /v3/setup)
+        '/api/v3/',  # All API endpoints
         '/static/',  # Static files (CSS, JS, images)
         '/hotspot-detect.html',  # iOS/macOS detection
         '/generate_204',  # Android detection
@@ -378,17 +391,13 @@ def captive_portal_redirect():
         '/success.txt',  # Firefox detection
         '/favicon.ico',  # Favicon
     ]
-    
-    # Check if this path should be allowed
+
     for allowed_path in allowed_paths:
         if path.startswith(allowed_path):
-            return None  # Allow this request to proceed normally
-    
-    # For all other paths, redirect to main interface
-    # This ensures users see the WiFi setup page when they try to access any website
-    # The main interface (/v3) is already in allowed_paths, so it won't redirect
-    # Static files (/static/) and API calls (/api/v3/) are also allowed
-    return redirect(url_for('pages_v3.index'), code=302)
+            return None
+
+    # Redirect to lightweight captive portal setup page (not the full UI)
+    return redirect(url_for('pages_v3.captive_setup'), code=302)
 
 # Add security headers and caching to all responses
 @app.after_request

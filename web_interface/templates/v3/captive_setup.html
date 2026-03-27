@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LEDMatrix WiFi Setup</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:#f3f4f6;color:#1f2937;padding:16px;max-width:480px;margin:0 auto}
+h1{font-size:20px;margin-bottom:4px}
+.subtitle{color:#6b7280;font-size:13px;margin-bottom:20px}
+.card{background:#fff;border-radius:12px;padding:20px;box-shadow:0 1px 3px rgba(0,0,0,.1);margin-bottom:16px}
+label{display:block;font-size:13px;font-weight:600;color:#374151;margin-bottom:6px}
+select,input[type=text],input[type=password]{width:100%;padding:10px 12px;border:1px solid #d1d5db;border-radius:8px;font-size:15px;background:#fff;-webkit-appearance:none;appearance:none}
+select{background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%236b7280' stroke-width='1.5' fill='none'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 12px center}
+select:focus,input:focus{outline:none;border-color:#3b82f6;box-shadow:0 0 0 3px rgba(59,130,246,.15)}
+.btn{display:block;width:100%;padding:12px;border:none;border-radius:8px;font-size:15px;font-weight:600;cursor:pointer;text-align:center;transition:background .15s}
+.btn-primary{background:#2563eb;color:#fff}.btn-primary:hover{background:#1d4ed8}
+.btn-scan{background:#e5e7eb;color:#374151}.btn-scan:hover{background:#d1d5db}
+.btn:disabled{background:#d1d5db;color:#9ca3af;cursor:not-allowed}
+.row{display:flex;gap:8px;margin-bottom:16px}
+.row>*:first-child{flex:1}
+.msg{padding:12px;border-radius:8px;font-size:13px;margin-bottom:12px;display:none}
+.msg-ok{background:#d1fae5;color:#065f46;display:block}
+.msg-err{background:#fee2e2;color:#991b1b;display:block}
+.msg-info{background:#dbeafe;color:#1e40af;display:block}
+.step{font-size:12px;color:#6b7280;text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px}
+.sep{margin:16px 0;border:none;border-top:1px solid #e5e7eb}
+.spinner{display:inline-block;width:14px;height:14px;border:2px solid rgba(255,255,255,.3);border-top-color:#fff;border-radius:50%;animation:spin .6s linear infinite;vertical-align:middle;margin-right:6px}
+@keyframes spin{to{transform:rotate(360deg)}}
+.footer{text-align:center;margin-top:20px;font-size:12px;color:#9ca3af}
+.footer a{color:#3b82f6;text-decoration:none}
+.success-box{text-align:center;padding:24px}
+.success-box .icon{font-size:48px;margin-bottom:12px}
+.success-box .ip{font-size:18px;font-weight:700;color:#2563eb;word-break:break-all}
+.hidden{display:none}
+.or-divider{text-align:center;color:#9ca3af;font-size:12px;margin:12px 0;position:relative}
+.or-divider::before,.or-divider::after{content:'';position:absolute;top:50%;width:40%;height:1px;background:#e5e7eb}
+.or-divider::before{left:0}
+.or-divider::after{right:0}
+</style>
+</head>
+<body>
+
+<h1>LEDMatrix WiFi Setup</h1>
+<p class="subtitle">Connect your device to a WiFi network</p>
+
+<div id="msg" class="msg"></div>
+
+<div id="setup-form">
+  <div class="card">
+    <div class="step">Step 1 &mdash; Choose Network</div>
+    <label for="net-select">Available Networks</label>
+    <div class="row">
+      <select id="net-select" onchange="onSelectNetwork()">
+        <option value="">-- Scan to find networks --</option>
+      </select>
+      <button class="btn btn-scan" id="btn-scan" onclick="doScan()" style="width:auto;padding:10px 16px">
+        Scan
+      </button>
+    </div>
+    <div class="or-divider">or enter manually</div>
+    <input type="text" id="manual-ssid" placeholder="Network name (SSID)" oninput="onManualInput()">
+  </div>
+
+  <div class="card">
+    <div class="step">Step 2 &mdash; Password</div>
+    <label for="password">WiFi Password</label>
+    <input type="password" id="password" placeholder="Leave empty for open networks">
+  </div>
+
+  <div class="card">
+    <button class="btn btn-primary" id="btn-connect" onclick="doConnect()" disabled>
+      Connect
+    </button>
+  </div>
+</div>
+
+<div id="success-view" class="card hidden">
+  <div class="success-box">
+    <div class="icon">&#10003;</div>
+    <p style="font-size:16px;font-weight:600;margin-bottom:8px">Connected!</p>
+    <p style="font-size:13px;color:#6b7280;margin-bottom:12px">Your device is now on the network. Access the full interface at:</p>
+    <p class="ip" id="new-ip"></p>
+    <p style="font-size:12px;color:#9ca3af;margin-top:12px">You may need to reconnect your phone to the same WiFi network.</p>
+  </div>
+</div>
+
+<div class="footer">
+  <a href="/v3">Open Full Interface</a>
+</div>
+
+<script>
+var selectedSSID = '';
+var scanning = false;
+var connecting = false;
+
+function $(id) { return document.getElementById(id); }
+
+function showMsg(text, type) {
+  var el = $('msg');
+  el.textContent = text;
+  el.className = 'msg msg-' + (type || 'info');
+  if (type === 'ok') setTimeout(function() { el.style.display = 'none'; }, 8000);
+}
+
+function clearMsg() { $('msg').className = 'msg'; }
+
+function updateConnectBtn() {
+  var ssid = $('net-select').value || $('manual-ssid').value.trim();
+  $('btn-connect').disabled = !ssid || connecting;
+}
+
+function onSelectNetwork() {
+  $('manual-ssid').value = '';
+  selectedSSID = $('net-select').value;
+  updateConnectBtn();
+}
+
+function onManualInput() {
+  $('net-select').value = '';
+  selectedSSID = '';
+  updateConnectBtn();
+}
+
+function doScan() {
+  if (scanning) return;
+  scanning = true;
+  var btn = $('btn-scan');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span>Scanning';
+  clearMsg();
+
+  fetch('/api/v3/wifi/scan')
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      var sel = $('net-select');
+      sel.innerHTML = '<option value="">-- Select a network --</option>';
+      if (data.status === 'success' && Array.isArray(data.data)) {
+        var nets = data.data;
+        for (var i = 0; i < nets.length; i++) {
+          var n = nets[i];
+          var opt = document.createElement('option');
+          opt.value = n.ssid;
+          opt.textContent = n.ssid + ' (' + n.signal + '% - ' + n.security + ')';
+          sel.appendChild(opt);
+        }
+        if (nets.length > 0) {
+          showMsg('Found ' + nets.length + ' network' + (nets.length > 1 ? 's' : ''), 'ok');
+        } else {
+          showMsg('No networks found. Try scanning again.', 'info');
+        }
+        if (data.cached) {
+          showMsg('Showing cached networks. Connect to see the latest.', 'info');
+        }
+      } else {
+        showMsg(data.message || 'Scan failed', 'err');
+      }
+    })
+    .catch(function(e) {
+      showMsg('Scan failed: ' + e.message, 'err');
+    })
+    .finally(function() {
+      scanning = false;
+      btn.disabled = false;
+      btn.innerHTML = 'Scan';
+      updateConnectBtn();
+    });
+}
+
+function doConnect() {
+  var ssid = $('net-select').value || $('manual-ssid').value.trim();
+  if (!ssid || connecting) return;
+  connecting = true;
+  var btn = $('btn-connect');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span>Connecting...';
+  clearMsg();
+  showMsg('Connecting to ' + ssid + '... This may take 15-30 seconds.', 'info');
+
+  fetch('/api/v3/wifi/connect', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ssid: ssid, password: $('password').value || '' })
+  })
+  .then(function(r) { return r.json(); })
+  .then(function(data) {
+    if (data.status === 'success') {
+      clearMsg();
+      // Poll for the new IP
+      setTimeout(function() { checkNewIP(ssid); }, 3000);
+    } else {
+      showMsg(data.message || 'Connection failed', 'err');
+      connecting = false;
+      btn.disabled = false;
+      btn.innerHTML = 'Connect';
+    }
+  })
+  .catch(function(e) {
+    // Connection may drop if AP mode was disabled — that's expected
+    clearMsg();
+    showMsg('Connection attempt sent. If the page stops responding, the device is connecting to ' + ssid + '.', 'info');
+    setTimeout(function() { showSuccessFallback(ssid); }, 5000);
+  });
+}
+
+function checkNewIP(ssid) {
+  fetch('/api/v3/wifi/status')
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      if (data.status === 'success' && data.data && data.data.connected && data.data.ip_address) {
+        showSuccess(data.data.ip_address);
+      } else {
+        // Try again
+        setTimeout(function() { checkNewIP(ssid); }, 3000);
+      }
+    })
+    .catch(function() {
+      // AP likely down — show fallback
+      showSuccessFallback(ssid);
+    });
+}
+
+function showSuccess(ip) {
+  $('setup-form').classList.add('hidden');
+  $('success-view').classList.remove('hidden');
+  $('new-ip').textContent = 'http://' + ip + ':5000';
+  $('msg').className = 'msg';
+}
+
+function showSuccessFallback(ssid) {
+  $('setup-form').classList.add('hidden');
+  $('success-view').classList.remove('hidden');
+  $('new-ip').textContent = 'Check your router for the device IP';
+  $('msg').className = 'msg';
+}
+
+// Auto-scan on load
+doScan();
+</script>
+</body>
+</html>
