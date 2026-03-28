@@ -79,7 +79,8 @@ class DisplayController:
         logger.info("Display modes initialized in %.3f seconds", time.time() - init_time)
         
         self.force_change = False
-        
+        self._next_live_priority_check = 0.0  # timestamp for throttled live priority checks
+
         # All sports and content managers now handled via plugins
         logger.info("All sports and content managers now handled via plugin system")
         
@@ -1793,7 +1794,9 @@ class DisplayController:
                                 # Check for live priority every ~30s so live
                                 # games can interrupt long display durations
                                 elapsed = time.time() - start_time
-                                if not self.on_demand_active and (elapsed % 30.0) < display_interval:
+                                now = time.time()
+                                if not self.on_demand_active and now >= self._next_live_priority_check:
+                                    self._next_live_priority_check = now + 30.0
                                     live_mode = self._check_live_priority()
                                     if live_mode and live_mode != active_mode:
                                         logger.info("Live priority detected during high-FPS loop: %s", live_mode)
@@ -1803,6 +1806,8 @@ class DisplayController:
                                             self.current_mode_index = self.available_modes.index(live_mode)
                                         except ValueError:
                                             pass
+                                        # continue the main while loop to skip
+                                        # post-loop rotation/sleep logic
                                         break
 
                                 if self.current_display_mode != active_mode:
@@ -1870,7 +1875,9 @@ class DisplayController:
 
                                 # Check for live priority every ~30s so live
                                 # games can interrupt long display durations
-                                if not self.on_demand_active and (elapsed % 30.0) < display_interval:
+                                now = time.time()
+                                if not self.on_demand_active and now >= self._next_live_priority_check:
+                                    self._next_live_priority_check = now + 30.0
                                     live_mode = self._check_live_priority()
                                     if live_mode and live_mode != active_mode:
                                         logger.info("Live priority detected during display loop: %s", live_mode)
@@ -1894,6 +1901,13 @@ class DisplayController:
                                     )
                                     loop_completed = True
                                     break
+
+                        # If live priority preempted the display loop, skip
+                        # all post-loop logic (remaining sleep, rotation) and
+                        # restart the main loop so the live mode displays
+                        # immediately.
+                        if self.current_display_mode != active_mode:
+                            continue
 
                         # Ensure we honour minimum duration when not dynamic and loop ended early
                         if (
