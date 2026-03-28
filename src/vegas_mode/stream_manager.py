@@ -199,6 +199,11 @@ class StreamManager:
 
         logger.debug("Plugin %s marked for update", plugin_id)
 
+    def has_pending_updates(self) -> bool:
+        """Check if any plugins have pending updates awaiting processing."""
+        with self._buffer_lock:
+            return len(self._pending_updates) > 0
+
     def process_updates(self) -> None:
         """
         Process pending plugin updates.

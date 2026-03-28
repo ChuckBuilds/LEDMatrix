@@ -265,6 +265,10 @@ class RenderPipeline:
         if buffer_status['staging_count'] > 0:
             return True
 
+        # Trigger recompose when plugins have pending data updates
+        if self.stream_manager.has_pending_updates():
+            return True
+
         return False
 
     def hot_swap_content(self) -> bool:
