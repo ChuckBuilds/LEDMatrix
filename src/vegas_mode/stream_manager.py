@@ -204,6 +204,16 @@ class StreamManager:
         with self._buffer_lock:
             return len(self._pending_updates) > 0
 
+    def has_pending_updates_for_visible_segments(self) -> bool:
+        """Check if pending updates affect plugins currently in the active buffer."""
+        with self._buffer_lock:
+            if not self._pending_updates:
+                return False
+            active_ids = {
+                seg.plugin_id for seg in self._active_buffer if seg.images
+            }
+            return bool(active_ids & self._pending_updates.keys())
+
     def process_updates(self) -> None:
         """
         Process pending plugin updates.

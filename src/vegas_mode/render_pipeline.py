@@ -265,8 +265,8 @@ class RenderPipeline:
         if buffer_status['staging_count'] > 0:
             return True
 
-        # Trigger recompose when plugins have pending data updates
-        if self.stream_manager.has_pending_updates():
+        # Trigger recompose when pending updates affect visible segments
+        if self.stream_manager.has_pending_updates_for_visible_segments():
             return True
 
         return False

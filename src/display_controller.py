@@ -79,7 +79,7 @@ class DisplayController:
         logger.info("Display modes initialized in %.3f seconds", time.time() - init_time)
         
         self.force_change = False
-        self._next_live_priority_check = 0.0  # timestamp for throttled live priority checks
+        self._next_live_priority_check = 0.0  # monotonic timestamp for throttled live priority checks
 
         # All sports and content managers now handled via plugins
         logger.info("All sports and content managers now handled via plugin system")
@@ -1727,7 +1727,7 @@ class DisplayController:
                             )
 
                         target_duration = max_duration
-                        start_time = time.time()
+                        start_time = time.monotonic()
 
                         def _should_exit_dynamic(elapsed_time: float) -> bool:
                             if not dynamic_enabled:
@@ -1793,8 +1793,8 @@ class DisplayController:
 
                                 # Check for live priority every ~30s so live
                                 # games can interrupt long display durations
-                                elapsed = time.time() - start_time
-                                now = time.time()
+                                elapsed = time.monotonic() - start_time
+                                now = time.monotonic()
                                 if not self.on_demand_active and now >= self._next_live_priority_check:
                                     self._next_live_priority_check = now + 30.0
                                     live_mode = self._check_live_priority()
@@ -1843,7 +1843,7 @@ class DisplayController:
                                 time.sleep(display_interval)
                                 self._tick_plugin_updates()
 
-                                elapsed = time.time() - start_time
+                                elapsed = time.monotonic() - start_time
                                 if elapsed >= target_duration:
                                     logger.debug(
                                         "Reached standard target duration %.2fs for mode %s",
@@ -1875,7 +1875,7 @@ class DisplayController:
 
                                 # Check for live priority every ~30s so live
                                 # games can interrupt long display durations
-                                now = time.time()
+                                now = time.monotonic()
                                 if not self.on_demand_active and now >= self._next_live_priority_check:
                                     self._next_live_priority_check = now + 30.0
                                     live_mode = self._check_live_priority()
@@ -1915,13 +1915,13 @@ class DisplayController:
                             and not loop_completed
                             and not needs_high_fps
                         ):
-                            elapsed = time.time() - start_time
+                            elapsed = time.monotonic() - start_time
                             remaining_sleep = max(0.0, max_duration - elapsed)
                             if remaining_sleep > 0:
                                 self._sleep_with_plugin_updates(remaining_sleep)
 
                         if dynamic_enabled:
-                            elapsed_total = time.time() - start_time
+                            elapsed_total = time.monotonic() - start_time
                             cycle_done = self._plugin_cycle_complete(manager_to_display)
                             
                             # Log cycle completion status and metrics
