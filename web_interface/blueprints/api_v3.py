@@ -740,6 +740,29 @@ def save_main_config():
                 except (ValueError, TypeError):
                     return jsonify({'status': 'error', 'message': f"Invalid multiplexing value '{data['multiplexing']}'. Must be an integer from 0 to 22."}), 400
 
+            # Validate integer display hardware fields (bounds check)
+            _int_field_limits = {
+                'rows':                    (8, 128),
+                'cols':                    (16, 128),
+                'chain_length':            (1, 32),
+                'parallel':                (1, 4),
+                'brightness':              (1, 100),
+                'scan_mode':               (0, 1),
+                'pwm_bits':                (1, 11),
+                'pwm_dither_bits':         (0, 2),
+                'pwm_lsb_nanoseconds':     (50, 500),
+                'limit_refresh_rate_hz':   (0, 1000),
+                'gpio_slowdown':           (0, 5),
+            }
+            for field, (lo, hi) in _int_field_limits.items():
+                if field in data:
+                    try:
+                        val = int(data[field])
+                    except (ValueError, TypeError):
+                        return jsonify({'status': 'error', 'message': f"Invalid {field} value '{data[field]}'. Must be an integer."}), 400
+                    if val < lo or val > hi:
+                        return jsonify({'status': 'error', 'message': f"Invalid {field} value {val}. Must be between {lo} and {hi}."}), 400
+
             # Handle hardware settings
             for field in ['rows', 'cols', 'chain_length', 'parallel', 'brightness', 'hardware_mapping', 'scan_mode',
                          'pwm_bits', 'pwm_dither_bits', 'pwm_lsb_nanoseconds', 'limit_refresh_rate_hz',
