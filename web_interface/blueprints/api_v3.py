@@ -753,13 +753,23 @@ def save_main_config():
                 'pwm_lsb_nanoseconds':     (50, 500),
                 'limit_refresh_rate_hz':   (0, 1000),
                 'gpio_slowdown':           (0, 5),
+                'max_dynamic_duration_seconds': (1, 3600),
             }
             for field, (lo, hi) in _int_field_limits.items():
                 if field in data:
-                    try:
-                        val = int(data[field])
-                    except (ValueError, TypeError):
-                        return jsonify({'status': 'error', 'message': f"Invalid {field} value '{data[field]}'. Must be an integer."}), 400
+                    raw = data[field]
+                    if isinstance(raw, bool):
+                        return jsonify({'status': 'error', 'message': f"Invalid {field} value '{raw}'. Must be an integer."}), 400
+                    if isinstance(raw, float):
+                        return jsonify({'status': 'error', 'message': f"Invalid {field} value '{raw}'. Must be an integer, not a float."}), 400
+                    if isinstance(raw, int):
+                        val = raw
+                    elif isinstance(raw, str):
+                        if not re.fullmatch(r'-?\d+', raw):
+                            return jsonify({'status': 'error', 'message': f"Invalid {field} value '{raw}'. Must be an integer."}), 400
+                        val = int(raw)
+                    else:
+                        return jsonify({'status': 'error', 'message': f"Invalid {field} value '{raw}'. Must be an integer."}), 400
                     if val < lo or val > hi:
                         return jsonify({'status': 'error', 'message': f"Invalid {field} value {val}. Must be between {lo} and {hi}."}), 400
 
@@ -790,7 +800,7 @@ def save_main_config():
             if 'max_dynamic_duration_seconds' in data:
                 if 'dynamic_duration' not in current_config['display']:
                     current_config['display']['dynamic_duration'] = {}
-                current_config['display']['dynamic_duration']['max_duration_seconds'] = int(data['max_dynamic_duration_seconds'])
+                current_config['display']['dynamic_duration']['max_duration_seconds'] = int(data['max_dynamic_duration_seconds'])  # Already validated by _int_field_limits
 
         # Handle Vegas scroll mode settings
         vegas_fields = ['vegas_scroll_enabled', 'vegas_scroll_speed', 'vegas_separator_width',
