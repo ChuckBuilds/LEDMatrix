@@ -519,6 +519,9 @@
             }
         });
 
+        // Guard flag to prevent duplicate stub-to-full enhancement
+        window._appEnhanced = false;
+
         // Define app() function early so Alpine can find it when it initializes
         // This is a complete implementation that will work immediately
         (function() {
@@ -534,15 +537,24 @@
                     init() {
                         // Try to enhance immediately with full implementation
                         const tryEnhance = () => {
+                            if (window._appEnhanced) return true;
                             if (typeof window.app === 'function') {
                                 const fullApp = window.app();
                                 // Check if this is the full implementation (has updatePluginTabs with proper implementation)
                                 if (fullApp && typeof fullApp.updatePluginTabs === 'function' && fullApp.updatePluginTabs.toString().includes('_doUpdatePluginTabs')) {
-                                    // Full implementation is available, copy all methods
-                                    // But preserve _initialized flag to prevent double init
+                                    window._appEnhanced = true;
+                                    // Preserve runtime state that should not be reset
+                                    const preservedPlugins = this.installedPlugins;
+                                    const preservedTab = this.activeTab;
                                     const wasInitialized = this._initialized;
                                     Object.assign(this, fullApp);
-                                    // Restore _initialized flag if it was set
+                                    // Restore runtime state if non-default
+                                    if (preservedPlugins && preservedPlugins.length > 0) {
+                                        this.installedPlugins = preservedPlugins;
+                                    }
+                                    if (preservedTab && preservedTab !== 'overview') {
+                                        this.activeTab = preservedTab;
+                                    }
                                     if (wasInitialized) {
                                         this._initialized = wasInitialized;
                                     }
@@ -1252,11 +1264,22 @@
                     <template x-if="activeTab === plugin.id">
                         <div class="bg-white rounded-lg shadow p-6 plugin-config-tab"
                              :id="'plugin-config-' + plugin.id"
-                             x-init="$nextTick(() => { 
-                                 if (window.htmx && !$el.dataset.htmxLoaded) {
-                                     $el.dataset.htmxLoaded = 'true';
-                                     htmx.ajax('GET', '/v3/partials/plugin-config/' + plugin.id, {target: $el, swap: 'innerHTML'});
-                                 }
+                             x-init="$nextTick(() => {
+                                 const el = $el;
+                                 const pid = plugin.id;
+                                 const loadContent = (retries) => {
+                                     if (window.htmx && !el.dataset.htmxLoaded) {
+                                         el.dataset.htmxLoaded = 'true';
+                                         htmx.ajax('GET', '/v3/partials/plugin-config/' + pid, {target: el, swap: 'innerHTML'});
+                                     } else if (!window.htmx && retries < 15) {
+                                         setTimeout(() => loadContent(retries + 1), 200);
+                                     } else if (!window.htmx) {
+                                         fetch('/v3/partials/plugin-config/' + pid)
+                                             .then(r => r.text())
+                                             .then(html => { el.innerHTML = html; });
+                                     }
+                                 };
+                                 loadContent(0);
                              })">
                             <!-- Loading skeleton shown until HTMX loads server-rendered content -->
                             <div class="animate-pulse space-y-6">
@@ -3066,13 +3089,25 @@
             if (window.Alpine) {
                 // Use requestAnimationFrame for immediate execution without blocking
                 requestAnimationFrame(() => {
+                    if (window._appEnhanced) return;
+                    window._appEnhanced = true;
                     const appElement = document.querySelector('[x-data]');
                     if (appElement && appElement._x_dataStack && appElement._x_dataStack[0]) {
                         const existingComponent = appElement._x_dataStack[0];
+                        // Preserve runtime state that should not be reset
+                        const preservedPlugins = existingComponent.installedPlugins;
+                        const preservedTab = existingComponent.activeTab;
                         // Replace all properties and methods from full implementation
                         Object.keys(fullImplementation).forEach(key => {
                             existingComponent[key] = fullImplementation[key];
                         });
+                        // Restore runtime state if non-default
+                        if (preservedPlugins && preservedPlugins.length > 0) {
+                            existingComponent.installedPlugins = preservedPlugins;
+                        }
+                        if (preservedTab && preservedTab !== 'overview') {
+                            existingComponent.activeTab = preservedTab;
+                        }
                         // Call init to load plugins and set up watchers (only if not already initialized)
                         if (typeof existingComponent.init === 'function' && !existingComponent._initialized) {
                             existingComponent.init();
