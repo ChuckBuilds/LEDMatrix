@@ -546,13 +546,14 @@
                                     // Preserve runtime state that should not be reset
                                     const preservedPlugins = this.installedPlugins;
                                     const preservedTab = this.activeTab;
+                                    const defaultTab = isAPMode ? 'wifi' : 'overview';
                                     const wasInitialized = this._initialized;
                                     Object.assign(this, fullApp);
                                     // Restore runtime state if non-default
                                     if (preservedPlugins && preservedPlugins.length > 0) {
                                         this.installedPlugins = preservedPlugins;
                                     }
-                                    if (preservedTab && preservedTab !== 'overview') {
+                                    if (preservedTab && preservedTab !== defaultTab) {
                                         this.activeTab = preservedTab;
                                     }
                                     if (wasInitialized) {
@@ -1276,7 +1277,12 @@
                                      } else if (!window.htmx) {
                                          fetch('/v3/partials/plugin-config/' + pid)
                                              .then(r => r.text())
-                                             .then(html => { el.innerHTML = html; });
+                                             .then(html => {
+                                                 el.innerHTML = html;
+                                                 if (window.Alpine) {
+                                                     window.Alpine.initTree(el);
+                                                 }
+                                             });
                                      }
                                  };
                                  loadContent(0);
@@ -3091,6 +3097,9 @@
                 requestAnimationFrame(() => {
                     if (window._appEnhanced) return;
                     window._appEnhanced = true;
+                    const isAPMode = window.location.hostname === '192.168.4.1' ||
+                                   window.location.hostname.startsWith('192.168.4.');
+                    const defaultTab = isAPMode ? 'wifi' : 'overview';
                     const appElement = document.querySelector('[x-data]');
                     if (appElement && appElement._x_dataStack && appElement._x_dataStack[0]) {
                         const existingComponent = appElement._x_dataStack[0];
@@ -3105,7 +3114,7 @@
                         if (preservedPlugins && preservedPlugins.length > 0) {
                             existingComponent.installedPlugins = preservedPlugins;
                         }
-                        if (preservedTab && preservedTab !== 'overview') {
+                        if (preservedTab && preservedTab !== defaultTab) {
                             existingComponent.activeTab = preservedTab;
                         }
                         // Call init to load plugins and set up watchers (only if not already initialized)
