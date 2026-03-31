@@ -561,8 +561,8 @@
                                 data-full-key="{{ full_key }}"
                                 data-max-items="{{ max_items }}"
                                 data-plugin-id="{{ plugin_id }}"
-                                data-item-properties="{{ item_properties|tojson|e }}"
-                                data-display-columns="{{ display_columns|tojson|e }}"
+                                data-item-properties='{% set ns = namespace(d={}) %}{% for k in display_columns %}{% if k in item_properties %}{% set _ = ns.d.update({k: item_properties[k]}) %}{% endif %}{% endfor %}{{ ns.d|tojson }}'
+                                data-display-columns='{{ display_columns|tojson }}'
                                 class="mt-3 px-4 py-2 text-sm bg-blue-600 hover:bg-blue-700 text-white rounded-md"
                                 {% if array_value|length >= max_items %}disabled style="opacity: 0.5;"{% endif %}>
                             <i class="fas fa-plus mr-1"></i> Add Item
