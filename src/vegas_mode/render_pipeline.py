@@ -275,13 +275,18 @@ class RenderPipeline:
         """
         Hot-swap to new composed content.
 
-        Called when staging buffer has updated content.
-        Swaps atomically to prevent visual glitches.
+        Called when staging buffer has updated content or pending updates exist.
+        Preserves scroll position for mid-cycle updates to prevent visual jumps.
 
         Returns:
             True if swap occurred
         """
         try:
+            # Save scroll position for mid-cycle updates
+            saved_position = self.scroll_helper.scroll_position
+            saved_total_distance = self.scroll_helper.total_distance_scrolled
+            was_mid_cycle = not self._cycle_complete
+
             # Process any pending updates
             self.stream_manager.process_updates()
             self.stream_manager.swap_buffers()
@@ -289,7 +294,14 @@ class RenderPipeline:
             # Recompose with updated content
             if self.compose_scroll_content():
                 self.stats['hot_swaps'] += 1
-                logger.debug("Hot-swap completed")
+                # Restore scroll position for mid-cycle updates so the
+                # scroll continues from where it was instead of jumping to 0
+                if was_mid_cycle:
+                    self.scroll_helper.scroll_position = saved_position
+                    self.scroll_helper.total_distance_scrolled = saved_total_distance
+                    self.scroll_helper.scroll_complete = False
+                    self._cycle_complete = False
+                logger.debug("Hot-swap completed (mid_cycle_restore=%s)", was_mid_cycle)
                 return True
 
             return False

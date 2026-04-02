@@ -32,7 +32,10 @@ class DisplayController:
     def __init__(self):
         start_time = time.time()
         logger.info("Starting DisplayController initialization")
-        
+
+        # Throttle tracking for _tick_plugin_updates in high-FPS loops
+        self._last_plugin_tick_time = 0.0
+
         # Initialize ConfigManager and wrap with ConfigService for hot-reload
         config_manager = ConfigManager()
         enable_hot_reload = os.environ.get('LEDMATRIX_HOT_RELOAD', 'true').lower() == 'true'
@@ -718,6 +721,13 @@ class DisplayController:
                 self.plugin_manager.run_scheduled_updates()
             except Exception:  # pylint: disable=broad-except
                 logger.exception("Error running scheduled plugin updates")
+
+    def _tick_plugin_updates_throttled(self, min_interval: float = 1.0):
+        """Throttled version of _tick_plugin_updates for high-FPS loops."""
+        now = time.time()
+        if now - self._last_plugin_tick_time >= min_interval:
+            self._last_plugin_tick_time = now
+            self._tick_plugin_updates()
 
     def _sleep_with_plugin_updates(self, duration: float, tick_interval: float = 1.0):
         """Sleep while continuing to service plugin update schedules."""
@@ -1787,7 +1797,7 @@ class DisplayController:
                                     logger.exception("Error during display update")
 
                                 time.sleep(display_interval)
-                                self._tick_plugin_updates()
+                                self._tick_plugin_updates_throttled()
                                 self._poll_on_demand_requests()
                                 self._check_on_demand_expiration()
 
