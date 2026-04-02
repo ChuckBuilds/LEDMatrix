@@ -722,8 +722,17 @@ class DisplayController:
             except Exception:  # pylint: disable=broad-except
                 logger.exception("Error running scheduled plugin updates")
 
-    def _tick_plugin_updates_throttled(self, min_interval: float = 1.0):
-        """Throttled version of _tick_plugin_updates for high-FPS loops."""
+    def _tick_plugin_updates_throttled(self, min_interval: float = 0.0):
+        """Throttled version of _tick_plugin_updates for high-FPS loops.
+
+        Args:
+            min_interval: Minimum seconds between calls.  When <= 0 the
+                call passes straight through to _tick_plugin_updates so
+                plugin-configured update_interval values are never capped.
+        """
+        if min_interval <= 0:
+            self._tick_plugin_updates()
+            return
         now = time.time()
         if now - self._last_plugin_tick_time >= min_interval:
             self._last_plugin_tick_time = now
@@ -1797,7 +1806,7 @@ class DisplayController:
                                     logger.exception("Error during display update")
 
                                 time.sleep(display_interval)
-                                self._tick_plugin_updates_throttled()
+                                self._tick_plugin_updates_throttled(min_interval=1.0)
                                 self._poll_on_demand_requests()
                                 self._check_on_demand_expiration()
 

@@ -80,7 +80,7 @@ class WebUIInfoPlugin(BasePlugin):
             if os.path.exists(font_path):
                 return ImageFont.truetype(font_path, 6)
             return ImageFont.load_default()
-        except Exception as e:
+        except (FileNotFoundError, OSError) as e:
             self.logger.debug(f"Could not load custom font: {e}, using default")
             return ImageFont.load_default()
 
