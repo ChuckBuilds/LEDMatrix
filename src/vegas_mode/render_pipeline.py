@@ -285,6 +285,7 @@ class RenderPipeline:
             # Save scroll position for mid-cycle updates
             saved_position = self.scroll_helper.scroll_position
             saved_total_distance = self.scroll_helper.total_distance_scrolled
+            saved_total_width = max(1, self.scroll_helper.total_scroll_width)
             was_mid_cycle = not self._cycle_complete
 
             # Process any pending updates
@@ -297,8 +298,13 @@ class RenderPipeline:
                 # Restore scroll position for mid-cycle updates so the
                 # scroll continues from where it was instead of jumping to 0
                 if was_mid_cycle:
-                    self.scroll_helper.scroll_position = saved_position
-                    self.scroll_helper.total_distance_scrolled = saved_total_distance
+                    new_total_width = max(1, self.scroll_helper.total_scroll_width)
+                    progress_ratio = min(saved_total_distance / saved_total_width, 0.999)
+                    self.scroll_helper.total_distance_scrolled = progress_ratio * new_total_width
+                    self.scroll_helper.scroll_position = min(
+                        saved_position,
+                        float(new_total_width - 1)
+                    )
                     self.scroll_helper.scroll_complete = False
                     self._cycle_complete = False
                 logger.debug("Hot-swap completed (mid_cycle_restore=%s)", was_mid_cycle)
