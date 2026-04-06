@@ -710,4 +710,6 @@ def check_health_monitor():
             _threading.Thread(target=_run_startup_reconciliation, daemon=True).start()
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000, debug=True)
+    # threaded=True is Flask's default since 1.0 but stated explicitly so that
+    # long-lived /api/v3/stream/* SSE connections don't starve other requests.
+    app.run(host='0.0.0.0', port=5000, debug=True, threaded=True)
