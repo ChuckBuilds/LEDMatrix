@@ -17,7 +17,7 @@ The LEDMatrix web interface provides a complete control panel for managing your 
 
 2. Open a web browser and navigate to:
    ```
-   http://your-pi-ip:5050
+   http://your-pi-ip:5000
    ```
 
 3. The interface will load with the Overview tab displaying system stats and a live display preview.
@@ -31,17 +31,28 @@ sudo systemctl status ledmatrix-web
 
 ## Navigation
 
-The interface uses a tab-based layout for easy navigation between features:
+The interface uses a two-row tab layout. The system tabs are always
+present:
 
-- **Overview** - System stats, quick actions, and display preview
-- **General Settings** - Timezone, location, and autostart configuration
-- **Display Settings** - Hardware configuration, brightness, and display options
-- **Durations** - Display rotation timing configuration
-- **Sports Configuration** - Per-league settings and on-demand modes
-- **Plugin Management** - Install, configure, enable/disable plugins
-- **Plugin Store** - Discover and install plugins
-- **Font Management** - Upload fonts, manage overrides, and preview
-- **Logs** - Real-time log streaming with filtering and search
+- **Overview** — System stats, quick actions, live display preview
+- **General** — Timezone, location, plugin-system settings
+- **WiFi** — Network selection and AP-mode setup
+- **Schedule** — Power and dim schedules
+- **Display** — Matrix hardware configuration (rows, cols, hardware
+  mapping, GPIO slowdown, brightness, PWM)
+- **Config Editor** — Raw `config.json` editor with validation
+- **Fonts** — Upload and manage fonts
+- **Logs** — Real-time log streaming
+- **Cache** — Cached data inspection and cleanup
+- **Operation History** — Recent service operations
+
+A second nav row holds plugin tabs:
+
+- **Plugin Manager** — browse the **Plugin Store** section, install
+  plugins from GitHub, enable/disable installed plugins
+- **&lt;plugin-id&gt;** — one tab per installed plugin for its own
+  configuration form (auto-generated from the plugin's
+  `config_schema.json`)
 
 ---
 
@@ -57,131 +68,84 @@ The Overview tab provides at-a-glance information and quick actions:
 - Disk usage
 - Network status
 
-**Quick Actions:**
-- **Start/Stop Display** - Control the display service
-- **Restart Display** - Restart to apply configuration changes
-- **Test Display** - Run a quick test pattern
+**Quick Actions** (verified in `web_interface/templates/v3/partials/overview.html`):
+- **Start Display** / **Stop Display** — control the display service
+- **Restart Display Service** — apply configuration changes
+- **Restart Web Service** — restart the web UI itself
+- **Update Code** — `git pull` the latest version (stashes local changes)
+- **Reboot System** / **Shutdown System** — confirm-gated power controls
 
 **Display Preview:**
 - Live preview of what's currently shown on the LED matrix
 - Updates in real-time
 - Useful for remote monitoring
 
-### General Settings Tab
+### General Tab
 
 Configure basic system settings:
 
-**Timezone:**
-- Set your local timezone for accurate time display
-- Auto-detects common timezones
+- **Timezone** — used by all time/date displays
+- **Location** — city/state/country for weather and other location-aware
+  plugins
+- **Plugin System Settings** — including the `plugins_directory` (default
+  `plugin-repos/`) used by the plugin loader
+- **Autostart** options for the display service
 
-**Location:**
-- Set latitude/longitude for location-based features
-- Used by weather plugins and sunrise/sunset calculations
+Click **Save** to write changes to `config/config.json`. Most changes
+require a display service restart from **Overview**.
 
-**Autostart:**
-- Enable/disable display autostart on boot
-- Configure systemd service settings
-
-**Save Changes:**
-- Click "Save Configuration" to apply changes
-- Restart the display for changes to take effect
-
-### Display Settings Tab
+### Display Tab
 
 Configure your LED matrix hardware:
 
-**Matrix Configuration:**
-- Rows: Number of LED rows (typically 32 or 64)
-- Columns: Number of LED columns (typically 64, 128, or 256)
-- Chain Length: Number of chained panels
-- Parallel Chains: Number of parallel chains
+**Matrix configuration:**
+- `rows` — LED rows (typically 32 or 64)
+- `cols` — LED columns (typically 64 or 96)
+- `chain_length` — number of horizontally chained panels
+- `parallel` — number of parallel chains
+- `hardware_mapping` — `adafruit-hat-pwm` (with PWM jumper mod),
+  `adafruit-hat` (without), `regular`, or `regular-pi1`
+- `gpio_slowdown` — must match your Pi model (3 for Pi 3, 4 for Pi 4, etc.)
+- `brightness` — 0–100%
+- `pwm_bits`, `pwm_lsb_nanoseconds`, `pwm_dither_bits` — PWM tuning
+- Dynamic Duration — global cap for plugins that extend their display
+  time based on content
 
-**Display Options:**
-- Brightness: Adjust LED brightness (0-100%)
-- Hardware Mapping: GPIO pin mapping
-- Slowdown GPIO: Timing adjustment for compatibility
+Changes require **Restart Display Service** from the Overview tab.
 
-**Save and Apply:**
-- Changes require a display restart
-- Use "Test Display" to verify configuration
+### Plugin Manager Tab
 
-### Durations Tab
+The Plugin Manager has three main sections:
 
-Control how long each plugin displays:
+1. **Installed Plugins** — toggle installed plugins on/off, see version
+   info. Each installed plugin also gets its own tab in the second nav
+   row for its configuration form.
+2. **Plugin Store** — browse plugins from the official
+   `ledmatrix-plugins` registry. Click **Install** to fetch and
+   install. Filter by category and search.
+3. **Install from GitHub** — install third-party plugins by pasting a
+   GitHub repository URL. **Install Single Plugin** for a single-plugin
+   repo, **Load Registry** for a multi-plugin monorepo.
 
-**Global Settings:**
-- Default Duration: Default time for plugins without specific durations
-- Transition Speed: Speed of transitions between plugins
+When a plugin is installed and enabled:
+- A new tab for that plugin appears in the second nav row
+- Open the tab to edit its config (auto-generated form from
+  `config_schema.json`)
+- The tab also exposes **Run On-Demand** / **Stop On-Demand** controls
+  to render that plugin immediately, even if it's disabled in the
+  rotation
 
-**Per-Plugin Durations:**
-- Set custom display duration for each plugin
-- Override global default for specific plugins
-- Measured in seconds
+### Per-plugin Configuration Tabs
 
-### Sports Configuration Tab
+Each installed plugin has its own tab in the second nav row. The form
+fields are auto-generated from the plugin's `config_schema.json`, so
+options always match the plugin's current code.
 
-Configure sports-specific settings:
+To temporarily run a plugin outside the normal rotation, use the
+**Run On-Demand** / **Stop On-Demand** buttons inside its tab. This
+works even when the plugin is disabled.
 
-**Per-League Settings:**
-- Favorite teams
-- Show favorite teams only
-- Include scores/standings
-- Refresh intervals
-
-**On-Demand Modes:**
-- Live Priority: Show live games immediately
-- Game Day Mode: Enhanced display during game days
-- Score Alerts: Highlight score changes
-
-### Plugin Management Tab
-
-Manage installed plugins:
-
-**Plugin List:**
-- View all installed plugins
-- See plugin status (enabled/disabled)
-- Check last update time
-
-**Actions:**
-- **Enable/Disable**: Toggle plugin using the switch
-- **Configure**: Click ⚙️ to edit plugin settings
-- **Update**: Update plugin to latest version
-- **Uninstall**: Remove plugin completely
-
-**Configuration:**
-- Edit plugin-specific settings
-- Changes are saved to `config/config.json`
-- Restart display to apply changes
-
-**Note:** See [PLUGIN_STORE_GUIDE.md](PLUGIN_STORE_GUIDE.md) for information on installing plugins.
-
-### Plugin Store Tab
-
-Discover and install new plugins:
-
-**Browse Plugins:**
-- View available plugins in the official store
-- Filter by category (sports, weather, time, finance, etc.)
-- Search by name, description, or author
-
-**Install Plugins:**
-- Click "Install" next to any plugin
-- Wait for installation to complete
-- Restart the display to activate
-
-**Install from URL:**
-- Install plugins from any GitHub repository
-- Paste the repository URL in the "Install from URL" section
-- Review the warning about unverified plugins
-- Click "Install from URL"
-
-**Plugin Information:**
-- View plugin descriptions, ratings, and screenshots
-- Check compatibility and requirements
-- Read user reviews (when available)
-
-### Font Management Tab
+### Fonts Tab
 
 Manage fonts for your display:
 
@@ -229,37 +193,37 @@ View real-time system logs:
 
 ### Changing Display Brightness
 
-1. Navigate to the **Display Settings** tab
-2. Adjust the **Brightness** slider (0-100%)
-3. Click **Save Configuration**
-4. Restart the display for changes to take effect
+1. Open the **Display** tab
+2. Adjust the **Brightness** slider (0–100)
+3. Click **Save**
+4. Click **Restart Display Service** on the **Overview** tab
 
 ### Installing a New Plugin
 
-1. Navigate to the **Plugin Store** tab
-2. Browse or search for the desired plugin
+1. Open the **Plugin Manager** tab
+2. Scroll to the **Plugin Store** section and browse or search
 3. Click **Install** next to the plugin
-4. Wait for installation to complete
-5. Restart the display
-6. Enable the plugin in the **Plugin Management** tab
+4. Toggle the plugin on in **Installed Plugins**
+5. Click **Restart Display Service** on **Overview**
 
 ### Configuring a Plugin
 
-1. Navigate to the **Plugin Management** tab
-2. Find the plugin you want to configure
-3. Click the ⚙️ **Configure** button
-4. Edit the settings in the form
-5. Click **Save**
-6. Restart the display to apply changes
+1. Open the plugin's tab in the second nav row (each installed plugin
+   has its own tab)
+2. Edit the auto-generated form
+3. Click **Save**
+4. Restart the display service from **Overview**
 
 ### Setting Favorite Sports Teams
 
-1. Navigate to the **Sports Configuration** tab
-2. Select the league (NHL, NBA, MLB, NFL)
-3. Choose your favorite teams from the dropdown
-4. Enable "Show favorite teams only" if desired
-5. Click **Save Configuration**
-6. Restart the display
+Sports favorites live in the relevant plugin's tab — there is no
+separate "Sports Configuration" tab. For example:
+
+1. Install **Hockey Scoreboard** from **Plugin Manager → Plugin Store**
+2. Open the **Hockey Scoreboard** tab in the second nav row
+3. Add your favorites under `favorite_teams.<league>` (e.g.
+   `favorite_teams.nhl`)
+4. Click **Save** and restart the display service
 
 ### Troubleshooting Display Issues
 
@@ -296,12 +260,10 @@ The interface is fully responsive and works on mobile devices:
 - Touch-friendly interface
 - Responsive layout adapts to screen size
 - All features available on mobile
-- Swipe navigation between tabs
 
 **Tips for Mobile:**
 - Use landscape mode for better visibility
 - Pinch to zoom on display preview
-- Long-press for context menus
 
 ---
 
@@ -322,15 +284,21 @@ The web interface is built on a REST API that you can access programmatically:
 
 **API Base URL:**
 ```
-http://your-pi-ip:5050/api
+http://your-pi-ip:5000/api/v3
 ```
 
+The API blueprint mounts at `/api/v3` (see
+`web_interface/app.py:144`). All endpoints below are relative to that
+base.
+
 **Common Endpoints:**
-- `GET /api/config/main` - Get configuration
-- `POST /api/config/main` - Update configuration
-- `GET /api/system/status` - Get system status
-- `POST /api/system/action` - Control display (start/stop/restart)
-- `GET /api/plugins/installed` - List installed plugins
+- `GET /api/v3/config/main` — Get main configuration
+- `POST /api/v3/config/main` — Update main configuration
+- `GET /api/v3/system/status` — Get system status
+- `POST /api/v3/system/action` — Control display (start/stop/restart, reboot, etc.)
+- `GET /api/v3/plugins/installed` — List installed plugins
+- `POST /api/v3/plugins/install` — Install a plugin from the store
+- `POST /api/v3/plugins/install-from-url` — Install a plugin from a GitHub URL
 
 **Note:** See [REST_API_REFERENCE.md](REST_API_REFERENCE.md) for complete API documentation.
 
@@ -353,7 +321,7 @@ http://your-pi-ip:5050/api
    sudo systemctl start ledmatrix-web
    ```
 
-3. Check that port 5050 is not blocked by firewall
+3. Check that port 5000 is not blocked by firewall
 4. Verify the Pi's IP address is correct
 
 ### Changes Not Applying
@@ -429,7 +397,9 @@ The web interface uses modern web technologies:
 - Web service: `sudo journalctl -u ledmatrix-web -f`
 
 **Plugins:**
-- Plugin directory: `/plugins/`
+- Plugin directory: configurable via
+  `plugin_system.plugins_directory` in `config.json` (default
+  `plugin-repos/`); the loader also searches `plugins/` as a fallback
 - Plugin config: `/config/config.json` (per-plugin sections)
 
 ---
