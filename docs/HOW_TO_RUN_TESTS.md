@@ -336,11 +336,15 @@ pytest --cov=src --cov-report=html
 
 ## Continuous Integration
 
-Tests are configured to run automatically in CI/CD. The GitHub Actions workflow (`.github/workflows/tests.yml`) runs:
+There is currently no CI test workflow in this repo — `pytest` runs
+locally but is not gated on PRs. The only GitHub Actions workflow is
+[`.github/workflows/security-audit.yml`](../.github/workflows/security-audit.yml),
+which runs bandit and semgrep on every push.
 
-- All tests on multiple Python versions (3.10, 3.11, 3.12)
-- Coverage reporting
-- Uploads coverage to Codecov (if configured)
+If you'd like to add a test workflow, the recommended setup is a
+`.github/workflows/tests.yml` that runs `pytest` against the
+supported Python versions (3.10, 3.11, 3.12, 3.13 per
+`requirements.txt`). Open an issue or PR if you want to contribute it.
 
 ## Best Practices
 
