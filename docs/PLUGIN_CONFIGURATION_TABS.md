@@ -29,10 +29,14 @@ Each installed plugin now gets its own dedicated configuration tab in the web in
 3. Click **Save Configuration**
 4. Restart the display service to apply changes
 
-### Plugin Management vs Configuration
+### Plugin Manager vs Per-Plugin Configuration
 
-- **Plugins Tab**: Used for plugin management (install, enable/disable, update, uninstall)
-- **Plugin-Specific Tabs**: Used for configuring plugin behavior and settings
+- **Plugin Manager tab** (second nav row): used for browsing the
+  Plugin Store, installing plugins, toggling installed plugins on/off,
+  and updating/uninstalling them
+- **Per-plugin tabs** (one per installed plugin, also in the second
+  nav row): used for configuring that specific plugin's behavior and
+  settings via a form auto-generated from its `config_schema.json`
 
 ## For Plugin Developers
 

@@ -37,7 +37,7 @@ sudo systemctl start ledmatrix-web
 
 ### ✅ Scenario 2: Web Interface Plugin Installation
 
-**What:** Installing/enabling plugins via web interface at `http://pi-ip:5001`
+**What:** Installing/enabling plugins via web interface at `http://pi-ip:5000`
 
 - **Web service runs as:** root (ledmatrix-web.service)
 - **Installs to:** System-wide

@@ -4,13 +4,14 @@
 
 ### For Users
 
-1. Open the web interface: `http://your-pi-ip:5001`
-2. Go to the **Plugin Store** tab
-3. Install a plugin (e.g., "Hello World")
-4. Notice a new tab appears with the plugin's name
-5. Click on the plugin's tab to configure it
-6. Modify settings and click **Save Configuration**
-7. Restart the display to see changes
+1. Open the web interface: `http://your-pi-ip:5000`
+2. Open the **Plugin Manager** tab
+3. Find a plugin in the **Plugin Store** section (e.g., "Hello World")
+   and click **Install**
+4. Notice a new tab appears in the second nav row with the plugin's name
+5. Click that tab to configure the plugin
+6. Modify settings and click **Save**
+7. From **Overview**, click **Restart Display Service** to see changes
 
 That's it! Each installed plugin automatically gets its own configuration tab.
 
@@ -171,9 +172,11 @@ User enters: `255, 0, 0`
 ### For Users
 
 1. **Reset Anytime**: Use "Reset to Defaults" to restore original settings
-2. **Navigate Back**: Click "Back to Plugin Management" to return to Plugins tab
+2. **Navigate Back**: Switch to the **Plugin Manager** tab to see the
+   full list of installed plugins
 3. **Check Help Text**: Each field has a description explaining what it does
-4. **Restart Required**: Remember to restart the display after saving
+4. **Restart Required**: Remember to restart the display service from
+   **Overview** after saving
 
 ### For Developers
 
@@ -206,8 +209,10 @@ User enters: `255, 0, 0`
 ## 📚 Next Steps
 
 - Read the full documentation: [PLUGIN_CONFIGURATION_TABS.md](PLUGIN_CONFIGURATION_TABS.md)
-- Check implementation details: [PLUGIN_CONFIG_TABS_SUMMARY.md](PLUGIN_CONFIG_TABS_SUMMARY.md)
-- Browse example plugins: `plugins/hello-world/`, `plugins/clock-simple/`
+- Check the configuration architecture: [PLUGIN_CONFIG_ARCHITECTURE.md](PLUGIN_CONFIG_ARCHITECTURE.md)
+- Browse example plugins in the
+  [ledmatrix-plugins](https://github.com/ChuckBuilds/ledmatrix-plugins)
+  repo, especially `plugins/hello-world/` and `plugins/clock-simple/`
 - Join the community for help and suggestions
 
 ## 🎉 That's It!
