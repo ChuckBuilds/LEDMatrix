@@ -782,14 +782,18 @@ The LEDMatrix system includes Web Interface that runs on port 5000 and provides 
 
 ### Installing the Web Interface Service
 
+> The first-time installer (`first_time_install.sh`) already installs the
+> web service. The steps below only apply if you need to (re)install it
+> manually.
+
 1. Make the install script executable:
 ```bash
-chmod +x install_web_service.sh
+chmod +x scripts/install/install_web_service.sh
 ```
 
 2. Run the install script with sudo:
 ```bash
-sudo ./install_web_service.sh
+sudo ./scripts/install/install_web_service.sh
 ```
 
 The script will:

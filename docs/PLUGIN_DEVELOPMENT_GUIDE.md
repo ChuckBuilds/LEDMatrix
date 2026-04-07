@@ -466,7 +466,9 @@ When developing plugins, you'll need to use the APIs provided by the LEDMatrix s
 
 **Display Manager** (`self.display_manager`):
 - `clear()`, `update_display()` - Core display operations
-- `draw_text()`, `draw_image()` - Rendering methods
+- `draw_text()` - Text rendering. For images, paste directly onto
+  `display_manager.image` (a PIL Image) and call `update_display()`;
+  there is no `draw_image()` helper method.
 - `draw_weather_icon()`, `draw_sun()`, `draw_cloud()` - Weather icons
 - `get_text_width()`, `get_font_height()` - Text utilities
 - `set_scrolling_state()`, `defer_update()` - Scrolling state management
