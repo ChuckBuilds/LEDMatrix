@@ -184,37 +184,45 @@ plugin-repos/
 
 ```json
 {
+    "id": "my-plugin",
     "name": "My Plugin",
     "version": "1.0.0",
     "description": "Plugin description",
     "author": "Your Name",
+    "entry_point": "manager.py",
+    "class_name": "MyPlugin",
     "display_modes": ["my_plugin"],
-    "config_schema": {
-        "type": "object",
-        "properties": {
-            "enabled": {"type": "boolean", "default": false},
-            "update_interval": {"type": "integer", "default": 3600}
-        }
-    }
+    "config_schema": "config_schema.json"
 }
 ```
+
+The required fields the plugin loader will check for are `id`,
+`name`, `version`, `class_name`, and `display_modes`. `entry_point`
+defaults to `manager.py` if omitted. `config_schema` must be a
+**file path** (relative to the plugin directory) — the schema itself
+lives in a separate JSON file, not inline in the manifest. The
+`class_name` value must match the actual class defined in the entry
+point file **exactly** (case-sensitive, no spaces); otherwise the
+loader fails with `AttributeError` at load time.
 
 ### Plugin Manager Class
 
 ```python
 from src.plugin_system.base_plugin import BasePlugin
 
-class MyPluginManager(BasePlugin):
-    def __init__(self, config, display_manager, cache_manager, font_manager):
-        super().__init__(config, display_manager, cache_manager, font_manager)
-        self.enabled = config.get('enabled', False)
-    
+class MyPlugin(BasePlugin):
+    def __init__(self, plugin_id, config, display_manager, cache_manager, plugin_manager):
+        super().__init__(plugin_id, config, display_manager, cache_manager, plugin_manager)
+        # self.config, self.display_manager, self.cache_manager,
+        # self.plugin_manager, self.logger, and self.enabled are
+        # all set up by BasePlugin.__init__.
+
     def update(self):
-        """Update plugin data"""
+        """Fetch/update data. Called based on update_interval."""
         pass
-    
+
     def display(self, force_clear=False):
-        """Display plugin content"""
+        """Render plugin content to the LED matrix."""
         pass
     
     def get_duration(self):
