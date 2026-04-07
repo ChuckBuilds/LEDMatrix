@@ -2,7 +2,13 @@
 
 ## Plugin System Overview
 
-The LEDMatrix project uses a plugin-based architecture. All display functionality (except core calendar) is implemented as plugins that are dynamically loaded from the `plugins/` directory.
+The LEDMatrix project uses a plugin-based architecture. All display
+functionality (except core calendar) is implemented as plugins that are
+dynamically loaded from the directory configured by
+`plugin_system.plugins_directory` in `config.json` — the default is
+`plugin-repos/` (per `config/config.template.json:130`), and the loader
+also falls back to `plugins/` (used by `scripts/dev/dev_plugin_setup.sh`
+for symlinks).
 
 ## Plugin Structure
 
@@ -27,14 +33,15 @@ The LEDMatrix project uses a plugin-based architecture. All display functionalit
 **Option A: Use dev_plugin_setup.sh (Recommended)**
 ```bash
 # Link from GitHub
-./dev_plugin_setup.sh link-github <plugin-name>
+./scripts/dev/dev_plugin_setup.sh link-github <plugin-name>
 
 # Link local repository
-./dev_plugin_setup.sh link <plugin-name> <path-to-repo>
+./scripts/dev/dev_plugin_setup.sh link <plugin-name> <path-to-repo>
 ```
 
 **Option B: Manual Setup**
-1. Create directory in `plugins/<plugin-id>/`
+1. Create directory in `plugin-repos/<plugin-id>/` (or `plugins/<plugin-id>/`
+   if you're using the dev fallback location)
 2. Add `manifest.json` with required fields
 3. Create `manager.py` with plugin class
 4. Add `config_schema.json` for configuration
@@ -63,7 +70,12 @@ Plugins are configured in `config/config.json`:
 ### 3. Testing Plugins
 
 **On Development Machine:**
-- Use emulator: `python run.py --emulator` or `./run_emulator.sh`
+- Run the dev preview server: `python3 scripts/dev_server.py` (then
+  open `http://localhost:5001`) — renders plugins in the browser
+  without running the full display loop
+- Or run the full display in emulator mode:
+  `EMULATOR=true python3 run.py` (or `./scripts/dev/run_emulator.sh`).
+  There is no `--emulator` flag.
 - Test plugin loading: Check logs for plugin discovery and loading
 - Validate configuration: Ensure config matches `config_schema.json`
 
@@ -75,15 +87,22 @@ Plugins are configured in `config/config.json`:
 ### 4. Plugin Development Best Practices
 
 **Code Organization:**
-- Keep plugin code in `plugins/<plugin-id>/`
+- Keep plugin code in `plugin-repos/<plugin-id>/` (or its dev-time
+  symlink in `plugins/<plugin-id>/`)
 - Use shared assets from `assets/` directory when possible
-- Follow existing plugin patterns (see `plugins/hockey-scoreboard/` as reference)
+- Follow existing plugin patterns — canonical sources live in the
+  [`ledmatrix-plugins`](https://github.com/ChuckBuilds/ledmatrix-plugins)
+  repo (`plugins/hockey-scoreboard/`, `plugins/football-scoreboard/`,
+  `plugins/clock-simple/`, etc.)
 - Place shared utilities in `src/common/` if reusable across plugins
 
 **Configuration Management:**
 - Use `config_schema.json` for validation
-- Store secrets in `config/config_secrets.json` (not in main config)
-- Reference secrets via `config_secrets` key in main config
+- Store secrets in `config/config_secrets.json` under the same plugin
+  id namespace as the main config — they're deep-merged into the main
+  config at load time (`src/config_manager.py:162-172`), so plugin
+  code reads them directly from `config.get(...)` like any other key
+- There is no separate `config_secrets` reference field
 - Validate all required fields in `validate_config()`
 
 **Error Handling:**
@@ -138,18 +157,31 @@ Located in: `src/display_manager.py`
 
 **Key Methods:**
 - `clear()`: Clear the display
-- `draw_text(text, x, y, color, font)`: Draw text
-- `draw_image(image, x, y)`: Draw PIL Image
-- `update_display()`: Update physical display
+- `draw_text(text, x, y, color, font, small_font, centered)`: Draw text
+- `update_display()`: Push the buffer to the physical display
+- `draw_weather_icon(condition, x, y, size)`: Draw a weather icon
 - `width`, `height`: Display dimensions
+
+**Image rendering**: there is no `draw_image()` helper. Paste directly
+onto the underlying PIL Image:
+```python
+self.display_manager.image.paste(pil_image, (x, y))
+self.display_manager.update_display()
+```
+For transparency, paste with a mask: `image.paste(rgba, (x, y), rgba)`.
 
 ### Cache Manager
 Located in: `src/cache_manager.py`
 
 **Key Methods:**
-- `get(key, max_age=None)`: Get cached value
+- `get(key, max_age=300)`: Get cached value (returns None if missing/stale)
 - `set(key, value, ttl=None)`: Cache a value
-- `delete(key)`: Remove cached value
+- `clear_cache(key=None)`: Remove a cache entry, or all entries if `key`
+  is omitted. There is no `delete()` method.
+- `get_cached_data_with_strategy(key, data_type)`: Cache get with
+  data-type-aware TTL strategy
+- `get_background_cached_data(key, sport_key)`: Cache get for the
+  background-fetch service path
 
 ## Plugin Manifest Schema
 
