@@ -86,7 +86,8 @@ reference for the most common endpoints:
 - `GET /api/v3/system/status` - System status
 - `POST /api/v3/system/action` - Control display (action body:
   `start_display`, `stop_display`, `restart_display_service`,
-  `restart_web_service`, `git_pull`, `reboot_system`, `shutdown_system`)
+  `restart_web_service`, `git_pull`, `reboot_system`, `shutdown_system`,
+  `enable_autostart`, `disable_autostart`)
 - `GET /api/v3/display/current` - Current display frame
 - `GET /api/v3/display/on-demand/status` - On-demand status
 - `POST /api/v3/display/on-demand/start` - Trigger on-demand display
@@ -105,11 +106,13 @@ reference for the most common endpoints:
 
 ### Plugin Store
 - `GET /api/v3/plugins/store/list` - List available registry plugins
+- `GET /api/v3/plugins/store/github-status` - GitHub authentication status
 - `POST /api/v3/plugins/store/refresh` - Refresh registry from GitHub
 
 ### Real-time Streams (SSE)
 SSE stream endpoints are defined directly on the Flask app
-(`app.py:607-615`), not on the api_v3 blueprint:
+(`app.py:607-619` — includes the CSRF exemption and rate-limit hookup
+alongside the three route definitions), not on the api_v3 blueprint:
 - `GET /api/v3/stream/stats` - System statistics stream
 - `GET /api/v3/stream/display` - Display preview stream
 - `GET /api/v3/stream/logs` - Service logs stream

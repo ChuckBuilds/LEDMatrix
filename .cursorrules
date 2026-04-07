@@ -6,9 +6,27 @@ The LEDMatrix project uses a plugin-based architecture. All display
 functionality (except core calendar) is implemented as plugins that are
 dynamically loaded from the directory configured by
 `plugin_system.plugins_directory` in `config.json` — the default is
-`plugin-repos/` (per `config/config.template.json:130`), and the loader
-also falls back to `plugins/` (used by `scripts/dev/dev_plugin_setup.sh`
-for symlinks).
+`plugin-repos/` (per `config/config.template.json:130`).
+
+> **Fallback note (scoped):** `PluginManager.discover_plugins()`
+> (`src/plugin_system/plugin_manager.py:154`) only scans the
+> configured directory — there is no fallback to `plugins/` in the
+> main discovery path. A fallback to `plugins/` does exist in two
+> narrower places:
+> - `store_manager.py:1700-1718` — store operations (install/update/
+>   uninstall) check `plugins/` if the plugin isn't found in the
+>   configured directory, so plugin-store flows work even when your
+>   dev symlinks live in `plugins/`.
+> - `schema_manager.py:70-80` — `get_schema_path()` probes both
+>   `plugins/` and `plugin-repos/` for `config_schema.json` so the
+>   web UI form generation finds the schema regardless of where the
+>   plugin lives.
+>
+> The dev workflow in `scripts/dev/dev_plugin_setup.sh` creates
+> symlinks under `plugins/`, which is why the store and schema
+> fallbacks exist. For day-to-day development, set
+> `plugin_system.plugins_directory` to `plugins` so the main
+> discovery path picks up your symlinks.
 
 ## Plugin Structure
 
@@ -74,8 +92,9 @@ Plugins are configured in `config/config.json`:
   open `http://localhost:5001`) — renders plugins in the browser
   without running the full display loop
 - Or run the full display in emulator mode:
-  `EMULATOR=true python3 run.py` (or `./scripts/dev/run_emulator.sh`).
-  There is no `--emulator` flag.
+  `python3 run.py --emulator` (or equivalently
+  `EMULATOR=true python3 run.py`, or `./scripts/dev/run_emulator.sh`).
+  The `-e`/`--emulator` CLI flag is defined in `run.py:19-20`.
 - Test plugin loading: Check logs for plugin discovery and loading
 - Validate configuration: Ensure config matches `config_schema.json`
 

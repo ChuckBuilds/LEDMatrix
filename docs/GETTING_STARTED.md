@@ -72,7 +72,9 @@ You should see:
 1. Open the **Display** tab
 2. Set your matrix configuration:
    - **Rows**: 32 or 64 (match your hardware)
-   - **Columns**: 64 or 96 (match your hardware)
+   - **Columns**: commonly 64 or 96; the web UI accepts any integer
+     in the 16–128 range, but 64 and 96 are the values the bundled
+     panel hardware ships with
    - **Chain Length**: Number of panels chained horizontally
    - **Hardware Mapping**: usually `adafruit-hat-pwm` (with the PWM jumper
      mod) or `adafruit-hat` (without). See the root README for the full list.
@@ -284,7 +286,11 @@ sudo journalctl -u ledmatrix-web -f
 
 > The plugin install location is configurable via
 > `plugin_system.plugins_directory` in `config.json`. The default is
-> `plugin-repos/`; the loader also searches `plugins/` as a fallback.
+> `plugin-repos/`. Plugin discovery (`PluginManager.discover_plugins()`)
+> only scans the configured directory — it does not fall back to
+> `plugins/`. However, the Plugin Store install/update path and the
+> web UI's schema loader do also probe `plugins/` so the dev symlinks
+> created by `scripts/dev/dev_plugin_setup.sh` keep working.
 
 ### Web Interface
 

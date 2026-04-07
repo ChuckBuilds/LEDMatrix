@@ -519,7 +519,12 @@ curl http://localhost:5000/api/v3/display/on-demand/status
 > There is no public Python on-demand API. The display controller's
 > on-demand machinery is internal — drive it through the REST endpoints
 > above (or the web UI buttons), which write a request into the cache
-> manager (`display_on_demand_config` key) that the controller polls.
+> manager under the `display_on_demand_request` key
+> (`web_interface/blueprints/api_v3.py:1622,1687`) that the controller
+> polls at `src/display_controller.py:921`. A separate
+> `display_on_demand_config` key is used by the controller itself
+> during activation to track what's currently running (written at
+> `display_controller.py:1195`, cleared at `:1221`).
 
 ### Duration Modes
 
@@ -795,12 +800,11 @@ Enable background service per plugin in `config/config.json`:
 
 ### Plugins using the background service
 
-The background data service is now used by all of the sports scoreboard
-plugins (football, hockey, baseball, basketball, soccer, lacrosse, F1,
-UFC), the odds ticker, and the leaderboard plugin. Each plugin's
+The background data service is used by all of the sports scoreboard
+plugins (football, hockey, baseball/MLB, basketball, soccer, lacrosse,
+F1, UFC), the odds ticker, and the leaderboard plugin. Each plugin's
 `background_service` block (under its own config namespace) follows the
 same shape as the example above.
-- ⏳ MLB (baseball)
 
 ### Error Handling & Fallback
 

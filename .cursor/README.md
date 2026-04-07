@@ -53,7 +53,8 @@ cp ../../.cursor/plugin_templates/*.template .
 
 ```bash
 # Emulator mode (development, no hardware required)
-EMULATOR=true python3 run.py
+python3 run.py --emulator
+# (equivalent: EMULATOR=true python3 run.py)
 
 # Hardware (production, requires the rpi-rgb-led-matrix submodule built)
 python3 run.py
@@ -65,9 +66,10 @@ sudo systemctl start ledmatrix
 python3 scripts/dev_server.py  # then open http://localhost:5001
 ```
 
-There is no `--emulator` flag — the emulator is selected via the
-`EMULATOR=true` environment variable, which `src/display_manager.py:2`
-checks at import time.
+The `-e`/`--emulator` CLI flag is defined in `run.py:19-20` and
+sets `os.environ["EMULATOR"] = "true"` before any display imports,
+which `src/display_manager.py:2` then reads to switch between the
+hardware and emulator backends.
 
 ### Managing Plugins
 

@@ -144,13 +144,21 @@ font = self.font_manager.resolve_font(
 > `"fonts"` block to your plugin's `manifest.json` will silently have
 > no effect — the FontManager method exists but nothing calls it.
 >
-> Until that's connected, plugin authors should ship custom fonts as
-> regular files inside the plugin directory (e.g., `assets/myfont.ttf`)
-> and reference them by relative path from the plugin's `manager.py`
-> via `display_manager.font_manager.resolve_font(...)` or by loading
-> with PIL directly. The user-facing font override system in the
-> **Fonts** tab still works for any element that's been registered via
-> `register_manager_font()`.
+> Until that's connected, plugin authors who need a custom font
+> should load it directly with PIL (or `freetype-py` for BDF) in
+> their plugin's `manager.py` — `FontManager.resolve_font(family=…,
+> size_px=…)` takes a **family name**, not a file path, so it can't
+> be used to pull a font from your plugin directory. The
+> `plugin://…` source URIs described below are only honored by
+> `register_plugin_fonts()` itself, which isn't wired up.
+>
+> The `/api/v3/fonts/overrides` endpoints and the **Fonts** tab in
+> the web UI are currently **placeholder implementations** — they
+> return empty arrays and contain "would integrate with the actual
+> font system" comments. Manually registered manager fonts do
+> **not** yet flow into that tab. If you need an override today,
+> load the font directly in your plugin and skip the
+> override system.
 
 ### Plugin Font Registration (planned)
 

@@ -399,7 +399,10 @@ The web interface uses modern web technologies:
 **Plugins:**
 - Plugin directory: configurable via
   `plugin_system.plugins_directory` in `config.json` (default
-  `plugin-repos/`); the loader also searches `plugins/` as a fallback
+  `plugin-repos/`). Main plugin discovery only scans this directory;
+  the Plugin Store install flow and the schema loader additionally
+  probe `plugins/` so dev symlinks created by
+  `scripts/dev/dev_plugin_setup.sh` keep working.
 - Plugin config: `/config/config.json` (per-plugin sections)
 
 ---

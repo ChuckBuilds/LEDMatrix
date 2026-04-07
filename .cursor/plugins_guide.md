@@ -403,7 +403,10 @@ cd /path/to/LEDMatrix
 2. **Test with the dev preview server**:
    `python3 scripts/dev_server.py` (then open `http://localhost:5001`).
    Or run the full display in emulator mode with
-   `EMULATOR=true python3 run.py`. There is no `--emulator` flag.
+   `python3 run.py --emulator` (or equivalently
+   `EMULATOR=true python3 run.py`). The `-e`/`--emulator` CLI flag is
+   defined in `run.py:19-20` and sets the same `EMULATOR` environment
+   variable internally.
 3. **Check logs** for errors or warnings
 4. **Update configuration** in `config/config.json` if needed
 5. **Iterate** until plugin works correctly

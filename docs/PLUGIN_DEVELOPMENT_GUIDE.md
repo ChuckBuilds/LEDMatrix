@@ -15,11 +15,17 @@ The solution uses **symbolic links** to connect plugin repositories to the `plug
 > **Plugin directory note:** the dev workflow described here puts
 > symlinks in `plugins/`. The plugin loader's *production* default is
 > `plugin-repos/` (set by `plugin_system.plugins_directory` in
-> `config.json`), but it falls back to `plugins/` so the dev symlinks
-> are picked up automatically. The Plugin Store installs to
-> `plugin-repos/`. If you want both your dev symlinks *and* store
-> installs to share the same directory, set `plugins_directory` to
-> `plugins` in the General tab of the web UI.
+> `config.json`). Importantly, the main discovery path
+> (`PluginManager.discover_plugins()`) only scans the configured
+> directory — it does **not** fall back to `plugins/`. Two narrower
+> paths do: the Plugin Store install/update logic in `store_manager.py`,
+> and `schema_manager.get_schema_path()` (which the web UI form
+> generator uses to find `config_schema.json`). That's why plugins
+> installed via the Plugin Store still work even with symlinks in
+> `plugins/`, but your own dev plugin won't appear in the rotation
+> until you either move it to `plugin-repos/` or change
+> `plugin_system.plugins_directory` to `plugins` in the General tab
+> of the web UI. The latter is the smoother dev setup.
 
 ## Quick Start
 
