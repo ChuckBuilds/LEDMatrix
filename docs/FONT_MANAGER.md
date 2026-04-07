@@ -138,7 +138,21 @@ font = self.font_manager.resolve_font(
 
 ## For Plugin Developers
 
-### Plugin Font Registration
+> ⚠️ **Status**: the plugin-font registration described below is
+> implemented in `src/font_manager.py:150` (`register_plugin_fonts()`)
+> but is **not currently wired into the plugin loader**. Adding a
+> `"fonts"` block to your plugin's `manifest.json` will silently have
+> no effect — the FontManager method exists but nothing calls it.
+>
+> Until that's connected, plugin authors should ship custom fonts as
+> regular files inside the plugin directory (e.g., `assets/myfont.ttf`)
+> and reference them by relative path from the plugin's `manager.py`
+> via `display_manager.font_manager.resolve_font(...)` or by loading
+> with PIL directly. The user-facing font override system in the
+> **Fonts** tab still works for any element that's been registered via
+> `register_manager_font()`.
+
+### Plugin Font Registration (planned)
 
 In your plugin's `manifest.json`:
 

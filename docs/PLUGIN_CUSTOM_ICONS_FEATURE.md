@@ -1,4 +1,13 @@
-# ✅ Plugin Custom Icons Feature - Complete
+# Plugin Custom Icons Feature
+
+> ⚠️ **Status:** this doc describes the v2 web interface
+> implementation of plugin custom icons. The feature **regressed when
+> the v3 web interface was built** — the `getPluginIcon()` helper
+> referenced below lived in `templates/index_v2.html` (which is now
+> archived) and was not ported to the v3 templates. Plugin tab icons
+> in v3 are hardcoded to `fas fa-puzzle-piece`
+> (`web_interface/templates/v3/base.html:515` and `:774`). The
+> `icon` field in `manifest.json` is currently silently ignored.
 
 ## What Was Implemented
 

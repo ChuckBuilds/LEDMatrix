@@ -1,5 +1,16 @@
 # Plugin Custom Icons Guide
 
+> ⚠️ **Status:** the `icon` field in `manifest.json` is currently
+> **not honored by the v3 web interface**. Plugin tab icons are
+> hardcoded to `fas fa-puzzle-piece` in
+> `web_interface/templates/v3/base.html:515` and `:774`. The icon
+> field was originally read by a `getPluginIcon()` helper in the v2
+> templates, but that helper wasn't ported to v3. Setting `icon` in a
+> manifest is harmless (it's just ignored) so plugin authors can leave
+> it in place for when this regression is fixed.
+>
+> Tracking issue: see the LEDMatrix repo for the open ticket.
+
 ## Overview
 
 Plugins can specify custom icons that appear next to their name in the web interface tabs. This makes your plugin instantly recognizable and adds visual polish to the UI.
