@@ -12,6 +12,15 @@ When developing plugins in separate repositories, you need a way to:
 
 The solution uses **symbolic links** to connect plugin repositories to the `plugins/` directory, combined with a helper script to manage the linking process.
 
+> **Plugin directory note:** the dev workflow described here puts
+> symlinks in `plugins/`. The plugin loader's *production* default is
+> `plugin-repos/` (set by `plugin_system.plugins_directory` in
+> `config.json`), but it falls back to `plugins/` so the dev symlinks
+> are picked up automatically. The Plugin Store installs to
+> `plugin-repos/`. If you want both your dev symlinks *and* store
+> installs to share the same directory, set `plugins_directory` to
+> `plugins` in the General tab of the web UI.
+
 ## Quick Start
 
 ### 1. Link a Plugin from GitHub
