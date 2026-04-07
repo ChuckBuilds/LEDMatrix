@@ -304,7 +304,7 @@ Result: `[logo] Company Metrics` tab
 
 To test custom icons:
 
-1. **Open web interface** at `http://your-pi:5001`
+1. **Open web interface** at `http://your-pi-ip:5000`
 2. **Check installed plugins**:
    - Hello World should show 👋
    - Clock Simple should show 🕐
