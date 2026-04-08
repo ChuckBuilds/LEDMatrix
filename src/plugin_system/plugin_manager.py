@@ -358,7 +358,23 @@ class PluginManager:
             
             # Store module
             self.plugin_modules[plugin_id] = module
-            
+
+            # Register plugin-shipped fonts with the FontManager (if any).
+            # Plugin manifests can declare a "fonts" block that ships custom
+            # fonts with the plugin; FontManager.register_plugin_fonts handles
+            # the actual loading. Wired here so manifest declarations take
+            # effect without requiring plugin code changes.
+            font_manifest = manifest.get('fonts')
+            if font_manifest and self.font_manager is not None and hasattr(
+                self.font_manager, 'register_plugin_fonts'
+            ):
+                try:
+                    self.font_manager.register_plugin_fonts(plugin_id, font_manifest)
+                except Exception as e:
+                    self.logger.warning(
+                        "Failed to register fonts for plugin %s: %s", plugin_id, e
+                    )
+
             # Validate configuration
             if hasattr(plugin_instance, 'validate_config'):
                 try:

@@ -138,29 +138,28 @@ font = self.font_manager.resolve_font(
 
 ## For Plugin Developers
 
-> ⚠️ **Status**: the plugin-font registration described below is
-> implemented in `src/font_manager.py:150` (`register_plugin_fonts()`)
-> but is **not currently wired into the plugin loader**. Adding a
-> `"fonts"` block to your plugin's `manifest.json` will silently have
-> no effect — the FontManager method exists but nothing calls it.
+> **Note**: plugins that ship their own fonts via a `"fonts"` block
+> in `manifest.json` are registered automatically during plugin load
+> (`src/plugin_system/plugin_manager.py` calls
+> `FontManager.register_plugin_fonts()`). The `plugin://…` source
+> URIs documented below are resolved relative to the plugin's
+> install directory.
 >
-> Until that's connected, plugin authors who need a custom font
-> should load it directly with PIL (or `freetype-py` for BDF) in
-> their plugin's `manager.py` — `FontManager.resolve_font(family=…,
-> size_px=…)` takes a **family name**, not a file path, so it can't
-> be used to pull a font from your plugin directory. The
-> `plugin://…` source URIs described below are only honored by
-> `register_plugin_fonts()` itself, which isn't wired up.
->
-> The `/api/v3/fonts/overrides` endpoints and the **Fonts** tab in
-> the web UI are currently **placeholder implementations** — they
-> return empty arrays and contain "would integrate with the actual
-> font system" comments. Manually registered manager fonts do
-> **not** yet flow into that tab. If you need an override today,
-> load the font directly in your plugin and skip the
-> override system.
+> The **Fonts** tab in the web UI that lists detected
+> manager-registered fonts is still a **placeholder
+> implementation** — fonts that managers register through
+> `register_manager_font()` do not yet appear there. The
+> programmatic per-element override workflow described in
+> [Manual Font Overrides](#manual-font-overrides) below
+> (`set_override()` / `remove_override()` / the
+> `config/font_overrides.json` store) **does** work today and is
+> the supported way to override a font for an element until the
+> Fonts tab is wired up. If you can't wait and need a workaround
+> right now, you can also just load the font directly with PIL
+> (or `freetype-py` for BDF) inside your plugin's `manager.py`
+> and skip the override system entirely.
 
-### Plugin Font Registration (planned)
+### Plugin Font Registration
 
 In your plugin's `manifest.json`:
 

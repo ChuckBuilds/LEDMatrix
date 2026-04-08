@@ -1,13 +1,12 @@
 # Plugin Custom Icons Feature
 
-> ⚠️ **Status:** this doc describes the v2 web interface
-> implementation of plugin custom icons. The feature **regressed when
-> the v3 web interface was built** — the `getPluginIcon()` helper
-> referenced below lived in `templates/index_v2.html` (which is now
-> archived) and was not ported to the v3 templates. Plugin tab icons
-> in v3 are hardcoded to `fas fa-puzzle-piece`
-> (`web_interface/templates/v3/base.html:515` and `:774`). The
-> `icon` field in `manifest.json` is currently silently ignored.
+> **Note:** this doc was originally written against the v2 web
+> interface. The v3 web interface now honors the same `icon` field
+> in `manifest.json` — the API passes it through at
+> `web_interface/blueprints/api_v3.py` and the three plugin-tab
+> render sites in `web_interface/templates/v3/base.html` read it
+> with a `fas fa-puzzle-piece` fallback. The guidance below still
+> applies; only the referenced template/helper names differ.
 
 ## What Was Implemented
 

@@ -336,15 +336,15 @@ pytest --cov=src --cov-report=html
 
 ## Continuous Integration
 
-There is currently no CI test workflow in this repo — `pytest` runs
-locally but is not gated on PRs. The only GitHub Actions workflow is
-[`.github/workflows/security-audit.yml`](../.github/workflows/security-audit.yml),
-which runs bandit and semgrep on every push.
-
-If you'd like to add a test workflow, the recommended setup is a
-`.github/workflows/tests.yml` that runs `pytest` against the
-supported Python versions (3.10, 3.11, 3.12, 3.13 per
-`requirements.txt`). Open an issue or PR if you want to contribute it.
+The repo runs
+[`.github/workflows/security-audit.yml`](../.github/workflows/security-audit.yml)
+(bandit + semgrep) on every push. A pytest CI workflow at
+`.github/workflows/tests.yml` is queued to land alongside this
+PR ([ChuckBuilds/LEDMatrix#307](https://github.com/ChuckBuilds/LEDMatrix/pull/307));
+the workflow file itself was held back from that PR because the
+push token lacked the GitHub `workflow` scope, so it needs to be
+committed separately by a maintainer. Once it's in, this section
+will be updated to describe what the job runs.
 
 ## Best Practices
 

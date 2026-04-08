@@ -1824,6 +1824,7 @@ def get_installed_plugins():
                 'category': plugin_info.get('category', 'General'),
                 'description': plugin_info.get('description', 'No description available'),
                 'tags': plugin_info.get('tags', []),
+                'icon': plugin_info.get('icon', 'fas fa-puzzle-piece'),
                 'enabled': enabled,
                 'verified': verified,
                 'loaded': plugin_info.get('loaded', False),

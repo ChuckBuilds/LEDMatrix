@@ -512,7 +512,8 @@
                             }
                         }
                     };
-                    tabButton.innerHTML = `<i class="fas fa-puzzle-piece"></i>${(plugin.name || plugin.id).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}`;
+                    const iconClass = (plugin.icon || 'fas fa-puzzle-piece').replace(/"/g, '&quot;');
+                    tabButton.innerHTML = `<i class="${iconClass}"></i>${(plugin.name || plugin.id).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}`;
                     pluginTabsNav.appendChild(tabButton);
                 });
                 console.log('[GLOBAL] Updated plugin tabs directly:', plugins.length, 'tabs added');
@@ -771,7 +772,8 @@
                                 };
                                 const div = document.createElement('div');
                                 div.textContent = plugin.name || plugin.id;
-                                tabButton.innerHTML = `<i class="fas fa-puzzle-piece"></i>${div.innerHTML}`;
+                                const iconClass = (plugin.icon || 'fas fa-puzzle-piece').replace(/"/g, '&quot;');
+                                tabButton.innerHTML = `<i class="${iconClass}"></i>${div.innerHTML}`;
                                 pluginTabsNav.appendChild(tabButton);
                             });
                             console.log('[STUB] updatePluginTabs: Added', this.installedPlugins.length, 'plugin tabs');
@@ -1959,9 +1961,15 @@
                                 this.updatePluginTabStates();
                             }
                         };
-                        tabButton.innerHTML = `
-                            <i class="fas fa-puzzle-piece"></i>${this.escapeHtml(plugin.name || plugin.id)}
-                        `;
+                        // Build the <i class="..."> + label as DOM nodes so a
+                        // hostile plugin.icon (e.g. containing a quote) can't
+                        // break out of the attribute. escapeHtml only escapes
+                        // <, >, &, not ", so attribute-context interpolation
+                        // would be unsafe.
+                        const iconEl = document.createElement('i');
+                        iconEl.className = plugin.icon || 'fas fa-puzzle-piece';
+                        const labelNode = document.createTextNode(plugin.name || plugin.id);
+                        tabButton.replaceChildren(iconEl, labelNode);
 
                         // Insert before the closing </nav> tag
                         pluginTabsNav.appendChild(tabButton);

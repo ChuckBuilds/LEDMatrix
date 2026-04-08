@@ -62,7 +62,7 @@ display_manager.defer_update(lambda: self.update_cache(), priority=0)
 # Basic caching
 cached = cache_manager.get("key", max_age=3600)
 cache_manager.set("key", data)
-cache_manager.clear_cache("key")  # there is no delete() method
+cache_manager.delete("key")       # alias for clear_cache(key)
 
 # Advanced caching
 data = cache_manager.get_cached_data_with_strategy("key", data_type="weather")
