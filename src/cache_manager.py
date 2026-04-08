@@ -333,6 +333,10 @@ class CacheManager:
             self._disk_cache_component.clear()
             self.logger.info("Cleared all cache: %d memory entries", memory_count)
 
+    def delete(self, key: str) -> None:
+        """Remove a single cache entry. Alias for ``clear_cache(key)``."""
+        self.clear_cache(key)
+
     def list_cache_files(self) -> List[Dict[str, Any]]:
         """List all cache files with metadata (key, age, size, path).
         

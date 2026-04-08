@@ -336,15 +336,10 @@ pytest --cov=src --cov-report=html
 
 ## Continuous Integration
 
-There is currently no CI test workflow in this repo — `pytest` runs
-locally but is not gated on PRs. The only GitHub Actions workflow is
-[`.github/workflows/security-audit.yml`](../.github/workflows/security-audit.yml),
-which runs bandit and semgrep on every push.
-
-If you'd like to add a test workflow, the recommended setup is a
-`.github/workflows/tests.yml` that runs `pytest` against the
-supported Python versions (3.10, 3.11, 3.12, 3.13 per
-`requirements.txt`). Open an issue or PR if you want to contribute it.
+The repo runs
+[`.github/workflows/security-audit.yml`](../.github/workflows/security-audit.yml)
+(bandit + semgrep) on every push. A pytest CI workflow is planned
+(`.github/workflows/tests.yml`) — see the PR adding it for details.
 
 ## Best Practices
 

@@ -19,14 +19,6 @@ from datetime import datetime, timedelta, timezone
 from typing import Dict, Any, Optional, List
 import pytz
 
-# Import the API counter function from web interface
-try:
-    from web_interface_v2 import increment_api_counter
-except ImportError:
-    # Fallback if web interface is not available
-    def increment_api_counter(kind: str, count: int = 1):
-        pass
-
 
 class BaseOddsManager:
     """
@@ -131,9 +123,7 @@ class BaseOddsManager:
             response = requests.get(url, timeout=self.request_timeout)
             response.raise_for_status()
             raw_data = response.json()
-            
-            # Increment API counter for odds data
-            increment_api_counter('odds', 1)
+
             self.logger.debug(f"Received raw odds data from ESPN: {json.dumps(raw_data, indent=2)}")
             
             odds_data = self._extract_espn_data(raw_data)

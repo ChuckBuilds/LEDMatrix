@@ -195,8 +195,9 @@ Located in: `src/cache_manager.py`
 **Key Methods:**
 - `get(key, max_age=300)`: Get cached value (returns None if missing/stale)
 - `set(key, value, ttl=None)`: Cache a value
-- `clear_cache(key=None)`: Remove a cache entry, or all entries if `key`
-  is omitted. There is no `delete()` method.
+- `delete(key)` / `clear_cache(key=None)`: Remove a single cache entry,
+  or (for `clear_cache` with no argument) every cached entry. `delete`
+  is an alias for `clear_cache(key)`.
 - `get_cached_data_with_strategy(key, data_type)`: Cache get with
   data-type-aware TTL strategy
 - `get_background_cached_data(key, sport_key)`: Cache get for the

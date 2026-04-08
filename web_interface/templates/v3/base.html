@@ -512,7 +512,8 @@
                             }
                         }
                     };
-                    tabButton.innerHTML = `<i class="fas fa-puzzle-piece"></i>${(plugin.name || plugin.id).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}`;
+                    const iconClass = (plugin.icon || 'fas fa-puzzle-piece').replace(/"/g, '&quot;');
+                    tabButton.innerHTML = `<i class="${iconClass}"></i>${(plugin.name || plugin.id).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}`;
                     pluginTabsNav.appendChild(tabButton);
                 });
                 console.log('[GLOBAL] Updated plugin tabs directly:', plugins.length, 'tabs added');
@@ -771,7 +772,8 @@
                                 };
                                 const div = document.createElement('div');
                                 div.textContent = plugin.name || plugin.id;
-                                tabButton.innerHTML = `<i class="fas fa-puzzle-piece"></i>${div.innerHTML}`;
+                                const iconClass = (plugin.icon || 'fas fa-puzzle-piece').replace(/"/g, '&quot;');
+                                tabButton.innerHTML = `<i class="${iconClass}"></i>${div.innerHTML}`;
                                 pluginTabsNav.appendChild(tabButton);
                             });
                             console.log('[STUB] updatePluginTabs: Added', this.installedPlugins.length, 'plugin tabs');
@@ -1959,8 +1961,9 @@
                                 this.updatePluginTabStates();
                             }
                         };
+                        const iconClass = this.escapeHtml(plugin.icon || 'fas fa-puzzle-piece');
                         tabButton.innerHTML = `
-                            <i class="fas fa-puzzle-piece"></i>${this.escapeHtml(plugin.name || plugin.id)}
+                            <i class="${iconClass}"></i>${this.escapeHtml(plugin.name || plugin.id)}
                         `;
 
                         // Insert before the closing </nav> tag

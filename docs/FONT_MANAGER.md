@@ -138,29 +138,20 @@ font = self.font_manager.resolve_font(
 
 ## For Plugin Developers
 
-> ⚠️ **Status**: the plugin-font registration described below is
-> implemented in `src/font_manager.py:150` (`register_plugin_fonts()`)
-> but is **not currently wired into the plugin loader**. Adding a
-> `"fonts"` block to your plugin's `manifest.json` will silently have
-> no effect — the FontManager method exists but nothing calls it.
->
-> Until that's connected, plugin authors who need a custom font
-> should load it directly with PIL (or `freetype-py` for BDF) in
-> their plugin's `manager.py` — `FontManager.resolve_font(family=…,
-> size_px=…)` takes a **family name**, not a file path, so it can't
-> be used to pull a font from your plugin directory. The
-> `plugin://…` source URIs described below are only honored by
-> `register_plugin_fonts()` itself, which isn't wired up.
+> **Note**: plugins that ship their own fonts via a `"fonts"` block
+> in `manifest.json` are registered automatically during plugin load
+> (`src/plugin_system/plugin_manager.py` calls
+> `FontManager.register_plugin_fonts()`). The `plugin://…` source
+> URIs documented below are resolved relative to the plugin's
+> install directory.
 >
 > The `/api/v3/fonts/overrides` endpoints and the **Fonts** tab in
-> the web UI are currently **placeholder implementations** — they
-> return empty arrays and contain "would integrate with the actual
-> font system" comments. Manually registered manager fonts do
-> **not** yet flow into that tab. If you need an override today,
-> load the font directly in your plugin and skip the
-> override system.
+> the web UI are still **placeholder implementations** — manually
+> registered manager fonts do not yet flow into that tab. If you
+> need an override today, load the font directly in your plugin
+> and skip the override system.
 
-### Plugin Font Registration (planned)
+### Plugin Font Registration
 
 In your plugin's `manifest.json`:
 

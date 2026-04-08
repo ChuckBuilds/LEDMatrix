@@ -6,7 +6,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_ROOT="$SCRIPT_DIR"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 PLUGINS_DIR="$PROJECT_ROOT/plugins"
 CONFIG_FILE="$PROJECT_ROOT/dev_plugins.json"
 DEFAULT_DEV_DIR="$HOME/.ledmatrix-dev-plugins"
