@@ -509,23 +509,34 @@ class PluginStoreManager:
             self.logger.error(f"Error fetching registry from URL: {e}", exc_info=True)
             return None
     
-    def fetch_registry(self, force_refresh: bool = False) -> Dict:
+    def fetch_registry(self, force_refresh: bool = False, raise_on_failure: bool = False) -> Dict:
         """
         Fetch the plugin registry from GitHub.
-        
+
         Args:
             force_refresh: Force refresh even if cached
-            
+            raise_on_failure: If True, re-raise network / JSON errors instead
+                of silently falling back to stale cache / empty dict. UI
+                callers prefer the stale-fallback default so the plugin
+                list keeps working on flaky WiFi; the state reconciler
+                needs the explicit failure signal so it can distinguish
+                "plugin genuinely not in registry" from "I couldn't reach
+                the registry at all" and not mark everything unrecoverable.
+
         Returns:
             Registry data with list of available plugins
+
+        Raises:
+            requests.RequestException / json.JSONDecodeError when
+            ``raise_on_failure`` is True and the fetch fails.
         """
         # Check if cache is still valid (within timeout)
         current_time = time.time()
-        if (self.registry_cache and self.registry_cache_time and 
-            not force_refresh and 
+        if (self.registry_cache and self.registry_cache_time and
+            not force_refresh and
             (current_time - self.registry_cache_time) < self.registry_cache_timeout):
             return self.registry_cache
-        
+
         try:
             self.logger.info(f"Fetching plugin registry from {self.REGISTRY_URL}")
             response = self._http_get_with_retries(self.REGISTRY_URL, timeout=10)
@@ -536,6 +547,8 @@ class PluginStoreManager:
             return self.registry_cache
         except requests.RequestException as e:
             self.logger.error(f"Error fetching registry: {e}")
+            if raise_on_failure:
+                raise
             # Prefer stale cache over an empty list so the plugin list UI
             # keeps working on a flaky connection (e.g. Pi on WiFi).
             if self.registry_cache:
@@ -544,6 +557,8 @@ class PluginStoreManager:
             return {"plugins": []}
         except json.JSONDecodeError as e:
             self.logger.error(f"Error parsing registry JSON: {e}")
+            if raise_on_failure:
+                raise
             if self.registry_cache:
                 return self.registry_cache
             return {"plugins": []}

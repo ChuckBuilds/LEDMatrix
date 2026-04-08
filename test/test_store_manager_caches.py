@@ -409,5 +409,73 @@ class TestRegistryStaleCacheFallback(unittest.TestCase):
         self.assertEqual(result, {"plugins": []})
 
 
+class TestFetchRegistryRaiseOnFailure(unittest.TestCase):
+    """``fetch_registry(raise_on_failure=True)`` must propagate errors
+    instead of silently falling back to the stale cache / empty dict.
+
+    Regression guard: the state reconciler relies on this to distinguish
+    "plugin genuinely not in registry" from "I can't reach the registry
+    right now". Without it, a fresh boot with flaky WiFi would poison
+    ``_unrecoverable_missing_on_disk`` with every config entry.
+    """
+
+    def setUp(self):
+        self._tmp = TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.sm = PluginStoreManager(plugins_dir=self._tmp.name)
+
+    def test_request_exception_propagates_when_flag_set(self):
+        import requests as real_requests
+        self.sm.registry_cache = None  # no stale cache
+        with patch.object(
+            self.sm,
+            "_http_get_with_retries",
+            side_effect=real_requests.RequestException("boom"),
+        ):
+            with self.assertRaises(real_requests.RequestException):
+                self.sm.fetch_registry(raise_on_failure=True)
+
+    def test_request_exception_propagates_even_with_stale_cache(self):
+        """Explicit caller opt-in beats the stale-cache convenience."""
+        import requests as real_requests
+        self.sm.registry_cache = {"plugins": [{"id": "stale"}]}
+        self.sm.registry_cache_time = time.time() - 10_000
+        self.sm.registry_cache_timeout = 1
+        with patch.object(
+            self.sm,
+            "_http_get_with_retries",
+            side_effect=real_requests.RequestException("boom"),
+        ):
+            with self.assertRaises(real_requests.RequestException):
+                self.sm.fetch_registry(raise_on_failure=True)
+
+    def test_json_decode_error_propagates_when_flag_set(self):
+        import json as _json
+        self.sm.registry_cache = None
+        bad_response = MagicMock()
+        bad_response.status_code = 200
+        bad_response.raise_for_status = MagicMock()
+        bad_response.json = MagicMock(
+            side_effect=_json.JSONDecodeError("bad", "", 0)
+        )
+        with patch.object(self.sm, "_http_get_with_retries", return_value=bad_response):
+            with self.assertRaises(_json.JSONDecodeError):
+                self.sm.fetch_registry(raise_on_failure=True)
+
+    def test_default_behavior_unchanged_by_new_parameter(self):
+        """UI callers that don't pass the flag still get stale-cache fallback."""
+        import requests as real_requests
+        self.sm.registry_cache = {"plugins": [{"id": "cached"}]}
+        self.sm.registry_cache_time = time.time() - 10_000
+        self.sm.registry_cache_timeout = 1
+        with patch.object(
+            self.sm,
+            "_http_get_with_retries",
+            side_effect=real_requests.RequestException("boom"),
+        ):
+            result = self.sm.fetch_registry()  # default raise_on_failure=False
+        self.assertEqual(result, {"plugins": [{"id": "cached"}]})
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -402,9 +402,17 @@ class StateReconciliation:
         # at all? If not, we know up-front this is unrecoverable and can skip
         # the expensive install_plugin path (which does a forced GitHub fetch
         # before failing).
+        #
+        # IMPORTANT: we must pass raise_on_failure=True here. The default
+        # fetch_registry() silently falls back to a stale cache or an empty
+        # dict on network failure, which would make it impossible to tell
+        # "plugin genuinely not in registry" from "I can't reach the
+        # registry right now" — in the second case we'd end up poisoning
+        # _unrecoverable_missing_on_disk with every config entry on a fresh
+        # boot with no cache.
         registry_has_candidate = False
         try:
-            registry = self.store_manager.fetch_registry()
+            registry = self.store_manager.fetch_registry(raise_on_failure=True)
             registry_ids = {
                 p.get('id') for p in (registry.get('plugins', []) or []) if p.get('id')
             }

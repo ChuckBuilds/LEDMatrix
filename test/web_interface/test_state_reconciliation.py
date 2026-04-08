@@ -426,10 +426,12 @@ class TestStateReconciliationUnrecoverable(unittest.TestCase):
 
         # Config still references ghost; disk still missing it — the
         # reconciler should re-attempt install now that force=True cleared
-        # the cache.
+        # the cache. Use assert_called_once_with so a future regression
+        # that accidentally triggers a second install attempt on force=True
+        # is caught.
         result = self.reconciler.reconcile_state(force=True)
 
-        self.store_manager.install_plugin.assert_called_with("ghost")
+        self.store_manager.install_plugin.assert_called_once_with("ghost")
 
     def test_registry_unreachable_does_not_mark_unrecoverable(self):
         """Transient registry failures should not poison the cache."""
@@ -455,6 +457,50 @@ class TestStateReconciliationUnrecoverable(unittest.TestCase):
         self.assertFalse(inc.can_auto_fix)
         self.assertEqual(inc.fix_action, FixAction.MANUAL_FIX_REQUIRED)
         self.store_manager.install_plugin.assert_not_called()
+
+    def test_real_store_manager_empty_registry_on_network_failure(self):
+        """Regression: using the REAL PluginStoreManager (not a Mock), verify
+        the reconciler does NOT poison the unrecoverable cache when
+        ``fetch_registry`` fails with no stale cache available.
+
+        Previously, the default stale-cache fallback in ``fetch_registry``
+        silently returned ``{"plugins": []}`` on network failure with no
+        cache. The reconciler's ``_auto_repair_missing_plugin`` saw "no
+        candidates in registry" and marked everything unrecoverable — a
+        regression that would bite every user doing a fresh boot on flaky
+        WiFi. The fix is ``fetch_registry(raise_on_failure=True)`` in
+        ``_auto_repair_missing_plugin`` so the reconciler can tell a real
+        registry miss from a network error.
+        """
+        from src.plugin_system.store_manager import PluginStoreManager
+        import requests as real_requests
+
+        real_store = PluginStoreManager(plugins_dir=str(self.plugins_dir))
+        real_store.registry_cache = None  # fresh boot, no cache
+        real_store.registry_cache_time = None
+
+        # Stub the underlying HTTP so no real network call is made but the
+        # real fetch_registry code path runs.
+        real_store._http_get_with_retries = Mock(
+            side_effect=real_requests.ConnectionError("wifi down")
+        )
+
+        reconciler = StateReconciliation(
+            state_manager=self.state_manager,
+            config_manager=self.config_manager,
+            plugin_manager=self.plugin_manager,
+            plugins_dir=self.plugins_dir,
+            store_manager=real_store,
+        )
+
+        result = reconciler.reconcile_state()
+
+        # One inconsistency (ghost is in config, not on disk), but
+        # because the registry lookup failed transiently, we must NOT
+        # have marked it unrecoverable — a later reconcile (after the
+        # network comes back) can still auto-repair.
+        self.assertEqual(len(result.inconsistencies_found), 1)
+        self.assertNotIn("ghost", reconciler._unrecoverable_missing_on_disk)
 
 
 if __name__ == '__main__':
