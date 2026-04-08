@@ -90,6 +90,48 @@ Table-based RSS feed editor with logo uploads.
 - Enable/disable individual feeds
 - Automatic row re-indexing
 
+### Other Built-in Widgets
+
+In addition to the three documented above, these widgets are
+registered and ready to use via `x-widget`:
+
+**Inputs:**
+- `text-input` — Plain text field with optional length constraints
+- `textarea` — Multi-line text input
+- `number-input` — Numeric input with min/max validation
+- `email-input` — Email field with format validation
+- `url-input` — URL field with format validation
+- `password-input` — Password field with show/hide toggle
+
+**Selectors:**
+- `select-dropdown` — Single-select dropdown for `enum` fields
+- `radio-group` — Radio buttons for `enum` fields (alternative to dropdown)
+- `toggle-switch` — Boolean toggle (alternative to a checkbox)
+- `slider` — Numeric range slider for `integer`/`number` with `min`/`max`
+- `color-picker` — RGB color picker; outputs `[r, g, b]` arrays
+- `font-selector` — Picks from fonts in `assets/fonts/` (TTF + BDF)
+- `timezone-selector` — IANA timezone picker
+
+**Date / time / scheduling:**
+- `date-picker` — Single date input
+- `day-selector` — Days-of-week multi-select (Mon–Sun checkboxes)
+- `time-range` — Start/end time pair (e.g. for dim schedules)
+- `schedule-picker` — Full cron-style or weekday/time schedule editor
+
+**Composite / data-source:**
+- `array-table` — Generic table editor for arrays of objects
+- `google-calendar-picker` — Picks from the user's authenticated Google
+  Calendars (used by the calendar plugin)
+
+**Internal (typically not used directly by plugins):**
+- `notification` — Toast notification helper
+- `base-widget` — Base class other widgets extend
+
+The canonical source for each widget's exact schema and options is the
+file in this directory (e.g., `slider.js`, `color-picker.js`). If you
+need a feature one of these doesn't support, see "Creating Custom
+Widgets" below.
+
 ## Using Existing Widgets
 
 To use an existing widget in your plugin's `config_schema.json`, simply add the `x-widget` property to your field definition:

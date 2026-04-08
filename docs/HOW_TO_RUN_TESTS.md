@@ -13,7 +13,7 @@ Make sure you have the testing packages installed:
 pip install -r requirements.txt
 
 # Or install just the test dependencies
-pip install pytest pytest-cov pytest-mock pytest-timeout
+pip install pytest pytest-cov pytest-mock
 ```
 
 ### 2. Set Environment Variables
@@ -85,8 +85,14 @@ pytest -m slow
 # Run all tests in the test directory
 pytest test/
 
-# Run all integration tests
-pytest test/integration/
+# Run plugin tests only
+pytest test/plugins/
+
+# Run web interface tests only
+pytest test/web_interface/
+
+# Run web interface integration tests
+pytest test/web_interface/integration/
 ```
 
 ## Understanding Test Output
@@ -231,20 +237,41 @@ pytest --maxfail=3
 
 ```
 test/
-├── conftest.py                    # Shared fixtures and configuration
-├── test_display_controller.py     # Display controller tests
-├── test_plugin_system.py          # Plugin system tests
-├── test_display_manager.py        # Display manager tests
-├── test_config_service.py         # Config service tests
-├── test_cache_manager.py          # Cache manager tests
-├── test_font_manager.py           # Font manager tests
-├── test_error_handling.py         # Error handling tests
-├── test_config_manager.py         # Config manager tests
-├── integration/                   # Integration tests
-│   ├── test_e2e.py               # End-to-end tests
-│   └── test_plugin_integration.py # Plugin integration tests
-├── test_error_scenarios.py        # Error scenario tests
-└── test_edge_cases.py             # Edge case tests
+├── conftest.py                          # Shared fixtures and configuration
+├── test_display_controller.py           # Display controller tests
+├── test_display_manager.py              # Display manager tests
+├── test_plugin_system.py                # Plugin system tests
+├── test_plugin_loader.py                # Plugin discovery/loading tests
+├── test_plugin_loading_failures.py      # Plugin failure-mode tests
+├── test_cache_manager.py                # Cache manager tests
+├── test_config_manager.py               # Config manager tests
+├── test_config_service.py               # Config service tests
+├── test_config_validation_edge_cases.py # Config edge cases
+├── test_font_manager.py                 # Font manager tests
+├── test_layout_manager.py               # Layout manager tests
+├── test_text_helper.py                  # Text helper tests
+├── test_error_handling.py               # Error handling tests
+├── test_error_aggregator.py             # Error aggregation tests
+├── test_schema_manager.py               # Schema manager tests
+├── test_web_api.py                      # Web API tests
+├── test_nba_*.py                        # NBA-specific test suites
+├── plugins/                             # Per-plugin test suites
+│   ├── test_clock_simple.py
+│   ├── test_calendar.py
+│   ├── test_basketball_scoreboard.py
+│   ├── test_soccer_scoreboard.py
+│   ├── test_odds_ticker.py
+│   ├── test_text_display.py
+│   ├── test_visual_rendering.py
+│   └── test_plugin_base.py
+└── web_interface/
+    ├── test_config_manager_atomic.py
+    ├── test_state_reconciliation.py
+    ├── test_plugin_operation_queue.py
+    ├── test_dedup_unique_arrays.py
+    └── integration/                     # Web interface integration tests
+        ├── test_config_flows.py
+        └── test_plugin_operations.py
 ```
 
 ### Test Categories
@@ -309,11 +336,15 @@ pytest --cov=src --cov-report=html
 
 ## Continuous Integration
 
-Tests are configured to run automatically in CI/CD. The GitHub Actions workflow (`.github/workflows/tests.yml`) runs:
+There is currently no CI test workflow in this repo — `pytest` runs
+locally but is not gated on PRs. The only GitHub Actions workflow is
+[`.github/workflows/security-audit.yml`](../.github/workflows/security-audit.yml),
+which runs bandit and semgrep on every push.
 
-- All tests on multiple Python versions (3.10, 3.11, 3.12)
-- Coverage reporting
-- Uploads coverage to Codecov (if configured)
+If you'd like to add a test workflow, the recommended setup is a
+`.github/workflows/tests.yml` that runs `pytest` against the
+supported Python versions (3.10, 3.11, 3.12, 3.13 per
+`requirements.txt`). Open an issue or PR if you want to contribute it.
 
 ## Best Practices
 

@@ -12,6 +12,21 @@ When developing plugins in separate repositories, you need a way to:
 
 The solution uses **symbolic links** to connect plugin repositories to the `plugins/` directory, combined with a helper script to manage the linking process.
 
+> **Plugin directory note:** the dev workflow described here puts
+> symlinks in `plugins/`. The plugin loader's *production* default is
+> `plugin-repos/` (set by `plugin_system.plugins_directory` in
+> `config.json`). Importantly, the main discovery path
+> (`PluginManager.discover_plugins()`) only scans the configured
+> directory — it does **not** fall back to `plugins/`. Two narrower
+> paths do: the Plugin Store install/update logic in `store_manager.py`,
+> and `schema_manager.get_schema_path()` (which the web UI form
+> generator uses to find `config_schema.json`). That's why plugins
+> installed via the Plugin Store still work even with symlinks in
+> `plugins/`, but your own dev plugin won't appear in the rotation
+> until you either move it to `plugin-repos/` or change
+> `plugin_system.plugins_directory` to `plugins` in the General tab
+> of the web UI. The latter is the smoother dev setup.
+
 ## Quick Start
 
 ### 1. Link a Plugin from GitHub
@@ -466,7 +481,9 @@ When developing plugins, you'll need to use the APIs provided by the LEDMatrix s
 
 **Display Manager** (`self.display_manager`):
 - `clear()`, `update_display()` - Core display operations
-- `draw_text()`, `draw_image()` - Rendering methods
+- `draw_text()` - Text rendering. For images, paste directly onto
+  `display_manager.image` (a PIL Image) and call `update_display()`;
+  there is no `draw_image()` helper method.
 - `draw_weather_icon()`, `draw_sun()`, `draw_cloud()` - Weather icons
 - `get_text_width()`, `get_font_height()` - Text utilities
 - `set_scrolling_state()`, `defer_update()` - Scrolling state management

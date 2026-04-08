@@ -28,14 +28,29 @@ These service files are installed by the installation scripts in `scripts/instal
 
 ## Manual Installation
 
-If you need to install a service manually:
-
-```bash
-sudo cp systemd/ledmatrix.service /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable ledmatrix.service
-sudo systemctl start ledmatrix.service
-```
+> **Important:** the unit files in this directory contain
+> `__PROJECT_ROOT_DIR__` placeholders that the install scripts replace
+> with the actual project directory at install time. Do **not** copy
+> them directly to `/etc/systemd/system/` — the service will fail to
+> start with `WorkingDirectory=__PROJECT_ROOT_DIR__` errors.
+>
+> Always install via the helper script:
+>
+> ```bash
+> sudo ./scripts/install/install_service.sh
+> ```
+>
+> If you really need to do it by hand, substitute the placeholder
+> first:
+>
+> ```bash
+> PROJECT_ROOT="$(pwd)"
+> sed "s|__PROJECT_ROOT_DIR__|$PROJECT_ROOT|g" systemd/ledmatrix.service \
+>   | sudo tee /etc/systemd/system/ledmatrix.service > /dev/null
+> sudo systemctl daemon-reload
+> sudo systemctl enable ledmatrix.service
+> sudo systemctl start ledmatrix.service
+> ```
 
 ## Service Management
 

@@ -95,14 +95,14 @@ Official plugin registry for [LEDMatrix](https://github.com/ChuckBuilds/LEDMatri
 
 All plugins can be installed through the LEDMatrix web interface:
 
-1. Open web interface (http://your-pi-ip:5050)
-2. Go to Plugin Store tab
-3. Browse or search for plugins
-4. Click Install
+1. Open web interface (http://your-pi-ip:5000)
+2. Open the **Plugin Manager** tab
+3. Browse or search the **Plugin Store** section
+4. Click **Install**
 
 Or via API:
 ```bash
-curl -X POST http://your-pi-ip:5050/api/plugins/install \
+curl -X POST http://your-pi-ip:5000/api/v3/plugins/install \
   -d '{"plugin_id": "clock-simple"}'
 ```
 
@@ -152,7 +152,7 @@ Before submitting, ensure your plugin:
 1. **Test Your Plugin**
    ```bash
    # Install via URL on your Pi
-   curl -X POST http://your-pi:5050/api/plugins/install-from-url \
+   curl -X POST http://your-pi:5000/api/v3/plugins/install-from-url \
      -d '{"repo_url": "https://github.com/you/ledmatrix-your-plugin"}'
    ```
 
@@ -311,7 +311,7 @@ git push
 # 1. Receive PR on ledmatrix-plugins repo
 # 2. Review using VERIFICATION.md checklist
 # 3. Test installation:
-curl -X POST http://pi:5050/api/plugins/install-from-url \
+curl -X POST http://pi:5000/api/v3/plugins/install-from-url \
   -d '{"repo_url": "https://github.com/contributor/plugin"}'
 
 # 4. If approved, merge PR

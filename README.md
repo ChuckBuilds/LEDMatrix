@@ -782,14 +782,18 @@ The LEDMatrix system includes Web Interface that runs on port 5000 and provides 
 
 ### Installing the Web Interface Service
 
+> The first-time installer (`first_time_install.sh`) already installs the
+> web service. The steps below only apply if you need to (re)install it
+> manually.
+
 1. Make the install script executable:
 ```bash
-chmod +x install_web_service.sh
+chmod +x scripts/install/install_web_service.sh
 ```
 
 2. Run the install script with sudo:
 ```bash
-sudo ./install_web_service.sh
+sudo ./scripts/install/install_web_service.sh
 ```
 
 The script will:
@@ -874,3 +878,27 @@ sudo systemctl enable ledmatrix-web.service
 
 
 ### If you've read this far — thanks!  
+
+-----------------------------------------------------------------------------------
+
+## License
+
+LEDMatrix is licensed under the
+[GNU General Public License v3.0 or later](LICENSE).
+
+LEDMatrix builds on
+[`rpi-rgb-led-matrix`](https://github.com/hzeller/rpi-rgb-led-matrix),
+which is GPL-2.0-or-later. The "or later" clause makes it compatible
+with GPL-3.0 distribution.
+
+Plugin contributions in
+[`ledmatrix-plugins`](https://github.com/ChuckBuilds/ledmatrix-plugins)
+are also GPL-3.0-or-later unless individual plugins specify otherwise.
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, the PR
+flow, and how to add a plugin. Bug reports and feature requests go in
+the [issue tracker](https://github.com/ChuckBuilds/LEDMatrix/issues).
+Security issues should be reported privately per
+[SECURITY.md](SECURITY.md).

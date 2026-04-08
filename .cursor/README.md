@@ -43,39 +43,48 @@ cp ../../.cursor/plugin_templates/*.template .
 2. **Using dev_plugin_setup.sh**:
 ```bash
 # Link from GitHub
-./dev_plugin_setup.sh link-github my-plugin
+./scripts/dev/dev_plugin_setup.sh link-github my-plugin
 
 # Link local repo
-./dev_plugin_setup.sh link my-plugin /path/to/repo
+./scripts/dev/dev_plugin_setup.sh link my-plugin /path/to/repo
 ```
 
-### Running Plugins
+### Running the Display
 
 ```bash
-# Emulator (development)
-python run.py --emulator
+# Emulator mode (development, no hardware required)
+python3 run.py --emulator
+# (equivalent: EMULATOR=true python3 run.py)
 
-# Hardware (production)
-python run.py
+# Hardware (production, requires the rpi-rgb-led-matrix submodule built)
+python3 run.py
 
-# As service
+# As a systemd service
 sudo systemctl start ledmatrix
+
+# Dev preview server (renders plugins to a browser without running run.py)
+python3 scripts/dev_server.py  # then open http://localhost:5001
 ```
+
+The `-e`/`--emulator` CLI flag is defined in `run.py:19-20` and
+sets `os.environ["EMULATOR"] = "true"` before any display imports,
+which `src/display_manager.py:2` then reads to switch between the
+hardware and emulator backends.
 
 ### Managing Plugins
 
 ```bash
 # List plugins
-./dev_plugin_setup.sh list
+./scripts/dev/dev_plugin_setup.sh list
 
 # Check status
-./dev_plugin_setup.sh status
+./scripts/dev/dev_plugin_setup.sh status
 
 # Update plugin(s)
-./dev_plugin_setup.sh update [plugin-name]
+./scripts/dev/dev_plugin_setup.sh update [plugin-name]
 
 # Unlink plugin
-./dev_plugin_setup.sh unlink <plugin-name>
+./scripts/dev/dev_plugin_setup.sh unlink <plugin-name>
 ```
 
 ## Using These Files with Cursor
@@ -118,9 +127,13 @@ Refer to `plugins_guide.md` for:
 - **Plugin System**: `src/plugin_system/`
 - **Base Plugin**: `src/plugin_system/base_plugin.py`
 - **Plugin Manager**: `src/plugin_system/plugin_manager.py`
-- **Example Plugins**: `plugins/hockey-scoreboard/`, `plugins/football-scoreboard/`
+- **Example Plugins**: see the
+  [`ledmatrix-plugins`](https://github.com/ChuckBuilds/ledmatrix-plugins)
+  repo for canonical sources (e.g. `plugins/hockey-scoreboard/`,
+  `plugins/football-scoreboard/`). Installed plugins land in
+  `plugin-repos/` (default) or `plugins/` (dev fallback).
 - **Architecture Docs**: `docs/PLUGIN_ARCHITECTURE_SPEC.md`
-- **Development Setup**: `dev_plugin_setup.sh`
+- **Development Setup**: `scripts/dev/dev_plugin_setup.sh`
 
 ## Getting Help
 

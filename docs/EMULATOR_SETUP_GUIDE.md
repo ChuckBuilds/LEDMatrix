@@ -32,9 +32,14 @@ The LEDMatrix emulator allows you to run and test LEDMatrix displays on your com
 ### 1. Clone the Repository
 
 ```bash
-git clone https://github.com/your-username/LEDMatrix.git
+git clone --recurse-submodules https://github.com/ChuckBuilds/LEDMatrix.git
 cd LEDMatrix
 ```
+
+> The emulator does **not** require building the
+> `rpi-rgb-led-matrix-master` submodule (it uses `RGBMatrixEmulator`
+> instead), so `--recurse-submodules` is optional here. Run it anyway if
+> you also want to test the real-hardware code path.
 
 ### 2. Install Emulator Dependencies
 
@@ -58,12 +63,13 @@ pip install -r requirements.txt
 
 ### 1. Emulator Configuration File
 
-The emulator uses `emulator_config.json` for configuration. Here's the default configuration:
+The emulator uses `emulator_config.json` for configuration. Here's the
+default configuration as it ships in the repo:
 
 ```json
 {
     "pixel_outline": 0,
-    "pixel_size": 16,
+    "pixel_size": 5,
     "pixel_style": "square",
     "pixel_glow": 6,
     "display_adapter": "pygame",
@@ -90,7 +96,7 @@ The emulator uses `emulator_config.json` for configuration. Here's the default c
 | Option | Description | Default | Values |
 |--------|-------------|---------|--------|
 | `pixel_outline` | Pixel border thickness | 0 | 0-5 |
-| `pixel_size` | Size of each pixel | 16 | 8-64 |
+| `pixel_size` | Size of each pixel | 5 | 1-64 (8–16 is typical for testing) |
 | `pixel_style` | Pixel shape | "square" | "square", "circle" |
 | `pixel_glow` | Glow effect intensity | 6 | 0-20 |
 | `display_adapter` | Display backend | "pygame" | "pygame", "browser" |

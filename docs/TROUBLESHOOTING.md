@@ -47,12 +47,14 @@ bash scripts/diagnose_web_interface.sh
 # WiFi setup verification
 ./scripts/verify_wifi_setup.sh
 
-# Weather plugin troubleshooting
-./troubleshoot_weather.sh
-
 # Captive portal troubleshooting
 ./scripts/troubleshoot_captive_portal.sh
 ```
+
+> Weather is provided by the `ledmatrix-weather` plugin (installed via the
+> Plugin Store). To troubleshoot weather, check that plugin's tab in the
+> web UI for its API key and recent error messages, then watch the
+> **Logs** tab.
 
 ### 4. Check Configuration
 
@@ -85,7 +87,7 @@ python3 web_interface/start.py
 #### Service Not Running/Starting
 
 **Symptoms:**
-- Cannot access web interface at http://your-pi-ip:5050
+- Cannot access web interface at http://your-pi-ip:5000
 - `systemctl status ledmatrix-web` shows `inactive (dead)`
 
 **Solutions:**
@@ -157,13 +159,13 @@ sudo systemctl restart ledmatrix-web
 
 **Symptoms:**
 - Error: `Address already in use`
-- Service fails to bind to port 5050
+- Service fails to bind to port 5000
 
 **Solutions:**
 
 1. **Check what's using the port:**
    ```bash
-   sudo lsof -i :5050
+   sudo lsof -i :5000
    ```
 
 2. **Kill the conflicting process:**
@@ -265,7 +267,7 @@ sudo systemctl cat ledmatrix-web | grep User
 6. **Manually enable AP mode:**
    ```bash
    # Via API
-   curl -X POST http://localhost:5050/api/wifi/ap/enable
+   curl -X POST http://localhost:5000/api/wifi/ap/enable
 
    # Via Python
    python3 -c "
@@ -291,9 +293,8 @@ sudo systemctl cat ledmatrix-web | grep User
    ```
 
 2. **Use correct IP address and port:**
-   - Correct: `http://192.168.4.1:5050`
-   - NOT: `http://192.168.4.1` (port 80)
-   - NOT: `http://192.168.4.1:5000`
+   - Correct: `http://192.168.4.1:5000`
+   - NOT: `http://192.168.4.1` (port 80 — nothing listens there)
 
 3. **Check wlan0 has correct IP:**
    ```bash
@@ -309,7 +310,7 @@ sudo systemctl cat ledmatrix-web | grep User
 
 5. **Test from the Pi itself:**
    ```bash
-   curl http://192.168.4.1:5050
+   curl http://192.168.4.1:5000
    # Should return HTML
    ```
 
@@ -340,11 +341,11 @@ sudo systemctl cat ledmatrix-web | grep User
 
 4. **Manual captive portal testing:**
    - Try these URLs manually:
-     - `http://192.168.4.1:5050`
+     - `http://192.168.4.1:5000`
      - `http://captive.apple.com`
      - `http://connectivitycheck.gstatic.com/generate_204`
 
-#### Firewall Blocking Port 5050
+#### Firewall Blocking Port 5000
 
 **Symptoms:**
 - Services running but cannot connect
@@ -357,9 +358,9 @@ sudo systemctl cat ledmatrix-web | grep User
    sudo ufw status
    ```
 
-2. **Allow port 5050:**
+2. **Allow port 5000:**
    ```bash
-   sudo ufw allow 5050/tcp
+   sudo ufw allow 5000/tcp
    ```
 
 3. **Check iptables:**
@@ -372,7 +373,7 @@ sudo systemctl cat ledmatrix-web | grep User
    sudo ufw disable
    # Test if it works, then re-enable and add rule
    sudo ufw enable
-   sudo ufw allow 5050/tcp
+   sudo ufw allow 5000/tcp
    ```
 
 ---
@@ -403,9 +404,9 @@ sudo systemctl cat ledmatrix-web | grep User
    ```
 
 3. **Verify in web interface:**
-   - Navigate to Plugin Management tab
-   - Toggle the switch to enable
-   - Restart display
+   - Open the **Plugin Manager** tab
+   - Toggle the plugin switch to enable
+   - From **Overview**, click **Restart Display Service**
 
 #### Plugin Not Loading
 
@@ -690,12 +691,12 @@ nslookup api.openweathermap.org
 dig api.openweathermap.org
 
 # Test HTTP endpoint
-curl -I http://your-pi-ip:5050
-curl http://192.168.4.1:5050
+curl -I http://your-pi-ip:5000
+curl http://192.168.4.1:5000
 
 # Check listening ports
-sudo lsof -i :5050
-sudo netstat -tuln | grep 5050
+sudo lsof -i :5000
+sudo netstat -tuln | grep 5000
 
 # Check network interfaces
 ip addr show
@@ -808,7 +809,7 @@ echo ""
 
 echo "4. Network Status:"
 ip addr show | grep -E "(wlan|eth|inet )"
-curl -s http://localhost:5050 > /dev/null && echo "Web interface: OK" || echo "Web interface: FAILED"
+curl -s http://localhost:5000 > /dev/null && echo "Web interface: OK" || echo "Web interface: FAILED"
 echo ""
 
 echo "5. File Structure:"
@@ -837,22 +838,22 @@ A properly functioning system should show:
    ```
 
 2. **Web Interface Accessible:**
-   - Navigate to http://your-pi-ip:5050
+   - Navigate to http://your-pi-ip:5000
    - Page loads successfully
    - Display preview visible
 
 3. **Logs Show Normal Operation:**
    ```
-   INFO: Web interface started on port 5050
+   INFO: Web interface started on port 5000
    INFO: Loaded X plugins
    INFO: Display rotation active
    ```
 
 4. **Process Listening on Port:**
    ```bash
-   $ sudo lsof -i :5050
+   $ sudo lsof -i :5000
    COMMAND   PID USER   FD   TYPE DEVICE SIZE/OFF NODE NAME
-   python3  1234 ledpi  3u   IPv4  12345      0t0  TCP *:5050 (LISTEN)
+   python3  1234 ledpi  3u   IPv4  12345      0t0  TCP *:5000 (LISTEN)
    ```
 
 5. **Plugins Loading:**

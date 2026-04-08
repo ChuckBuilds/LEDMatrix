@@ -1,5 +1,24 @@
 # LEDMatrix Plugin Architecture Specification
 
+> **Historical design document.** This spec was written *before* the
+> plugin system was built. Most of it is still architecturally
+> accurate, but specific details have drifted from the shipped
+> implementation:
+>
+> - Code paths reference `web_interface_v2.py`; the current web UI is
+>   `web_interface/app.py` with v3 Blueprint-based templates.
+> - The example Flask routes use `/api/plugins/*`; the real API
+>   blueprint is mounted at `/api/v3` (`web_interface/app.py:144`).
+> - The default plugin location is `plugin-repos/` (configurable via
+>   `plugin_system.plugins_directory`), not `./plugins/`.
+> - The "Migration Strategy" and "Implementation Roadmap" sections
+>   describe work that has now shipped.
+>
+> For the current system, see:
+> [PLUGIN_DEVELOPMENT_GUIDE.md](PLUGIN_DEVELOPMENT_GUIDE.md),
+> [PLUGIN_API_REFERENCE.md](PLUGIN_API_REFERENCE.md), and
+> [REST_API_REFERENCE.md](REST_API_REFERENCE.md).
+
 ## Executive Summary
 
 This document outlines the transformation of the LEDMatrix project into a modular, plugin-based architecture that enables user-created displays. The goal is to create a flexible, extensible system similar to Home Assistant Community Store (HACS) where users can discover, install, and manage custom display managers from GitHub repositories.
@@ -9,7 +28,7 @@ This document outlines the transformation of the LEDMatrix project into a modula
 1. **Gradual Migration**: Existing managers remain in core while new plugin infrastructure is built
 2. **Migration Required**: Breaking changes with migration tools provided
 3. **GitHub-Based Store**: Simple discovery system, packages served from GitHub repos
-4. **Plugin Location**: `./plugins/` directory in project root
+4. **Plugin Location**: `./plugins/` directory in project root *(actual default is now `plugin-repos/`)*
 
 ---
 

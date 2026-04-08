@@ -114,6 +114,95 @@ Get display duration for this plugin. Can be overridden for dynamic durations.
 
 Return plugin info for display in web UI. Override to provide additional state information.
 
+### Dynamic-duration hooks
+
+Plugins that render multi-step content (e.g. cycling through several games)
+can extend their display time until they've shown everything. To opt in,
+either set `dynamic_duration.enabled: true` in the plugin's config or
+override `supports_dynamic_duration()`.
+
+#### `supports_dynamic_duration() -> bool`
+
+Return `True` if this plugin should use dynamic durations. Default reads
+`config["dynamic_duration"]["enabled"]`.
+
+#### `get_dynamic_duration_cap() -> Optional[float]`
+
+Maximum number of seconds the controller will keep this plugin on screen
+in dynamic mode. Default reads
+`config["dynamic_duration"]["max_duration_seconds"]`.
+
+#### `is_cycle_complete() -> bool`
+
+Override this to return `True` only after the plugin has rendered all of
+its content for the current rotation. Default returns `True` immediately,
+which means a single `display()` call counts as a full cycle.
+
+#### `reset_cycle_state() -> None`
+
+Called by the controller before each new dynamic-duration session. Reset
+internal counters/iterators here.
+
+### Live priority hooks
+
+Live priority lets a plugin temporarily take over the rotation when it has
+urgent content (live games, breaking news). Enable by setting
+`live_priority: true` in the plugin's config and overriding
+`has_live_content()`.
+
+#### `has_live_priority() -> bool`
+
+Whether live priority is enabled in config (default reads
+`config["live_priority"]`).
+
+#### `has_live_content() -> bool`
+
+Override to return `True` when the plugin currently has urgent content.
+Default returns `False`.
+
+#### `get_live_modes() -> List[str]`
+
+List of display modes to show during a live takeover. Default returns the
+plugin's `display_modes` from its manifest.
+
+### Vegas scroll hooks
+
+Vegas mode shows multiple plugins as a single continuous scroll instead of
+rotating one at a time. Plugins control how their content appears via
+these hooks. See [ADVANCED_FEATURES.md](ADVANCED_FEATURES.md) for the user
+side of Vegas mode.
+
+#### `get_vegas_content() -> Optional[PIL.Image | List[PIL.Image] | None]`
+
+Return content to inject into the scroll. Multi-item plugins (sports,
+odds, news) should return a *list* of PIL Images so each item scrolls
+independently. Static plugins (clock, weather) can return a single image.
+Returning `None` falls back to capturing whatever `display()` produces.
+
+#### `get_vegas_content_type() -> str`
+
+`'multi'`, `'static'`, or `'none'`. Affects how Vegas mode treats the
+plugin. Default `'static'`.
+
+#### `get_vegas_display_mode() -> VegasDisplayMode`
+
+Returns one of `VegasDisplayMode.SCROLL`, `FIXED_SEGMENT`, or `STATIC`.
+Read from `config["vegas_mode"]` or override directly.
+
+#### `get_supported_vegas_modes() -> List[VegasDisplayMode]`
+
+The set of Vegas modes this plugin can render. Used by the UI to populate
+the mode selector for this plugin.
+
+#### `get_vegas_segment_width() -> Optional[int]`
+
+For `FIXED_SEGMENT` plugins, the width in pixels of the segment they
+occupy in the scroll. `None` lets the controller pick a default.
+
+> The full source for `BasePlugin` lives in
+> `src/plugin_system/base_plugin.py`. If a method here disagrees with the
+> source, the source wins — please open an issue or PR to fix the doc.
+
 ---
 
 ## Display Manager
@@ -228,22 +317,30 @@ date_str = self.display_manager.format_date_with_ordinal(datetime.now())
 
 ### Image Rendering
 
-#### `draw_image(image: PIL.Image, x: int, y: int) -> None`
+The display manager doesn't provide a dedicated `draw_image()` method.
+Instead, plugins paste directly onto the underlying PIL Image
+(`display_manager.image`), then call `update_display()` to push the buffer
+to the matrix.
 
-Draw a PIL Image object on the canvas.
-
-**Parameters**:
-- `image`: PIL Image object
-- `x` (int): X position (left edge)
-- `y` (int): Y position (top edge)
-
-**Example**:
 ```python
 from PIL import Image
-logo = Image.open("assets/logo.png")
-self.display_manager.draw_image(logo, x=10, y=10)
+
+logo = Image.open("assets/logo.png").convert("RGB")
+self.display_manager.image.paste(logo, (10, 10))
 self.display_manager.update_display()
 ```
+
+For transparency support, paste using a mask:
+
+```python
+icon = Image.open("assets/icon.png").convert("RGBA")
+self.display_manager.image.paste(icon, (5, 5), icon)
+self.display_manager.update_display()
+```
+
+This is the same pattern the bundled scoreboard base classes
+(`src/base_classes/baseball.py`, `basketball.py`, `football.py`,
+`hockey.py`) use, so it's the canonical way to render arbitrary images.
 
 ### Weather Icons
 
@@ -440,12 +537,23 @@ self.cache_manager.set("weather_data", {
 })
 ```
 
-#### `delete(key: str) -> None`
+#### `clear_cache(key: Optional[str] = None) -> None`
 
-Remove a specific cache entry.
+Remove a specific cache entry, or all cache entries when called without
+arguments.
 
 **Parameters**:
-- `key` (str): Cache key to delete
+- `key` (str, optional): Cache key to delete. If omitted, every cached
+  entry (memory + disk) is cleared.
+
+**Example**:
+```python
+# Drop one stale entry
+self.cache_manager.clear_cache("weather_data")
+
+# Nuke everything (rare — typically only used by maintenance tooling)
+self.cache_manager.clear_cache()
+```
 
 ### Advanced Methods
 

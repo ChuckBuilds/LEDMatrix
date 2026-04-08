@@ -437,26 +437,26 @@ When on-demand expires or is cleared, the display returns to the next highest pr
 
 ### Web Interface Controls
 
-**Access:** Navigate to Settings → Plugin Management
+Each installed plugin has its own tab in the second nav row of the web
+UI. Inside the plugin's tab, scroll to **On-Demand Controls**:
 
-**Controls:**
-- **Show Now Button** - Triggers plugin immediately
-- **Duration Slider** - Set display time (0 = indefinite)
-- **Pin Checkbox** - Keep showing until manually cleared
-- **Stop Button** - Clear on-demand and return to rotation
-- **Shift+Click Stop** - Stop the entire display service
+- **Run On-Demand** — triggers the plugin immediately, even if it's
+  disabled in the rotation
+- **Stop On-Demand** — clears on-demand and returns to the normal
+  rotation
 
-**Status Card:**
-- Real-time status updates
-- Shows active plugin and remaining time
-- Pin status indicator
+The display service must be running. The status banner at the top of
+the plugin tab shows the active on-demand plugin, mode, and remaining
+time when something is active.
 
 ### REST API Reference
+
+The API is mounted at `/api/v3` (`web_interface/app.py:144`).
 
 #### Start On-Demand Display
 
 ```bash
-POST /api/display/on-demand/start
+POST /api/v3/display/on-demand/start
 
 # Body:
 {
@@ -467,20 +467,20 @@ POST /api/display/on-demand/start
 
 # Examples:
 # 30-second preview
-curl -X POST http://localhost:5050/api/display/on-demand/start \
+curl -X POST http://localhost:5000/api/v3/display/on-demand/start \
   -H "Content-Type: application/json" \
   -d '{"plugin_id": "weather", "duration": 30}'
 
 # Pin indefinitely
-curl -X POST http://localhost:5050/api/display/on-demand/start \
+curl -X POST http://localhost:5000/api/v3/display/on-demand/start \
   -H "Content-Type: application/json" \
-  -d '{"plugin_id": "hockey-scores", "pinned": true}'
+  -d '{"plugin_id": "hockey-scoreboard", "pinned": true}'
 ```
 
 #### Stop On-Demand Display
 
 ```bash
-POST /api/display/on-demand/stop
+POST /api/v3/display/on-demand/stop
 
 # Body:
 {
@@ -489,10 +489,10 @@ POST /api/display/on-demand/stop
 
 # Examples:
 # Clear on-demand
-curl -X POST http://localhost:5050/api/display/on-demand/stop
+curl -X POST http://localhost:5000/api/v3/display/on-demand/stop
 
 # Stop service too
-curl -X POST http://localhost:5050/api/display/on-demand/stop \
+curl -X POST http://localhost:5000/api/v3/display/on-demand/stop \
   -H "Content-Type: application/json" \
   -d '{"stop_service": true}'
 ```
@@ -500,10 +500,10 @@ curl -X POST http://localhost:5050/api/display/on-demand/stop \
 #### Get On-Demand Status
 
 ```bash
-GET /api/display/on-demand/status
+GET /api/v3/display/on-demand/status
 
 # Example:
-curl http://localhost:5050/api/display/on-demand/status
+curl http://localhost:5000/api/v3/display/on-demand/status
 
 # Response:
 {
@@ -516,35 +516,15 @@ curl http://localhost:5050/api/display/on-demand/status
 }
 ```
 
-### Python API Methods
-
-```python
-from src.display_controller import DisplayController
-
-controller = DisplayController()
-
-# Show plugin for 30 seconds
-controller.show_on_demand('weather', duration=30)
-
-# Pin plugin until manually cleared
-controller.show_on_demand('hockey-scores', pinned=True)
-
-# Show indefinitely (not pinned, clears on expiry if duration set later)
-controller.show_on_demand('weather', duration=0)
-
-# Use plugin's default duration
-controller.show_on_demand('weather')
-
-# Clear on-demand
-controller.clear_on_demand()
-
-# Check status
-is_active = controller.is_on_demand_active()
-
-# Get detailed info
-info = controller.get_on_demand_info()
-# Returns: {'active': bool, 'mode': str, 'duration': float, 'remaining': float, 'pinned': bool}
-```
+> There is no public Python on-demand API. The display controller's
+> on-demand machinery is internal — drive it through the REST endpoints
+> above (or the web UI buttons), which write a request into the cache
+> manager under the `display_on_demand_request` key
+> (`web_interface/blueprints/api_v3.py:1622,1687`) that the controller
+> polls at `src/display_controller.py:921`. A separate
+> `display_on_demand_config` key is used by the controller itself
+> during activation to track what's currently running (written at
+> `display_controller.py:1195`, cleared at `:1221`).
 
 ### Duration Modes
 
@@ -557,27 +537,31 @@ info = controller.get_on_demand_info()
 
 ### Use Case Examples
 
-**Quick Check (30-second preview):**
-```python
-controller.show_on_demand('weather', duration=30)
+**Quick check (30-second preview):**
+```bash
+curl -X POST http://localhost:5000/api/v3/display/on-demand/start \
+  -H "Content-Type: application/json" \
+  -d '{"plugin_id": "ledmatrix-weather", "duration": 30}'
 ```
 
-**Pin Important Information:**
-```python
-controller.show_on_demand('game-score', pinned=True)
+**Pin important information:**
+```bash
+curl -X POST http://localhost:5000/api/v3/display/on-demand/start \
+  -H "Content-Type: application/json" \
+  -d '{"plugin_id": "hockey-scoreboard", "pinned": true}'
 # ... later ...
-controller.clear_on_demand()
+curl -X POST http://localhost:5000/api/v3/display/on-demand/stop
 ```
 
-**Indefinite Display:**
-```python
-controller.show_on_demand('welcome-message', duration=0)
+**Indefinite display:**
+```bash
+curl -X POST http://localhost:5000/api/v3/display/on-demand/start \
+  -H "Content-Type: application/json" \
+  -d '{"plugin_id": "text-display", "duration": 0}'
 ```
 
-**Testing Plugin:**
-```python
-controller.show_on_demand('my-new-plugin', duration=60)
-```
+**Testing a plugin during development:** the same call works, or just
+click **Run On-Demand** in the plugin's tab.
 
 ### Best Practices
 
@@ -613,7 +597,10 @@ controller.show_on_demand('my-new-plugin', duration=60)
 
 ### Overview
 
-On-demand display uses Redis cache keys to manage state across service restarts and coordinate between web interface and display controller. Understanding these keys helps troubleshoot stuck states.
+On-demand display uses cache keys (managed by `src/cache_manager.py` —
+file-based, not Redis) to coordinate state between the web interface
+and the display controller across service restarts. Understanding these
+keys helps troubleshoot stuck states.
 
 ### Cache Keys
 
@@ -688,19 +675,26 @@ On-demand display uses Redis cache keys to manage state across service restarts 
 ### Manual Recovery Procedures
 
 **Via Web Interface (Recommended):**
-1. Navigate to Settings → Cache Management
-2. Search for "on_demand" keys
-3. Select keys to delete
-4. Click "Delete Selected"
-5. Restart display: `sudo systemctl restart ledmatrix`
+1. Open the **Cache** tab in the web UI
+2. Find the `display_on_demand_*` entries
+3. Delete them
+4. Restart display: `sudo systemctl restart ledmatrix`
 
 **Via Command Line:**
-```bash
-# Clear specific key
-redis-cli DEL display_on_demand_config
 
-# Clear all on-demand keys
-redis-cli KEYS "display_on_demand_*" | xargs redis-cli DEL
+The cache is stored as JSON files under one of:
+
+- `/var/cache/ledmatrix/` (preferred when the service has permission)
+- `~/.cache/ledmatrix/`
+- `/opt/ledmatrix/cache/`
+- `/tmp/ledmatrix-cache/` (fallback)
+
+```bash
+# Find the cache dir actually in use
+journalctl -u ledmatrix | grep -i "cache directory" | tail -1
+
+# Clear all on-demand keys (replace path with the one above)
+rm /var/cache/ledmatrix/display_on_demand_*
 
 # Restart service
 sudo systemctl restart ledmatrix
@@ -711,11 +705,14 @@ sudo systemctl restart ledmatrix
 from src.cache_manager import CacheManager
 
 cache = CacheManager()
-cache.delete('display_on_demand_config')
-cache.delete('display_on_demand_state')
-cache.delete('display_on_demand_request')
-cache.delete('display_on_demand_processed_id')
+cache.clear_cache('display_on_demand_config')
+cache.clear_cache('display_on_demand_state')
+cache.clear_cache('display_on_demand_request')
+cache.clear_cache('display_on_demand_processed_id')
 ```
+
+> The actual public method is `clear_cache(key=None)` — there is no
+> `delete()` method on `CacheManager`.
 
 ### Cache Impact on Running Service
 
@@ -723,7 +720,7 @@ cache.delete('display_on_demand_processed_id')
 
 **To fully reset:**
 1. Stop the service: `sudo systemctl stop ledmatrix`
-2. Clear cache keys (web UI or redis-cli)
+2. Clear cache keys (web UI Cache tab or `rm` from the cache directory)
 3. Clear systemd environment: `sudo systemctl daemon-reload`
 4. Start the service: `sudo systemctl start ledmatrix`
 
@@ -767,7 +764,7 @@ Enable background service per plugin in `config/config.json`:
 
 ```json
 {
-  "nfl_scoreboard": {
+  "football-scoreboard": {
     "enabled": true,
     "background_service": {
       "enabled": true,
@@ -801,19 +798,13 @@ Enable background service per plugin in `config/config.json`:
 - Returns immediately: < 0.1 seconds
 - Background refresh (if stale): async, no blocking
 
-### Implementation Status
+### Plugins using the background service
 
-**Phase 1 (Complete):**
-- ✅ NFL scoreboard implemented
-- ✅ Background threading architecture
-- ✅ Cache integration
-- ✅ Error handling and retry logic
-
-**Phase 2 (Planned):**
-- ⏳ NCAAFB (college football)
-- ⏳ NBA (basketball)
-- ⏳ NHL (hockey)
-- ⏳ MLB (baseball)
+The background data service is used by all of the sports scoreboard
+plugins (football, hockey, baseball/MLB, basketball, soccer, lacrosse,
+F1, UFC), the odds ticker, and the leaderboard plugin. Each plugin's
+`background_service` block (under its own config namespace) follows the
+same shape as the example above.
 
 ### Error Handling & Fallback
 

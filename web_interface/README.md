@@ -66,38 +66,53 @@ Once running, access the web interface at:
 
 The web interface reads configuration from:
 - `config/config.json` - Main configuration
-- `config/secrets.json` - API keys and secrets
+- `config/config_secrets.json` - API keys and secrets
 
 ## API Documentation
 
-The V3 API is available at `/api/v3/` with the following endpoints:
+The V3 API is mounted at `/api/v3/` (`app.py:144`). For the complete
+list and request/response formats, see
+[`docs/REST_API_REFERENCE.md`](../docs/REST_API_REFERENCE.md). Quick
+reference for the most common endpoints:
 
 ### Configuration
 - `GET /api/v3/config/main` - Get main configuration
 - `POST /api/v3/config/main` - Save main configuration
 - `GET /api/v3/config/secrets` - Get secrets configuration
-- `POST /api/v3/config/secrets` - Save secrets configuration
+- `POST /api/v3/config/raw/main` - Save raw main config (Config Editor)
+- `POST /api/v3/config/raw/secrets` - Save raw secrets
 
-### Display Control
-- `POST /api/v3/display/start` - Start display service
-- `POST /api/v3/display/stop` - Stop display service
-- `POST /api/v3/display/restart` - Restart display service
-- `GET /api/v3/display/status` - Get display service status
+### Display & System Control
+- `GET /api/v3/system/status` - System status
+- `POST /api/v3/system/action` - Control display (action body:
+  `start_display`, `stop_display`, `restart_display_service`,
+  `restart_web_service`, `git_pull`, `reboot_system`, `shutdown_system`,
+  `enable_autostart`, `disable_autostart`)
+- `GET /api/v3/display/current` - Current display frame
+- `GET /api/v3/display/on-demand/status` - On-demand status
+- `POST /api/v3/display/on-demand/start` - Trigger on-demand display
+- `POST /api/v3/display/on-demand/stop` - Clear on-demand
 
 ### Plugins
-- `GET /api/v3/plugins` - List installed plugins
-- `GET /api/v3/plugins/<id>` - Get plugin details
-- `POST /api/v3/plugins/<id>/config` - Update plugin configuration
-- `GET /api/v3/plugins/<id>/enable` - Enable plugin
-- `GET /api/v3/plugins/<id>/disable` - Disable plugin
+- `GET /api/v3/plugins/installed` - List installed plugins
+- `GET /api/v3/plugins/config?plugin_id=<id>` - Get plugin config
+- `POST /api/v3/plugins/config` - Update plugin configuration
+- `GET /api/v3/plugins/schema?plugin_id=<id>` - Get plugin schema
+- `POST /api/v3/plugins/toggle` - Enable/disable plugin
+- `POST /api/v3/plugins/install` - Install from registry
+- `POST /api/v3/plugins/install-from-url` - Install from GitHub URL
+- `POST /api/v3/plugins/uninstall` - Uninstall plugin
+- `POST /api/v3/plugins/update` - Update plugin
 
 ### Plugin Store
-- `GET /api/v3/store/plugins` - List available plugins
-- `POST /api/v3/store/install/<id>` - Install plugin
-- `POST /api/v3/store/uninstall/<id>` - Uninstall plugin
-- `POST /api/v3/store/update/<id>` - Update plugin
+- `GET /api/v3/plugins/store/list` - List available registry plugins
+- `GET /api/v3/plugins/store/github-status` - GitHub authentication status
+- `POST /api/v3/plugins/store/refresh` - Refresh registry from GitHub
 
 ### Real-time Streams (SSE)
+SSE stream endpoints are defined directly on the Flask app
+(`app.py:607-619` — includes the CSRF exemption and rate-limit hookup
+alongside the three route definitions), not on the api_v3 blueprint:
 - `GET /api/v3/stream/stats` - System statistics stream
 - `GET /api/v3/stream/display` - Display preview stream
 - `GET /api/v3/stream/logs` - Service logs stream

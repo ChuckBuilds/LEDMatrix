@@ -91,7 +91,7 @@ Pixlet is the rendering engine that executes Starlark apps. The plugin will atte
 
 #### Auto-Install via Web UI
 
-Navigate to: **Plugins → Starlark Apps → Status → Install Pixlet**
+Navigate to: **Plugin Manager → Starlark Apps tab (in the second nav row) → Status → Install Pixlet**
 
 This runs the bundled installation script which downloads the appropriate binary for your platform.
 
@@ -110,10 +110,10 @@ Verify installation:
 
 ### 2. Enable the Starlark Apps Plugin
 
-1. Open the web UI
-2. Navigate to **Plugins**
-3. Find **Starlark Apps** in the installed plugins list
-4. Enable the plugin
+1. Open the web UI (`http://your-pi-ip:5000`)
+2. Open the **Plugin Manager** tab
+3. Find **Starlark Apps** in the **Installed Plugins** list
+4. Enable the plugin (it then gets its own tab in the second nav row)
 5. Configure settings:
    - **Magnify**: Auto-calculated based on your display size (or set manually)
    - **Render Interval**: How often apps re-render (default: 300s)
@@ -122,7 +122,7 @@ Verify installation:
 
 ### 3. Browse and Install Apps
 
-1. Navigate to **Plugins → Starlark Apps → App Store**
+1. Navigate to **Plugin Manager → Starlark Apps tab (in the second nav row) → App Store**
 2. Browse available apps (974+ options)
 3. Filter by category: Weather, Sports, Finance, Games, Clocks, etc.
 4. Click **Install** on desired apps
@@ -307,7 +307,7 @@ Many apps require API keys for external services:
 **Symptom**: "Pixlet binary not found" error
 
 **Solutions**:
-1. Run auto-installer: **Plugins → Starlark Apps → Install Pixlet**
+1. Run auto-installer: **Plugin Manager → Starlark Apps tab (in the second nav row) → Install Pixlet**
 2. Manual install: `bash scripts/download_pixlet.sh`
 3. Check permissions: `chmod +x bin/pixlet/pixlet-*`
 4. Verify architecture: `uname -m` matches binary name
@@ -338,7 +338,7 @@ Many apps require API keys for external services:
 **Symptom**: Content appears stretched, squished, or cropped
 
 **Solutions**:
-1. Check magnify setting: **Plugins → Starlark Apps → Config**
+1. Check magnify setting: **Plugin Manager → Starlark Apps tab (in the second nav row) → Config**
 2. Try `center_small_output=true` to preserve aspect ratio
 3. Adjust `magnify` manually (1-8) for your display size
 4. Some apps assume 64×32 - may not scale perfectly to all sizes
@@ -349,7 +349,7 @@ Many apps require API keys for external services:
 
 **Solutions**:
 1. Check render interval: **App Config → Render Interval** (300s default)
-2. Force re-render: **Plugins → Starlark Apps → {App} → Render Now**
+2. Force re-render: **Plugin Manager → Starlark Apps tab (in the second nav row) → {App} → Render Now**
 3. Clear cache: Restart LEDMatrix service
 4. API rate limits: Some services throttle requests
 5. Check app logs for API errors

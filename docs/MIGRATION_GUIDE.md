@@ -88,8 +88,8 @@ If you encounter issues during migration:
 
 1. Check the [README.md](README.md) for current installation and usage instructions
 2. Review script README files:
-   - `scripts/install/README.md` - Installation scripts documentation
-   - `scripts/fix_perms/README.md` (if exists) - Permission scripts documentation
+   - [`scripts/install/README.md`](../scripts/install/README.md) - Installation scripts documentation
+   - [`scripts/fix_perms/README.md`](../scripts/fix_perms/README.md) - Permission scripts documentation
 3. Check system logs: `journalctl -u ledmatrix -f` or `journalctl -u ledmatrix-web -f`
 4. Review the troubleshooting section in the main README
 

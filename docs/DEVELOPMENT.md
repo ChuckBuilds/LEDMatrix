@@ -141,19 +141,27 @@ stage('Checkout') {
 
 ---
 
-## Plugin Submodules
+## Plugins
 
-Plugin submodules are located in the `plugins/` directory and are managed similarly:
+Plugins are **not** git submodules of this repository. The plugins
+directory (configured by `plugin_system.plugins_directory` in
+`config/config.json`, default `plugin-repos/`) is populated at install
+time by the plugin loader as users install plugins from the Plugin Store
+or from a GitHub URL via the web interface. Plugin source lives in a
+separate repository:
+[ChuckBuilds/ledmatrix-plugins](https://github.com/ChuckBuilds/ledmatrix-plugins).
 
-**Initialize all plugin submodules:**
-```bash
-git submodule update --init --recursive plugins/
-```
+To work on a plugin locally without going through the Plugin Store, clone
+that repo and symlink (or copy) the plugin directory into your configured
+plugins directory — by default `plugin-repos/<plugin-id>/`. The plugin
+loader will pick it up on the next display restart. The directory name
+must match the plugin's `id` in `manifest.json`.
 
-**Initialize a specific plugin:**
-```bash
-git submodule update --init --recursive plugins/hockey-scoreboard
-```
+For more information, see:
 
-For more information about plugins, see the [Plugin Development Guide](.cursor/plugins_guide.md) and [Plugin Architecture Specification](docs/PLUGIN_ARCHITECTURE_SPEC.md).
-
+- [PLUGIN_DEVELOPMENT_GUIDE.md](PLUGIN_DEVELOPMENT_GUIDE.md) — end-to-end
+  plugin development workflow
+- [PLUGIN_ARCHITECTURE_SPEC.md](PLUGIN_ARCHITECTURE_SPEC.md) — plugin system
+  specification
+- [DEV_PREVIEW.md](DEV_PREVIEW.md) — preview plugins on a desktop without a
+  Pi

@@ -39,7 +39,7 @@ This guide will help you set up your LEDMatrix display for the first time and ge
 
 **If you see "LEDMatrix-Setup" WiFi network:**
 1. Connect your device to "LEDMatrix-Setup" (open network, no password)
-2. Open browser to: `http://192.168.4.1:5050`
+2. Open browser to: `http://192.168.4.1:5000`
 3. Navigate to the WiFi tab
 4. Click "Scan" to find your WiFi network
 5. Select your network, enter password
@@ -48,14 +48,14 @@ This guide will help you set up your LEDMatrix display for the first time and ge
 
 **If already connected to WiFi:**
 1. Find your Pi's IP address (check your router, or run `hostname -I` on the Pi)
-2. Open browser to: `http://your-pi-ip:5050`
+2. Open browser to: `http://your-pi-ip:5000`
 
 ### 3. Access the Web Interface
 
 Once connected, access the web interface:
 
 ```
-http://your-pi-ip:5050
+http://your-pi-ip:5000
 ```
 
 You should see:
@@ -69,84 +69,84 @@ You should see:
 
 ### Step 1: Configure Display Hardware
 
-1. Navigate to Settings → **Display Settings**
+1. Open the **Display** tab
 2. Set your matrix configuration:
    - **Rows**: 32 or 64 (match your hardware)
-   - **Columns**: 64, 128, or 256 (match your hardware)
-   - **Chain Length**: Number of panels chained together
-   - **Brightness**: 50-75% recommended for indoor use
-3. Click **Save Configuration**
-4. Click **Restart Display** to apply changes
+   - **Columns**: commonly 64 or 96; the web UI accepts any integer
+     in the 16–128 range, but 64 and 96 are the values the bundled
+     panel hardware ships with
+   - **Chain Length**: Number of panels chained horizontally
+   - **Hardware Mapping**: usually `adafruit-hat-pwm` (with the PWM jumper
+     mod) or `adafruit-hat` (without). See the root README for the full list.
+   - **Brightness**: 70–90 is fine for indoor use
+3. Click **Save**
+4. From the **Overview** tab, click **Restart Display Service** to apply
 
-**Tip:** If the display doesn't look right, try different hardware mapping options.
+**Tip:** if the display shows garbage or nothing, the most common culprits
+are an incorrect `hardware_mapping`, a `gpio_slowdown` value that doesn't
+match your Pi model, or panels needing the E-line mod. See
+[TROUBLESHOOTING.md](TROUBLESHOOTING.md).
 
 ### Step 2: Set Timezone and Location
 
-1. Navigate to Settings → **General Settings**
-2. Set your timezone (e.g., "America/New_York")
-3. Set your location (city, state, country)
-4. Click **Save Configuration**
+1. Open the **General** tab
+2. Set your timezone (e.g., `America/New_York`) and location
+3. Click **Save**
 
-**Why it matters:** Correct timezone ensures accurate time display. Location enables weather and location-based features.
+Correct timezone ensures accurate time display, and location is used by
+weather and other location-aware plugins.
 
 ### Step 3: Install Plugins
 
-1. Navigate to **Plugin Store** tab
-2. Browse available plugins:
-   - **Time & Date**: Clock, calendar
-   - **Weather**: Weather forecasts
-   - **Sports**: NHL, NBA, NFL, MLB scores
-   - **Finance**: Stocks, crypto
-   - **Custom**: Community plugins
-3. Click **Install** on desired plugins
-4. Wait for installation to complete
-5. Navigate to **Plugin Management** tab
-6. Enable installed plugins (toggle switch)
-7. Click **Restart Display**
+1. Open the **Plugin Manager** tab
+2. Scroll to the **Plugin Store** section to browse available plugins
+3. Click **Install** on the plugins you want
+4. Wait for installation to finish — installed plugins appear in the
+   **Installed Plugins** section above and get their own tab in the second
+   nav row
+5. Toggle the plugin to enabled
+6. From **Overview**, click **Restart Display Service**
 
-**Popular First Plugins:**
-- `clock-simple` - Simple digital clock
-- `weather` - Weather forecast
-- `nhl-scores` - NHL scores (if you're a hockey fan)
+You can also install community plugins straight from a GitHub URL using the
+**Install from GitHub** section further down the same tab — see
+[PLUGIN_STORE_GUIDE.md](PLUGIN_STORE_GUIDE.md) for details.
 
 ### Step 4: Configure Plugins
 
-1. Navigate to **Plugin Management** tab
-2. Find a plugin you installed
-3. Click the ⚙️ **Configure** button
-4. Edit settings (e.g., favorite teams, update intervals)
-5. Click **Save**
-6. Click **Restart Display**
+1. Each installed plugin gets its own tab in the second navigation row
+2. Open that plugin's tab to edit its settings (favorite teams, API keys,
+   update intervals, display duration, etc.)
+3. Click **Save**
+4. Restart the display service from **Overview** so the new settings take
+   effect
 
 **Example: Weather Plugin**
 - Set your location (city, state, country)
-- Add API key from OpenWeatherMap (free signup)
-- Set update interval (300 seconds recommended)
+- Add an API key from OpenWeatherMap (free signup) to
+  `config/config_secrets.json` or directly in the plugin's config screen
+- Set the update interval (300 seconds is reasonable)
 
 ---
 
 ## Testing Your Display
 
-### Quick Test
+### Run a single plugin on demand
 
-1. Navigate to **Overview** tab
-2. Click **Test Display** button
-3. You should see a test pattern on your LED matrix
+The fastest way to verify a plugin works without waiting for the rotation:
 
-### Manual Plugin Trigger
+1. Open the plugin's tab (second nav row)
+2. Scroll to **On-Demand Controls**
+3. Click **Run On-Demand** — the plugin runs immediately even if disabled
+4. Click **Stop On-Demand** to return to the normal rotation
 
-1. Navigate to **Plugin Management** tab
-2. Find a plugin
-3. Click **Show Now** button
-4. The plugin should display immediately
-5. Click **Stop** to return to rotation
+### Check the live preview and logs
 
-### Check Logs
-
-1. Navigate to **Logs** tab
-2. Watch real-time logs
-3. Look for any ERROR messages
-4. Normal operation shows INFO messages about plugin rotation
+- The **Overview** tab shows a **Live Display Preview** that mirrors what's
+  on the matrix in real time — handy for debugging without looking at the
+  panel.
+- The **Logs** tab streams the display and web service logs. Look for
+  `ERROR` lines if something isn't working; normal operation just shows
+  `INFO` messages about plugin rotation.
 
 ---
 
@@ -156,12 +156,12 @@ You should see:
 
 **Check:**
 1. Power supply connected and adequate (5V, 4A minimum)
-2. LED matrix connected to GPIO pins correctly
+2. LED matrix connected to the bonnet/HAT correctly
 3. Display service running: `sudo systemctl status ledmatrix`
-4. Hardware configuration matches your matrix (rows/columns)
+4. Hardware configuration matches your matrix (rows/cols/chain length)
 
 **Fix:**
-1. Restart display: Settings → Overview → Restart Display
+1. Restart from the **Overview** tab → **Restart Display Service**
 2. Or via SSH: `sudo systemctl restart ledmatrix`
 
 ### Web Interface Won't Load
@@ -169,8 +169,8 @@ You should see:
 **Check:**
 1. Pi is connected to network: `ping your-pi-ip`
 2. Web service running: `sudo systemctl status ledmatrix-web`
-3. Correct port: Use `:5050` not `:5000`
-4. Firewall not blocking port 5050
+3. Correct port: the web UI listens on `:5000`
+4. Firewall not blocking port 5000
 
 **Fix:**
 1. Restart web service: `sudo systemctl restart ledmatrix-web`
@@ -179,15 +179,15 @@ You should see:
 ### Plugins Not Showing
 
 **Check:**
-1. Plugins are enabled (toggle switch in Plugin Management)
-2. Display has been restarted after enabling
-3. Plugin duration is reasonable (not too short)
-4. No errors in logs for the plugin
+1. Plugin is enabled (toggle on the **Plugin Manager** tab)
+2. Display service was restarted after enabling
+3. Plugin's display duration is non-zero
+4. No errors in the **Logs** tab for that plugin
 
 **Fix:**
-1. Enable plugin in Plugin Management
-2. Restart display
-3. Check logs for plugin-specific errors
+1. Enable the plugin from **Plugin Manager**
+2. Click **Restart Display Service** on **Overview**
+3. Check the **Logs** tab for plugin-specific errors
 
 ### Weather Plugin Shows "No Data"
 
@@ -207,18 +207,18 @@ You should see:
 
 ### Customize Your Display
 
-**Adjust Display Durations:**
-- Navigate to Settings → Durations
-- Set how long each plugin displays
-- Save and restart
+**Adjust display durations:**
+- Each plugin's tab has a **Display Duration (seconds)** field — set how
+  long that plugin stays on screen each rotation.
 
-**Organize Plugin Order:**
-- Use Plugin Management to enable/disable plugins
-- Display cycles through enabled plugins in order
+**Organize plugin order:**
+- Use the **Plugin Manager** tab to enable/disable plugins. The display
+  cycles through enabled plugins in the order they appear.
 
-**Add More Plugins:**
-- Check Plugin Store regularly for new plugins
-- Install from GitHub URLs for custom/community plugins
+**Add more plugins:**
+- Check the **Plugin Store** section of **Plugin Manager** for new plugins.
+- Install community plugins straight from a GitHub URL via
+  **Install from GitHub** on the same tab.
 
 ### Enable Advanced Features
 
@@ -279,26 +279,39 @@ sudo journalctl -u ledmatrix-web -f
 │   ├── config.json           # Main configuration
 │   ├── config_secrets.json   # API keys and secrets
 │   └── wifi_config.json      # WiFi settings
-├── plugins/                  # Installed plugins
+├── plugin-repos/             # Installed plugins (default location)
 ├── cache/                    # Cached data
 └── web_interface/            # Web interface files
 ```
 
+> The plugin install location is configurable via
+> `plugin_system.plugins_directory` in `config.json`. The default is
+> `plugin-repos/`. Plugin discovery (`PluginManager.discover_plugins()`)
+> only scans the configured directory — it does not fall back to
+> `plugins/`. However, the Plugin Store install/update path and the
+> web UI's schema loader do also probe `plugins/` so the dev symlinks
+> created by `scripts/dev/dev_plugin_setup.sh` keep working.
+
 ### Web Interface
 
 ```
-Main Interface: http://your-pi-ip:5050
+Main Interface: http://your-pi-ip:5000
 
-Tabs:
-- Overview: System stats and quick actions
-- General Settings: Timezone, location, autostart
-- Display Settings: Hardware configuration
-- Durations: Plugin display times
-- Sports Configuration: Per-league settings
-- Plugin Management: Enable/disable, configure
-- Plugin Store: Install new plugins
-- Font Management: Upload and manage fonts
-- Logs: Real-time log viewing
+System tabs:
+- Overview          System stats, live preview, quick actions
+- General           Timezone, location, plugin-system settings
+- WiFi              Network selection and AP-mode setup
+- Schedule          Power and dim schedules
+- Display           Matrix hardware configuration
+- Config Editor     Raw config.json editor
+- Fonts             Upload and manage fonts
+- Logs              Real-time log viewing
+- Cache             Cached data inspection and cleanup
+- Operation History Recent service operations
+
+Plugin tabs (second row):
+- Plugin Manager    Browse the Plugin Store, install/enable plugins
+- <plugin-id>       One tab per installed plugin for its config
 ```
 
 ### WiFi Access Point
@@ -306,7 +319,7 @@ Tabs:
 ```
 Network Name: LEDMatrix-Setup
 Password: (none - open network)
-URL when connected: http://192.168.4.1:5050
+URL when connected: http://192.168.4.1:5000
 ```
 
 ---
