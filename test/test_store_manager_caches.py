@@ -112,6 +112,64 @@ class TestGitInfoCache(unittest.TestCase):
         non_git.mkdir()
         self.assertIsNone(self.sm._get_local_git_info(non_git))
 
+    def test_cache_invalidates_on_git_config_change(self):
+        """A config-only change (e.g. ``git remote set-url``) must invalidate
+        the cache, because the cached ``result`` dict includes ``remote_url``
+        which is read from ``.git/config``. Without config in the signature,
+        a stale remote URL would be served indefinitely.
+        """
+        head_file = self.plugin_path / ".git" / "HEAD"
+        head_file.write_text("ref: refs/heads/main\n")
+        refs_heads = self.plugin_path / ".git" / "refs" / "heads"
+        refs_heads.mkdir(parents=True, exist_ok=True)
+        (refs_heads / "main").write_text("a" * 40 + "\n")
+        config_file = self.plugin_path / ".git" / "config"
+        config_file.write_text(
+            '[remote "origin"]\n\turl = https://old.example.com/repo.git\n'
+        )
+
+        remote_url = {"current": "https://old.example.com/repo.git"}
+
+        def fake_subprocess_run(*args, **kwargs):
+            cmd = args[0]
+            result = MagicMock()
+            result.returncode = 0
+            if "rev-parse" in cmd and "--abbrev-ref" not in cmd:
+                result.stdout = "a" * 40 + "\n"
+            elif "--abbrev-ref" in cmd:
+                result.stdout = "main\n"
+            elif "config" in cmd:
+                result.stdout = remote_url["current"] + "\n"
+            elif "log" in cmd:
+                result.stdout = "2026-04-08T12:00:00+00:00\n"
+            else:
+                result.stdout = ""
+            return result
+
+        with patch(
+            "src.plugin_system.store_manager.subprocess.run",
+            side_effect=fake_subprocess_run,
+        ):
+            first = self.sm._get_local_git_info(self.plugin_path)
+            self.assertEqual(first["remote_url"], "https://old.example.com/repo.git")
+
+            # Simulate ``git remote set-url origin https://new.example.com/repo.git``:
+            # ``.git/config`` contents AND mtime change. HEAD is untouched.
+            time.sleep(0.01)  # ensure a detectable mtime delta
+            config_file.write_text(
+                '[remote "origin"]\n\turl = https://new.example.com/repo.git\n'
+            )
+            new_time = config_file.stat().st_mtime + 10
+            os.utime(config_file, (new_time, new_time))
+            remote_url["current"] = "https://new.example.com/repo.git"
+
+            second = self.sm._get_local_git_info(self.plugin_path)
+            self.assertEqual(
+                second["remote_url"], "https://new.example.com/repo.git",
+                "config-only change did not invalidate the cache — "
+                ".git/config mtime/contents must be part of the signature",
+            )
+
     def test_cache_invalidates_on_fast_forward_of_current_branch(self):
         """Regression: .git/HEAD mtime alone is not enough.
 
@@ -584,6 +642,37 @@ class TestRegistryStaleCacheFallback(unittest.TestCase):
         ):
             result = self.sm.fetch_registry()
         self.assertEqual(result, {"plugins": []})
+
+    def test_stale_fallback_bumps_timestamp_into_backoff(self):
+        """Regression: after the stale-cache fallback fires, the next
+        fetch_registry call must NOT re-hit the network. Without the
+        timestamp bump, a flaky connection causes every request to pay
+        the network timeout before falling back to stale.
+        """
+        self.sm.registry_cache = {"plugins": [{"id": "cached"}]}
+        self.sm.registry_cache_time = time.time() - 10_000  # expired
+        self.sm.registry_cache_timeout = 1
+        self.sm._failure_backoff_seconds = 60
+
+        import requests as real_requests
+        call_count = {"n": 0}
+
+        def counting_get(*args, **kwargs):
+            call_count["n"] += 1
+            raise real_requests.ConnectionError("boom")
+
+        with patch.object(self.sm, "_http_get_with_retries", side_effect=counting_get):
+            first = self.sm.fetch_registry()
+            self.assertEqual(first, {"plugins": [{"id": "cached"}]})
+            self.assertEqual(call_count["n"], 1)
+
+            second = self.sm.fetch_registry()
+            self.assertEqual(second, {"plugins": [{"id": "cached"}]})
+            self.assertEqual(
+                call_count["n"], 1,
+                "stale registry fallback must bump registry_cache_time so "
+                "subsequent requests hit the cache instead of re-retrying",
+            )
 
 
 class TestFetchRegistryRaiseOnFailure(unittest.TestCase):

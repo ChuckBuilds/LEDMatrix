@@ -29,10 +29,30 @@ sys.path.insert(0, str(project_root))
 from flask import Flask
 
 
+_API_V3_MOCKED_ATTRS = (
+    'config_manager', 'plugin_manager', 'plugin_store_manager',
+    'plugin_state_manager', 'saved_repositories_manager', 'schema_manager',
+    'operation_queue', 'operation_history', 'cache_manager',
+)
+
+
 def _make_client():
-    """Minimal Flask app + mocked deps that exercises the api_v3 blueprint."""
+    """Minimal Flask app + mocked deps that exercises the api_v3 blueprint.
+
+    Returns ``(client, module, cleanup_fn)``. Callers (test ``setUp``
+    methods) must register ``cleanup_fn`` with ``self.addCleanup(...)``
+    so the original api_v3 singleton attributes are restored at the end
+    of the test — otherwise the MagicMocks leak into later tests that
+    import api_v3 expecting fresh state.
+    """
     from web_interface.blueprints import api_v3 as api_v3_module
     from web_interface.blueprints.api_v3 import api_v3
+
+    # Snapshot the originals so we can restore them.
+    _SENTINEL = object()
+    originals = {
+        name: getattr(api_v3, name, _SENTINEL) for name in _API_V3_MOCKED_ATTRS
+    }
 
     # Mocks for all the bits the reconcile / uninstall endpoints touch.
     api_v3.config_manager = MagicMock()
@@ -50,11 +70,23 @@ def _make_client():
     api_v3.operation_history = MagicMock()
     api_v3.cache_manager = MagicMock()
 
+    def _cleanup():
+        for name, original in originals.items():
+            if original is _SENTINEL:
+                # Attribute didn't exist before — remove it to match.
+                if hasattr(api_v3, name):
+                    try:
+                        delattr(api_v3, name)
+                    except AttributeError:
+                        pass
+            else:
+                setattr(api_v3, name, original)
+
     app = Flask(__name__)
     app.config['TESTING'] = True
     app.config['SECRET_KEY'] = 'test'
     app.register_blueprint(api_v3, url_prefix='/api/v3')
-    return app.test_client(), api_v3_module
+    return app.test_client(), api_v3_module, _cleanup
 
 
 class TestTransactionalUninstall(unittest.TestCase):
@@ -66,7 +98,8 @@ class TestTransactionalUninstall(unittest.TestCase):
     """
 
     def setUp(self):
-        self.client, self.mod = _make_client()
+        self.client, self.mod, _cleanup = _make_client()
+        self.addCleanup(_cleanup)
         self.api_v3 = self.mod.api_v3
 
     def test_cleanup_failure_aborts_before_file_removal(self):
@@ -200,6 +233,56 @@ class TestTransactionalUninstall(unittest.TestCase):
         # called load_plugin to restore runtime state.
         self.api_v3.plugin_manager.load_plugin.assert_called_once_with('thing')
 
+    def test_snapshot_survives_config_read_error(self):
+        """Regression: if get_raw_file_content raises an expected error
+        (OSError / ConfigError) during snapshot, the uninstall should
+        still proceed — we just won't have a rollback snapshot. Narrow
+        exception list must still cover the realistic failure modes.
+        """
+        from src.exceptions import ConfigError
+        self.api_v3.config_manager.get_raw_file_content.side_effect = ConfigError(
+            "file missing", config_path="/tmp/missing"
+        )
+        self.api_v3.config_manager.cleanup_plugin_config.return_value = None
+        self.api_v3.plugin_store_manager.uninstall_plugin.return_value = True
+
+        response = self.client.post(
+            '/api/v3/plugins/uninstall',
+            data=json.dumps({'plugin_id': 'thing'}),
+            content_type='application/json',
+        )
+
+        # Uninstall should still succeed — snapshot failure is logged
+        # but doesn't block the uninstall.
+        self.assertEqual(response.status_code, 200)
+        self.api_v3.plugin_store_manager.uninstall_plugin.assert_called_once_with('thing')
+
+    def test_snapshot_does_not_swallow_programmer_errors(self):
+        """Regression: unexpected exceptions (TypeError, AttributeError)
+        must propagate out of the snapshot helper so bugs surface
+        during development instead of being silently logged and
+        ignored. Narrowing from ``except Exception`` to
+        ``(OSError, ConfigError)`` is what makes this work.
+        """
+        # Raise an exception that is NOT in the narrow catch list.
+        self.api_v3.config_manager.get_raw_file_content.side_effect = TypeError(
+            "unexpected kwarg"
+        )
+
+        response = self.client.post(
+            '/api/v3/plugins/uninstall',
+            data=json.dumps({'plugin_id': 'thing'}),
+            content_type='application/json',
+        )
+
+        # The TypeError should propagate up to the endpoint's outer
+        # try/except and produce a 500, NOT be silently swallowed like
+        # the previous ``except Exception`` did.
+        self.assertEqual(response.status_code, 500)
+        # uninstall_plugin must NOT have been called — the snapshot
+        # exception bubbled up before we got that far.
+        self.api_v3.plugin_store_manager.uninstall_plugin.assert_not_called()
+
     def test_unload_failure_restores_config_and_does_not_call_uninstall(self):
         """If unload_plugin itself raises, config must be restored and
         uninstall_plugin must NOT be called."""
@@ -235,7 +318,8 @@ class TestReconcileEndpointPayload(unittest.TestCase):
     """
 
     def setUp(self):
-        self.client, self.mod = _make_client()
+        self.client, self.mod, _cleanup = _make_client()
+        self.addCleanup(_cleanup)
         self.api_v3 = self.mod.api_v3
         # Stub the reconciler so we only test the payload plumbing, not
         # the full reconciliation. We patch StateReconciliation at the

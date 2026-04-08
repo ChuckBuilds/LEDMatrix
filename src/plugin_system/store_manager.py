@@ -589,9 +589,16 @@ class PluginStoreManager:
             if raise_on_failure:
                 raise
             # Prefer stale cache over an empty list so the plugin list UI
-            # keeps working on a flaky connection (e.g. Pi on WiFi).
+            # keeps working on a flaky connection (e.g. Pi on WiFi). Bump
+            # registry_cache_time into a short backoff window so the next
+            # request serves the stale payload cheaply instead of
+            # re-hitting the network on every request (matches the
+            # pattern used by github_cache / commit_info_cache).
             if self.registry_cache:
                 self.logger.warning("Falling back to stale registry cache")
+                self.registry_cache_time = (
+                    time.time() + self._failure_backoff_seconds - self.registry_cache_timeout
+                )
                 return self.registry_cache
             return {"plugins": []}
         except json.JSONDecodeError as e:
@@ -599,6 +606,9 @@ class PluginStoreManager:
             if raise_on_failure:
                 raise
             if self.registry_cache:
+                self.registry_cache_time = (
+                    time.time() + self._failure_backoff_seconds - self.registry_cache_timeout
+                )
                 return self.registry_cache
             return {"plugins": []}
     
@@ -1759,8 +1769,10 @@ class PluginStoreManager:
         Caching on ``.git/HEAD`` mtime alone is not enough: a ``git pull``
         that fast-forwards the current branch updates
         ``.git/refs/heads/<branch>`` (or ``.git/packed-refs``) but leaves
-        HEAD's contents and mtime untouched. We'd then serve a stale SHA
-        indefinitely.
+        HEAD's contents and mtime untouched. And the cached ``result``
+        dict includes ``remote_url`` — a value read from ``.git/config`` —
+        so a config-only change (e.g. a monorepo-migration re-pointing
+        ``remote.origin.url``) must also invalidate the cache.
 
         Signature components:
           - HEAD contents (catches detach / branch switch)
@@ -1768,6 +1780,9 @@ class PluginStoreManager:
           - if HEAD points at a ref, that ref file's mtime (catches
             fast-forward / reset on the current branch)
           - packed-refs mtime as a coarse fallback for repos using packed refs
+          - .git/config contents + mtime (catches remote URL changes and
+            any other config-only edit that affects what the cached
+            ``remote_url`` field should contain)
 
         Returns ``None`` if HEAD cannot be read at all (caller will skip
         the cache and take the slow path).
@@ -1797,7 +1812,21 @@ class PluginStoreManager:
             except OSError:
                 packed_refs_mtime = None
 
-        return (head_contents, head_mtime, ref_mtime, packed_refs_mtime)
+        config_mtime = None
+        config_contents = None
+        config_file = git_dir / 'config'
+        try:
+            config_mtime = config_file.stat().st_mtime
+            config_contents = config_file.read_text(encoding='utf-8', errors='replace').strip()
+        except OSError:
+            config_mtime = None
+            config_contents = None
+
+        return (
+            head_contents, head_mtime,
+            ref_mtime, packed_refs_mtime,
+            config_contents, config_mtime,
+        )
 
     def _get_local_git_info(self, plugin_path: Path) -> Optional[Dict[str, str]]:
         """Return local git branch, commit hash, and commit date if the plugin is a git checkout.

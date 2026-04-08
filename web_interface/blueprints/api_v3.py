@@ -2833,12 +2833,17 @@ def _snapshot_plugin_config(plugin_id: str):
     """
     main_entry = None
     secrets_entry = None
+    # Narrow exception list: filesystem errors (FileNotFoundError is a
+    # subclass of OSError, IOError is an alias for OSError in Python 3)
+    # and ConfigError, which is what ``get_raw_file_content`` wraps all
+    # load failures in. Programmer errors (TypeError, AttributeError,
+    # etc.) are intentionally NOT caught — they should surface loudly.
     try:
         main_config = api_v3.config_manager.get_raw_file_content('main')
         if plugin_id in main_config:
             import copy as _copy
             main_entry = _copy.deepcopy(main_config[plugin_id])
-    except Exception as e:
+    except (OSError, ConfigError) as e:
         logger.warning("[PluginUninstall] Could not snapshot main config for %s: %s", plugin_id, e)
     try:
         import os as _os
@@ -2847,7 +2852,7 @@ def _snapshot_plugin_config(plugin_id: str):
             if plugin_id in secrets_config:
                 import copy as _copy
                 secrets_entry = _copy.deepcopy(secrets_config[plugin_id])
-    except Exception as e:
+    except (OSError, ConfigError) as e:
         logger.warning("[PluginUninstall] Could not snapshot secrets for %s: %s", plugin_id, e)
     return (main_entry, secrets_entry)
 
