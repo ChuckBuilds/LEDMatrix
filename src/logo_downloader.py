@@ -43,6 +43,9 @@ class LogoDownloader:
         'ncaaw': 'https://site.api.espn.com/apis/site/v2/sports/basketball/womens-college-basketball/teams',  # Alias for basketball plugin
         'ncaa_baseball': 'https://site.api.espn.com/apis/site/v2/sports/baseball/college-baseball/teams',
         'ncaam_hockey': 'https://site.api.espn.com/apis/site/v2/sports/hockey/mens-college-hockey/teams',
+        'ncaaw_hockey': 'https://site.api.espn.com/apis/site/v2/sports/hockey/womens-college-hockey/teams',
+        'ncaam_lacrosse': 'https://site.api.espn.com/apis/site/v2/sports/lacrosse/mens-college-lacrosse/teams',
+        'ncaaw_lacrosse': 'https://site.api.espn.com/apis/site/v2/sports/lacrosse/womens-college-lacrosse/teams',
         # Soccer leagues
         'soccer_eng.1': 'https://site.api.espn.com/apis/site/v2/sports/soccer/eng.1/teams',
         'soccer_esp.1': 'https://site.api.espn.com/apis/site/v2/sports/soccer/esp.1/teams',
@@ -73,6 +76,8 @@ class LogoDownloader:
         'ncaa_baseball': 'assets/sports/ncaa_logos',
         'ncaam_hockey': 'assets/sports/ncaa_logos',
         'ncaaw_hockey': 'assets/sports/ncaa_logos',
+        'ncaam_lacrosse': 'assets/sports/ncaa_logos',
+        'ncaaw_lacrosse': 'assets/sports/ncaa_logos',
         # Soccer leagues - all use the same soccer_logos directory
         'soccer_eng.1': 'assets/sports/soccer_logos',
         'soccer_esp.1': 'assets/sports/soccer_logos',
