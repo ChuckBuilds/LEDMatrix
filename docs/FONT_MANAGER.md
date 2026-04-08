@@ -145,11 +145,19 @@ font = self.font_manager.resolve_font(
 > URIs documented below are resolved relative to the plugin's
 > install directory.
 >
-> The `/api/v3/fonts/overrides` endpoints and the **Fonts** tab in
-> the web UI are still **placeholder implementations** — manually
-> registered manager fonts do not yet flow into that tab. If you
-> need an override today, load the font directly in your plugin
-> and skip the override system.
+> The **Fonts** tab in the web UI that lists detected
+> manager-registered fonts is still a **placeholder
+> implementation** — fonts that managers register through
+> `register_manager_font()` do not yet appear there. The
+> programmatic per-element override workflow described in
+> [Manual Font Overrides](#manual-font-overrides) below
+> (`set_override()` / `remove_override()` / the
+> `config/font_overrides.json` store) **does** work today and is
+> the supported way to override a font for an element until the
+> Fonts tab is wired up. If you can't wait and need a workaround
+> right now, you can also just load the font directly with PIL
+> (or `freetype-py` for BDF) inside your plugin's `manager.py`
+> and skip the override system entirely.
 
 ### Plugin Font Registration
 

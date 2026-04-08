@@ -320,21 +320,42 @@ class CacheManager:
         return None
 
     def clear_cache(self, key: Optional[str] = None) -> None:
-        """Clear cache for a specific key or all keys."""
-        if key:
-            # Clear specific key
-            self._memory_cache_component.clear(key)
-            self._disk_cache_component.clear(key)
-            self.logger.info("Cleared cache for key: %s", key)
-        else:
+        """Clear cache entries.
+
+        Pass a non-empty ``key`` to remove a single entry, or pass
+        ``None`` (the default) to clear every cached entry. An empty
+        string is rejected to prevent accidental whole-cache wipes
+        from callers that pass through unvalidated input.
+        """
+        if key is None:
             # Clear all keys
             memory_count = self._memory_cache_component.size()
             self._memory_cache_component.clear()
             self._disk_cache_component.clear()
             self.logger.info("Cleared all cache: %d memory entries", memory_count)
+            return
+
+        if not isinstance(key, str) or not key:
+            raise ValueError(
+                "clear_cache(key) requires a non-empty string; "
+                "pass key=None to clear all entries"
+            )
+
+        # Clear specific key
+        self._memory_cache_component.clear(key)
+        self._disk_cache_component.clear(key)
+        self.logger.info("Cleared cache for key: %s", key)
 
     def delete(self, key: str) -> None:
-        """Remove a single cache entry. Alias for ``clear_cache(key)``."""
+        """Remove a single cache entry.
+
+        Thin wrapper around :meth:`clear_cache` that **requires** a
+        non-empty string key — unlike ``clear_cache(None)`` it never
+        wipes every entry. Raises ``ValueError`` on ``None`` or an
+        empty string.
+        """
+        if key is None or not isinstance(key, str) or not key:
+            raise ValueError("delete(key) requires a non-empty string key")
         self.clear_cache(key)
 
     def list_cache_files(self) -> List[Dict[str, Any]]:

@@ -1961,10 +1961,15 @@
                                 this.updatePluginTabStates();
                             }
                         };
-                        const iconClass = this.escapeHtml(plugin.icon || 'fas fa-puzzle-piece');
-                        tabButton.innerHTML = `
-                            <i class="${iconClass}"></i>${this.escapeHtml(plugin.name || plugin.id)}
-                        `;
+                        // Build the <i class="..."> + label as DOM nodes so a
+                        // hostile plugin.icon (e.g. containing a quote) can't
+                        // break out of the attribute. escapeHtml only escapes
+                        // <, >, &, not ", so attribute-context interpolation
+                        // would be unsafe.
+                        const iconEl = document.createElement('i');
+                        iconEl.className = plugin.icon || 'fas fa-puzzle-piece';
+                        const labelNode = document.createTextNode(plugin.name || plugin.id);
+                        tabButton.replaceChildren(iconEl, labelNode);
 
                         // Insert before the closing </nav> tag
                         pluginTabsNav.appendChild(tabButton);

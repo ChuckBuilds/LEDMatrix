@@ -338,8 +338,13 @@ pytest --cov=src --cov-report=html
 
 The repo runs
 [`.github/workflows/security-audit.yml`](../.github/workflows/security-audit.yml)
-(bandit + semgrep) on every push. A pytest CI workflow is planned
-(`.github/workflows/tests.yml`) — see the PR adding it for details.
+(bandit + semgrep) on every push. A pytest CI workflow at
+`.github/workflows/tests.yml` is queued to land alongside this
+PR ([ChuckBuilds/LEDMatrix#307](https://github.com/ChuckBuilds/LEDMatrix/pull/307));
+the workflow file itself was held back from that PR because the
+push token lacked the GitHub `workflow` scope, so it needs to be
+committed separately by a maintainer. Once it's in, this section
+will be updated to describe what the job runs.
 
 ## Best Practices
 
