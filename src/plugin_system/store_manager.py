@@ -645,14 +645,16 @@ class PluginStoreManager:
                     enhanced_plugin['branch'] = commit_info.get('branch', branch)
                     enhanced_plugin['last_commit_branch'] = commit_info.get('branch')
 
-                plugin_subpath = plugin.get('plugin_path', '')
-                manifest_rel = f"{plugin_subpath}/manifest.json" if plugin_subpath else "manifest.json"
-                github_manifest = self._fetch_manifest_from_github(repo_url, branch, manifest_rel)
-                if github_manifest:
-                    if 'last_updated' in github_manifest and not enhanced_plugin.get('last_updated'):
-                        enhanced_plugin['last_updated'] = github_manifest['last_updated']
-                    if 'description' in github_manifest:
-                        enhanced_plugin['description'] = github_manifest['description']
+                # Intentionally NO per-plugin manifest.json fetch here.
+                # The registry's plugins.json already carries ``description``
+                # (it is generated from each plugin's manifest by
+                # ``update_registry.py``), and ``last_updated`` is filled in
+                # from the commit info above. An earlier implementation
+                # fetched manifest.json per plugin anyway, which meant one
+                # extra HTTPS round trip per result; on a Pi4 with a flaky
+                # WiFi link the tail retries of that one extra call
+                # (_http_get_with_retries does 3 attempts with exponential
+                # backoff) dominated wall time even after parallelization.
 
             return enhanced_plugin
 
