@@ -667,8 +667,20 @@ import threading as _threading
 _reconciliation_lock = _threading.Lock()
 
 def _run_startup_reconciliation() -> None:
-    """Run state reconciliation in background to auto-repair missing plugins."""
-    global _reconciliation_done, _reconciliation_started
+    """Run state reconciliation in background to auto-repair missing plugins.
+
+    Reconciliation runs exactly once per process lifetime, regardless of
+    whether every inconsistency could be auto-fixed. Previously, a failed
+    auto-repair (e.g. a config entry referencing a plugin that no longer
+    exists in the registry) would reset ``_reconciliation_started`` to False,
+    causing the ``@app.before_request`` hook to re-trigger reconciliation on
+    every single HTTP request — an infinite install-retry loop that pegged
+    the CPU and flooded the log. Unresolved issues are now left in place for
+    the user to address via the UI; the reconciler itself also caches
+    per-plugin unrecoverable failures internally so repeated reconcile calls
+    stay cheap.
+    """
+    global _reconciliation_done
     from src.logging_config import get_logger
     _logger = get_logger('reconciliation')
 
@@ -684,18 +696,22 @@ def _run_startup_reconciliation() -> None:
         result = reconciler.reconcile_state()
         if result.inconsistencies_found:
             _logger.info("[Reconciliation] %s", result.message)
-        if result.reconciliation_successful:
-            if result.inconsistencies_fixed:
-                plugin_manager.discover_plugins()
-            _reconciliation_done = True
-        else:
-            _logger.warning("[Reconciliation] Finished with unresolved issues, will retry")
-            with _reconciliation_lock:
-                _reconciliation_started = False
+        if result.inconsistencies_fixed:
+            plugin_manager.discover_plugins()
+        if not result.reconciliation_successful:
+            _logger.warning(
+                "[Reconciliation] Finished with %d unresolved issue(s); "
+                "will not retry automatically. Use the Plugin Store or the "
+                "manual 'Reconcile' action to resolve.",
+                len(result.inconsistencies_manual),
+            )
     except Exception as e:
         _logger.error("[Reconciliation] Error: %s", e, exc_info=True)
-        with _reconciliation_lock:
-            _reconciliation_started = False
+    finally:
+        # Always mark done — we do not want an unhandled exception (or an
+        # unresolved inconsistency) to cause the @before_request hook to
+        # retrigger reconciliation on every subsequent request.
+        _reconciliation_done = True
 
 # Initialize health monitor and run reconciliation on first request
 @app.before_request

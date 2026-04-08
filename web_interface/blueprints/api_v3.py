@@ -1714,9 +1714,23 @@ def get_installed_plugins():
         import json
         from pathlib import Path
 
-        # Re-discover plugins to ensure we have the latest list
-        # This handles cases where plugins are added/removed after app startup
-        api_v3.plugin_manager.discover_plugins()
+        # Re-discover plugins only if the plugins directory has actually
+        # changed since our last scan, or if the caller explicitly asked
+        # for a refresh. The previous unconditional ``discover_plugins()``
+        # call (plus a per-plugin manifest re-read) made this endpoint
+        # O(plugins) in disk I/O on every page refresh, which on an SD-card
+        # Pi4 with ~15 plugins was pegging the CPU and blocking the UI
+        # "connecting to display" spinner for minutes.
+        force_refresh = request.args.get('refresh', '').lower() in ('1', 'true', 'yes')
+        plugins_dir_path = Path(api_v3.plugin_manager.plugins_dir)
+        try:
+            current_mtime = plugins_dir_path.stat().st_mtime if plugins_dir_path.exists() else 0
+        except OSError:
+            current_mtime = 0
+        last_mtime = getattr(api_v3, '_installed_plugins_dir_mtime', None)
+        if force_refresh or last_mtime != current_mtime:
+            api_v3.plugin_manager.discover_plugins()
+            api_v3._installed_plugins_dir_mtime = current_mtime
 
         # Get all installed plugin info from the plugin manager
         all_plugin_info = api_v3.plugin_manager.get_all_plugin_info()
@@ -1729,17 +1743,10 @@ def get_installed_plugins():
         for plugin_info in all_plugin_info:
             plugin_id = plugin_info.get('id')
 
-            # Re-read manifest from disk to ensure we have the latest metadata
-            manifest_path = Path(api_v3.plugin_manager.plugins_dir) / plugin_id / "manifest.json"
-            if manifest_path.exists():
-                try:
-                    with open(manifest_path, 'r', encoding='utf-8') as f:
-                        fresh_manifest = json.load(f)
-                    # Update plugin_info with fresh manifest data
-                    plugin_info.update(fresh_manifest)
-                except Exception as e:
-                    # If we can't read the fresh manifest, use the cached one
-                    logger.warning("[PluginStore] Could not read fresh manifest for %s: %s", plugin_id, e)
+            # Note: we intentionally do NOT re-read manifest.json here.
+            # discover_plugins() above already reparses manifests on change;
+            # re-reading on every request added ~1 syscall+json.loads per
+            # plugin per request for no benefit.
 
             # Get enabled status from config (source of truth)
             # Read from config file first, fall back to plugin instance if config doesn't have the key
@@ -2369,14 +2376,30 @@ def reconcile_plugin_state():
 
         from src.plugin_system.state_reconciliation import StateReconciliation
 
+        # Pass the store manager so auto-repair of missing-on-disk plugins
+        # can actually run. Previously this endpoint silently degraded to
+        # MANUAL_FIX_REQUIRED because store_manager was omitted.
         reconciler = StateReconciliation(
             state_manager=api_v3.plugin_state_manager,
             config_manager=api_v3.config_manager,
             plugin_manager=api_v3.plugin_manager,
-            plugins_dir=Path(api_v3.plugin_manager.plugins_dir)
+            plugins_dir=Path(api_v3.plugin_manager.plugins_dir),
+            store_manager=api_v3.plugin_store_manager,
         )
 
-        result = reconciler.reconcile_state()
+        # Allow the caller to force a retry of previously-unrecoverable
+        # plugins (e.g. after the registry has been updated or a typo fixed).
+        # Non-object JSON bodies (e.g. a bare string or array) must fall
+        # through to the default False instead of raising AttributeError,
+        # and string booleans like "false" must coerce correctly — hence
+        # the isinstance guard plus _coerce_to_bool.
+        force = False
+        if request.is_json:
+            payload = request.get_json(silent=True)
+            if isinstance(payload, dict):
+                force = _coerce_to_bool(payload.get('force', False))
+
+        result = reconciler.reconcile_state(force=force)
 
         return success_response(
             data={
@@ -2799,6 +2822,181 @@ def update_plugin():
             status_code=500
         )
 
+def _snapshot_plugin_config(plugin_id: str):
+    """Capture the plugin's current config and secrets entries for rollback.
+
+    Returns a tuple ``(main_entry, secrets_entry)`` where each element is
+    the plugin's dict from the respective file, or ``None`` if the plugin
+    was not present there. Used by the transactional uninstall path so we
+    can restore state if file removal fails after config cleanup has
+    already succeeded.
+    """
+    main_entry = None
+    secrets_entry = None
+    # Narrow exception list: filesystem errors (FileNotFoundError is a
+    # subclass of OSError, IOError is an alias for OSError in Python 3)
+    # and ConfigError, which is what ``get_raw_file_content`` wraps all
+    # load failures in. Programmer errors (TypeError, AttributeError,
+    # etc.) are intentionally NOT caught — they should surface loudly.
+    try:
+        main_config = api_v3.config_manager.get_raw_file_content('main')
+        if plugin_id in main_config:
+            import copy as _copy
+            main_entry = _copy.deepcopy(main_config[plugin_id])
+    except (OSError, ConfigError) as e:
+        logger.warning("[PluginUninstall] Could not snapshot main config for %s: %s", plugin_id, e)
+    try:
+        import os as _os
+        if _os.path.exists(api_v3.config_manager.secrets_path):
+            secrets_config = api_v3.config_manager.get_raw_file_content('secrets')
+            if plugin_id in secrets_config:
+                import copy as _copy
+                secrets_entry = _copy.deepcopy(secrets_config[plugin_id])
+    except (OSError, ConfigError) as e:
+        logger.warning("[PluginUninstall] Could not snapshot secrets for %s: %s", plugin_id, e)
+    return (main_entry, secrets_entry)
+
+
+def _restore_plugin_config(plugin_id: str, snapshot) -> None:
+    """Best-effort restoration of a snapshot taken by ``_snapshot_plugin_config``.
+
+    Called on the unhappy path when ``cleanup_plugin_config`` already
+    succeeded but the subsequent file removal failed. If the restore
+    itself fails, we log loudly — the caller still sees the original
+    uninstall error and the user can reconcile manually.
+    """
+    main_entry, secrets_entry = snapshot
+    if main_entry is not None:
+        try:
+            main_config = api_v3.config_manager.get_raw_file_content('main')
+            main_config[plugin_id] = main_entry
+            api_v3.config_manager.save_raw_file_content('main', main_config)
+            logger.warning("[PluginUninstall] Restored main config entry for %s after uninstall failure", plugin_id)
+        except Exception as e:
+            logger.error(
+                "[PluginUninstall] FAILED to restore main config entry for %s after uninstall failure: %s",
+                plugin_id, e, exc_info=True,
+            )
+    if secrets_entry is not None:
+        try:
+            import os as _os
+            if _os.path.exists(api_v3.config_manager.secrets_path):
+                secrets_config = api_v3.config_manager.get_raw_file_content('secrets')
+            else:
+                secrets_config = {}
+            secrets_config[plugin_id] = secrets_entry
+            api_v3.config_manager.save_raw_file_content('secrets', secrets_config)
+            logger.warning("[PluginUninstall] Restored secrets entry for %s after uninstall failure", plugin_id)
+        except Exception as e:
+            logger.error(
+                "[PluginUninstall] FAILED to restore secrets entry for %s after uninstall failure: %s",
+                plugin_id, e, exc_info=True,
+            )
+
+
+def _do_transactional_uninstall(plugin_id: str, preserve_config: bool) -> None:
+    """Run the full uninstall as a best-effort transaction.
+
+    Order:
+      1. Mark tombstone (so any reconciler racing with us cannot resurrect
+         the plugin mid-flight).
+      2. Snapshot existing config + secrets entries (for rollback).
+      3. Run ``cleanup_plugin_config``. If this raises, re-raise — files
+         have NOT been touched, so aborting here leaves a fully consistent
+         state: plugin is still installed and still in config.
+      4. Unload the plugin from the running plugin manager.
+      5. Call ``store_manager.uninstall_plugin``. If it returns False or
+         raises, RESTORE the snapshot (so config matches disk) and then
+         propagate the failure.
+      6. Invalidate schema cache and remove from the state manager only
+         after the file removal succeeds.
+
+    Raises on any failure so the caller can return an error to the user.
+    """
+    if hasattr(api_v3.plugin_store_manager, 'mark_recently_uninstalled'):
+        api_v3.plugin_store_manager.mark_recently_uninstalled(plugin_id)
+
+    snapshot = _snapshot_plugin_config(plugin_id) if not preserve_config else (None, None)
+
+    # Step 1: config cleanup. If this fails, bail out early — the plugin
+    # files on disk are still intact and the caller will get a clear
+    # error.
+    if not preserve_config:
+        try:
+            api_v3.config_manager.cleanup_plugin_config(plugin_id, remove_secrets=True)
+        except Exception as cleanup_err:
+            logger.error(
+                "[PluginUninstall] Config cleanup failed for %s; aborting uninstall (files untouched): %s",
+                plugin_id, cleanup_err, exc_info=True,
+            )
+            raise
+
+    # Remember whether the plugin was loaded *before* we touched runtime
+    # state — we need this so we can reload it on rollback if file
+    # removal fails after we've already unloaded it.
+    was_loaded = bool(
+        api_v3.plugin_manager and plugin_id in api_v3.plugin_manager.plugins
+    )
+
+    def _rollback(reason_err):
+        """Undo both the config cleanup AND the unload."""
+        if not preserve_config:
+            _restore_plugin_config(plugin_id, snapshot)
+        if was_loaded and api_v3.plugin_manager:
+            try:
+                api_v3.plugin_manager.load_plugin(plugin_id)
+            except Exception as reload_err:
+                logger.error(
+                    "[PluginUninstall] FAILED to reload %s after uninstall rollback: %s",
+                    plugin_id, reload_err, exc_info=True,
+                )
+
+    # Step 2: unload if loaded. Also part of the rollback boundary — if
+    # unload itself raises, restore config and surface the error.
+    if was_loaded:
+        try:
+            api_v3.plugin_manager.unload_plugin(plugin_id)
+        except Exception as unload_err:
+            logger.error(
+                "[PluginUninstall] unload_plugin raised for %s; restoring config snapshot: %s",
+                plugin_id, unload_err, exc_info=True,
+            )
+            if not preserve_config:
+                _restore_plugin_config(plugin_id, snapshot)
+            # Plugin was never successfully unloaded, so no reload is
+            # needed here — runtime state is still what it was before.
+            raise
+
+    # Step 3: remove files. If this fails, roll back the config cleanup
+    # AND reload the plugin so the user doesn't end up with an orphaned
+    # install (files on disk + no config entry + plugin no longer
+    # loaded at runtime).
+    try:
+        success = api_v3.plugin_store_manager.uninstall_plugin(plugin_id)
+    except Exception as uninstall_err:
+        logger.error(
+            "[PluginUninstall] uninstall_plugin raised for %s; rolling back: %s",
+            plugin_id, uninstall_err, exc_info=True,
+        )
+        _rollback(uninstall_err)
+        raise
+
+    if not success:
+        logger.error(
+            "[PluginUninstall] uninstall_plugin returned False for %s; rolling back",
+            plugin_id,
+        )
+        _rollback(None)
+        raise RuntimeError(f"Failed to uninstall plugin {plugin_id}")
+
+    # Past this point the filesystem and config are both in the
+    # "uninstalled" state. Clean up the cheap in-memory bookkeeping.
+    if api_v3.schema_manager:
+        api_v3.schema_manager.invalidate_cache(plugin_id)
+    if api_v3.plugin_state_manager:
+        api_v3.plugin_state_manager.remove_plugin_state(plugin_id)
+
+
 @api_v3.route('/plugins/uninstall', methods=['POST'])
 def uninstall_plugin():
     """Uninstall plugin"""
@@ -2821,49 +3019,28 @@ def uninstall_plugin():
         # Use operation queue if available
         if api_v3.operation_queue:
             def uninstall_callback(operation):
-                """Callback to execute plugin uninstallation."""
-                # Unload the plugin first if it's loaded
-                if api_v3.plugin_manager and plugin_id in api_v3.plugin_manager.plugins:
-                    api_v3.plugin_manager.unload_plugin(plugin_id)
-
-                # Uninstall the plugin
-                success = api_v3.plugin_store_manager.uninstall_plugin(plugin_id)
-
-                if not success:
-                    error_msg = f'Failed to uninstall plugin {plugin_id}'
+                """Callback to execute plugin uninstallation transactionally."""
+                try:
+                    _do_transactional_uninstall(plugin_id, preserve_config)
+                except Exception as err:
+                    error_msg = f'Failed to uninstall plugin {plugin_id}: {err}'
                     if api_v3.operation_history:
                         api_v3.operation_history.record_operation(
                             "uninstall",
                             plugin_id=plugin_id,
                             status="failed",
-                            error=error_msg
+                            error=error_msg,
                         )
-                    raise Exception(error_msg)
+                    # Re-raise so the operation_queue marks this op as failed.
+                    raise
 
-                # Invalidate schema cache
-                if api_v3.schema_manager:
-                    api_v3.schema_manager.invalidate_cache(plugin_id)
-
-                # Clean up plugin configuration if not preserving
-                if not preserve_config:
-                    try:
-                        api_v3.config_manager.cleanup_plugin_config(plugin_id, remove_secrets=True)
-                    except Exception as cleanup_err:
-                        logger.warning("[PluginUninstall] Failed to cleanup config for %s: %s", plugin_id, cleanup_err)
-
-                # Remove from state manager
-                if api_v3.plugin_state_manager:
-                    api_v3.plugin_state_manager.remove_plugin_state(plugin_id)
-
-                # Record in history
                 if api_v3.operation_history:
                     api_v3.operation_history.record_operation(
                         "uninstall",
                         plugin_id=plugin_id,
                         status="success",
-                        details={"preserve_config": preserve_config}
+                        details={"preserve_config": preserve_config},
                     )
-
                 return {'success': True, 'message': f'Plugin {plugin_id} uninstalled successfully'}
 
             # Enqueue operation
@@ -2878,54 +3055,31 @@ def uninstall_plugin():
                 message=f'Plugin {plugin_id} uninstallation queued'
             )
         else:
-            # Fallback to direct uninstall
-            # Unload the plugin first if it's loaded
-            if api_v3.plugin_manager and plugin_id in api_v3.plugin_manager.plugins:
-                api_v3.plugin_manager.unload_plugin(plugin_id)
-
-            # Uninstall the plugin
-            success = api_v3.plugin_store_manager.uninstall_plugin(plugin_id)
-
-            if success:
-                # Invalidate schema cache
-                if api_v3.schema_manager:
-                    api_v3.schema_manager.invalidate_cache(plugin_id)
-
-                # Clean up plugin configuration if not preserving
-                if not preserve_config:
-                    try:
-                        api_v3.config_manager.cleanup_plugin_config(plugin_id, remove_secrets=True)
-                    except Exception as cleanup_err:
-                        logger.warning("[PluginUninstall] Failed to cleanup config for %s: %s", plugin_id, cleanup_err)
-
-                # Remove from state manager
-                if api_v3.plugin_state_manager:
-                    api_v3.plugin_state_manager.remove_plugin_state(plugin_id)
-
-                # Record in history
-                if api_v3.operation_history:
-                    api_v3.operation_history.record_operation(
-                        "uninstall",
-                        plugin_id=plugin_id,
-                        status="success",
-                        details={"preserve_config": preserve_config}
-                    )
-
-                return success_response(message=f'Plugin {plugin_id} uninstalled successfully')
-            else:
+            # Fallback to direct uninstall — same transactional helper.
+            try:
+                _do_transactional_uninstall(plugin_id, preserve_config)
+            except Exception as err:
                 if api_v3.operation_history:
                     api_v3.operation_history.record_operation(
                         "uninstall",
                         plugin_id=plugin_id,
                         status="failed",
-                        error=f'Failed to uninstall plugin {plugin_id}'
+                        error=f'Failed to uninstall plugin {plugin_id}: {err}',
                     )
-
                 return error_response(
                     ErrorCode.PLUGIN_UNINSTALL_FAILED,
-                    f'Failed to uninstall plugin {plugin_id}',
-                    status_code=500
+                    f'Failed to uninstall plugin {plugin_id}: {err}',
+                    status_code=500,
                 )
+
+            if api_v3.operation_history:
+                api_v3.operation_history.record_operation(
+                    "uninstall",
+                    plugin_id=plugin_id,
+                    status="success",
+                    details={"preserve_config": preserve_config},
+                )
+            return success_response(message=f'Plugin {plugin_id} uninstalled successfully')
 
     except Exception as e:
         logger.exception("[PluginUninstall] Unhandled exception")
