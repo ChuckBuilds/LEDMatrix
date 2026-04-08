@@ -8,7 +8,7 @@ Detects and fixes inconsistencies between:
 - State manager state
 """
 
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Set
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
@@ -94,7 +94,7 @@ class StateReconciliation:
         # restart — or an explicit user-initiated reconcile with force=True —
         # clears this so recovery is possible after the underlying issue is
         # fixed.
-        self._unrecoverable_missing_on_disk: set = set()
+        self._unrecoverable_missing_on_disk: Set[str] = set()
     
     def reconcile_state(self, force: bool = False) -> ReconciliationResult:
         """

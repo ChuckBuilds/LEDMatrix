@@ -112,6 +112,68 @@ class TestGitInfoCache(unittest.TestCase):
         non_git.mkdir()
         self.assertIsNone(self.sm._get_local_git_info(non_git))
 
+    def test_cache_invalidates_on_fast_forward_of_current_branch(self):
+        """Regression: .git/HEAD mtime alone is not enough.
+
+        ``git pull`` that fast-forwards the current branch touches
+        ``.git/refs/heads/<branch>`` (or packed-refs) but NOT HEAD. If
+        we cache on HEAD mtime alone, we serve a stale SHA indefinitely.
+        """
+        # Build a realistic loose-ref layout.
+        refs_heads = self.plugin_path / ".git" / "refs" / "heads"
+        refs_heads.mkdir(parents=True)
+        branch_file = refs_heads / "main"
+        branch_file.write_text("a" * 40 + "\n")
+        # Overwrite HEAD to point at refs/heads/main.
+        (self.plugin_path / ".git" / "HEAD").write_text("ref: refs/heads/main\n")
+
+        call_log = []
+
+        def fake_subprocess_run(*args, **kwargs):
+            call_log.append(args[0])
+            result = MagicMock()
+            result.returncode = 0
+            cmd = args[0]
+            if "rev-parse" in cmd and "--abbrev-ref" not in cmd:
+                result.stdout = branch_file.read_text().strip() + "\n"
+            elif "--abbrev-ref" in cmd:
+                result.stdout = "main\n"
+            elif "config" in cmd:
+                result.stdout = "https://example.com/repo.git\n"
+            elif "log" in cmd:
+                result.stdout = "2026-04-08T12:00:00+00:00\n"
+            else:
+                result.stdout = ""
+            return result
+
+        with patch(
+            "src.plugin_system.store_manager.subprocess.run",
+            side_effect=fake_subprocess_run,
+        ):
+            first = self.sm._get_local_git_info(self.plugin_path)
+            calls_after_first = len(call_log)
+            self.assertIsNotNone(first)
+            self.assertTrue(first["sha"].startswith("a"))
+
+            # Second call: unchanged. Cache hit → no new subprocess calls.
+            self.sm._get_local_git_info(self.plugin_path)
+            self.assertEqual(len(call_log), calls_after_first,
+                             "cache should hit on unchanged state")
+
+            # Simulate a fast-forward: the branch ref file gets a new SHA
+            # and a new mtime, but .git/HEAD is untouched.
+            branch_file.write_text("b" * 40 + "\n")
+            new_time = branch_file.stat().st_mtime + 10
+            os.utime(branch_file, (new_time, new_time))
+
+            second = self.sm._get_local_git_info(self.plugin_path)
+            # Cache MUST have been invalidated — we should have re-run git.
+            self.assertGreater(
+                len(call_log), calls_after_first,
+                "cache should have invalidated on branch ref update",
+            )
+            self.assertTrue(second["sha"].startswith("b"))
+
 
 class TestSearchPluginsParallel(unittest.TestCase):
     """Plugin Store browse path — the per-plugin GitHub enrichment used to
@@ -179,9 +241,16 @@ class TestSearchPluginsParallel(unittest.TestCase):
     def test_enrichment_runs_concurrently(self):
         """Verify the thread pool actually runs fetches in parallel.
 
-        We make each fake fetch sleep briefly and check wall time — if the
-        code had regressed to serial execution, 5 plugins × ~60ms sleep
-        would be ≥ 300ms. Parallel should be well under that.
+        Deterministic check: each stub repo fetch holds a lock while it
+        increments a "currently running" counter, then sleeps briefly,
+        then decrements. If execution is serial, the peak counter can
+        never exceed 1. If the thread pool is engaged, we see at least
+        2 concurrent workers.
+
+        We deliberately do NOT assert on elapsed wall time — that check
+        was flaky on low-power / CI boxes where scheduler noise dwarfed
+        the 50ms-per-worker budget. ``peak["count"] >= 2`` is the signal
+        we actually care about.
         """
         import threading
         peak_lock = threading.Lock()
@@ -192,6 +261,10 @@ class TestSearchPluginsParallel(unittest.TestCase):
                 peak["current"] += 1
                 if peak["current"] > peak["count"]:
                     peak["count"] = peak["current"]
+            # Small sleep gives other workers a chance to enter the
+            # critical section before we leave it. 50ms is large enough
+            # to dominate any scheduling jitter without slowing the test
+            # suite meaningfully.
             time.sleep(0.05)
             with peak_lock:
                 peak["current"] -= 1
@@ -202,16 +275,13 @@ class TestSearchPluginsParallel(unittest.TestCase):
         self.sm._get_latest_commit_info = lambda *a, **k: None
         self.sm._fetch_manifest_from_github = lambda *a, **k: None
 
-        t0 = time.time()
         results = self.sm.search_plugins(fetch_commit_info=False, include_saved_repos=False)
-        elapsed = time.time() - t0
 
         self.assertEqual(len(results), 5)
-        # Serial would be ~250ms; parallel should be well under 200ms.
-        self.assertLess(elapsed, 0.2,
-                        f"search_plugins took {elapsed:.3f}s — appears to have regressed to serial")
-        self.assertGreaterEqual(peak["count"], 2,
-                                "no concurrent fetches observed — thread pool not engaging")
+        self.assertGreaterEqual(
+            peak["count"], 2,
+            "no concurrent fetches observed — thread pool not engaging",
+        )
 
 
 class TestStaleOnErrorFallbacks(unittest.TestCase):
@@ -240,6 +310,73 @@ class TestStaleOnErrorFallbacks(unittest.TestCase):
             result = self.sm._get_github_repo_info("https://github.com/owner/repo")
         self.assertEqual(result["stars"], 42)
 
+    def test_repo_info_stale_bumps_timestamp_into_backoff(self):
+        """Regression: after serving stale, next lookup must hit cache.
+
+        Without the failure-backoff timestamp bump, a repeat request
+        would see the cache as still expired and re-hit the network,
+        amplifying the original failure. The fix is to update the
+        cached entry's timestamp so ``(now - ts) < cache_timeout`` holds
+        for the backoff window.
+        """
+        cache_key = "owner/repo"
+        good = {"stars": 99, "default_branch": "main",
+                "last_commit_iso": "", "last_commit_date": "",
+                "forks": 0, "open_issues": 0, "updated_at_iso": "",
+                "language": "", "license": ""}
+        self.sm.github_cache[cache_key] = (time.time() - 10_000, good)
+        self.sm.cache_timeout = 1
+        self.sm._failure_backoff_seconds = 60
+
+        import requests as real_requests
+        call_count = {"n": 0}
+
+        def counting_get(*args, **kwargs):
+            call_count["n"] += 1
+            raise real_requests.ConnectionError("boom")
+
+        with patch("src.plugin_system.store_manager.requests.get", side_effect=counting_get):
+            first = self.sm._get_github_repo_info("https://github.com/owner/repo")
+            self.assertEqual(first["stars"], 99)
+            self.assertEqual(call_count["n"], 1)
+
+            # Second call must hit the bumped cache and NOT make another request.
+            second = self.sm._get_github_repo_info("https://github.com/owner/repo")
+            self.assertEqual(second["stars"], 99)
+            self.assertEqual(
+                call_count["n"], 1,
+                "stale-cache fallback must bump the timestamp to avoid "
+                "re-retrying on every request during the backoff window",
+            )
+
+    def test_repo_info_stale_on_403_also_backs_off(self):
+        """Same backoff requirement for 403 rate-limit responses."""
+        cache_key = "owner/repo"
+        good = {"stars": 7, "default_branch": "main",
+                "last_commit_iso": "", "last_commit_date": "",
+                "forks": 0, "open_issues": 0, "updated_at_iso": "",
+                "language": "", "license": ""}
+        self.sm.github_cache[cache_key] = (time.time() - 10_000, good)
+        self.sm.cache_timeout = 1
+
+        rate_limited = MagicMock()
+        rate_limited.status_code = 403
+        rate_limited.text = "rate limited"
+        call_count = {"n": 0}
+
+        def counting_get(*args, **kwargs):
+            call_count["n"] += 1
+            return rate_limited
+
+        with patch("src.plugin_system.store_manager.requests.get", side_effect=counting_get):
+            self.sm._get_github_repo_info("https://github.com/owner/repo")
+            self.assertEqual(call_count["n"], 1)
+            self.sm._get_github_repo_info("https://github.com/owner/repo")
+            self.assertEqual(
+                call_count["n"], 1,
+                "403 stale fallback must also bump the timestamp",
+            )
+
     def test_commit_info_stale_on_network_error(self):
         cache_key = "owner/repo:main"
         good = {"branch": "main", "sha": "a" * 40, "short_sha": "aaaaaaa",
@@ -256,6 +393,38 @@ class TestStaleOnErrorFallbacks(unittest.TestCase):
             )
         self.assertIsNotNone(result)
         self.assertEqual(result["short_sha"], "aaaaaaa")
+
+    def test_commit_info_preserves_good_cache_on_all_branches_404(self):
+        """Regression: all-branches-404 used to overwrite good cache with None.
+
+        The previous implementation unconditionally wrote
+        ``self.commit_info_cache[cache_key] = (time.time(), None)`` after
+        the branch loop, which meant a single transient failure (e.g. an
+        odd 5xx or an ls-refs hiccup) wiped out the commit info we had
+        just served to the UI the previous minute.
+        """
+        cache_key = "owner/repo:main"
+        good = {"branch": "main", "sha": "a" * 40, "short_sha": "aaaaaaa",
+                "date_iso": "2026-04-08T00:00:00Z", "date": "2026-04-08",
+                "author": "x", "message": "y"}
+        self.sm.commit_info_cache[cache_key] = (time.time() - 10_000, good)
+        self.sm.commit_cache_timeout = 1
+
+        # Each branches_to_try attempt returns a 404. No network error
+        # exception — just a non-200 response. This is the code path
+        # that used to overwrite the cache with None.
+        not_found = MagicMock()
+        not_found.status_code = 404
+        not_found.text = "Not Found"
+        with patch("src.plugin_system.store_manager.requests.get", return_value=not_found):
+            result = self.sm._get_latest_commit_info(
+                "https://github.com/owner/repo", branch="main"
+            )
+
+        self.assertIsNotNone(result, "good cache was wiped out by transient 404s")
+        self.assertEqual(result["short_sha"], "aaaaaaa")
+        # The cache entry must still be the good value, not None.
+        self.assertIsNotNone(self.sm.commit_info_cache[cache_key][1])
 
 
 class TestInstallUpdateUninstallInvariants(unittest.TestCase):
@@ -319,7 +488,14 @@ class TestInstallUpdateUninstallInvariants(unittest.TestCase):
         self.assertTrue(manifest_calls[0][3], "force_refresh=True did not reach _fetch_manifest_from_github")
 
     def test_install_plugin_is_not_blocked_by_tombstone(self):
-        """A tombstone must only gate the reconciler, not explicit installs."""
+        """A tombstone must only gate the reconciler, not explicit installs.
+
+        Uses a complete, valid manifest stub and a no-op dependency
+        installer so ``install_plugin`` runs all the way through to a
+        True return. Anything less (e.g. swallowing exceptions) would
+        hide real regressions in the install path.
+        """
+        import json as _json
         self.sm.registry_cache = {
             "plugins": [{"id": "bar", "repo": "https://github.com/o/bar",
                          "plugin_path": ""}]
@@ -342,34 +518,36 @@ class TestInstallUpdateUninstallInvariants(unittest.TestCase):
             "date": "2026-04-08", "date_iso": "2026-04-08T00:00:00Z",
         }
         self.sm._fetch_manifest_from_github = lambda *a, **k: None
-
-        # Intercept the actual download so we don't touch the network, but
-        # still exercise the full install_plugin path up to that point.
-        install_attempted = {"flag": False}
+        # Skip dependency install entirely (real install calls pip).
+        self.sm._install_dependencies = lambda *a, **k: True
 
         def fake_install_via_git(repo_url, plugin_path, branches):
-            install_attempted["flag"] = True
+            # Write a COMPLETE valid manifest so install_plugin's
+            # post-download validation succeeds. Required fields come
+            # from install_plugin itself: id, name, class_name, display_modes.
             plugin_path.mkdir(parents=True, exist_ok=True)
+            manifest = {
+                "id": "bar",
+                "name": "Bar Plugin",
+                "version": "1.0.0",
+                "class_name": "BarPlugin",
+                "entry_point": "manager.py",
+                "display_modes": ["bar_mode"],
+            }
+            (plugin_path / "manifest.json").write_text(_json.dumps(manifest))
             return branches[0]
 
         self.sm._install_via_git = fake_install_via_git
 
-        # The goal of this test is to prove the tombstone does NOT gate
-        # explicit install_plugin calls. The full install path has a bunch
-        # of downstream validation (manifest fields, dependency install,
-        # etc.) that we don't need to exercise here — the "tombstone did
-        # not block" invariant is proven purely by the fact that
-        # install_plugin reaches the download step at all. If the tombstone
-        # had been gating, install_plugin would have returned False before
-        # calling _install_via_git.
-        try:
-            self.sm.install_plugin("bar")
-        except Exception:
-            pass
+        # No exception-swallowing: if install_plugin fails for ANY reason
+        # unrelated to the tombstone, the test fails loudly.
+        result = self.sm.install_plugin("bar")
 
-        self.assertTrue(install_attempted["flag"],
-                        "install_plugin did not reach the download step — "
-                        "tombstone must not gate explicit installs")
+        self.assertTrue(
+            result,
+            "install_plugin returned False — the tombstone should not gate "
+            "explicit installs and all other stubs should allow success.",
+        )
         # Tombstone survives install (harmless — nothing reads it for installed plugins).
         self.assertTrue(self.sm.was_recently_uninstalled("bar"))
 

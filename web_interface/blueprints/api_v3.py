@@ -2926,31 +2926,62 @@ def _do_transactional_uninstall(plugin_id: str, preserve_config: bool) -> None:
             )
             raise
 
-    # Step 2: unload if loaded.
-    if api_v3.plugin_manager and plugin_id in api_v3.plugin_manager.plugins:
-        api_v3.plugin_manager.unload_plugin(plugin_id)
+    # Remember whether the plugin was loaded *before* we touched runtime
+    # state — we need this so we can reload it on rollback if file
+    # removal fails after we've already unloaded it.
+    was_loaded = bool(
+        api_v3.plugin_manager and plugin_id in api_v3.plugin_manager.plugins
+    )
 
-    # Step 3: remove files. If this fails, roll back the config cleanup so
-    # the user doesn't end up with an orphaned install (files on disk with
-    # no config entry).
+    def _rollback(reason_err):
+        """Undo both the config cleanup AND the unload."""
+        if not preserve_config:
+            _restore_plugin_config(plugin_id, snapshot)
+        if was_loaded and api_v3.plugin_manager:
+            try:
+                api_v3.plugin_manager.load_plugin(plugin_id)
+            except Exception as reload_err:
+                logger.error(
+                    "[PluginUninstall] FAILED to reload %s after uninstall rollback: %s",
+                    plugin_id, reload_err, exc_info=True,
+                )
+
+    # Step 2: unload if loaded. Also part of the rollback boundary — if
+    # unload itself raises, restore config and surface the error.
+    if was_loaded:
+        try:
+            api_v3.plugin_manager.unload_plugin(plugin_id)
+        except Exception as unload_err:
+            logger.error(
+                "[PluginUninstall] unload_plugin raised for %s; restoring config snapshot: %s",
+                plugin_id, unload_err, exc_info=True,
+            )
+            if not preserve_config:
+                _restore_plugin_config(plugin_id, snapshot)
+            # Plugin was never successfully unloaded, so no reload is
+            # needed here — runtime state is still what it was before.
+            raise
+
+    # Step 3: remove files. If this fails, roll back the config cleanup
+    # AND reload the plugin so the user doesn't end up with an orphaned
+    # install (files on disk + no config entry + plugin no longer
+    # loaded at runtime).
     try:
         success = api_v3.plugin_store_manager.uninstall_plugin(plugin_id)
     except Exception as uninstall_err:
         logger.error(
-            "[PluginUninstall] uninstall_plugin raised for %s; restoring config snapshot: %s",
+            "[PluginUninstall] uninstall_plugin raised for %s; rolling back: %s",
             plugin_id, uninstall_err, exc_info=True,
         )
-        if not preserve_config:
-            _restore_plugin_config(plugin_id, snapshot)
+        _rollback(uninstall_err)
         raise
 
     if not success:
         logger.error(
-            "[PluginUninstall] uninstall_plugin returned False for %s; restoring config snapshot",
+            "[PluginUninstall] uninstall_plugin returned False for %s; rolling back",
             plugin_id,
         )
-        if not preserve_config:
-            _restore_plugin_config(plugin_id, snapshot)
+        _rollback(None)
         raise RuntimeError(f"Failed to uninstall plugin {plugin_id}")
 
     # Past this point the filesystem and config are both in the

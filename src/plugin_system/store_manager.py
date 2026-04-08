@@ -81,18 +81,45 @@ class PluginStoreManager:
         self._uninstall_tombstones: Dict[str, float] = {}
         self._uninstall_tombstone_ttl = 300  # 5 minutes
 
-        # Cache for _get_local_git_info: {plugin_path_str: (head_mtime, data)}
-        # Keyed on the mtime of .git/HEAD so we re-run git only when the
-        # working copy actually moved. Before this cache, every
+        # Cache for _get_local_git_info: {plugin_path_str: (signature, data)}
+        # where ``signature`` is a tuple of (head_mtime, resolved_ref_mtime,
+        # head_contents) so a fast-forward update to the current branch
+        # (which touches .git/refs/heads/<branch> but NOT .git/HEAD) still
+        # invalidates the cache. Before this cache, every
         # /plugins/installed request fired 4 git subprocesses per plugin,
         # which pegged the CPU on a Pi4 with a dozen plugins. The cached
         # ``data`` dict is the same shape returned by ``_get_local_git_info``
         # itself (sha / short_sha / branch / optional remote_url, date_iso,
         # date) — all string-keyed strings.
-        self._git_info_cache: Dict[str, Tuple[float, Dict[str, str]]] = {}
+        self._git_info_cache: Dict[str, Tuple[Tuple, Dict[str, str]]] = {}
+
+        # How long to wait before re-attempting a failed GitHub metadata
+        # fetch after we've already served a stale cache hit. Without this,
+        # a single expired-TTL + network-error would cause every subsequent
+        # request to re-hit the network (and fail again) until the network
+        # actually came back — amplifying the failure and blocking request
+        # handlers. Bumping the cached-entry timestamp on failure serves
+        # the stale payload cheaply until the backoff expires.
+        self._failure_backoff_seconds = 60
 
         # Ensure plugins directory exists
         self.plugins_dir.mkdir(exist_ok=True)
+
+    def _record_cache_backoff(self, cache_dict: Dict, cache_key: str,
+                              cache_timeout: int, payload: Any) -> None:
+        """Bump a cache entry's timestamp so subsequent lookups hit the
+        cache rather than re-failing over the network.
+
+        Used by the stale-on-error fallbacks in the GitHub metadata fetch
+        paths. Without this, a cache entry whose TTL just expired would
+        cause every subsequent request to re-hit the network and fail
+        again until the network actually came back. We write a synthetic
+        timestamp ``(now + backoff - cache_timeout)`` so the cache-valid
+        check ``(now - ts) < cache_timeout`` succeeds for another
+        ``backoff`` seconds.
+        """
+        synthetic_ts = time.time() + self._failure_backoff_seconds - cache_timeout
+        cache_dict[cache_key] = (synthetic_ts, payload)
 
     def mark_recently_uninstalled(self, plugin_id: str) -> None:
         """Record that ``plugin_id`` was just uninstalled by the user."""
@@ -357,9 +384,13 @@ class PluginStoreManager:
                     except requests.RequestException as req_err:
                         # Network error: prefer a stale cache hit over an
                         # empty default so the UI keeps working on a flaky
-                        # Pi WiFi link.
+                        # Pi WiFi link. Bump the cached entry's timestamp
+                        # into a short backoff window so subsequent
+                        # requests serve the stale payload cheaply instead
+                        # of re-hitting the network on every request.
                         if cache_key in self.github_cache:
                             _, stale = self.github_cache[cache_key]
+                            self._record_cache_backoff(self.github_cache, cache_key, self.cache_timeout, stale)
                             self.logger.warning(
                                 "GitHub repo info fetch failed for %s (%s); serving stale cache.",
                                 cache_key, req_err,
@@ -389,9 +420,13 @@ class PluginStoreManager:
                         # Rate limit or authentication issue. If we have a
                         # previously-cached value, serve it rather than
                         # returning empty defaults — a stale star count is
-                        # better than a reset to zero.
+                        # better than a reset to zero. Apply the same
+                        # failure-backoff bump as the network-error path
+                        # so we don't hammer the API with repeat requests
+                        # while rate-limited.
                         if cache_key in self.github_cache:
                             _, stale = self.github_cache[cache_key]
+                            self._record_cache_backoff(self.github_cache, cache_key, self.cache_timeout, stale)
                             self.logger.warning(
                                 "GitHub API 403 for %s; serving stale cache.", cache_key,
                             )
@@ -411,6 +446,7 @@ class PluginStoreManager:
                         self.logger.warning(f"GitHub API request failed: {response.status_code} for {api_url}")
                         if cache_key in self.github_cache:
                             _, stale = self.github_cache[cache_key]
+                            self._record_cache_backoff(self.github_cache, cache_key, self.cache_timeout, stale)
                             return stale
 
             return {
@@ -800,10 +836,16 @@ class PluginStoreManager:
                 except requests.RequestException as req_err:
                     # Network failure: fall back to a stale cache hit if
                     # available so the plugin store UI keeps populating
-                    # commit info on a flaky WiFi link.
+                    # commit info on a flaky WiFi link. Bump the cached
+                    # timestamp into the backoff window so we don't
+                    # re-retry on every request.
                     if cache_key in self.commit_info_cache:
                         _, stale = self.commit_info_cache[cache_key]
                         if stale is not None:
+                            self._record_cache_backoff(
+                                self.commit_info_cache, cache_key,
+                                self.commit_cache_timeout, stale,
+                            )
                             self.logger.warning(
                                 "GitHub commit fetch failed for %s (%s); serving stale cache.",
                                 cache_key, req_err,
@@ -840,7 +882,23 @@ class PluginStoreManager:
             if last_error:
                 self.logger.debug(f"Unable to fetch commit info for {repo_url}: {last_error}")
 
-            # Cache negative result to avoid repeated failing calls
+            # All branches returned a non-200 response (e.g. 404 on every
+            # candidate, or a transient 5xx). If we already had a good
+            # cached value, prefer serving that — overwriting it with
+            # None here would wipe out commit info the UI just showed
+            # on the previous request. Bump the timestamp into the
+            # backoff window so subsequent lookups hit the cache.
+            if cache_key in self.commit_info_cache:
+                _, prior = self.commit_info_cache[cache_key]
+                if prior is not None:
+                    self._record_cache_backoff(
+                        self.commit_info_cache, cache_key,
+                        self.commit_cache_timeout, prior,
+                    )
+                    return prior
+
+            # No prior good value — cache the negative result so we don't
+            # hammer a plugin that genuinely has no reachable commits.
             self.commit_info_cache[cache_key] = (time.time(), None)
 
         except Exception as e:
@@ -1694,28 +1752,72 @@ class PluginStoreManager:
             self.logger.error(f"Unexpected error installing dependencies for {plugin_path.name}: {e}", exc_info=True)
             return False
 
+    def _git_cache_signature(self, git_dir: Path) -> Optional[Tuple]:
+        """Build a cache signature that invalidates on the kind of updates
+        a plugin user actually cares about.
+
+        Caching on ``.git/HEAD`` mtime alone is not enough: a ``git pull``
+        that fast-forwards the current branch updates
+        ``.git/refs/heads/<branch>`` (or ``.git/packed-refs``) but leaves
+        HEAD's contents and mtime untouched. We'd then serve a stale SHA
+        indefinitely.
+
+        Signature components:
+          - HEAD contents (catches detach / branch switch)
+          - HEAD mtime
+          - if HEAD points at a ref, that ref file's mtime (catches
+            fast-forward / reset on the current branch)
+          - packed-refs mtime as a coarse fallback for repos using packed refs
+
+        Returns ``None`` if HEAD cannot be read at all (caller will skip
+        the cache and take the slow path).
+        """
+        head_file = git_dir / 'HEAD'
+        try:
+            head_mtime = head_file.stat().st_mtime
+            head_contents = head_file.read_text(encoding='utf-8', errors='replace').strip()
+        except OSError:
+            return None
+
+        ref_mtime = None
+        if head_contents.startswith('ref: '):
+            ref_path = head_contents[len('ref: '):].strip()
+            # ``ref_path`` looks like ``refs/heads/main``. It lives either
+            # as a loose file under .git/ or inside .git/packed-refs.
+            loose_ref = git_dir / ref_path
+            try:
+                ref_mtime = loose_ref.stat().st_mtime
+            except OSError:
+                ref_mtime = None
+
+        packed_refs_mtime = None
+        if ref_mtime is None:
+            try:
+                packed_refs_mtime = (git_dir / 'packed-refs').stat().st_mtime
+            except OSError:
+                packed_refs_mtime = None
+
+        return (head_contents, head_mtime, ref_mtime, packed_refs_mtime)
+
     def _get_local_git_info(self, plugin_path: Path) -> Optional[Dict[str, str]]:
         """Return local git branch, commit hash, and commit date if the plugin is a git checkout.
 
-        Results are cached keyed on the mtime of ``.git/HEAD`` so repeated
-        calls (e.g. one per plugin on every ``/plugins/installed`` request)
-        skip the four ``git`` subprocesses when nothing has changed.
+        Results are cached keyed on a signature that includes HEAD
+        contents plus the mtime of HEAD AND the resolved ref (or
+        packed-refs). Repeated calls skip the four ``git`` subprocesses
+        when nothing has changed, and a ``git pull`` that fast-forwards
+        the branch correctly invalidates the cache.
         """
         git_dir = plugin_path / '.git'
         if not git_dir.exists():
             return None
 
-        # mtime-gated cache lookup.
-        head_file = git_dir / 'HEAD'
         cache_key = str(plugin_path)
-        try:
-            head_mtime = head_file.stat().st_mtime
-        except OSError:
-            head_mtime = None
+        signature = self._git_cache_signature(git_dir)
 
-        if head_mtime is not None:
+        if signature is not None:
             cached = self._git_info_cache.get(cache_key)
-            if cached is not None and cached[0] == head_mtime:
+            if cached is not None and cached[0] == signature:
                 return cached[1]
 
         try:
@@ -1775,8 +1877,8 @@ class PluginStoreManager:
                 result['date_iso'] = commit_date_iso
                 result['date'] = self._iso_to_date(commit_date_iso)
 
-            if head_mtime is not None:
-                self._git_info_cache[cache_key] = (head_mtime, result)
+            if signature is not None:
+                self._git_info_cache[cache_key] = (signature, result)
             return result
         except subprocess.CalledProcessError as err:
             self.logger.debug(f"Failed to read git info for {plugin_path.name}: {err}")

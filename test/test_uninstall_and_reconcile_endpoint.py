@@ -169,6 +169,65 @@ class TestTransactionalUninstall(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.api_v3.plugin_store_manager.uninstall_plugin.assert_called_once_with('thing')
 
+    def test_file_removal_failure_reloads_previously_loaded_plugin(self):
+        """Regression: rollback must restore BOTH config AND runtime state.
+
+        If the plugin was loaded at runtime before the uninstall
+        request, and file removal fails after unload has already
+        succeeded, the rollback must call ``load_plugin`` so the user
+        doesn't end up in a state where the files exist and the config
+        exists but the plugin is no longer loaded.
+        """
+        # Plugin is currently loaded.
+        self.api_v3.plugin_manager.plugins = {'thing': MagicMock()}
+        self.api_v3.config_manager.get_raw_file_content.return_value = {
+            'thing': {'enabled': True}
+        }
+        self.api_v3.config_manager.cleanup_plugin_config.return_value = None
+        self.api_v3.plugin_manager.unload_plugin.return_value = None
+        self.api_v3.plugin_store_manager.uninstall_plugin.return_value = False
+
+        response = self.client.post(
+            '/api/v3/plugins/uninstall',
+            data=json.dumps({'plugin_id': 'thing'}),
+            content_type='application/json',
+        )
+
+        self.assertEqual(response.status_code, 500)
+        # Unload did happen (it's part of the uninstall sequence)...
+        self.api_v3.plugin_manager.unload_plugin.assert_called_once_with('thing')
+        # ...and because file removal failed, the rollback must have
+        # called load_plugin to restore runtime state.
+        self.api_v3.plugin_manager.load_plugin.assert_called_once_with('thing')
+
+    def test_unload_failure_restores_config_and_does_not_call_uninstall(self):
+        """If unload_plugin itself raises, config must be restored and
+        uninstall_plugin must NOT be called."""
+        self.api_v3.plugin_manager.plugins = {'thing': MagicMock()}
+        self.api_v3.config_manager.get_raw_file_content.return_value = {
+            'thing': {'enabled': True}
+        }
+        self.api_v3.config_manager.cleanup_plugin_config.return_value = None
+        self.api_v3.plugin_manager.unload_plugin.side_effect = RuntimeError("unload boom")
+
+        response = self.client.post(
+            '/api/v3/plugins/uninstall',
+            data=json.dumps({'plugin_id': 'thing'}),
+            content_type='application/json',
+        )
+
+        self.assertEqual(response.status_code, 500)
+        self.api_v3.plugin_store_manager.uninstall_plugin.assert_not_called()
+        # Config should have been restored.
+        calls = self.api_v3.config_manager.save_raw_file_content.call_args_list
+        self.assertTrue(
+            any(c.args[0] == 'main' for c in calls),
+            "main config was not restored after unload_plugin raised",
+        )
+        # load_plugin must NOT have been called — unload didn't succeed,
+        # so runtime state is still what it was.
+        self.api_v3.plugin_manager.load_plugin.assert_not_called()
+
 
 class TestReconcileEndpointPayload(unittest.TestCase):
     """``/plugins/state/reconcile`` must handle weird JSON payloads without
