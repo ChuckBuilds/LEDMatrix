@@ -184,7 +184,6 @@ class TestSearchPluginsParallel(unittest.TestCase):
         would be ≥ 300ms. Parallel should be well under that.
         """
         import threading
-        concurrent_workers = []
         peak_lock = threading.Lock()
         peak = {"count": 0, "current": 0}
 

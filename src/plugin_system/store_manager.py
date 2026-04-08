@@ -17,7 +17,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
-from typing import List, Dict, Optional, Any
+from typing import List, Dict, Optional, Any, Tuple
 import logging
 
 from src.common.permission_utils import sudo_remove_directory
@@ -64,7 +64,7 @@ class PluginStoreManager:
         # 30 minutes for commit/manifest caches. Plugin Store users browse
         # the catalog via /plugins/store/list which fetches commit info and
         # manifest data per plugin. 5-min TTLs meant every fresh browse on
-        # a Pi4 paid for ~3 HTTP requests × N plugins (30-60s serial). 30
+        # a Pi4 paid for ~3 HTTP requests x N plugins (30-60s serial). 30
         # minutes keeps the cache warm across a realistic session while
         # still picking up upstream updates within a reasonable window.
         self.commit_cache_timeout = 1800
@@ -85,8 +85,11 @@ class PluginStoreManager:
         # Keyed on the mtime of .git/HEAD so we re-run git only when the
         # working copy actually moved. Before this cache, every
         # /plugins/installed request fired 4 git subprocesses per plugin,
-        # which pegged the CPU on a Pi4 with a dozen plugins.
-        self._git_info_cache: Dict[str, tuple] = {}
+        # which pegged the CPU on a Pi4 with a dozen plugins. The cached
+        # ``data`` dict is the same shape returned by ``_get_local_git_info``
+        # itself (sha / short_sha / branch / optional remote_url, date_iso,
+        # date) — all string-keyed strings.
+        self._git_info_cache: Dict[str, Tuple[float, Dict[str, str]]] = {}
 
         # Ensure plugins directory exists
         self.plugins_dir.mkdir(exist_ok=True)
@@ -685,8 +688,10 @@ class PluginStoreManager:
         if not filtered:
             return []
 
-        if len(filtered) == 1 or not fetch_commit_info and len(filtered) < 4:
-            # Not worth the pool overhead for tiny workloads.
+        # Not worth the pool overhead for tiny workloads. Parenthesized to
+        # make Python's default ``and`` > ``or`` precedence explicit: a
+        # single plugin, OR a small batch where we don't need commit info.
+        if (len(filtered) == 1) or ((not fetch_commit_info) and (len(filtered) < 4)):
             return [_enrich(p) for p in filtered]
 
         max_workers = min(10, len(filtered))
