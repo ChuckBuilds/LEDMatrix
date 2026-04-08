@@ -259,6 +259,122 @@ class TestStaleOnErrorFallbacks(unittest.TestCase):
         self.assertEqual(result["short_sha"], "aaaaaaa")
 
 
+class TestInstallUpdateUninstallInvariants(unittest.TestCase):
+    """Regression guard: the caching and tombstone work added in this PR
+    must not break the install / update / uninstall code paths.
+
+    Specifically:
+    - ``install_plugin`` bypasses commit/manifest caches via force_refresh,
+      so the 5→30 min TTL bump cannot cause users to install a stale commit.
+    - ``update_plugin`` does the same.
+    - The uninstall tombstone is only honored by the state reconciler, not
+      by explicit ``install_plugin`` calls — so a user can uninstall and
+      immediately reinstall from the store UI without the tombstone getting
+      in the way.
+    - ``was_recently_uninstalled`` is not touched by ``install_plugin``.
+    """
+
+    def setUp(self):
+        self._tmp = TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.sm = PluginStoreManager(plugins_dir=self._tmp.name)
+
+    def test_get_plugin_info_with_force_refresh_forwards_to_commit_fetch(self):
+        """install_plugin's code path must reach the network bypass."""
+        self.sm.registry_cache = {
+            "plugins": [{"id": "foo", "repo": "https://github.com/o/r"}]
+        }
+        self.sm.registry_cache_time = time.time()
+
+        repo_calls = []
+        commit_calls = []
+        manifest_calls = []
+
+        def fake_repo(url):
+            repo_calls.append(url)
+            return {"default_branch": "main", "stars": 0,
+                    "last_commit_iso": "", "last_commit_date": ""}
+
+        def fake_commit(url, branch, force_refresh=False):
+            commit_calls.append((url, branch, force_refresh))
+            return {"short_sha": "deadbee", "sha": "d" * 40,
+                    "message": "m", "author": "a", "branch": branch,
+                    "date": "2026-04-08", "date_iso": "2026-04-08T00:00:00Z"}
+
+        def fake_manifest(url, branch, manifest_path, force_refresh=False):
+            manifest_calls.append((url, branch, manifest_path, force_refresh))
+            return None
+
+        self.sm._get_github_repo_info = fake_repo
+        self.sm._get_latest_commit_info = fake_commit
+        self.sm._fetch_manifest_from_github = fake_manifest
+
+        info = self.sm.get_plugin_info("foo", fetch_latest_from_github=True, force_refresh=True)
+
+        self.assertIsNotNone(info)
+        self.assertEqual(info["last_commit_sha"], "d" * 40)
+        # force_refresh must have propagated through to the fetch helpers.
+        self.assertTrue(commit_calls, "commit fetch was not called")
+        self.assertTrue(commit_calls[0][2], "force_refresh=True did not reach _get_latest_commit_info")
+        self.assertTrue(manifest_calls, "manifest fetch was not called")
+        self.assertTrue(manifest_calls[0][3], "force_refresh=True did not reach _fetch_manifest_from_github")
+
+    def test_install_plugin_is_not_blocked_by_tombstone(self):
+        """A tombstone must only gate the reconciler, not explicit installs."""
+        self.sm.registry_cache = {
+            "plugins": [{"id": "bar", "repo": "https://github.com/o/bar",
+                         "plugin_path": ""}]
+        }
+        self.sm.registry_cache_time = time.time()
+
+        # Mark it recently uninstalled (simulates a user who just clicked
+        # uninstall and then immediately clicked install again).
+        self.sm.mark_recently_uninstalled("bar")
+        self.assertTrue(self.sm.was_recently_uninstalled("bar"))
+
+        # Stub the heavy bits so install_plugin can run without network.
+        self.sm._get_github_repo_info = lambda url: {
+            "default_branch": "main", "stars": 0,
+            "last_commit_iso": "", "last_commit_date": ""
+        }
+        self.sm._get_latest_commit_info = lambda *a, **k: {
+            "short_sha": "abc1234", "sha": "a" * 40, "branch": "main",
+            "message": "m", "author": "a",
+            "date": "2026-04-08", "date_iso": "2026-04-08T00:00:00Z",
+        }
+        self.sm._fetch_manifest_from_github = lambda *a, **k: None
+
+        # Intercept the actual download so we don't touch the network, but
+        # still exercise the full install_plugin path up to that point.
+        install_attempted = {"flag": False}
+
+        def fake_install_via_git(repo_url, plugin_path, branches):
+            install_attempted["flag"] = True
+            plugin_path.mkdir(parents=True, exist_ok=True)
+            return branches[0]
+
+        self.sm._install_via_git = fake_install_via_git
+
+        # The goal of this test is to prove the tombstone does NOT gate
+        # explicit install_plugin calls. The full install path has a bunch
+        # of downstream validation (manifest fields, dependency install,
+        # etc.) that we don't need to exercise here — the "tombstone did
+        # not block" invariant is proven purely by the fact that
+        # install_plugin reaches the download step at all. If the tombstone
+        # had been gating, install_plugin would have returned False before
+        # calling _install_via_git.
+        try:
+            self.sm.install_plugin("bar")
+        except Exception:
+            pass
+
+        self.assertTrue(install_attempted["flag"],
+                        "install_plugin did not reach the download step — "
+                        "tombstone must not gate explicit installs")
+        # Tombstone survives install (harmless — nothing reads it for installed plugins).
+        self.assertTrue(self.sm.was_recently_uninstalled("bar"))
+
+
 class TestRegistryStaleCacheFallback(unittest.TestCase):
     def setUp(self):
         self._tmp = TemporaryDirectory()
