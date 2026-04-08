@@ -86,16 +86,38 @@ class StateReconciliation:
         self.plugins_dir = Path(plugins_dir)
         self.store_manager = store_manager
         self.logger = get_logger(__name__)
+
+        # Plugin IDs that failed auto-repair and should NOT be retried this
+        # process lifetime. Prevents the infinite "attempt to reinstall missing
+        # plugin" loop when a config entry references a plugin that isn't in
+        # the registry (e.g. legacy 'github', 'youtube' entries). A process
+        # restart — or an explicit user-initiated reconcile with force=True —
+        # clears this so recovery is possible after the underlying issue is
+        # fixed.
+        self._unrecoverable_missing_on_disk: set = set()
     
-    def reconcile_state(self) -> ReconciliationResult:
+    def reconcile_state(self, force: bool = False) -> ReconciliationResult:
         """
         Perform state reconciliation.
-        
+
         Compares state from all sources and fixes safe inconsistencies.
-        
+
+        Args:
+            force: If True, clear the unrecoverable-plugin cache before
+                reconciling so previously-failed auto-repairs are retried.
+                Intended for user-initiated reconcile requests after the
+                underlying issue (e.g. registry update) has been fixed.
+
         Returns:
             ReconciliationResult with findings and fixes
         """
+        if force and self._unrecoverable_missing_on_disk:
+            self.logger.info(
+                "Force reconcile requested; clearing %d cached unrecoverable plugin(s)",
+                len(self._unrecoverable_missing_on_disk),
+            )
+            self._unrecoverable_missing_on_disk.clear()
+
         self.logger.info("Starting state reconciliation")
         
         inconsistencies = []
@@ -280,7 +302,26 @@ class StateReconciliation:
         
         # Check: Plugin in config but not on disk
         if config.get('exists_in_config') and not disk.get('exists_on_disk'):
-            can_repair = self.store_manager is not None
+            # Skip plugins that previously failed auto-repair in this process.
+            # Re-attempting wastes CPU (network + git clone each request) and
+            # spams the logs with the same "Plugin not found in registry"
+            # error. The entry is still surfaced as MANUAL_FIX_REQUIRED so the
+            # UI can show it, but no auto-repair will run.
+            previously_unrecoverable = plugin_id in self._unrecoverable_missing_on_disk
+            # Also refuse to re-install a plugin that the user just uninstalled
+            # through the UI — prevents a race where the reconciler fires
+            # between file removal and config cleanup and resurrects the
+            # plugin the user just deleted.
+            recently_uninstalled = (
+                self.store_manager is not None
+                and hasattr(self.store_manager, 'was_recently_uninstalled')
+                and self.store_manager.was_recently_uninstalled(plugin_id)
+            )
+            can_repair = (
+                self.store_manager is not None
+                and not previously_unrecoverable
+                and not recently_uninstalled
+            )
             inconsistencies.append(Inconsistency(
                 plugin_id=plugin_id,
                 inconsistency_type=InconsistencyType.PLUGIN_MISSING_ON_DISK,
@@ -342,7 +383,13 @@ class StateReconciliation:
         return False
 
     def _auto_repair_missing_plugin(self, plugin_id: str) -> bool:
-        """Attempt to reinstall a missing plugin from the store."""
+        """Attempt to reinstall a missing plugin from the store.
+
+        On failure, records plugin_id in ``_unrecoverable_missing_on_disk`` so
+        subsequent reconciliation passes within this process do not retry and
+        spam the log / CPU. A process restart (or an explicit ``force=True``
+        reconcile) is required to clear the cache.
+        """
         if not self.store_manager:
             return False
 
@@ -350,6 +397,35 @@ class StateReconciliation:
         candidates = [plugin_id]
         if plugin_id.startswith('ledmatrix-'):
             candidates.append(plugin_id[len('ledmatrix-'):])
+
+        # Cheap pre-check: is any candidate actually present in the registry
+        # at all? If not, we know up-front this is unrecoverable and can skip
+        # the expensive install_plugin path (which does a forced GitHub fetch
+        # before failing).
+        registry_has_candidate = False
+        try:
+            registry = self.store_manager.fetch_registry()
+            registry_ids = {
+                p.get('id') for p in (registry.get('plugins', []) or []) if p.get('id')
+            }
+            registry_has_candidate = any(c in registry_ids for c in candidates)
+        except Exception as e:
+            # If we can't reach the registry, treat this as transient — don't
+            # mark unrecoverable, let the next pass try again.
+            self.logger.warning(
+                "[AutoRepair] Could not read registry to check %s: %s", plugin_id, e
+            )
+            return False
+
+        if not registry_has_candidate:
+            self.logger.warning(
+                "[AutoRepair] %s not present in registry; marking unrecoverable "
+                "(will not retry this session). Reinstall from the Plugin Store "
+                "or remove the stale config entry to clear this warning.",
+                plugin_id,
+            )
+            self._unrecoverable_missing_on_disk.add(plugin_id)
+            return False
 
         for candidate_id in candidates:
             try:
@@ -366,6 +442,11 @@ class StateReconciliation:
             except Exception as e:
                 self.logger.error("[AutoRepair] Error reinstalling %s: %s", candidate_id, e, exc_info=True)
 
-        self.logger.warning("[AutoRepair] Could not reinstall %s from store", plugin_id)
+        self.logger.warning(
+            "[AutoRepair] Could not reinstall %s from store; marking unrecoverable "
+            "(will not retry this session).",
+            plugin_id,
+        )
+        self._unrecoverable_missing_on_disk.add(plugin_id)
         return False
 

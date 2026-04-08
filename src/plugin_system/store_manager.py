@@ -53,7 +53,12 @@ class PluginStoreManager:
         self.registry_cache_time = None  # Timestamp of when registry was cached
         self.github_cache = {}  # Cache for GitHub API responses
         self.cache_timeout = 3600  # 1 hour cache timeout
-        self.registry_cache_timeout = 300  # 5 minutes for registry cache
+        # 15 minutes for registry cache. Long enough that the plugin list
+        # endpoint on a warm cache never hits the network, short enough that
+        # new plugins show up within a reasonable window. See also the
+        # stale-cache fallback in fetch_registry for transient network
+        # failures.
+        self.registry_cache_timeout = 900
         self.commit_info_cache = {}  # Cache for latest commit info: {key: (timestamp, data)}
         self.commit_cache_timeout = 300  # 5 minutes (same as registry)
         self.manifest_cache = {}  # Cache for GitHub manifest fetches: {key: (timestamp, data)}
@@ -62,8 +67,37 @@ class PluginStoreManager:
         self._token_validation_cache = {}  # Cache for token validation results: {token: (is_valid, timestamp, error_message)}
         self._token_validation_cache_timeout = 300  # 5 minutes cache for token validation
 
+        # Per-plugin tombstone timestamps for plugins that were uninstalled
+        # recently via the UI. Used by the state reconciler to avoid
+        # resurrecting a plugin the user just deleted when reconciliation
+        # races against the uninstall operation. Cleared after ``_uninstall_tombstone_ttl``.
+        self._uninstall_tombstones: Dict[str, float] = {}
+        self._uninstall_tombstone_ttl = 300  # 5 minutes
+
+        # Cache for _get_local_git_info: {plugin_path_str: (head_mtime, data)}
+        # Keyed on the mtime of .git/HEAD so we re-run git only when the
+        # working copy actually moved. Before this cache, every
+        # /plugins/installed request fired 4 git subprocesses per plugin,
+        # which pegged the CPU on a Pi4 with a dozen plugins.
+        self._git_info_cache: Dict[str, tuple] = {}
+
         # Ensure plugins directory exists
         self.plugins_dir.mkdir(exist_ok=True)
+
+    def mark_recently_uninstalled(self, plugin_id: str) -> None:
+        """Record that ``plugin_id`` was just uninstalled by the user."""
+        self._uninstall_tombstones[plugin_id] = time.time()
+
+    def was_recently_uninstalled(self, plugin_id: str) -> bool:
+        """Return True if ``plugin_id`` has an active uninstall tombstone."""
+        ts = self._uninstall_tombstones.get(plugin_id)
+        if ts is None:
+            return False
+        if time.time() - ts > self._uninstall_tombstone_ttl:
+            # Expired — clean up so the dict doesn't grow unbounded.
+            self._uninstall_tombstones.pop(plugin_id, None)
+            return False
+        return True
 
     def _load_github_token(self) -> Optional[str]:
         """
@@ -469,9 +503,16 @@ class PluginStoreManager:
             return self.registry_cache
         except requests.RequestException as e:
             self.logger.error(f"Error fetching registry: {e}")
+            # Prefer stale cache over an empty list so the plugin list UI
+            # keeps working on a flaky connection (e.g. Pi on WiFi).
+            if self.registry_cache:
+                self.logger.warning("Falling back to stale registry cache")
+                return self.registry_cache
             return {"plugins": []}
         except json.JSONDecodeError as e:
             self.logger.error(f"Error parsing registry JSON: {e}")
+            if self.registry_cache:
+                return self.registry_cache
             return {"plugins": []}
     
     def search_plugins(self, query: str = "", category: str = "", tags: List[str] = None, fetch_commit_info: bool = True, include_saved_repos: bool = True, saved_repositories_manager = None) -> List[Dict]:
@@ -1561,10 +1602,28 @@ class PluginStoreManager:
             return False
 
     def _get_local_git_info(self, plugin_path: Path) -> Optional[Dict[str, str]]:
-        """Return local git branch, commit hash, and commit date if the plugin is a git checkout."""
+        """Return local git branch, commit hash, and commit date if the plugin is a git checkout.
+
+        Results are cached keyed on the mtime of ``.git/HEAD`` so repeated
+        calls (e.g. one per plugin on every ``/plugins/installed`` request)
+        skip the four ``git`` subprocesses when nothing has changed.
+        """
         git_dir = plugin_path / '.git'
         if not git_dir.exists():
             return None
+
+        # mtime-gated cache lookup.
+        head_file = git_dir / 'HEAD'
+        cache_key = str(plugin_path)
+        try:
+            head_mtime = head_file.stat().st_mtime
+        except OSError:
+            head_mtime = None
+
+        if head_mtime is not None:
+            cached = self._git_info_cache.get(cache_key)
+            if cached is not None and cached[0] == head_mtime:
+                return cached[1]
 
         try:
             sha_result = subprocess.run(
@@ -1623,6 +1682,8 @@ class PluginStoreManager:
                 result['date_iso'] = commit_date_iso
                 result['date'] = self._iso_to_date(commit_date_iso)
 
+            if head_mtime is not None:
+                self._git_info_cache[cache_key] = (head_mtime, result)
             return result
         except subprocess.CalledProcessError as err:
             self.logger.debug(f"Failed to read git info for {plugin_path.name}: {err}")

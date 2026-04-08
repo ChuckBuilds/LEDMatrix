@@ -1714,9 +1714,23 @@ def get_installed_plugins():
         import json
         from pathlib import Path
 
-        # Re-discover plugins to ensure we have the latest list
-        # This handles cases where plugins are added/removed after app startup
-        api_v3.plugin_manager.discover_plugins()
+        # Re-discover plugins only if the plugins directory has actually
+        # changed since our last scan, or if the caller explicitly asked
+        # for a refresh. The previous unconditional ``discover_plugins()``
+        # call (plus a per-plugin manifest re-read) made this endpoint
+        # O(plugins) in disk I/O on every page refresh, which on an SD-card
+        # Pi4 with ~15 plugins was pegging the CPU and blocking the UI
+        # "connecting to display" spinner for minutes.
+        force_refresh = request.args.get('refresh', '').lower() in ('1', 'true', 'yes')
+        plugins_dir_path = Path(api_v3.plugin_manager.plugins_dir)
+        try:
+            current_mtime = plugins_dir_path.stat().st_mtime if plugins_dir_path.exists() else 0
+        except OSError:
+            current_mtime = 0
+        last_mtime = getattr(api_v3, '_installed_plugins_dir_mtime', None)
+        if force_refresh or last_mtime != current_mtime:
+            api_v3.plugin_manager.discover_plugins()
+            api_v3._installed_plugins_dir_mtime = current_mtime
 
         # Get all installed plugin info from the plugin manager
         all_plugin_info = api_v3.plugin_manager.get_all_plugin_info()
@@ -1729,17 +1743,10 @@ def get_installed_plugins():
         for plugin_info in all_plugin_info:
             plugin_id = plugin_info.get('id')
 
-            # Re-read manifest from disk to ensure we have the latest metadata
-            manifest_path = Path(api_v3.plugin_manager.plugins_dir) / plugin_id / "manifest.json"
-            if manifest_path.exists():
-                try:
-                    with open(manifest_path, 'r', encoding='utf-8') as f:
-                        fresh_manifest = json.load(f)
-                    # Update plugin_info with fresh manifest data
-                    plugin_info.update(fresh_manifest)
-                except Exception as e:
-                    # If we can't read the fresh manifest, use the cached one
-                    logger.warning("[PluginStore] Could not read fresh manifest for %s: %s", plugin_id, e)
+            # Note: we intentionally do NOT re-read manifest.json here.
+            # discover_plugins() above already reparses manifests on change;
+            # re-reading on every request added ~1 syscall+json.loads per
+            # plugin per request for no benefit.
 
             # Get enabled status from config (source of truth)
             # Read from config file first, fall back to plugin instance if config doesn't have the key
@@ -2369,14 +2376,25 @@ def reconcile_plugin_state():
 
         from src.plugin_system.state_reconciliation import StateReconciliation
 
+        # Pass the store manager so auto-repair of missing-on-disk plugins
+        # can actually run. Previously this endpoint silently degraded to
+        # MANUAL_FIX_REQUIRED because store_manager was omitted.
         reconciler = StateReconciliation(
             state_manager=api_v3.plugin_state_manager,
             config_manager=api_v3.config_manager,
             plugin_manager=api_v3.plugin_manager,
-            plugins_dir=Path(api_v3.plugin_manager.plugins_dir)
+            plugins_dir=Path(api_v3.plugin_manager.plugins_dir),
+            store_manager=api_v3.plugin_store_manager,
         )
 
-        result = reconciler.reconcile_state()
+        # Allow the caller to force a retry of previously-unrecoverable
+        # plugins (e.g. after the registry has been updated or a typo fixed).
+        force = False
+        if request.is_json:
+            payload = request.get_json(silent=True) or {}
+            force = bool(payload.get('force', False))
+
+        result = reconciler.reconcile_state(force=force)
 
         return success_response(
             data={
@@ -2822,6 +2840,22 @@ def uninstall_plugin():
         if api_v3.operation_queue:
             def uninstall_callback(operation):
                 """Callback to execute plugin uninstallation."""
+                # Drop a tombstone *first* so a background reconciliation pass
+                # that interleaves with us cannot see the transient
+                # "config-entry-with-no-files" state and resurrect the
+                # plugin the user just asked to delete.
+                if hasattr(api_v3.plugin_store_manager, 'mark_recently_uninstalled'):
+                    api_v3.plugin_store_manager.mark_recently_uninstalled(plugin_id)
+
+                # Clean up plugin configuration BEFORE removing files so the
+                # config entry and the on-disk files disappear together from
+                # the reconciler's point of view.
+                if not preserve_config:
+                    try:
+                        api_v3.config_manager.cleanup_plugin_config(plugin_id, remove_secrets=True)
+                    except Exception as cleanup_err:
+                        logger.warning("[PluginUninstall] Failed to cleanup config for %s: %s", plugin_id, cleanup_err)
+
                 # Unload the plugin first if it's loaded
                 if api_v3.plugin_manager and plugin_id in api_v3.plugin_manager.plugins:
                     api_v3.plugin_manager.unload_plugin(plugin_id)
@@ -2843,13 +2877,6 @@ def uninstall_plugin():
                 # Invalidate schema cache
                 if api_v3.schema_manager:
                     api_v3.schema_manager.invalidate_cache(plugin_id)
-
-                # Clean up plugin configuration if not preserving
-                if not preserve_config:
-                    try:
-                        api_v3.config_manager.cleanup_plugin_config(plugin_id, remove_secrets=True)
-                    except Exception as cleanup_err:
-                        logger.warning("[PluginUninstall] Failed to cleanup config for %s: %s", plugin_id, cleanup_err)
 
                 # Remove from state manager
                 if api_v3.plugin_state_manager:
@@ -2879,6 +2906,18 @@ def uninstall_plugin():
             )
         else:
             # Fallback to direct uninstall
+            # Tombstone + config cleanup happen BEFORE file removal — see
+            # queue path above for the full rationale (prevents reconciler
+            # resurrection race).
+            if hasattr(api_v3.plugin_store_manager, 'mark_recently_uninstalled'):
+                api_v3.plugin_store_manager.mark_recently_uninstalled(plugin_id)
+
+            if not preserve_config:
+                try:
+                    api_v3.config_manager.cleanup_plugin_config(plugin_id, remove_secrets=True)
+                except Exception as cleanup_err:
+                    logger.warning("[PluginUninstall] Failed to cleanup config for %s: %s", plugin_id, cleanup_err)
+
             # Unload the plugin first if it's loaded
             if api_v3.plugin_manager and plugin_id in api_v3.plugin_manager.plugins:
                 api_v3.plugin_manager.unload_plugin(plugin_id)
@@ -2890,13 +2929,6 @@ def uninstall_plugin():
                 # Invalidate schema cache
                 if api_v3.schema_manager:
                     api_v3.schema_manager.invalidate_cache(plugin_id)
-
-                # Clean up plugin configuration if not preserving
-                if not preserve_config:
-                    try:
-                        api_v3.config_manager.cleanup_plugin_config(plugin_id, remove_secrets=True)
-                    except Exception as cleanup_err:
-                        logger.warning("[PluginUninstall] Failed to cleanup config for %s: %s", plugin_id, cleanup_err)
 
                 # Remove from state manager
                 if api_v3.plugin_state_manager:
