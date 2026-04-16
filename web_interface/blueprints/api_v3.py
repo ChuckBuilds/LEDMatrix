@@ -1341,6 +1341,57 @@ def get_system_version():
         logger.exception("[System] get_system_version failed")
         return jsonify({'status': 'error', 'message': 'Failed to get system version'}), 500
 
+_update_check_cache: Dict = {}
+_UPDATE_CHECK_TTL = 300  # 5 minutes
+
+@api_v3.route('/system/check-update', methods=['GET'])
+def check_for_update():
+    """Check if a newer version is available on the remote."""
+    import time as _time
+    now = _time.time()
+    if _update_check_cache.get('ts', 0) + _UPDATE_CHECK_TTL > now:
+        return jsonify(_update_check_cache['data'])
+
+    project_dir = str(PROJECT_ROOT)
+    try:
+        subprocess.run(
+            ['git', 'fetch', 'origin', 'main'],
+            capture_output=True, text=True, timeout=15, cwd=project_dir
+        )
+        local_sha = subprocess.run(
+            ['git', 'rev-parse', 'HEAD'],
+            capture_output=True, text=True, timeout=5, cwd=project_dir
+        ).stdout.strip()
+        remote_sha = subprocess.run(
+            ['git', 'rev-parse', 'origin/main'],
+            capture_output=True, text=True, timeout=5, cwd=project_dir
+        ).stdout.strip()
+
+        if local_sha == remote_sha:
+            data = {'status': 'success', 'update_available': False,
+                    'local_sha': local_sha[:8], 'remote_sha': remote_sha[:8]}
+        else:
+            log_result = subprocess.run(
+                ['git', 'log', 'HEAD..origin/main', '--oneline'],
+                capture_output=True, text=True, timeout=5, cwd=project_dir
+            )
+            lines = [l for l in log_result.stdout.strip().split('\n') if l]
+            data = {
+                'status': 'success',
+                'update_available': True,
+                'local_sha': local_sha[:8],
+                'remote_sha': remote_sha[:8],
+                'commits_behind': len(lines),
+                'latest_message': lines[0].split(' ', 1)[1] if lines else '',
+            }
+    except Exception as e:
+        logger.warning("[System] check-update failed: %s", e)
+        data = {'status': 'error', 'update_available': False, 'message': str(e)}
+
+    _update_check_cache['ts'] = now
+    _update_check_cache['data'] = data
+    return jsonify(data)
+
 @api_v3.route('/system/action', methods=['POST'])
 def execute_system_action():
     """Execute system actions (start/stop/reboot/etc)"""
@@ -1449,6 +1500,9 @@ def execute_system_action():
                 timeout=60,
                 cwd=project_dir
             )
+
+            # Invalidate update-check cache so the banner hides immediately
+            _update_check_cache.clear()
 
             # Return custom response for git_pull
             if result.returncode == 0:

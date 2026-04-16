@@ -931,6 +931,33 @@
         </div>
     </header>
 
+    <!-- Update available banner -->
+    <div id="update-banner" style="display:none"
+         class="update-banner border-b transition-all duration-300 ease-in-out">
+        <div class="mx-auto px-4 sm:px-6 lg:px-8 xl:px-12 2xl:px-16 py-2" style="max-width:100%">
+            <div class="flex items-center justify-between">
+                <div class="flex items-center space-x-3">
+                    <i class="fas fa-arrow-circle-up text-lg"></i>
+                    <span class="text-sm font-medium" id="update-banner-text">
+                        A new LEDMatrix update is available
+                    </span>
+                </div>
+                <div class="flex items-center space-x-3">
+                    <button onclick="applyUpdate()" id="update-banner-btn"
+                            class="inline-flex items-center px-3 py-1 text-xs font-semibold rounded-md
+                                   update-banner-action transition-colors duration-150">
+                        <i class="fas fa-download mr-1"></i> Update Now
+                    </button>
+                    <button onclick="dismissUpdateBanner()"
+                            class="update-banner-dismiss rounded p-1 transition-colors duration-150"
+                            title="Dismiss">
+                        <i class="fas fa-times text-sm"></i>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- Main content -->
     <main class="mx-auto px-4 sm:px-6 lg:px-8 xl:px-12 2xl:px-16 py-8" style="max-width: 100%;">
         <!-- Navigation tabs -->
@@ -4888,6 +4915,72 @@
             </form>
         </div>
     </div>
+<!-- Update banner logic -->
+<script>
+(function() {
+    var CHECK_INTERVAL = 30 * 60 * 1000; // 30 minutes
+    var _dismissed = false;
+
+    function checkForUpdate() {
+        fetch('/api/v3/system/check-update')
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                if (data.update_available && !_dismissed) {
+                    var n = data.commits_behind || 0;
+                    var msg = 'A new LEDMatrix update is available';
+                    if (n > 0) msg += ' (' + n + ' commit' + (n > 1 ? 's' : '') + ')';
+                    document.getElementById('update-banner-text').textContent = msg;
+                    document.getElementById('update-banner').style.display = '';
+                    try { sessionStorage.setItem('update-sha', data.remote_sha); } catch(e) {}
+                } else {
+                    document.getElementById('update-banner').style.display = 'none';
+                }
+            })
+            .catch(function() {});
+    }
+
+    window.dismissUpdateBanner = function() {
+        _dismissed = true;
+        document.getElementById('update-banner').style.display = 'none';
+        try { sessionStorage.setItem('update-dismissed', '1'); } catch(e) {}
+    };
+
+    window.applyUpdate = function() {
+        var btn = document.getElementById('update-banner-btn');
+        btn.innerHTML = '<i class="fas fa-spinner fa-spin mr-1"></i> Updating...';
+        btn.disabled = true;
+        fetch('/api/v3/system/action', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'git_pull' })
+        })
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            document.getElementById('update-banner').style.display = 'none';
+            if (typeof showNotification === 'function') {
+                showNotification(data.message || 'Update complete', data.status || 'success');
+            }
+            try { sessionStorage.removeItem('update-dismissed'); } catch(e) {}
+        })
+        .catch(function() {
+            btn.innerHTML = '<i class="fas fa-download mr-1"></i> Update Now';
+            btn.disabled = false;
+            if (typeof showNotification === 'function') {
+                showNotification('Update failed — check your connection', 'error');
+            }
+        });
+    };
+
+    // On load: skip if dismissed this session for the same SHA
+    try {
+        if (sessionStorage.getItem('update-dismissed') === '1') _dismissed = true;
+    } catch(e) {}
+
+    // Initial check shortly after page load, then periodic
+    setTimeout(checkForUpdate, 2000);
+    setInterval(checkForUpdate, CHECK_INTERVAL);
+})();
+</script>
 </body>
 </html>
 
