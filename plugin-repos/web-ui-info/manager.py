@@ -35,24 +35,24 @@ class WebUIInfoPlugin(BasePlugin):
         """Initialize the Web UI Info plugin."""
         super().__init__(plugin_id, config, display_manager, cache_manager, plugin_manager)
         
+        # AP mode cache (must be initialized before _get_local_ip)
+        self._ap_mode_cached = False
+        self._ap_mode_cache_time = 0.0
+        self._ap_mode_cache_ttl = 60.0
+
         # Get device hostname
         try:
             self.device_id = socket.gethostname()
         except Exception as e:
             self.logger.warning(f"Could not get hostname: {e}, using 'localhost'")
             self.device_id = "localhost"
-        
+
         # Get device IP address
         self.device_ip = self._get_local_ip()
-        
+
         # IP refresh tracking
         self.last_ip_refresh = time.time()
-        self.ip_refresh_interval = 300.0  # Refresh IP every 5 minutes
-
-        # AP mode cache
-        self._ap_mode_cached = False
-        self._ap_mode_cache_time = 0.0
-        self._ap_mode_cache_ttl = 60.0  # Cache AP mode check for 60 seconds
+        self.ip_refresh_interval = 300.0
 
         # Rotation state
         self.current_display_mode = "hostname"  # "hostname" or "ip"
@@ -200,9 +200,7 @@ class WebUIInfoPlugin(BasePlugin):
                                 elif current_interface == "wlan0":
                                     self.logger.debug(f"Found WiFi IP: {ip} on {current_interface}")
                                     return ip
-            except Exception:
-                pass
-            
+
             # Last resort: try hostname resolution (often returns 127.0.0.1)
             try:
                 ip = socket.gethostbyname(socket.gethostname())
