@@ -221,6 +221,7 @@
             }
             notifyFn(`Upload error: ${error.message}`, 'error');
         } finally {
+            const fileInput = document.getElementById(`${fieldId}_file_input`);
             if (fileInput) fileInput.value = '';
         }
     };
