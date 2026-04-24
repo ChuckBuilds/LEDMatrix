@@ -6272,6 +6272,8 @@ def _list_google_calendars_from_disk():
     needed, it happens only in memory for the duration of this request.
     """
     try:
+        import google_auth_httplib2
+        import httplib2
         from google.auth.transport.requests import Request
         from googleapiclient.discovery import build
     except ImportError:
@@ -6306,7 +6308,12 @@ def _list_google_calendars_from_disk():
             return None, 'Stored authentication is invalid. Re-run the Google authentication step.'
 
     try:
-        service = build('calendar', 'v3', credentials=creds)
+        # Build an Http with an explicit socket timeout so API calls cannot
+        # hang the Flask worker on flaky connectivity.
+        authed_http = google_auth_httplib2.AuthorizedHttp(
+            creds, http=httplib2.Http(timeout=_GOOGLE_API_TIMEOUT_SECONDS)
+        )
+        service = build('calendar', 'v3', http=authed_http, cache_discovery=False)
         items = []
         page_token = None
         while True:
