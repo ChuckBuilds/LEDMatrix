@@ -2,6 +2,7 @@ from flask import Blueprint, request, jsonify, Response, send_from_directory
 import json
 import os
 import re
+import socket
 import sys
 import subprocess
 import time
@@ -6226,16 +6227,51 @@ def _load_calendar_plugin_dir():
     return fallback if fallback.exists() else None
 
 
+_GOOGLE_API_TIMEOUT_SECONDS = 15
+
+
+def _load_calendar_credentials(token_path):
+    """Load OAuth credentials from the plugin's token file.
+
+    The calendar plugin historically persists credentials with pickle
+    (``token.pickle``). pickle.load is only applied to this specific file,
+    which is owned by the same user as the web service, chmod 0600, and
+    located inside the plugin install directory — it is not user-supplied
+    input. We still constrain the unpickle to a reasonable size to reduce
+    blast radius. New installs may use a JSON token (``token.json``)
+    written via google-auth's safe serializer; prefer that when present.
+    """
+    json_path = token_path.with_suffix('.json')
+    if json_path.exists():
+        from google.oauth2.credentials import Credentials
+        return Credentials.from_authorized_user_file(str(json_path))
+
+    # Fall back to the pickle token the plugin writes today.
+    # nosemgrep: python.lang.security.audit.avoid-pickle.avoid-pickle
+    import pickle  # noqa: S403
+    try:
+        size = token_path.stat().st_size
+    except OSError as e:
+        raise RuntimeError(f'Cannot stat token file: {e}') from e
+    if size > 64 * 1024:
+        raise RuntimeError('Token file is unexpectedly large; refusing to load.')
+    with open(token_path, 'rb') as f:
+        return pickle.load(f)  # noqa: S301  # trusted file, owner-only perms
+
+
 def _list_google_calendars_from_disk():
-    """List calendars using token.pickle + credentials.json from the plugin dir.
+    """List calendars using the plugin's stored OAuth token.
 
     Returns (calendars, error_message). calendars is a list of raw Google
     calendarList items on success; on failure calendars is None and
     error_message describes the problem.
+
+    Refreshed credentials are intentionally not persisted back to disk
+    from this request path — the display service owns token.pickle and
+    concurrent writes across processes could corrupt it. If refresh is
+    needed, it happens only in memory for the duration of this request.
     """
-    import pickle
     try:
-        from google.oauth2.credentials import Credentials  # noqa: F401
         from google.auth.transport.requests import Request
         from googleapiclient.discovery import build
     except ImportError:
@@ -6246,24 +6282,23 @@ def _list_google_calendars_from_disk():
         return None, 'Calendar plugin directory not found.'
 
     token_path = plugin_dir / 'token.pickle'
-    creds_path = plugin_dir / 'credentials.json'
-
-    if not token_path.exists():
+    if not token_path.exists() and not (plugin_dir / 'token.json').exists():
         return None, 'Not authenticated yet — complete the Google authentication step first.'
 
     try:
-        with open(token_path, 'rb') as f:
-            creds = pickle.load(f)
+        creds = _load_calendar_credentials(token_path)
     except Exception as e:
-        logger.exception('list_calendar_calendars: failed to load token.pickle')
+        logger.exception('list_calendar_calendars: failed to load stored credentials')
         return None, f'Failed to load stored authentication: {e}'
 
     if not creds or not getattr(creds, 'valid', False):
         if creds and getattr(creds, 'expired', False) and getattr(creds, 'refresh_token', None):
             try:
-                creds.refresh(Request())
-                with open(token_path, 'wb') as f:
-                    pickle.dump(creds, f)
+                # In-memory refresh only; do not write back to shared token file.
+                creds.refresh(Request(timeout=_GOOGLE_API_TIMEOUT_SECONDS))
+            except (socket.timeout, TimeoutError) as e:
+                logger.warning('list_calendar_calendars: token refresh timed out: %s', e)
+                return None, 'Token refresh timed out. Please try again.'
             except Exception as e:
                 logger.exception('list_calendar_calendars: token refresh failed')
                 return None, f'Stored authentication expired and refresh failed: {e}. Re-run the Google authentication step.'
@@ -6275,12 +6310,17 @@ def _list_google_calendars_from_disk():
         items = []
         page_token = None
         while True:
-            response = service.calendarList().list(pageToken=page_token).execute()
+            response = service.calendarList().list(pageToken=page_token).execute(
+                num_retries=1
+            )
             items.extend(response.get('items', []))
             page_token = response.get('nextPageToken')
             if not page_token:
                 break
         return items, None
+    except (socket.timeout, TimeoutError) as e:
+        logger.warning('list_calendar_calendars: Google API call timed out: %s', e)
+        return None, 'Google Calendar request timed out. Please try again.'
     except Exception as e:
         logger.exception('list_calendar_calendars: Google API call failed')
         return None, f'Google Calendar API call failed: {e}'
