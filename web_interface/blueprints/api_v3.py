@@ -6210,18 +6210,100 @@ def upload_calendar_credentials():
         logger.exception("[PluginConfig] upload_calendar_credentials failed")
         return jsonify({'status': 'error', 'message': 'Failed to upload calendar credentials'}), 500
 
+def _load_calendar_plugin_dir():
+    """Resolve the calendar plugin's on-disk directory without requiring a running instance.
+
+    The web service and display service are separate processes — the web
+    process discovers plugins but does not instantiate them, so
+    plugin_manager.get_plugin('calendar') is typically None here.
+    """
+    plugin_id = 'calendar'
+    if api_v3.plugin_manager:
+        plugin_dir = api_v3.plugin_manager.get_plugin_directory(plugin_id)
+        if plugin_dir and Path(plugin_dir).exists():
+            return Path(plugin_dir)
+    fallback = PROJECT_ROOT / 'plugins' / plugin_id
+    return fallback if fallback.exists() else None
+
+
+def _list_google_calendars_from_disk():
+    """List calendars using token.pickle + credentials.json from the plugin dir.
+
+    Returns (calendars, error_message). calendars is a list of raw Google
+    calendarList items on success; on failure calendars is None and
+    error_message describes the problem.
+    """
+    import pickle
+    try:
+        from google.oauth2.credentials import Credentials  # noqa: F401
+        from google.auth.transport.requests import Request
+        from googleapiclient.discovery import build
+    except ImportError:
+        return None, 'Google API libraries not installed on this host.'
+
+    plugin_dir = _load_calendar_plugin_dir()
+    if plugin_dir is None:
+        return None, 'Calendar plugin directory not found.'
+
+    token_path = plugin_dir / 'token.pickle'
+    creds_path = plugin_dir / 'credentials.json'
+
+    if not token_path.exists():
+        return None, 'Not authenticated yet — complete the Google authentication step first.'
+
+    try:
+        with open(token_path, 'rb') as f:
+            creds = pickle.load(f)
+    except Exception as e:
+        logger.exception('list_calendar_calendars: failed to load token.pickle')
+        return None, f'Failed to load stored authentication: {e}'
+
+    if not creds or not getattr(creds, 'valid', False):
+        if creds and getattr(creds, 'expired', False) and getattr(creds, 'refresh_token', None):
+            try:
+                creds.refresh(Request())
+                with open(token_path, 'wb') as f:
+                    pickle.dump(creds, f)
+            except Exception as e:
+                logger.exception('list_calendar_calendars: token refresh failed')
+                return None, f'Stored authentication expired and refresh failed: {e}. Re-run the Google authentication step.'
+        else:
+            return None, 'Stored authentication is invalid. Re-run the Google authentication step.'
+
+    try:
+        service = build('calendar', 'v3', credentials=creds)
+        items = []
+        page_token = None
+        while True:
+            response = service.calendarList().list(pageToken=page_token).execute()
+            items.extend(response.get('items', []))
+            page_token = response.get('nextPageToken')
+            if not page_token:
+                break
+        return items, None
+    except Exception as e:
+        logger.exception('list_calendar_calendars: Google API call failed')
+        return None, f'Google Calendar API call failed: {e}'
+
+
 @api_v3.route('/plugins/calendar/list-calendars', methods=['GET'])
 def list_calendar_calendars():
-    """Return Google Calendars accessible with the currently authenticated credentials."""
-    if not api_v3.plugin_manager:
-        return jsonify({'status': 'error', 'message': 'Plugin manager not available'}), 500
-    plugin = api_v3.plugin_manager.get_plugin('calendar')
-    if not plugin:
-        return jsonify({'status': 'error', 'message': 'Calendar plugin is not running. Enable it and save config first.'}), 404
-    if not hasattr(plugin, 'get_calendars'):
-        return jsonify({'status': 'error', 'message': 'Installed plugin version does not support calendar listing — update the plugin.'}), 400
+    """Return Google Calendars accessible with the currently authenticated credentials.
+
+    Reads credentials from the plugin directory directly so this works from the
+    web process (which does not instantiate plugins).
+    """
+    # Prefer a live plugin instance if one happens to exist (e.g. local dev where
+    # web and display share a process); otherwise fall back to on-disk credentials.
+    plugin = api_v3.plugin_manager.get_plugin('calendar') if api_v3.plugin_manager else None
+
     try:
-        raw = plugin.get_calendars()
+        if plugin is not None and hasattr(plugin, 'get_calendars'):
+            raw = plugin.get_calendars()
+        else:
+            raw, err = _list_google_calendars_from_disk()
+            if raw is None:
+                return jsonify({'status': 'error', 'message': err}), 400
         import collections.abc
         if not isinstance(raw, (list, tuple)):
             logger.error('list_calendar_calendars: get_calendars() returned non-sequence type %r', type(raw))
