@@ -1296,6 +1296,8 @@ def backup_restore():
             opts_dict = json.loads(raw_opts)
         except json.JSONDecodeError:
             return jsonify({'status': 'error', 'message': 'Invalid options JSON'}), 400
+        if not isinstance(opts_dict, dict):
+            return jsonify({'status': 'error', 'message': 'options must be an object'}), 400
 
         opts = backup_manager.RestoreOptions(
             restore_config=_coerce_to_bool(opts_dict.get('restore_config', True)),

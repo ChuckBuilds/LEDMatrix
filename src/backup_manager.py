@@ -291,48 +291,52 @@ def create_backup(
 
     # Stream directly to a temp file so we never hold the whole ZIP in memory.
     tmp_path = zip_path.with_suffix(".zip.tmp")
-    with zipfile.ZipFile(tmp_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
-        # Config files.
-        if (project_root / _CONFIG_REL).exists():
-            zf.write(project_root / _CONFIG_REL, _CONFIG_REL.as_posix())
-            contents.append("config")
-        if (project_root / _SECRETS_REL).exists():
-            zf.write(project_root / _SECRETS_REL, _SECRETS_REL.as_posix())
-            contents.append("secrets")
-        if (project_root / _WIFI_REL).exists():
-            zf.write(project_root / _WIFI_REL, _WIFI_REL.as_posix())
-            contents.append("wifi")
+    try:
+        with zipfile.ZipFile(tmp_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+            # Config files.
+            if (project_root / _CONFIG_REL).exists():
+                zf.write(project_root / _CONFIG_REL, _CONFIG_REL.as_posix())
+                contents.append("config")
+            if (project_root / _SECRETS_REL).exists():
+                zf.write(project_root / _SECRETS_REL, _SECRETS_REL.as_posix())
+                contents.append("secrets")
+            if (project_root / _WIFI_REL).exists():
+                zf.write(project_root / _WIFI_REL, _WIFI_REL.as_posix())
+                contents.append("wifi")
 
-        # User-uploaded fonts.
-        user_fonts = iter_user_fonts(project_root)
-        if user_fonts:
-            for font in user_fonts:
-                arcname = font.relative_to(project_root).as_posix()
-                zf.write(font, arcname)
-            contents.append("fonts")
+            # User-uploaded fonts.
+            user_fonts = iter_user_fonts(project_root)
+            if user_fonts:
+                for font in user_fonts:
+                    arcname = font.relative_to(project_root).as_posix()
+                    zf.write(font, arcname)
+                contents.append("fonts")
 
-        # Plugin uploads.
-        plugin_uploads = iter_plugin_uploads(project_root)
-        if plugin_uploads:
-            for upload in plugin_uploads:
-                arcname = upload.relative_to(project_root).as_posix()
-                zf.write(upload, arcname)
-            contents.append("plugin_uploads")
+            # Plugin uploads.
+            plugin_uploads = iter_plugin_uploads(project_root)
+            if plugin_uploads:
+                for upload in plugin_uploads:
+                    arcname = upload.relative_to(project_root).as_posix()
+                    zf.write(upload, arcname)
+                contents.append("plugin_uploads")
 
-        # Installed plugins manifest.
-        plugins = list_installed_plugins(project_root)
-        if plugins:
-            zf.writestr(
-                PLUGINS_MANIFEST_NAME,
-                json.dumps(plugins, indent=2),
-            )
-            contents.append("plugins")
+            # Installed plugins manifest.
+            plugins = list_installed_plugins(project_root)
+            if plugins:
+                zf.writestr(
+                    PLUGINS_MANIFEST_NAME,
+                    json.dumps(plugins, indent=2),
+                )
+                contents.append("plugins")
 
-        # Manifest goes last so that `contents` reflects what we actually wrote.
-        manifest = _build_manifest(contents, project_root)
-        zf.writestr(MANIFEST_NAME, json.dumps(manifest, indent=2))
+            # Manifest goes last so that `contents` reflects what we actually wrote.
+            manifest = _build_manifest(contents, project_root)
+            zf.writestr(MANIFEST_NAME, json.dumps(manifest, indent=2))
 
-    os.replace(tmp_path, zip_path)
+        os.replace(tmp_path, zip_path)
+    except Exception:
+        tmp_path.unlink(missing_ok=True)
+        raise
     logger.info("Created backup %s (%d bytes)", zip_path, zip_path.stat().st_size)
     return zip_path
 
@@ -391,15 +395,17 @@ def validate_backup(zip_path: Path) -> Tuple[bool, str, Dict[str, Any]]:
                 return False, "Backup is missing manifest.json", {}
 
             total = 0
-            for info in zf.infolist():
-                if info.file_size > _MAX_MEMBER_BYTES:
-                    return False, f"Member {info.filename} is too large", {}
-                total += info.file_size
-                if total > _MAX_TOTAL_BYTES:
-                    return False, "Backup exceeds maximum allowed size", {}
-                # Safety: reject members with unsafe paths up front.
-                if _safe_extract_path(Path("/tmp/_zip_check"), info.filename) is None:
-                    return False, f"Unsafe path in backup: {info.filename}", {}
+            with tempfile.TemporaryDirectory() as _sandbox:
+                sandbox = Path(_sandbox)
+                for info in zf.infolist():
+                    if info.file_size > _MAX_MEMBER_BYTES:
+                        return False, f"Member {info.filename} is too large", {}
+                    total += info.file_size
+                    if total > _MAX_TOTAL_BYTES:
+                        return False, "Backup exceeds maximum allowed size", {}
+                    # Safety: reject members with unsafe paths up front.
+                    if _safe_extract_path(sandbox, info.filename) is None:
+                        return False, f"Unsafe path in backup: {info.filename}", {}
 
             try:
                 manifest_raw = zf.read(MANIFEST_NAME).decode("utf-8")

@@ -313,11 +313,14 @@
                 throw new Error(payload.message || msgs || 'Restore had errors');
             }
             const data = payload.data || {};
+            const hasPartial = (data.plugins_failed || []).length > 0 || (data.errors || []).length > 0;
             const result = document.getElementById('restore-result');
-            result.className = 'bg-green-50 border-green-200 text-green-800 border rounded-md p-4';
+            result.className = (hasPartial
+                ? 'bg-yellow-50 border-yellow-200 text-yellow-800'
+                : 'bg-green-50 border-green-200 text-green-800') + ' border rounded-md p-4';
             result.classList.remove('hidden');
             result.innerHTML = `
-                <h3 class="font-medium mb-2">Restore complete</h3>
+                <h3 class="font-medium mb-2">${hasPartial ? 'Restore complete with warnings' : 'Restore complete'}</h3>
                 <div><strong>Restored:</strong> ${(data.restored || []).map(escapeHtml).join(', ') || 'none'}</div>
                 <div><strong>Skipped:</strong> ${(data.skipped || []).map(escapeHtml).join(', ') || 'none'}</div>
                 <div><strong>Plugins installed:</strong> ${(data.plugins_installed || []).map(escapeHtml).join(', ') || 'none'}</div>
@@ -325,7 +328,7 @@
                 <div><strong>Errors:</strong> ${(data.errors || []).map(escapeHtml).join('; ') || 'none'}</div>
                 <p class="mt-2">Restart the display service to apply all changes.</p>
             `;
-            notify('Restore complete', 'success');
+            notify(hasPartial ? 'Restore complete with warnings' : 'Restore complete', hasPartial ? 'warning' : 'success');
         } catch (err) {
             notify('Restore failed: ' + err.message, 'error');
         } finally {
