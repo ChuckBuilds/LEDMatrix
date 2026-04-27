@@ -9,7 +9,7 @@ import time
 import hashlib
 import uuid
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional, Tuple, Dict, Any, Type
 
@@ -1105,6 +1105,290 @@ def save_raw_secrets_config():
                 details="Internal server error - check server logs",
                 status_code=500
             )
+
+
+# ---------------------------------------------------------------------------
+# Backup & Restore
+# ---------------------------------------------------------------------------
+
+_BACKUP_FILENAME_RE = re.compile(r'^ledmatrix-backup-[A-Za-z0-9_-]+-\d{8}_\d{6}\.zip$')
+
+
+def _backup_exports_dir() -> Path:
+    """Directory where user-downloadable backup ZIPs are stored."""
+    d = PROJECT_ROOT / 'config' / 'backups' / 'exports'
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def _is_safe_backup_filename(name: str) -> bool:
+    """Allow-list filter for backup filenames used in download/delete."""
+    return bool(_BACKUP_FILENAME_RE.match(name))
+
+
+@api_v3.route('/backup/preview', methods=['GET'])
+def backup_preview():
+    """Return a summary of what a new backup would include."""
+    try:
+        from src import backup_manager
+        preview = backup_manager.preview_backup_contents(PROJECT_ROOT)
+        return jsonify({'status': 'success', 'data': preview})
+    except Exception:
+        logger.exception("[Backup] preview failed")
+        return jsonify({'status': 'error', 'message': 'Failed to compute backup preview'}), 500
+
+
+@api_v3.route('/backup/export', methods=['POST'])
+def backup_export():
+    """Create a new backup ZIP and return its filename."""
+    try:
+        from src import backup_manager
+        zip_path = backup_manager.create_backup(PROJECT_ROOT, output_dir=_backup_exports_dir())
+        return jsonify({
+            'status': 'success',
+            'filename': zip_path.name,
+            'size': zip_path.stat().st_size,
+            'created_at': datetime.now(timezone.utc).isoformat(),
+        })
+    except Exception:
+        logger.exception("[Backup] export failed")
+        return jsonify({'status': 'error', 'message': 'Failed to create backup'}), 500
+
+
+@api_v3.route('/backup/list', methods=['GET'])
+def backup_list():
+    """List backup ZIPs currently stored on disk."""
+    try:
+        exports = _backup_exports_dir()
+        entries = []
+        for path in sorted(exports.glob('ledmatrix-backup-*.zip'), reverse=True):
+            if not _is_safe_backup_filename(path.name):
+                continue
+            stat = path.stat()
+            entries.append({
+                'filename': path.name,
+                'size': stat.st_size,
+                'created_at': datetime.fromtimestamp(stat.st_mtime, timezone.utc).isoformat(),
+            })
+        return jsonify({'status': 'success', 'data': entries})
+    except Exception:
+        logger.exception("[Backup] list failed")
+        return jsonify({'status': 'error', 'message': 'Failed to list backups'}), 500
+
+
+@api_v3.route('/backup/download/<path:filename>', methods=['GET'])
+def backup_download(filename):
+    """Stream a previously-created backup ZIP to the browser."""
+    try:
+        if not _is_safe_backup_filename(filename):
+            return jsonify({'status': 'error', 'message': 'Invalid backup filename'}), 400
+        exports = _backup_exports_dir()
+        target = exports / filename
+        if not target.exists():
+            return jsonify({'status': 'error', 'message': 'Backup not found'}), 404
+        return send_from_directory(
+            str(exports),
+            filename,
+            as_attachment=True,
+            mimetype='application/zip',
+        )
+    except Exception:
+        logger.exception("[Backup] download failed")
+        return jsonify({'status': 'error', 'message': 'Failed to download backup'}), 500
+
+
+@api_v3.route('/backup/<path:filename>', methods=['DELETE'])
+def backup_delete(filename):
+    """Delete a stored backup ZIP."""
+    try:
+        if not _is_safe_backup_filename(filename):
+            return jsonify({'status': 'error', 'message': 'Invalid backup filename'}), 400
+        target = _backup_exports_dir() / filename
+        if not target.exists():
+            return jsonify({'status': 'error', 'message': 'Backup not found'}), 404
+        target.unlink()
+        return jsonify({'status': 'success', 'message': f'Deleted {filename}'})
+    except Exception:
+        logger.exception("[Backup] delete failed")
+        return jsonify({'status': 'error', 'message': 'Failed to delete backup'}), 500
+
+
+def _save_uploaded_backup_to_temp() -> Tuple[Optional[Path], Optional[Tuple[Response, int]]]:
+    """Shared upload handler for validate/restore endpoints. Returns
+    ``(temp_path, None)`` on success or ``(None, error_response)`` on failure.
+    The caller is responsible for deleting the returned temp file."""
+    import tempfile as _tempfile
+    if 'backup_file' not in request.files:
+        return None, (jsonify({'status': 'error', 'message': 'No backup file provided'}), 400)
+    upload = request.files['backup_file']
+    if not upload.filename:
+        return None, (jsonify({'status': 'error', 'message': 'No file selected'}), 400)
+    is_valid, err = validate_file_upload(
+        upload.filename,
+        max_size_mb=200,
+        allowed_extensions=['.zip'],
+    )
+    if not is_valid:
+        return None, (jsonify({'status': 'error', 'message': err}), 400)
+    fd, tmp_name = _tempfile.mkstemp(prefix='ledmatrix_upload_', suffix='.zip')
+    os.close(fd)
+    tmp_path = Path(tmp_name)
+    max_bytes = 200 * 1024 * 1024
+    try:
+        written = 0
+        with open(tmp_path, 'wb') as fh:
+            while True:
+                chunk = upload.stream.read(65536)
+                if not chunk:
+                    break
+                written += len(chunk)
+                if written > max_bytes:
+                    fh.close()
+                    tmp_path.unlink(missing_ok=True)
+                    return None, (jsonify({'status': 'error', 'message': 'Backup file exceeds 200 MB limit'}), 413)
+                fh.write(chunk)
+    except Exception:
+        tmp_path.unlink(missing_ok=True)
+        logger.exception("[Backup] Failed to save uploaded backup")
+        return None, (jsonify({'status': 'error', 'message': 'Failed to read uploaded file'}), 500)
+    return tmp_path, None
+
+
+@api_v3.route('/backup/validate', methods=['POST'])
+def backup_validate():
+    """Inspect an uploaded backup without applying it."""
+    tmp_path, err = _save_uploaded_backup_to_temp()
+    if err is not None:
+        return err
+    try:
+        from src import backup_manager
+        ok, error, manifest = backup_manager.validate_backup(tmp_path)
+        if not ok:
+            return jsonify({'status': 'error', 'message': error}), 400
+        return jsonify({'status': 'success', 'data': manifest})
+    except Exception:
+        logger.exception("[Backup] validate failed")
+        return jsonify({'status': 'error', 'message': 'Failed to validate backup'}), 500
+    finally:
+        try:
+            tmp_path.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
+@api_v3.route('/backup/restore', methods=['POST'])
+def backup_restore():
+    """
+    Restore an uploaded backup into the running installation.
+
+    The request is multipart/form-data with:
+      - ``backup_file``: the ZIP upload
+      - ``options``: JSON string with RestoreOptions fields (all boolean)
+    """
+    tmp_path, err = _save_uploaded_backup_to_temp()
+    if err is not None:
+        return err
+    try:
+        from src import backup_manager
+
+        # Parse options (all optional; default is "restore everything").
+        raw_opts = request.form.get('options') or '{}'
+        try:
+            opts_dict = json.loads(raw_opts)
+        except json.JSONDecodeError:
+            return jsonify({'status': 'error', 'message': 'Invalid options JSON'}), 400
+        if not isinstance(opts_dict, dict):
+            return jsonify({'status': 'error', 'message': 'options must be an object'}), 400
+
+        opts = backup_manager.RestoreOptions(
+            restore_config=_coerce_to_bool(opts_dict.get('restore_config', True)),
+            restore_secrets=_coerce_to_bool(opts_dict.get('restore_secrets', True)),
+            restore_wifi=_coerce_to_bool(opts_dict.get('restore_wifi', True)),
+            restore_fonts=_coerce_to_bool(opts_dict.get('restore_fonts', True)),
+            restore_plugin_uploads=_coerce_to_bool(opts_dict.get('restore_plugin_uploads', True)),
+            reinstall_plugins=_coerce_to_bool(opts_dict.get('reinstall_plugins', True)),
+        )
+
+        # Snapshot current config through the atomic manager so the pre-restore
+        # state is recoverable via the existing rollback_config() path.
+        if api_v3.config_manager and opts.restore_config:
+            try:
+                current = api_v3.config_manager.load_config()
+                snapshot_ok, snapshot_err = _save_config_atomic(api_v3.config_manager, current, create_backup=True)
+                if not snapshot_ok:
+                    logger.warning("[Backup] Pre-restore snapshot failed: %s (continuing)", snapshot_err)
+            except Exception:
+                logger.warning("[Backup] Pre-restore snapshot failed (continuing)", exc_info=True)
+
+        result = backup_manager.restore_backup(tmp_path, PROJECT_ROOT, opts)
+
+        # Reinstall plugins via the store manager, one at a time.
+        if opts.reinstall_plugins and api_v3.plugin_store_manager and result.plugins_to_install:
+            installed_names = set()
+            if api_v3.plugin_manager:
+                try:
+                    existing = api_v3.plugin_manager.get_all_plugin_info() or []
+                    installed_names = {p.get('id') for p in existing if p.get('id')}
+                except Exception:
+                    installed_names = set()
+            for entry in result.plugins_to_install:
+                plugin_id = entry.get('plugin_id')
+                if not plugin_id:
+                    continue
+                if plugin_id in installed_names:
+                    result.plugins_installed.append(plugin_id)
+                    continue
+                try:
+                    ok = api_v3.plugin_store_manager.install_plugin(plugin_id)
+                    if ok:
+                        if api_v3.schema_manager:
+                            api_v3.schema_manager.invalidate_cache(plugin_id)
+                        if api_v3.plugin_manager:
+                            api_v3.plugin_manager.discover_plugins()
+                            api_v3.plugin_manager.load_plugin(plugin_id)
+                        if api_v3.plugin_state_manager:
+                            api_v3.plugin_state_manager.set_plugin_installed(plugin_id)
+                        result.plugins_installed.append(plugin_id)
+                    else:
+                        result.plugins_failed.append({'plugin_id': plugin_id, 'error': 'install returned False'})
+                except Exception as install_err:
+                    logger.exception("[Backup] plugin reinstall failed for %s", plugin_id)
+                    result.plugins_failed.append({'plugin_id': plugin_id, 'error': str(install_err)})
+
+        # Clear font catalog cache so restored fonts show up.
+        if any(r.startswith("fonts") for r in result.restored):
+            try:
+                from web_interface.cache import delete_cached
+                delete_cached('fonts_catalog')
+            except Exception:
+                logger.warning("[Backup] Failed to clear font cache", exc_info=True)
+
+        # Reload config_manager state so the UI picks up the new values
+        # without a full service restart.
+        if api_v3.config_manager and opts.restore_config:
+            try:
+                api_v3.config_manager.load_config(force_reload=True)
+            except TypeError:
+                try:
+                    api_v3.config_manager.load_config()
+                except Exception:
+                    logger.warning("[Backup] Could not reload config after restore", exc_info=True)
+            except Exception:
+                logger.warning("[Backup] Could not reload config after restore", exc_info=True)
+
+        return jsonify({
+            'status': 'success' if result.success else 'partial',
+            'data': result.to_dict(),
+        })
+    except Exception:
+        logger.exception("[Backup] restore failed")
+        return jsonify({'status': 'error', 'message': 'Failed to restore backup'}), 500
+    finally:
+        try:
+            tmp_path.unlink(missing_ok=True)
+        except OSError:
+            pass
+
 
 @api_v3.route('/system/status', methods=['GET'])
 def get_system_status():
