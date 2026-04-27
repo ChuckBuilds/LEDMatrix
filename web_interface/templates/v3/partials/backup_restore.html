@@ -326,7 +326,7 @@
                 <div><strong>Plugins installed:</strong> ${(data.plugins_installed || []).map(escapeHtml).join(', ') || 'none'}</div>
                 <div><strong>Plugins failed:</strong> ${(data.plugins_failed || []).map(p => escapeHtml(p.plugin_id + ' (' + p.error + ')')).join(', ') || 'none'}</div>
                 <div><strong>Errors:</strong> ${(data.errors || []).map(escapeHtml).join('; ') || 'none'}</div>
-                <p class="mt-2">Restart the display service to apply all changes.</p>
+                ${((data.restored || []).length || (data.plugins_installed || []).length) ? '<p class="mt-2">Restart the display service to apply all changes.</p>' : ''}
             `;
             notify(hasPartial ? 'Restore complete with warnings' : 'Restore complete', hasPartial ? 'warning' : 'success');
         } catch (err) {

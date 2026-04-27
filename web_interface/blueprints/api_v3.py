@@ -1340,6 +1340,13 @@ def backup_restore():
                 try:
                     ok = api_v3.plugin_store_manager.install_plugin(plugin_id)
                     if ok:
+                        if api_v3.schema_manager:
+                            api_v3.schema_manager.invalidate_cache(plugin_id)
+                        if api_v3.plugin_manager:
+                            api_v3.plugin_manager.discover_plugins()
+                            api_v3.plugin_manager.load_plugin(plugin_id)
+                        if api_v3.plugin_state_manager:
+                            api_v3.plugin_state_manager.set_plugin_installed(plugin_id)
                         result.plugins_installed.append(plugin_id)
                     else:
                         result.plugins_failed.append({'plugin_id': plugin_id, 'error': 'install returned False'})
