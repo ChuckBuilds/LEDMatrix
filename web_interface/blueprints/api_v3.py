@@ -8,7 +8,7 @@ import time
 import hashlib
 import uuid
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional, Tuple, Dict, Any, Type
 
@@ -1147,7 +1147,7 @@ def backup_export():
             'status': 'success',
             'filename': zip_path.name,
             'size': zip_path.stat().st_size,
-            'created_at': datetime.utcnow().isoformat() + 'Z',
+            'created_at': datetime.now(timezone.utc).isoformat(),
         })
     except Exception:
         logger.exception("[Backup] export failed")
@@ -1167,7 +1167,7 @@ def backup_list():
             entries.append({
                 'filename': path.name,
                 'size': stat.st_size,
-                'created_at': datetime.utcfromtimestamp(stat.st_mtime).isoformat() + 'Z',
+                'created_at': datetime.fromtimestamp(stat.st_mtime, timezone.utc).isoformat(),
             })
         return jsonify({'status': 'success', 'data': entries})
     except Exception:
@@ -1355,7 +1355,7 @@ def backup_restore():
                     result.plugins_failed.append({'plugin_id': plugin_id, 'error': str(install_err)})
 
         # Clear font catalog cache so restored fonts show up.
-        if 'fonts' in ' '.join(result.restored):
+        if any(r.startswith("fonts") for r in result.restored):
             try:
                 from web_interface.cache import delete_cached
                 delete_cached('fonts_catalog')
