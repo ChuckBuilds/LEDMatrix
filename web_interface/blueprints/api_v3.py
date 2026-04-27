@@ -1232,8 +1232,20 @@ def _save_uploaded_backup_to_temp() -> Tuple[Optional[Path], Optional[Tuple[Resp
     fd, tmp_name = _tempfile.mkstemp(prefix='ledmatrix_upload_', suffix='.zip')
     os.close(fd)
     tmp_path = Path(tmp_name)
+    max_bytes = 200 * 1024 * 1024
     try:
-        upload.save(str(tmp_path))
+        written = 0
+        with open(tmp_path, 'wb') as fh:
+            while True:
+                chunk = upload.stream.read(65536)
+                if not chunk:
+                    break
+                written += len(chunk)
+                if written > max_bytes:
+                    fh.close()
+                    tmp_path.unlink(missing_ok=True)
+                    return None, (jsonify({'status': 'error', 'message': 'Backup file exceeds 200 MB limit'}), 413)
+                fh.write(chunk)
     except Exception:
         tmp_path.unlink(missing_ok=True)
         logger.exception("[Backup] Failed to save uploaded backup")
@@ -1286,12 +1298,12 @@ def backup_restore():
             return jsonify({'status': 'error', 'message': 'Invalid options JSON'}), 400
 
         opts = backup_manager.RestoreOptions(
-            restore_config=bool(opts_dict.get('restore_config', True)),
-            restore_secrets=bool(opts_dict.get('restore_secrets', True)),
-            restore_wifi=bool(opts_dict.get('restore_wifi', True)),
-            restore_fonts=bool(opts_dict.get('restore_fonts', True)),
-            restore_plugin_uploads=bool(opts_dict.get('restore_plugin_uploads', True)),
-            reinstall_plugins=bool(opts_dict.get('reinstall_plugins', True)),
+            restore_config=_coerce_to_bool(opts_dict.get('restore_config', True)),
+            restore_secrets=_coerce_to_bool(opts_dict.get('restore_secrets', True)),
+            restore_wifi=_coerce_to_bool(opts_dict.get('restore_wifi', True)),
+            restore_fonts=_coerce_to_bool(opts_dict.get('restore_fonts', True)),
+            restore_plugin_uploads=_coerce_to_bool(opts_dict.get('restore_plugin_uploads', True)),
+            reinstall_plugins=_coerce_to_bool(opts_dict.get('reinstall_plugins', True)),
         )
 
         # Snapshot current config through the atomic manager so the pre-restore
@@ -1299,7 +1311,9 @@ def backup_restore():
         if api_v3.config_manager and opts.restore_config:
             try:
                 current = api_v3.config_manager.load_config()
-                _save_config_atomic(api_v3.config_manager, current, create_backup=True)
+                snapshot_ok, snapshot_err = _save_config_atomic(api_v3.config_manager, current, create_backup=True)
+                if not snapshot_ok:
+                    logger.warning("[Backup] Pre-restore snapshot failed: %s (continuing)", snapshot_err)
             except Exception:
                 logger.warning("[Backup] Pre-restore snapshot failed (continuing)", exc_info=True)
 
@@ -1337,7 +1351,7 @@ def backup_restore():
                 from web_interface.cache import delete_cached
                 delete_cached('fonts_catalog')
             except Exception:
-                pass
+                logger.warning("[Backup] Failed to clear font cache", exc_info=True)
 
         # Reload config_manager state so the UI picks up the new values
         # without a full service restart.
@@ -1348,7 +1362,7 @@ def backup_restore():
                 try:
                     api_v3.config_manager.load_config()
                 except Exception:
-                    pass
+                    logger.warning("[Backup] Could not reload config after restore", exc_info=True)
             except Exception:
                 logger.warning("[Backup] Could not reload config after restore", exc_info=True)
 

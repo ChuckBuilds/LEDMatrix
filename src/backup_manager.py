@@ -12,7 +12,6 @@ used from scripts.
 
 from __future__ import annotations
 
-import io
 import json
 import logging
 import os
@@ -189,7 +188,7 @@ def list_installed_plugins(project_root: Path) -> List[Dict[str, Any]]:
         try:
             with state_file.open("r", encoding="utf-8") as f:
                 state = json.load(f)
-            raw_plugins = state.get("plugins", {}) if isinstance(state, dict) else {}
+            raw_plugins = state.get("states", {}) if isinstance(state, dict) else {}
             if isinstance(raw_plugins, dict):
                 for plugin_id, info in raw_plugins.items():
                     if not isinstance(info, dict):
@@ -290,9 +289,9 @@ def create_backup(
 
     contents: List[str] = []
 
-    # Build bundle in memory first, then atomically write to final path.
-    buffer = io.BytesIO()
-    with zipfile.ZipFile(buffer, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+    # Stream directly to a temp file so we never hold the whole ZIP in memory.
+    tmp_path = zip_path.with_suffix(".zip.tmp")
+    with zipfile.ZipFile(tmp_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
         # Config files.
         if (project_root / _CONFIG_REL).exists():
             zf.write(project_root / _CONFIG_REL, _CONFIG_REL.as_posix())
@@ -333,9 +332,6 @@ def create_backup(
         manifest = _build_manifest(contents, project_root)
         zf.writestr(MANIFEST_NAME, json.dumps(manifest, indent=2))
 
-    # Write atomically.
-    tmp_path = zip_path.with_suffix(".zip.tmp")
-    tmp_path.write_bytes(buffer.getvalue())
     os.replace(tmp_path, zip_path)
     logger.info("Created backup %s (%d bytes)", zip_path, zip_path.stat().st_size)
     return zip_path
@@ -429,7 +425,10 @@ def validate_backup(zip_path: Path) -> Tuple[bool, str, Dict[str, Any]]:
                 detected.append("wifi")
             if any(n.startswith(_FONTS_REL.as_posix() + "/") for n in names):
                 detected.append("fonts")
-            if any(n.startswith(_PLUGIN_UPLOADS_REL.as_posix() + "/") for n in names):
+            if any(
+                n.startswith(_PLUGIN_UPLOADS_REL.as_posix() + "/") and "/uploads/" in n
+                for n in names
+            ):
                 detected.append("plugin_uploads")
 
             plugins: List[Dict[str, Any]] = []
@@ -569,6 +568,9 @@ def restore_backup(
                 for name in files:
                     src = Path(root) / name
                     rel = src.relative_to(tmp_dir)
+                    if "/uploads/" not in rel.as_posix():
+                        result.errors.append(f"Rejected unexpected plugin path: {rel}")
+                        continue
                     try:
                         _copy_file(src, project_root / rel)
                         count += 1

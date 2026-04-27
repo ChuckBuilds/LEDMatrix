@@ -117,6 +117,8 @@
 
 <script>
 (function () {
+    let inspectedFile = null;
+
     function notify(message, kind) {
         if (typeof showNotification === 'function') {
             showNotification(message, kind || 'info');
@@ -245,12 +247,14 @@
             notify('Choose a backup file first', 'error');
             return;
         }
+        const file = input.files[0];
         const fd = new FormData();
-        fd.append('backup_file', input.files[0]);
+        fd.append('backup_file', file);
         try {
             const res = await fetch('/api/v3/backup/validate', { method: 'POST', body: fd });
             const payload = await res.json();
             if (payload.status !== 'success') throw new Error(payload.message || 'Validation failed');
+            inspectedFile = file;
             renderRestorePreview(payload.data);
         } catch (err) {
             notify('Invalid backup: ' + err.message, 'error');
@@ -273,15 +277,15 @@
     }
 
     function clearRestore() {
+        inspectedFile = null;
         document.getElementById('restore-preview').classList.add('hidden');
         document.getElementById('restore-result').classList.add('hidden');
         document.getElementById('restore-file-input').value = '';
     }
 
     async function runRestore() {
-        const input = document.getElementById('restore-file-input');
-        if (!input.files || !input.files[0]) {
-            notify('Choose a backup file first', 'error');
+        if (!inspectedFile) {
+            notify('Inspect the file before restoring', 'error');
             return;
         }
         if (!confirm('Restore from this backup? Current configuration will be overwritten.')) return;
@@ -295,7 +299,7 @@
             reinstall_plugins: document.getElementById('opt-reinstall').checked,
         };
         const fd = new FormData();
-        fd.append('backup_file', input.files[0]);
+        fd.append('backup_file', inspectedFile);
         fd.append('options', JSON.stringify(options));
 
         const btn = document.getElementById('run-restore-btn');
@@ -304,13 +308,16 @@
         try {
             const res = await fetch('/api/v3/backup/restore', { method: 'POST', body: fd });
             const payload = await res.json();
+            if (payload.status !== 'success') {
+                const msgs = (payload.data?.errors || []).join('; ');
+                throw new Error(payload.message || msgs || 'Restore had errors');
+            }
             const data = payload.data || {};
             const result = document.getElementById('restore-result');
-            const ok = payload.status === 'success';
-            result.className = (ok ? 'bg-green-50 border-green-200 text-green-800' : 'bg-yellow-50 border-yellow-200 text-yellow-800') + ' border rounded-md p-4';
+            result.className = 'bg-green-50 border-green-200 text-green-800 border rounded-md p-4';
             result.classList.remove('hidden');
             result.innerHTML = `
-                <h3 class="font-medium mb-2">${ok ? 'Restore complete' : 'Restore finished with warnings'}</h3>
+                <h3 class="font-medium mb-2">Restore complete</h3>
                 <div><strong>Restored:</strong> ${(data.restored || []).map(escapeHtml).join(', ') || 'none'}</div>
                 <div><strong>Skipped:</strong> ${(data.skipped || []).map(escapeHtml).join(', ') || 'none'}</div>
                 <div><strong>Plugins installed:</strong> ${(data.plugins_installed || []).map(escapeHtml).join(', ') || 'none'}</div>
@@ -318,7 +325,7 @@
                 <div><strong>Errors:</strong> ${(data.errors || []).map(escapeHtml).join('; ') || 'none'}</div>
                 <p class="mt-2">Restart the display service to apply all changes.</p>
             `;
-            notify(ok ? 'Restore complete' : 'Restore finished with warnings', ok ? 'success' : 'info');
+            notify('Restore complete', 'success');
         } catch (err) {
             notify('Restore failed: ' + err.message, 'error');
         } finally {
@@ -333,6 +340,13 @@
     window.validateRestoreFile = validateRestoreFile;
     window.clearRestore = clearRestore;
     window.runRestore = runRestore;
+
+    // Clear inspection state whenever the user picks a new file.
+    document.getElementById('restore-file-input').addEventListener('change', function () {
+        inspectedFile = null;
+        document.getElementById('restore-preview').classList.add('hidden');
+        document.getElementById('restore-result').classList.add('hidden');
+    });
 
     // Initial load.
     loadPreview();

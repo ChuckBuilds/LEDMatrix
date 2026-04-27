@@ -12,6 +12,7 @@ import pytest
 from src import backup_manager
 from src.backup_manager import (
     BUNDLED_FONTS,
+    SCHEMA_VERSION,
     RestoreOptions,
     create_backup,
     list_installed_plugins,
@@ -66,10 +67,11 @@ def _make_project(root: Path) -> Path:
     (root / "data" / "plugin_state.json").write_text(
         json.dumps(
             {
-                "plugins": {
+                "version": 1,
+                "states": {
                     "my-plugin": {"version": "1.2.3", "enabled": True},
                     "other-plugin": {"version": "0.1.0", "enabled": False},
-                }
+                },
             }
         ),
         encoding="utf-8",
@@ -204,7 +206,7 @@ def test_validate_backup_bad_schema_version(tmp_path: Path) -> None:
 def test_validate_backup_rejects_zip_traversal(tmp_path: Path) -> None:
     zip_path = tmp_path / "malicious.zip"
     with zipfile.ZipFile(zip_path, "w") as zf:
-        zf.writestr("manifest.json", json.dumps({"schema_version": 1, "contents": []}))
+        zf.writestr("manifest.json", json.dumps({"schema_version": SCHEMA_VERSION, "contents": []}))
         zf.writestr("../../etc/passwd", "x")
     ok, err, _ = validate_backup(zip_path)
     assert not ok
@@ -214,7 +216,7 @@ def test_validate_backup_rejects_zip_traversal(tmp_path: Path) -> None:
 def test_validate_backup_not_a_zip(tmp_path: Path) -> None:
     p = tmp_path / "nope.zip"
     p.write_text("hello", encoding="utf-8")
-    ok, err, _ = validate_backup(p)
+    ok, _err, _ = validate_backup(p)
     assert not ok
 
 
@@ -275,7 +277,7 @@ def test_restore_honors_options(project: Path, empty_project: Path, tmp_path: Pa
 def test_restore_rejects_malicious_zip(empty_project: Path, tmp_path: Path) -> None:
     zip_path = tmp_path / "bad.zip"
     with zipfile.ZipFile(zip_path, "w") as zf:
-        zf.writestr("manifest.json", json.dumps({"schema_version": 1, "contents": []}))
+        zf.writestr("manifest.json", json.dumps({"schema_version": SCHEMA_VERSION, "contents": []}))
         zf.writestr("../escape.txt", "x")
     result = restore_backup(zip_path, empty_project, RestoreOptions())
     # validate_backup catches it before extraction.
