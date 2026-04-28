@@ -136,13 +136,29 @@ class PluginStateManager:
         """
         return self._state_history.get(plugin_id, [])
     
-    def get_error_info(self, plugin_id: str) -> Optional[Dict[str, Any]]:
+    def set_error_info(self, plugin_id: str, error_info: Dict[str, Any]) -> None:
         """
-        Get error information for a plugin in ERROR state.
-        
+        Persist structured error context without changing plugin state.
+
+        Used for recoverable failures (e.g. update timeout) where the plugin
+        stays ENABLED but the error details should remain queryable.
+
         Args:
             plugin_id: Plugin identifier
-            
+            error_info: Arbitrary dict describing the error
+        """
+        self._error_info[plugin_id] = error_info
+
+    def get_error_info(self, plugin_id: str) -> Optional[Dict[str, Any]]:
+        """
+        Get error information for a plugin.
+
+        Returns the stored error dict whether the plugin is in ERROR state or
+        still ENABLED after a recoverable failure.
+
+        Args:
+            plugin_id: Plugin identifier
+
         Returns:
             Error information dict or None
         """
