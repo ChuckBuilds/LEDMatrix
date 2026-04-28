@@ -734,14 +734,18 @@ class PluginManager:
                         if self.health_tracker:
                             self.health_tracker.record_success(plugin_id)
                     else:
-                        # Execution failed (timeout or error)
-                        self.state_manager.set_state(plugin_id, PluginState.ERROR)
+                        # Execution failed (timeout or error) — update timestamp so the
+                        # plugin waits one full interval before retrying, but keep state
+                        # ENABLED so can_execute() returns True and recovery is automatic.
+                        self.plugin_last_update[plugin_id] = current_time
+                        self.state_manager.set_state(plugin_id, PluginState.ENABLED)
                         if self.health_tracker:
                             self.health_tracker.record_failure(plugin_id, Exception("Plugin execution failed"))
                 except Exception as exc:  # pylint: disable=broad-except
                     self.logger.exception("Error updating plugin %s: %s", plugin_id, exc)
-                    self.state_manager.set_state(plugin_id, PluginState.ERROR, error=exc)
-                    # Record failure
+                    # Same as the failure path above: stay ENABLED and wait one interval.
+                    self.plugin_last_update[plugin_id] = current_time
+                    self.state_manager.set_state(plugin_id, PluginState.ENABLED)
                     if self.health_tracker:
                         self.health_tracker.record_failure(plugin_id, exc)
 
