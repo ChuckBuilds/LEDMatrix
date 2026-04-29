@@ -747,8 +747,7 @@ class PluginManager:
                         }
                         self.logger.warning("Plugin %s update() failed; will retry after interval", plugin_id)
                         self.plugin_last_update[plugin_id] = failure_time
-                        self.state_manager.set_state(plugin_id, PluginState.ENABLED)
-                        self.state_manager.set_error_info(plugin_id, error_info)
+                        self.state_manager.set_state_with_error(plugin_id, PluginState.ENABLED, error_info, error=err)
                         if self.health_tracker:
                             self.health_tracker.record_failure(plugin_id, err)
                 except Exception as exc:  # pylint: disable=broad-except
@@ -761,8 +760,7 @@ class PluginManager:
                         'recoverable': True,
                     }
                     self.plugin_last_update[plugin_id] = failure_time
-                    self.state_manager.set_state(plugin_id, PluginState.ENABLED)
-                    self.state_manager.set_error_info(plugin_id, error_info)
+                    self.state_manager.set_state_with_error(plugin_id, PluginState.ENABLED, error_info, error=exc)
                     if self.health_tracker:
                         self.health_tracker.record_failure(plugin_id, exc)
 

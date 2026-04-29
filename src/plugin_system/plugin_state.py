@@ -5,6 +5,7 @@ Manages plugin state machine (loaded → enabled → running → error)
 with state transitions and queries.
 """
 
+import threading
 from enum import Enum
 from typing import Optional, Dict, Any
 from datetime import datetime
@@ -34,6 +35,7 @@ class PluginStateManager:
             logger: Optional logger instance
         """
         self.logger = logger or get_logger(__name__)
+        self._lock = threading.RLock()
         self._states: Dict[str, PluginState] = {}
         self._state_history: Dict[str, list] = {}
         self._error_info: Dict[str, Dict[str, Any]] = {}
@@ -148,6 +150,51 @@ class PluginStateManager:
             error_info: Arbitrary dict describing the error
         """
         self._error_info[plugin_id] = error_info
+
+    def set_state_with_error(
+        self,
+        plugin_id: str,
+        state: PluginState,
+        error_info: Dict[str, Any],
+        error: Optional[Exception] = None,
+    ) -> None:
+        """Set plugin state and persist error context atomically.
+
+        Unlike calling set_state() then set_error_info() separately, this
+        method holds ``_lock`` for both writes so no reader can observe the
+        new state without the accompanying error context.
+
+        Intentionally does not clear ``_error_info`` the way set_state() does
+        for non-ERROR transitions — this is the recoverable-failure path where
+        the error dict is the entire point.
+
+        Args:
+            plugin_id: Plugin identifier
+            state: New state
+            error_info: Structured error dict to persist alongside the state
+            error: Optional exception recorded in the transition history
+        """
+        with self._lock:
+            old_state = self._states.get(plugin_id, PluginState.UNLOADED)
+            self._states[plugin_id] = state
+
+            if plugin_id not in self._state_history:
+                self._state_history[plugin_id] = []
+            self._state_history[plugin_id].append({
+                'timestamp': datetime.now(),
+                'from': old_state.value,
+                'to': state.value,
+                'error': str(error) if error else None,
+            })
+
+            self._error_info[plugin_id] = error_info
+
+            self.logger.debug(
+                "Plugin %s state transition: %s → %s (recoverable error stored)",
+                plugin_id,
+                old_state.value,
+                state.value,
+            )
 
     def get_error_info(self, plugin_id: str) -> Optional[Dict[str, Any]]:
         """
