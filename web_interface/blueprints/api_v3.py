@@ -8,6 +8,7 @@ import time
 import hashlib
 import uuid
 import logging
+import threading
 from datetime import datetime
 from pathlib import Path
 from typing import Optional, Tuple, Dict, Any, Type
@@ -1343,29 +1344,40 @@ def get_system_version():
 
 _update_check_cache: Dict = {}
 _UPDATE_CHECK_TTL = 300  # 5 minutes
+_update_check_lock = threading.Lock()
 
 @api_v3.route('/system/check-update', methods=['GET'])
 def check_for_update():
     """Check if a newer version is available on the remote."""
-    import time as _time
-    now = _time.time()
-    if _update_check_cache.get('ts', 0) + _UPDATE_CHECK_TTL > now:
-        return jsonify(_update_check_cache['data'])
+    now = time.time()
+    with _update_check_lock:
+        if _update_check_cache.get('ts', 0) + _UPDATE_CHECK_TTL > now:
+            return jsonify(_update_check_cache['data'])
 
     project_dir = str(PROJECT_ROOT)
     try:
-        subprocess.run(
+        fetch_result = subprocess.run(
             ['git', 'fetch', 'origin', 'main'],
             capture_output=True, text=True, timeout=15, cwd=project_dir
         )
-        local_sha = subprocess.run(
+        if fetch_result.returncode != 0:
+            raise RuntimeError(f"git fetch failed: {fetch_result.stderr.strip()}")
+
+        local_result = subprocess.run(
             ['git', 'rev-parse', 'HEAD'],
             capture_output=True, text=True, timeout=5, cwd=project_dir
-        ).stdout.strip()
-        remote_sha = subprocess.run(
+        )
+        if local_result.returncode != 0:
+            raise RuntimeError(f"git rev-parse HEAD failed: {local_result.stderr.strip()}")
+        local_sha = local_result.stdout.strip()
+
+        remote_result = subprocess.run(
             ['git', 'rev-parse', 'origin/main'],
             capture_output=True, text=True, timeout=5, cwd=project_dir
-        ).stdout.strip()
+        )
+        if remote_result.returncode != 0:
+            raise RuntimeError(f"git rev-parse origin/main failed: {remote_result.stderr.strip()}")
+        remote_sha = remote_result.stdout.strip()
 
         if local_sha == remote_sha:
             data = {'status': 'success', 'update_available': False,
@@ -1376,20 +1388,22 @@ def check_for_update():
                 capture_output=True, text=True, timeout=5, cwd=project_dir
             )
             lines = [l for l in log_result.stdout.strip().split('\n') if l]
+            commits_behind = len(lines)
             data = {
                 'status': 'success',
-                'update_available': True,
+                'update_available': commits_behind > 0,
                 'local_sha': local_sha[:8],
                 'remote_sha': remote_sha[:8],
-                'commits_behind': len(lines),
+                'commits_behind': commits_behind,
                 'latest_message': lines[0].split(' ', 1)[1] if lines else '',
             }
     except Exception as e:
         logger.warning("[System] check-update failed: %s", e)
         data = {'status': 'error', 'update_available': False, 'message': str(e)}
 
-    _update_check_cache['ts'] = now
-    _update_check_cache['data'] = data
+    with _update_check_lock:
+        _update_check_cache['ts'] = now
+        _update_check_cache['data'] = data
     return jsonify(data)
 
 @api_v3.route('/system/action', methods=['POST'])
@@ -1502,7 +1516,8 @@ def execute_system_action():
             )
 
             # Invalidate update-check cache so the banner hides immediately
-            _update_check_cache.clear()
+            with _update_check_lock:
+                _update_check_cache.clear()
 
             # Return custom response for git_pull
             if result.returncode == 0:

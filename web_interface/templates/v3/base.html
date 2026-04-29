@@ -948,9 +948,9 @@
                                    update-banner-action transition-colors duration-150">
                         <i class="fas fa-download mr-1"></i> Update Now
                     </button>
-                    <button onclick="dismissUpdateBanner()"
+                    <button type="button" onclick="dismissUpdateBanner()"
                             class="update-banner-dismiss rounded p-1 transition-colors duration-150"
-                            title="Dismiss">
+                            title="Dismiss" aria-label="Dismiss update">
                         <i class="fas fa-times text-sm"></i>
                     </button>
                 </div>
@@ -4947,6 +4947,7 @@
 
     window.applyUpdate = function() {
         var btn = document.getElementById('update-banner-btn');
+        var originalHTML = '<i class="fas fa-download mr-1"></i> Update Now';
         btn.innerHTML = '<i class="fas fa-spinner fa-spin mr-1"></i> Updating...';
         btn.disabled = true;
         fetch('/api/v3/system/action', {
@@ -4956,14 +4957,18 @@
         })
         .then(function(r) { return r.json(); })
         .then(function(data) {
-            document.getElementById('update-banner').style.display = 'none';
+            btn.innerHTML = originalHTML;
+            btn.disabled = false;
+            if (data.status === 'success') {
+                document.getElementById('update-banner').style.display = 'none';
+                try { sessionStorage.removeItem('update-dismissed'); } catch(e) {}
+            }
             if (typeof showNotification === 'function') {
                 showNotification(data.message || 'Update complete', data.status || 'success');
             }
-            try { sessionStorage.removeItem('update-dismissed'); } catch(e) {}
         })
         .catch(function() {
-            btn.innerHTML = '<i class="fas fa-download mr-1"></i> Update Now';
+            btn.innerHTML = originalHTML;
             btn.disabled = false;
             if (typeof showNotification === 'function') {
                 showNotification('Update failed — check your connection', 'error');
