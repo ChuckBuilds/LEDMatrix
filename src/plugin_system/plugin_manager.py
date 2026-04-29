@@ -677,6 +677,44 @@ class PluginManager:
         # Default: 60 seconds
         return 60.0
 
+    def _record_update_failure(
+        self,
+        plugin_id: str,
+        exc: Optional[Exception] = None,
+    ) -> None:
+        """Apply the standard failure-recovery path for a plugin update.
+
+        Stamps plugin_last_update with the actual failure time so the full
+        configured interval elapses before the next retry, then transitions
+        the plugin back to ENABLED (not ERROR) with structured error context
+        so automatic recovery happens on the next scheduled cycle.
+
+        Args:
+            plugin_id: Plugin identifier
+            exc: The exception that caused the failure, if any.  When None a
+                 synthetic ExecutionFailure exception is constructed from the
+                 timeout/executor-error path.
+        """
+        failure_time = time.time()
+        if exc is not None:
+            err: Exception = exc
+            error_type = type(exc).__name__
+        else:
+            err = Exception(f"Plugin {plugin_id} execution failed (timeout or executor error)")
+            error_type = 'ExecutionFailure'
+
+        error_info = {
+            'error': str(err),
+            'error_type': error_type,
+            'timestamp': failure_time,
+            'recoverable': True,
+        }
+        self.logger.warning("Plugin %s update() failed; will retry after interval", plugin_id)
+        self.plugin_last_update[plugin_id] = failure_time
+        self.state_manager.set_state_with_error(plugin_id, PluginState.ENABLED, error_info, error=err)
+        if self.health_tracker:
+            self.health_tracker.record_failure(plugin_id, err)
+
     def run_scheduled_updates(self, current_time: Optional[float] = None) -> None:
         """
         Trigger plugin updates based on their defined update intervals.
@@ -734,35 +772,10 @@ class PluginManager:
                         if self.health_tracker:
                             self.health_tracker.record_success(plugin_id)
                     else:
-                        # Execution failed (timeout or executor error) — stamp with the
-                        # actual failure time (not current_time captured before execution)
-                        # so the full interval elapses before the next retry.
-                        failure_time = time.time()
-                        err = Exception(f"Plugin {plugin_id} execution failed (timeout or executor error)")
-                        error_info = {
-                            'error': str(err),
-                            'error_type': 'ExecutionFailure',
-                            'timestamp': failure_time,
-                            'recoverable': True,
-                        }
-                        self.logger.warning("Plugin %s update() failed; will retry after interval", plugin_id)
-                        self.plugin_last_update[plugin_id] = failure_time
-                        self.state_manager.set_state_with_error(plugin_id, PluginState.ENABLED, error_info, error=err)
-                        if self.health_tracker:
-                            self.health_tracker.record_failure(plugin_id, err)
+                        self._record_update_failure(plugin_id)
                 except Exception as exc:  # pylint: disable=broad-except
-                    failure_time = time.time()
                     self.logger.exception("Error updating plugin %s: %s", plugin_id, exc)
-                    error_info = {
-                        'error': str(exc),
-                        'error_type': type(exc).__name__,
-                        'timestamp': failure_time,
-                        'recoverable': True,
-                    }
-                    self.plugin_last_update[plugin_id] = failure_time
-                    self.state_manager.set_state_with_error(plugin_id, PluginState.ENABLED, error_info, error=exc)
-                    if self.health_tracker:
-                        self.health_tracker.record_failure(plugin_id, exc)
+                    self._record_update_failure(plugin_id, exc=exc)
 
     def update_all_plugins(self) -> None:
         """
@@ -788,14 +801,12 @@ class PluginManager:
                 if success:
                     self.plugin_last_update[plugin_id] = time.time()
                     self.state_manager.record_update(plugin_id)
-                    # Update state back to ENABLED
                     self.state_manager.set_state(plugin_id, PluginState.ENABLED)
                 else:
-                    # Execution failed
-                    self.state_manager.set_state(plugin_id, PluginState.ERROR)
+                    self._record_update_failure(plugin_id)
             except Exception as exc:  # pylint: disable=broad-except
                 self.logger.exception("Error updating plugin %s: %s", plugin_id, exc)
-                self.state_manager.set_state(plugin_id, PluginState.ERROR, error=exc)
+                self._record_update_failure(plugin_id, exc=exc)
     
     def get_plugin_health_metrics(self) -> Dict[str, Any]:
         """
