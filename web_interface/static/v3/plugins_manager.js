@@ -4837,9 +4837,9 @@ window.executePluginAction = function(actionId, actionIndex, pluginIdParam = nul
                     showNotification(data.message || 'Action completed successfully!', 'success');
                 }
             } else {
-                statusDiv.innerHTML = `<div class="text-red-600"><i class="fas fa-exclamation-circle mr-2"></i>${data.message}</div>`;
+                statusDiv.innerHTML = `<div class="text-red-600"><i class="fas fa-exclamation-circle mr-2"></i>${escapeHtml(data.message || 'Error')}</div>`;
                 if (data.output) {
-                    statusDiv.innerHTML += `<pre class="mt-2 text-xs bg-red-50 p-2 rounded overflow-auto max-h-32">${data.output}</pre>`;
+                    statusDiv.innerHTML += `<pre class="mt-2 text-xs bg-red-50 p-2 rounded overflow-auto max-h-32">${escapeHtml(data.output)}</pre>`;
                 }
                 btn.innerHTML = originalText;
                 btn.disabled = false;
@@ -4883,8 +4883,8 @@ window.executePluginAction = function(actionId, actionIndex, pluginIdParam = nul
                         </div>
                         <div class="mb-3">
                             <p class="text-sm text-blue-700 mb-2">1. Click the link below to authorize:</p>
-                            <a href="${data.auth_url}" target="_blank" class="text-blue-600 hover:text-blue-800 underline break-all">
-                                ${data.auth_url}
+                            <a href="${data.auth_url && data.auth_url.startsWith('http') ? escapeHtml(data.auth_url) : '#'}" target="_blank" class="text-blue-600 hover:text-blue-800 underline break-all">
+                                ${escapeHtml(data.auth_url || '')}
                             </a>
                         </div>
                         <div class="mb-2">
@@ -4906,7 +4906,7 @@ window.executePluginAction = function(actionId, actionIndex, pluginIdParam = nul
                         <div class="text-green-900 font-medium mb-2">
                             <i class="fas fa-check-circle mr-2"></i>${data.message || 'Action completed successfully'}
                         </div>
-                        ${data.output ? `<pre class="mt-2 text-xs bg-green-50 p-2 rounded overflow-auto max-h-32">${data.output}</pre>` : ''}
+                        ${data.output ? `<pre class="mt-2 text-xs bg-green-50 p-2 rounded overflow-auto max-h-32">${escapeHtml(data.output)}</pre>` : ''}
                     </div>
                 `;
                 btn.innerHTML = originalText;
@@ -4919,9 +4919,9 @@ window.executePluginAction = function(actionId, actionIndex, pluginIdParam = nul
             statusDiv.innerHTML = `
                 <div class="bg-red-50 border border-red-200 rounded p-3">
                     <div class="text-red-900 font-medium mb-2">
-                        <i class="fas fa-exclamation-circle mr-2"></i>${data.message || 'Action failed'}
+                        <i class="fas fa-exclamation-circle mr-2"></i>${escapeHtml(data.message || 'Action failed')}
                     </div>
-                    ${data.output ? `<pre class="mt-2 text-xs bg-red-50 p-2 rounded overflow-auto max-h-32">${data.output}</pre>` : ''}
+                    ${data.output ? `<pre class="mt-2 text-xs bg-red-50 p-2 rounded overflow-auto max-h-32">${escapeHtml(data.output)}</pre>` : ''}
                 </div>
             `;
             btn.innerHTML = originalText;
