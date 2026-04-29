@@ -598,11 +598,7 @@ if [ ! -f "$PROJECT_ROOT_DIR/config/config_secrets.json" ]; then
     else
         echo "⚠ Template config/config_secrets.template.json not found; creating a minimal secrets file"
         cat > "$PROJECT_ROOT_DIR/config/config_secrets.json" <<'EOF'
-{
-  "weather": {
-    "api_key": "YOUR_OPENWEATHERMAP_API_KEY"
-  }
-}
+{}
 EOF
         # Check if service runs as root and set ownership accordingly
         SERVICE_USER="root"
