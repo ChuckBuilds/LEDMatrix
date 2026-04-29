@@ -50,44 +50,44 @@ class PluginStateManager:
     ) -> None:
         """
         Set plugin state and record transition.
-        
+
         Args:
             plugin_id: Plugin identifier
             state: New state
             error: Optional error if transitioning to ERROR state
         """
-        old_state = self._states.get(plugin_id, PluginState.UNLOADED)
-        self._states[plugin_id] = state
-        
-        # Record state transition
-        if plugin_id not in self._state_history:
-            self._state_history[plugin_id] = []
-        
-        transition = {
-            'timestamp': datetime.now(),
-            'from': old_state.value,
-            'to': state.value,
-            'error': str(error) if error else None
-        }
-        self._state_history[plugin_id].append(transition)
-        
-        # Store error info if transitioning to ERROR state
-        if state == PluginState.ERROR and error:
-            self._error_info[plugin_id] = {
-                'error': str(error),
-                'error_type': type(error).__name__,
-                'timestamp': datetime.now()
+        with self._lock:
+            old_state = self._states.get(plugin_id, PluginState.UNLOADED)
+            self._states[plugin_id] = state
+
+            if plugin_id not in self._state_history:
+                self._state_history[plugin_id] = []
+
+            transition = {
+                'timestamp': datetime.now(),
+                'from': old_state.value,
+                'to': state.value,
+                'error': str(error) if error else None
             }
-        elif state != PluginState.ERROR:
-            # Clear error info when leaving ERROR state
-            self._error_info.pop(plugin_id, None)
-        
-        self.logger.debug(
-            "Plugin %s state transition: %s → %s",
-            plugin_id,
-            old_state.value,
-            state.value
-        )
+            self._state_history[plugin_id].append(transition)
+
+            # Store error info if transitioning to ERROR state
+            if state == PluginState.ERROR and error:
+                self._error_info[plugin_id] = {
+                    'error': str(error),
+                    'error_type': type(error).__name__,
+                    'timestamp': datetime.now()
+                }
+            elif state != PluginState.ERROR:
+                # Clear error info when leaving ERROR state
+                self._error_info.pop(plugin_id, None)
+
+            self.logger.debug(
+                "Plugin %s state transition: %s → %s",
+                plugin_id,
+                old_state.value,
+                state.value
+            )
     
     def get_state(self, plugin_id: str) -> PluginState:
         """
@@ -149,7 +149,8 @@ class PluginStateManager:
             plugin_id: Plugin identifier
             error_info: Arbitrary dict describing the error
         """
-        self._error_info[plugin_id] = error_info
+        with self._lock:
+            self._error_info[plugin_id] = dict(error_info)
 
     def set_state_with_error(
         self,
@@ -187,7 +188,7 @@ class PluginStateManager:
                 'error': str(error) if error else None,
             })
 
-            self._error_info[plugin_id] = error_info
+            self._error_info[plugin_id] = dict(error_info)
 
             self.logger.debug(
                 "Plugin %s state transition: %s → %s (recoverable error stored)",
@@ -201,15 +202,18 @@ class PluginStateManager:
         Get error information for a plugin.
 
         Returns the stored error dict whether the plugin is in ERROR state or
-        still ENABLED after a recoverable failure.
+        still ENABLED after a recoverable failure. Returns a shallow copy so
+        callers cannot mutate the stored snapshot.
 
         Args:
             plugin_id: Plugin identifier
 
         Returns:
-            Error information dict or None
+            Copy of the error information dict, or None
         """
-        return self._error_info.get(plugin_id)
+        with self._lock:
+            info = self._error_info.get(plugin_id)
+            return dict(info) if info is not None else None
     
     def record_update(self, plugin_id: str) -> None:
         """Record that plugin update() was called."""
