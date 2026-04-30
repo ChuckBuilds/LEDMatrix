@@ -65,7 +65,6 @@ DNSMASQ_SERVICE = "dnsmasq"
 
 # Default AP settings
 DEFAULT_AP_SSID = "LEDMatrix-Setup"
-DEFAULT_AP_PASSWORD = "ledmatrix123"
 DEFAULT_AP_CHANNEL = 7
 
 # LED status message file (for display_controller integration)
@@ -303,7 +302,6 @@ class WiFiManager:
         else:
             self.config = {
                 "ap_ssid": DEFAULT_AP_SSID,
-                "ap_password": DEFAULT_AP_PASSWORD,
                 "ap_channel": DEFAULT_AP_CHANNEL,
                 "auto_enable_ap_mode": True,  # Default: auto-enable when no network (safe due to grace period)
                 "saved_networks": []
@@ -1705,7 +1703,10 @@ class WiFiManager:
                     # Continue anyway - port 5000 will still work
                 
                 logger.info("AP mode enabled successfully")
-                self._show_led_message("Setup Mode Active", duration=5)
+                ap_ssid = self.config.get("ap_ssid", DEFAULT_AP_SSID)
+                self._show_led_message(
+                    f"WiFi Setup\n{ap_ssid}\nNo password\n192.168.4.1:5000", duration=10
+                )
                 return True, "AP mode enabled"
             except Exception as e:
                 logger.error(f"Error starting AP services: {e}")
@@ -1716,245 +1717,155 @@ class WiFiManager:
     
     def _enable_ap_mode_nmcli_hotspot(self) -> Tuple[bool, str]:
         """
-        Enable AP mode using nmcli hotspot.
+        Enable AP mode using nmcli as an open (passwordless) access point.
 
-        This method is optimized for both Bookworm and Trixie:
-        - Trixie: Uses Netplan, connections stored in /run/NetworkManager/system-connections
-        - Bookworm: Traditional NetworkManager, connections in /etc/NetworkManager/system-connections
+        Uses 'nmcli connection add type wifi 802-11-wireless.mode ap' instead of
+        'nmcli device wifi hotspot' because the hotspot subcommand always creates a
+        WPA2-protected network on Bookworm/Trixie and silently ignores attempts to
+        strip security after creation.
 
-        On Trixie, we also disable PMF (Protected Management Frames) which can cause
-        connection issues with certain WiFi adapters and clients.
+        Tested for both Bookworm and Trixie (Netplan-based NetworkManager).
         """
         try:
             # Stop any existing connection
             self.disconnect_from_network()
             time.sleep(1)
 
-            # Delete any existing hotspot connections (more thorough cleanup)
-            # First, list all connections to find any with the same SSID or hotspot-related ones
-            ap_ssid = self.config.get("ap_ssid", DEFAULT_AP_SSID)
-            result = subprocess.run(
-                ["nmcli", "-t", "-f", "NAME,TYPE,802-11-wireless.ssid", "connection", "show"],
-                capture_output=True,
-                text=True,
-                timeout=10
-            )
-            if result.returncode == 0:
-                for line in result.stdout.strip().split('\n'):
-                    if ':' in line:
-                        parts = line.split(':')
-                        if len(parts) >= 2:
-                            conn_name = parts[0].strip()
-                            conn_type = parts[1].strip().lower() if len(parts) > 1 else ""
-                            conn_ssid = parts[2].strip() if len(parts) > 2 else ""
-
-                            # Delete if:
-                            # 1. It's a hotspot type
-                            # 2. It has the same SSID as our AP
-                            # 3. It matches our known connection names
-                            should_delete = (
-                                'hotspot' in conn_type or
-                                conn_ssid == ap_ssid or
-                                'hotspot' in conn_name.lower() or
-                                conn_name in ["Hotspot", "LEDMatrix-Setup-AP", "TickerSetup-AP"]
-                            )
-
-                            if should_delete:
-                                logger.info(f"Deleting existing connection: {conn_name} (type: {conn_type}, SSID: {conn_ssid})")
-                                # First disconnect it if active
-                                subprocess.run(
-                                    ["nmcli", "connection", "down", conn_name],
-                                    capture_output=True,
-                                    timeout=5
-                                )
-                                # Then delete it
-                                subprocess.run(
-                                    ["nmcli", "connection", "delete", conn_name],
-                                    capture_output=True,
-                                    timeout=10
-                                )
-
-            # Also explicitly delete known connection names (in case they weren't caught above)
-            for conn_name in ["Hotspot", "LEDMatrix-Setup-AP", "TickerSetup-AP"]:
-                subprocess.run(
-                    ["nmcli", "connection", "down", conn_name],
-                    capture_output=True,
-                    timeout=5
-                )
-                subprocess.run(
-                    ["nmcli", "connection", "delete", conn_name],
-                    capture_output=True,
-                    timeout=10
-                )
-
-            # Wait a moment for deletions to complete
-            time.sleep(1)
-
-            # Get AP settings from config
             ap_ssid = self.config.get("ap_ssid", DEFAULT_AP_SSID)
             ap_channel = self.config.get("ap_channel", DEFAULT_AP_CHANNEL)
 
-            # Use nmcli hotspot command (simpler, works with Broadcom chips)
-            # Open network (no password) for easy setup access
-            logger.info(f"Creating open hotspot with nmcli: {ap_ssid} on {self._wifi_interface} (no password)")
+            # Clean up any pre-existing AP connection profiles
+            for conn_name in ["Hotspot", "LEDMatrix-Setup-AP", "TickerSetup-AP"]:
+                subprocess.run(["nmcli", "connection", "down", conn_name],
+                                capture_output=True, timeout=5)
+                subprocess.run(["nmcli", "connection", "delete", conn_name],
+                                capture_output=True, timeout=10)
 
-            # Note: Some NetworkManager versions add a default password to hotspots
-            # We'll create it and then immediately remove all security settings
+            # Also delete any connection whose SSID matches ours or is hotspot type
+            result = subprocess.run(
+                ["nmcli", "-t", "-f", "NAME,TYPE,802-11-wireless.ssid", "connection", "show"],
+                capture_output=True, text=True, timeout=10
+            )
+            if result.returncode == 0:
+                for line in result.stdout.strip().split('\n'):
+                    parts = line.split(':')
+                    if len(parts) >= 2:
+                        conn_name = parts[0].strip()
+                        conn_type = parts[1].strip().lower() if len(parts) > 1 else ""
+                        conn_ssid = parts[2].strip() if len(parts) > 2 else ""
+                        if ('hotspot' in conn_type or conn_ssid == ap_ssid or
+                                'hotspot' in conn_name.lower()):
+                            logger.info(f"Deleting existing AP connection: {conn_name}")
+                            subprocess.run(["nmcli", "connection", "down", conn_name],
+                                           capture_output=True, timeout=5)
+                            subprocess.run(["nmcli", "connection", "delete", conn_name],
+                                           capture_output=True, timeout=10)
+
+            time.sleep(1)
+
+            # Create an open AP connection profile from scratch.
+            # Using 'connection add' instead of 'device wifi hotspot' because the
+            # hotspot subcommand always attaches a WPA2 PSK on Bookworm/Trixie and
+            # ignores post-creation security modifications.
+            logger.info(f"Creating open AP with nmcli connection add: {ap_ssid} on "
+                        f"{self._wifi_interface} (no password)")
             cmd = [
-                "nmcli", "device", "wifi", "hotspot",
-                "ifname", self._wifi_interface,
+                "nmcli", "connection", "add",
+                "type", "wifi",
                 "con-name", "LEDMatrix-Setup-AP",
+                "ifname", self._wifi_interface,
                 "ssid", ap_ssid,
-                "band", "bg",  # 2.4GHz for maximum compatibility
-                "channel", str(ap_channel),
-                # Don't pass password parameter - we'll remove security after creation
+                "802-11-wireless.mode", "ap",
+                "802-11-wireless.band", "bg",   # 2.4 GHz for maximum compatibility
+                "802-11-wireless.channel", str(ap_channel),
+                "ipv4.method", "shared",
+                "ipv4.addresses", "192.168.4.1/24",
+                # No 802-11-wireless-security section → open network
             ]
 
-            result = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                timeout=30
-            )
+            # On Trixie disable PMF which can prevent older clients from connecting
+            if self._is_trixie:
+                cmd += ["802-11-wireless-security.pmf", "disable"]
+                logger.info("Trixie detected: disabling PMF for better client compatibility")
 
-            if result.returncode == 0:
-                # Always explicitly remove all security settings to ensure open network
-                # NetworkManager sometimes adds default security even when not specified
-                logger.info("Ensuring hotspot is open (no password)...")
-                time.sleep(2)  # Give it a moment to create
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
 
-                # Remove all possible security settings
-                security_settings = [
-                    ("802-11-wireless-security.key-mgmt", "none"),
-                    ("802-11-wireless-security.psk", ""),
-                    ("802-11-wireless-security.wep-key", ""),
-                    ("802-11-wireless-security.wep-key-type", ""),
-                    ("802-11-wireless-security.auth-alg", "open"),
-                ]
-
-                # On Trixie, also disable PMF (Protected Management Frames)
-                # This can cause connection issues with certain WiFi adapters and clients
-                if self._is_trixie:
-                    security_settings.append(("802-11-wireless-security.pmf", "disable"))
-                    logger.info("Trixie detected: disabling PMF for better client compatibility")
-
-                for setting, value in security_settings:
-                    result_modify = subprocess.run(
-                        ["nmcli", "connection", "modify", "LEDMatrix-Setup-AP", setting, str(value)],
-                        capture_output=True,
-                        text=True,
-                        timeout=5
-                    )
-                    if result_modify.returncode != 0:
-                        logger.debug(f"Could not set {setting} to {value}: {result_modify.stderr}")
-
-                # On Trixie, set static IP address for the hotspot (default is 10.42.0.1)
-                # We want 192.168.4.1 for consistency
-                subprocess.run(
-                    ["nmcli", "connection", "modify", "LEDMatrix-Setup-AP",
-                     "ipv4.addresses", "192.168.4.1/24",
-                     "ipv4.method", "shared"],
-                    capture_output=True,
-                    text=True,
-                    timeout=5
-                )
-                
-                # Verify it's open
-                verify_result = subprocess.run(
-                    ["nmcli", "-t", "-f", "802-11-wireless-security.key-mgmt,802-11-wireless-security.psk", "connection", "show", "LEDMatrix-Setup-AP"],
-                    capture_output=True,
-                    text=True,
-                    timeout=5
-                )
-                
-                if verify_result.returncode == 0:
-                    output = verify_result.stdout.strip()
-                    key_mgmt = ""
-                    psk = ""
-                    for line in output.split('\n'):
-                        if 'key-mgmt:' in line:
-                            key_mgmt = line.split(':', 1)[1].strip() if ':' in line else ""
-                        elif 'psk:' in line:
-                            psk = line.split(':', 1)[1].strip() if ':' in line else ""
-                    
-                    if key_mgmt != "none" or (psk and psk != ""):
-                        logger.warning(f"Hotspot still has security (key-mgmt={key_mgmt}, psk={'set' if psk else 'empty'}), deleting and recreating...")
-                        # Delete and recreate as last resort
-                        subprocess.run(
-                            ["nmcli", "connection", "down", "LEDMatrix-Setup-AP"],
-                            capture_output=True,
-                            timeout=5
-                        )
-                        subprocess.run(
-                            ["nmcli", "connection", "delete", "LEDMatrix-Setup-AP"],
-                            capture_output=True,
-                            timeout=5
-                        )
-                        time.sleep(1)
-                        # Recreate without any password parameters
-                        cmd_recreate = [
-                            "nmcli", "device", "wifi", "hotspot",
-                            "ifname", self._wifi_interface,
-                            "con-name", "LEDMatrix-Setup-AP",
-                            "ssid", ap_ssid,
-                            "band", "bg",
-                            "channel", str(ap_channel),
-                        ]
-                        subprocess.run(cmd_recreate, capture_output=True, timeout=30)
-                        # Set IP address for consistency
-                        subprocess.run(
-                            ["nmcli", "connection", "modify", "LEDMatrix-Setup-AP",
-                             "ipv4.addresses", "192.168.4.1/24",
-                             "ipv4.method", "shared"],
-                            capture_output=True,
-                            timeout=5
-                        )
-                        # Disable PMF on Trixie
-                        if self._is_trixie:
-                            subprocess.run(
-                                ["nmcli", "connection", "modify", "LEDMatrix-Setup-AP",
-                                 "802-11-wireless-security.pmf", "disable"],
-                                capture_output=True,
-                                timeout=5
-                            )
-                        logger.info("Recreated hotspot as open network")
-                    else:
-                        logger.info("Hotspot verified as open (no password)")
-                
-                # Restart the connection to apply all changes
-                subprocess.run(
-                    ["nmcli", "connection", "down", "LEDMatrix-Setup-AP"],
-                    capture_output=True,
-                    timeout=5
-                )
-                time.sleep(1)
-                subprocess.run(
-                    ["nmcli", "connection", "up", "LEDMatrix-Setup-AP"],
-                    capture_output=True,
-                    timeout=10
-                )
-                logger.info("Hotspot restarted with open network settings")
-                logger.info(f"AP mode started via nmcli hotspot: {ap_ssid}")
-                time.sleep(2)
-                
-                # Verify hotspot is running
-                status = self._get_ap_status_nmcli()
-                if status.get('active'):
-                    ip = status.get('ip', '192.168.4.1')
-                    logger.info(f"AP mode confirmed active at {ip}")
-                    self._show_led_message(f"Setup: {ip}", duration=5)
-                    return True, f"AP mode enabled (hotspot mode) - Access at {ip}:5000"
-                else:
-                    logger.error("AP mode started but not verified")
-                    return False, "AP mode started but verification failed"
-            else:
+            if result.returncode != 0:
                 error_msg = result.stderr.strip() or result.stdout.strip()
-                logger.error(f"Failed to start AP mode via nmcli: {error_msg}")
+                logger.error(f"Failed to create AP connection profile: {error_msg}")
                 self._show_led_message("AP mode failed", duration=5)
-                return False, f"Failed to start AP mode: {error_msg}"
-                
+                return False, f"Failed to create AP profile: {error_msg}"
+
+            logger.info("AP connection profile created, bringing it up...")
+            up_result = subprocess.run(
+                ["nmcli", "connection", "up", "LEDMatrix-Setup-AP"],
+                capture_output=True, text=True, timeout=20
+            )
+            if up_result.returncode != 0:
+                error_msg = up_result.stderr.strip() or up_result.stdout.strip()
+                logger.error(f"Failed to bring up AP connection: {error_msg}")
+                subprocess.run(["nmcli", "connection", "delete", "LEDMatrix-Setup-AP"],
+                               capture_output=True, timeout=10)
+                self._show_led_message("AP mode failed", duration=5)
+                return False, f"Failed to start AP: {error_msg}"
+
+            time.sleep(2)
+
+            # Set up iptables port forwarding: redirect port 80 → 5000
+            # This enables the captive portal auto-redirect on phones/laptops.
+            try:
+                iptables_check = subprocess.run(["which", "iptables"],
+                                                capture_output=True, timeout=2)
+                if iptables_check.returncode == 0:
+                    subprocess.run(
+                        ["sudo", "sysctl", "-w", "net.ipv4.ip_forward=1"],
+                        capture_output=True, timeout=5
+                    )
+                    check_result = subprocess.run(
+                        ["sudo", "iptables", "-t", "nat", "-C", "PREROUTING",
+                         "-i", self._wifi_interface, "-p", "tcp", "--dport", "80",
+                         "-j", "REDIRECT", "--to-port", "5000"],
+                        capture_output=True, timeout=5
+                    )
+                    if check_result.returncode != 0:
+                        subprocess.run(
+                            ["sudo", "iptables", "-t", "nat", "-A", "PREROUTING",
+                             "-i", self._wifi_interface, "-p", "tcp", "--dport", "80",
+                             "-j", "REDIRECT", "--to-port", "5000"],
+                            capture_output=True, timeout=5
+                        )
+                        logger.info("Added iptables rule to redirect port 80 to 5000")
+                    check_input = subprocess.run(
+                        ["sudo", "iptables", "-C", "INPUT",
+                         "-i", self._wifi_interface, "-p", "tcp", "--dport", "80",
+                         "-j", "ACCEPT"],
+                        capture_output=True, timeout=5
+                    )
+                    if check_input.returncode != 0:
+                        subprocess.run(
+                            ["sudo", "iptables", "-A", "INPUT",
+                             "-i", self._wifi_interface, "-p", "tcp", "--dport", "80",
+                             "-j", "ACCEPT"],
+                            capture_output=True, timeout=5
+                        )
+                else:
+                    logger.debug("iptables not available; users must access port 5000 directly")
+            except Exception as e:
+                logger.warning(f"Could not set up iptables port forwarding: {e}")
+
+            # Verify the AP is actually running
+            status = self._get_ap_status_nmcli()
+            if status.get('active'):
+                ip = status.get('ip', '192.168.4.1')
+                logger.info(f"AP mode confirmed active at {ip} (open network, no password)")
+                self._show_led_message(f"WiFi Setup\n{ap_ssid}\nNo password\n{ip}:5000", duration=10)
+                return True, f"AP mode enabled (open network) - Access at {ip}:5000"
+            else:
+                logger.error("AP mode started but not verified by status check")
+                return False, "AP mode started but verification failed"
+
         except Exception as e:
-            logger.error(f"Error starting AP mode with nmcli hotspot: {e}")
+            logger.error(f"Error starting AP mode with nmcli: {e}")
             self._show_led_message("Setup mode error", duration=5)
             return False, str(e)
     
@@ -2153,13 +2064,36 @@ class WiFiManager:
                         except Exception as e:
                             logger.error(f"Final WiFi radio unblock attempt failed: {e}")
                 else:
-                    # nmcli hotspot mode - restart not needed, just ensure WiFi radio is enabled
-                    logger.info("Skipping NetworkManager restart (nmcli hotspot mode, restart not needed)")
-                    # Still ensure WiFi radio is enabled (may have been disabled by nmcli operations)
-                    # Use retries for safety
+                    # nmcli AP mode - restart not needed, but clean up iptables rules
+                    # (we add these in _enable_ap_mode_nmcli_hotspot for captive portal)
+                    logger.info("Skipping NetworkManager restart (nmcli AP mode, restart not needed)")
+                    try:
+                        iptables_check = subprocess.run(["which", "iptables"],
+                                                        capture_output=True, timeout=2)
+                        if iptables_check.returncode == 0:
+                            subprocess.run(
+                                ["sudo", "iptables", "-t", "nat", "-D", "PREROUTING",
+                                 "-i", self._wifi_interface, "-p", "tcp", "--dport", "80",
+                                 "-j", "REDIRECT", "--to-port", "5000"],
+                                capture_output=True, timeout=5
+                            )
+                            subprocess.run(
+                                ["sudo", "iptables", "-D", "INPUT",
+                                 "-i", self._wifi_interface, "-p", "tcp", "--dport", "80",
+                                 "-j", "ACCEPT"],
+                                capture_output=True, timeout=5
+                            )
+                            subprocess.run(
+                                ["sudo", "sysctl", "-w", "net.ipv4.ip_forward=0"],
+                                capture_output=True, timeout=5
+                            )
+                            logger.info("Removed iptables port forwarding rules (nmcli path)")
+                    except Exception as e:
+                        logger.warning(f"Could not remove iptables rules (nmcli path): {e}")
+                    # Ensure WiFi radio is enabled after nmcli operations
                     wifi_enabled = self._ensure_wifi_radio_enabled(max_retries=3)
                     if not wifi_enabled:
-                        logger.warning("WiFi radio may be disabled after nmcli hotspot cleanup")
+                        logger.warning("WiFi radio may be disabled after nmcli AP cleanup")
                 
                 logger.info("AP mode disabled successfully")
                 return True, "AP mode disabled"
