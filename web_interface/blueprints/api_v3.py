@@ -1635,58 +1635,59 @@ _update_check_lock = threading.Lock()
 def check_for_update():
     """Check if a newer version is available on the remote."""
     now = time.time()
+    project_dir = str(PROJECT_ROOT)
     with _update_check_lock:
         if _update_check_cache.get('ts', 0) + _UPDATE_CHECK_TTL > now:
             return jsonify(_update_check_cache['data'])
 
-    project_dir = str(PROJECT_ROOT)
-    try:
-        fetch_result = subprocess.run(
-            ['git', 'fetch', 'origin', 'main'],
-            capture_output=True, text=True, timeout=15, cwd=project_dir
-        )
-        if fetch_result.returncode != 0:
-            raise RuntimeError(f"git fetch failed: {fetch_result.stderr.strip()}")
+        try:
+            fetch_result = subprocess.run(
+                ['git', 'fetch', 'origin', 'main'],
+                capture_output=True, text=True, timeout=15, cwd=project_dir
+            )
+            if fetch_result.returncode != 0:
+                raise RuntimeError(f"git fetch failed: {fetch_result.stderr.strip()}")
 
-        local_result = subprocess.run(
-            ['git', 'rev-parse', 'HEAD'],
-            capture_output=True, text=True, timeout=5, cwd=project_dir
-        )
-        if local_result.returncode != 0:
-            raise RuntimeError(f"git rev-parse HEAD failed: {local_result.stderr.strip()}")
-        local_sha = local_result.stdout.strip()
-
-        remote_result = subprocess.run(
-            ['git', 'rev-parse', 'origin/main'],
-            capture_output=True, text=True, timeout=5, cwd=project_dir
-        )
-        if remote_result.returncode != 0:
-            raise RuntimeError(f"git rev-parse origin/main failed: {remote_result.stderr.strip()}")
-        remote_sha = remote_result.stdout.strip()
-
-        if local_sha == remote_sha:
-            data = {'status': 'success', 'update_available': False,
-                    'local_sha': local_sha[:8], 'remote_sha': remote_sha[:8]}
-        else:
-            log_result = subprocess.run(
-                ['git', 'log', 'HEAD..origin/main', '--oneline'],
+            local_result = subprocess.run(
+                ['git', 'rev-parse', 'HEAD'],
                 capture_output=True, text=True, timeout=5, cwd=project_dir
             )
-            lines = [l for l in log_result.stdout.strip().split('\n') if l]
-            commits_behind = len(lines)
-            data = {
-                'status': 'success',
-                'update_available': commits_behind > 0,
-                'local_sha': local_sha[:8],
-                'remote_sha': remote_sha[:8],
-                'commits_behind': commits_behind,
-                'latest_message': lines[0].split(' ', 1)[1] if lines else '',
-            }
-    except Exception as e:
-        logger.warning("[System] check-update failed: %s", e)
-        data = {'status': 'error', 'update_available': False, 'message': str(e)}
+            if local_result.returncode != 0:
+                raise RuntimeError(f"git rev-parse HEAD failed: {local_result.stderr.strip()}")
+            local_sha = local_result.stdout.strip()
 
-    with _update_check_lock:
+            remote_result = subprocess.run(
+                ['git', 'rev-parse', 'origin/main'],
+                capture_output=True, text=True, timeout=5, cwd=project_dir
+            )
+            if remote_result.returncode != 0:
+                raise RuntimeError(f"git rev-parse origin/main failed: {remote_result.stderr.strip()}")
+            remote_sha = remote_result.stdout.strip()
+
+            if local_sha == remote_sha:
+                data = {'status': 'success', 'update_available': False,
+                        'local_sha': local_sha[:8], 'remote_sha': remote_sha[:8]}
+            else:
+                log_result = subprocess.run(
+                    ['git', 'log', 'HEAD..origin/main', '--oneline'],
+                    capture_output=True, text=True, timeout=5, cwd=project_dir
+                )
+                if log_result.returncode != 0:
+                    raise RuntimeError(f"git log failed: {log_result.stderr.strip()}")
+                lines = [commit_line for commit_line in log_result.stdout.strip().split('\n') if commit_line]
+                commits_behind = len(lines)
+                data = {
+                    'status': 'success',
+                    'update_available': commits_behind > 0,
+                    'local_sha': local_sha[:8],
+                    'remote_sha': remote_sha[:8],
+                    'commits_behind': commits_behind,
+                    'latest_message': lines[0].split(' ', 1)[1] if lines else '',
+                }
+        except Exception as e:
+            logger.warning("[System] check-update failed: %s", e)
+            data = {'status': 'error', 'update_available': False, 'message': str(e)}
+
         _update_check_cache['ts'] = now
         _update_check_cache['data'] = data
     return jsonify(data)

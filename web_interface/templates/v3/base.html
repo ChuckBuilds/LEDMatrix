@@ -907,7 +907,8 @@
             <div class="flex items-center justify-between">
                 <div class="flex items-center space-x-3">
                     <i class="fas fa-arrow-circle-up text-lg"></i>
-                    <span class="text-sm font-medium" id="update-banner-text">
+                    <span class="text-sm font-medium" id="update-banner-text"
+                          aria-live="polite" aria-atomic="true">
                         A new LEDMatrix update is available
                     </span>
                 </div>
@@ -4905,13 +4906,16 @@
 <script>
 (function() {
     var CHECK_INTERVAL = 30 * 60 * 1000; // 30 minutes
-    var _dismissed = false;
+
+    function getDismissedSha() {
+        try { return sessionStorage.getItem('update-sha-dismissed'); } catch(e) { return null; }
+    }
 
     function checkForUpdate() {
         fetch('/api/v3/system/check-update')
             .then(function(r) { return r.json(); })
             .then(function(data) {
-                if (data.update_available && !_dismissed) {
+                if (data.update_available && getDismissedSha() !== data.remote_sha) {
                     var n = data.commits_behind || 0;
                     var msg = 'A new LEDMatrix update is available';
                     if (n > 0) msg += ' (' + n + ' commit' + (n > 1 ? 's' : '') + ')';
@@ -4926,9 +4930,11 @@
     }
 
     window.dismissUpdateBanner = function() {
-        _dismissed = true;
         document.getElementById('update-banner').style.display = 'none';
-        try { sessionStorage.setItem('update-dismissed', '1'); } catch(e) {}
+        try {
+            var sha = sessionStorage.getItem('update-sha');
+            if (sha) sessionStorage.setItem('update-sha-dismissed', sha);
+        } catch(e) {}
     };
 
     window.applyUpdate = function() {
@@ -4947,7 +4953,7 @@
             btn.disabled = false;
             if (data.status === 'success') {
                 document.getElementById('update-banner').style.display = 'none';
-                try { sessionStorage.removeItem('update-dismissed'); } catch(e) {}
+                try { sessionStorage.removeItem('update-sha-dismissed'); } catch(e) {}
             }
             if (typeof showNotification === 'function') {
                 showNotification(data.message || 'Update complete', data.status || 'success');
@@ -4961,11 +4967,6 @@
             }
         });
     };
-
-    // On load: skip if dismissed this session for the same SHA
-    try {
-        if (sessionStorage.getItem('update-dismissed') === '1') _dismissed = true;
-    } catch(e) {}
 
     // Initial check shortly after page load, then periodic
     setTimeout(checkForUpdate, 2000);
