@@ -1165,9 +1165,10 @@ function initializePluginPageWhenReady() {
         if (target.id === 'plugins-content' ||
             target.querySelector('#installed-plugins-grid')) {
             console.log('HTMX swap detected for plugins, initializing...');
-            // Reset initialization flag to allow re-initialization after HTMX swap
+            // Reset all initialization flags so the fresh empty DOM gets populated
             window.pluginManager.initialized = false;
             window.pluginManager.initializing = false;
+            pluginsInitialized = false;
             initTimer = setTimeout(attemptInit, 100);
         }
     }, { once: false }); // Allow multiple swaps
@@ -5127,7 +5128,7 @@ function refreshPlugins() {
     pluginStoreCache = null;
     cacheTimestamp = null;
 
-    loadInstalledPlugins();
+    refreshInstalledPlugins(); // invalidates cache before fetching
     // Fetch latest metadata from GitHub when refreshing
     searchPluginStore(true);
     showNotification('Plugins refreshed with latest metadata from GitHub', 'success');
