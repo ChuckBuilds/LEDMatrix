@@ -1168,6 +1168,7 @@ function initializePluginPageWhenReady() {
             // Reset all initialization flags so the fresh empty DOM gets populated
             window.pluginManager.initialized = false;
             window.pluginManager.initializing = false;
+            window.pluginManager._reswap = true; // signal: use cached store, don't re-fetch GitHub
             pluginsInitialized = false;
             initTimer = setTimeout(attemptInit, 100);
         }
@@ -1212,9 +1213,13 @@ function initializePlugins() {
         console.warn('[INIT] checkGitHubAuthStatus not available yet');
     }
 
-    // Load both installed plugins and plugin store
+    // Load both installed plugins and plugin store.
+    // On HTMX re-swaps use cached store data (fetchCommitInfo=false) to avoid
+    // re-hitting GitHub on every tab switch; only fetch fresh on first load.
+    const isReswap = !!window.pluginManager._reswap;
+    window.pluginManager._reswap = false;
     loadInstalledPlugins();
-    searchPluginStore(true); // Load plugin store with fresh metadata from GitHub
+    searchPluginStore(!isReswap);
 
     // Setup search functionality (with guard against duplicate listeners)
     const searchInput = document.getElementById('plugin-search');
