@@ -7161,6 +7161,13 @@ window.getSchemaProperty = getSchemaProperty;
 window.escapeHtml = escapeHtml;
 window.escapeAttribute = escapeAttribute;
 
+// Expose GitHub install handlers. These must be assigned inside the IIFE —
+// from outside the IIFE, `typeof attachInstallButtonHandler` evaluates to
+// 'undefined' and the fallback path at the bottom of this file fires a
+// [FALLBACK] attachInstallButtonHandler not available on window warning.
+window.attachInstallButtonHandler = attachInstallButtonHandler;
+window.setupGitHubInstallHandlers = setupGitHubInstallHandlers;
+
 })(); // End IIFE
 
 // Functions to handle array-of-objects
@@ -7390,16 +7397,8 @@ if (typeof loadInstalledPlugins !== 'undefined') {
 if (typeof renderInstalledPlugins !== 'undefined') {
     window.renderInstalledPlugins = renderInstalledPlugins;
 }
-// Expose GitHub install handlers for debugging and manual testing
-if (typeof setupGitHubInstallHandlers !== 'undefined') {
-    window.setupGitHubInstallHandlers = setupGitHubInstallHandlers;
-    console.log('[GLOBAL] setupGitHubInstallHandlers exposed to window');
-}
-if (typeof attachInstallButtonHandler !== 'undefined') {
-    window.attachInstallButtonHandler = attachInstallButtonHandler;
-    console.log('[GLOBAL] attachInstallButtonHandler exposed to window');
-}
-// searchPluginStore is now exposed inside the IIFE after its definition
+// GitHub install handlers are now exposed inside the IIFE (see above).
+// searchPluginStore is also exposed inside the IIFE after its definition.
 
 // Verify critical functions are available
 if (_PLUGIN_DEBUG_EARLY) {

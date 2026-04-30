@@ -2,6 +2,7 @@ from flask import Blueprint, request, jsonify, Response, send_from_directory
 import json
 import os
 import re
+import socket
 import sys
 import subprocess
 import time
@@ -9,7 +10,7 @@ import hashlib
 import uuid
 import logging
 import threading
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional, Tuple, Dict, Any, Type
 
@@ -1106,6 +1107,290 @@ def save_raw_secrets_config():
                 status_code=500
             )
 
+
+# ---------------------------------------------------------------------------
+# Backup & Restore
+# ---------------------------------------------------------------------------
+
+_BACKUP_FILENAME_RE = re.compile(r'^ledmatrix-backup-[A-Za-z0-9_-]+-\d{8}_\d{6}\.zip$')
+
+
+def _backup_exports_dir() -> Path:
+    """Directory where user-downloadable backup ZIPs are stored."""
+    d = PROJECT_ROOT / 'config' / 'backups' / 'exports'
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def _is_safe_backup_filename(name: str) -> bool:
+    """Allow-list filter for backup filenames used in download/delete."""
+    return bool(_BACKUP_FILENAME_RE.match(name))
+
+
+@api_v3.route('/backup/preview', methods=['GET'])
+def backup_preview():
+    """Return a summary of what a new backup would include."""
+    try:
+        from src import backup_manager
+        preview = backup_manager.preview_backup_contents(PROJECT_ROOT)
+        return jsonify({'status': 'success', 'data': preview})
+    except Exception:
+        logger.exception("[Backup] preview failed")
+        return jsonify({'status': 'error', 'message': 'Failed to compute backup preview'}), 500
+
+
+@api_v3.route('/backup/export', methods=['POST'])
+def backup_export():
+    """Create a new backup ZIP and return its filename."""
+    try:
+        from src import backup_manager
+        zip_path = backup_manager.create_backup(PROJECT_ROOT, output_dir=_backup_exports_dir())
+        return jsonify({
+            'status': 'success',
+            'filename': zip_path.name,
+            'size': zip_path.stat().st_size,
+            'created_at': datetime.now(timezone.utc).isoformat(),
+        })
+    except Exception:
+        logger.exception("[Backup] export failed")
+        return jsonify({'status': 'error', 'message': 'Failed to create backup'}), 500
+
+
+@api_v3.route('/backup/list', methods=['GET'])
+def backup_list():
+    """List backup ZIPs currently stored on disk."""
+    try:
+        exports = _backup_exports_dir()
+        entries = []
+        for path in sorted(exports.glob('ledmatrix-backup-*.zip'), reverse=True):
+            if not _is_safe_backup_filename(path.name):
+                continue
+            stat = path.stat()
+            entries.append({
+                'filename': path.name,
+                'size': stat.st_size,
+                'created_at': datetime.fromtimestamp(stat.st_mtime, timezone.utc).isoformat(),
+            })
+        return jsonify({'status': 'success', 'data': entries})
+    except Exception:
+        logger.exception("[Backup] list failed")
+        return jsonify({'status': 'error', 'message': 'Failed to list backups'}), 500
+
+
+@api_v3.route('/backup/download/<path:filename>', methods=['GET'])
+def backup_download(filename):
+    """Stream a previously-created backup ZIP to the browser."""
+    try:
+        if not _is_safe_backup_filename(filename):
+            return jsonify({'status': 'error', 'message': 'Invalid backup filename'}), 400
+        exports = _backup_exports_dir()
+        target = exports / filename
+        if not target.exists():
+            return jsonify({'status': 'error', 'message': 'Backup not found'}), 404
+        return send_from_directory(
+            str(exports),
+            filename,
+            as_attachment=True,
+            mimetype='application/zip',
+        )
+    except Exception:
+        logger.exception("[Backup] download failed")
+        return jsonify({'status': 'error', 'message': 'Failed to download backup'}), 500
+
+
+@api_v3.route('/backup/<path:filename>', methods=['DELETE'])
+def backup_delete(filename):
+    """Delete a stored backup ZIP."""
+    try:
+        if not _is_safe_backup_filename(filename):
+            return jsonify({'status': 'error', 'message': 'Invalid backup filename'}), 400
+        target = _backup_exports_dir() / filename
+        if not target.exists():
+            return jsonify({'status': 'error', 'message': 'Backup not found'}), 404
+        target.unlink()
+        return jsonify({'status': 'success', 'message': f'Deleted {filename}'})
+    except Exception:
+        logger.exception("[Backup] delete failed")
+        return jsonify({'status': 'error', 'message': 'Failed to delete backup'}), 500
+
+
+def _save_uploaded_backup_to_temp() -> Tuple[Optional[Path], Optional[Tuple[Response, int]]]:
+    """Shared upload handler for validate/restore endpoints. Returns
+    ``(temp_path, None)`` on success or ``(None, error_response)`` on failure.
+    The caller is responsible for deleting the returned temp file."""
+    import tempfile as _tempfile
+    if 'backup_file' not in request.files:
+        return None, (jsonify({'status': 'error', 'message': 'No backup file provided'}), 400)
+    upload = request.files['backup_file']
+    if not upload.filename:
+        return None, (jsonify({'status': 'error', 'message': 'No file selected'}), 400)
+    is_valid, err = validate_file_upload(
+        upload.filename,
+        max_size_mb=200,
+        allowed_extensions=['.zip'],
+    )
+    if not is_valid:
+        return None, (jsonify({'status': 'error', 'message': err}), 400)
+    fd, tmp_name = _tempfile.mkstemp(prefix='ledmatrix_upload_', suffix='.zip')
+    os.close(fd)
+    tmp_path = Path(tmp_name)
+    max_bytes = 200 * 1024 * 1024
+    try:
+        written = 0
+        with open(tmp_path, 'wb') as fh:
+            while True:
+                chunk = upload.stream.read(65536)
+                if not chunk:
+                    break
+                written += len(chunk)
+                if written > max_bytes:
+                    fh.close()
+                    tmp_path.unlink(missing_ok=True)
+                    return None, (jsonify({'status': 'error', 'message': 'Backup file exceeds 200 MB limit'}), 413)
+                fh.write(chunk)
+    except Exception:
+        tmp_path.unlink(missing_ok=True)
+        logger.exception("[Backup] Failed to save uploaded backup")
+        return None, (jsonify({'status': 'error', 'message': 'Failed to read uploaded file'}), 500)
+    return tmp_path, None
+
+
+@api_v3.route('/backup/validate', methods=['POST'])
+def backup_validate():
+    """Inspect an uploaded backup without applying it."""
+    tmp_path, err = _save_uploaded_backup_to_temp()
+    if err is not None:
+        return err
+    try:
+        from src import backup_manager
+        ok, error, manifest = backup_manager.validate_backup(tmp_path)
+        if not ok:
+            return jsonify({'status': 'error', 'message': error}), 400
+        return jsonify({'status': 'success', 'data': manifest})
+    except Exception:
+        logger.exception("[Backup] validate failed")
+        return jsonify({'status': 'error', 'message': 'Failed to validate backup'}), 500
+    finally:
+        try:
+            tmp_path.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
+@api_v3.route('/backup/restore', methods=['POST'])
+def backup_restore():
+    """
+    Restore an uploaded backup into the running installation.
+
+    The request is multipart/form-data with:
+      - ``backup_file``: the ZIP upload
+      - ``options``: JSON string with RestoreOptions fields (all boolean)
+    """
+    tmp_path, err = _save_uploaded_backup_to_temp()
+    if err is not None:
+        return err
+    try:
+        from src import backup_manager
+
+        # Parse options (all optional; default is "restore everything").
+        raw_opts = request.form.get('options') or '{}'
+        try:
+            opts_dict = json.loads(raw_opts)
+        except json.JSONDecodeError:
+            return jsonify({'status': 'error', 'message': 'Invalid options JSON'}), 400
+        if not isinstance(opts_dict, dict):
+            return jsonify({'status': 'error', 'message': 'options must be an object'}), 400
+
+        opts = backup_manager.RestoreOptions(
+            restore_config=_coerce_to_bool(opts_dict.get('restore_config', True)),
+            restore_secrets=_coerce_to_bool(opts_dict.get('restore_secrets', True)),
+            restore_wifi=_coerce_to_bool(opts_dict.get('restore_wifi', True)),
+            restore_fonts=_coerce_to_bool(opts_dict.get('restore_fonts', True)),
+            restore_plugin_uploads=_coerce_to_bool(opts_dict.get('restore_plugin_uploads', True)),
+            reinstall_plugins=_coerce_to_bool(opts_dict.get('reinstall_plugins', True)),
+        )
+
+        # Snapshot current config through the atomic manager so the pre-restore
+        # state is recoverable via the existing rollback_config() path.
+        if api_v3.config_manager and opts.restore_config:
+            try:
+                current = api_v3.config_manager.load_config()
+                snapshot_ok, snapshot_err = _save_config_atomic(api_v3.config_manager, current, create_backup=True)
+                if not snapshot_ok:
+                    logger.warning("[Backup] Pre-restore snapshot failed: %s (continuing)", snapshot_err)
+            except Exception:
+                logger.warning("[Backup] Pre-restore snapshot failed (continuing)", exc_info=True)
+
+        result = backup_manager.restore_backup(tmp_path, PROJECT_ROOT, opts)
+
+        # Reinstall plugins via the store manager, one at a time.
+        if opts.reinstall_plugins and api_v3.plugin_store_manager and result.plugins_to_install:
+            installed_names = set()
+            if api_v3.plugin_manager:
+                try:
+                    existing = api_v3.plugin_manager.get_all_plugin_info() or []
+                    installed_names = {p.get('id') for p in existing if p.get('id')}
+                except Exception:
+                    installed_names = set()
+            for entry in result.plugins_to_install:
+                plugin_id = entry.get('plugin_id')
+                if not plugin_id:
+                    continue
+                if plugin_id in installed_names:
+                    result.plugins_installed.append(plugin_id)
+                    continue
+                try:
+                    ok = api_v3.plugin_store_manager.install_plugin(plugin_id)
+                    if ok:
+                        if api_v3.schema_manager:
+                            api_v3.schema_manager.invalidate_cache(plugin_id)
+                        if api_v3.plugin_manager:
+                            api_v3.plugin_manager.discover_plugins()
+                            api_v3.plugin_manager.load_plugin(plugin_id)
+                        if api_v3.plugin_state_manager:
+                            api_v3.plugin_state_manager.set_plugin_installed(plugin_id)
+                        result.plugins_installed.append(plugin_id)
+                    else:
+                        result.plugins_failed.append({'plugin_id': plugin_id, 'error': 'install returned False'})
+                except Exception as install_err:
+                    logger.exception("[Backup] plugin reinstall failed for %s", plugin_id)
+                    result.plugins_failed.append({'plugin_id': plugin_id, 'error': str(install_err)})
+
+        # Clear font catalog cache so restored fonts show up.
+        if any(r.startswith("fonts") for r in result.restored):
+            try:
+                from web_interface.cache import delete_cached
+                delete_cached('fonts_catalog')
+            except Exception:
+                logger.warning("[Backup] Failed to clear font cache", exc_info=True)
+
+        # Reload config_manager state so the UI picks up the new values
+        # without a full service restart.
+        if api_v3.config_manager and opts.restore_config:
+            try:
+                api_v3.config_manager.load_config(force_reload=True)
+            except TypeError:
+                try:
+                    api_v3.config_manager.load_config()
+                except Exception:
+                    logger.warning("[Backup] Could not reload config after restore", exc_info=True)
+            except Exception:
+                logger.warning("[Backup] Could not reload config after restore", exc_info=True)
+
+        return jsonify({
+            'status': 'success' if result.success else 'partial',
+            'data': result.to_dict(),
+        })
+    except Exception:
+        logger.exception("[Backup] restore failed")
+        return jsonify({'status': 'error', 'message': 'Failed to restore backup'}), 500
+    finally:
+        try:
+            tmp_path.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
 @api_v3.route('/system/status', methods=['GET'])
 def get_system_status():
     """Get system status"""
@@ -1783,9 +2068,23 @@ def get_installed_plugins():
         import json
         from pathlib import Path
 
-        # Re-discover plugins to ensure we have the latest list
-        # This handles cases where plugins are added/removed after app startup
-        api_v3.plugin_manager.discover_plugins()
+        # Re-discover plugins only if the plugins directory has actually
+        # changed since our last scan, or if the caller explicitly asked
+        # for a refresh. The previous unconditional ``discover_plugins()``
+        # call (plus a per-plugin manifest re-read) made this endpoint
+        # O(plugins) in disk I/O on every page refresh, which on an SD-card
+        # Pi4 with ~15 plugins was pegging the CPU and blocking the UI
+        # "connecting to display" spinner for minutes.
+        force_refresh = request.args.get('refresh', '').lower() in ('1', 'true', 'yes')
+        plugins_dir_path = Path(api_v3.plugin_manager.plugins_dir)
+        try:
+            current_mtime = plugins_dir_path.stat().st_mtime if plugins_dir_path.exists() else 0
+        except OSError:
+            current_mtime = 0
+        last_mtime = getattr(api_v3, '_installed_plugins_dir_mtime', None)
+        if force_refresh or last_mtime != current_mtime:
+            api_v3.plugin_manager.discover_plugins()
+            api_v3._installed_plugins_dir_mtime = current_mtime
 
         # Get all installed plugin info from the plugin manager
         all_plugin_info = api_v3.plugin_manager.get_all_plugin_info()
@@ -1798,17 +2097,10 @@ def get_installed_plugins():
         for plugin_info in all_plugin_info:
             plugin_id = plugin_info.get('id')
 
-            # Re-read manifest from disk to ensure we have the latest metadata
-            manifest_path = Path(api_v3.plugin_manager.plugins_dir) / plugin_id / "manifest.json"
-            if manifest_path.exists():
-                try:
-                    with open(manifest_path, 'r', encoding='utf-8') as f:
-                        fresh_manifest = json.load(f)
-                    # Update plugin_info with fresh manifest data
-                    plugin_info.update(fresh_manifest)
-                except Exception as e:
-                    # If we can't read the fresh manifest, use the cached one
-                    logger.warning("[PluginStore] Could not read fresh manifest for %s: %s", plugin_id, e)
+            # Note: we intentionally do NOT re-read manifest.json here.
+            # discover_plugins() above already reparses manifests on change;
+            # re-reading on every request added ~1 syscall+json.loads per
+            # plugin per request for no benefit.
 
             # Get enabled status from config (source of truth)
             # Read from config file first, fall back to plugin instance if config doesn't have the key
@@ -2438,14 +2730,30 @@ def reconcile_plugin_state():
 
         from src.plugin_system.state_reconciliation import StateReconciliation
 
+        # Pass the store manager so auto-repair of missing-on-disk plugins
+        # can actually run. Previously this endpoint silently degraded to
+        # MANUAL_FIX_REQUIRED because store_manager was omitted.
         reconciler = StateReconciliation(
             state_manager=api_v3.plugin_state_manager,
             config_manager=api_v3.config_manager,
             plugin_manager=api_v3.plugin_manager,
-            plugins_dir=Path(api_v3.plugin_manager.plugins_dir)
+            plugins_dir=Path(api_v3.plugin_manager.plugins_dir),
+            store_manager=api_v3.plugin_store_manager,
         )
 
-        result = reconciler.reconcile_state()
+        # Allow the caller to force a retry of previously-unrecoverable
+        # plugins (e.g. after the registry has been updated or a typo fixed).
+        # Non-object JSON bodies (e.g. a bare string or array) must fall
+        # through to the default False instead of raising AttributeError,
+        # and string booleans like "false" must coerce correctly — hence
+        # the isinstance guard plus _coerce_to_bool.
+        force = False
+        if request.is_json:
+            payload = request.get_json(silent=True)
+            if isinstance(payload, dict):
+                force = _coerce_to_bool(payload.get('force', False))
+
+        result = reconciler.reconcile_state(force=force)
 
         return success_response(
             data={
@@ -2868,6 +3176,181 @@ def update_plugin():
             status_code=500
         )
 
+def _snapshot_plugin_config(plugin_id: str):
+    """Capture the plugin's current config and secrets entries for rollback.
+
+    Returns a tuple ``(main_entry, secrets_entry)`` where each element is
+    the plugin's dict from the respective file, or ``None`` if the plugin
+    was not present there. Used by the transactional uninstall path so we
+    can restore state if file removal fails after config cleanup has
+    already succeeded.
+    """
+    main_entry = None
+    secrets_entry = None
+    # Narrow exception list: filesystem errors (FileNotFoundError is a
+    # subclass of OSError, IOError is an alias for OSError in Python 3)
+    # and ConfigError, which is what ``get_raw_file_content`` wraps all
+    # load failures in. Programmer errors (TypeError, AttributeError,
+    # etc.) are intentionally NOT caught — they should surface loudly.
+    try:
+        main_config = api_v3.config_manager.get_raw_file_content('main')
+        if plugin_id in main_config:
+            import copy as _copy
+            main_entry = _copy.deepcopy(main_config[plugin_id])
+    except (OSError, ConfigError) as e:
+        logger.warning("[PluginUninstall] Could not snapshot main config for %s: %s", plugin_id, e)
+    try:
+        import os as _os
+        if _os.path.exists(api_v3.config_manager.secrets_path):
+            secrets_config = api_v3.config_manager.get_raw_file_content('secrets')
+            if plugin_id in secrets_config:
+                import copy as _copy
+                secrets_entry = _copy.deepcopy(secrets_config[plugin_id])
+    except (OSError, ConfigError) as e:
+        logger.warning("[PluginUninstall] Could not snapshot secrets for %s: %s", plugin_id, e)
+    return (main_entry, secrets_entry)
+
+
+def _restore_plugin_config(plugin_id: str, snapshot) -> None:
+    """Best-effort restoration of a snapshot taken by ``_snapshot_plugin_config``.
+
+    Called on the unhappy path when ``cleanup_plugin_config`` already
+    succeeded but the subsequent file removal failed. If the restore
+    itself fails, we log loudly — the caller still sees the original
+    uninstall error and the user can reconcile manually.
+    """
+    main_entry, secrets_entry = snapshot
+    if main_entry is not None:
+        try:
+            main_config = api_v3.config_manager.get_raw_file_content('main')
+            main_config[plugin_id] = main_entry
+            api_v3.config_manager.save_raw_file_content('main', main_config)
+            logger.warning("[PluginUninstall] Restored main config entry for %s after uninstall failure", plugin_id)
+        except Exception as e:
+            logger.error(
+                "[PluginUninstall] FAILED to restore main config entry for %s after uninstall failure: %s",
+                plugin_id, e, exc_info=True,
+            )
+    if secrets_entry is not None:
+        try:
+            import os as _os
+            if _os.path.exists(api_v3.config_manager.secrets_path):
+                secrets_config = api_v3.config_manager.get_raw_file_content('secrets')
+            else:
+                secrets_config = {}
+            secrets_config[plugin_id] = secrets_entry
+            api_v3.config_manager.save_raw_file_content('secrets', secrets_config)
+            logger.warning("[PluginUninstall] Restored secrets entry for %s after uninstall failure", plugin_id)
+        except Exception as e:
+            logger.error(
+                "[PluginUninstall] FAILED to restore secrets entry for %s after uninstall failure: %s",
+                plugin_id, e, exc_info=True,
+            )
+
+
+def _do_transactional_uninstall(plugin_id: str, preserve_config: bool) -> None:
+    """Run the full uninstall as a best-effort transaction.
+
+    Order:
+      1. Mark tombstone (so any reconciler racing with us cannot resurrect
+         the plugin mid-flight).
+      2. Snapshot existing config + secrets entries (for rollback).
+      3. Run ``cleanup_plugin_config``. If this raises, re-raise — files
+         have NOT been touched, so aborting here leaves a fully consistent
+         state: plugin is still installed and still in config.
+      4. Unload the plugin from the running plugin manager.
+      5. Call ``store_manager.uninstall_plugin``. If it returns False or
+         raises, RESTORE the snapshot (so config matches disk) and then
+         propagate the failure.
+      6. Invalidate schema cache and remove from the state manager only
+         after the file removal succeeds.
+
+    Raises on any failure so the caller can return an error to the user.
+    """
+    if hasattr(api_v3.plugin_store_manager, 'mark_recently_uninstalled'):
+        api_v3.plugin_store_manager.mark_recently_uninstalled(plugin_id)
+
+    snapshot = _snapshot_plugin_config(plugin_id) if not preserve_config else (None, None)
+
+    # Step 1: config cleanup. If this fails, bail out early — the plugin
+    # files on disk are still intact and the caller will get a clear
+    # error.
+    if not preserve_config:
+        try:
+            api_v3.config_manager.cleanup_plugin_config(plugin_id, remove_secrets=True)
+        except Exception as cleanup_err:
+            logger.error(
+                "[PluginUninstall] Config cleanup failed for %s; aborting uninstall (files untouched): %s",
+                plugin_id, cleanup_err, exc_info=True,
+            )
+            raise
+
+    # Remember whether the plugin was loaded *before* we touched runtime
+    # state — we need this so we can reload it on rollback if file
+    # removal fails after we've already unloaded it.
+    was_loaded = bool(
+        api_v3.plugin_manager and plugin_id in api_v3.plugin_manager.plugins
+    )
+
+    def _rollback(reason_err):
+        """Undo both the config cleanup AND the unload."""
+        if not preserve_config:
+            _restore_plugin_config(plugin_id, snapshot)
+        if was_loaded and api_v3.plugin_manager:
+            try:
+                api_v3.plugin_manager.load_plugin(plugin_id)
+            except Exception as reload_err:
+                logger.error(
+                    "[PluginUninstall] FAILED to reload %s after uninstall rollback: %s",
+                    plugin_id, reload_err, exc_info=True,
+                )
+
+    # Step 2: unload if loaded. Also part of the rollback boundary — if
+    # unload itself raises, restore config and surface the error.
+    if was_loaded:
+        try:
+            api_v3.plugin_manager.unload_plugin(plugin_id)
+        except Exception as unload_err:
+            logger.error(
+                "[PluginUninstall] unload_plugin raised for %s; restoring config snapshot: %s",
+                plugin_id, unload_err, exc_info=True,
+            )
+            if not preserve_config:
+                _restore_plugin_config(plugin_id, snapshot)
+            # Plugin was never successfully unloaded, so no reload is
+            # needed here — runtime state is still what it was before.
+            raise
+
+    # Step 3: remove files. If this fails, roll back the config cleanup
+    # AND reload the plugin so the user doesn't end up with an orphaned
+    # install (files on disk + no config entry + plugin no longer
+    # loaded at runtime).
+    try:
+        success = api_v3.plugin_store_manager.uninstall_plugin(plugin_id)
+    except Exception as uninstall_err:
+        logger.error(
+            "[PluginUninstall] uninstall_plugin raised for %s; rolling back: %s",
+            plugin_id, uninstall_err, exc_info=True,
+        )
+        _rollback(uninstall_err)
+        raise
+
+    if not success:
+        logger.error(
+            "[PluginUninstall] uninstall_plugin returned False for %s; rolling back",
+            plugin_id,
+        )
+        _rollback(None)
+        raise RuntimeError(f"Failed to uninstall plugin {plugin_id}")
+
+    # Past this point the filesystem and config are both in the
+    # "uninstalled" state. Clean up the cheap in-memory bookkeeping.
+    if api_v3.schema_manager:
+        api_v3.schema_manager.invalidate_cache(plugin_id)
+    if api_v3.plugin_state_manager:
+        api_v3.plugin_state_manager.remove_plugin_state(plugin_id)
+
+
 @api_v3.route('/plugins/uninstall', methods=['POST'])
 def uninstall_plugin():
     """Uninstall plugin"""
@@ -2890,49 +3373,28 @@ def uninstall_plugin():
         # Use operation queue if available
         if api_v3.operation_queue:
             def uninstall_callback(operation):
-                """Callback to execute plugin uninstallation."""
-                # Unload the plugin first if it's loaded
-                if api_v3.plugin_manager and plugin_id in api_v3.plugin_manager.plugins:
-                    api_v3.plugin_manager.unload_plugin(plugin_id)
-
-                # Uninstall the plugin
-                success = api_v3.plugin_store_manager.uninstall_plugin(plugin_id)
-
-                if not success:
-                    error_msg = f'Failed to uninstall plugin {plugin_id}'
+                """Callback to execute plugin uninstallation transactionally."""
+                try:
+                    _do_transactional_uninstall(plugin_id, preserve_config)
+                except Exception as err:
+                    error_msg = f'Failed to uninstall plugin {plugin_id}: {err}'
                     if api_v3.operation_history:
                         api_v3.operation_history.record_operation(
                             "uninstall",
                             plugin_id=plugin_id,
                             status="failed",
-                            error=error_msg
+                            error=error_msg,
                         )
-                    raise Exception(error_msg)
+                    # Re-raise so the operation_queue marks this op as failed.
+                    raise
 
-                # Invalidate schema cache
-                if api_v3.schema_manager:
-                    api_v3.schema_manager.invalidate_cache(plugin_id)
-
-                # Clean up plugin configuration if not preserving
-                if not preserve_config:
-                    try:
-                        api_v3.config_manager.cleanup_plugin_config(plugin_id, remove_secrets=True)
-                    except Exception as cleanup_err:
-                        logger.warning("[PluginUninstall] Failed to cleanup config for %s: %s", plugin_id, cleanup_err)
-
-                # Remove from state manager
-                if api_v3.plugin_state_manager:
-                    api_v3.plugin_state_manager.remove_plugin_state(plugin_id)
-
-                # Record in history
                 if api_v3.operation_history:
                     api_v3.operation_history.record_operation(
                         "uninstall",
                         plugin_id=plugin_id,
                         status="success",
-                        details={"preserve_config": preserve_config}
+                        details={"preserve_config": preserve_config},
                     )
-
                 return {'success': True, 'message': f'Plugin {plugin_id} uninstalled successfully'}
 
             # Enqueue operation
@@ -2947,54 +3409,31 @@ def uninstall_plugin():
                 message=f'Plugin {plugin_id} uninstallation queued'
             )
         else:
-            # Fallback to direct uninstall
-            # Unload the plugin first if it's loaded
-            if api_v3.plugin_manager and plugin_id in api_v3.plugin_manager.plugins:
-                api_v3.plugin_manager.unload_plugin(plugin_id)
-
-            # Uninstall the plugin
-            success = api_v3.plugin_store_manager.uninstall_plugin(plugin_id)
-
-            if success:
-                # Invalidate schema cache
-                if api_v3.schema_manager:
-                    api_v3.schema_manager.invalidate_cache(plugin_id)
-
-                # Clean up plugin configuration if not preserving
-                if not preserve_config:
-                    try:
-                        api_v3.config_manager.cleanup_plugin_config(plugin_id, remove_secrets=True)
-                    except Exception as cleanup_err:
-                        logger.warning("[PluginUninstall] Failed to cleanup config for %s: %s", plugin_id, cleanup_err)
-
-                # Remove from state manager
-                if api_v3.plugin_state_manager:
-                    api_v3.plugin_state_manager.remove_plugin_state(plugin_id)
-
-                # Record in history
-                if api_v3.operation_history:
-                    api_v3.operation_history.record_operation(
-                        "uninstall",
-                        plugin_id=plugin_id,
-                        status="success",
-                        details={"preserve_config": preserve_config}
-                    )
-
-                return success_response(message=f'Plugin {plugin_id} uninstalled successfully')
-            else:
+            # Fallback to direct uninstall — same transactional helper.
+            try:
+                _do_transactional_uninstall(plugin_id, preserve_config)
+            except Exception as err:
                 if api_v3.operation_history:
                     api_v3.operation_history.record_operation(
                         "uninstall",
                         plugin_id=plugin_id,
                         status="failed",
-                        error=f'Failed to uninstall plugin {plugin_id}'
+                        error=f'Failed to uninstall plugin {plugin_id}: {err}',
                     )
-
                 return error_response(
                     ErrorCode.PLUGIN_UNINSTALL_FAILED,
-                    f'Failed to uninstall plugin {plugin_id}',
-                    status_code=500
+                    f'Failed to uninstall plugin {plugin_id}: {err}',
+                    status_code=500,
                 )
+
+            if api_v3.operation_history:
+                api_v3.operation_history.record_operation(
+                    "uninstall",
+                    plugin_id=plugin_id,
+                    status="success",
+                    details={"preserve_config": preserve_config},
+                )
+            return success_response(message=f'Plugin {plugin_id} uninstalled successfully')
 
     except Exception as e:
         logger.exception("[PluginUninstall] Unhandled exception")
@@ -6280,18 +6719,146 @@ def upload_calendar_credentials():
         logger.exception("[PluginConfig] upload_calendar_credentials failed")
         return jsonify({'status': 'error', 'message': 'Failed to upload calendar credentials'}), 500
 
+def _load_calendar_plugin_dir():
+    """Resolve the calendar plugin's on-disk directory without requiring a running instance.
+
+    The web service and display service are separate processes — the web
+    process discovers plugins but does not instantiate them, so
+    plugin_manager.get_plugin('calendar') is typically None here.
+    """
+    plugin_id = 'calendar'
+    if api_v3.plugin_manager:
+        plugin_dir = api_v3.plugin_manager.get_plugin_directory(plugin_id)
+        if plugin_dir and Path(plugin_dir).exists():
+            return Path(plugin_dir)
+    fallback = PROJECT_ROOT / 'plugins' / plugin_id
+    return fallback if fallback.exists() else None
+
+
+_GOOGLE_API_TIMEOUT_SECONDS = 15
+
+
+def _load_calendar_credentials(token_path):
+    """Load OAuth credentials from the plugin's token file.
+
+    The calendar plugin historically persists credentials with pickle
+    (``token.pickle``). pickle.load is only applied to this specific file,
+    which is owned by the same user as the web service, chmod 0600, and
+    located inside the plugin install directory — it is not user-supplied
+    input. We still constrain the unpickle to a reasonable size to reduce
+    blast radius. New installs may use a JSON token (``token.json``)
+    written via google-auth's safe serializer; prefer that when present.
+    """
+    json_path = token_path.with_suffix('.json')
+    if json_path.exists():
+        from google.oauth2.credentials import Credentials
+        return Credentials.from_authorized_user_file(str(json_path))
+
+    # Fall back to the pickle token the plugin writes today.
+    # nosemgrep: python.lang.security.audit.avoid-pickle.avoid-pickle
+    import pickle  # noqa: S403
+    try:
+        size = token_path.stat().st_size
+    except OSError as e:
+        raise RuntimeError(f'Cannot stat token file: {e}') from e
+    if size > 64 * 1024:
+        raise RuntimeError('Token file is unexpectedly large; refusing to load.')
+    with open(token_path, 'rb') as f:
+        return pickle.load(f)  # noqa: S301  # trusted file, owner-only perms
+
+
+def _list_google_calendars_from_disk():
+    """List calendars using the plugin's stored OAuth token.
+
+    Returns (calendars, error_message). calendars is a list of raw Google
+    calendarList items on success; on failure calendars is None and
+    error_message describes the problem.
+
+    Refreshed credentials are intentionally not persisted back to disk
+    from this request path — the display service owns token.pickle and
+    concurrent writes across processes could corrupt it. If refresh is
+    needed, it happens only in memory for the duration of this request.
+    """
+    try:
+        import google_auth_httplib2
+        import httplib2
+        from google.auth.transport.requests import Request
+        from googleapiclient.discovery import build
+    except ImportError:
+        return None, 'Google API libraries not installed on this host.'
+
+    plugin_dir = _load_calendar_plugin_dir()
+    if plugin_dir is None:
+        return None, 'Calendar plugin directory not found.'
+
+    token_path = plugin_dir / 'token.pickle'
+    if not token_path.exists() and not (plugin_dir / 'token.json').exists():
+        return None, 'Not authenticated yet — complete the Google authentication step first.'
+
+    try:
+        creds = _load_calendar_credentials(token_path)
+    except Exception as e:
+        logger.exception('list_calendar_calendars: failed to load stored credentials')
+        return None, f'Failed to load stored authentication: {e}'
+
+    if not creds or not getattr(creds, 'valid', False):
+        if creds and getattr(creds, 'expired', False) and getattr(creds, 'refresh_token', None):
+            try:
+                # In-memory refresh only; do not write back to shared token file.
+                creds.refresh(Request(timeout=_GOOGLE_API_TIMEOUT_SECONDS))
+            except (socket.timeout, TimeoutError) as e:
+                logger.warning('list_calendar_calendars: token refresh timed out: %s', e)
+                return None, 'Token refresh timed out. Please try again.'
+            except Exception as e:
+                logger.exception('list_calendar_calendars: token refresh failed')
+                return None, f'Stored authentication expired and refresh failed: {e}. Re-run the Google authentication step.'
+        else:
+            return None, 'Stored authentication is invalid. Re-run the Google authentication step.'
+
+    try:
+        # Build an Http with an explicit socket timeout so API calls cannot
+        # hang the Flask worker on flaky connectivity.
+        authed_http = google_auth_httplib2.AuthorizedHttp(
+            creds, http=httplib2.Http(timeout=_GOOGLE_API_TIMEOUT_SECONDS)
+        )
+        service = build('calendar', 'v3', http=authed_http, cache_discovery=False)
+        items = []
+        page_token = None
+        while True:
+            response = service.calendarList().list(pageToken=page_token).execute(
+                num_retries=1
+            )
+            items.extend(response.get('items', []))
+            page_token = response.get('nextPageToken')
+            if not page_token:
+                break
+        return items, None
+    except (socket.timeout, TimeoutError) as e:
+        logger.warning('list_calendar_calendars: Google API call timed out: %s', e)
+        return None, 'Google Calendar request timed out. Please try again.'
+    except Exception as e:
+        logger.exception('list_calendar_calendars: Google API call failed')
+        return None, f'Google Calendar API call failed: {e}'
+
+
 @api_v3.route('/plugins/calendar/list-calendars', methods=['GET'])
 def list_calendar_calendars():
-    """Return Google Calendars accessible with the currently authenticated credentials."""
-    if not api_v3.plugin_manager:
-        return jsonify({'status': 'error', 'message': 'Plugin manager not available'}), 500
-    plugin = api_v3.plugin_manager.get_plugin('calendar')
-    if not plugin:
-        return jsonify({'status': 'error', 'message': 'Calendar plugin is not running. Enable it and save config first.'}), 404
-    if not hasattr(plugin, 'get_calendars'):
-        return jsonify({'status': 'error', 'message': 'Installed plugin version does not support calendar listing — update the plugin.'}), 400
+    """Return Google Calendars accessible with the currently authenticated credentials.
+
+    Reads credentials from the plugin directory directly so this works from the
+    web process (which does not instantiate plugins).
+    """
+    # Prefer a live plugin instance if one happens to exist (e.g. local dev where
+    # web and display share a process); otherwise fall back to on-disk credentials.
+    plugin = api_v3.plugin_manager.get_plugin('calendar') if api_v3.plugin_manager else None
+
     try:
-        raw = plugin.get_calendars()
+        if plugin is not None and hasattr(plugin, 'get_calendars'):
+            raw = plugin.get_calendars()
+        else:
+            raw, err = _list_google_calendars_from_disk()
+            if raw is None:
+                return jsonify({'status': 'error', 'message': err}), 400
         import collections.abc
         if not isinstance(raw, (list, tuple)):
             logger.error('list_calendar_calendars: get_calendars() returned non-sequence type %r', type(raw))

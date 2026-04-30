@@ -14,9 +14,10 @@ import zipfile
 import tempfile
 import requests
 import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
-from typing import List, Dict, Optional, Any
+from typing import List, Dict, Optional, Any, Tuple
 import logging
 
 from src.common.permission_utils import sudo_remove_directory
@@ -52,18 +53,88 @@ class PluginStoreManager:
         self.registry_cache = None
         self.registry_cache_time = None  # Timestamp of when registry was cached
         self.github_cache = {}  # Cache for GitHub API responses
-        self.cache_timeout = 3600  # 1 hour cache timeout
-        self.registry_cache_timeout = 300  # 5 minutes for registry cache
+        self.cache_timeout = 3600  # 1 hour cache timeout (repo info: stars, default_branch)
+        # 15 minutes for registry cache. Long enough that the plugin list
+        # endpoint on a warm cache never hits the network, short enough that
+        # new plugins show up within a reasonable window. See also the
+        # stale-cache fallback in fetch_registry for transient network
+        # failures.
+        self.registry_cache_timeout = 900
         self.commit_info_cache = {}  # Cache for latest commit info: {key: (timestamp, data)}
-        self.commit_cache_timeout = 300  # 5 minutes (same as registry)
+        # 30 minutes for commit/manifest caches. Plugin Store users browse
+        # the catalog via /plugins/store/list which fetches commit info and
+        # manifest data per plugin. 5-min TTLs meant every fresh browse on
+        # a Pi4 paid for ~3 HTTP requests x N plugins (30-60s serial). 30
+        # minutes keeps the cache warm across a realistic session while
+        # still picking up upstream updates within a reasonable window.
+        self.commit_cache_timeout = 1800
         self.manifest_cache = {}  # Cache for GitHub manifest fetches: {key: (timestamp, data)}
-        self.manifest_cache_timeout = 300  # 5 minutes
+        self.manifest_cache_timeout = 1800
         self.github_token = self._load_github_token()
         self._token_validation_cache = {}  # Cache for token validation results: {token: (is_valid, timestamp, error_message)}
         self._token_validation_cache_timeout = 300  # 5 minutes cache for token validation
 
+        # Per-plugin tombstone timestamps for plugins that were uninstalled
+        # recently via the UI. Used by the state reconciler to avoid
+        # resurrecting a plugin the user just deleted when reconciliation
+        # races against the uninstall operation. Cleared after ``_uninstall_tombstone_ttl``.
+        self._uninstall_tombstones: Dict[str, float] = {}
+        self._uninstall_tombstone_ttl = 300  # 5 minutes
+
+        # Cache for _get_local_git_info: {plugin_path_str: (signature, data)}
+        # where ``signature`` is a tuple of (head_mtime, resolved_ref_mtime,
+        # head_contents) so a fast-forward update to the current branch
+        # (which touches .git/refs/heads/<branch> but NOT .git/HEAD) still
+        # invalidates the cache. Before this cache, every
+        # /plugins/installed request fired 4 git subprocesses per plugin,
+        # which pegged the CPU on a Pi4 with a dozen plugins. The cached
+        # ``data`` dict is the same shape returned by ``_get_local_git_info``
+        # itself (sha / short_sha / branch / optional remote_url, date_iso,
+        # date) — all string-keyed strings.
+        self._git_info_cache: Dict[str, Tuple[Tuple, Dict[str, str]]] = {}
+
+        # How long to wait before re-attempting a failed GitHub metadata
+        # fetch after we've already served a stale cache hit. Without this,
+        # a single expired-TTL + network-error would cause every subsequent
+        # request to re-hit the network (and fail again) until the network
+        # actually came back — amplifying the failure and blocking request
+        # handlers. Bumping the cached-entry timestamp on failure serves
+        # the stale payload cheaply until the backoff expires.
+        self._failure_backoff_seconds = 60
+
         # Ensure plugins directory exists
         self.plugins_dir.mkdir(exist_ok=True)
+
+    def _record_cache_backoff(self, cache_dict: Dict, cache_key: str,
+                              cache_timeout: int, payload: Any) -> None:
+        """Bump a cache entry's timestamp so subsequent lookups hit the
+        cache rather than re-failing over the network.
+
+        Used by the stale-on-error fallbacks in the GitHub metadata fetch
+        paths. Without this, a cache entry whose TTL just expired would
+        cause every subsequent request to re-hit the network and fail
+        again until the network actually came back. We write a synthetic
+        timestamp ``(now + backoff - cache_timeout)`` so the cache-valid
+        check ``(now - ts) < cache_timeout`` succeeds for another
+        ``backoff`` seconds.
+        """
+        synthetic_ts = time.time() + self._failure_backoff_seconds - cache_timeout
+        cache_dict[cache_key] = (synthetic_ts, payload)
+
+    def mark_recently_uninstalled(self, plugin_id: str) -> None:
+        """Record that ``plugin_id`` was just uninstalled by the user."""
+        self._uninstall_tombstones[plugin_id] = time.time()
+
+    def was_recently_uninstalled(self, plugin_id: str) -> bool:
+        """Return True if ``plugin_id`` has an active uninstall tombstone."""
+        ts = self._uninstall_tombstones.get(plugin_id)
+        if ts is None:
+            return False
+        if time.time() - ts > self._uninstall_tombstone_ttl:
+            # Expired — clean up so the dict doesn't grow unbounded.
+            self._uninstall_tombstones.pop(plugin_id, None)
+            return False
+        return True
 
     def _load_github_token(self) -> Optional[str]:
         """
@@ -308,7 +379,25 @@ class PluginStoreManager:
                     if self.github_token:
                         headers['Authorization'] = f'token {self.github_token}'
 
-                    response = requests.get(api_url, headers=headers, timeout=10)
+                    try:
+                        response = requests.get(api_url, headers=headers, timeout=10)
+                    except requests.RequestException as req_err:
+                        # Network error: prefer a stale cache hit over an
+                        # empty default so the UI keeps working on a flaky
+                        # Pi WiFi link. Bump the cached entry's timestamp
+                        # into a short backoff window so subsequent
+                        # requests serve the stale payload cheaply instead
+                        # of re-hitting the network on every request.
+                        if cache_key in self.github_cache:
+                            _, stale = self.github_cache[cache_key]
+                            self._record_cache_backoff(self.github_cache, cache_key, self.cache_timeout, stale)
+                            self.logger.warning(
+                                "GitHub repo info fetch failed for %s (%s); serving stale cache.",
+                                cache_key, req_err,
+                            )
+                            return stale
+                        raise
+
                     if response.status_code == 200:
                         data = response.json()
                         pushed_at = data.get('pushed_at', '') or data.get('updated_at', '')
@@ -328,7 +417,20 @@ class PluginStoreManager:
                         self.github_cache[cache_key] = (time.time(), repo_info)
                         return repo_info
                     elif response.status_code == 403:
-                        # Rate limit or authentication issue
+                        # Rate limit or authentication issue. If we have a
+                        # previously-cached value, serve it rather than
+                        # returning empty defaults — a stale star count is
+                        # better than a reset to zero. Apply the same
+                        # failure-backoff bump as the network-error path
+                        # so we don't hammer the API with repeat requests
+                        # while rate-limited.
+                        if cache_key in self.github_cache:
+                            _, stale = self.github_cache[cache_key]
+                            self._record_cache_backoff(self.github_cache, cache_key, self.cache_timeout, stale)
+                            self.logger.warning(
+                                "GitHub API 403 for %s; serving stale cache.", cache_key,
+                            )
+                            return stale
                         if not self.github_token:
                             self.logger.warning(
                                 f"GitHub API rate limit likely exceeded (403). "
@@ -342,6 +444,10 @@ class PluginStoreManager:
                             )
                     else:
                         self.logger.warning(f"GitHub API request failed: {response.status_code} for {api_url}")
+                        if cache_key in self.github_cache:
+                            _, stale = self.github_cache[cache_key]
+                            self._record_cache_backoff(self.github_cache, cache_key, self.cache_timeout, stale)
+                            return stale
 
             return {
                 'stars': 0,
@@ -442,23 +548,34 @@ class PluginStoreManager:
             self.logger.error(f"Error fetching registry from URL: {e}", exc_info=True)
             return None
     
-    def fetch_registry(self, force_refresh: bool = False) -> Dict:
+    def fetch_registry(self, force_refresh: bool = False, raise_on_failure: bool = False) -> Dict:
         """
         Fetch the plugin registry from GitHub.
-        
+
         Args:
             force_refresh: Force refresh even if cached
-            
+            raise_on_failure: If True, re-raise network / JSON errors instead
+                of silently falling back to stale cache / empty dict. UI
+                callers prefer the stale-fallback default so the plugin
+                list keeps working on flaky WiFi; the state reconciler
+                needs the explicit failure signal so it can distinguish
+                "plugin genuinely not in registry" from "I couldn't reach
+                the registry at all" and not mark everything unrecoverable.
+
         Returns:
             Registry data with list of available plugins
+
+        Raises:
+            requests.RequestException / json.JSONDecodeError when
+            ``raise_on_failure`` is True and the fetch fails.
         """
         # Check if cache is still valid (within timeout)
         current_time = time.time()
-        if (self.registry_cache and self.registry_cache_time and 
-            not force_refresh and 
+        if (self.registry_cache and self.registry_cache_time and
+            not force_refresh and
             (current_time - self.registry_cache_time) < self.registry_cache_timeout):
             return self.registry_cache
-        
+
         try:
             self.logger.info(f"Fetching plugin registry from {self.REGISTRY_URL}")
             response = self._http_get_with_retries(self.REGISTRY_URL, timeout=10)
@@ -469,9 +586,30 @@ class PluginStoreManager:
             return self.registry_cache
         except requests.RequestException as e:
             self.logger.error(f"Error fetching registry: {e}")
+            if raise_on_failure:
+                raise
+            # Prefer stale cache over an empty list so the plugin list UI
+            # keeps working on a flaky connection (e.g. Pi on WiFi). Bump
+            # registry_cache_time into a short backoff window so the next
+            # request serves the stale payload cheaply instead of
+            # re-hitting the network on every request (matches the
+            # pattern used by github_cache / commit_info_cache).
+            if self.registry_cache:
+                self.logger.warning("Falling back to stale registry cache")
+                self.registry_cache_time = (
+                    time.time() + self._failure_backoff_seconds - self.registry_cache_timeout
+                )
+                return self.registry_cache
             return {"plugins": []}
         except json.JSONDecodeError as e:
             self.logger.error(f"Error parsing registry JSON: {e}")
+            if raise_on_failure:
+                raise
+            if self.registry_cache:
+                self.registry_cache_time = (
+                    time.time() + self._failure_backoff_seconds - self.registry_cache_timeout
+                )
+                return self.registry_cache
             return {"plugins": []}
     
     def search_plugins(self, query: str = "", category: str = "", tags: List[str] = None, fetch_commit_info: bool = True, include_saved_repos: bool = True, saved_repositories_manager = None) -> List[Dict]:
@@ -517,68 +655,95 @@ class PluginStoreManager:
                     except Exception as e:
                         self.logger.warning(f"Failed to fetch plugins from saved repository {repo_url}: {e}")
 
-        results = []
+        # First pass: apply cheap filters (category/tags/query) so we only
+        # fetch GitHub metadata for plugins that will actually be returned.
+        filtered: List[Dict] = []
         for plugin in plugins:
-            # Category filter
             if category and plugin.get('category') != category:
                 continue
-
-            # Tags filter (match any tag)
             if tags and not any(tag in plugin.get('tags', []) for tag in tags):
                 continue
-
-            # Query search (case-insensitive)
             if query:
                 query_lower = query.lower()
                 searchable_text = ' '.join([
                     plugin.get('name', ''),
                     plugin.get('description', ''),
                     plugin.get('id', ''),
-                    plugin.get('author', '')
+                    plugin.get('author', ''),
                 ]).lower()
-
                 if query_lower not in searchable_text:
                     continue
+            filtered.append(plugin)
 
-            # Enhance plugin data with GitHub metadata
+        def _enrich(plugin: Dict) -> Dict:
+            """Enrich a single plugin with GitHub metadata.
+
+            Called concurrently from a ThreadPoolExecutor. Each underlying
+            HTTP helper (``_get_github_repo_info`` / ``_get_latest_commit_info``
+            / ``_fetch_manifest_from_github``) is thread-safe — they use
+            ``requests`` and write their own cache keys on Python dicts,
+            which is atomic under the GIL for single-key assignments.
+            """
             enhanced_plugin = plugin.copy()
-
-            # Get real GitHub stars
             repo_url = plugin.get('repo', '')
-            if repo_url:
-                github_info = self._get_github_repo_info(repo_url)
-                enhanced_plugin['stars'] = github_info.get('stars', plugin.get('stars', 0))
-                enhanced_plugin['default_branch'] = github_info.get('default_branch', plugin.get('branch', 'main'))
-                enhanced_plugin['last_updated_iso'] = github_info.get('last_commit_iso')
-                enhanced_plugin['last_updated'] = github_info.get('last_commit_date')
+            if not repo_url:
+                return enhanced_plugin
 
-                if fetch_commit_info:
-                    branch = plugin.get('branch') or github_info.get('default_branch', 'main')
+            github_info = self._get_github_repo_info(repo_url)
+            enhanced_plugin['stars'] = github_info.get('stars', plugin.get('stars', 0))
+            enhanced_plugin['default_branch'] = github_info.get('default_branch', plugin.get('branch', 'main'))
+            enhanced_plugin['last_updated_iso'] = github_info.get('last_commit_iso')
+            enhanced_plugin['last_updated'] = github_info.get('last_commit_date')
 
-                    commit_info = self._get_latest_commit_info(repo_url, branch)
-                    if commit_info:
-                        enhanced_plugin['last_commit'] = commit_info.get('short_sha')
-                        enhanced_plugin['last_commit_sha'] = commit_info.get('sha')
-                        enhanced_plugin['last_updated'] = commit_info.get('date') or enhanced_plugin.get('last_updated')
-                        enhanced_plugin['last_updated_iso'] = commit_info.get('date_iso') or enhanced_plugin.get('last_updated_iso')
-                        enhanced_plugin['last_commit_message'] = commit_info.get('message')
-                        enhanced_plugin['last_commit_author'] = commit_info.get('author')
-                        enhanced_plugin['branch'] = commit_info.get('branch', branch)
-                        enhanced_plugin['last_commit_branch'] = commit_info.get('branch')
+            if fetch_commit_info:
+                branch = plugin.get('branch') or github_info.get('default_branch', 'main')
 
-                    # Fetch manifest from GitHub for additional metadata (description, etc.)
-                    plugin_subpath = plugin.get('plugin_path', '')
-                    manifest_rel = f"{plugin_subpath}/manifest.json" if plugin_subpath else "manifest.json"
-                    github_manifest = self._fetch_manifest_from_github(repo_url, branch, manifest_rel)
-                    if github_manifest:
-                        if 'last_updated' in github_manifest and not enhanced_plugin.get('last_updated'):
-                            enhanced_plugin['last_updated'] = github_manifest['last_updated']
-                        if 'description' in github_manifest:
-                            enhanced_plugin['description'] = github_manifest['description']
+                commit_info = self._get_latest_commit_info(repo_url, branch)
+                if commit_info:
+                    enhanced_plugin['last_commit'] = commit_info.get('short_sha')
+                    enhanced_plugin['last_commit_sha'] = commit_info.get('sha')
+                    enhanced_plugin['last_updated'] = commit_info.get('date') or enhanced_plugin.get('last_updated')
+                    enhanced_plugin['last_updated_iso'] = commit_info.get('date_iso') or enhanced_plugin.get('last_updated_iso')
+                    enhanced_plugin['last_commit_message'] = commit_info.get('message')
+                    enhanced_plugin['last_commit_author'] = commit_info.get('author')
+                    enhanced_plugin['branch'] = commit_info.get('branch', branch)
+                    enhanced_plugin['last_commit_branch'] = commit_info.get('branch')
 
-            results.append(enhanced_plugin)
+                # Intentionally NO per-plugin manifest.json fetch here.
+                # The registry's plugins.json already carries ``description``
+                # (it is generated from each plugin's manifest by
+                # ``update_registry.py``), and ``last_updated`` is filled in
+                # from the commit info above. An earlier implementation
+                # fetched manifest.json per plugin anyway, which meant one
+                # extra HTTPS round trip per result; on a Pi4 with a flaky
+                # WiFi link the tail retries of that one extra call
+                # (_http_get_with_retries does 3 attempts with exponential
+                # backoff) dominated wall time even after parallelization.
 
-        return results
+            return enhanced_plugin
+
+        # Fan out the per-plugin GitHub enrichment. The previous
+        # implementation did this serially, which on a Pi4 with ~15 plugins
+        # and a fresh cache meant 30+ HTTP requests in strict sequence (the
+        # "connecting to display" hang reported by users). With a thread
+        # pool, latency is dominated by the slowest request rather than
+        # their sum. Workers capped at 10 to stay well under the
+        # unauthenticated GitHub rate limit burst and avoid overwhelming a
+        # Pi's WiFi link. For a small number of plugins the pool is
+        # essentially free.
+        if not filtered:
+            return []
+
+        # Not worth the pool overhead for tiny workloads. Parenthesized to
+        # make Python's default ``and`` > ``or`` precedence explicit: a
+        # single plugin, OR a small batch where we don't need commit info.
+        if (len(filtered) == 1) or ((not fetch_commit_info) and (len(filtered) < 4)):
+            return [_enrich(p) for p in filtered]
+
+        max_workers = min(10, len(filtered))
+        with ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix='plugin-search') as executor:
+            # executor.map preserves input order, which the UI relies on.
+            return list(executor.map(_enrich, filtered))
     
     def _fetch_manifest_from_github(self, repo_url: str, branch: str = "master", manifest_path: str = "manifest.json", force_refresh: bool = False) -> Optional[Dict]:
         """
@@ -676,7 +841,28 @@ class PluginStoreManager:
             last_error = None
             for branch_name in branches_to_try:
                 api_url = f"https://api.github.com/repos/{owner}/{repo}/commits/{branch_name}"
-                response = requests.get(api_url, headers=headers, timeout=10)
+                try:
+                    response = requests.get(api_url, headers=headers, timeout=10)
+                except requests.RequestException as req_err:
+                    # Network failure: fall back to a stale cache hit if
+                    # available so the plugin store UI keeps populating
+                    # commit info on a flaky WiFi link. Bump the cached
+                    # timestamp into the backoff window so we don't
+                    # re-retry on every request.
+                    if cache_key in self.commit_info_cache:
+                        _, stale = self.commit_info_cache[cache_key]
+                        if stale is not None:
+                            self._record_cache_backoff(
+                                self.commit_info_cache, cache_key,
+                                self.commit_cache_timeout, stale,
+                            )
+                            self.logger.warning(
+                                "GitHub commit fetch failed for %s (%s); serving stale cache.",
+                                cache_key, req_err,
+                            )
+                            return stale
+                    last_error = str(req_err)
+                    continue
                 if response.status_code == 200:
                     commit_data = response.json()
                     commit_sha_full = commit_data.get('sha', '')
@@ -706,7 +892,23 @@ class PluginStoreManager:
             if last_error:
                 self.logger.debug(f"Unable to fetch commit info for {repo_url}: {last_error}")
 
-            # Cache negative result to avoid repeated failing calls
+            # All branches returned a non-200 response (e.g. 404 on every
+            # candidate, or a transient 5xx). If we already had a good
+            # cached value, prefer serving that — overwriting it with
+            # None here would wipe out commit info the UI just showed
+            # on the previous request. Bump the timestamp into the
+            # backoff window so subsequent lookups hit the cache.
+            if cache_key in self.commit_info_cache:
+                _, prior = self.commit_info_cache[cache_key]
+                if prior is not None:
+                    self._record_cache_backoff(
+                        self.commit_info_cache, cache_key,
+                        self.commit_cache_timeout, prior,
+                    )
+                    return prior
+
+            # No prior good value — cache the negative result so we don't
+            # hammer a plugin that genuinely has no reachable commits.
             self.commit_info_cache[cache_key] = (time.time(), None)
 
         except Exception as e:
@@ -1560,11 +1762,92 @@ class PluginStoreManager:
             self.logger.error(f"Unexpected error installing dependencies for {plugin_path.name}: {e}", exc_info=True)
             return False
 
+    def _git_cache_signature(self, git_dir: Path) -> Optional[Tuple]:
+        """Build a cache signature that invalidates on the kind of updates
+        a plugin user actually cares about.
+
+        Caching on ``.git/HEAD`` mtime alone is not enough: a ``git pull``
+        that fast-forwards the current branch updates
+        ``.git/refs/heads/<branch>`` (or ``.git/packed-refs``) but leaves
+        HEAD's contents and mtime untouched. And the cached ``result``
+        dict includes ``remote_url`` — a value read from ``.git/config`` —
+        so a config-only change (e.g. a monorepo-migration re-pointing
+        ``remote.origin.url``) must also invalidate the cache.
+
+        Signature components:
+          - HEAD contents (catches detach / branch switch)
+          - HEAD mtime
+          - if HEAD points at a ref, that ref file's mtime (catches
+            fast-forward / reset on the current branch)
+          - packed-refs mtime as a coarse fallback for repos using packed refs
+          - .git/config contents + mtime (catches remote URL changes and
+            any other config-only edit that affects what the cached
+            ``remote_url`` field should contain)
+
+        Returns ``None`` if HEAD cannot be read at all (caller will skip
+        the cache and take the slow path).
+        """
+        head_file = git_dir / 'HEAD'
+        try:
+            head_mtime = head_file.stat().st_mtime
+            head_contents = head_file.read_text(encoding='utf-8', errors='replace').strip()
+        except OSError:
+            return None
+
+        ref_mtime = None
+        if head_contents.startswith('ref: '):
+            ref_path = head_contents[len('ref: '):].strip()
+            # ``ref_path`` looks like ``refs/heads/main``. It lives either
+            # as a loose file under .git/ or inside .git/packed-refs.
+            loose_ref = git_dir / ref_path
+            try:
+                ref_mtime = loose_ref.stat().st_mtime
+            except OSError:
+                ref_mtime = None
+
+        packed_refs_mtime = None
+        if ref_mtime is None:
+            try:
+                packed_refs_mtime = (git_dir / 'packed-refs').stat().st_mtime
+            except OSError:
+                packed_refs_mtime = None
+
+        config_mtime = None
+        config_contents = None
+        config_file = git_dir / 'config'
+        try:
+            config_mtime = config_file.stat().st_mtime
+            config_contents = config_file.read_text(encoding='utf-8', errors='replace').strip()
+        except OSError:
+            config_mtime = None
+            config_contents = None
+
+        return (
+            head_contents, head_mtime,
+            ref_mtime, packed_refs_mtime,
+            config_contents, config_mtime,
+        )
+
     def _get_local_git_info(self, plugin_path: Path) -> Optional[Dict[str, str]]:
-        """Return local git branch, commit hash, and commit date if the plugin is a git checkout."""
+        """Return local git branch, commit hash, and commit date if the plugin is a git checkout.
+
+        Results are cached keyed on a signature that includes HEAD
+        contents plus the mtime of HEAD AND the resolved ref (or
+        packed-refs). Repeated calls skip the four ``git`` subprocesses
+        when nothing has changed, and a ``git pull`` that fast-forwards
+        the branch correctly invalidates the cache.
+        """
         git_dir = plugin_path / '.git'
         if not git_dir.exists():
             return None
+
+        cache_key = str(plugin_path)
+        signature = self._git_cache_signature(git_dir)
+
+        if signature is not None:
+            cached = self._git_info_cache.get(cache_key)
+            if cached is not None and cached[0] == signature:
+                return cached[1]
 
         try:
             sha_result = subprocess.run(
@@ -1623,6 +1906,8 @@ class PluginStoreManager:
                 result['date_iso'] = commit_date_iso
                 result['date'] = self._iso_to_date(commit_date_iso)
 
+            if signature is not None:
+                self._git_info_cache[cache_key] = (signature, result)
             return result
         except subprocess.CalledProcessError as err:
             self.logger.debug(f"Failed to read git info for {plugin_path.name}: {err}")
