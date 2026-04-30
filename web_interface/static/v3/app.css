@@ -1004,3 +1004,39 @@ button.bg-white {
 [data-theme="dark"] .theme-toggle-btn {
     color: #fbbf24;
 }
+
+/* Update available banner */
+.update-banner {
+    background-color: #eff6ff;
+    border-color: #bfdbfe;
+    color: #1e40af;
+}
+.update-banner-action {
+    background-color: #3b82f6;
+    color: #fff;
+}
+.update-banner-action:hover {
+    background-color: #2563eb;
+}
+.update-banner-dismiss {
+    color: #1e40af;
+    opacity: 0.6;
+}
+.update-banner-dismiss:hover {
+    opacity: 1;
+}
+
+[data-theme="dark"] .update-banner {
+    background-color: #1e293b;
+    border-color: #334155;
+    color: #93c5fd;
+}
+[data-theme="dark"] .update-banner-action {
+    background-color: #2563eb;
+}
+[data-theme="dark"] .update-banner-action:hover {
+    background-color: #3b82f6;
+}
+[data-theme="dark"] .update-banner-dismiss {
+    color: #93c5fd;
+}
