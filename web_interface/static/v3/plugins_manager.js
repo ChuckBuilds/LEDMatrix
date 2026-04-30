@@ -1223,8 +1223,11 @@ function initializePlugins() {
     // during a re-swap, fetch fresh data including GitHub commit/version info.
     const isReswapWarm = !!window.pluginManager._reswap && !storeCacheExpired();
     window.pluginManager._reswap = false;
-    loadInstalledPlugins();
-    searchPluginStore(!isReswapWarm);
+    // Await the installed-plugins fetch so window.installedPlugins is populated before
+    // searchPluginStore renders Installed/Reinstall badges against it.
+    loadInstalledPlugins().then(() => {
+        searchPluginStore(!isReswapWarm);
+    });
 
     // Setup search functionality (with guard against duplicate listeners)
     const searchInput = document.getElementById('plugin-search');

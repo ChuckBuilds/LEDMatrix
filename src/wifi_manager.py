@@ -702,8 +702,14 @@ class WiFiManager:
             except OSError:
                 pass  # non-fatal; restore will fall back to "0"
 
-            subprocess.run(["sudo", "sysctl", "-w", "net.ipv4.ip_forward=1"],
-                           capture_output=True, timeout=5)
+            sysctl_r = subprocess.run(
+                ["sudo", "sysctl", "-w", "net.ipv4.ip_forward=1"],
+                capture_output=True, text=True, timeout=5
+            )
+            if sysctl_r.returncode != 0:
+                logger.error(f"Failed to enable ip_forward: {sysctl_r.stderr.strip()}")
+                self._teardown_iptables_redirect()
+                return False
 
             # PREROUTING: redirect HTTP → Flask
             if subprocess.run(
@@ -712,12 +718,16 @@ class WiFiManager:
                  "-j", "REDIRECT", "--to-port", "5000"],
                 capture_output=True, timeout=5
             ).returncode != 0:
-                subprocess.run(
+                add_r = subprocess.run(
                     ["sudo", "iptables", "-t", "nat", "-A", "PREROUTING",
                      "-i", self._wifi_interface, "-p", "tcp", "--dport", "80",
                      "-j", "REDIRECT", "--to-port", "5000"],
-                    capture_output=True, timeout=5
+                    capture_output=True, text=True, timeout=5
                 )
+                if add_r.returncode != 0:
+                    logger.error(f"Failed to add PREROUTING rule: {add_r.stderr.strip()}")
+                    self._teardown_iptables_redirect()
+                    return False
 
             # INPUT: accept traffic on port 5000 (the post-redirect destination port)
             if subprocess.run(
@@ -726,12 +736,16 @@ class WiFiManager:
                  "-j", "ACCEPT"],
                 capture_output=True, timeout=5
             ).returncode != 0:
-                subprocess.run(
+                add_r = subprocess.run(
                     ["sudo", "iptables", "-A", "INPUT",
                      "-i", self._wifi_interface, "-p", "tcp", "--dport", "5000",
                      "-j", "ACCEPT"],
-                    capture_output=True, timeout=5
+                    capture_output=True, text=True, timeout=5
                 )
+                if add_r.returncode != 0:
+                    logger.error(f"Failed to add INPUT rule: {add_r.stderr.strip()}")
+                    self._teardown_iptables_redirect()
+                    return False
 
             logger.info("iptables: port 80→5000 redirect and INPUT accept-5000 rules added")
             return True
@@ -1865,7 +1879,13 @@ class WiFiManager:
                 self._show_led_message(f"WiFi Setup\n{ap_ssid}\nNo password\n{ip}:5000", duration=10)
                 return True, f"AP mode enabled (open network) - Access at {ip}:5000"
             else:
-                logger.error("AP mode started but not verified by status check")
+                logger.error("AP mode started but not verified by status check — rolling back")
+                self._teardown_iptables_redirect()
+                subprocess.run(["nmcli", "connection", "down", "LEDMatrix-Setup-AP"],
+                               capture_output=True, timeout=10)
+                subprocess.run(["nmcli", "connection", "delete", "LEDMatrix-Setup-AP"],
+                               capture_output=True, timeout=10)
+                self._clear_led_message()
                 return False, "AP mode started but verification failed"
 
         except Exception as e:
@@ -2060,9 +2080,11 @@ class WiFiManager:
         try:
             config_dir = HOSTAPD_CONFIG_PATH.parent
             config_dir.mkdir(parents=True, exist_ok=True)
-            
-            ap_ssid = self.config.get("ap_ssid", DEFAULT_AP_SSID)
-            ap_channel = self.config.get("ap_channel", DEFAULT_AP_CHANNEL)
+
+            # Use validated values — strips invalid chars and ensures channel is an int.
+            # Also strip newlines from SSID to prevent config-file injection.
+            ap_ssid, ap_channel = self._validate_ap_config()
+            ap_ssid = ap_ssid.replace('\n', '').replace('\r', '')
 
             # Open network configuration (no password) for easy setup access
             config_content = f"""interface={self._wifi_interface}
