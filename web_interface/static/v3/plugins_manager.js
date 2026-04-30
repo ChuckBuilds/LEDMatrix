@@ -898,6 +898,10 @@ window.currentPluginConfig = null;
     const CACHE_DURATION = 5 * 60 * 1000; // 5 minutes in milliseconds
     let storeFilteredList = [];
 
+    function storeCacheExpired() {
+        return !cacheTimestamp || (Date.now() - cacheTimestamp >= CACHE_DURATION);
+    }
+
     // ── Plugin Store Filter State ───────────────────────────────────────────
     const storeFilterState = {
         sort: safeLocalStorage.getItem('storeSort') || 'a-z',
@@ -1214,12 +1218,13 @@ function initializePlugins() {
     }
 
     // Load both installed plugins and plugin store.
-    // On HTMX re-swaps use cached store data (fetchCommitInfo=false) to avoid
-    // re-hitting GitHub on every tab switch; only fetch fresh on first load.
-    const isReswap = !!window.pluginManager._reswap;
+    // On HTMX re-swaps with a still-warm cache, skip GitHub metadata to avoid
+    // re-hitting the API on every tab switch. If the cache TTL has expired even
+    // during a re-swap, fetch fresh data including GitHub commit/version info.
+    const isReswapWarm = !!window.pluginManager._reswap && !storeCacheExpired();
     window.pluginManager._reswap = false;
     loadInstalledPlugins();
-    searchPluginStore(!isReswap);
+    searchPluginStore(!isReswapWarm);
 
     // Setup search functionality (with guard against duplicate listeners)
     const searchInput = document.getElementById('plugin-search');
@@ -5133,10 +5138,13 @@ function refreshPlugins() {
     pluginStoreCache = null;
     cacheTimestamp = null;
 
-    refreshInstalledPlugins(); // invalidates cache before fetching
-    // Fetch latest metadata from GitHub when refreshing
-    searchPluginStore(true);
-    showNotification('Plugins refreshed with latest metadata from GitHub', 'success');
+    // refreshInstalledPlugins() is async (returns a Promise via loadInstalledPlugins).
+    // Only search the store and notify after window.installedPlugins is updated so
+    // that Installed/Reinstall badges reflect the freshly fetched state.
+    refreshInstalledPlugins().then(() => {
+        searchPluginStore(true);
+        showNotification('Plugins refreshed with latest metadata from GitHub', 'success');
+    });
 }
 
 function restartDisplay() {
