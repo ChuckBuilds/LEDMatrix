@@ -2396,29 +2396,20 @@ address=/detectportal.firefox.com/192.168.4.1
                         f"auto_enable={auto_enable}, disconnected_checks={self._disconnected_checks}")
             
             # Determine if we should have AP mode active.
-            # "Disconnected" means either:
-            #   (a) nmcli reports no WiFi/Ethernet association, OR
-            #   (b) nmcli reports connected but there is no actual internet reachability.
-            # Case (b) catches the common scenario where the Pi is associated with a
-            # router whose WAN link is down (e.g. ISP outage, user moved home).
-            has_association = status.connected or ethernet_connected
-            if has_association:
-                has_internet = self._check_internet_connectivity()
-            else:
-                has_internet = False
-
-            is_disconnected = not has_association or not has_internet
+            # AP-enable uses only the nmcli association state (fast, no network calls).
+            # This keeps the same reliable behaviour as before: momentary packet loss
+            # while on working WiFi does NOT trigger AP mode.  The internet-reachability
+            # check is performed separately in the daemon watchdog for NM recovery.
+            is_disconnected = not status.connected and not ethernet_connected
 
             if is_disconnected:
                 # Increment disconnected check counter
                 self._disconnected_checks += 1
-                reason = "no association" if not has_association else "no internet reachability"
-                logger.debug(f"Network effectively disconnected ({reason}) "
-                             f"(check {self._disconnected_checks}/{self._disconnected_checks_required})")
+                logger.debug(f"Network disconnected (check {self._disconnected_checks}/{self._disconnected_checks_required})")
             else:
-                # Reset counter if we're genuinely connected with internet
+                # Reset counter if we're associated
                 if self._disconnected_checks > 0:
-                    logger.debug("Network connected with internet reachability, resetting counter")
+                    logger.debug("Network connected, resetting disconnected check counter")
                 self._disconnected_checks = 0
             
             # Only enable AP if we've had enough consecutive disconnected checks
@@ -2448,11 +2439,11 @@ address=/detectportal.firefox.com/192.168.4.1
             elif not should_have_ap and ap_active:
                 # Should not have AP but do - disable AP mode
                 # Always disable if WiFi or Ethernet connects, regardless of auto_enable setting
-                if not is_disconnected:
+                if status.connected or ethernet_connected:
                     success, message = self.disable_ap_mode()
                     if success:
                         if status.connected:
-                            logger.info("Auto-disabled AP mode (WiFi connected with internet)")
+                            logger.info("Auto-disabled AP mode (WiFi connected)")
                         elif ethernet_connected:
                             logger.info("Auto-disabled AP mode (Ethernet connected)")
                         self._disconnected_checks = 0  # Reset counter

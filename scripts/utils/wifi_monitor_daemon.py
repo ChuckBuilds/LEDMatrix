@@ -126,10 +126,11 @@ class WiFiMonitorDaemon:
                     else:
                         logger.debug(f"Status check: WiFi=disconnected, Ethernet={updated_ethernet}, AP={updated_status.ap_mode_active}")
                 
-                # Escalating recovery: if nmcli reports connected but internet is
-                # unreachable for several consecutive checks, restart NetworkManager.
-                # check_and_manage_ap_mode() already calls _check_internet_connectivity()
-                # internally; we track the failure count here from the observed state.
+                # Escalating recovery: if nmcli reports connected but actual internet
+                # is unreachable for several consecutive checks, restart NetworkManager.
+                # This is done HERE (not inside check_and_manage_ap_mode) to keep the
+                # AP-enable trigger clean and avoid false-positive AP enables from
+                # transient packet loss on otherwise working WiFi.
                 if updated_status.connected and not updated_status.ap_mode_active:
                     if not self.wifi_manager._check_internet_connectivity():
                         self._consecutive_internet_failures += 1
