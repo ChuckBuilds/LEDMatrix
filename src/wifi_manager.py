@@ -200,6 +200,24 @@ class WiFiManager:
         except (subprocess.TimeoutExpired, subprocess.SubprocessError, OSError):
             return False
 
+    def _find_command_path(self, command: str) -> Optional[str]:
+        """
+        Return the absolute path of a command, checking sbin locations that may not
+        be on PATH in restricted service environments.  Returns None if not found.
+        """
+        try:
+            result = subprocess.run(["which", command], capture_output=True,
+                                    text=True, timeout=2)
+            if result.returncode == 0 and result.stdout.strip():
+                return result.stdout.strip()
+        except (subprocess.TimeoutExpired, subprocess.SubprocessError, OSError):
+            pass
+        for path in [f"/usr/sbin/{command}", f"/sbin/{command}",
+                     f"/usr/local/sbin/{command}"]:
+            if os.path.isfile(path) and os.access(path, os.X_OK):
+                return path
+        return None
+
     def _discover_wifi_interface(self) -> str:
         """
         Discover the primary WiFi interface name dynamically.
@@ -682,44 +700,63 @@ class WiFiManager:
     def _setup_iptables_redirect(self) -> bool:
         """
         Add iptables rules that redirect port 80 → Flask on 5000 for the captive portal.
-        The INPUT rule must accept port 5000 (post-redirect destination), not port 80.
-        ip_forward state is saved to disk before enabling; call _teardown_iptables_redirect
-        to restore it.
-        Returns True if rules were applied.
+        The INPUT rule must accept port 5000 (the post-redirect destination), not port 80.
+
+        Uses _find_command_path() so binaries in /sbin or /usr/sbin are resolved even
+        when those directories are absent from PATH in service environments.
+
+        Reads ip_forward from /proc (no subprocess, always reliable), saves it to disk
+        only when the read succeeds, and skips the sysctl write if the value is already
+        "1" to avoid mutating global state unnecessarily.  Teardown will only restore the
+        saved value when the save file is actually present.
+
+        Returns True if all rules were applied successfully.
         """
         try:
-            if subprocess.run(["which", "iptables"], capture_output=True,
-                              timeout=2).returncode != 0:
+            iptables = self._find_command_path("iptables")
+            if not iptables:
                 logger.debug("iptables unavailable; captive portal requires direct port-5000 access")
                 return False
 
-            # Save current ip_forward state so we can restore it exactly on teardown
-            fwd = subprocess.run(["sysctl", "-n", "net.ipv4.ip_forward"],
-                                 capture_output=True, text=True, timeout=3)
-            saved = fwd.stdout.strip() if fwd.returncode == 0 else "0"
+            # Read ip_forward from /proc — reliable with no subprocess or PATH dependency.
             try:
-                self._IP_FORWARD_SAVE_PATH.write_text(saved)
+                current_fwd = Path("/proc/sys/net/ipv4/ip_forward").read_text().strip()
             except OSError:
-                pass  # non-fatal; restore will fall back to "0"
+                current_fwd = None  # can't read → don't save, teardown won't restore
 
-            sysctl_r = subprocess.run(
-                ["sudo", "sysctl", "-w", "net.ipv4.ip_forward=1"],
-                capture_output=True, text=True, timeout=5
-            )
-            if sysctl_r.returncode != 0:
-                logger.error(f"Failed to enable ip_forward: {sysctl_r.stderr.strip()}")
-                self._teardown_iptables_redirect()
-                return False
+            # Persist the original value only when we could read it.
+            # If the write fails, leave the save file absent so teardown skips the restore
+            # rather than unconditionally forcing "0" (which could break VPNs/bridges).
+            if current_fwd is not None:
+                try:
+                    self._IP_FORWARD_SAVE_PATH.write_text(current_fwd)
+                except OSError:
+                    current_fwd = None  # treat as unsaved; teardown will skip restore
+                    logger.warning("Could not write ip_forward save file; state will not be restored")
+
+            # Enable ip_forward only when it isn't already set, to avoid mutating state
+            # that another service (e.g. NetworkManager shared mode, a VPN) already owns.
+            if current_fwd != "1":
+                sysctl = self._find_command_path("sysctl")
+                sysctl_bin = sysctl if sysctl else "sysctl"
+                sysctl_r = subprocess.run(
+                    ["sudo", sysctl_bin, "-w", "net.ipv4.ip_forward=1"],
+                    capture_output=True, text=True, timeout=5
+                )
+                if sysctl_r.returncode != 0:
+                    logger.error(f"Failed to enable ip_forward: {sysctl_r.stderr.strip()}")
+                    self._teardown_iptables_redirect()
+                    return False
 
             # PREROUTING: redirect HTTP → Flask
             if subprocess.run(
-                ["sudo", "iptables", "-t", "nat", "-C", "PREROUTING",
+                ["sudo", iptables, "-t", "nat", "-C", "PREROUTING",
                  "-i", self._wifi_interface, "-p", "tcp", "--dport", "80",
                  "-j", "REDIRECT", "--to-port", "5000"],
                 capture_output=True, timeout=5
             ).returncode != 0:
                 add_r = subprocess.run(
-                    ["sudo", "iptables", "-t", "nat", "-A", "PREROUTING",
+                    ["sudo", iptables, "-t", "nat", "-A", "PREROUTING",
                      "-i", self._wifi_interface, "-p", "tcp", "--dport", "80",
                      "-j", "REDIRECT", "--to-port", "5000"],
                     capture_output=True, text=True, timeout=5
@@ -731,13 +768,13 @@ class WiFiManager:
 
             # INPUT: accept traffic on port 5000 (the post-redirect destination port)
             if subprocess.run(
-                ["sudo", "iptables", "-C", "INPUT",
+                ["sudo", iptables, "-C", "INPUT",
                  "-i", self._wifi_interface, "-p", "tcp", "--dport", "5000",
                  "-j", "ACCEPT"],
                 capture_output=True, timeout=5
             ).returncode != 0:
                 add_r = subprocess.run(
-                    ["sudo", "iptables", "-A", "INPUT",
+                    ["sudo", iptables, "-A", "INPUT",
                      "-i", self._wifi_interface, "-p", "tcp", "--dport", "5000",
                      "-j", "ACCEPT"],
                     capture_output=True, text=True, timeout=5
@@ -754,34 +791,45 @@ class WiFiManager:
             return False
 
     def _teardown_iptables_redirect(self) -> None:
-        """Remove the port 80→5000 iptables rules and restore the saved ip_forward state."""
+        """Remove the port 80→5000 iptables rules and restore the saved ip_forward state.
+
+        ip_forward is only restored when the save file written by _setup_iptables_redirect
+        is present.  If the file is absent (save was skipped or failed), ip_forward is
+        left untouched to avoid forcing "0" onto state owned by another service.
+        """
         try:
-            if subprocess.run(["which", "iptables"], capture_output=True,
-                              timeout=2).returncode != 0:
+            iptables = self._find_command_path("iptables")
+            if not iptables:
                 return
 
             subprocess.run(
-                ["sudo", "iptables", "-t", "nat", "-D", "PREROUTING",
+                ["sudo", iptables, "-t", "nat", "-D", "PREROUTING",
                  "-i", self._wifi_interface, "-p", "tcp", "--dport", "80",
                  "-j", "REDIRECT", "--to-port", "5000"],
                 capture_output=True, timeout=5
             )
             subprocess.run(
-                ["sudo", "iptables", "-D", "INPUT",
+                ["sudo", iptables, "-D", "INPUT",
                  "-i", self._wifi_interface, "-p", "tcp", "--dport", "5000",
                  "-j", "ACCEPT"],
                 capture_output=True, timeout=5
             )
 
-            # Restore ip_forward to whatever it was before we touched it
-            try:
-                saved = self._IP_FORWARD_SAVE_PATH.read_text().strip()
-                self._IP_FORWARD_SAVE_PATH.unlink(missing_ok=True)
-            except OSError:
-                saved = "0"
-            subprocess.run(["sudo", "sysctl", "-w", f"net.ipv4.ip_forward={saved}"],
-                           capture_output=True, timeout=5)
-            logger.info(f"iptables redirect rules removed; ip_forward restored to {saved}")
+            # Only restore ip_forward when we have a saved value from setup.
+            # If the save file is absent the state was never changed here, so leave it.
+            if self._IP_FORWARD_SAVE_PATH.exists():
+                try:
+                    saved = self._IP_FORWARD_SAVE_PATH.read_text().strip()
+                    self._IP_FORWARD_SAVE_PATH.unlink(missing_ok=True)
+                    sysctl = self._find_command_path("sysctl")
+                    sysctl_bin = sysctl if sysctl else "sysctl"
+                    subprocess.run(["sudo", sysctl_bin, "-w", f"net.ipv4.ip_forward={saved}"],
+                                   capture_output=True, timeout=5)
+                    logger.info(f"iptables redirect rules removed; ip_forward restored to {saved}")
+                except OSError as e:
+                    logger.warning(f"Could not restore ip_forward: {e}")
+            else:
+                logger.info("iptables redirect rules removed; ip_forward left unchanged (not modified by setup)")
         except Exception as e:
             logger.warning(f"Could not tear down iptables redirect: {e}")
 
