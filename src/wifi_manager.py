@@ -788,6 +788,10 @@ class WiFiManager:
             return True
         except Exception as e:
             logger.warning(f"Could not set up iptables redirect: {e}")
+            try:
+                self._teardown_iptables_redirect()
+            except Exception as cleanup_e:
+                logger.warning(f"Cleanup after iptables redirect exception also failed: {cleanup_e}")
             return False
 
     def _teardown_iptables_redirect(self) -> None:
@@ -1824,10 +1828,17 @@ class WiFiManager:
                     return False, f"Failed to start dnsmasq: {result.stderr}"
                 
                 # Set up iptables port forwarding (port 80 → 5000) and save ip_forward state
-                self._setup_iptables_redirect()
-                
+                if not self._setup_iptables_redirect():
+                    logger.error("Captive-portal redirect setup failed; stopping AP services")
+                    subprocess.run(["sudo", "systemctl", "stop", HOSTAPD_SERVICE],
+                                   capture_output=True, timeout=10)
+                    subprocess.run(["sudo", "systemctl", "stop", DNSMASQ_SERVICE],
+                                   capture_output=True, timeout=10)
+                    return False, "AP started but captive-portal redirect setup failed"
+
                 logger.info("AP mode enabled successfully")
-                ap_ssid = self.config.get("ap_ssid", DEFAULT_AP_SSID)
+                # Use the validated SSID so the displayed name matches what hostapd broadcast
+                ap_ssid, _ = self._validate_ap_config()
                 self._show_led_message(
                     f"WiFi Setup\n{ap_ssid}\nNo password\n192.168.4.1:5000", duration=10
                 )
@@ -1917,7 +1928,14 @@ class WiFiManager:
 
             # NM's ipv4.method=shared manages ip_forward automatically, so we only
             # need to add the iptables port-redirect rules for the captive portal.
-            self._setup_iptables_redirect()
+            if not self._setup_iptables_redirect():
+                logger.error("Captive-portal redirect setup failed; rolling back AP profile")
+                subprocess.run(["nmcli", "connection", "down", "LEDMatrix-Setup-AP"],
+                               capture_output=True, timeout=10)
+                subprocess.run(["nmcli", "connection", "delete", "LEDMatrix-Setup-AP"],
+                               capture_output=True, timeout=10)
+                self._clear_led_message()
+                return False, "AP started but captive-portal redirect setup failed"
 
             # Verify the AP is actually running
             status = self._get_ap_status_nmcli()
