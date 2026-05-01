@@ -15,6 +15,7 @@ I'm trying to be open to constructive criticism and support, as long as it's a r
 
 
 ### Installing the LEDMatrix project on a pi video:
+[![Codacy Badge](https://api.codacy.com/project/badge/Grade/abbd9cd9bb474074b7c9f49b07744c98)](https://app.codacy.com/gh/ChuckBuilds/LEDMatrix?utm_source=github.com&utm_medium=referral&utm_content=ChuckBuilds/LEDMatrix&utm_campaign=Badge_Grade)
 [![Installing LEDMatrix on a Pi](https://img.youtube.com/vi/bkT0f1tZI0Y/hqdefault.jpg)](https://www.youtube.com/watch?v=bkT0f1tZI0Y)
 
 ### Setup video and feature walkthrough on Youtube (Outdated but still useful) : 
