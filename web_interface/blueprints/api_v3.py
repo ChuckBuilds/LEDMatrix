@@ -7133,9 +7133,14 @@ def connect_wifi():
                 'message': message
             })
         else:
+            # Propagate structured error type so the captive portal UI can show
+            # "Wrong password — try again" instead of a generic failure message.
+            error_type = "wrong_password" if (message or "").startswith("wrong_password:") else "connection_failed"
+            clean_message = (message or "").removeprefix("wrong_password: ") or "Failed to connect to network"
             return jsonify({
                 'status': 'error',
-                'message': message or 'Failed to connect to network'
+                'message': clean_message,
+                'error_type': error_type
             }), 400
     except Exception as e:
         logger.exception("[WiFi] Failed connecting to WiFi network")

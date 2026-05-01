@@ -43,7 +43,11 @@ class WiFiMonitorDaemon:
         self.wifi_manager = WiFiManager()
         self.running = True
         self.last_state = None
-        
+        # Counts consecutive checks where nmcli says "connected" but internet is unreachable.
+        # After _nm_restart_threshold failures, NetworkManager is restarted as a recovery step.
+        self._consecutive_internet_failures = 0
+        self._nm_restart_threshold = 5  # ~2.5 min at 30s interval
+
         # Register signal handlers for graceful shutdown
         signal.signal(signal.SIGINT, self._signal_handler)
         signal.signal(signal.SIGTERM, self._signal_handler)
@@ -122,6 +126,28 @@ class WiFiMonitorDaemon:
                     else:
                         logger.debug(f"Status check: WiFi=disconnected, Ethernet={updated_ethernet}, AP={updated_status.ap_mode_active}")
                 
+                # Escalating recovery: if nmcli reports connected but internet is
+                # unreachable for several consecutive checks, restart NetworkManager.
+                # check_and_manage_ap_mode() already calls _check_internet_connectivity()
+                # internally; we track the failure count here from the observed state.
+                if updated_status.connected and not updated_status.ap_mode_active:
+                    if not self.wifi_manager._check_internet_connectivity():
+                        self._consecutive_internet_failures += 1
+                        logger.warning(
+                            f"Internet unreachable despite nmcli connection "
+                            f"({self._consecutive_internet_failures}/{self._nm_restart_threshold})"
+                        )
+                        if self._consecutive_internet_failures >= self._nm_restart_threshold:
+                            logger.warning("Restarting NetworkManager to recover internet connectivity")
+                            import subprocess as _sp
+                            _sp.run(["sudo", "systemctl", "restart", "NetworkManager"],
+                                    capture_output=True, timeout=20)
+                            self._consecutive_internet_failures = 0
+                    else:
+                        self._consecutive_internet_failures = 0
+                else:
+                    self._consecutive_internet_failures = 0
+
                 # Sleep until next check
                 time.sleep(self.check_interval)
                 

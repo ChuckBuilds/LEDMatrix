@@ -60,6 +60,11 @@ def get_wifi_config_path():
 
 HOSTAPD_CONFIG_PATH = Path("/etc/hostapd/hostapd.conf")
 DNSMASQ_CONFIG_PATH = Path("/etc/dnsmasq.d/ledmatrix-captive.conf")
+# Drop-in config for NetworkManager's built-in dnsmasq (ipv4.method=shared).
+# Writing address=/#/<ap_ip> here causes NM to resolve every hostname to the AP,
+# triggering the OS captive-portal popup automatically on iOS/Android/Windows/macOS.
+NM_DNSMASQ_SHARED_DIR = Path("/etc/NetworkManager/dnsmasq-shared.d")
+NM_DNSMASQ_SHARED_CONF = NM_DNSMASQ_SHARED_DIR / "ledmatrix-captive.conf"
 HOSTAPD_SERVICE = "hostapd"
 DNSMASQ_SERVICE = "dnsmasq"
 
@@ -136,6 +141,9 @@ class WiFiManager:
         # This prevents AP mode from enabling on transient network hiccups
         self._disconnected_checks = 0
         self._disconnected_checks_required = 3  # Require 3 consecutive disconnected checks (90 seconds at 30s interval)
+
+        # Timestamp set when AP mode is enabled; used for the idle-timeout check
+        self._ap_enabled_at: Optional[float] = None
 
         logger.info(f"WiFi Manager initialized - nmcli: {self.has_nmcli}, iwlist: {self.has_iwlist}, "
                    f"hostapd: {self.has_hostapd}, dnsmasq: {self.has_dnsmasq}, "
@@ -837,6 +845,88 @@ class WiFiManager:
         except Exception as e:
             logger.warning(f"Could not tear down iptables redirect: {e}")
 
+    def _write_nm_dnsmasq_captive_conf(self, ap_ip: str = "192.168.4.1") -> None:
+        """
+        Write the NM dnsmasq-shared.d drop-in that makes NM's built-in dnsmasq
+        resolve every hostname to the AP IP.  This triggers the OS captive-portal
+        popup automatically on iOS / Android / Windows / macOS as soon as the
+        device connects — no manual navigation required.
+
+        NetworkManager reads /etc/NetworkManager/dnsmasq-shared.d/*.conf when it
+        starts the dnsmasq instance for ipv4.method=shared connections.
+        """
+        try:
+            content = f"# LEDMatrix captive portal: resolve all hostnames to AP\naddress=/#/{ap_ip}\n"
+            with open("/tmp/ledmatrix-nm-dnsmasq.conf", "w") as f:
+                f.write(content)
+            subprocess.run(
+                ["sudo", "mkdir", "-p", str(NM_DNSMASQ_SHARED_DIR)],
+                capture_output=True, timeout=5
+            )
+            subprocess.run(
+                ["sudo", "cp", "/tmp/ledmatrix-nm-dnsmasq.conf", str(NM_DNSMASQ_SHARED_CONF)],
+                capture_output=True, timeout=5
+            )
+            logger.info(f"Wrote NM dnsmasq captive-portal config: {NM_DNSMASQ_SHARED_CONF}")
+        except Exception as e:
+            logger.warning(f"Could not write NM dnsmasq captive config: {e}")
+
+    def _remove_nm_dnsmasq_captive_conf(self) -> None:
+        """Remove the NM dnsmasq-shared.d drop-in written by _write_nm_dnsmasq_captive_conf."""
+        try:
+            subprocess.run(
+                ["sudo", "rm", "-f", str(NM_DNSMASQ_SHARED_CONF)],
+                capture_output=True, timeout=5
+            )
+            logger.info("Removed NM dnsmasq captive-portal config")
+        except Exception as e:
+            logger.warning(f"Could not remove NM dnsmasq captive config: {e}")
+
+    def _check_internet_connectivity(self, timeout: int = 5) -> bool:
+        """
+        Test actual internet reachability — not just nmcli association state.
+
+        A device can be 'connected' in nmcli (associated with an AP) while the
+        router has no WAN link.  This check catches that case so the daemon can
+        auto-enable AP mode even when nmcli reports a connection.
+
+        Returns True if at least one reachability method succeeds.
+        """
+        try:
+            r = subprocess.run(
+                ["ping", "-c", "1", "-W", str(timeout), "8.8.8.8"],
+                capture_output=True, timeout=timeout + 1
+            )
+            if r.returncode == 0:
+                logger.debug("Internet connectivity confirmed via ping 8.8.8.8")
+                return True
+        except Exception:
+            pass
+        try:
+            import urllib.request as _ureq
+            _ureq.urlopen("http://connectivity-check.ubuntu.com/", timeout=timeout)
+            logger.debug("Internet connectivity confirmed via HTTP check")
+            return True
+        except Exception:
+            pass
+        logger.debug("Internet connectivity check failed (both ping and HTTP)")
+        return False
+
+    def _has_ap_clients(self) -> bool:
+        """
+        Return True if at least one client is associated with the AP.
+        Uses 'iw dev <iface> station dump' which works for both hostapd and
+        nmcli AP modes.
+        """
+        try:
+            result = subprocess.run(
+                ["iw", "dev", self._wifi_interface, "station", "dump"],
+                capture_output=True, text=True, timeout=5
+            )
+            return bool(result.stdout.strip())
+        except Exception:
+            return False
+
     def scan_networks(self, allow_cached: bool = True) -> Tuple[List[WiFiNetwork], bool]:
         """
         Scan for available WiFi networks.
@@ -1471,12 +1561,27 @@ class WiFiManager:
                 error_msg = result.stderr.strip() or result.stdout.strip()
                 logger.error(f"Failed to connect to {ssid}: {error_msg}")
                 self._show_led_message("Connection failed", duration=5)
+                if self._is_wrong_password_error(error_msg):
+                    return False, f"wrong_password: {error_msg}"
                 return False, error_msg
         except Exception as e:
             logger.error(f"Error connecting with nmcli: {e}")
             self._show_led_message("Connection error", duration=5)
             return False, str(e)
-    
+
+    @staticmethod
+    def _is_wrong_password_error(error_msg: str) -> bool:
+        """Return True when nmcli's error output indicates an authentication failure."""
+        indicators = [
+            "secrets were required",
+            "no secret agent",
+            "802-11-wireless-security.psk",
+            "authentication rejected",
+            "association rejected",
+        ]
+        lower = error_msg.lower()
+        return any(ind in lower for ind in indicators)
+
     def _connect_wpa_supplicant(self, ssid: str, password: str) -> Tuple[bool, str]:
         """Connect using wpa_supplicant (fallback)"""
         try:
@@ -1748,14 +1853,18 @@ class WiFiManager:
             if self.has_hostapd and self.has_dnsmasq:
                 result = self._enable_ap_mode_hostapd()
                 if result[0]:
+                    self._ap_enabled_at = time.time()
                     return result
-            
+
             # Fallback to nmcli hotspot (simpler, no captive portal)
             if self.has_nmcli:
                 logger.info("hostapd/dnsmasq failed or unavailable, trying nmcli hotspot fallback...")
                 self._show_led_message("Setup Mode", duration=5)
-                return self._enable_ap_mode_nmcli_hotspot()
-            
+                result = self._enable_ap_mode_nmcli_hotspot()
+                if result[0]:
+                    self._ap_enabled_at = time.time()
+                return result
+
             return False, "No WiFi tools available (nmcli, hostapd, or dnsmasq required)"
         except Exception as e:
             logger.error(f"Error in enable_ap_mode: {e}")
@@ -1910,6 +2019,12 @@ class WiFiManager:
                 logger.error(f"Failed to create AP connection profile: {error_msg}")
                 self._show_led_message("AP mode failed", duration=5)
                 return False, f"Failed to create AP profile: {error_msg}"
+
+            # Write the NM dnsmasq-shared.d captive-portal config BEFORE bringing up
+            # the connection so NM's dnsmasq picks it up at start time.
+            # This causes every hostname DNS query from a connected device to resolve
+            # to 192.168.4.1, automatically triggering the OS captive-portal popup.
+            self._write_nm_dnsmasq_captive_conf()
 
             logger.info("AP connection profile created, bringing it up...")
             up_result = subprocess.run(
@@ -2127,11 +2242,13 @@ class WiFiManager:
                     # so we only need to remove the iptables redirect rules we added.
                     logger.info("Skipping NetworkManager restart (nmcli AP mode, restart not needed)")
                     self._teardown_iptables_redirect()
+                    self._remove_nm_dnsmasq_captive_conf()
                     # Ensure WiFi radio is enabled after nmcli operations
                     wifi_enabled = self._ensure_wifi_radio_enabled(max_retries=3)
                     if not wifi_enabled:
                         logger.warning("WiFi radio may be disabled after nmcli AP cleanup")
-                
+
+                self._ap_enabled_at = None
                 logger.info("AP mode disabled successfully")
                 return True, "AP mode disabled"
             except Exception as e:
@@ -2278,22 +2395,30 @@ address=/detectportal.firefox.com/192.168.4.1
                         f"Ethernet={ethernet_connected}, AP_active={ap_active}, "
                         f"auto_enable={auto_enable}, disconnected_checks={self._disconnected_checks}")
             
-            # Determine if we should have AP mode active
-            # AP mode should only be auto-enabled if:
-            # - auto_enable_ap_mode is True AND
-            # - WiFi is NOT connected AND
-            # - Ethernet is NOT connected AND
-            # - We've had multiple consecutive disconnected checks (grace period)
-            is_disconnected = not status.connected and not ethernet_connected
-            
+            # Determine if we should have AP mode active.
+            # "Disconnected" means either:
+            #   (a) nmcli reports no WiFi/Ethernet association, OR
+            #   (b) nmcli reports connected but there is no actual internet reachability.
+            # Case (b) catches the common scenario where the Pi is associated with a
+            # router whose WAN link is down (e.g. ISP outage, user moved home).
+            has_association = status.connected or ethernet_connected
+            if has_association:
+                has_internet = self._check_internet_connectivity()
+            else:
+                has_internet = False
+
+            is_disconnected = not has_association or not has_internet
+
             if is_disconnected:
                 # Increment disconnected check counter
                 self._disconnected_checks += 1
-                logger.debug(f"Network disconnected (check {self._disconnected_checks}/{self._disconnected_checks_required})")
+                reason = "no association" if not has_association else "no internet reachability"
+                logger.debug(f"Network effectively disconnected ({reason}) "
+                             f"(check {self._disconnected_checks}/{self._disconnected_checks_required})")
             else:
-                # Reset counter if we're connected
+                # Reset counter if we're genuinely connected with internet
                 if self._disconnected_checks > 0:
-                    logger.debug(f"Network connected, resetting disconnected check counter")
+                    logger.debug("Network connected with internet reachability, resetting counter")
                 self._disconnected_checks = 0
             
             # Only enable AP if we've had enough consecutive disconnected checks
@@ -2323,11 +2448,11 @@ address=/detectportal.firefox.com/192.168.4.1
             elif not should_have_ap and ap_active:
                 # Should not have AP but do - disable AP mode
                 # Always disable if WiFi or Ethernet connects, regardless of auto_enable setting
-                if status.connected or ethernet_connected:
+                if not is_disconnected:
                     success, message = self.disable_ap_mode()
                     if success:
                         if status.connected:
-                            logger.info("Auto-disabled AP mode (WiFi connected)")
+                            logger.info("Auto-disabled AP mode (WiFi connected with internet)")
                         elif ethernet_connected:
                             logger.info("Auto-disabled AP mode (Ethernet connected)")
                         self._disconnected_checks = 0  # Reset counter
@@ -2338,6 +2463,21 @@ address=/detectportal.firefox.com/192.168.4.1
                     # AP is active but auto_enable is disabled - this means it was manually enabled
                     # Don't disable it automatically, let it stay active
                     logger.debug("AP mode is active (manually enabled), keeping active")
+
+            # Idle-timeout check: disable AP if no client has connected within the window.
+            # Only applies when AP is active and we haven't just decided to enable/disable it.
+            if ap_active and self._ap_enabled_at is not None:
+                idle_timeout_min = self.config.get("ap_idle_timeout_minutes", 15)
+                elapsed = time.time() - self._ap_enabled_at
+                if elapsed > idle_timeout_min * 60 and not self._has_ap_clients():
+                    logger.info(
+                        f"AP idle timeout ({idle_timeout_min} min, no clients) — disabling AP"
+                    )
+                    success, message = self.disable_ap_mode()
+                    if success:
+                        return True
+                    else:
+                        logger.warning(f"Failed to disable AP on idle timeout: {message}")
             
             return False
         except Exception as e:
