@@ -193,6 +193,8 @@ def test_iptables_rules_and_ip_forward_reverted_on_teardown(manager: WiFiManager
     """
     original_fwd = "0"
     manager._IP_FORWARD_SAVE_PATH.write_text(original_fwd)
+    # Teardown dispatches on the backend recorded during setup
+    manager._redirect_backend = "iptables"
 
     captured: list[list[str]] = []
 

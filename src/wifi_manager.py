@@ -705,145 +705,181 @@ class WiFiManager:
             channel = DEFAULT_AP_CHANNEL
         return ssid, channel
 
+    # Tracks which redirect backend was used so teardown uses the same one.
+    # Value is "iptables", "nftables", or None (not set up).
+    _redirect_backend: Optional[str] = None
+
     def _setup_iptables_redirect(self) -> bool:
         """
-        Add iptables rules that redirect port 80 → Flask on 5000 for the captive portal.
-        The INPUT rule must accept port 5000 (the post-redirect destination), not port 80.
+        Add port 80 → 5000 redirect rules for the captive portal.
 
-        Uses _find_command_path() so binaries in /sbin or /usr/sbin are resolved even
-        when those directories are absent from PATH in service environments.
+        Tries iptables first, falls back to nftables (used by Debian Trixie).
+        When neither tool is available, logs a warning and returns True — the AP
+        still works and DNS spoofing still triggers the OS popup; users just land
+        on port 5000 directly rather than being redirected from port 80.
 
-        Reads ip_forward from /proc (no subprocess, always reliable), saves it to disk
-        only when the read succeeds, and skips the sysctl write if the value is already
-        "1" to avoid mutating global state unnecessarily.  Teardown will only restore the
-        saved value when the save file is actually present.
-
-        Returns True if all rules were applied successfully.
+        Only returns False when a tool was found but the rule addition itself failed.
         """
         try:
             iptables = self._find_command_path("iptables")
-            if not iptables:
-                logger.debug("iptables unavailable; captive portal requires direct port-5000 access")
-                return False
+            nft = self._find_command_path("nft")
 
-            # Read ip_forward from /proc — reliable with no subprocess or PATH dependency.
-            try:
-                current_fwd = Path("/proc/sys/net/ipv4/ip_forward").read_text().strip()
-            except OSError:
-                current_fwd = None  # can't read → don't save, teardown won't restore
-
-            # Persist the original value only when we could read it.
-            # If the write fails, leave the save file absent so teardown skips the restore
-            # rather than unconditionally forcing "0" (which could break VPNs/bridges).
-            if current_fwd is not None:
-                try:
-                    self._IP_FORWARD_SAVE_PATH.write_text(current_fwd)
-                except OSError:
-                    current_fwd = None  # treat as unsaved; teardown will skip restore
-                    logger.warning("Could not write ip_forward save file; state will not be restored")
-
-            # Enable ip_forward only when it isn't already set, to avoid mutating state
-            # that another service (e.g. NetworkManager shared mode, a VPN) already owns.
-            if current_fwd != "1":
-                sysctl = self._find_command_path("sysctl")
-                sysctl_bin = sysctl if sysctl else "sysctl"
-                sysctl_r = subprocess.run(
-                    ["sudo", sysctl_bin, "-w", "net.ipv4.ip_forward=1"],
-                    capture_output=True, text=True, timeout=5
+            if not iptables and not nft:
+                logger.warning(
+                    "Neither iptables nor nft found; captive portal port-80 redirect unavailable. "
+                    "DNS spoofing will still trigger the OS popup but HTTP on port 80 won't reach Flask."
                 )
-                if sysctl_r.returncode != 0:
-                    logger.error(f"Failed to enable ip_forward: {sysctl_r.stderr.strip()}")
-                    self._teardown_iptables_redirect()
-                    return False
+                self._redirect_backend = None
+                return True  # AP works; redirect is best-effort
 
-            # PREROUTING: redirect HTTP → Flask
-            if subprocess.run(
-                ["sudo", iptables, "-t", "nat", "-C", "PREROUTING",
-                 "-i", self._wifi_interface, "-p", "tcp", "--dport", "80",
-                 "-j", "REDIRECT", "--to-port", "5000"],
-                capture_output=True, timeout=5
-            ).returncode != 0:
-                add_r = subprocess.run(
-                    ["sudo", iptables, "-t", "nat", "-A", "PREROUTING",
-                     "-i", self._wifi_interface, "-p", "tcp", "--dport", "80",
-                     "-j", "REDIRECT", "--to-port", "5000"],
-                    capture_output=True, text=True, timeout=5
-                )
-                if add_r.returncode != 0:
-                    logger.error(f"Failed to add PREROUTING rule: {add_r.stderr.strip()}")
-                    self._teardown_iptables_redirect()
-                    return False
+            if iptables:
+                return self._setup_iptables_redirect_iptables(iptables)
+            else:
+                return self._setup_iptables_redirect_nftables(nft)
 
-            # INPUT: accept traffic on port 5000 (the post-redirect destination port)
-            if subprocess.run(
-                ["sudo", iptables, "-C", "INPUT",
-                 "-i", self._wifi_interface, "-p", "tcp", "--dport", "5000",
-                 "-j", "ACCEPT"],
-                capture_output=True, timeout=5
-            ).returncode != 0:
-                add_r = subprocess.run(
-                    ["sudo", iptables, "-A", "INPUT",
-                     "-i", self._wifi_interface, "-p", "tcp", "--dport", "5000",
-                     "-j", "ACCEPT"],
-                    capture_output=True, text=True, timeout=5
-                )
-                if add_r.returncode != 0:
-                    logger.error(f"Failed to add INPUT rule: {add_r.stderr.strip()}")
-                    self._teardown_iptables_redirect()
-                    return False
-
-            logger.info("iptables: port 80→5000 redirect and INPUT accept-5000 rules added")
-            return True
         except Exception as e:
-            logger.warning(f"Could not set up iptables redirect: {e}")
+            logger.warning(f"Could not set up port redirect: {e}")
             try:
                 self._teardown_iptables_redirect()
             except Exception as cleanup_e:
-                logger.warning(f"Cleanup after iptables redirect exception also failed: {cleanup_e}")
+                logger.warning(f"Cleanup after redirect exception also failed: {cleanup_e}")
             return False
 
-    def _teardown_iptables_redirect(self) -> None:
-        """Remove the port 80→5000 iptables rules and restore the saved ip_forward state.
-
-        ip_forward is only restored when the save file written by _setup_iptables_redirect
-        is present.  If the file is absent (save was skipped or failed), ip_forward is
-        left untouched to avoid forcing "0" onto state owned by another service.
-        """
+    def _setup_iptables_redirect_iptables(self, iptables: str) -> bool:
+        """Set up port 80→5000 redirect using iptables."""
+        # Save ip_forward state before enabling
         try:
-            iptables = self._find_command_path("iptables")
-            if not iptables:
-                return
+            current_fwd = Path("/proc/sys/net/ipv4/ip_forward").read_text().strip()
+        except OSError:
+            current_fwd = None
+        if current_fwd is not None:
+            try:
+                self._IP_FORWARD_SAVE_PATH.write_text(current_fwd)
+            except OSError:
+                current_fwd = None
+                logger.warning("Could not write ip_forward save file; state will not be restored")
 
-            subprocess.run(
-                ["sudo", iptables, "-t", "nat", "-D", "PREROUTING",
+        if current_fwd != "1":
+            sysctl = self._find_command_path("sysctl")
+            sysctl_bin = sysctl if sysctl else "sysctl"
+            r = subprocess.run(["sudo", sysctl_bin, "-w", "net.ipv4.ip_forward=1"],
+                               capture_output=True, text=True, timeout=5)
+            if r.returncode != 0:
+                logger.error(f"Failed to enable ip_forward: {r.stderr.strip()}")
+                self._teardown_iptables_redirect()
+                return False
+
+        if subprocess.run(
+            ["sudo", iptables, "-t", "nat", "-C", "PREROUTING",
+             "-i", self._wifi_interface, "-p", "tcp", "--dport", "80",
+             "-j", "REDIRECT", "--to-port", "5000"],
+            capture_output=True, timeout=5
+        ).returncode != 0:
+            r = subprocess.run(
+                ["sudo", iptables, "-t", "nat", "-A", "PREROUTING",
                  "-i", self._wifi_interface, "-p", "tcp", "--dport", "80",
                  "-j", "REDIRECT", "--to-port", "5000"],
-                capture_output=True, timeout=5
+                capture_output=True, text=True, timeout=5
             )
-            subprocess.run(
-                ["sudo", iptables, "-D", "INPUT",
-                 "-i", self._wifi_interface, "-p", "tcp", "--dport", "5000",
-                 "-j", "ACCEPT"],
-                capture_output=True, timeout=5
-            )
+            if r.returncode != 0:
+                logger.error(f"Failed to add PREROUTING rule: {r.stderr.strip()}")
+                self._teardown_iptables_redirect()
+                return False
 
-            # Only restore ip_forward when we have a saved value from setup.
-            # If the save file is absent the state was never changed here, so leave it.
-            if self._IP_FORWARD_SAVE_PATH.exists():
-                try:
-                    saved = self._IP_FORWARD_SAVE_PATH.read_text().strip()
-                    self._IP_FORWARD_SAVE_PATH.unlink(missing_ok=True)
-                    sysctl = self._find_command_path("sysctl")
-                    sysctl_bin = sysctl if sysctl else "sysctl"
-                    subprocess.run(["sudo", sysctl_bin, "-w", f"net.ipv4.ip_forward={saved}"],
-                                   capture_output=True, timeout=5)
-                    logger.info(f"iptables redirect rules removed; ip_forward restored to {saved}")
-                except OSError as e:
-                    logger.warning(f"Could not restore ip_forward: {e}")
+        if subprocess.run(
+            ["sudo", iptables, "-C", "INPUT",
+             "-i", self._wifi_interface, "-p", "tcp", "--dport", "5000", "-j", "ACCEPT"],
+            capture_output=True, timeout=5
+        ).returncode != 0:
+            r = subprocess.run(
+                ["sudo", iptables, "-A", "INPUT",
+                 "-i", self._wifi_interface, "-p", "tcp", "--dport", "5000", "-j", "ACCEPT"],
+                capture_output=True, text=True, timeout=5
+            )
+            if r.returncode != 0:
+                logger.error(f"Failed to add INPUT rule: {r.stderr.strip()}")
+                self._teardown_iptables_redirect()
+                return False
+
+        self._redirect_backend = "iptables"
+        logger.info("iptables: port 80→5000 redirect rules added")
+        return True
+
+    def _setup_iptables_redirect_nftables(self, nft: str) -> bool:
+        """Set up port 80→5000 redirect using nftables (Debian Trixie / modern systems)."""
+        # NM's ipv4.method=shared already enables ip_forward; no sysctl needed.
+        cmds = [
+            ["sudo", nft, "add", "table", "ip", "ledmatrix"],
+            ["sudo", nft, "add", "chain", "ip", "ledmatrix", "prerouting",
+             "{", "type", "nat", "hook", "prerouting", "priority", "-100", ";", "}"],
+            ["sudo", nft, "add", "rule", "ip", "ledmatrix", "prerouting",
+             "iif", self._wifi_interface, "tcp", "dport", "80", "redirect", "to", ":5000"],
+        ]
+        for cmd in cmds:
+            r = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
+            if r.returncode != 0:
+                # Table/chain may already exist — only fail on rule add
+                if "add rule" in " ".join(cmd):
+                    logger.error(f"Failed to add nftables redirect rule: {r.stderr.strip()}")
+                    self._teardown_iptables_redirect()
+                    return False
+                logger.debug(f"nft cmd non-zero (may already exist): {r.stderr.strip()}")
+
+        self._redirect_backend = "nftables"
+        logger.info("nftables: port 80→5000 redirect rule added")
+        return True
+
+    def _teardown_iptables_redirect(self) -> None:
+        """Remove the port 80→5000 redirect rules and restore ip_forward if saved."""
+        try:
+            backend = self._redirect_backend
+            self._redirect_backend = None
+
+            if backend == "iptables":
+                iptables = self._find_command_path("iptables")
+                if iptables:
+                    subprocess.run(
+                        ["sudo", iptables, "-t", "nat", "-D", "PREROUTING",
+                         "-i", self._wifi_interface, "-p", "tcp", "--dport", "80",
+                         "-j", "REDIRECT", "--to-port", "5000"],
+                        capture_output=True, timeout=5
+                    )
+                    subprocess.run(
+                        ["sudo", iptables, "-D", "INPUT",
+                         "-i", self._wifi_interface, "-p", "tcp", "--dport", "5000",
+                         "-j", "ACCEPT"],
+                        capture_output=True, timeout=5
+                    )
+                # Restore ip_forward only when we saved it
+                if self._IP_FORWARD_SAVE_PATH.exists():
+                    try:
+                        saved = self._IP_FORWARD_SAVE_PATH.read_text().strip()
+                        self._IP_FORWARD_SAVE_PATH.unlink(missing_ok=True)
+                        sysctl = self._find_command_path("sysctl")
+                        sysctl_bin = sysctl if sysctl else "sysctl"
+                        subprocess.run(["sudo", sysctl_bin, "-w", f"net.ipv4.ip_forward={saved}"],
+                                       capture_output=True, timeout=5)
+                        logger.info(f"ip_forward restored to {saved}")
+                    except OSError as e:
+                        logger.warning(f"Could not restore ip_forward: {e}")
+                else:
+                    logger.debug("ip_forward not modified by setup; leaving unchanged")
+
+            elif backend == "nftables":
+                nft = self._find_command_path("nft")
+                if nft:
+                    subprocess.run(
+                        ["sudo", nft, "delete", "table", "ip", "ledmatrix"],
+                        capture_output=True, timeout=5
+                    )
+                    logger.info("nftables ledmatrix table removed")
+
             else:
-                logger.info("iptables redirect rules removed; ip_forward left unchanged (not modified by setup)")
+                # No redirect was set up (neither tool available); nothing to tear down
+                self._IP_FORWARD_SAVE_PATH.unlink(missing_ok=True)
+
         except Exception as e:
-            logger.warning(f"Could not tear down iptables redirect: {e}")
+            logger.warning(f"Could not tear down port redirect: {e}")
 
     def _write_nm_dnsmasq_captive_conf(self, ap_ip: str = "192.168.4.1") -> None:
         """
