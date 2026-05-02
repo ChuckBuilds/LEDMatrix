@@ -2007,10 +2007,10 @@ class WiFiManager:
                 # No 802-11-wireless-security section → open network
             ]
 
-            # On Trixie disable PMF which can prevent older clients from connecting
-            if self._is_trixie:
-                cmd += ["802-11-wireless-security.pmf", "disable"]
-                logger.info("Trixie detected: disabling PMF for better client compatibility")
+            # PMF (Protected Management Frames) is only meaningful for WPA2/WPA3.
+            # An open AP has no security section, so adding 802-11-wireless-security.pmf
+            # would cause NM to require key-mgmt too, breaking the connection add on
+            # Trixie NM 1.52+. Leave PMF untouched — open APs have no frame protection.
 
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
 
