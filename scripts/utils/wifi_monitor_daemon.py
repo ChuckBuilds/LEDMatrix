@@ -132,7 +132,7 @@ class WiFiMonitorDaemon:
                 # AP-enable trigger clean and avoid false-positive AP enables from
                 # transient packet loss on otherwise working WiFi.
                 if updated_status.connected and not updated_status.ap_mode_active:
-                    if not self.wifi_manager._check_internet_connectivity():
+                    if not self.wifi_manager.check_internet_connectivity():
                         self._consecutive_internet_failures += 1
                         logger.warning(
                             f"Internet unreachable despite nmcli connection "
@@ -140,10 +140,18 @@ class WiFiMonitorDaemon:
                         )
                         if self._consecutive_internet_failures >= self._nm_restart_threshold:
                             logger.warning("Restarting NetworkManager to recover internet connectivity")
-                            import subprocess as _sp
-                            _sp.run(["sudo", "systemctl", "restart", "NetworkManager"],
-                                    capture_output=True, timeout=20)
-                            self._consecutive_internet_failures = 0
+                            try:
+                                subprocess.run(
+                                    ["/usr/bin/systemctl", "restart", "NetworkManager"],
+                                    capture_output=True, timeout=20, check=True
+                                )
+                                self._consecutive_internet_failures = 0
+                            except subprocess.CalledProcessError as e:
+                                logger.error(f"NetworkManager restart failed (rc={e.returncode}); "
+                                             "keeping failure counter unchanged")
+                            except Exception as e:
+                                logger.error(f"NetworkManager restart error: {e}; "
+                                             "keeping failure counter unchanged")
                     else:
                         self._consecutive_internet_failures = 0
                 else:

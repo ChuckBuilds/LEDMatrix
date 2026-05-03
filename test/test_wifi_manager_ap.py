@@ -129,7 +129,15 @@ def test_nmcli_ap_profile_has_no_security_params(manager: WiFiManager) -> None:
     assert "psk" not in add_str, "AP profile must not include a PSK/password"
     assert "wpa" not in add_str.lower(), "AP profile must not reference WPA"
     assert "802-11-wireless.mode" in add_str, "AP profile must declare wireless mode"
-    assert "ap" in add_calls[0], "Wireless mode value must be 'ap'"
+    # Verify the value for 802-11-wireless.mode is exactly "ap" — check the element
+    # that immediately follows the key in the command list, not a loose substring match.
+    cmd = add_calls[0]
+    try:
+        mode_idx = cmd.index("802-11-wireless.mode")
+        assert cmd[mode_idx + 1] == "ap", \
+            f"802-11-wireless.mode value must be exactly 'ap', got {cmd[mode_idx + 1]!r}"
+    except ValueError:
+        pytest.fail("802-11-wireless.mode not found as a list element in nmcli command")
 
 
 # ---------------------------------------------------------------------------

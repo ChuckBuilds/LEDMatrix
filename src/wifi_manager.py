@@ -948,6 +948,10 @@ class WiFiManager:
         logger.debug("Internet connectivity check failed (both ping and HTTP)")
         return False
 
+    def check_internet_connectivity(self, timeout: int = 5) -> bool:
+        """Public wrapper around _check_internet_connectivity for use by the daemon."""
+        return self._check_internet_connectivity(timeout=timeout)
+
     def _has_ap_clients(self) -> bool:
         """
         Return True if at least one client is associated with the AP.
