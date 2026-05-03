@@ -91,7 +91,7 @@
             const xOptions = config['x-options'] || config['x_options'] || {};
             const requestedFormat = xOptions.format || 'long';
             // Validate format exists in DAY_LABELS, default to 'long' if not
-            const format = DAY_LABELS.hasOwnProperty(requestedFormat) ? requestedFormat : 'long';
+            const format = Object.prototype.hasOwnProperty.call(DAY_LABELS, requestedFormat) ? requestedFormat : 'long';
             const layout = xOptions.layout || 'horizontal';
             const showSelectAll = xOptions.selectAll !== false;
 
