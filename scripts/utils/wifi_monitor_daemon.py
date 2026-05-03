@@ -43,7 +43,11 @@ class WiFiMonitorDaemon:
         self.wifi_manager = WiFiManager()
         self.running = True
         self.last_state = None
-        
+        # Counts consecutive checks where nmcli says "connected" but internet is unreachable.
+        # After _nm_restart_threshold failures, NetworkManager is restarted as a recovery step.
+        self._consecutive_internet_failures = 0
+        self._nm_restart_threshold = 5  # ~2.5 min at 30s interval
+
         # Register signal handlers for graceful shutdown
         signal.signal(signal.SIGINT, self._signal_handler)
         signal.signal(signal.SIGTERM, self._signal_handler)
@@ -122,6 +126,37 @@ class WiFiMonitorDaemon:
                     else:
                         logger.debug(f"Status check: WiFi=disconnected, Ethernet={updated_ethernet}, AP={updated_status.ap_mode_active}")
                 
+                # Escalating recovery: if nmcli reports connected but actual internet
+                # is unreachable for several consecutive checks, restart NetworkManager.
+                # This is done HERE (not inside check_and_manage_ap_mode) to keep the
+                # AP-enable trigger clean and avoid false-positive AP enables from
+                # transient packet loss on otherwise working WiFi.
+                if updated_status.connected and not updated_status.ap_mode_active:
+                    if not self.wifi_manager.check_internet_connectivity():
+                        self._consecutive_internet_failures += 1
+                        logger.warning(
+                            f"Internet unreachable despite nmcli connection "
+                            f"({self._consecutive_internet_failures}/{self._nm_restart_threshold})"
+                        )
+                        if self._consecutive_internet_failures >= self._nm_restart_threshold:
+                            logger.warning("Restarting NetworkManager to recover internet connectivity")
+                            try:
+                                subprocess.run(
+                                    ["/usr/bin/systemctl", "restart", "NetworkManager"],
+                                    capture_output=True, timeout=20, check=True
+                                )
+                                self._consecutive_internet_failures = 0
+                            except subprocess.CalledProcessError as e:
+                                logger.error(f"NetworkManager restart failed (rc={e.returncode}); "
+                                             "keeping failure counter unchanged")
+                            except Exception as e:
+                                logger.error(f"NetworkManager restart error: {e}; "
+                                             "keeping failure counter unchanged")
+                    else:
+                        self._consecutive_internet_failures = 0
+                else:
+                    self._consecutive_internet_failures = 0
+
                 # Sleep until next check
                 time.sleep(self.check_interval)
                 

@@ -191,7 +191,10 @@ function doConnect() {
       // Poll for the new IP
       setTimeout(function() { checkNewIP(ssid); }, 3000);
     } else {
-      showMsg(data.message || 'Connection failed', 'err');
+      var msg = data.error_type === 'wrong_password'
+        ? 'Incorrect password — please try again'
+        : (data.message || 'Connection failed');
+      showMsg(msg, 'err');
       connecting = false;
       btn.disabled = false;
       btn.innerHTML = 'Connect';
