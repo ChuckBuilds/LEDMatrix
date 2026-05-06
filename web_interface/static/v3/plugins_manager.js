@@ -86,7 +86,7 @@ window.requestOnDemandStop = function({ stopService = false } = {}) {
 // Define updatePlugin early as a stub to ensure it's always available
 window.updatePlugin = window.updatePlugin || function(pluginId) {
     if (_PLUGIN_DEBUG_EARLY) console.log('[PLUGINS STUB] updatePlugin called for', pluginId);
-    
+
     // Validate pluginId
     if (!pluginId || typeof pluginId !== 'string') {
         console.error('Invalid pluginId:', pluginId);
@@ -95,22 +95,22 @@ window.updatePlugin = window.updatePlugin || function(pluginId) {
         }
         return Promise.reject(new Error('Invalid plugin ID'));
     }
-    
+
     // Show immediate feedback
     if (typeof showNotification === 'function') {
         showNotification(`Updating ${pluginId}...`, 'info');
     }
-    
+
     // Prepare request body
     const requestBody = { plugin_id: pluginId };
     const requestBodyJson = JSON.stringify(requestBody);
-    
+
     console.log('[UPDATE] Sending request:', { url: '/api/v3/plugins/update', body: requestBodyJson });
-    
+
     // Make the API call directly
     return fetch('/api/v3/plugins/update', {
         method: 'POST',
-        headers: { 
+        headers: {
             'Content-Type': 'application/json',
             'Accept': 'application/json'
         },
@@ -128,13 +128,13 @@ window.updatePlugin = window.updatePlugin || function(pluginId) {
             } catch (e) {
                 errorData = { message: `Server error: ${response.status} ${response.statusText}` };
             }
-            
+
             if (typeof showNotification === 'function') {
                 showNotification(errorData.message || `Update failed: ${response.status}`, 'error');
             }
             throw new Error(errorData.message || `Update failed: ${response.status}`);
         }
-        
+
         // Parse successful response
         return response.json();
     })
@@ -162,15 +162,15 @@ window.updatePlugin = window.updatePlugin || function(pluginId) {
 // Define uninstallPlugin early as a stub
 window.uninstallPlugin = window.uninstallPlugin || function(pluginId) {
     if (_PLUGIN_DEBUG_EARLY) console.log('[PLUGINS STUB] uninstallPlugin called for', pluginId);
-    
+
     if (!confirm(`Are you sure you want to uninstall ${pluginId}?`)) {
         return Promise.resolve({ cancelled: true });
     }
-    
+
     if (typeof showNotification === 'function') {
         showNotification(`Uninstalling ${pluginId}...`, 'info');
     }
-    
+
     return fetch('/api/v3/plugins/uninstall', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -201,7 +201,7 @@ window.uninstallPlugin = window.uninstallPlugin || function(pluginId) {
 // Define configurePlugin early to ensure it's always available
 window.configurePlugin = window.configurePlugin || async function(pluginId) {
     if (_PLUGIN_DEBUG_EARLY) console.log('[PLUGINS STUB] configurePlugin called for', pluginId);
-    
+
     // Switch to the plugin's configuration tab instead of opening a modal
     // This matches the behavior of clicking the plugin tab at the top
     function getAppComponent() {
@@ -213,13 +213,13 @@ window.configurePlugin = window.configurePlugin || async function(pluginId) {
         }
         return null;
     }
-    
+
     const appComponent = getAppComponent();
     if (appComponent) {
         // Set the active tab to the plugin ID
         appComponent.activeTab = pluginId;
         if (_PLUGIN_DEBUG_EARLY) console.log('[PLUGINS STUB] Switched to plugin tab:', pluginId);
-        
+
         // Scroll to top of page to ensure the tab is visible
         window.scrollTo({ top: 0, behavior: 'smooth' });
     } else {
@@ -238,34 +238,34 @@ if (!window._pluginToggleRequests) {
 // Define togglePlugin early to ensure it's always available
 window.togglePlugin = window.togglePlugin || function(pluginId, enabled) {
     if (_PLUGIN_DEBUG_EARLY) console.log('[PLUGINS STUB] togglePlugin called for', pluginId, 'enabled:', enabled);
-    
+
     const plugin = (window.installedPlugins || []).find(p => p.id === pluginId);
     const pluginName = plugin ? (plugin.name || pluginId) : pluginId;
     const action = enabled ? 'enabling' : 'disabling';
-    
+
     // Generate unique token for this toggle request to prevent race conditions
     const requestToken = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
     window._pluginToggleRequests[pluginId] = requestToken;
-    
+
     // Update UI immediately for better UX
     const toggleCheckbox = document.getElementById(`toggle-${pluginId}`);
     const toggleLabel = document.getElementById(`toggle-label-${pluginId}`);
     const wrapperDiv = toggleCheckbox?.parentElement?.querySelector('.flex.items-center.gap-2');
     const toggleTrack = wrapperDiv?.querySelector('.relative.w-14');
     const toggleHandle = toggleTrack?.querySelector('.absolute');
-    
+
     // Disable checkbox and add disabled class to prevent overlapping requests
     if (toggleCheckbox) {
         toggleCheckbox.checked = enabled;
         toggleCheckbox.disabled = true;
         toggleCheckbox.classList.add('opacity-50', 'cursor-not-allowed');
     }
-    
+
     // Disable wrapper to provide visual feedback
     if (wrapperDiv) {
         wrapperDiv.classList.add('opacity-50', 'pointer-events-none');
     }
-    
+
     // Update wrapper background and border
     if (wrapperDiv) {
         if (enabled) {
@@ -276,7 +276,7 @@ window.togglePlugin = window.togglePlugin || function(pluginId, enabled) {
             wrapperDiv.classList.add('bg-gray-50', 'border-gray-300');
         }
     }
-    
+
     // Update toggle track
     if (toggleTrack) {
         if (enabled) {
@@ -287,7 +287,7 @@ window.togglePlugin = window.togglePlugin || function(pluginId, enabled) {
             toggleTrack.classList.add('bg-gray-300');
         }
     }
-    
+
     // Update toggle handle
     if (toggleHandle) {
         if (enabled) {
@@ -300,7 +300,7 @@ window.togglePlugin = window.togglePlugin || function(pluginId, enabled) {
             toggleHandle.innerHTML = '<i class="fas fa-times text-gray-400 text-xs"></i>';
         }
     }
-    
+
     // Update label with icon and text
     if (toggleLabel) {
         if (enabled) {
@@ -311,7 +311,7 @@ window.togglePlugin = window.togglePlugin || function(pluginId, enabled) {
             toggleLabel.innerHTML = '<i class="fas fa-toggle-off text-gray-400"></i><span>Disabled</span>';
         }
     }
-    
+
     if (typeof showNotification === 'function') {
         showNotification(`${action.charAt(0).toUpperCase() + action.slice(1)} ${pluginName}...`, 'info');
     }
@@ -328,7 +328,7 @@ window.togglePlugin = window.togglePlugin || function(pluginId, enabled) {
             console.log(`[togglePlugin] Ignoring out-of-order response for ${pluginId}`);
             return;
         }
-        
+
         if (typeof showNotification === 'function') {
             showNotification(data.message, data.status);
         }
@@ -350,7 +350,7 @@ window.togglePlugin = window.togglePlugin || function(pluginId, enabled) {
                 loadInstalledPlugins();
             }
         }
-        
+
         // Clear token and re-enable UI
         delete window._pluginToggleRequests[pluginId];
         if (toggleCheckbox) {
@@ -367,7 +367,7 @@ window.togglePlugin = window.togglePlugin || function(pluginId, enabled) {
             console.log(`[togglePlugin] Ignoring out-of-order error for ${pluginId}`);
             return;
         }
-        
+
         if (typeof showNotification === 'function') {
             showNotification('Error toggling plugin: ' + error.message, 'error');
         }
@@ -378,7 +378,7 @@ window.togglePlugin = window.togglePlugin || function(pluginId, enabled) {
         if (typeof loadInstalledPlugins === 'function') {
             loadInstalledPlugins();
         }
-        
+
         // Clear token and re-enable UI
         delete window._pluginToggleRequests[pluginId];
         if (toggleCheckbox) {
@@ -418,13 +418,13 @@ window.__pluginDomReady = window.__pluginDomReady || false;
     // Use document-level delegation so it works for dynamically added content
     const handleGlobalPluginAction = function(event) {
         // Only handle if it's a plugin action
-        const button = event.target.closest('button[data-action][data-plugin-id]') || 
+        const button = event.target.closest('button[data-action][data-plugin-id]') ||
                        event.target.closest('input[data-action][data-plugin-id]');
         if (!button) return;
-        
+
         const action = button.getAttribute('data-action');
         const pluginId = button.getAttribute('data-plugin-id');
-        
+
         // For toggle and configure, ensure functions are available
         if (action === 'toggle' || action === 'configure') {
             const funcName = action === 'toggle' ? 'togglePlugin' : 'configurePlugin';
@@ -434,12 +434,12 @@ window.__pluginDomReady = window.__pluginDomReady || false;
                 event.stopPropagation();
 
                 console.warn(`[GLOBAL DELEGATION] ${funcName} not available yet, waiting...`);
-                
+
                 // Capture state synchronously from plugin data (source of truth)
                 let targetChecked = false;
                 if (action === 'toggle') {
                     const plugin = (window.installedPlugins || []).find(p => p.id === pluginId);
-                    
+
                     let currentEnabled;
                     if (plugin) {
                         currentEnabled = Boolean(plugin.enabled);
@@ -448,7 +448,7 @@ window.__pluginDomReady = window.__pluginDomReady || false;
                     } else {
                         currentEnabled = false;
                     }
-                    
+
                     targetChecked = !currentEnabled; // Toggle to opposite state
                 }
 
@@ -476,11 +476,11 @@ window.__pluginDomReady = window.__pluginDomReady || false;
                 return; // Don't proceed with normal handling
             }
         }
-        
+
         // Prevent default and stop propagation to avoid double handling
         event.preventDefault();
         event.stopPropagation();
-        
+
         // If handlePluginAction exists, use it; otherwise handle directly
         if (typeof handlePluginAction === 'function') {
             handlePluginAction(event);
@@ -489,7 +489,7 @@ window.__pluginDomReady = window.__pluginDomReady || false;
             if (action === 'toggle' && window.togglePlugin) {
                 // Get the current enabled state from plugin data (source of truth)
                 const plugin = (window.installedPlugins || []).find(p => p.id === pluginId);
-                
+
                 let currentEnabled;
                 if (plugin) {
                     currentEnabled = Boolean(plugin.enabled);
@@ -498,17 +498,17 @@ window.__pluginDomReady = window.__pluginDomReady || false;
                 } else {
                     currentEnabled = false;
                 }
-                
+
                 // Toggle the state - we want the opposite of current state
                 const isChecked = !currentEnabled;
-                
+
                 // Prevent default behavior to avoid double-toggling and change event
                 // (Already done at start of function, but safe to repeat)
                 event.preventDefault();
                 event.stopPropagation();
-                
+
                 console.log('[DEBUG toggle fallback] Plugin:', pluginId, 'Current enabled (from data):', currentEnabled, 'New state:', isChecked);
-                
+
                 window.togglePlugin(pluginId, isChecked);
             } else if (action === 'configure' && window.configurePlugin) {
                 event.preventDefault();
@@ -529,7 +529,7 @@ window.__pluginDomReady = window.__pluginDomReady || false;
             }
         }
     };
-    
+
     // Set up delegation on document (capture phase for better reliability)
     document.addEventListener('click', handleGlobalPluginAction, true);
     document.addEventListener('change', handleGlobalPluginAction, true);
@@ -563,7 +563,7 @@ window.attachGithubTokenCollapseHandler = function() {
         console.warn('[attachGithubTokenCollapseHandler] GitHub token collapse button not found');
         return;
     }
-    
+
     console.log('[attachGithubTokenCollapseHandler] Checking toggleGithubTokenContent...', {
         exists: typeof window.toggleGithubTokenContent
     });
@@ -571,23 +571,23 @@ window.attachGithubTokenCollapseHandler = function() {
         console.warn('[attachGithubTokenCollapseHandler] toggleGithubTokenContent function not defined');
         return;
     }
-    
+
     // Remove any existing listeners by cloning the button
     const parent = toggleTokenCollapseBtn.parentNode;
     if (!parent) {
         console.warn('[attachGithubTokenCollapseHandler] Button parent not found');
         return;
     }
-    
+
     const newBtn = toggleTokenCollapseBtn.cloneNode(true);
     parent.replaceChild(newBtn, toggleTokenCollapseBtn);
-    
+
     // Attach listener to the new button
     newBtn.addEventListener('click', function(e) {
         console.log('[attachGithubTokenCollapseHandler] Button clicked, calling toggleGithubTokenContent');
         window.toggleGithubTokenContent(e);
     });
-    
+
     console.log('[attachGithubTokenCollapseHandler] Handler attached to button:', newBtn.id);
 };
 
@@ -595,36 +595,36 @@ window.attachGithubTokenCollapseHandler = function() {
 console.log('[DEFINE] Defining toggleGithubTokenContent function...');
 window.toggleGithubTokenContent = function(e) {
     console.log('[toggleGithubTokenContent] called', e);
-    
+
     if (e) {
         e.stopPropagation();
         e.preventDefault();
     }
-    
+
     const tokenContent = document.getElementById('github-token-content');
     const tokenIconCollapse = document.getElementById('github-token-icon-collapse');
     const toggleTokenCollapseBtn = document.getElementById('toggle-github-token-collapse');
-    
+
     console.log('[toggleGithubTokenContent] Elements found:', {
         tokenContent: !!tokenContent,
         tokenIconCollapse: !!tokenIconCollapse,
         toggleTokenCollapseBtn: !!toggleTokenCollapseBtn
     });
-    
+
     if (!tokenContent || !toggleTokenCollapseBtn) {
         console.warn('[toggleGithubTokenContent] GitHub token content or button not found');
         return;
     }
-    
+
     const hasHiddenClass = tokenContent.classList.contains('hidden');
     const computedDisplay = window.getComputedStyle(tokenContent).display;
-    
+
     console.log('[toggleGithubTokenContent] Current state:', {
         hasHiddenClass,
         computedDisplay,
         buttonText: toggleTokenCollapseBtn.querySelector('span')?.textContent
     });
-    
+
     if (hasHiddenClass || computedDisplay === 'none') {
         // Show content - remove hidden class, add block class, remove inline display
         tokenContent.classList.remove('hidden');
@@ -657,35 +657,35 @@ window.toggleGithubTokenContent = function(e) {
 console.log('[DEFINE] Defining handleGitHubPluginInstall function...');
 window.handleGitHubPluginInstall = function() {
     console.log('[handleGitHubPluginInstall] Function called!');
-    
+
     const urlInput = document.getElementById('github-plugin-url');
     const statusDiv = document.getElementById('github-plugin-status');
     const branchInput = document.getElementById('plugin-branch-input');
     const installBtn = document.getElementById('install-plugin-from-url');
-    
+
     if (!urlInput) {
         console.error('[handleGitHubPluginInstall] URL input not found');
         alert('Error: Could not find URL input field');
         return;
     }
-    
+
     const repoUrl = urlInput.value.trim();
     console.log('[handleGitHubPluginInstall] Repo URL:', repoUrl);
-    
+
     if (!repoUrl) {
         if (statusDiv) {
             statusDiv.innerHTML = '<span class="text-red-600"><i class="fas fa-exclamation-circle mr-1"></i>Please enter a GitHub URL</span>';
         }
         return;
     }
-    
+
     if (!repoUrl.includes('github.com')) {
         if (statusDiv) {
             statusDiv.innerHTML = '<span class="text-red-600"><i class="fas fa-exclamation-circle mr-1"></i>Please enter a valid GitHub URL</span>';
         }
         return;
     }
-    
+
     // Disable button and show loading
     if (installBtn) {
         installBtn.disabled = true;
@@ -694,15 +694,15 @@ window.handleGitHubPluginInstall = function() {
     if (statusDiv) {
         statusDiv.innerHTML = '<span class="text-blue-600"><i class="fas fa-spinner fa-spin mr-1"></i>Installing plugin...</span>';
     }
-    
+
     const branch = branchInput?.value?.trim() || null;
     const requestBody = { repo_url: repoUrl };
     if (branch) {
         requestBody.branch = branch;
     }
-    
+
     console.log('[handleGitHubPluginInstall] Sending request:', requestBody);
-    
+
     fetch('/api/v3/plugins/install-from-url', {
         method: 'POST',
         headers: {
@@ -721,12 +721,12 @@ window.handleGitHubPluginInstall = function() {
                 statusDiv.innerHTML = `<span class="text-green-600"><i class="fas fa-check-circle mr-1"></i>Successfully installed: ${data.plugin_id}</span>`;
             }
             urlInput.value = '';
-            
+
             // Show notification if available
             if (typeof showNotification === 'function') {
                 showNotification(`Plugin ${data.plugin_id} installed successfully`, 'success');
             }
-            
+
             // Refresh installed plugins list if function available
             setTimeout(() => {
                 if (typeof loadInstalledPlugins === 'function') {
@@ -796,38 +796,38 @@ window.checkGitHubAuthStatus = function checkGitHubAuthStatus() {
                     if (!dismissed) {
                         if (warning && rateLimit) {
                             rateLimit.textContent = authData.rate_limit;
-                            
+
                             // Update warning message for invalid tokens
                             if (tokenStatus === 'invalid' && authData.error) {
                                 const warningText = warning.querySelector('p.text-sm.text-yellow-700');
                                 if (warningText) {
                                     // Clear existing content
                                     warningText.textContent = '';
-                                    
+
                                     // Create safe error message with fallback
                                     const errorMsg = (authData.message || authData.error || 'Unknown error').toString();
-                                    
+
                                     // Create <strong> element for "Token Invalid:" label
                                     const strong = document.createElement('strong');
                                     strong.textContent = 'Token Invalid:';
-                                    
+
                                     // Create text node for error message and suffix
                                     const errorText = document.createTextNode(` ${errorMsg}. Please update your GitHub token to increase API rate limits to 5,000 requests/hour.`);
-                                    
+
                                     // Append elements safely (no innerHTML)
                                     warningText.appendChild(strong);
                                     warningText.appendChild(errorText);
                                 }
                             }
                             // For 'none' status, use the default message from HTML template
-                            
+
                             // Show warning using both classList and style.display
                             warning.classList.remove('hidden');
                             warning.style.display = '';
                             console.log(`GitHub token status: ${tokenStatus} - showing API limit warning`);
                         }
                     }
-                    
+
                     // Ensure settings panel is accessible when token is missing or invalid
                     // Panel can be opened via "Configure Token" link in warning
                     // Don't force it to be visible, but don't prevent it from being shown
@@ -839,13 +839,13 @@ window.checkGitHubAuthStatus = function checkGitHubAuthStatus() {
                         warning.style.display = 'none';
                         console.log('GitHub token is valid - hiding API limit warning');
                     }
-                    
+
                     // Make settings panel visible but collapsed (accessible for token management)
                     if (settings) {
                         // Remove hidden class from panel itself - make it visible using both methods
                         settings.classList.remove('hidden');
                         settings.style.display = '';
-                        
+
                         // Always collapse the content when token is valid (user must click expand)
                         const tokenContent = document.getElementById('github-token-content');
                         if (tokenContent) {
@@ -854,26 +854,26 @@ window.checkGitHubAuthStatus = function checkGitHubAuthStatus() {
                             tokenContent.classList.remove('block');
                             tokenContent.style.display = 'none';
                         }
-                        
+
                         // Update collapse button state to show "Expand"
                         const tokenIconCollapse = document.getElementById('github-token-icon-collapse');
                         if (tokenIconCollapse) {
                             tokenIconCollapse.classList.remove('fa-chevron-up');
                             tokenIconCollapse.classList.add('fa-chevron-down');
                         }
-                        
+
                         const toggleTokenCollapseBtn = document.getElementById('toggle-github-token-collapse');
                         if (toggleTokenCollapseBtn) {
                             const span = toggleTokenCollapseBtn.querySelector('span');
                             if (span) span.textContent = 'Expand';
-                            
+
                             // Ensure event listener is attached
                             if (window.attachGithubTokenCollapseHandler) {
                                 window.attachGithubTokenCollapseHandler();
                             }
                         }
                     }
-                    
+
                     // Clear dismissal flag when token becomes valid
                     sessionStorage.removeItem('github-auth-warning-dismissed');
                 }
@@ -889,7 +889,7 @@ window.checkGitHubAuthStatus = function checkGitHubAuthStatus() {
     'use strict';
 
     if (_PLUGIN_DEBUG_EARLY) console.log('Plugin manager script starting...');
-    
+
     // Local variables for this instance
 let installedPlugins = [];
 window.currentPluginConfig = null;
@@ -1026,24 +1026,24 @@ window.initPluginsPage = function() {
         console.log('Plugin page already initialized or initializing, skipping...');
         return;
     }
-    
+
     // Check if required elements exist
     const installedGrid = document.getElementById('installed-plugins-grid');
     if (!installedGrid) {
         console.log('Plugin elements not ready yet');
         return false;
     }
-    
+
     window.pluginManager.initializing = true;
     window.__pluginDomReady = true;
-    
+
     // Check GitHub auth status immediately (don't wait for full initialization)
     // This can run in parallel with other initialization
     if (window.checkGitHubAuthStatus) {
         console.log('[INIT] Checking GitHub auth status immediately...');
         window.checkGitHubAuthStatus();
     }
-    
+
     // If we fetched data before the DOM existed, render it now
     if (window.__pendingInstalledPlugins) {
         console.log('[RENDER] Applying pending installed plugins data');
@@ -1059,7 +1059,7 @@ window.initPluginsPage = function() {
     }
 
     initializePlugins();
-    
+
     // Event listeners (remove old ones first to prevent duplicates)
     const refreshBtn = document.getElementById('refresh-plugins-btn');
     const updateAllBtn = document.getElementById('update-all-plugins-btn');
@@ -1092,14 +1092,14 @@ window.initPluginsPage = function() {
     if (closeBtn) {
         closeBtn.replaceWith(closeBtn.cloneNode(true));
         document.getElementById('close-plugin-config').addEventListener('click', closePluginConfigModal);
-        
+
         // View toggle buttons
         document.getElementById('view-toggle-form')?.addEventListener('click', () => switchPluginConfigView('form'));
         document.getElementById('view-toggle-json')?.addEventListener('click', () => switchPluginConfigView('json'));
-        
+
         // Reset to defaults button
         document.getElementById('reset-to-defaults-btn')?.addEventListener('click', resetPluginConfigToDefaults);
-        
+
         // JSON editor save button
         document.getElementById('save-json-config-btn')?.addEventListener('click', saveConfigFromJsonEditor);
     }
@@ -1122,7 +1122,7 @@ window.initPluginsPage = function() {
     // Load on-demand status silently (false = don't show notification)
     loadOnDemandStatus(false);
     startOnDemandStatusPolling();
-    
+
     window.pluginManager.initialized = true;
     window.pluginManager.initializing = false;
     return true;
@@ -1147,7 +1147,7 @@ function initializePluginPageWhenReady() {
         // Try immediate initialization
         initializePluginPageWhenReady();
     }
-    
+
     // Strategy 1: Immediate check (for direct page loads)
     if (document.readyState === 'complete' || document.readyState === 'interactive') {
         // DOM is already ready, try immediately with a small delay to ensure scripts are loaded
@@ -1158,7 +1158,7 @@ function initializePluginPageWhenReady() {
             initTimer = setTimeout(attemptInit, 50);
         });
     }
-    
+
     // Strategy 3: HTMX afterSwap event (for HTMX-loaded content)
     // This is the primary way plugins content is loaded
     // Register unconditionally — HTMX may load after this script (loaded dynamically from CDN)
@@ -1197,7 +1197,7 @@ function initializePlugins() {
         return;
     }
     pluginsInitialized = true;
-    
+
     console.log('[initializePlugins] Starting initialization...');
     pluginLog('[INIT] Initializing plugins...');
 
@@ -1232,7 +1232,7 @@ function initializePlugins() {
     // Setup search functionality (with guard against duplicate listeners)
     const searchInput = document.getElementById('plugin-search');
     const categorySelect = document.getElementById('plugin-category');
-    
+
     if (searchInput && !searchInput._listenerSetup) {
         searchInput._listenerSetup = true;
         searchInput.addEventListener('input', debounce(searchPluginStore, 300));
@@ -1241,7 +1241,7 @@ function initializePlugins() {
         categorySelect._listenerSetup = true;
         categorySelect.addEventListener('change', searchPluginStore);
     }
-    
+
     // Setup GitHub installation handlers
     console.log('[initializePlugins] About to call setupGitHubInstallHandlers...');
     if (typeof setupGitHubInstallHandlers === 'function') {
@@ -1251,10 +1251,10 @@ function initializePlugins() {
     } else {
         console.error('[initializePlugins] ERROR: setupGitHubInstallHandlers is not a function! Type:', typeof setupGitHubInstallHandlers);
     }
-    
+
     // Setup collapsible section handlers
     setupCollapsibleSections();
-    
+
     // Load saved repositories
     loadSavedRepositories();
 
@@ -1322,29 +1322,29 @@ function loadInstalledPlugins(forceRefresh = false) {
             if (data.status === 'success') {
                 const pluginsData = data.data?.plugins;
                 installedPlugins = Array.isArray(pluginsData) ? pluginsData : [];
-                
+
                 // Update cache
                 pluginLoadCache.data = installedPlugins;
                 pluginLoadCache.timestamp = Date.now();
-                
+
                 // Always update window.installedPlugins to ensure Alpine component can detect changes
                 window.installedPlugins = installedPlugins;
-                
+
                 // Dispatch event to notify Alpine component to update tabs
                 document.dispatchEvent(new CustomEvent('pluginsUpdated', {
                     detail: { plugins: installedPlugins }
                 }));
                 pluginLog('[FETCH] Dispatched pluginsUpdated event with', installedPlugins.length, 'plugins');
-                
+
                 pluginLog('[FETCH] Loaded', installedPlugins.length, 'plugins');
-                
+
                 // Debug logging only when enabled
                 if (PLUGIN_DEBUG) {
                     installedPlugins.forEach(plugin => {
                         console.log(`[DEBUG] Plugin ${plugin.id}: enabled=${plugin.enabled}`);
                     });
                 }
-                
+
                 renderInstalledPlugins(installedPlugins);
 
                 // Update count
@@ -1393,17 +1393,17 @@ function renderInstalledPlugins(plugins) {
         window.__pendingInstalledPlugins = plugins;
         return;
     }
-    
+
     // Always update window.installedPlugins to ensure Alpine component reactivity
     window.installedPlugins = plugins;
     pluginLog('[RENDER] Set window.installedPlugins to:', plugins.length, 'plugins');
-    
+
     // Dispatch event to notify Alpine component to update tabs
     document.dispatchEvent(new CustomEvent('pluginsUpdated', {
         detail: { plugins: plugins }
     }));
     pluginLog('[RENDER] Dispatched pluginsUpdated event');
-    
+
     // Also try direct Alpine update as fallback
     if (window.Alpine && document.querySelector('[x-data="app()"]')) {
         const appElement = document.querySelector('[x-data="app()"]');
@@ -1433,7 +1433,7 @@ function renderInstalledPlugins(plugins) {
     const escapeAttr = (text) => {
         return (text || '').replace(/'/g, "\\'").replace(/"/g, '&quot;');
     };
-    
+
     // Helper function to escape for JavaScript strings (use JSON.stringify for proper escaping)
     // JSON.stringify returns a quoted string, so we can use it directly in JavaScript
     const escapeJs = (text) => {
@@ -1443,15 +1443,15 @@ function renderInstalledPlugins(plugins) {
     container.innerHTML = plugins.map(plugin => {
         // Convert enabled to boolean for consistent rendering
         const enabledBool = Boolean(plugin.enabled);
-        
+
         // Debug: Log enabled status during rendering (only when debug enabled)
         if (PLUGIN_DEBUG) {
             console.log(`[DEBUG RENDER] Plugin ${plugin.id}: enabled=${enabledBool}`);
         }
-        
+
         // Escape plugin ID for use in HTML attributes and JavaScript
         const escapedPluginId = escapeAttr(plugin.id);
-        
+
         return `
         <div class="plugin-card">
             <div class="flex items-start justify-between mb-4">
@@ -1471,8 +1471,8 @@ function renderInstalledPlugins(plugins) {
                 <!-- Toggle Switch in Top Right -->
                 <div class="flex-shrink-0 ml-4">
                     <label class="relative inline-flex items-center cursor-pointer group">
-                        <input type="checkbox" 
-                               class="sr-only peer" 
+                        <input type="checkbox"
+                               class="sr-only peer"
                                id="toggle-${escapedPluginId}"
                                ${enabledBool ? 'checked' : ''}
                                data-plugin-id="${escapedPluginId}"
@@ -1527,7 +1527,7 @@ function renderInstalledPlugins(plugins) {
         </div>
         `;
     }).join('');
-    
+
     // Set up event delegation for plugin action buttons (fallback if onclick doesn't work)
     // Only set up once per container to avoid redundant listeners
     const setupEventDelegation = () => {
@@ -1536,26 +1536,26 @@ function renderInstalledPlugins(plugins) {
             pluginLog('[RENDER] installed-plugins-grid not found for event delegation');
             return;
         }
-        
+
         // Skip if already set up (guard against multiple calls)
         if (container._eventDelegationSetup) {
             pluginLog('[RENDER] Event delegation already set up, skipping');
             return;
         }
-        
+
         // Mark as set up
         container._eventDelegationSetup = true;
         container._pluginActionHandler = handlePluginAction;
-        
+
         // Add listeners for both click and change events
         container.addEventListener('click', handlePluginAction, true);
         container.addEventListener('change', handlePluginAction, true);
         pluginLog('[RENDER] Event delegation set up for installed-plugins-grid');
     };
-    
+
     // Set up immediately
     setupEventDelegation();
-    
+
     // Also retry after a short delay to ensure it's attached even if container wasn't ready
     setTimeout(setupEventDelegation, 100);
 }
@@ -1564,17 +1564,17 @@ function handlePluginAction(event) {
     // Check for both button and input (for toggle)
     const button = event.target.closest('button[data-action]') || event.target.closest('input[data-action]');
     if (!button) return;
-    
+
     const action = button.getAttribute('data-action');
     const pluginId = button.getAttribute('data-plugin-id');
-    
+
     if (!pluginId) return;
-    
+
     event.preventDefault();
     event.stopPropagation();
-    
+
     console.log('[EVENT DELEGATION] Plugin action:', action, 'Plugin ID:', pluginId);
-    
+
     // Helper function to wait for a function to be available
     const waitForFunction = (funcName, maxAttempts = 10, delay = 50) => {
         return new Promise((resolve, reject) => {
@@ -1592,29 +1592,29 @@ function handlePluginAction(event) {
             check();
         });
     };
-    
+
     switch(action) {
         case 'toggle':
             // Get the current enabled state from plugin data (source of truth)
             // rather than from the checkbox DOM which might be out of sync
             const plugin = (window.installedPlugins || []).find(p => p.id === pluginId);
-            
+
             // Special handling: If plugin data isn't found or is stale, fallback to DOM but be careful
             // If the user clicked the checkbox, the 'checked' property has *already* toggled in the DOM
             // (even though we preventDefault later, sometimes it's too late for the property read)
             // However, we used preventDefault() in the global handler, so the checkbox state *should* be reliable if we didn't touch it.
-            
+
             // BUT: The issue is that 'currentEnabled' calculation might be wrong if window.installedPlugins is outdated.
             // If the user toggles ON, enabled becomes true. If they click again, we want enabled=false.
-            
+
             // Let's try a simpler approach: Use the checkbox state as the source of truth for the *desired* state
             // Since we preventDefault(), the checkbox state reflects the *old* state (before the click)
             // wait... if we preventDefault() on 'click', the checkbox does NOT change visually or internally.
             // So button.checked is the OLD state.
             // We want the NEW state to be !button.checked.
-            
+
             let currentEnabled;
-            
+
             if (plugin) {
                 currentEnabled = Boolean(plugin.enabled);
             } else if (button.type === 'checkbox') {
@@ -1625,7 +1625,7 @@ function handlePluginAction(event) {
 
             // Toggle the state - we want the opposite of current state
             const isChecked = !currentEnabled;
-            
+
             console.log('[DEBUG toggle] Plugin:', pluginId, 'Current enabled (from data):', currentEnabled, 'New state:', isChecked, 'Event type:', event.type);
 
             waitForFunction('togglePlugin', 10, 50)
@@ -1832,7 +1832,7 @@ function initializeOnDemandModal() {
     const cancelOnDemandBtn = document.getElementById('cancel-on-demand');
     const onDemandForm = document.getElementById('on-demand-form');
     const onDemandModal = document.getElementById('on-demand-modal');
-    
+
     if (closeOnDemandModalBtn && !closeOnDemandModalBtn.dataset.initialized) {
         closeOnDemandModalBtn.replaceWith(closeOnDemandModalBtn.cloneNode(true));
         const newBtn = document.getElementById('close-on-demand-modal');
@@ -1919,7 +1919,7 @@ window.__openOnDemandModalImpl = function(pluginId) {
         });
         return;
     }
-    
+
     console.log('[__openOnDemandModalImpl] All elements found, opening modal...');
 
     modalTitle.textContent = `Run ${resolvePluginDisplayName(pluginId)} On-Demand`;
@@ -1952,7 +1952,7 @@ window.__openOnDemandModalImpl = function(pluginId) {
         .then(data => {
             const serviceWarning = document.getElementById('on-demand-service-warning');
             const serviceActive = data?.data?.service?.active || false;
-            
+
             if (serviceWarning) {
                 if (!serviceActive) {
                     serviceWarning.classList.remove('hidden');
@@ -1973,7 +1973,7 @@ window.__openOnDemandModalImpl = function(pluginId) {
     modal.removeAttribute('style');
     // Set explicit positioning to ensure it's visible
     modal.style.cssText = 'position: fixed !important; top: 0 !important; left: 0 !important; right: 0 !important; bottom: 0 !important; display: flex !important; visibility: visible !important; opacity: 1 !important; z-index: 9999 !important; margin: 0 !important; padding: 0 !important;';
-    
+
     // Ensure modal content is centered
     const modalContent = modal.querySelector('.modal-content');
     if (modalContent) {
@@ -1981,10 +1981,10 @@ window.__openOnDemandModalImpl = function(pluginId) {
         modalContent.style.maxHeight = '90vh';
         modalContent.style.overflowY = 'auto';
     }
-    
+
     // Scroll to top of page to ensure modal is visible
     window.scrollTo({ top: 0, behavior: 'smooth' });
-    
+
     // Force a reflow to ensure styles are applied
     modal.offsetHeight;
     console.log('[__openOnDemandModalImpl] Modal display set, should be visible now. Modal element:', modal);
@@ -2020,7 +2020,7 @@ function closeOnDemandModal() {
 function submitOnDemandRequest(event) {
     event.preventDefault();
     console.log('[submitOnDemandRequest] Form submitted, currentOnDemandPluginId:', currentOnDemandPluginId);
-    
+
     if (!currentOnDemandPluginId) {
         console.error('[submitOnDemandRequest] No plugin ID set');
         if (typeof showNotification === 'function') {
@@ -2034,7 +2034,7 @@ function submitOnDemandRequest(event) {
         console.error('[submitOnDemandRequest] Form not found');
         return;
     }
-    
+
     console.log('[submitOnDemandRequest] Form found, processing...');
 
     const formData = new FormData(form);
@@ -2151,7 +2151,7 @@ window.showPluginConfigModal = function(pluginId, config) {
     const modal = document.getElementById('plugin-config-modal');
     const title = document.getElementById('plugin-config-title');
     const content = document.getElementById('plugin-config-content');
-    
+
     if (!modal) {
         console.error('[DEBUG] Plugin config modal element not found');
         if (typeof showError === 'function') {
@@ -2165,7 +2165,7 @@ window.showPluginConfigModal = function(pluginId, config) {
     console.log('[DEBUG] ===== Opening plugin config modal =====');
     console.log('[DEBUG] Plugin ID:', pluginId);
     console.log('[DEBUG] Config:', config);
-    
+
     // Check if modal elements exist (already checked above, but double-check for safety)
     if (!title) {
         console.error('[DEBUG] Plugin config title element not found');
@@ -2176,7 +2176,7 @@ window.showPluginConfigModal = function(pluginId, config) {
         }
         return;
     }
-    
+
     if (!content) {
         console.error('[DEBUG] Plugin config content element not found');
         if (typeof showError === 'function') {
@@ -2186,23 +2186,23 @@ window.showPluginConfigModal = function(pluginId, config) {
         }
         return;
     }
-    
+
     // Initialize state
     currentPluginConfigState.pluginId = pluginId;
     currentPluginConfigState.config = config || {};
     currentPluginConfigState.jsonEditor = null;
-    
+
     // Reset view to form
     switchPluginConfigView('form');
-    
+
     // Hide validation errors
     displayValidationErrors([]);
-    
+
     title.textContent = `Configure ${pluginId}`;
-    
+
     // Show loading state while form is generated
     content.innerHTML = '<div class="flex items-center justify-center py-8"><i class="fas fa-spinner fa-spin text-2xl text-blue-600"></i></div>';
-    
+
     // Move modal to body to avoid z-index/overflow issues
     if (modal.parentElement !== document.body) {
         document.body.appendChild(modal);
@@ -2230,7 +2230,7 @@ window.showPluginConfigModal = function(pluginId, config) {
     modal.style.setProperty('opacity', '1', 'important');
     modal.style.setProperty('z-index', '9999', 'important');
     modal.style.setProperty('position', 'fixed', 'important');
-    
+
     // Ensure modal content is also visible
     const modalContent = modal.querySelector('.modal-content');
     if (modalContent) {
@@ -2238,7 +2238,7 @@ window.showPluginConfigModal = function(pluginId, config) {
         modalContent.style.setProperty('visibility', 'visible', 'important');
         modalContent.style.setProperty('opacity', '1', 'important');
     }
-    
+
     console.log('[DEBUG] Modal display set to flex');
     console.log('[DEBUG] Modal computed style:', window.getComputedStyle(modal).display);
     console.log('[DEBUG] Modal z-index:', window.getComputedStyle(modal).zIndex);
@@ -2247,7 +2247,7 @@ window.showPluginConfigModal = function(pluginId, config) {
     console.log('[DEBUG] Modal in DOM:', document.body.contains(modal));
     console.log('[DEBUG] Modal parent:', modal.parentElement?.tagName);
     console.log('[DEBUG] Modal rect:', modal.getBoundingClientRect());
-    
+
     // Load schema for validation
     fetch(`/api/v3/plugins/schema?plugin_id=${pluginId}`)
         .then(r => r.json())
@@ -2257,20 +2257,20 @@ window.showPluginConfigModal = function(pluginId, config) {
             }
         })
         .catch(err => console.warn('Could not load schema:', err));
-    
+
     // Generate form asynchronously
     generatePluginConfigForm(pluginId, config)
         .then(formHtml => {
             console.log('[DEBUG] Form generated, setting content. HTML length:', formHtml.length);
             content.innerHTML = formHtml;
-            
+
             // Attach form submit handler after form is inserted
             const form = document.getElementById('plugin-config-form');
             if (form) {
                 form.addEventListener('submit', handlePluginConfigSubmit);
                 console.log('Form submit handler attached');
             }
-            
+
         })
         .catch(error => {
             console.error('Error generating config form:', error);
@@ -2405,19 +2405,19 @@ function dotToNested(obj, schema) {
 // Helper function to collect all boolean fields from schema (including nested)
 function collectBooleanFields(schema, prefix = '') {
     const boolFields = [];
-    
+
     if (!schema || !schema.properties) return boolFields;
-    
+
     Object.entries(schema.properties).forEach(([key, prop]) => {
         const fullKey = prefix ? `${prefix}.${key}` : key;
-        
+
         if (prop.type === 'boolean') {
             boolFields.push(fullKey);
         } else if (prop.type === 'object' && prop.properties) {
             boolFields.push(...collectBooleanFields(prop, fullKey));
         }
     });
-    
+
     return boolFields;
 }
 
@@ -2644,7 +2644,7 @@ function handlePluginConfigSubmit(e) {
     const config = normalizeFormDataForConfig(form, schema);
 
     console.log('Nested config to save:', config);
-    
+
     // Save the configuration
     fetch('/api/v3/plugins/config', {
         method: 'POST',
@@ -2683,14 +2683,14 @@ function generatePluginConfigForm(pluginId, config) {
     const installedPluginsPromise = (window.PluginAPI && window.PluginAPI.getInstalledPlugins) ?
         window.PluginAPI.getInstalledPlugins().then(plugins => ({ status: 'success', data: { plugins: plugins } })) :
         fetch(`/api/v3/plugins/installed`).then(r => r.json());
-    
+
     return Promise.all([
         fetch(`/api/v3/plugins/schema?plugin_id=${pluginId}`).then(r => r.json()),
         installedPluginsPromise
     ])
         .then(([schemaData, pluginsData]) => {
             console.log('[DEBUG] Schema data received:', schemaData.status);
-            
+
             // Get plugin info including web_ui_actions
             let pluginInfo = null;
             if (pluginsData.status === 'success' && pluginsData.data && pluginsData.data.plugins) {
@@ -2706,7 +2706,7 @@ function generatePluginConfigForm(pluginId, config) {
             }
             const webUiActions = pluginInfo ? (pluginInfo.web_ui_actions || []) : [];
             console.log('[DEBUG] Final webUiActions:', webUiActions, 'length:', webUiActions.length);
-            
+
             if (schemaData.status === 'success' && schemaData.data.schema) {
                 console.log('[DEBUG] Schema has properties:', Object.keys(schemaData.data.schema.properties || {}));
                 // Store plugin ID, schema, and actions for form submission
@@ -2741,11 +2741,11 @@ function generatePluginConfigForm(pluginId, config) {
 // Helper to flatten nested config for form display (converts {nfl: {enabled: true}} to {'nfl.enabled': true})
 function flattenConfig(obj, prefix = '') {
     let result = {};
-    
+
     for (const key in obj) {
         const value = obj[key];
         const fullKey = prefix ? `${prefix}.${key}` : key;
-        
+
         if (value !== null && typeof value === 'object' && !Array.isArray(value)) {
             // Recursively flatten nested objects
             Object.assign(result, flattenConfig(value, fullKey));
@@ -2753,7 +2753,7 @@ function flattenConfig(obj, prefix = '') {
             result[fullKey] = value;
         }
     }
-    
+
     return result;
 }
 
@@ -2766,20 +2766,20 @@ function renderArrayObjectItem(fieldId, fullKey, itemProperties, itemValue, inde
     const itemDataJson = JSON.stringify(item);
     const itemDataBase64 = btoa(unescape(encodeURIComponent(itemDataJson)));
     let html = `<div id="${itemId}" class="border border-gray-300 rounded-lg p-4 bg-gray-50 array-object-item" data-index="${index}" data-item-data="${escapeAttribute(itemDataBase64)}">`;
-    
+
     // Render each property of the object
     const propertyOrder = itemsSchema['x-propertyOrder'] || Object.keys(itemProperties);
     propertyOrder.forEach(propKey => {
         if (!itemProperties[propKey]) return;
-        
+
         const propSchema = itemProperties[propKey];
         const propValue = item[propKey] !== undefined ? item[propKey] : propSchema.default;
         const propLabel = propSchema.title || propKey.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
         const propDescription = propSchema.description || '';
         const propFullKey = `${fullKey}[${index}].${propKey}`;
-        
+
         html += `<div class="mb-3">`;
-        
+
         // Handle file-upload widget (for logo field)
         if (propSchema['x-widget'] === 'file-upload') {
             html += `<label class="block text-sm font-medium text-gray-700 mb-1">${escapeHtml(propLabel)}</label>`;
@@ -2798,26 +2798,26 @@ function renderArrayObjectItem(fieldId, fullKey, itemProperties, itemValue, inde
             const pluginIdParam = pluginId ? `'${escapeAttribute(pluginId)}'` : 'null';
             const uploadConfigJson = JSON.stringify({ allowed_types: allowedTypes, max_size_mb: maxSizeMB });
             const uploadConfigBase64 = btoa(unescape(encodeURIComponent(uploadConfigJson)));
-            
+
             html += `
                 <div class="file-upload-widget-inline"${logoDataBase64 ? ` data-file-data="${escapeAttribute(logoDataBase64)}" data-prop-key="${escapeAttribute(propKey)}"` : ` data-prop-key="${escapeAttribute(propKey)}"`} data-upload-config="${escapeAttribute(uploadConfigBase64)}">
-                    <input type="file" 
-                           id="${escapeAttribute(itemId)}_logo_file" 
+                    <input type="file"
+                           id="${escapeAttribute(itemId)}_logo_file"
                            accept="${escapeAttribute(allowedTypes.join(','))}"
                            style="display: none;"
                            onchange="handleArrayObjectFileUpload(event, '${escapeAttribute(fieldId)}', ${index}, '${escapeAttribute(propKey)}', ${pluginIdParam})">
-                    <button type="button" 
+                    <button type="button"
                             onclick="document.getElementById('${escapeAttribute(itemId)}_logo_file').click()"
                             class="px-3 py-2 text-sm bg-gray-200 hover:bg-gray-300 text-gray-700 rounded-md transition-colors">
                         <i class="fas fa-upload mr-1"></i> Upload Logo
                     </button>
             `;
-            
+
             if (logoValue.path) {
                 html += `
                     <div class="mt-2 flex items-center space-x-2 uploaded-image-container">
                         <img src="/${escapeAttribute(logoValue.path.replace(/^\/+/, ''))}" alt="Logo" class="w-16 h-16 object-cover rounded border">
-                        <button type="button" 
+                        <button type="button"
                                 onclick="removeArrayObjectFile('${escapeAttribute(fieldId)}', ${index}, '${escapeAttribute(propKey)}')"
                                 class="text-red-600 hover:text-red-800">
                             <i class="fas fa-trash"></i> Remove
@@ -2825,13 +2825,13 @@ function renderArrayObjectItem(fieldId, fullKey, itemProperties, itemValue, inde
                     </div>
                 `;
             }
-            
+
             html += `</div>`;
         } else if (propSchema.type === 'boolean') {
             // Boolean checkbox
             html += `
                 <label class="flex items-center">
-                    <input type="checkbox" 
+                    <input type="checkbox"
                            id="${escapeAttribute(itemId)}_${escapeAttribute(propKey)}"
                            data-prop-key="${escapeAttribute(propKey)}"
                            class="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
@@ -2852,7 +2852,7 @@ function renderArrayObjectItem(fieldId, fullKey, itemProperties, itemValue, inde
             }
             const placeholder = propSchema.format === 'uri' ? 'https://example.com/feed' : '';
             html += `
-                <input type="${propSchema.format === 'uri' ? 'url' : 'text'}" 
+                <input type="${propSchema.format === 'uri' ? 'url' : 'text'}"
                        id="${escapeAttribute(itemId)}_${escapeAttribute(propKey)}"
                        data-prop-key="${escapeAttribute(propKey)}"
                        class="block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm bg-white text-black"
@@ -2861,20 +2861,20 @@ function renderArrayObjectItem(fieldId, fullKey, itemProperties, itemValue, inde
                        onchange="updateArrayObjectData('${escapeAttribute(fieldId)}')">
             `;
         }
-        
+
         html += `</div>`;
     });
-    
+
     // Use schema-driven label for remove button, fallback to generic "Remove item"
     const removeLabel = itemsSchema['x-removeLabel'] || 'Remove item';
     html += `
-        <button type="button" 
+        <button type="button"
                 onclick="removeArrayObjectItem('${escapeAttribute(fieldId)}', ${index})"
                 class="mt-2 px-3 py-2 text-sm text-red-600 hover:text-red-800 hover:bg-red-50 rounded-md transition-colors">
             <i class="fas fa-trash mr-1"></i> ${escapeHtml(removeLabel)}
         </button>
     </div>`;
-    
+
     return html;
 }
 
@@ -2883,7 +2883,7 @@ function generateFieldHtml(key, prop, value, prefix = '') {
     const label = prop.title || key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
     const description = prop.description || '';
     let html = '';
-    
+
     // Debug logging for categories field
     if (key === 'categories') {
         console.log(`[DEBUG] Processing categories field:`, {
@@ -2903,33 +2903,33 @@ function generateFieldHtml(key, prop, value, prefix = '') {
         const valueType = patternProp.type || 'string';
         const maxProperties = prop.maxProperties || 50;
         const entries = Object.entries(currentValue);
-        
+
         html += `
             <div class="key-value-pairs-container">
                 <div class="mb-2">
                     <p class="text-sm text-gray-600 mb-2">${description || 'Add key-value pairs'}</p>
                     <div id="${fieldId}_pairs" class="space-y-2">
         `;
-        
+
         // Render existing pairs
         entries.forEach(([pairKey, pairValue], index) => {
             html += `
                 <div class="flex items-center gap-2 key-value-pair" data-index="${index}">
-                    <input type="text" 
-                           name="${fullKey}[key_${index}]" 
-                           value="${pairKey}" 
+                    <input type="text"
+                           name="${fullKey}[key_${index}]"
+                           value="${pairKey}"
                            placeholder="Key"
                            class="flex-1 px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
                            data-key-index="${index}"
                            onchange="updateKeyValuePairData('${fieldId}', '${fullKey}')">
-                    <input type="${valueType === 'string' ? 'text' : valueType === 'number' || valueType === 'integer' ? 'number' : 'text'}" 
-                           name="${fullKey}[value_${index}]" 
-                           value="${pairValue}" 
+                    <input type="${valueType === 'string' ? 'text' : valueType === 'number' || valueType === 'integer' ? 'number' : 'text'}"
+                           name="${fullKey}[value_${index}]"
+                           value="${pairValue}"
                            placeholder="Value"
                            class="flex-1 px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
                            data-value-index="${index}"
                            onchange="updateKeyValuePairData('${fieldId}', '${fullKey}')">
-                    <button type="button" 
+                    <button type="button"
                             onclick="removeKeyValuePair('${fieldId}', ${index})"
                             class="px-3 py-2 text-red-600 hover:text-red-800 hover:bg-red-50 rounded-md transition-colors"
                             title="Remove">
@@ -2938,10 +2938,10 @@ function generateFieldHtml(key, prop, value, prefix = '') {
                 </div>
             `;
         });
-        
+
         html += `
                     </div>
-                    <button type="button" 
+                    <button type="button"
                             onclick="addKeyValuePair('${fieldId}', '${fullKey}', ${maxProperties})"
                             class="mt-2 px-4 py-2 text-sm bg-blue-600 hover:bg-blue-700 text-white rounded-md transition-colors"
                             ${entries.length >= maxProperties ? 'disabled style="opacity: 0.5; cursor: not-allowed;"' : ''}>
@@ -2951,20 +2951,20 @@ function generateFieldHtml(key, prop, value, prefix = '') {
                 </div>
             </div>
         `;
-        
+
         return html;
     }
-    
+
     // Handle objects with additionalProperties (dynamic keys with object values, like categories)
     // Must have additionalProperties, no top-level properties, and additionalProperties must be an object type
-    const hasAdditionalProperties = prop.type === 'object' && 
+    const hasAdditionalProperties = prop.type === 'object' &&
                                     (prop.properties === undefined || prop.properties === null) && // Explicitly exclude objects with properties (those use nested handler)
-                                    prop.additionalProperties && 
-                                    typeof prop.additionalProperties === 'object' && 
+                                    prop.additionalProperties &&
+                                    typeof prop.additionalProperties === 'object' &&
                                     prop.additionalProperties !== null &&
                                     prop.additionalProperties.type === 'object' &&
                                     !prop.patternProperties; // Also exclude patternProperties objects
-    
+
     // Debug logging for categories field specifically
     if (key === 'categories') {
         console.log(`[DEBUG] Categories field check:`, {
@@ -2977,18 +2977,18 @@ function generateFieldHtml(key, prop, value, prefix = '') {
             allPropKeys: Object.keys(prop)
         });
     }
-    
+
     if (hasAdditionalProperties) {
         const fieldId = fullKey.replace(/\./g, '_');
         const currentValue = value || {};
         const categorySchema = prop.additionalProperties;
         const entries = Object.entries(currentValue);
-        
+
         console.log(`[DEBUG] Rendering additionalProperties object for ${fullKey}:`, {
             entries: entries.length,
             keys: Object.keys(currentValue)
         });
-        
+
         html += `
             <div class="categories-container mb-4">
                 <div class="mb-4">
@@ -2996,7 +2996,7 @@ function generateFieldHtml(key, prop, value, prefix = '') {
                     ${description ? `<p class="text-sm text-gray-600 mb-3">${description}</p>` : ''}
                     <div id="${fieldId}_categories" class="space-y-3">
         `;
-        
+
         // Render each category
         entries.forEach(([categoryKey, categoryValue]) => {
             const categoryId = `${fieldId}_${categoryKey}`;
@@ -3006,14 +3006,14 @@ function generateFieldHtml(key, prop, value, prefix = '') {
             // Safely extract string values, ensuring they're strings
             const dataFile = (typeof catValue.data_file === 'string' ? catValue.data_file : '') || '';
             const displayName = (typeof catValue.display_name === 'string' ? catValue.display_name : '') || categoryKey.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
-            
+
             html += `
                 <div class="category-item border border-gray-300 rounded-lg p-4 bg-white">
                     <div class="flex items-center justify-between mb-3">
                         <div class="flex items-center gap-3">
                             <label class="flex items-center cursor-pointer">
-                                <input type="checkbox" 
-                                       name="${fullKey}.${categoryKey}.enabled" 
+                                <input type="checkbox"
+                                       name="${fullKey}.${categoryKey}.enabled"
                                        ${enabled ? 'checked' : ''}
                                        class="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded category-enabled-toggle"
                                        data-category-key="${categoryKey}">
@@ -3025,16 +3025,16 @@ function generateFieldHtml(key, prop, value, prefix = '') {
                     <div class="space-y-2 text-sm">
                         <div>
                             <label class="block text-xs font-medium text-gray-700 mb-1">Data File</label>
-                            <input type="text" 
-                                   name="${fullKey}.${categoryKey}.data_file" 
+                            <input type="text"
+                                   name="${fullKey}.${categoryKey}.data_file"
                                    value="${escapeHtml(dataFile)}"
                                    readonly
                                    class="w-full px-2 py-1 border border-gray-200 rounded bg-gray-50 text-gray-600 text-xs font-mono">
                         </div>
                         <div>
                             <label class="block text-xs font-medium text-gray-700 mb-1">Display Name</label>
-                            <input type="text" 
-                                   name="${fullKey}.${categoryKey}.display_name" 
+                            <input type="text"
+                                   name="${fullKey}.${categoryKey}.display_name"
                                    value="${escapeHtml(displayName)}"
                                    class="w-full px-2 py-1 border border-gray-300 rounded text-xs">
                         </div>
@@ -3042,7 +3042,7 @@ function generateFieldHtml(key, prop, value, prefix = '') {
                 </div>
             `;
         });
-        
+
         if (entries.length === 0) {
             html += `
                 <div class="text-center py-4 text-sm text-gray-500">
@@ -3051,16 +3051,16 @@ function generateFieldHtml(key, prop, value, prefix = '') {
                 </div>
             `;
         }
-        
+
         html += `
                     </div>
                 </div>
             </div>
         `;
-        
+
         return html;
     }
-    
+
     // Handle nested objects with known properties
     if (prop.type === 'object' && prop.properties) {
         const sectionId = `section-${fullKey.replace(/\./g, '-')}`;
@@ -3069,10 +3069,10 @@ function generateFieldHtml(key, prop, value, prefix = '') {
         // Calculate nesting depth for better spacing
         const nestingDepth = (fullKey.match(/\./g) || []).length;
         const marginClass = nestingDepth > 1 ? 'mb-6' : 'mb-4';
-        
+
         html += `
             <div class="nested-section border border-gray-300 rounded-lg ${marginClass}">
-                <button type="button" 
+                <button type="button"
                         class="w-full bg-gray-100 hover:bg-gray-200 px-4 py-3 flex items-center justify-between text-left transition-colors rounded-t-lg"
                         onclick="toggleNestedSection('${sectionId}', event); return false;"
                         data-section-id="${sectionId}">
@@ -3084,7 +3084,7 @@ function generateFieldHtml(key, prop, value, prefix = '') {
                 </button>
                 <div id="${sectionId}" class="nested-content collapsed bg-gray-50 px-4 py-4 space-y-3 rounded-b-lg" style="max-height: 0; display: none;">
         `;
-        
+
         // Recursively generate fields for nested properties
         // Get ordered properties if x-propertyOrder is defined
         let nestedPropertyEntries = Object.entries(prop.properties);
@@ -3092,7 +3092,7 @@ function generateFieldHtml(key, prop, value, prefix = '') {
             const order = prop['x-propertyOrder'];
             const orderedEntries = [];
             const unorderedEntries = [];
-            
+
             // Separate ordered and unordered properties
             nestedPropertyEntries.forEach(([nestedKey, nestedProp]) => {
                 const index = order.indexOf(nestedKey);
@@ -3102,11 +3102,11 @@ function generateFieldHtml(key, prop, value, prefix = '') {
                     unorderedEntries.push([nestedKey, nestedProp]);
                 }
             });
-            
+
             // Combine ordered entries (filter out undefined from sparse array) with unordered entries
             nestedPropertyEntries = orderedEntries.filter(entry => entry !== undefined).concat(unorderedEntries);
         }
-        
+
         nestedPropertyEntries.forEach(([nestedKey, nestedProp]) => {
             const nestedValue = nestedConfig[nestedKey] !== undefined ? nestedConfig[nestedKey] : nestedProp.default;
             console.log(`[DEBUG] Processing nested field ${fullKey}.${nestedKey}:`, {
@@ -3117,15 +3117,15 @@ function generateFieldHtml(key, prop, value, prefix = '') {
             });
             html += generateFieldHtml(nestedKey, nestedProp, nestedValue, fullKey);
         });
-        
+
         html += `
                 </div>
             </div>
         `;
-        
+
         // Add extra spacing after nested sections to prevent overlap with next section
         html += `<div class="mb-4" style="clear: both;"></div>`;
-        
+
         return html;
     }
 
@@ -3153,7 +3153,7 @@ function generateFieldHtml(key, prop, value, prefix = '') {
         const min = prop.minimum !== undefined ? `min="${prop.minimum}"` : '';
         const max = prop.maximum !== undefined ? `max="${prop.maximum}"` : '';
         const step = prop.type === 'integer' ? 'step="1"' : 'step="any"';
-        
+
         // Ensure value respects min/max constraints
         let fieldValue = value !== undefined ? value : (prop.default !== undefined ? prop.default : '');
         if (fieldValue !== '' && fieldValue !== undefined && fieldValue !== null) {
@@ -3169,12 +3169,12 @@ function generateFieldHtml(key, prop, value, prefix = '') {
                 }
             }
         }
-        
+
         // If still empty and we have a default, use it
         if (fieldValue === '' && prop.default !== undefined) {
             fieldValue = prop.default;
         }
-        
+
         html += `
             <input type="number" id="${fullKey}" name="${fullKey}" value="${fieldValue}" ${min} ${max} ${step} class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm bg-white text-black placeholder:text-gray-500">
         `;
@@ -3188,20 +3188,20 @@ function generateFieldHtml(key, prop, value, prefix = '') {
             const itemProperties = itemsSchema.properties || {};
             const maxItems = prop.maxItems || 50;
             const currentItems = Array.isArray(value) ? value : [];
-            
+
             html += `
                 <div class="array-of-objects-container mt-1">
                     <div id="${fieldId}_items" class="space-y-4">
             `;
-            
+
             // Render existing items
             currentItems.forEach((item, index) => {
                 html += renderArrayObjectItem(fieldId, fullKey, itemProperties, item, index, itemsSchema);
             });
-            
+
             html += `
                     </div>
-                    <button type="button" 
+                    <button type="button"
                             onclick="addArrayObjectItem('${fieldId}', '${fullKey}', ${maxItems})"
                             class="mt-3 px-4 py-2 text-sm bg-blue-600 hover:bg-blue-700 text-white rounded-md transition-colors"
                             ${currentItems.length >= maxItems ? 'disabled style="opacity: 0.5; cursor: not-allowed;"' : ''}>
@@ -3211,12 +3211,12 @@ function generateFieldHtml(key, prop, value, prefix = '') {
                 </div>
             `;
         } else {
-            // Array - check for file upload widget first (to avoid breaking static-image plugin), 
+            // Array - check for file upload widget first (to avoid breaking static-image plugin),
             // then checkbox-group, then custom-feeds
             const hasXWidget = prop.hasOwnProperty('x-widget');
             const xWidgetValue = prop['x-widget'];
             const xWidgetValue2 = prop['x-widget'] || prop['x_widget'] || prop.xWidget;
-            
+
             console.log(`[DEBUG] Array field ${fullKey}:`, {
                 type: prop.type,
                 hasItems: !!prop.items,
@@ -3229,7 +3229,7 @@ function generateFieldHtml(key, prop, value, prefix = '') {
                 propKeys: Object.keys(prop),
                 value: value
             });
-        
+
             // Check for file-upload widget FIRST (to avoid breaking static-image plugin)
             if (xWidgetValue === 'file-upload' || xWidgetValue2 === 'file-upload') {
                 console.log(`[DEBUG] ✅ Detected file-upload widget for ${fullKey} - rendering upload zone`);
@@ -3241,21 +3241,21 @@ function generateFieldHtml(key, prop, value, prefix = '') {
                 const maxSizeMB = uploadConfig.max_size_mb || 5;
                 const customUploadEndpoint = uploadConfig.endpoint; // Custom endpoint if specified
                 const customDeleteEndpoint = uploadConfig.delete_endpoint; // Custom delete endpoint if specified
-                
+
                 const currentFiles = Array.isArray(value) ? value : [];
                 const fieldId = fullKey.replace(/\./g, '_');
-                
+
                 html += `
                 <div id="${fieldId}_upload_widget" class="mt-1">
                     <!-- File Upload Drop Zone -->
-                    <div id="${fieldId}_drop_zone" 
+                    <div id="${fieldId}_drop_zone"
                          class="border-2 border-dashed border-gray-300 rounded-lg p-6 text-center hover:border-blue-400 transition-colors cursor-pointer"
-                         ondrop="handleFileDrop(event, '${fieldId}')" 
-                         ondragover="event.preventDefault()" 
+                         ondrop="handleFileDrop(event, '${fieldId}')"
+                         ondragover="event.preventDefault()"
                          onclick="document.getElementById('${fieldId}_file_input').click()">
-                        <input type="file" 
-                               id="${fieldId}_file_input" 
-                               multiple 
+                        <input type="file"
+                               id="${fieldId}_file_input"
+                               multiple
                                accept="${allowedTypes.join(',')}"
                                style="display: none;"
                                onchange="handleFileSelect(event, '${fieldId}')">
@@ -3263,14 +3263,14 @@ function generateFieldHtml(key, prop, value, prefix = '') {
                         <p class="text-sm text-gray-600">Drag and drop ${fileType === 'json' ? 'JSON files' : 'images'} here or click to browse</p>
                         <p class="text-xs text-gray-500 mt-1">Max ${maxFiles} files, ${maxSizeMB}MB each ${fileType === 'json' ? '(JSON)' : '(PNG, JPG, GIF, BMP)'}</p>
                     </div>
-                    
+
                     <!-- Uploaded Files List -->
                     <div id="${fieldId}_image_list" class="mt-4 space-y-2">
                         ${currentFiles.map((file, idx) => {
                             const fileId = file.id || file.category_name || idx;
                             const fileName = file.original_filename || file.filename || (fileType === 'json' ? 'JSON File' : 'Image');
                             const entryCount = file.entry_count ? `${file.entry_count} entries` : '';
-                            
+
                             return `
                             <div id="file_${fileId}" class="bg-gray-50 p-3 rounded-lg border border-gray-200">
                                 <div class="flex items-center justify-between mb-2">
@@ -3280,8 +3280,8 @@ function generateFieldHtml(key, prop, value, prefix = '') {
                                             <i class="fas fa-file-code text-2xl text-blue-600"></i>
                                         </div>
                                         ` : `
-                                        <img src="/${file.path || ''}" 
-                                             alt="${fileName}" 
+                                        <img src="/${file.path || ''}"
+                                             alt="${fileName}"
                                              class="w-16 h-16 object-cover rounded"
                                              onerror="this.style.display='none'; this.nextElementSibling.style.display='block';">
                                         <div style="display:none;" class="w-16 h-16 bg-gray-200 rounded flex items-center justify-center">
@@ -3301,14 +3301,14 @@ function generateFieldHtml(key, prop, value, prefix = '') {
                                     </div>
                                     <div class="flex items-center space-x-2 ml-4">
                                         ${fileType === 'image' ? `
-                                        <button type="button" 
+                                        <button type="button"
                                                 onclick="openImageSchedule('${fieldId}', '${fileId}', ${idx})"
-                                                class="text-blue-600 hover:text-blue-800 p-2" 
+                                                class="text-blue-600 hover:text-blue-800 p-2"
                                                 title="Schedule this image">
                                             <i class="fas fa-calendar-alt"></i>
                                         </button>
                                         ` : ''}
-                                        <button type="button" 
+                                        <button type="button"
                                                 onclick="deleteUploadedFile('${fieldId}', '${fileId}', '${pluginId}', '${fileType}', ${customDeleteEndpoint ? `'${customDeleteEndpoint}'` : 'null'})"
                                                 class="text-red-600 hover:text-red-800 p-2"
                                                 title="Delete ${fileType === 'json' ? 'file' : 'image'}">
@@ -3323,7 +3323,7 @@ function generateFieldHtml(key, prop, value, prefix = '') {
                             `;
                         }).join('')}
                     </div>
-                    
+
                     <!-- Hidden input to store file data -->
                     <input type="hidden" id="${fieldId}_images_data" name="${fullKey}" value="${JSON.stringify(currentFiles).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/'/g, '&#39;')}"
                            data-upload-endpoint="${customUploadEndpoint || '/api/v3/plugins/assets/upload'}"
@@ -3339,7 +3339,7 @@ function generateFieldHtml(key, prop, value, prefix = '') {
             const xOptions = prop['x-options'] || {};
             const labels = xOptions.labels || {};
             const fieldId = fullKey.replace(/\./g, '_');
-            
+
             html += `<div class="mt-1 space-y-2">`;
             enumItems.forEach((option) => {
                 const isChecked = arrayValue.includes(option);
@@ -3347,13 +3347,13 @@ function generateFieldHtml(key, prop, value, prefix = '') {
                 const checkboxId = `${fieldId}_${escapeHtml(option)}`;
                 html += `
                     <label class="flex items-center">
-                        <input type="checkbox" 
-                               id="${checkboxId}" 
+                        <input type="checkbox"
+                               id="${checkboxId}"
                                name="${fullKey}[]"
                                data-checkbox-group="${fieldId}"
                                data-option-value="${escapeHtml(option)}"
-                               value="${escapeHtml(option)}" 
-                               ${isChecked ? 'checked' : ''} 
+                               value="${escapeHtml(option)}"
+                               ${isChecked ? 'checked' : ''}
                                onchange="updateCheckboxGroupData('${fieldId}')"
                                class="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded">
                         <span class="ml-2 text-sm text-gray-700">${escapeHtml(label)}</span>
@@ -3433,18 +3433,18 @@ function generateFieldHtml(key, prop, value, prefix = '') {
         const htmlFile = prop['x-html-file'];
         const pluginId = currentPluginConfig?.pluginId || window.currentPluginConfig?.pluginId || '';
         const fieldId = fullKey.replace(/\./g, '_');
-        
+
         console.log(`[Custom HTML Widget] Generating widget for ${fullKey}:`, {
             htmlFile,
             pluginId,
             fieldId,
             hasPluginId: !!pluginId
         });
-        
+
         if (htmlFile && pluginId) {
             html += `
-                <div id="${fieldId}_custom_html" 
-                     data-plugin-id="${pluginId}" 
+                <div id="${fieldId}_custom_html"
+                     data-plugin-id="${pluginId}"
                      data-html-file="${htmlFile}"
                      class="custom-html-widget">
                     <div class="animate-pulse text-center py-4">
@@ -3453,7 +3453,7 @@ function generateFieldHtml(key, prop, value, prefix = '') {
                     </div>
                 </div>
             `;
-            
+
             // Load HTML asynchronously
             setTimeout(() => {
                 loadCustomHtmlWidget(fieldId, pluginId, htmlFile);
@@ -3488,12 +3488,12 @@ function generateFieldHtml(key, prop, value, prefix = '') {
         const maxLength = prop.maxLength || '';
         const maxLengthAttr = maxLength ? `maxlength="${maxLength}"` : '';
         const secretClass = isSecret ? 'pr-10' : '';
-        
+
         html += `
             <div class="relative">
                 <input type="${inputType}" id="${fullKey}" name="${fullKey}" value="${value !== undefined ? value : ''}" ${maxLengthAttr} class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm bg-white text-black placeholder:text-gray-500 ${secretClass}">
         `;
-        
+
         if (isSecret) {
             html += `
                 <button type="button" onclick="togglePasswordVisibility('${fullKey}')" class="absolute inset-y-0 right-0 pr-3 flex items-center text-gray-500 hover:text-gray-700">
@@ -3501,12 +3501,12 @@ function generateFieldHtml(key, prop, value, prefix = '') {
                 </button>
             `;
         }
-        
+
         html += `</div>`;
     }
 
     html += `</div>`;
-    
+
     return html;
 }
 
@@ -3518,19 +3518,19 @@ async function loadCustomHtmlWidget(fieldId, pluginId, htmlFile) {
             console.warn(`[Custom HTML Widget] Container not found: ${fieldId}_custom_html`);
             return;
         }
-        
+
         // Fetch HTML from plugin static files endpoint
         const response = await fetch(`/api/v3/plugins/${pluginId}/static/${htmlFile}`);
-        
+
         if (!response.ok) {
             throw new Error(`Failed to load custom HTML: ${response.statusText}`);
         }
-        
+
         const html = await response.text();
-        
+
         // Inject HTML into container
         container.innerHTML = html;
-        
+
         // Execute any script tags in the loaded HTML
         const scripts = container.querySelectorAll('script');
         scripts.forEach(oldScript => {
@@ -3541,7 +3541,7 @@ async function loadCustomHtmlWidget(fieldId, pluginId, htmlFile) {
             newScript.appendChild(document.createTextNode(oldScript.innerHTML));
             oldScript.parentNode.replaceChild(newScript, oldScript);
         });
-        
+
         console.log(`[Custom HTML Widget] Loaded ${htmlFile} for plugin ${pluginId}`);
     } catch (error) {
         console.error(`[Custom HTML Widget] Error loading ${htmlFile} for plugin ${pluginId}:`, error);
@@ -3570,7 +3570,7 @@ function generateFormFromSchema(schema, config, webUiActions = []) {
             const order = schema['x-propertyOrder'];
             const orderedEntries = [];
             const unorderedEntries = [];
-            
+
             // Separate ordered and unordered properties
             propertyEntries.forEach(([key, prop]) => {
                 const index = order.indexOf(key);
@@ -3580,20 +3580,20 @@ function generateFormFromSchema(schema, config, webUiActions = []) {
                     unorderedEntries.push([key, prop]);
                 }
             });
-            
+
             // Combine ordered entries (filter out undefined from sparse array) with unordered entries
             propertyEntries = orderedEntries.filter(entry => entry !== undefined).concat(unorderedEntries);
         }
-        
+
         propertyEntries.forEach(([key, prop]) => {
             // Skip the 'enabled' property - it's managed separately via the header toggle
             if (key === 'enabled') return;
 
             let value = config[key] !== undefined ? config[key] : prop.default;
-            
+
             // Special handling: use uploaded_files from config if available (populated by backend from disk)
             // No need to populate from categories here since backend does it
-            
+
             formHtml += generateFieldHtml(key, prop, value);
         });
     }
@@ -3606,15 +3606,15 @@ function generateFormFromSchema(schema, config, webUiActions = []) {
             <div class="border-t border-gray-200 pt-4 mt-4">
                 <h3 class="text-lg font-semibold text-gray-900 mb-3">Actions</h3>
                 <p class="text-sm text-gray-600 mb-4">${webUiActions[0].section_description || 'Perform actions for this plugin'}</p>
-                
+
                 <div class="space-y-3">
         `;
-        
+
         webUiActions.forEach((action, index) => {
             const actionId = `action-${action.id}-${index}`;
             const statusId = `action-status-${action.id}-${index}`;
             const bgColor = action.color || 'blue';
-            
+
             // Map color names to explicit Tailwind classes to ensure they're included
             const colorMap = {
                 'blue': { bg: 'bg-blue-50', border: 'border-blue-200', text: 'text-blue-900', textLight: 'text-blue-700', btn: 'bg-blue-600 hover:bg-blue-700' },
@@ -3623,9 +3623,9 @@ function generateFormFromSchema(schema, config, webUiActions = []) {
                 'yellow': { bg: 'bg-yellow-50', border: 'border-yellow-200', text: 'text-yellow-900', textLight: 'text-yellow-700', btn: 'bg-yellow-600 hover:bg-yellow-700' },
                 'purple': { bg: 'bg-purple-50', border: 'border-purple-200', text: 'text-purple-900', textLight: 'text-purple-700', btn: 'bg-purple-600 hover:bg-purple-700' }
             };
-            
+
             const colors = colorMap[bgColor] || colorMap['blue'];
-            
+
             formHtml += `
                     <div class="${colors.bg} border ${colors.border} rounded-lg p-4">
                         <div class="flex items-center justify-between">
@@ -3635,9 +3635,9 @@ function generateFormFromSchema(schema, config, webUiActions = []) {
                                 </h4>
                                 <p class="text-sm ${colors.textLight}">${action.description || ''}</p>
                             </div>
-                            <button type="button" 
+                            <button type="button"
                                     id="${actionId}"
-                                    onclick="executePluginAction('${action.id}', ${index}, '${window.currentPluginConfig?.pluginId || ''}')" 
+                                    onclick="executePluginAction('${action.id}', ${index}, '${window.currentPluginConfig?.pluginId || ''}')"
                                     data-plugin-id="${window.currentPluginConfig?.pluginId || ''}"
                                     data-action-id="${action.id}"
                                     class="btn ${colors.btn} text-white px-4 py-2 rounded-md whitespace-nowrap">
@@ -3648,7 +3648,7 @@ function generateFormFromSchema(schema, config, webUiActions = []) {
                     </div>
             `;
         });
-        
+
         formHtml += `
                 </div>
             </div>
@@ -3676,33 +3676,33 @@ function generateFormFromSchema(schema, config, webUiActions = []) {
 window.addKeyValuePair = function(fieldId, fullKey, maxProperties) {
     const pairsContainer = document.getElementById(fieldId + '_pairs');
     if (!pairsContainer) return;
-    
+
     const currentPairs = pairsContainer.querySelectorAll('.key-value-pair');
     if (currentPairs.length >= maxProperties) {
         alert(`Maximum ${maxProperties} entries allowed`);
         return;
     }
-    
+
     const newIndex = currentPairs.length;
     const valueType = 'string'; // Default to string, could be determined from schema
-    
+
     const pairHtml = `
         <div class="flex items-center gap-2 key-value-pair" data-index="${newIndex}">
-            <input type="text" 
-                   name="${fullKey}[key_${newIndex}]" 
-                   value="" 
+            <input type="text"
+                   name="${fullKey}[key_${newIndex}]"
+                   value=""
                    placeholder="Key"
                    class="flex-1 px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
                    data-key-index="${newIndex}"
                    onchange="updateKeyValuePairData('${fieldId}', '${fullKey}')">
-            <input type="text" 
-                   name="${fullKey}[value_${newIndex}]" 
-                   value="" 
+            <input type="text"
+                   name="${fullKey}[value_${newIndex}]"
+                   value=""
                    placeholder="Value"
                    class="flex-1 px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
                    data-value-index="${newIndex}"
                    onchange="updateKeyValuePairData('${fieldId}', '${fullKey}')">
-            <button type="button" 
+            <button type="button"
                     onclick="removeKeyValuePair('${fieldId}', ${newIndex})"
                     class="px-3 py-2 text-red-600 hover:text-red-800 hover:bg-red-50 rounded-md transition-colors"
                     title="Remove">
@@ -3710,10 +3710,10 @@ window.addKeyValuePair = function(fieldId, fullKey, maxProperties) {
             </button>
         </div>
     `;
-    
+
     pairsContainer.insertAdjacentHTML('beforeend', pairHtml);
     updateKeyValuePairData(fieldId, fullKey);
-    
+
     // Update add button state
     const addButton = pairsContainer.nextElementSibling;
     if (addButton && currentPairs.length + 1 >= maxProperties) {
@@ -3726,7 +3726,7 @@ window.addKeyValuePair = function(fieldId, fullKey, maxProperties) {
 window.removeKeyValuePair = function(fieldId, index) {
     const pairsContainer = document.getElementById(fieldId + '_pairs');
     if (!pairsContainer) return;
-    
+
     const pair = pairsContainer.querySelector(`.key-value-pair[data-index="${index}"]`);
     if (pair) {
         pair.remove();
@@ -3756,7 +3756,7 @@ window.removeKeyValuePair = function(fieldId, index) {
             const hiddenName = hiddenInput.getAttribute('name').replace(/_data$/, '');
             updateKeyValuePairData(fieldId, hiddenName);
         }
-        
+
         // Update add button state
         const addButton = pairsContainer.nextElementSibling;
         if (addButton) {
@@ -3774,11 +3774,11 @@ window.updateKeyValuePairData = function(fieldId, fullKey) {
     const pairsContainer = document.getElementById(fieldId + '_pairs');
     const hiddenInput = document.getElementById(fieldId + '_data');
     if (!pairsContainer || !hiddenInput) return;
-    
+
     const pairs = {};
     const keyInputs = pairsContainer.querySelectorAll('[data-key-index]');
     const valueInputs = pairsContainer.querySelectorAll('[data-value-index]');
-    
+
     keyInputs.forEach((keyInput, idx) => {
         const key = keyInput.value.trim();
         const valueInput = Array.from(valueInputs).find(v => v.getAttribute('data-value-index') === keyInput.getAttribute('data-key-index'));
@@ -3789,7 +3789,7 @@ window.updateKeyValuePairData = function(fieldId, fullKey) {
             }
         }
     });
-    
+
     hiddenInput.value = JSON.stringify(pairs);
 };
 
@@ -3798,17 +3798,17 @@ window.addArrayObjectItem = function(fieldId, fullKey, maxItems) {
     const itemsContainer = document.getElementById(fieldId + '_items');
     const hiddenInput = document.getElementById(fieldId + '_data');
     if (!itemsContainer || !hiddenInput) return;
-    
+
     const currentItems = itemsContainer.querySelectorAll('.array-object-item');
     if (currentItems.length >= maxItems) {
         alert(`Maximum ${maxItems} items allowed`);
         return;
     }
-    
+
     // Get schema for item properties from the hidden input's data attribute or currentPluginConfig
     const schema = (typeof currentPluginConfig !== 'undefined' && currentPluginConfig?.schema) || (typeof window.currentPluginConfig !== 'undefined' && window.currentPluginConfig?.schema);
     if (!schema) return;
-    
+
     // Navigate to the items schema
     const keys = fullKey.split('.');
     let itemsSchema = schema.properties;
@@ -3821,14 +3821,14 @@ window.addArrayObjectItem = function(fieldId, fullKey, maxItems) {
             }
         }
     }
-    
+
     if (!itemsSchema || !itemsSchema.properties) return;
-    
+
     const newIndex = currentItems.length;
     const itemHtml = renderArrayObjectItem(fieldId, fullKey, itemsSchema.properties, {}, newIndex, itemsSchema);
     itemsContainer.insertAdjacentHTML('beforeend', itemHtml);
     updateArrayObjectData(fieldId);
-    
+
     // Update add button state
     const addButton = itemsContainer.nextElementSibling;
     if (addButton && currentItems.length + 1 >= maxItems) {
@@ -3841,7 +3841,7 @@ window.addArrayObjectItem = function(fieldId, fullKey, maxItems) {
 window.removeArrayObjectItem = function(fieldId, index) {
     const itemsContainer = document.getElementById(fieldId + '_items');
     if (!itemsContainer) return;
-    
+
     const item = itemsContainer.querySelector(`.array-object-item[data-index="${index}"]`);
     if (item) {
         item.remove();
@@ -3871,7 +3871,7 @@ window.removeArrayObjectItem = function(fieldId, index) {
             });
         });
         updateArrayObjectData(fieldId);
-        
+
         // Update add button state
         const addButton = itemsContainer.nextElementSibling;
         if (addButton) {
@@ -3889,7 +3889,7 @@ window.updateArrayObjectData = function(fieldId) {
     const itemsContainer = document.getElementById(fieldId + '_items');
     const hiddenInput = document.getElementById(fieldId + '_data');
     if (!itemsContainer || !hiddenInput) return;
-    
+
     // Get existing items from hidden input to preserve non-editable properties
     let existingItems = [];
     try {
@@ -3900,10 +3900,10 @@ window.updateArrayObjectData = function(fieldId) {
     } catch (e) {
         console.error('Error parsing existing items data:', e);
     }
-    
+
     const items = [];
     const itemElements = itemsContainer.querySelectorAll('.array-object-item');
-    
+
     itemElements.forEach((itemEl, index) => {
         // Start with original item data from data attribute to preserve non-editable properties
         // This avoids index-based corruption after deletions/reindexing
@@ -3927,21 +3927,21 @@ window.updateArrayObjectData = function(fieldId) {
             }
         }
         const item = Object.assign({}, existingItem); // Copy existing item
-        
+
         // Get all text inputs in this item and overlay their values with type coercion
         itemEl.querySelectorAll('input[type="text"], input[type="url"], input[type="number"]').forEach(input => {
             const propKey = input.getAttribute('data-prop-key');
             if (propKey && propKey !== 'logo_file') {
                 let value = input.value.trim();
-                
+
                 // Type coercion: check input type or data-prop-type attribute
                 const inputType = input.type;
                 const propType = input.getAttribute('data-prop-type');
-                
+
                 if (inputType === 'number' || propType === 'number') {
                     // Use valueAsNumber if available, fallback to Number()
-                    const numValue = input.valueAsNumber !== undefined && !isNaN(input.valueAsNumber) 
-                        ? input.valueAsNumber 
+                    const numValue = input.valueAsNumber !== undefined && !isNaN(input.valueAsNumber)
+                        ? input.valueAsNumber
                         : Number(value);
                     item[propKey] = isNaN(numValue) ? value : numValue;
                 } else if (propType === 'array' || input.getAttribute('data-prop-is-list') === 'true') {
@@ -3984,7 +3984,7 @@ window.updateArrayObjectData = function(fieldId) {
             }
         });
         items.push(item);
-        
+
         // Update data-item-data attribute with the merged item to keep it in sync
         try {
             const itemDataJson = JSON.stringify(item);
@@ -3994,28 +3994,28 @@ window.updateArrayObjectData = function(fieldId) {
             console.error('Error updating data-item-data attribute:', e);
         }
     });
-    
+
     hiddenInput.value = JSON.stringify(items);
 };
 
 window.handleArrayObjectFileUpload = async function(event, fieldId, itemIndex, propKey, pluginId) {
     const file = event.target.files[0];
     if (!file) return;
-    
+
     // Derive item element from event instead of constructing ID (works after reindexing)
     const itemEl = event.target.closest('.array-object-item');
     if (!itemEl) {
         console.error('Array object item element not found');
         return;
     }
-    
+
     // Find file upload container within the item element, scoped to propKey
     const fileUploadContainer = itemEl.querySelector(`.file-upload-widget-inline[data-prop-key="${propKey}"]`);
     if (!fileUploadContainer) {
         console.error('File upload container not found for propKey:', propKey);
         return;
     }
-    
+
     // Get upload config from data attribute
     let uploadConfig = { allowed_types: ['image/png', 'image/jpeg', 'image/jpg', 'image/bmp'], max_size_mb: 5 };
     const uploadConfigBase64 = fileUploadContainer.getAttribute('data-upload-config');
@@ -4027,7 +4027,7 @@ window.handleArrayObjectFileUpload = async function(event, fieldId, itemIndex, p
             console.error('Error parsing upload config from data attribute:', e);
         }
     }
-    
+
     // Validate file type using uploadConfig
     const allowedTypes = uploadConfig.allowed_types || ['image/png', 'image/jpeg', 'image/jpg', 'image/bmp'];
     if (!allowedTypes.includes(file.type)) {
@@ -4036,7 +4036,7 @@ window.handleArrayObjectFileUpload = async function(event, fieldId, itemIndex, p
         }
         return;
     }
-    
+
     // Validate file size using uploadConfig
     const maxSizeMB = uploadConfig.max_size_mb || 5;
     if (file.size > maxSizeMB * 1024 * 1024) {
@@ -4045,7 +4045,7 @@ window.handleArrayObjectFileUpload = async function(event, fieldId, itemIndex, p
         }
         return;
     }
-    
+
     // Validate pluginId before upload (fail fast)
     if (!pluginId || pluginId === 'null' || pluginId === 'undefined' || (typeof pluginId === 'string' && pluginId.trim() === '')) {
         if (typeof showNotification === 'function') {
@@ -4054,18 +4054,18 @@ window.handleArrayObjectFileUpload = async function(event, fieldId, itemIndex, p
         console.error('File upload failed: pluginId is required');
         return;
     }
-    
+
     // Upload file
     const formData = new FormData();
     formData.append('plugin_id', pluginId);
     formData.append('files', file);
-    
+
     try {
         const response = await fetch('/api/v3/plugins/assets/upload', {
             method: 'POST',
             body: formData
         });
-        
+
         // Check response.ok before parsing JSON to avoid parsing errors on HTTP errors
         if (!response.ok) {
             const errorText = await response.text();
@@ -4084,24 +4084,24 @@ window.handleArrayObjectFileUpload = async function(event, fieldId, itemIndex, p
             }
             return;
         }
-        
+
         const data = await response.json();
-        
+
         if (data.status === 'success' && data.uploaded_files && data.uploaded_files.length > 0) {
             const uploadedFile = data.uploaded_files[0];
-            
+
             // Store file data in data-file-data attribute on the container (base64-encoded)
             const fileDataJson = JSON.stringify(uploadedFile);
             const fileDataBase64 = btoa(unescape(encodeURIComponent(fileDataJson)));
             fileUploadContainer.setAttribute('data-file-data', fileDataBase64);
             fileUploadContainer.setAttribute('data-prop-key', propKey);
-            
+
             // Update the display to show the uploaded image
             const existingImage = fileUploadContainer.querySelector('.uploaded-image-container');
             if (existingImage) {
                 existingImage.remove();
             }
-            
+
             const imageContainer = document.createElement('div');
             imageContainer.className = 'mt-2 flex items-center space-x-2 uploaded-image-container';
             const escapedPath = escapeAttribute(uploadedFile.path.replace(/^\/+/, ''));
@@ -4111,17 +4111,17 @@ window.handleArrayObjectFileUpload = async function(event, fieldId, itemIndex, p
             const currentItemIndex = itemEl.getAttribute('data-index') || itemIndex;
             imageContainer.innerHTML = `
                 <img src="/${escapedPath}" alt="Logo" class="w-16 h-16 object-cover rounded border">
-                <button type="button" 
+                <button type="button"
                         onclick="removeArrayObjectFile('${escapedFieldId}', ${currentItemIndex}, '${escapedPropKey}')"
                         class="text-red-600 hover:text-red-800">
                     <i class="fas fa-trash"></i> Remove
                 </button>
             `;
             fileUploadContainer.appendChild(imageContainer);
-            
+
             // Update the hidden input with the new file data
             updateArrayObjectData(fieldId);
-            
+
             if (typeof showNotification === 'function') {
                 showNotification('Logo uploaded successfully', 'success');
             }
@@ -4136,7 +4136,7 @@ window.handleArrayObjectFileUpload = async function(event, fieldId, itemIndex, p
             showNotification(`Upload error: ${error.message}`, 'error');
         }
     }
-    
+
     // Clear file input
     event.target.value = '';
 };
@@ -4148,19 +4148,19 @@ window.removeArrayObjectFile = function(fieldId, itemIndex, propKey) {
         console.error('File upload container not found');
         return;
     }
-    
+
     // Remove file data from data attribute
     fileUploadContainer.removeAttribute('data-file-data');
-    
+
     // Remove the image display
     const imageContainer = fileUploadContainer.querySelector('.uploaded-image-container');
     if (imageContainer) {
         imageContainer.remove();
     }
-    
+
     // Update the hidden input to remove the file data
     updateArrayObjectData(fieldId);
-    
+
     if (typeof showNotification === 'function') {
         showNotification('Logo removed', 'success');
     }
@@ -4173,43 +4173,43 @@ window.toggleNestedSection = function(sectionId, event) {
         event.stopPropagation();
         event.preventDefault();
     }
-    
+
     const content = document.getElementById(sectionId);
     const icon = document.getElementById(sectionId + '-icon');
-    
+
     if (!content || !icon) return;
-    
+
     // Prevent multiple simultaneous toggles
     if (content.dataset.toggling === 'true') {
         return;
     }
-    
+
     // Mark as toggling
     content.dataset.toggling = 'true';
-    
+
     // Check current state before making changes
     const hasCollapsed = content.classList.contains('collapsed');
     const hasExpanded = content.classList.contains('expanded');
     const displayStyle = content.style.display;
     const computedDisplay = window.getComputedStyle(content).display;
-    
+
     // Check if content is currently collapsed - prioritize class over display style
     const isCollapsed = hasCollapsed || (!hasExpanded && (displayStyle === 'none' || computedDisplay === 'none'));
-    
+
     if (isCollapsed) {
         // Expand the section
         content.classList.remove('collapsed');
         content.classList.add('expanded');
         content.style.display = 'block';
         content.style.overflow = 'hidden'; // Prevent content jumping during animation
-        
+
         // CRITICAL FIX: Use setTimeout to ensure browser has time to layout the element
         // When element goes from display:none to display:block, scrollHeight might be 0
         // We need to wait for the browser to calculate the layout
         setTimeout(() => {
             // Force reflow to ensure transition works
             void content.offsetHeight;
-            
+
             // Now measure the actual content height after layout
             const scrollHeight = content.scrollHeight;
             if (scrollHeight > 0) {
@@ -4222,16 +4222,16 @@ window.toggleNestedSection = function(sectionId, event) {
                 }, 10);
             }
         }, 10);
-        
+
         icon.classList.remove('fa-chevron-right');
         icon.classList.add('fa-chevron-down');
-        
+
         // Allow parent section to show overflow when expanded
         const sectionElement = content.closest('.nested-section');
         if (sectionElement) {
             sectionElement.style.overflow = 'visible';
         }
-        
+
         // After animation completes, remove max-height constraint to allow natural expansion
         // This allows parent sections to automatically expand
         setTimeout(() => {
@@ -4243,7 +4243,7 @@ window.toggleNestedSection = function(sectionId, event) {
             // Clear toggling flag
             content.dataset.toggling = 'false';
         }, 320); // Slightly longer than transition duration
-        
+
         // Scroll the expanded content into view after a short delay to allow animation
         setTimeout(() => {
             if (sectionElement) {
@@ -4266,25 +4266,25 @@ window.toggleNestedSection = function(sectionId, event) {
         content.classList.add('collapsed');
         content.classList.remove('expanded');
         content.style.overflow = 'hidden'; // Prevent content jumping during animation
-        
+
         // Set max-height to current scroll height first (required for smooth animation)
         const currentHeight = content.scrollHeight;
         content.style.maxHeight = currentHeight + 'px';
-        
+
         // Force reflow to apply the height
         void content.offsetHeight;
-        
+
         // Then animate to 0
         setTimeout(() => {
             content.style.maxHeight = '0';
         }, 10);
-        
+
         // Restore parent section overflow when collapsed
         const sectionElement = content.closest('.nested-section');
         if (sectionElement) {
             sectionElement.style.overflow = 'hidden';
         }
-        
+
         // Use setTimeout to set display:none after transition completes
         setTimeout(() => {
             if (content.classList.contains('collapsed')) {
@@ -4309,7 +4309,7 @@ function generateSimpleConfigForm(config, webUiActions = []) {
                 <h3 class="text-lg font-semibold text-gray-900 mb-3">Actions</h3>
                 <div class="space-y-3">
         `;
-        
+
         // Map color names to explicit Tailwind classes
         const colorMap = {
             'blue': { bg: 'bg-blue-50', border: 'border-blue-200', text: 'text-blue-900', textLight: 'text-blue-700', btn: 'bg-blue-600 hover:bg-blue-700' },
@@ -4318,13 +4318,13 @@ function generateSimpleConfigForm(config, webUiActions = []) {
             'yellow': { bg: 'bg-yellow-50', border: 'border-yellow-200', text: 'text-yellow-900', textLight: 'text-yellow-700', btn: 'bg-yellow-600 hover:bg-yellow-700' },
             'purple': { bg: 'bg-purple-50', border: 'border-purple-200', text: 'text-purple-900', textLight: 'text-purple-700', btn: 'bg-purple-600 hover:bg-purple-700' }
         };
-        
+
         webUiActions.forEach((action, index) => {
             const actionId = `action-${action.id}-${index}`;
             const statusId = `action-status-${action.id}-${index}`;
             const bgColor = action.color || 'blue';
             const colors = colorMap[bgColor] || colorMap['blue'];
-            
+
             actionsHtml += `
                     <div class="${colors.bg} border ${colors.border} rounded-lg p-4">
                         <div class="flex items-center justify-between">
@@ -4334,9 +4334,9 @@ function generateSimpleConfigForm(config, webUiActions = []) {
                                 </h4>
                                 <p class="text-sm ${colors.textLight}">${action.description || ''}</p>
                             </div>
-                            <button type="button" 
+                            <button type="button"
                                     id="${actionId}"
-                                    onclick="executePluginAction('${action.id}', ${index}, '${window.currentPluginConfig?.pluginId || ''}')" 
+                                    onclick="executePluginAction('${action.id}', ${index}, '${window.currentPluginConfig?.pluginId || ''}')"
                                     data-plugin-id="${window.currentPluginConfig?.pluginId || ''}"
                                     data-action-id="${action.id}"
                                     class="btn ${colors.btn} text-white px-4 py-2 rounded-md">
@@ -4352,7 +4352,7 @@ function generateSimpleConfigForm(config, webUiActions = []) {
             </div>
         `;
     }
-    
+
     return `
         <form id="plugin-config-form" class="space-y-4" novalidate>
             <div class="form-group">
@@ -4385,7 +4385,7 @@ let currentPluginConfigState = {
 async function initJsonEditor() {
     const textarea = document.getElementById('plugin-config-json-editor');
     if (!textarea) return null;
-    
+
     // Lazy load CodeMirror if needed
     if (typeof CodeMirror === 'undefined') {
         if (typeof window.loadCodeMirror === 'function') {
@@ -4402,12 +4402,12 @@ async function initJsonEditor() {
             return null;
         }
     }
-    
+
     if (currentPluginConfigState.jsonEditor) {
         currentPluginConfigState.jsonEditor.toTextArea();
         currentPluginConfigState.jsonEditor = null;
     }
-    
+
     const editor = CodeMirror.fromTextArea(textarea, {
         mode: 'application/json',
         theme: 'monokai',
@@ -4420,7 +4420,7 @@ async function initJsonEditor() {
         foldGutter: true,
         gutters: ['CodeMirror-linenumbers', 'CodeMirror-foldgutter']
     });
-    
+
     // Validate JSON on change
     editor.on('change', function() {
         const value = editor.getValue();
@@ -4431,7 +4431,7 @@ async function initJsonEditor() {
             editor.setOption('class', 'cm-error');
         }
     });
-    
+
     return editor;
 }
 
@@ -4441,7 +4441,7 @@ function switchPluginConfigView(view) {
     const jsonView = document.getElementById('plugin-config-json-view');
     const formBtn = document.getElementById('view-toggle-form');
     const jsonBtn = document.getElementById('view-toggle-json');
-    
+
     if (view === 'json') {
         formView.classList.add('hidden');
         jsonView.classList.remove('hidden');
@@ -4449,10 +4449,10 @@ function switchPluginConfigView(view) {
         formBtn.classList.add('text-gray-700', 'hover:bg-gray-200');
         jsonBtn.classList.add('active', 'bg-blue-600', 'text-white');
         jsonBtn.classList.remove('text-gray-700', 'hover:bg-gray-200');
-        
+
         // Sync form data to JSON editor
         syncFormToJson();
-        
+
         // Initialize editor if not already done
         if (!currentPluginConfigState.jsonEditor) {
             // Small delay to ensure textarea is visible, then load CodeMirror and initialize
@@ -4477,7 +4477,7 @@ function switchPluginConfigView(view) {
         jsonBtn.classList.add('text-gray-700', 'hover:bg-gray-200');
         formBtn.classList.add('active', 'bg-blue-600', 'text-white');
         formBtn.classList.remove('text-gray-700', 'hover:bg-gray-200');
-        
+
         // Sync JSON to form if JSON was edited
         syncJsonToForm();
     }
@@ -4490,7 +4490,7 @@ function syncFormToJson() {
 
     const schema = currentPluginConfigState.schema;
     const config = normalizeFormDataForConfig(form, schema);
-    
+
     // Deep merge with existing config to preserve nested structures
     function deepMerge(target, source) {
         for (const key in source) {
@@ -4505,7 +4505,7 @@ function syncFormToJson() {
         }
         return target;
     }
-    
+
     // Deep merge new form data into existing config
     currentPluginConfigState.config = deepMerge(
         JSON.parse(JSON.stringify(currentPluginConfigState.config)), // Deep clone
@@ -4516,12 +4516,12 @@ function syncFormToJson() {
 // Sync JSON editor content to form
 function syncJsonToForm() {
     if (!currentPluginConfigState.jsonEditor) return;
-    
+
     try {
         const jsonText = currentPluginConfigState.jsonEditor.getValue();
         const config = JSON.parse(jsonText);
         currentPluginConfigState.config = config;
-        
+
         // Update form fields (this is complex, so we'll reload the form)
         // For now, just update the config state - form will be regenerated on next open
         console.log('JSON synced to config state');
@@ -4537,11 +4537,11 @@ async function resetPluginConfigToDefaults() {
         showNotification('No plugin selected', 'error');
         return;
     }
-    
+
     if (!confirm('Are you sure you want to reset this plugin configuration to defaults? This will replace all current settings.')) {
         return;
     }
-    
+
     try {
         const response = await fetch('/api/v3/plugins/config/reset', {
             method: 'POST',
@@ -4551,16 +4551,16 @@ async function resetPluginConfigToDefaults() {
                 preserve_secrets: true
             })
         });
-        
+
         const data = await response.json();
-        
+
         if (data.status === 'success') {
             showNotification(data.message, 'success');
-            
+
             // Reload the config form with defaults
             const newConfig = data.data?.config || {};
             currentPluginConfigState.config = newConfig;
-            
+
             // Regenerate form
             const content = document.getElementById('plugin-config-content');
             if (content) {
@@ -4574,7 +4574,7 @@ async function resetPluginConfigToDefaults() {
                         }
                     });
             }
-            
+
             // Update JSON editor if it's visible
             if (currentPluginConfigState.jsonEditor) {
                 const jsonText = JSON.stringify(newConfig, null, 2);
@@ -4593,9 +4593,9 @@ async function resetPluginConfigToDefaults() {
 function displayValidationErrors(errors) {
     const errorContainer = document.getElementById('plugin-config-validation-errors');
     const errorList = document.getElementById('validation-errors-list');
-    
+
     if (!errorContainer || !errorList) return;
-    
+
     if (errors && errors.length > 0) {
         errorContainer.classList.remove('hidden');
         errorList.innerHTML = errors.map(error => `<li>${escapeHtml(error)}</li>`).join('');
@@ -4610,14 +4610,14 @@ async function saveConfigFromJsonEditor() {
     if (!currentPluginConfigState.jsonEditor || !currentPluginConfigState.pluginId) {
         return;
     }
-    
+
     try {
         const jsonText = currentPluginConfigState.jsonEditor.getValue();
         const config = JSON.parse(jsonText);
-        
+
         // Update state
         currentPluginConfigState.config = config;
-        
+
         // Save the configuration (will handle validation errors)
         savePluginConfiguration(currentPluginConfigState.pluginId, config);
     } catch (e) {
@@ -4634,38 +4634,38 @@ async function saveConfigFromJsonEditor() {
 window.closePluginConfigModal = function() {
         const modal = document.getElementById('plugin-config-modal');
     modal.style.display = 'none';
-    
+
     // Clean up JSON editor
     if (currentPluginConfigState.jsonEditor) {
         currentPluginConfigState.jsonEditor.toTextArea();
         currentPluginConfigState.jsonEditor = null;
     }
-    
+
     // Reset state
     currentPluginConfig = null;
     currentPluginConfigState.pluginId = null;
     currentPluginConfigState.config = {};
     currentPluginConfigState.schema = null;
-    
+
     // Hide validation errors
     displayValidationErrors([]);
-    
+
     console.log('Modal closed');
 }
 
 // Generic Plugin Action Handler
 window.executePluginAction = function(actionId, actionIndex, pluginIdParam = null) {
     console.log('[DEBUG] executePluginAction called - actionId:', actionId, 'actionIndex:', actionIndex, 'pluginIdParam:', pluginIdParam);
-    
+
     // Construct button ID first (we have actionId and actionIndex)
     const actionIdFull = `action-${actionId}-${actionIndex}`;
     const statusId = `action-status-${actionId}-${actionIndex}`;
     const btn = document.getElementById(actionIdFull);
     const statusDiv = document.getElementById(statusId);
-    
+
     // Get plugin ID from multiple sources with comprehensive fallback logic
     let pluginId = pluginIdParam;
-    
+
     // Fallback 1: Try to get from button's data-plugin-id attribute
     if (!pluginId && btn) {
         pluginId = btn.getAttribute('data-plugin-id');
@@ -4673,7 +4673,7 @@ window.executePluginAction = function(actionId, actionIndex, pluginIdParam = nul
             console.log('[DEBUG] Got pluginId from button data attribute:', pluginId);
         }
     }
-    
+
     // Fallback 2: Try to get from closest parent with data-plugin-id
     if (!pluginId && btn) {
         const parentWithPluginId = btn.closest('[data-plugin-id]');
@@ -4684,7 +4684,7 @@ window.executePluginAction = function(actionId, actionIndex, pluginIdParam = nul
             }
         }
     }
-    
+
     // Fallback 3: Try to get from plugin-config-container or plugin-config-tab
     if (!pluginId && btn) {
         const container = btn.closest('.plugin-config-container, .plugin-config-tab, [id^="plugin-config-"]');
@@ -4703,7 +4703,7 @@ window.executePluginAction = function(actionId, actionIndex, pluginIdParam = nul
             }
         }
     }
-    
+
     // Fallback 4: Try to get from currentPluginConfig
     if (!pluginId) {
         pluginId = currentPluginConfig?.pluginId;
@@ -4711,7 +4711,7 @@ window.executePluginAction = function(actionId, actionIndex, pluginIdParam = nul
             console.log('[DEBUG] Got pluginId from currentPluginConfig:', pluginId);
         }
     }
-    
+
     // Fallback 5: Try to get from Alpine.js context (activeTab)
     if (!pluginId && window.Alpine) {
         try {
@@ -4727,7 +4727,7 @@ window.executePluginAction = function(actionId, actionIndex, pluginIdParam = nul
             console.warn('[DEBUG] Error accessing Alpine context:', e);
         }
     }
-    
+
     // Fallback 6: Try to find from plugin tab elements (scoped to button context)
     if (!pluginId && btn) {
         try {
@@ -4773,7 +4773,7 @@ window.executePluginAction = function(actionId, actionIndex, pluginIdParam = nul
             console.warn('[DEBUG] Error in fallback 6 DOM lookup:', e);
         }
     }
-    
+
     // Final check - if still no pluginId, show error
     if (!pluginId) {
         console.error('No plugin ID available after all fallbacks. actionId:', actionId, 'actionIndex:', actionIndex);
@@ -4784,17 +4784,17 @@ window.executePluginAction = function(actionId, actionIndex, pluginIdParam = nul
         }
         return;
     }
-    
+
     console.log('[DEBUG] executePluginAction - Final pluginId:', pluginId, 'actionId:', actionId, 'actionIndex:', actionIndex);
-    
+
     if (!btn || !statusDiv) {
         console.error(`Action elements not found: ${actionIdFull}`);
         return;
     }
-    
+
     // Get action definition - try currentPluginConfig first, then fetch from API
     let action = currentPluginConfig?.webUiActions?.[actionIndex];
-    
+
     if (!action) {
         // Try to get from installed plugins
         if (window.installedPlugins) {
@@ -4804,7 +4804,7 @@ window.executePluginAction = function(actionId, actionIndex, pluginIdParam = nul
             }
         }
     }
-    
+
     if (!action) {
         console.error(`Action not found: ${actionId} for plugin ${pluginId}`);
         console.log('[DEBUG] currentPluginConfig:', currentPluginConfig);
@@ -4814,23 +4814,23 @@ window.executePluginAction = function(actionId, actionIndex, pluginIdParam = nul
         }
         return;
     }
-    
+
     console.log('[DEBUG] Found action:', action);
-    
+
     // Check if we're in step 2 (completing OAuth flow)
     if (btn.dataset.step === '2') {
         const redirectUrl = prompt(action.step2_prompt || 'Please paste the full redirect URL:');
         if (!redirectUrl || !redirectUrl.trim()) {
             return;
         }
-        
+
         // Complete authentication
         btn.disabled = true;
         const originalText = btn.innerHTML;
         btn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>Completing...';
         statusDiv.classList.remove('hidden');
         statusDiv.innerHTML = '<div class="text-blue-600"><i class="fas fa-spinner fa-spin mr-2"></i>Completing authentication...</div>';
-        
+
         fetch('/api/v3/plugins/action', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
@@ -4851,9 +4851,9 @@ window.executePluginAction = function(actionId, actionIndex, pluginIdParam = nul
                     showNotification(data.message || 'Action completed successfully!', 'success');
                 }
             } else {
-                statusDiv.innerHTML = `<div class="text-red-600"><i class="fas fa-exclamation-circle mr-2"></i>${data.message}</div>`;
+                statusDiv.innerHTML = `<div class="text-red-600"><i class="fas fa-exclamation-circle mr-2"></i>${escapeHtml(data.message || 'Error')}</div>`;
                 if (data.output) {
-                    statusDiv.innerHTML += `<pre class="mt-2 text-xs bg-red-50 p-2 rounded overflow-auto max-h-32">${data.output}</pre>`;
+                    statusDiv.innerHTML += `<pre class="mt-2 text-xs bg-red-50 p-2 rounded overflow-auto max-h-32">${escapeHtml(data.output)}</pre>`;
                 }
                 btn.innerHTML = originalText;
                 btn.disabled = false;
@@ -4868,14 +4868,14 @@ window.executePluginAction = function(actionId, actionIndex, pluginIdParam = nul
         });
         return;
     }
-    
+
     // Step 1: Execute action
     btn.disabled = true;
     const originalText = btn.innerHTML;
     btn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>Executing...';
     statusDiv.classList.remove('hidden');
     statusDiv.innerHTML = '<div class="text-blue-600"><i class="fas fa-spinner fa-spin mr-2"></i>Executing action...</div>';
-    
+
     fetch('/api/v3/plugins/action', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
@@ -4897,8 +4897,8 @@ window.executePluginAction = function(actionId, actionIndex, pluginIdParam = nul
                         </div>
                         <div class="mb-3">
                             <p class="text-sm text-blue-700 mb-2">1. Click the link below to authorize:</p>
-                            <a href="${data.auth_url}" target="_blank" class="text-blue-600 hover:text-blue-800 underline break-all">
-                                ${data.auth_url}
+                            <a href="${data.auth_url && data.auth_url.startsWith('http') ? escapeHtml(data.auth_url) : '#'}" target="_blank" class="text-blue-600 hover:text-blue-800 underline break-all">
+                                ${escapeHtml(data.auth_url || '')}
                             </a>
                         </div>
                         <div class="mb-2">
@@ -4920,7 +4920,7 @@ window.executePluginAction = function(actionId, actionIndex, pluginIdParam = nul
                         <div class="text-green-900 font-medium mb-2">
                             <i class="fas fa-check-circle mr-2"></i>${data.message || 'Action completed successfully'}
                         </div>
-                        ${data.output ? `<pre class="mt-2 text-xs bg-green-50 p-2 rounded overflow-auto max-h-32">${data.output}</pre>` : ''}
+                        ${data.output ? `<pre class="mt-2 text-xs bg-green-50 p-2 rounded overflow-auto max-h-32">${escapeHtml(data.output)}</pre>` : ''}
                     </div>
                 `;
                 btn.innerHTML = originalText;
@@ -4933,9 +4933,9 @@ window.executePluginAction = function(actionId, actionIndex, pluginIdParam = nul
             statusDiv.innerHTML = `
                 <div class="bg-red-50 border border-red-200 rounded p-3">
                     <div class="text-red-900 font-medium mb-2">
-                        <i class="fas fa-exclamation-circle mr-2"></i>${data.message || 'Action failed'}
+                        <i class="fas fa-exclamation-circle mr-2"></i>${escapeHtml(data.message || 'Action failed')}
                     </div>
-                    ${data.output ? `<pre class="mt-2 text-xs bg-red-50 p-2 rounded overflow-auto max-h-32">${data.output}</pre>` : ''}
+                    ${data.output ? `<pre class="mt-2 text-xs bg-red-50 p-2 rounded overflow-auto max-h-32">${escapeHtml(data.output)}</pre>` : ''}
                 </div>
             `;
             btn.innerHTML = originalText;
@@ -4962,18 +4962,18 @@ if (!window.updatePlugin || window.updatePlugin.toString().includes('[UPDATE]'))
             }
             return Promise.reject(new Error('Invalid plugin ID'));
         }
-        
+
         showNotification(`Updating ${pluginId}...`, 'info');
 
         // Prepare request body
         const requestBody = { plugin_id: pluginId };
         const requestBodyJson = JSON.stringify(requestBody);
-        
+
         console.log('[UPDATE] Sending request:', { url: '/api/v3/plugins/update', body: requestBodyJson });
 
         return fetch('/api/v3/plugins/update', {
             method: 'POST',
-            headers: { 
+            headers: {
                 'Content-Type': 'application/json',
                 'Accept': 'application/json'
             },
@@ -4991,13 +4991,13 @@ if (!window.updatePlugin || window.updatePlugin.toString().includes('[UPDATE]'))
                 } catch (e) {
                     errorData = { message: `Server error: ${response.status} ${response.statusText}` };
                 }
-                
+
                 if (typeof showNotification === 'function') {
                     showNotification(errorData.message || `Update failed: ${response.status}`, 'error');
                 }
                 throw new Error(errorData.message || `Update failed: ${response.status}`);
             }
-            
+
             // Parse successful response
             return response.json();
         })
@@ -5041,7 +5041,7 @@ window.uninstallPlugin = function(pluginId) {
     .then(response => response.json())
     .then(data => {
         console.log('Uninstall response:', data);
-        
+
         // Check if operation was queued
         if (data.status === 'success' && data.data && data.data.operation_id) {
             // Operation was queued, poll for completion
@@ -5078,7 +5078,7 @@ function pollOperationStatus(operationId, pluginId, pluginName, maxAttempts = 60
             if (data.status === 'success' && data.data) {
                 const operation = data.data;
                 const status = operation.status;
-                
+
                 if (status === 'completed') {
                     // Operation completed successfully
                     handleUninstallSuccess(pluginId);
@@ -5632,7 +5632,7 @@ window.installPlugin = function(pluginId, branch = null) {
 
 window.installFromCustomRegistry = function(pluginId, registryUrl, pluginPath, branch = null) {
     const repoUrl = registryUrl;
-    const requestBody = { 
+    const requestBody = {
         repo_url: repoUrl,
         plugin_id: pluginId,
         plugin_path: pluginPath
@@ -5640,7 +5640,7 @@ window.installFromCustomRegistry = function(pluginId, registryUrl, pluginPath, b
     if (branch) {
         requestBody.branch = branch;
     }
-    
+
     fetch('/api/v3/plugins/install-from-url', {
         method: 'POST',
         headers: {
@@ -5674,15 +5674,15 @@ window.installFromCustomRegistry = function(pluginId, registryUrl, pluginPath, b
 
 function setupCollapsibleSections() {
     console.log('[setupCollapsibleSections] Setting up collapsible sections...');
-    
+
     // Installed Plugins and Plugin Store sections no longer have collapse buttons
     // They are always visible
-    
+
     // Functions are now defined outside IIFE, just attach the handler
     if (window.attachGithubTokenCollapseHandler) {
         window.attachGithubTokenCollapseHandler();
     }
-    
+
     console.log('[setupCollapsibleSections] Collapsible sections setup complete');
 }
 
@@ -5702,28 +5702,28 @@ function loadSavedRepositories() {
 function renderSavedRepositories(repositories) {
     const container = document.getElementById('saved-repositories-list');
     const countEl = document.getElementById('saved-repos-count');
-    
+
     if (!container) return;
-    
+
     if (countEl) {
         countEl.textContent = `${repositories.length} saved`;
     }
-    
+
     if (repositories.length === 0) {
         container.innerHTML = '<p class="text-xs text-gray-500 italic">No saved repositories yet. Save a repository URL to see it here.</p>';
         return;
     }
-    
+
     // Helper function to escape for JavaScript strings
     const escapeJs = (text) => {
         return JSON.stringify(text || '');
     };
-    
+
     container.innerHTML = repositories.map(repo => {
         const repoUrl = repo.url || '';
         const repoName = repo.name || repoUrl;
         const repoType = repo.type || 'single';
-        
+
         return `
             <div class="bg-white border border-gray-200 rounded p-2 flex items-center justify-between">
                 <div class="flex-1 min-w-0">
@@ -5745,7 +5745,7 @@ window.removeSavedRepository = function(repoUrl) {
     if (!confirm('Remove this saved repository? Its plugins will no longer appear in the store.')) {
         return;
     }
-    
+
     fetch('/api/v3/plugins/saved-repositories', {
         method: 'DELETE',
         headers: {
@@ -5775,20 +5775,20 @@ function attachInstallButtonHandler() {
     const installBtn = document.getElementById('install-plugin-from-url');
     const pluginUrlInput = document.getElementById('github-plugin-url');
     const pluginStatusDiv = document.getElementById('github-plugin-status');
-    
+
     console.log('[attachInstallButtonHandler] Looking for install button elements:', {
         installBtn: !!installBtn,
         pluginUrlInput: !!pluginUrlInput,
         pluginStatusDiv: !!pluginStatusDiv
     });
-    
+
     if (installBtn && pluginUrlInput) {
         // Check if handler already attached (prevent duplicates)
         if (installBtn.hasAttribute('data-handler-attached')) {
             console.log('[attachInstallButtonHandler] Handler already attached, skipping');
             return;
         }
-        
+
         // Clone button to remove any existing listeners (prevents duplicate handlers)
         const parent = installBtn.parentNode;
         if (parent) {
@@ -5798,14 +5798,14 @@ function attachInstallButtonHandler() {
             // Mark as having handler attached
             newBtn.setAttribute('data-handler-attached', 'true');
             parent.replaceChild(newBtn, installBtn);
-            
+
             console.log('[attachInstallButtonHandler] Install button cloned and replaced, type:', newBtn.type);
-            
+
             newBtn.addEventListener('click', function(e) {
                 e.preventDefault();
                 e.stopPropagation();
                 console.log('[attachInstallButtonHandler] Install button clicked!');
-                
+
                 const repoUrl = pluginUrlInput.value.trim();
                 if (!repoUrl) {
                     if (pluginStatusDiv) {
@@ -5813,28 +5813,28 @@ function attachInstallButtonHandler() {
                     }
                     return;
                 }
-                
+
                 if (!repoUrl.includes('github.com')) {
                     if (pluginStatusDiv) {
                         pluginStatusDiv.innerHTML = '<span class="text-red-600"><i class="fas fa-exclamation-circle mr-1"></i>Please enter a valid GitHub URL</span>';
                     }
                     return;
                 }
-                
+
                 newBtn.disabled = true;
                 newBtn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>Installing...';
                 if (pluginStatusDiv) {
                     pluginStatusDiv.innerHTML = '<span class="text-blue-600"><i class="fas fa-spinner fa-spin mr-1"></i>Installing plugin...</span>';
                 }
-                
+
                 const branch = document.getElementById('plugin-branch-input')?.value?.trim() || null;
                 const requestBody = { repo_url: repoUrl };
                 if (branch) {
                     requestBody.branch = branch;
                 }
-                
+
                 console.log('[attachInstallButtonHandler] Sending install request:', requestBody);
-                
+
                 fetch('/api/v3/plugins/install-from-url', {
                     method: 'POST',
                     headers: {
@@ -5853,7 +5853,7 @@ function attachInstallButtonHandler() {
                             pluginStatusDiv.innerHTML = `<span class="text-green-600"><i class="fas fa-check-circle mr-1"></i>Successfully installed: ${data.plugin_id}</span>`;
                         }
                         pluginUrlInput.value = '';
-                        
+
                         // Refresh installed plugins list
                         setTimeout(() => {
                             loadInstalledPlugins();
@@ -5875,7 +5875,7 @@ function attachInstallButtonHandler() {
                     newBtn.innerHTML = '<i class="fas fa-download mr-2"></i>Install';
                 });
             });
-            
+
             // Allow Enter key to trigger install
             pluginUrlInput.addEventListener('keypress', function(e) {
                 if (e.key === 'Enter') {
@@ -5884,7 +5884,7 @@ function attachInstallButtonHandler() {
                     newBtn.click();
                 }
             });
-            
+
             console.log('[attachInstallButtonHandler] Install button handler attached successfully');
         } else {
             console.error('[attachInstallButtonHandler] Install button parent not found!');
@@ -5899,39 +5899,39 @@ function attachInstallButtonHandler() {
 
 function setupGitHubInstallHandlers() {
     console.log('[setupGitHubInstallHandlers] ===== FUNCTION CALLED ===== Setting up GitHub install handlers...');
-    
+
     // Toggle GitHub install section visibility
     const toggleBtn = document.getElementById('toggle-github-install');
     const installSection = document.getElementById('github-install-section');
     const icon = document.getElementById('github-install-icon');
-    
+
     console.log('[setupGitHubInstallHandlers] Elements found:', {
         button: !!toggleBtn,
         section: !!installSection,
         icon: !!icon
     });
-    
+
     if (toggleBtn && installSection) {
         // Clone button to remove any existing listeners
         const parent = toggleBtn.parentNode;
         if (parent) {
             const newBtn = toggleBtn.cloneNode(true);
             parent.replaceChild(newBtn, toggleBtn);
-            
+
             newBtn.addEventListener('click', function(e) {
                 e.stopPropagation();
                 e.preventDefault();
                 console.log('[setupGitHubInstallHandlers] GitHub install toggle clicked');
-                
+
                 const section = document.getElementById('github-install-section');
                 const iconEl = document.getElementById('github-install-icon');
                 const btn = document.getElementById('toggle-github-install');
-                
+
                 if (!section || !btn) return;
-                
+
                 const hasHiddenClass = section.classList.contains('hidden');
                 const computedDisplay = window.getComputedStyle(section).display;
-                
+
                 if (hasHiddenClass || computedDisplay === 'none') {
                     // Show section - remove hidden, ensure visible
                     section.classList.remove('hidden');
@@ -5942,7 +5942,7 @@ function setupGitHubInstallHandlers() {
                     }
                     const span = btn.querySelector('span');
                     if (span) span.textContent = 'Hide';
-                    
+
                     // Re-attach install button handler when section is shown (in case elements weren't ready before)
                     console.log('[setupGitHubInstallHandlers] Section shown, will re-attach install button handler in 100ms');
                     setTimeout(() => {
@@ -5966,19 +5966,19 @@ function setupGitHubInstallHandlers() {
     } else {
         console.warn('[setupGitHubInstallHandlers] Required elements not found');
     }
-    
+
     // Install single plugin from URL - use separate function so we can re-call it
     console.log('[setupGitHubInstallHandlers] About to call attachInstallButtonHandler...');
     attachInstallButtonHandler();
     console.log('[setupGitHubInstallHandlers] Called attachInstallButtonHandler');
-    
+
     // Load registry from URL
     const loadRegistryBtn = document.getElementById('load-registry-from-url');
     const registryUrlInput = document.getElementById('github-registry-url');
     const registryStatusDiv = document.getElementById('registry-status');
     const customRegistryPlugins = document.getElementById('custom-registry-plugins');
     const customRegistryGrid = document.getElementById('custom-registry-grid');
-    
+
     if (loadRegistryBtn && registryUrlInput) {
         loadRegistryBtn.addEventListener('click', function() {
             const repoUrl = registryUrlInput.value.trim();
@@ -5986,17 +5986,17 @@ function setupGitHubInstallHandlers() {
                 registryStatusDiv.innerHTML = '<span class="text-red-600"><i class="fas fa-exclamation-circle mr-1"></i>Please enter a GitHub URL</span>';
                 return;
             }
-            
+
             if (!repoUrl.includes('github.com')) {
                 registryStatusDiv.innerHTML = '<span class="text-red-600"><i class="fas fa-exclamation-circle mr-1"></i>Please enter a valid GitHub URL</span>';
                 return;
             }
-            
+
             loadRegistryBtn.disabled = true;
             loadRegistryBtn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>Loading...';
             registryStatusDiv.innerHTML = '<span class="text-blue-600"><i class="fas fa-spinner fa-spin mr-1"></i>Loading registry...</span>';
             customRegistryPlugins.classList.add('hidden');
-            
+
             fetch('/api/v3/plugins/registry-from-url', {
                 method: 'POST',
                 headers: {
@@ -6024,7 +6024,7 @@ function setupGitHubInstallHandlers() {
                 loadRegistryBtn.innerHTML = '<i class="fas fa-search mr-2"></i>Load Registry';
             });
         });
-        
+
         // Allow Enter key to trigger load
         registryUrlInput.addEventListener('keypress', function(e) {
             if (e.key === 'Enter') {
@@ -6032,7 +6032,7 @@ function setupGitHubInstallHandlers() {
             }
         });
     }
-    
+
     // Save registry URL button
     const saveRegistryBtn = document.getElementById('save-registry-url');
     if (saveRegistryBtn && registryUrlInput) {
@@ -6042,15 +6042,15 @@ function setupGitHubInstallHandlers() {
                 showError('Please enter a repository URL first');
                 return;
             }
-            
+
             if (!repoUrl.includes('github.com')) {
                 showError('Please enter a valid GitHub URL');
                 return;
             }
-            
+
             saveRegistryBtn.disabled = true;
             saveRegistryBtn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>Saving...';
-            
+
             fetch('/api/v3/plugins/saved-repositories', {
                 method: 'POST',
                 headers: {
@@ -6078,7 +6078,7 @@ function setupGitHubInstallHandlers() {
             });
         });
     }
-    
+
     // Refresh saved repos button
     const refreshSavedReposBtn = document.getElementById('refresh-saved-repos');
     if (refreshSavedReposBtn) {
@@ -6093,12 +6093,12 @@ function setupGitHubInstallHandlers() {
 function renderCustomRegistryPlugins(plugins, registryUrl) {
     const container = document.getElementById('custom-registry-grid');
     if (!container) return;
-    
+
     if (plugins.length === 0) {
         container.innerHTML = '<p class="text-sm text-gray-500 col-span-full">No plugins found in this registry</p>';
         return;
     }
-    
+
     // Escape HTML helper
     const escapeHtml = (text) => {
         if (!text) return '';
@@ -6106,23 +6106,23 @@ function renderCustomRegistryPlugins(plugins, registryUrl) {
         div.textContent = text;
         return div.innerHTML;
     };
-    
+
     // Helper function to escape for JavaScript strings
     const escapeJs = (text) => {
         return JSON.stringify(text || '');
     };
-    
+
     container.innerHTML = plugins.map(plugin => {
         const isInstalled = isStorePluginInstalled(plugin);
         const pluginIdJs = escapeJs(plugin.id);
         const escapedUrlJs = escapeJs(registryUrl);
         const pluginPathJs = escapeJs(plugin.plugin_path || '');
         const branchInputId = `branch-input-custom-${plugin.id.replace(/[^a-zA-Z0-9]/g, '-')}`;
-        
-        const installBtn = isInstalled 
+
+        const installBtn = isInstalled
             ? '<button class="px-3 py-1 text-xs bg-gray-400 text-white rounded cursor-not-allowed" disabled><i class="fas fa-check mr-1"></i>Installed</button>'
             : `<button onclick='if(window.installFromCustomRegistry){const branchInput = document.getElementById("${branchInputId}"); window.installFromCustomRegistry(${pluginIdJs}, ${escapedUrlJs}, ${pluginPathJs}, branchInput?.value?.trim() || null)}else{console.error("installFromCustomRegistry not available")}' class="px-3 py-1 text-xs bg-blue-600 hover:bg-blue-700 text-white rounded"><i class="fas fa-download mr-1"></i>Install</button>`;
-        
+
         return `
             <div class="bg-white border border-gray-200 rounded-lg p-3">
                 <div class="flex items-start justify-between mb-2">
@@ -6136,8 +6136,8 @@ function renderCustomRegistryPlugins(plugins, registryUrl) {
                         <label for="${branchInputId}" class="text-xs text-gray-600 whitespace-nowrap">
                             <i class="fas fa-code-branch mr-1"></i>Branch:
                         </label>
-                        <input type="text" id="${branchInputId}" 
-                               placeholder="main (default)" 
+                        <input type="text" id="${branchInputId}"
+                               placeholder="main (default)"
                                class="flex-1 px-2 py-1 text-xs border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500">
                     </div>
                     <div class="flex items-center justify-between">
@@ -6205,10 +6205,10 @@ function savePluginConfiguration(pluginId, config) {
                 return { error: true, status: response.status, ...data };
             }).catch(() => {
                 // If JSON parsing fails, return generic error
-                return { 
-                    error: true, 
-                    status: response.status, 
-                    message: `Server error: ${response.status} ${response.statusText}` 
+                return {
+                    error: true,
+                    status: response.status,
+                    message: `Server error: ${response.status} ${response.statusText}`
                 };
             });
         }
@@ -6266,13 +6266,13 @@ function escapeAttribute(text) {
 // Format date for display
 function formatDate(dateString) {
     if (!dateString) return 'Unknown';
-    
+
     try {
         const date = new Date(dateString);
         const now = new Date();
         const diffTime = Math.abs(now - date);
         const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-        
+
         if (diffDays < 1) {
             return 'Today';
         } else if (diffDays < 2) {
@@ -6310,13 +6310,13 @@ function formatCommit(commit, branch) {
 // Check if plugin is new (updated within last 7 days)
 function isNewPlugin(lastUpdated) {
     if (!lastUpdated) return false;
-    
+
     try {
         const date = new Date(lastUpdated);
         const now = new Date();
         const diffTime = Math.abs(now - date);
         const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-        
+
         return diffDays <= 7;
     } catch (e) {
         return false;
@@ -6340,7 +6340,7 @@ function debounce(func, wait) {
 function togglePasswordVisibility(fieldId) {
     const input = document.getElementById(fieldId);
     const icon = document.getElementById(fieldId + '-icon');
-    
+
     if (input && icon) {
         if (input.type === 'password') {
             input.type = 'text';
@@ -6361,17 +6361,17 @@ window.openGithubTokenSettings = function() {
     const settings = document.getElementById('github-token-settings');
     const warning = document.getElementById('github-auth-warning');
     const tokenContent = document.getElementById('github-token-content');
-    
+
     if (settings) {
         // Show settings panel using both methods
         settings.classList.remove('hidden');
         settings.style.display = '';
-        
+
                         // Expand the content when opening
                         if (tokenContent) {
                             tokenContent.style.removeProperty('display');
                             tokenContent.classList.remove('hidden');
-            
+
             // Update collapse button state
             const tokenIconCollapse = document.getElementById('github-token-icon-collapse');
             const toggleTokenCollapseBtn = document.getElementById('toggle-github-token-collapse');
@@ -6384,7 +6384,7 @@ window.openGithubTokenSettings = function() {
                 if (span) span.textContent = 'Collapse';
             }
         }
-        
+
         // When opening settings, hide the warning banner
         if (warning) {
             warning.classList.add('hidden');
@@ -6392,7 +6392,7 @@ window.openGithubTokenSettings = function() {
             // Clear any dismissal state since user is actively configuring
             sessionStorage.removeItem('github-auth-warning-dismissed');
         }
-        
+
         // Load token when opening the panel
         loadGithubToken();
     }
@@ -6401,7 +6401,7 @@ window.openGithubTokenSettings = function() {
 window.toggleGithubTokenVisibility = function() {
     const input = document.getElementById('github-token-input');
     const icon = document.getElementById('github-token-icon');
-    
+
     if (input && icon) {
         if (input.type === 'password') {
             input.type = 'text';
@@ -6418,9 +6418,9 @@ window.toggleGithubTokenVisibility = function() {
 window.loadGithubToken = function() {
     const input = document.getElementById('github-token-input');
     const loadButton = document.querySelector('button[onclick="loadGithubToken()"]');
-    
+
     if (!input) return;
-    
+
     // Set loading state on load button
     const originalButtonContent = loadButton ? loadButton.innerHTML : '';
     if (loadButton) {
@@ -6428,7 +6428,7 @@ window.loadGithubToken = function() {
         loadButton.classList.add('opacity-50', 'cursor-not-allowed');
         loadButton.innerHTML = '<i class="fas fa-spinner fa-spin mr-1"></i>Loading...';
     }
-    
+
     fetch('/api/v3/config/secrets')
         .then(response => {
             if (!response.ok) {
@@ -6441,7 +6441,7 @@ window.loadGithubToken = function() {
                 // Handle empty data (secrets file doesn't exist) - API returns {} in this case
                 const secrets = data.data || {};
                 const token = secrets.github?.api_token || '';
-                
+
                 if (input) {
                     if (token && token !== 'YOUR_GITHUB_PERSONAL_ACCESS_TOKEN') {
                         // Token exists and is valid
@@ -6483,21 +6483,21 @@ window.saveGithubToken = function() {
     const input = document.getElementById('github-token-input');
     const saveButton = document.querySelector('button[onclick="saveGithubToken()"]');
     if (!input) return;
-    
+
     const token = input.value.trim();
-    
+
     if (!token) {
         showNotification('Please enter a GitHub token', 'error');
         return;
     }
-    
+
     // Client-side token validation
     if (!token.startsWith('ghp_') && !token.startsWith('github_pat_')) {
         if (!confirm('Token format looks invalid. GitHub tokens should start with "ghp_" or "github_pat_". Continue anyway?')) {
             return;
         }
     }
-    
+
     // Set loading state on save button
     const originalButtonContent = saveButton ? saveButton.innerHTML : '';
     if (saveButton) {
@@ -6505,7 +6505,7 @@ window.saveGithubToken = function() {
         saveButton.classList.add('opacity-50', 'cursor-not-allowed');
         saveButton.innerHTML = '<i class="fas fa-spinner fa-spin mr-1"></i>Saving...';
     }
-    
+
     // Load current secrets config
     fetch('/api/v3/config/secrets')
         .then(response => {
@@ -6517,13 +6517,13 @@ window.saveGithubToken = function() {
         .then(data => {
             if (data.status === 'success') {
                 const secrets = data.data || {};
-                
+
                 // Update GitHub token
                 if (!secrets.github) {
                     secrets.github = {};
                 }
                 secrets.github.api_token = token;
-                
+
                 // Save updated secrets
                 return fetch('/api/v3/config/raw/secrets', {
                     method: 'POST',
@@ -6543,13 +6543,13 @@ window.saveGithubToken = function() {
         .then(data => {
             if (data.status === 'success') {
                 showNotification('GitHub token saved successfully! Rate limit increased to 5,000/hour', 'success');
-                
+
                 // Clear input field for security (user can reload if needed)
                 input.value = '';
-                
+
                 // Clear the dismissal flag so warning can properly hide/show based on token status
                 sessionStorage.removeItem('github-auth-warning-dismissed');
-                
+
                 // Small delay to ensure backend has reloaded the token, then refresh status
                 // checkGitHubAuthStatus() will handle collapsing the panel automatically
                 // Reduced delay from 300ms to 100ms - backend should reload quickly
@@ -6598,7 +6598,7 @@ window.showGithubTokenInstructions = function() {
     const instructions = `
         <div class="space-y-4">
             <h4 class="font-semibold text-lg">How to Add a GitHub Token</h4>
-            
+
             <div class="space-y-3">
                 <div class="bg-gray-50 p-3 rounded">
                     <h5 class="font-medium mb-2">Step 1: Create a GitHub Token</h5>
@@ -6610,7 +6610,7 @@ window.showGithubTokenInstructions = function() {
                         <li>Copy the generated token (it starts with "ghp_")</li>
                     </ol>
                 </div>
-                
+
                 <div class="bg-gray-50 p-3 rounded">
                     <h5 class="font-medium mb-2">Step 2: Add Token to LEDMatrix</h5>
                     <ol class="list-decimal list-inside space-y-1 text-sm">
@@ -6625,7 +6625,7 @@ window.showGithubTokenInstructions = function() {
                         <li>Restart the web service: <code class="bg-gray-200 px-1 rounded">sudo systemctl restart ledmatrix-web</code></li>
                     </ol>
                 </div>
-                
+
                 <div class="bg-blue-50 p-3 rounded border border-blue-200">
                     <p class="text-sm text-blue-800">
                         <i class="fas fa-info-circle mr-2"></i>
@@ -6633,7 +6633,7 @@ window.showGithubTokenInstructions = function() {
                     </p>
                 </div>
             </div>
-            
+
             <div class="flex justify-end">
                 <button onclick="closeInstructionsModal()" class="btn bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md">
                     Got it!
@@ -6641,12 +6641,12 @@ window.showGithubTokenInstructions = function() {
             </div>
         </div>
     `;
-    
+
     // Use the existing plugin config modal for instructions
     const modal = document.getElementById('plugin-config-modal');
     const title = document.getElementById('plugin-config-title');
     const content = document.getElementById('plugin-config-content');
-    
+
     title.textContent = 'GitHub Token Setup';
     content.innerHTML = instructions;
     modal.style.display = 'flex';
@@ -6669,20 +6669,20 @@ window.handleCredentialsUpload = async function(event, fieldId, uploadEndpoint, 
     if (!file) {
         return;
     }
-    
+
     // Validate file extension
     const fileExt = '.' + file.name.split('.').pop().toLowerCase();
     if (!fileExt || fileExt === '.') {
         showNotification('Please select a valid file', 'error');
         return;
     }
-    
+
     // Validate file size (1MB max)
     if (file.size > 1024 * 1024) {
         showNotification('File exceeds 1MB limit', 'error');
         return;
     }
-    
+
     // Show upload status
     const statusEl = document.getElementById(fieldId + '_status');
     if (statusEl) {
@@ -6692,11 +6692,11 @@ window.handleCredentialsUpload = async function(event, fieldId, uploadEndpoint, 
         statusEl.appendChild(spinner);
         statusEl.appendChild(document.createTextNode('Uploading...'));
     }
-    
+
     // Create form data
     const formData = new FormData();
     formData.append('file', file);
-    
+
     try {
         const response = await fetch(uploadEndpoint, {
             method: 'POST',
@@ -6716,13 +6716,13 @@ window.handleCredentialsUpload = async function(event, fieldId, uploadEndpoint, 
             if (hiddenInput) {
                 hiddenInput.value = targetFilename || file.name;
             }
-            
+
             // Update status
             if (statusEl) {
                 statusEl.textContent = `✓ Uploaded: ${targetFilename || file.name}`;
                 statusEl.className = 'text-sm text-green-600';
             }
-            
+
             showNotification('Credentials file uploaded successfully', 'success');
         } else {
             if (statusEl) {
@@ -6754,13 +6754,13 @@ window.deleteUploadedFile = async function(fieldId, fileId, pluginId, fileType, 
     if (!confirm(`Are you sure you want to delete this ${fileTypeLabel}?`)) {
         return;
     }
-    
+
     try {
         const deleteEndpoint = customDeleteEndpoint || (fileType === 'json' ? '/api/v3/plugins/of-the-day/json/delete' : '/api/v3/plugins/assets/delete');
-        const requestBody = fileType === 'json' 
+        const requestBody = fileType === 'json'
             ? { file_id: fileId }
             : { plugin_id: pluginId, image_id: fileId };
-        
+
         const response = await fetch(deleteEndpoint, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -6833,24 +6833,24 @@ window.updateImageList = function(fieldId, images) {
     if (hiddenInput) {
         hiddenInput.value = JSON.stringify(images);
     }
-    
+
     // Update the display
     const imageList = document.getElementById(`${fieldId}_image_list`);
     if (imageList) {
         const uploadConfig = window.getUploadConfig(fieldId);
         const pluginId = uploadConfig.plugin_id || window.currentPluginConfig?.pluginId || 'static-image';
-        
+
         imageList.innerHTML = images.map((img, idx) => {
             const imgSchedule = img.schedule || {};
             const hasSchedule = imgSchedule.enabled && imgSchedule.mode && imgSchedule.mode !== 'always';
             const scheduleSummary = hasSchedule ? (window.getScheduleSummary ? window.getScheduleSummary(imgSchedule) : 'Scheduled') : 'Always shown';
-            
+
             return `
             <div id="img_${img.id || idx}" class="bg-gray-50 p-3 rounded-lg border border-gray-200">
                 <div class="flex items-center justify-between mb-2">
                     <div class="flex items-center space-x-3 flex-1">
-                        <img src="/${img.path || ''}" 
-                             alt="${img.filename || ''}" 
+                        <img src="/${img.path || ''}"
+                             alt="${img.filename || ''}"
                              class="w-16 h-16 object-cover rounded"
                              onerror="this.style.display='none'; this.nextElementSibling.style.display='block';">
                         <div style="display:none;" class="w-16 h-16 bg-gray-200 rounded flex items-center justify-center">
@@ -6865,13 +6865,13 @@ window.updateImageList = function(fieldId, images) {
                         </div>
                     </div>
                     <div class="flex items-center space-x-2 ml-4">
-                        <button type="button" 
+                        <button type="button"
                                 onclick="window.openImageSchedule('${fieldId}', '${img.id}', ${idx})"
-                                class="text-blue-600 hover:text-blue-800 p-2" 
+                                class="text-blue-600 hover:text-blue-800 p-2"
                                 title="Schedule this image">
                             <i class="fas fa-calendar-alt"></i>
                         </button>
-                        <button type="button" 
+                        <button type="button"
                                 onclick="window.deleteUploadedImage('${fieldId}', '${img.id}', '${pluginId}')"
                                 class="text-red-600 hover:text-red-800 p-2"
                                 title="Delete image">
@@ -6903,7 +6903,7 @@ window.hideUploadProgress = function(fieldId) {
     const maxFiles = uploadConfig.max_files || 10;
     const maxSizeMB = uploadConfig.max_size_mb || 5;
     const allowedTypes = uploadConfig.allowed_types || ['image/png', 'image/jpeg', 'image/bmp', 'image/gif'];
-    
+
     const dropZone = document.getElementById(`${fieldId}_drop_zone`);
     if (dropZone) {
         dropZone.innerHTML = `
@@ -6937,23 +6937,23 @@ window.getScheduleSummary = function(schedule) {
     if (!schedule || !schedule.enabled || schedule.mode === 'always') {
         return 'Always shown';
     }
-    
+
     if (schedule.mode === 'time_range') {
         return `${schedule.start_time || '08:00'} - ${schedule.end_time || '18:00'} (daily)`;
     }
-    
+
     if (schedule.mode === 'per_day' && schedule.days) {
         const enabledDays = Object.entries(schedule.days)
             .filter(([day, config]) => config && config.enabled)
             .map(([day]) => day.charAt(0).toUpperCase() + day.slice(1, 3));
-        
+
         if (enabledDays.length === 0) {
             return 'Never shown';
         }
-        
+
         return enabledDays.join(', ') + ' only';
     }
-    
+
     return 'Scheduled';
 }
 
@@ -6961,32 +6961,32 @@ window.openImageSchedule = function(fieldId, imageId, imageIdx) {
     const currentImages = getCurrentImages(fieldId);
     const image = currentImages[imageIdx];
     if (!image) return;
-    
+
     const scheduleContainer = document.getElementById(`schedule_${imageId || imageIdx}`);
     if (!scheduleContainer) return;
-    
+
     // Toggle visibility
     const isVisible = !scheduleContainer.classList.contains('hidden');
-    
+
     if (isVisible) {
         scheduleContainer.classList.add('hidden');
         return;
     }
-    
+
     scheduleContainer.classList.remove('hidden');
-    
+
     const schedule = image.schedule || { enabled: false, mode: 'always', start_time: '08:00', end_time: '18:00', days: {} };
-    
+
     scheduleContainer.innerHTML = `
         <div class="bg-white rounded-lg border border-blue-200 p-4">
             <h4 class="text-sm font-semibold text-gray-900 mb-3">
                 <i class="fas fa-clock mr-2"></i>Schedule Settings
             </h4>
-            
+
             <!-- Enable Schedule -->
             <div class="mb-4">
                 <label class="flex items-center">
-                    <input type="checkbox" 
+                    <input type="checkbox"
                            id="schedule_enabled_${imageId}"
                            ${schedule.enabled ? 'checked' : ''}
                            onchange="window.toggleImageScheduleEnabled('${fieldId}', '${imageId}', ${imageIdx})"
@@ -6995,7 +6995,7 @@ window.openImageSchedule = function(fieldId, imageId, imageIdx) {
                 </label>
                 <p class="ml-6 text-xs text-gray-500 mt-1">When enabled, this image will only display during scheduled times</p>
             </div>
-            
+
             <!-- Schedule Mode -->
             <div id="schedule_options_${imageId}" class="space-y-4" style="display: ${schedule.enabled ? 'block' : 'none'};">
                 <div>
@@ -7008,12 +7008,12 @@ window.openImageSchedule = function(fieldId, imageId, imageIdx) {
                         <option value="per_day" ${schedule.mode === 'per_day' ? 'selected' : ''}>Different Times Per Day</option>
                     </select>
                 </div>
-                
+
                 <!-- Time Range Mode -->
                 <div id="time_range_${imageId}" class="grid grid-cols-2 gap-4" style="display: ${schedule.mode === 'time_range' ? 'grid' : 'none'};">
                     <div>
                         <label class="block text-xs font-medium text-gray-700 mb-1">Start Time</label>
-                        <input type="time" 
+                        <input type="time"
                                id="schedule_start_${imageId}"
                                value="${schedule.start_time || '08:00'}"
                                onchange="window.updateImageScheduleTime('${fieldId}', '${imageId}', ${imageIdx})"
@@ -7021,14 +7021,14 @@ window.openImageSchedule = function(fieldId, imageId, imageIdx) {
                     </div>
                     <div>
                         <label class="block text-xs font-medium text-gray-700 mb-1">End Time</label>
-                        <input type="time" 
+                        <input type="time"
                                id="schedule_end_${imageId}"
                                value="${schedule.end_time || '18:00'}"
                                onchange="window.updateImageScheduleTime('${fieldId}', '${imageId}', ${imageIdx})"
                                class="block w-full px-2 py-1 text-sm border border-gray-300 rounded-md">
                     </div>
                 </div>
-                
+
                 <!-- Per-Day Mode -->
                 <div id="per_day_${imageId}" style="display: ${schedule.mode === 'per_day' ? 'block' : 'none'};">
                     <label class="block text-xs font-medium text-gray-700 mb-2">Day-Specific Times</label>
@@ -7075,21 +7075,21 @@ window.toggleImageScheduleEnabled = function(fieldId, imageId, imageIdx) {
     const currentImages = window.getCurrentImages(fieldId);
     const image = currentImages[imageIdx];
     if (!image) return;
-    
+
     const checkbox = document.getElementById(`schedule_enabled_${imageId}`);
     const enabled = checkbox.checked;
-    
+
     if (!image.schedule) {
         image.schedule = { enabled: false, mode: 'always', start_time: '08:00', end_time: '18:00', days: {} };
     }
-    
+
     image.schedule.enabled = enabled;
-    
+
     const optionsDiv = document.getElementById(`schedule_options_${imageId}`);
     if (optionsDiv) {
         optionsDiv.style.display = enabled ? 'block' : 'none';
     }
-    
+
     window.updateImageList(fieldId, currentImages);
 }
 
@@ -7097,22 +7097,22 @@ window.updateImageScheduleMode = function(fieldId, imageId, imageIdx) {
     const currentImages = window.getCurrentImages(fieldId);
     const image = currentImages[imageIdx];
     if (!image) return;
-    
+
     if (!image.schedule) {
         image.schedule = { enabled: true, mode: 'always', start_time: '08:00', end_time: '18:00', days: {} };
     }
-    
+
     const modeSelect = document.getElementById(`schedule_mode_${imageId}`);
     const mode = modeSelect.value;
-    
+
     image.schedule.mode = mode;
-    
+
     const timeRangeDiv = document.getElementById(`time_range_${imageId}`);
     const perDayDiv = document.getElementById(`per_day_${imageId}`);
-    
+
     if (timeRangeDiv) timeRangeDiv.style.display = mode === 'time_range' ? 'grid' : 'none';
     if (perDayDiv) perDayDiv.style.display = mode === 'per_day' ? 'block' : 'none';
-    
+
     window.updateImageList(fieldId, currentImages);
 }
 
@@ -7120,17 +7120,17 @@ window.updateImageScheduleTime = function(fieldId, imageId, imageIdx) {
     const currentImages = window.getCurrentImages(fieldId);
     const image = currentImages[imageIdx];
     if (!image) return;
-    
+
     if (!image.schedule) {
         image.schedule = { enabled: true, mode: 'time_range', start_time: '08:00', end_time: '18:00' };
     }
-    
+
     const startInput = document.getElementById(`schedule_start_${imageId}`);
     const endInput = document.getElementById(`schedule_end_${imageId}`);
-    
+
     if (startInput) image.schedule.start_time = startInput.value || '08:00';
     if (endInput) image.schedule.end_time = endInput.value || '18:00';
-    
+
     window.updateImageList(fieldId, currentImages);
 }
 
@@ -7138,37 +7138,37 @@ window.updateImageScheduleDay = function(fieldId, imageId, imageIdx, day) {
     const currentImages = window.getCurrentImages(fieldId);
     const image = currentImages[imageIdx];
     if (!image) return;
-    
+
     if (!image.schedule) {
         image.schedule = { enabled: true, mode: 'per_day', days: {} };
     }
-    
+
     if (!image.schedule.days) {
         image.schedule.days = {};
     }
-    
+
     const checkbox = document.getElementById(`day_${day}_${imageId}`);
     const startInput = document.getElementById(`day_${day}_start_${imageId}`);
     const endInput = document.getElementById(`day_${day}_end_${imageId}`);
-    
+
     const enabled = checkbox ? checkbox.checked : true;
-    
+
     if (!image.schedule.days[day]) {
         image.schedule.days[day] = { enabled: true, start_time: '08:00', end_time: '18:00' };
     }
-    
+
     image.schedule.days[day].enabled = enabled;
-    
+
     if (startInput) image.schedule.days[day].start_time = startInput.value || '08:00';
     if (endInput) image.schedule.days[day].end_time = endInput.value || '18:00';
-    
+
     const timesDiv = document.getElementById(`day_times_${day}_${imageId}`);
     if (timesDiv) {
         timesDiv.style.display = enabled ? 'grid' : 'none';
         if (startInput) startInput.disabled = !enabled;
         if (endInput) endInput.disabled = !enabled;
     }
-    
+
     window.updateImageList(fieldId, currentImages);
 }
 
@@ -7194,31 +7194,31 @@ if (typeof window !== 'undefined') {
         const itemsContainer = document.getElementById(fieldId + '_items');
         const hiddenInput = document.getElementById(fieldId + '_data');
         if (!itemsContainer || !hiddenInput) return;
-        
+
         const currentItems = itemsContainer.querySelectorAll('.array-object-item');
         if (currentItems.length >= maxItems) {
             alert(`Maximum ${maxItems} items allowed`);
             return;
         }
-        
+
         // Get schema for item properties - ensure currentPluginConfig is available
         // Try window.currentPluginConfig first (most reliable), then currentPluginConfig
-        const schema = (typeof window.currentPluginConfig !== 'undefined' && window.currentPluginConfig?.schema) || 
+        const schema = (typeof window.currentPluginConfig !== 'undefined' && window.currentPluginConfig?.schema) ||
                        (typeof currentPluginConfig !== 'undefined' && currentPluginConfig?.schema);
         if (!schema) {
             console.error('addArrayObjectItem: Schema not available. currentPluginConfig may not be set.');
             return;
         }
-        
+
         // Use getSchemaProperty to properly handle nested schemas (e.g., news.custom_feeds)
         const arraySchema = window.getSchemaProperty(schema, fullKey);
         if (!arraySchema || arraySchema.type !== 'array' || !arraySchema.items) {
             return;
         }
-        
+
         const itemsSchema = arraySchema.items;
         if (!itemsSchema || !itemsSchema.properties) return;
-        
+
         const newIndex = currentItems.length;
         // Use renderArrayObjectItem if available, otherwise create basic HTML
         let itemHtml = '';
@@ -7250,7 +7250,7 @@ if (typeof window !== 'undefined') {
         }
         itemsContainer.insertAdjacentHTML('beforeend', itemHtml);
         window.updateArrayObjectData(fieldId);
-        
+
         // Update add button state
         const addButton = itemsContainer.nextElementSibling;
         if (addButton && currentItems.length + 1 >= maxItems) {
@@ -7263,7 +7263,7 @@ if (typeof window !== 'undefined') {
     window.removeArrayObjectItem = function(fieldId, index) {
         const itemsContainer = document.getElementById(fieldId + '_items');
         if (!itemsContainer) return;
-        
+
         const item = itemsContainer.querySelector(`.array-object-item[data-index="${index}"]`);
         if (item) {
             item.remove();
@@ -7321,7 +7321,7 @@ if (typeof window !== 'undefined') {
                 });
             });
             window.updateArrayObjectData(fieldId);
-            
+
             // Update add button state
             const addButton = itemsContainer.nextElementSibling;
             if (addButton && addButton.getAttribute('onclick')) {
@@ -7352,17 +7352,17 @@ if (typeof window !== 'undefined') {
         // Update hidden _data input with currently checked values
         const hiddenInput = document.getElementById(fieldId + '_data');
         if (!hiddenInput) return;
-        
+
         const checkboxes = document.querySelectorAll(`input[type="checkbox"][data-checkbox-group="${fieldId}"]`);
         const selectedValues = [];
-        
+
         checkboxes.forEach(checkbox => {
             if (checkbox.checked) {
                 const optionValue = checkbox.getAttribute('data-option-value') || checkbox.value;
                 selectedValues.push(optionValue);
             }
         });
-        
+
         hiddenInput.value = JSON.stringify(selectedValues);
     };
 
@@ -7381,7 +7381,7 @@ if (typeof window !== 'undefined') {
             window.updateArrayObjectData(fieldId);
         };
     }
-    
+
     // Debug logging (only if pluginDebug is enabled)
     if (_PLUGIN_DEBUG_EARLY) {
         console.log('[ARRAY-OBJECTS] Functions defined on window:', {
@@ -7459,7 +7459,7 @@ setTimeout(function() {
     } else {
         console.log('installed-plugins-grid not found yet, will retry via event listeners');
     }
-    
+
     // Also try to attach install button handler after a delay (fallback)
     setTimeout(() => {
         if (typeof window.attachInstallButtonHandler === 'function') {
@@ -8065,4 +8065,3 @@ setTimeout(function() {
         }
     });
 })();
-
