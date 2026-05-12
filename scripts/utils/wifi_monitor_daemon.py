@@ -146,6 +146,10 @@ class WiFiMonitorDaemon:
                                     capture_output=True, timeout=20, check=True
                                 )
                                 self._consecutive_internet_failures = 0
+                                # NM restart causes a brief WiFi drop; reset the AP-mode grace
+                                # counter so that transient disconnect doesn't count toward
+                                # triggering AP mode.
+                                self.wifi_manager._disconnected_checks = 0
                             except subprocess.CalledProcessError as e:
                                 logger.error(f"NetworkManager restart failed (rc={e.returncode}); "
                                              "keeping failure counter unchanged")
