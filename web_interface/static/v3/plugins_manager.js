@@ -1227,6 +1227,8 @@ function initializePlugins() {
     // searchPluginStore renders Installed/Reinstall badges against it.
     loadInstalledPlugins().then(() => {
         searchPluginStore(!isReswapWarm);
+    }).catch(err => {
+        console.error('[PluginStore] loadInstalledPlugins failed:', err);
     });
 
     // Setup search functionality (with guard against duplicate listeners)
