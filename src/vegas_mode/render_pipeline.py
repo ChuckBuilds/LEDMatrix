@@ -235,7 +235,7 @@ class RenderPipeline:
                         blank = _Image.new('RGB', (self.display_width, self.display_height))
                         self.display_manager.image = blank
                         self.display_manager.update_display()
-                    except (ImportError, ValueError, TypeError, MemoryError) as exc:
+                    except (ImportError, OSError, RuntimeError, ValueError, TypeError, MemoryError) as exc:
                         logger.error(
                             "Failed to push blank frame at cycle end "
                             "(display=%dx%d): %s",
