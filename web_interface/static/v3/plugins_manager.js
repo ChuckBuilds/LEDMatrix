@@ -1225,7 +1225,9 @@ function initializePlugins() {
     window.pluginManager._reswap = false;
     // Await the installed-plugins fetch so window.installedPlugins is populated before
     // searchPluginStore renders Installed/Reinstall badges against it.
-    loadInstalledPlugins().then(() => {
+    loadInstalledPlugins().catch(err => {
+        console.error('[PluginStore] loadInstalledPlugins failed:', err);
+    }).finally(() => {
         searchPluginStore(!isReswapWarm);
     });
 

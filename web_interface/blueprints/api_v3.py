@@ -2,6 +2,7 @@ from flask import Blueprint, request, jsonify, Response, send_from_directory
 import json
 import os
 import re
+import shutil
 import socket
 import sys
 import subprocess
@@ -15,6 +16,11 @@ from pathlib import Path
 from typing import Optional, Tuple, Dict, Any, Type
 
 logger = logging.getLogger(__name__)
+
+SUDO_BIN = shutil.which("sudo") or "/usr/bin/sudo"
+SYSTEMCTL_BIN = shutil.which("systemctl") or "/usr/bin/systemctl"
+REBOOT_BIN = shutil.which("reboot") or "/usr/sbin/reboot"
+POWEROFF_BIN = shutil.which("poweroff") or "/usr/sbin/poweroff"
 
 # Import new infrastructure
 from src.web_interface.api_helpers import success_response, error_response, validate_request_json
@@ -218,7 +224,7 @@ def _ensure_display_service_running():
     if status.get('active'):
         status['started'] = False
         return status
-    result = _run_systemctl_command(['sudo', 'systemctl', 'start', 'ledmatrix'])
+    result = _run_systemctl_command([SUDO_BIN, SYSTEMCTL_BIN, 'start', 'ledmatrix.service'])
     service_status = _get_display_service_status()
     result['started'] = result.get('returncode') == 0
     result['active'] = service_status.get('active')
@@ -227,7 +233,7 @@ def _ensure_display_service_running():
 
 def _stop_display_service():
     """Stop the ledmatrix display service."""
-    result = _run_systemctl_command(['sudo', 'systemctl', 'stop', 'ledmatrix'])
+    result = _run_systemctl_command([SUDO_BIN, SYSTEMCTL_BIN, 'stop', 'ledmatrix.service'])
     status = _get_display_service_status()
     result['active'] = status.get('active')
     result['status'] = status
@@ -1716,33 +1722,34 @@ def execute_system_action():
             if mode:
                 # For on-demand modes, we would need to integrate with the display controller
                 # For now, just start the display service
-                result = subprocess.run(['sudo', 'systemctl', 'start', 'ledmatrix'],
-                                     capture_output=True, text=True)
+                result = subprocess.run([SUDO_BIN, SYSTEMCTL_BIN, 'start', 'ledmatrix.service'],
+                                     capture_output=True, text=True, timeout=15)
                 return jsonify({
                     'status': 'success' if result.returncode == 0 else 'error',
-                    'message': f'Started display in {mode} mode',
+                    'message': f'Started display in {mode} mode' if result.returncode == 0
+                               else f'Failed to start display in {mode} mode: {result.stderr.strip() or "check sudo systemctl status ledmatrix.service"}',
                     'returncode': result.returncode,
                     'stdout': result.stdout,
                     'stderr': result.stderr
                 })
             else:
-                result = subprocess.run(['sudo', 'systemctl', 'start', 'ledmatrix'],
-                                     capture_output=True, text=True)
+                result = subprocess.run([SUDO_BIN, SYSTEMCTL_BIN, 'start', 'ledmatrix.service'],
+                                     capture_output=True, text=True, timeout=15)
         elif action == 'stop_display':
-            result = subprocess.run(['sudo', 'systemctl', 'stop', 'ledmatrix'],
-                                 capture_output=True, text=True)
+            result = subprocess.run([SUDO_BIN, SYSTEMCTL_BIN, 'stop', 'ledmatrix.service'],
+                                 capture_output=True, text=True, timeout=15)
         elif action == 'enable_autostart':
-            result = subprocess.run(['sudo', 'systemctl', 'enable', 'ledmatrix'],
-                                 capture_output=True, text=True)
+            result = subprocess.run([SUDO_BIN, SYSTEMCTL_BIN, 'enable', 'ledmatrix.service'],
+                                 capture_output=True, text=True, timeout=15)
         elif action == 'disable_autostart':
-            result = subprocess.run(['sudo', 'systemctl', 'disable', 'ledmatrix'],
-                                 capture_output=True, text=True)
+            result = subprocess.run([SUDO_BIN, SYSTEMCTL_BIN, 'disable', 'ledmatrix.service'],
+                                 capture_output=True, text=True, timeout=15)
         elif action == 'reboot_system':
-            result = subprocess.run(['sudo', 'reboot'],
-                                 capture_output=True, text=True)
+            result = subprocess.run([SUDO_BIN, REBOOT_BIN],
+                                 capture_output=True, text=True, timeout=10)
         elif action == 'shutdown_system':
-            result = subprocess.run(['sudo', 'poweroff'],
-                                 capture_output=True, text=True)
+            result = subprocess.run([SUDO_BIN, POWEROFF_BIN],
+                                 capture_output=True, text=True, timeout=10)
         elif action == 'git_pull':
             # Use PROJECT_ROOT instead of hardcoded path
             project_dir = str(PROJECT_ROOT)
@@ -1823,12 +1830,11 @@ def execute_system_action():
                 'stderr': result.stderr
             })
         elif action == 'restart_display_service':
-            result = subprocess.run(['sudo', 'systemctl', 'restart', 'ledmatrix'],
-                                 capture_output=True, text=True)
+            result = subprocess.run([SUDO_BIN, SYSTEMCTL_BIN, 'restart', 'ledmatrix.service'],
+                                 capture_output=True, text=True, timeout=15)
         elif action == 'restart_web_service':
-            # Try to restart the web service (assuming it's ledmatrix-web.service)
-            result = subprocess.run(['sudo', 'systemctl', 'restart', 'ledmatrix-web'],
-                                 capture_output=True, text=True)
+            result = subprocess.run([SUDO_BIN, SYSTEMCTL_BIN, 'restart', 'ledmatrix-web.service'],
+                                 capture_output=True, text=True, timeout=15)
         else:
             return jsonify({'status': 'error', 'message': f'Unknown action: {action}'}), 400
 
@@ -1840,6 +1846,13 @@ def execute_system_action():
             'stderr': result.stderr
         })
 
+    except subprocess.TimeoutExpired:
+        if action == 'start_display' and mode:
+            msg = f'Failed to start display in {mode} mode: timed out'
+        else:
+            msg = f'Action {action} timed out'
+        logger.warning("[System] execute_system_action timed out: action=%s", action)
+        return jsonify({'status': 'error', 'message': msg, 'returncode': -1, 'stdout': '', 'stderr': 'timeout'}), 500
     except Exception as e:
         logger.exception("[System] execute_system_action failed")
         return jsonify({'status': 'error', 'message': 'Failed to execute system action'}), 500
@@ -7136,7 +7149,7 @@ def connect_wifi():
             # Propagate structured error type so the captive portal UI can show
             # "Wrong password — try again" instead of a generic failure message.
             error_type = "wrong_password" if (message or "").startswith("wrong_password:") else "connection_failed"
-            clean_message = (message or "").removeprefix("wrong_password: ") or "Failed to connect to network"
+            clean_message = (message or "").removeprefix("wrong_password:").lstrip() or "Failed to connect to network"
             return jsonify({
                 'status': 'error',
                 'message': clean_message,

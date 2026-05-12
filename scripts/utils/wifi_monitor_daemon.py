@@ -10,6 +10,7 @@ import sys
 import time
 import logging
 import signal
+import subprocess
 from pathlib import Path
 
 # Add project root to path (parent of scripts/utils/)
@@ -146,12 +147,18 @@ class WiFiMonitorDaemon:
                                     capture_output=True, timeout=20, check=True
                                 )
                                 self._consecutive_internet_failures = 0
+                                # NM restart causes a brief WiFi drop; reset the AP-mode grace
+                                # counter so that transient disconnect doesn't count toward
+                                # triggering AP mode.
+                                self.wifi_manager._disconnected_checks = 0
                             except subprocess.CalledProcessError as e:
                                 logger.error(f"NetworkManager restart failed (rc={e.returncode}); "
-                                             "keeping failure counter unchanged")
-                            except Exception as e:
+                                             "resetting failure counter to avoid tight retry loop")
+                                self._consecutive_internet_failures = 0
+                            except (subprocess.SubprocessError, OSError) as e:
                                 logger.error(f"NetworkManager restart error: {e}; "
-                                             "keeping failure counter unchanged")
+                                             "resetting failure counter to avoid tight retry loop")
+                                self._consecutive_internet_failures = 0
                     else:
                         self._consecutive_internet_failures = 0
                 else:

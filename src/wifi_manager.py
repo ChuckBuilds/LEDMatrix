@@ -144,6 +144,8 @@ class WiFiManager:
 
         # Timestamp set when AP mode is enabled; used for the idle-timeout check
         self._ap_enabled_at: Optional[float] = None
+        # Which redirect backend was used (iptables/nftables/None); set per-instance
+        self._redirect_backend: Optional[str] = None
 
         logger.info(f"WiFi Manager initialized - nmcli: {self.has_nmcli}, iwlist: {self.has_iwlist}, "
                    f"hostapd: {self.has_hostapd}, dnsmasq: {self.has_dnsmasq}, "
@@ -691,9 +693,8 @@ class WiFiManager:
 
     def _validate_ap_config(self) -> Tuple[str, int]:
         """Return a sanitized (ssid, channel) pair from config, falling back to defaults."""
-        import re as _re
         ssid = str(self.config.get("ap_ssid", DEFAULT_AP_SSID))
-        if not ssid or len(ssid) > 32 or not _re.match(r'^[\x20-\x7E]+$', ssid):
+        if not ssid or len(ssid) > 32 or not re.match(r'^[\x20-\x7E]+$', ssid):
             logger.warning(f"AP SSID '{ssid}' is invalid, falling back to default")
             ssid = DEFAULT_AP_SSID
         try:
@@ -704,10 +705,6 @@ class WiFiManager:
             logger.warning("AP channel out of range, falling back to default")
             channel = DEFAULT_AP_CHANNEL
         return ssid, channel
-
-    # Tracks which redirect backend was used so teardown uses the same one.
-    # Value is "iptables", "nftables", or None (not set up).
-    _redirect_backend: Optional[str] = None
 
     def _setup_iptables_redirect(self) -> bool:
         """
@@ -936,14 +933,14 @@ class WiFiManager:
             if r.returncode == 0:
                 logger.debug("Internet connectivity confirmed via ping 8.8.8.8")
                 return True
-        except Exception:
+        except (subprocess.SubprocessError, OSError):
             pass
         try:
             import urllib.request as _ureq
             _ureq.urlopen("http://connectivity-check.ubuntu.com/", timeout=timeout)
             logger.debug("Internet connectivity confirmed via HTTP check")
             return True
-        except Exception:
+        except OSError:
             pass
         logger.debug("Internet connectivity check failed (both ping and HTTP)")
         return False
@@ -2074,6 +2071,7 @@ class WiFiManager:
             if up_result.returncode != 0:
                 error_msg = up_result.stderr.strip() or up_result.stdout.strip()
                 logger.error(f"Failed to bring up AP connection: {error_msg}")
+                self._remove_nm_dnsmasq_captive_conf()
                 subprocess.run(["nmcli", "connection", "delete", "LEDMatrix-Setup-AP"],
                                capture_output=True, timeout=10)
                 self._show_led_message("AP mode failed", duration=5)
@@ -2085,6 +2083,7 @@ class WiFiManager:
             # need to add the iptables port-redirect rules for the captive portal.
             if not self._setup_iptables_redirect():
                 logger.error("Captive-portal redirect setup failed; rolling back AP profile")
+                self._remove_nm_dnsmasq_captive_conf()
                 subprocess.run(["nmcli", "connection", "down", "LEDMatrix-Setup-AP"],
                                capture_output=True, timeout=10)
                 subprocess.run(["nmcli", "connection", "delete", "LEDMatrix-Setup-AP"],
@@ -2102,6 +2101,7 @@ class WiFiManager:
             else:
                 logger.error("AP mode started but not verified by status check — rolling back")
                 self._teardown_iptables_redirect()
+                self._remove_nm_dnsmasq_captive_conf()
                 subprocess.run(["nmcli", "connection", "down", "LEDMatrix-Setup-AP"],
                                capture_output=True, timeout=10)
                 subprocess.run(["nmcli", "connection", "delete", "LEDMatrix-Setup-AP"],
@@ -2111,6 +2111,7 @@ class WiFiManager:
 
         except Exception as e:
             logger.error(f"Error starting AP mode with nmcli: {e}")
+            self._remove_nm_dnsmasq_captive_conf()
             self._show_led_message("Setup mode error", duration=5)
             return False, str(e)
     
@@ -2498,7 +2499,10 @@ address=/detectportal.firefox.com/192.168.4.1
             # Idle-timeout check: disable AP if no client has connected within the window.
             # Only applies when AP is active and we haven't just decided to enable/disable it.
             if ap_active and self._ap_enabled_at is not None:
-                idle_timeout_min = self.config.get("ap_idle_timeout_minutes", 15)
+                try:
+                    idle_timeout_min = max(1, min(1440, int(self.config.get("ap_idle_timeout_minutes", 15))))
+                except (TypeError, ValueError):
+                    idle_timeout_min = 15
                 elapsed = time.time() - self._ap_enabled_at
                 if elapsed > idle_timeout_min * 60 and not self._has_ap_clients():
                     logger.info(
