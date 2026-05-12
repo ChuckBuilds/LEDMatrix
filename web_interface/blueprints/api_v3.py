@@ -1840,6 +1840,13 @@ def execute_system_action():
             'stderr': result.stderr
         })
 
+    except subprocess.TimeoutExpired:
+        if action == 'start_display' and mode:
+            msg = f'Failed to start display in {mode} mode: timed out'
+        else:
+            msg = f'Action {action} timed out'
+        logger.warning("[System] execute_system_action timed out: action=%s", action)
+        return jsonify({'status': 'error', 'message': msg, 'returncode': -1, 'stdout': '', 'stderr': 'timeout'}), 500
     except Exception as e:
         logger.exception("[System] execute_system_action failed")
         return jsonify({'status': 'error', 'message': 'Failed to execute system action'}), 500
