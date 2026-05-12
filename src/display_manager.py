@@ -328,20 +328,21 @@ class DisplayManager:
             self.draw = ImageDraw.Draw(self.image)
 
             if not self._capture_mode_active:
-                # Clear both canvases and the underlying matrix to ensure no artifacts
+                # Clear both canvases and the underlying matrix to ensure no artifacts.
+                # Failures are non-fatal — the image buffer is already black above, so
+                # the next update_display() call will push clean content regardless.
                 try:
                     self.offscreen_canvas.Clear()
-                except Exception:
-                    pass
+                except (RuntimeError, OSError) as e:
+                    logger.error("Failed to clear offscreen canvas: %s", e)
                 try:
                     self.current_canvas.Clear()
-                except Exception:
-                    pass
+                except (RuntimeError, OSError) as e:
+                    logger.error("Failed to clear current canvas: %s", e)
                 try:
-                    # Extra safety: clear the matrix front buffer as well
                     self.matrix.Clear()
-                except Exception:
-                    pass
+                except (RuntimeError, OSError) as e:
+                    logger.error("Failed to clear matrix front buffer: %s", e)
             
             # Note: We do NOT call update_display() here to avoid black flashes.
             # The caller should call update_display() after drawing new content.
