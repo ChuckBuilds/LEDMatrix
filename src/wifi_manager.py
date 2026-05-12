@@ -2074,6 +2074,7 @@ class WiFiManager:
             if up_result.returncode != 0:
                 error_msg = up_result.stderr.strip() or up_result.stdout.strip()
                 logger.error(f"Failed to bring up AP connection: {error_msg}")
+                self._remove_nm_dnsmasq_captive_conf()
                 subprocess.run(["nmcli", "connection", "delete", "LEDMatrix-Setup-AP"],
                                capture_output=True, timeout=10)
                 self._show_led_message("AP mode failed", duration=5)
@@ -2085,6 +2086,7 @@ class WiFiManager:
             # need to add the iptables port-redirect rules for the captive portal.
             if not self._setup_iptables_redirect():
                 logger.error("Captive-portal redirect setup failed; rolling back AP profile")
+                self._remove_nm_dnsmasq_captive_conf()
                 subprocess.run(["nmcli", "connection", "down", "LEDMatrix-Setup-AP"],
                                capture_output=True, timeout=10)
                 subprocess.run(["nmcli", "connection", "delete", "LEDMatrix-Setup-AP"],
@@ -2102,6 +2104,7 @@ class WiFiManager:
             else:
                 logger.error("AP mode started but not verified by status check — rolling back")
                 self._teardown_iptables_redirect()
+                self._remove_nm_dnsmasq_captive_conf()
                 subprocess.run(["nmcli", "connection", "down", "LEDMatrix-Setup-AP"],
                                capture_output=True, timeout=10)
                 subprocess.run(["nmcli", "connection", "delete", "LEDMatrix-Setup-AP"],
@@ -2111,6 +2114,7 @@ class WiFiManager:
 
         except Exception as e:
             logger.error(f"Error starting AP mode with nmcli: {e}")
+            self._remove_nm_dnsmasq_captive_conf()
             self._show_led_message("Setup mode error", duration=5)
             return False, str(e)
     
@@ -2498,7 +2502,10 @@ address=/detectportal.firefox.com/192.168.4.1
             # Idle-timeout check: disable AP if no client has connected within the window.
             # Only applies when AP is active and we haven't just decided to enable/disable it.
             if ap_active and self._ap_enabled_at is not None:
-                idle_timeout_min = self.config.get("ap_idle_timeout_minutes", 15)
+                try:
+                    idle_timeout_min = max(1, min(1440, int(self.config.get("ap_idle_timeout_minutes", 15))))
+                except (TypeError, ValueError):
+                    idle_timeout_min = 15
                 elapsed = time.time() - self._ap_enabled_at
                 if elapsed > idle_timeout_min * 60 and not self._has_ap_clients():
                     logger.info(

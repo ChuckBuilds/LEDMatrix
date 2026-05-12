@@ -10,6 +10,7 @@ import sys
 import time
 import logging
 import signal
+import subprocess
 from pathlib import Path
 
 # Add project root to path (parent of scripts/utils/)
