@@ -1720,7 +1720,8 @@ def execute_system_action():
                                      capture_output=True, text=True, timeout=15)
                 return jsonify({
                     'status': 'success' if result.returncode == 0 else 'error',
-                    'message': f'Started display in {mode} mode',
+                    'message': f'Started display in {mode} mode' if result.returncode == 0
+                               else f'Failed to start display in {mode} mode: {result.stderr.strip() or "check sudo systemctl status ledmatrix.service"}',
                     'returncode': result.returncode,
                     'stdout': result.stdout,
                     'stderr': result.stderr

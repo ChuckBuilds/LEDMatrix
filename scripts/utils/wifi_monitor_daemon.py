@@ -153,10 +153,12 @@ class WiFiMonitorDaemon:
                                 self.wifi_manager._disconnected_checks = 0
                             except subprocess.CalledProcessError as e:
                                 logger.error(f"NetworkManager restart failed (rc={e.returncode}); "
-                                             "keeping failure counter unchanged")
+                                             "resetting failure counter to avoid tight retry loop")
+                                self._consecutive_internet_failures = 0
                             except Exception as e:
                                 logger.error(f"NetworkManager restart error: {e}; "
-                                             "keeping failure counter unchanged")
+                                             "resetting failure counter to avoid tight retry loop")
+                                self._consecutive_internet_failures = 0
                     else:
                         self._consecutive_internet_failures = 0
                 else:

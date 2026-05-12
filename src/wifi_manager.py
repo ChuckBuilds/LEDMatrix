@@ -144,6 +144,8 @@ class WiFiManager:
 
         # Timestamp set when AP mode is enabled; used for the idle-timeout check
         self._ap_enabled_at: Optional[float] = None
+        # Which redirect backend was used (iptables/nftables/None); set per-instance
+        self._redirect_backend: Optional[str] = None
 
         logger.info(f"WiFi Manager initialized - nmcli: {self.has_nmcli}, iwlist: {self.has_iwlist}, "
                    f"hostapd: {self.has_hostapd}, dnsmasq: {self.has_dnsmasq}, "
@@ -691,9 +693,8 @@ class WiFiManager:
 
     def _validate_ap_config(self) -> Tuple[str, int]:
         """Return a sanitized (ssid, channel) pair from config, falling back to defaults."""
-        import re as _re
         ssid = str(self.config.get("ap_ssid", DEFAULT_AP_SSID))
-        if not ssid or len(ssid) > 32 or not _re.match(r'^[\x20-\x7E]+$', ssid):
+        if not ssid or len(ssid) > 32 or not re.match(r'^[\x20-\x7E]+$', ssid):
             logger.warning(f"AP SSID '{ssid}' is invalid, falling back to default")
             ssid = DEFAULT_AP_SSID
         try:
@@ -704,10 +705,6 @@ class WiFiManager:
             logger.warning("AP channel out of range, falling back to default")
             channel = DEFAULT_AP_CHANNEL
         return ssid, channel
-
-    # Tracks which redirect backend was used so teardown uses the same one.
-    # Value is "iptables", "nftables", or None (not set up).
-    _redirect_backend: Optional[str] = None
 
     def _setup_iptables_redirect(self) -> bool:
         """
@@ -936,14 +933,14 @@ class WiFiManager:
             if r.returncode == 0:
                 logger.debug("Internet connectivity confirmed via ping 8.8.8.8")
                 return True
-        except Exception:
+        except (subprocess.SubprocessError, OSError):
             pass
         try:
             import urllib.request as _ureq
             _ureq.urlopen("http://connectivity-check.ubuntu.com/", timeout=timeout)
             logger.debug("Internet connectivity confirmed via HTTP check")
             return True
-        except Exception:
+        except OSError:
             pass
         logger.debug("Internet connectivity check failed (both ping and HTTP)")
         return False
