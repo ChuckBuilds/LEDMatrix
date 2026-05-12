@@ -140,7 +140,7 @@ class WiFiManager:
         # Initialize disconnected check counter for grace period
         # This prevents AP mode from enabling on transient network hiccups
         self._disconnected_checks = 0
-        self._disconnected_checks_required = 6  # Require 6 consecutive disconnected checks (3 minutes at 30s interval)
+        self._disconnected_checks_required = 3  # Require 3 consecutive disconnected checks (90 seconds at 30s interval)
 
         # Timestamp set when AP mode is enabled; used for the idle-timeout check
         self._ap_enabled_at: Optional[float] = None
