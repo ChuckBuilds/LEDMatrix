@@ -329,50 +329,51 @@ class PluginAdapter:
             # Save display state to restore after
             original_image = self.display_manager.image.copy()
 
-            # Method 1: Try _create_scrolling_display (stocks pattern)
-            if hasattr(plugin, '_create_scrolling_display'):
-                logger.info(
-                    "[%s] Triggering via _create_scrolling_display()",
-                    plugin_id
-                )
-                try:
-                    plugin._create_scrolling_display()
-                    cached_image = getattr(scroll_helper, 'cached_image', None)
-                    if cached_image is not None and isinstance(cached_image, Image.Image):
-                        logger.info(
-                            "[%s] _create_scrolling_display() SUCCESS: %dx%d",
-                            plugin_id, cached_image.width, cached_image.height
-                        )
-                        return cached_image
-                except (AttributeError, TypeError, ValueError, OSError):
-                    logger.exception(
-                        "[%s] _create_scrolling_display() failed", plugin_id
-                    )
-
-            # Method 2: Try display(force_clear=True) which typically builds scroll content
-            if hasattr(plugin, 'display'):
-                logger.info(
-                    "[%s] Triggering via display(force_clear=True)",
-                    plugin_id
-                )
-                try:
-                    self.display_manager.clear()
-                    plugin.display(force_clear=True)
-                    cached_image = getattr(scroll_helper, 'cached_image', None)
-                    if cached_image is not None and isinstance(cached_image, Image.Image):
-                        logger.info(
-                            "[%s] display(force_clear=True) SUCCESS: %dx%d",
-                            plugin_id, cached_image.width, cached_image.height
-                        )
-                        return cached_image
+            with self.display_manager.capture_mode():
+                # Method 1: Try _create_scrolling_display (stocks pattern)
+                if hasattr(plugin, '_create_scrolling_display'):
                     logger.info(
-                        "[%s] display(force_clear=True) did not populate cached_image",
+                        "[%s] Triggering via _create_scrolling_display()",
                         plugin_id
                     )
-                except (AttributeError, TypeError, ValueError, OSError):
-                    logger.exception(
-                        "[%s] display(force_clear=True) failed", plugin_id
+                    try:
+                        plugin._create_scrolling_display()
+                        cached_image = getattr(scroll_helper, 'cached_image', None)
+                        if cached_image is not None and isinstance(cached_image, Image.Image):
+                            logger.info(
+                                "[%s] _create_scrolling_display() SUCCESS: %dx%d",
+                                plugin_id, cached_image.width, cached_image.height
+                            )
+                            return cached_image
+                    except (AttributeError, TypeError, ValueError, OSError):
+                        logger.exception(
+                            "[%s] _create_scrolling_display() failed", plugin_id
+                        )
+
+                # Method 2: Try display(force_clear=True) which typically builds scroll content
+                if hasattr(plugin, 'display'):
+                    logger.info(
+                        "[%s] Triggering via display(force_clear=True)",
+                        plugin_id
                     )
+                    try:
+                        self.display_manager.clear()
+                        plugin.display(force_clear=True)
+                        cached_image = getattr(scroll_helper, 'cached_image', None)
+                        if cached_image is not None and isinstance(cached_image, Image.Image):
+                            logger.info(
+                                "[%s] display(force_clear=True) SUCCESS: %dx%d",
+                                plugin_id, cached_image.width, cached_image.height
+                            )
+                            return cached_image
+                        logger.info(
+                            "[%s] display(force_clear=True) did not populate cached_image",
+                            plugin_id
+                        )
+                    except (AttributeError, TypeError, ValueError, OSError):
+                        logger.exception(
+                            "[%s] display(force_clear=True) failed", plugin_id
+                        )
 
             logger.info(
                 "[%s] Could not trigger scroll content generation",
@@ -408,10 +409,7 @@ class PluginAdapter:
             original_image = self.display_manager.image.copy()
             logger.info("[%s] Fallback: saved original display state", plugin_id)
 
-            # Lightweight in-memory data refresh before capturing.
-            # Full update() is intentionally skipped here — the background
-            # update tick in the Vegas coordinator handles periodic API
-            # refreshes so we don't block the content-fetch thread.
+            # Ensure plugin has fresh data before capturing
             has_update_data = hasattr(plugin, 'update_data')
             logger.info("[%s] Fallback: has update_data=%s", plugin_id, has_update_data)
             if has_update_data:
@@ -421,21 +419,24 @@ class PluginAdapter:
                 except (AttributeError, RuntimeError, OSError):
                     logger.exception("[%s] Fallback: update_data() failed", plugin_id)
 
-            # Clear and call plugin display
-            self.display_manager.clear()
-            logger.info("[%s] Fallback: display cleared, calling display()", plugin_id)
+            # Clear and call plugin display — use capture_mode to suppress hardware writes
+            # that plugins may trigger internally via update_display().
+            with self.display_manager.capture_mode():
+                self.display_manager.clear()
+                logger.info("[%s] Fallback: display cleared, calling display()", plugin_id)
 
-            # First try without force_clear (some plugins behave better this way)
-            try:
-                plugin.display()
-                logger.info("[%s] Fallback: display() called successfully", plugin_id)
-            except TypeError:
-                # Plugin may require force_clear argument
-                logger.info("[%s] Fallback: display() failed, trying with force_clear=True", plugin_id)
-                plugin.display(force_clear=True)
+                # First try without force_clear (some plugins behave better this way)
+                try:
+                    plugin.display()
+                    logger.info("[%s] Fallback: display() called successfully", plugin_id)
+                except TypeError:
+                    # Plugin may require force_clear argument
+                    logger.info("[%s] Fallback: display() failed, trying with force_clear=True", plugin_id)
+                    plugin.display(force_clear=True)
 
-            # Capture the result
-            captured = self.display_manager.image.copy()
+                # Capture the result
+                captured = self.display_manager.image.copy()
+
             logger.info(
                 "[%s] Fallback: captured frame %dx%d, mode=%s",
                 plugin_id, captured.width, captured.height, captured.mode
@@ -454,9 +455,10 @@ class PluginAdapter:
                     plugin_id
                 )
                 # Try once more with force_clear=True
-                self.display_manager.clear()
-                plugin.display(force_clear=True)
-                captured = self.display_manager.image.copy()
+                with self.display_manager.capture_mode():
+                    self.display_manager.clear()
+                    plugin.display(force_clear=True)
+                    captured = self.display_manager.image.copy()
 
                 is_blank, bright_ratio = self._is_blank_image(captured, return_ratio=True)
                 logger.info(
@@ -584,28 +586,6 @@ class PluginAdapter:
                 self._content_cache.pop(plugin_id, None)
             else:
                 self._content_cache.clear()
-
-    def invalidate_plugin_scroll_cache(self, plugin: 'BasePlugin', plugin_id: str) -> None:
-        """
-        Clear a plugin's scroll_helper cache so Vegas re-fetches fresh visuals.
-
-        Uses scroll_helper.clear_cache() to reset all cached state (cached_image,
-        cached_array, total_scroll_width, scroll_position, etc.) — not just the
-        image.  Without this, plugins that use scroll_helper (stocks, news,
-        odds-ticker, etc.) would keep serving stale scroll images even after
-        their data refreshes.
-
-        Args:
-            plugin: Plugin instance
-            plugin_id: Plugin identifier
-        """
-        scroll_helper = getattr(plugin, 'scroll_helper', None)
-        if scroll_helper is None:
-            return
-
-        if getattr(scroll_helper, 'cached_image', None) is not None:
-            scroll_helper.clear_cache()
-            logger.debug("[%s] Cleared scroll_helper cache", plugin_id)
 
     def get_content_type(self, plugin: 'BasePlugin', plugin_id: str) -> str:
         """
