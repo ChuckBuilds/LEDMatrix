@@ -90,13 +90,11 @@ class VegasModeCoordinator:
         self._interrupt_check: Optional[Callable[[], bool]] = None
         self._interrupt_check_interval: int = 10  # Check every N frames
 
-        # Plugin update tick for keeping data fresh during Vegas mode
-        self._update_tick: Optional[Callable[[], Optional[List[str]]]] = None
-        self._update_tick_interval: float = 1.0  # Tick every 1 second
-        self._update_thread: Optional[threading.Thread] = None
-        self._update_results: Optional[List[str]] = None
-        self._update_results_lock = threading.Lock()
-        self._last_update_tick_time: float = 0.0
+        # Plugin update callback — fired from a background thread inside the loop
+        # so the main loop's _tick_plugin_updates() finds nothing due when Vegas
+        # returns, eliminating the inter-iteration frozen-frame gap.
+        self._update_callback: Optional[Callable[[], None]] = None
+        self._update_tick_running: bool = False
 
         # Config update tracking
         self._config_version = 0
@@ -139,6 +137,20 @@ class VegasModeCoordinator:
         """Check if Vegas mode is currently running."""
         return self._is_active
 
+    def set_sync_manager(self, sync_manager, follower_position: str = "left") -> None:
+        """
+        Attach a DisplaySyncManager so Vegas mode sends the follower's portion
+        of the ticker to the second display on every rendered frame.
+
+        Args:
+            sync_manager:       DisplaySyncManager instance, or None to disable sync
+            follower_position:  "left" (default) or "right" — physical position of
+                                the follower display relative to the leader
+        """
+        if self.render_pipeline:
+            self.render_pipeline.sync_manager = sync_manager
+            self.render_pipeline.sync_follower_left = (follower_position == "left")
+
     def set_live_priority_checker(self, checker: Callable[[], Optional[str]]) -> None:
         """
         Set the callback for checking live priority content.
@@ -166,24 +178,19 @@ class VegasModeCoordinator:
         self._interrupt_check = checker
         self._interrupt_check_interval = max(1, check_interval)
 
-    def set_update_tick(
-        self,
-        callback: Callable[[], Optional[List[str]]],
-        interval: float = 1.0
-    ) -> None:
+    def set_update_callback(self, callback: Callable[[], None]) -> None:
         """
-        Set the callback for periodic plugin update ticking during Vegas mode.
+        Set a callback for running plugin updates from inside the Vegas loop.
 
-        This keeps plugin data fresh while the Vegas render loop is running.
-        The callback should run scheduled plugin updates and return a list of
-        plugin IDs that were actually updated, or None/empty if no updates occurred.
+        Fired in a daemon background thread every ~4 s so plugin data stays
+        fresh without blocking the render loop.  The main loop's
+        _tick_plugin_updates() then finds all intervals already satisfied and
+        returns immediately, collapsing the inter-iteration gap to <1 ms.
 
         Args:
-            callback: Callable that returns list of updated plugin IDs or None
-            interval: Seconds between update tick calls (default 1.0)
+            callback: Callable with no arguments (typically _tick_plugin_updates)
         """
-        self._update_tick = callback
-        self._update_tick_interval = max(0.5, interval)
+        self._update_callback = callback
 
     def start(self) -> bool:
         """
@@ -236,9 +243,6 @@ class VegasModeCoordinator:
             if self._start_time:
                 self.stats['total_runtime_seconds'] += time.time() - self._start_time
                 self._start_time = None
-
-        # Wait for in-flight background update before tearing down state
-        self._drain_update_thread()
 
         # Cleanup components
         self.render_pipeline.reset()
@@ -335,83 +339,101 @@ class VegasModeCoordinator:
         last_fps_log_time = start_time
         fps_frame_count = 0
 
-        self._last_update_tick_time = start_time
-
         logger.info("Starting Vegas iteration for %.1fs", duration)
 
-        try:
-            while True:
-                # Check for STATIC mode plugin that should pause scroll
-                static_plugin = self._check_static_plugin_trigger()
-                if static_plugin:
-                    if not self._handle_static_pause(static_plugin):
-                        # Static pause was interrupted
+        while True:
+            # Check for STATIC mode plugin that should pause scroll
+            static_plugin = self._check_static_plugin_trigger()
+            if static_plugin:
+                if not self._handle_static_pause(static_plugin):
+                    # Static pause was interrupted
+                    return False
+                # After static pause, skip this segment and continue
+                self.stream_manager.get_next_segment()  # Consume the segment
+                continue
+
+            # Run frame
+            if not self.run_frame():
+                # Check why we stopped
+                with self._state_lock:
+                    if self._should_stop:
                         return False
-                    # After static pause, skip this segment and continue
-                    self.stream_manager.get_next_segment()  # Consume the segment
-                    continue
+                    if self._is_paused:
+                        # Paused for live priority - let caller handle
+                        return False
 
-                # Run frame
-                if not self.run_frame():
-                    # Check why we stopped
-                    with self._state_lock:
-                        if self._should_stop:
-                            return False
-                        if self._is_paused:
-                            # Paused for live priority - let caller handle
-                            return False
+            # Sleep for frame interval
+            time.sleep(frame_interval)
 
-                # Sleep for frame interval
-                time.sleep(frame_interval)
+            # Increment frame count and check for interrupt periodically
+            frame_count += 1
+            fps_frame_count += 1
 
-                # Increment frame count and check for interrupt periodically
-                frame_count += 1
-                fps_frame_count += 1
+            # Periodic FPS logging
+            current_time = time.time()
+            if current_time - last_fps_log_time >= fps_log_interval:
+                fps = fps_frame_count / (current_time - last_fps_log_time)
+                logger.info(
+                    "Vegas FPS: %.1f (target: %d, frames: %d)",
+                    fps, self.vegas_config.target_fps, fps_frame_count
+                )
+                last_fps_log_time = current_time
+                fps_frame_count = 0
 
-                # Periodic FPS logging
-                current_time = time.time()
-                if current_time - last_fps_log_time >= fps_log_interval:
-                    fps = fps_frame_count / (current_time - last_fps_log_time)
-                    logger.info(
-                        "Vegas FPS: %.1f (target: %d, frames: %d)",
-                        fps, self.vegas_config.target_fps, fps_frame_count
-                    )
-                    last_fps_log_time = current_time
-                    fps_frame_count = 0
+            if (self._interrupt_check and
+                    frame_count % self._interrupt_check_interval == 0):
+                try:
+                    if self._interrupt_check():
+                        logger.debug(
+                            "Vegas interrupted by callback after %d frames",
+                            frame_count
+                        )
+                        return False
+                except Exception:
+                    # Log but don't let interrupt check errors stop Vegas
+                    logger.exception("Interrupt check failed")
 
-                # Periodic plugin update tick to keep data fresh (non-blocking)
-                self._drive_background_updates()
-
-                if (self._interrupt_check and
-                        frame_count % self._interrupt_check_interval == 0):
+            # Fire plugin update tick in a background thread every ~4 s.
+            # Running it here (rather than only between iterations) means the
+            # main loop's _tick_plugin_updates() finds all intervals already
+            # satisfied on return, so the inter-iteration gap is <1 ms and the
+            # display never shows a frozen frame between iterations.
+            _UPDATE_TICK_FRAMES = 500  # ~4 s at 125 FPS
+            if (self._update_callback and
+                    frame_count % _UPDATE_TICK_FRAMES == 0 and
+                    not self._update_tick_running):
+                self._update_tick_running = True
+                def _run_tick(cb=self._update_callback):
                     try:
-                        if self._interrupt_check():
-                            logger.debug(
-                                "Vegas interrupted by callback after %d frames",
-                                frame_count
-                            )
-                            return False
-                    except Exception:
-                        # Log but don't let interrupt check errors stop Vegas
-                        logger.exception("Interrupt check failed")
+                        cb()
+                    finally:
+                        self._update_tick_running = False
+                threading.Thread(
+                    target=_run_tick, daemon=True, name="vegas-plugin-tick"
+                ).start()
 
-                # Check elapsed time
-                elapsed = time.time() - start_time
-                if elapsed >= duration:
-                    break
+            # Check elapsed time
+            elapsed = time.time() - start_time
+            if elapsed >= duration:
+                break
 
-                # Check for cycle completion
-                if self.render_pipeline.is_cycle_complete():
-                    break
+            # NOTE: do NOT break on is_cycle_complete() here.
+            # When multi-display sync is active, breaking exits run_iteration()
+            # which causes a 2-3s delay before start_new_cycle() is called on
+            # the next run_iteration(). During that gap the scroll advances into
+            # the pre-roll zone, then start_new_cycle() resets it — producing a
+            # second visible jump on the follower display ~2.5s after the first.
+            #
+            # Instead, run_frame() handles cycle completion directly (it calls
+            # start_new_cycle() in the very next frame, 8ms later), collapsing
+            # the two events into a single clean transition.
+            #
+            # Without sync, the iteration now runs to its full duration and may
+            # cycle content multiple times within one iteration — acceptable for
+            # a continuous ticker.
 
-            logger.info("Vegas iteration completed after %.1fs", time.time() - start_time)
-            return True
-
-        finally:
-            # Ensure background update thread finishes before the main loop
-            # resumes its own _tick_plugin_updates() calls, preventing concurrent
-            # run_scheduled_updates() execution.
-            self._drain_update_thread()
+        logger.info("Vegas iteration completed after %.1fs", time.time() - start_time)
+        return True
 
     def _check_live_priority(self) -> bool:
         """
@@ -499,71 +521,6 @@ class VegasModeCoordinator:
             with self._state_lock:
                 if self._pending_config is None:
                     self._pending_config_update = False
-
-    def _run_update_tick_background(self) -> None:
-        """Run the plugin update tick in a background thread.
-
-        Stores results for the render loop to pick up on its next iteration,
-        so the scroll never blocks on API calls.
-        """
-        try:
-            updated_plugins = self._update_tick()
-            if updated_plugins:
-                with self._update_results_lock:
-                    # Accumulate rather than replace to avoid losing notifications
-                    # if a previous result hasn't been picked up yet
-                    if self._update_results is None:
-                        self._update_results = updated_plugins
-                    else:
-                        self._update_results.extend(updated_plugins)
-        except Exception:
-            logger.exception("Background plugin update tick failed")
-
-    def _drain_update_thread(self, timeout: float = 2.0) -> None:
-        """Wait for any in-flight background update thread to finish.
-
-        Called when transitioning out of Vegas mode so the main-loop
-        ``_tick_plugin_updates`` call doesn't race with a still-running
-        background thread.
-        """
-        if self._update_thread is not None and self._update_thread.is_alive():
-            self._update_thread.join(timeout=timeout)
-            if self._update_thread.is_alive():
-                logger.warning(
-                    "Background update thread did not finish within %.1fs", timeout
-                )
-
-    def _drive_background_updates(self) -> None:
-        """Collect finished background update results and launch new ticks.
-
-        Safe to call from both the main render loop and the static-pause
-        wait loop so that plugin data stays fresh regardless of which
-        code path is active.
-        """
-        # 1. Collect results from a previously completed background update
-        with self._update_results_lock:
-            ready_results = self._update_results
-            self._update_results = None
-        if ready_results:
-            for pid in ready_results:
-                self.mark_plugin_updated(pid)
-
-        # 2. Kick off a new background update if interval elapsed and none running
-        current_time = time.time()
-        if (self._update_tick and
-                current_time - self._last_update_tick_time >= self._update_tick_interval):
-            thread_alive = (
-                self._update_thread is not None
-                and self._update_thread.is_alive()
-            )
-            if not thread_alive:
-                self._last_update_tick_time = current_time
-                self._update_thread = threading.Thread(
-                    target=self._run_update_tick_background,
-                    daemon=True,
-                    name="vegas-update-tick",
-                )
-                self._update_thread.start()
 
     def mark_plugin_updated(self, plugin_id: str) -> None:
         """
@@ -683,8 +640,10 @@ class VegasModeCoordinator:
                     logger.info("Static pause interrupted by live priority")
                     return False
 
-                # Keep plugin data fresh during static pause
-                self._drive_background_updates()
+                # Yield immediately if multi-display follower mode becomes active
+                if self._interrupt_check and self._interrupt_check():
+                    logger.info("Static pause interrupted by sync follower mode")
+                    return False
 
                 # Sleep in small increments to remain responsive
                 time.sleep(0.1)
