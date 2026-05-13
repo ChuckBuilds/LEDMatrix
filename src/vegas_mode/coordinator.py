@@ -148,6 +148,11 @@ class VegasModeCoordinator:
                                 the follower display relative to the leader
         """
         if self.render_pipeline:
+            # Don't expose a standalone (no-op) manager to the pipeline — treat it as None
+            if sync_manager is not None and hasattr(sync_manager, 'role'):
+                from src.common.sync_manager import SyncRole
+                if sync_manager.role == SyncRole.STANDALONE:
+                    sync_manager = None
             self.render_pipeline.sync_manager = sync_manager
             self.render_pipeline.sync_follower_left = (follower_position == "left")
 
@@ -398,7 +403,7 @@ class VegasModeCoordinator:
             # main loop's _tick_plugin_updates() finds all intervals already
             # satisfied on return, so the inter-iteration gap is <1 ms and the
             # display never shows a frozen frame between iterations.
-            _UPDATE_TICK_FRAMES = 500  # ~4 s at 125 FPS
+            _UPDATE_TICK_FRAMES = max(1, int(self.vegas_config.target_fps * 4))  # every 4 s regardless of FPS
             if (self._update_callback and
                     frame_count % _UPDATE_TICK_FRAMES == 0 and
                     not self._update_tick_running):

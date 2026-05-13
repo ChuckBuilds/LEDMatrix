@@ -242,7 +242,7 @@ class RenderPipeline:
                         self.display_manager.image = blank
                         self.display_manager.update_display()
                     except Exception:
-                        pass
+                        logger.exception("Failed to write blank frame to display at cycle end")
                 return True  # Cycle done; coordinator starts new cycle next frame
 
             # Get visible portion

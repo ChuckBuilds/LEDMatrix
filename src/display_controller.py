@@ -88,7 +88,9 @@ class DisplayController:
             _real_update = self.display_manager.update_display
             _dm = self.display_manager
             def _follower_gated_update():
-                if getattr(_dm, '_sync_render_allowed', False):
+                # Allow through when the sync render loop has the token, or when
+                # the leader has gone offline and we've fallen back to standalone.
+                if getattr(_dm, '_sync_render_allowed', False) or not self.sync_manager.is_follower_active():
                     _real_update()
             self.display_manager.update_display = _follower_gated_update
 

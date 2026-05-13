@@ -255,6 +255,14 @@ class DisplaySyncManager:
                     if len(hdr) < 4:
                         continue
                     length = int.from_bytes(hdr, "big")
+                    _MAX_IMAGE_BYTES = 10 * 1024 * 1024  # 10 MB — well above any real scroll image
+                    if length <= 0 or length > _MAX_IMAGE_BYTES:
+                        self.logger.warning(
+                            "Sync: rejected TCP image with invalid length %d (max %d) from %s",
+                            length, _MAX_IMAGE_BYTES, addr,
+                        )
+                        conn.close()
+                        continue
                     data = b""
                     while len(data) < length:
                         chunk = conn.recv(min(65536, length - len(data)))
