@@ -7598,14 +7598,17 @@ def _find_pixlet_binary(explicit_path: Optional[str] = None) -> Optional[str]:
         name = None
     if name:
         bundled = bin_dir / name
-        if bundled.exists():
+        if bundled.is_file():
             if os.access(str(bundled), os.X_OK):
                 return str(bundled)
             try:
                 bundled.chmod(0o755)
-                return str(bundled)
             except OSError:
                 logger.warning("Could not make pixlet bundled binary executable (%s); falling back to PATH", bundled)
+            else:
+                if os.access(str(bundled), os.X_OK):
+                    return str(bundled)
+                logger.warning("Pixlet bundled binary still not executable after chmod (%s); falling back to PATH", bundled)
     return shutil.which("pixlet")
 
 
@@ -7619,7 +7622,12 @@ def _standalone_render_starlark_app(app_id: str) -> Tuple[bool, int, Optional[st
     Returns (success, http_status_code, error_message).
     """
     manifest = _read_starlark_manifest()
-    app_data = manifest.get('apps', {}).get(app_id)
+    if not isinstance(manifest, dict):
+        return False, 400, "Invalid manifest shape: expected object with 'apps' mapping"
+    apps = manifest.get('apps', {})
+    if not isinstance(apps, dict):
+        return False, 400, "Invalid manifest shape: expected object with 'apps' mapping"
+    app_data = apps.get(app_id)
     if not app_data:
         return False, 404, f"App not found: {app_id}"
 
