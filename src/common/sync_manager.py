@@ -22,6 +22,7 @@ import json
 import os
 import socket
 import struct
+import tempfile
 import threading
 import time
 import logging
@@ -41,7 +42,7 @@ HELLO_INTERVAL = 5.0       # follower broadcasts hello every 5 s
 HEARTBEAT_INTERVAL = 2.0   # follower sends heartbeat every 2 s
 PEER_TIMEOUT = 6.0         # leader: no heartbeat → follower gone
 LEADER_TIMEOUT = 6.0       # follower: no frame → leader gone
-STATUS_FILE = "/tmp/led_matrix_sync_status.json"
+STATUS_FILE = os.path.join(tempfile.gettempdir(), "led_matrix_sync_status.json")
 
 
 class SyncRole(Enum):
@@ -111,6 +112,7 @@ class DisplaySyncManager:
         self._on_new_cycle: Optional[Callable[[], None]] = None       # called when leader starts new cycle
         self._on_scroll_image: Optional[Callable[[Image.Image], None]] = None   # called with Image when received
         self._pending_scroll_image: Optional[Image.Image] = None  # image received before callback set
+        self._scroll_image_lock = threading.Lock()         # guards _on_scroll_image / _pending_scroll_image
         self._img_server_sock = None                        # TCP server for scroll image transfer
 
         # Leader state additions
@@ -270,16 +272,31 @@ class DisplaySyncManager:
                             break
                         data += chunk
                     img = Image.open(io.BytesIO(data))
-                    img.load()
+                    _MAX_W, _MAX_H = 100_000, 256  # generous for any real scroll image
+                    if img.width > _MAX_W or img.height > _MAX_H:
+                        self.logger.warning(
+                            "Sync: rejected oversized scroll image %dx%d (max %dx%d) from %s",
+                            img.width, img.height, _MAX_W, _MAX_H, addr,
+                        )
+                        continue
+                    try:
+                        img.load()
+                    except (Image.DecompressionBombError, ValueError) as exc:
+                        self.logger.warning("Sync: rejected decompression bomb from %s: %s", addr, exc)
+                        continue
                     self.logger.info(
                         "Sync: received scroll image %dx%d (%d bytes compressed)",
                         img.width, img.height, length,
                     )
-                    if self._on_scroll_image:
-                        self._on_scroll_image(img)
-                    else:
-                        # Callback not registered yet (startup race) — cache it
-                        self._pending_scroll_image = img
+                    with self._scroll_image_lock:
+                        if self._on_scroll_image:
+                            cb = self._on_scroll_image
+                        else:
+                            # Callback not registered yet (startup race) — cache it
+                            self._pending_scroll_image = img
+                            cb = None
+                    if cb:
+                        cb(img)
                 finally:
                     conn.close()
             except socket.timeout:
@@ -301,11 +318,10 @@ class DisplaySyncManager:
             buf = io.BytesIO()
             image.save(buf, format="PNG", optimize=True)
             data = buf.getvalue()
-            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            sock.settimeout(5.0)
-            sock.connect((self._peer_ip, self.port + 1))
-            sock.sendall(len(data).to_bytes(4, "big") + data)
-            sock.close()
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+                sock.settimeout(5.0)
+                sock.connect((self._peer_ip, self.port + 1))
+                sock.sendall(len(data).to_bytes(4, "big") + data)
             self.logger.info(
                 "Sync: sent scroll image %dx%d (%d bytes compressed)",
                 image.width, image.height, len(data),
@@ -330,10 +346,12 @@ class DisplaySyncManager:
         If an image was received before this callback was registered (startup race),
         fires immediately with that cached image.
         """
-        self._on_scroll_image = callback
-        if self._pending_scroll_image is not None:
-            callback(self._pending_scroll_image)
+        with self._scroll_image_lock:
+            self._on_scroll_image = callback
+            pending = self._pending_scroll_image
             self._pending_scroll_image = None
+        if pending is not None:
+            callback(pending)
 
     def send_scroll_x(self, scroll_x: float) -> None:
         """Leader (Vegas mode): broadcast scroll position instead of a pixel frame.
@@ -438,8 +456,8 @@ class DisplaySyncManager:
                 data, addr = self._recv_sock.recvfrom(65535)
                 sender_ip = addr[0]
 
-                if len(data) > 512:
-                    # Raw RGB frame: magic(8) + width/height(4) + pixels
+                if data[:8] == _RAW_MAGIC or len(data) > 512:
+                    # Frame data: prefer magic-tagged raw RGB; fall back to legacy PNG
                     try:
                         if data[:8] == _RAW_MAGIC:
                             w, h = _RAW_HEADER.unpack(data[8:12])
@@ -628,5 +646,5 @@ class DisplaySyncManager:
             if sock:
                 try:
                     sock.close()
-                except Exception:
-                    pass
+                except Exception as exc:
+                    self.logger.debug("Sync: error closing socket: %s", exc)
