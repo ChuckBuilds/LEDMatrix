@@ -788,18 +788,28 @@ if (typeof window.fixInvalidNumberInputs !== 'function') {
         }
 
         content.className = `flex items-start space-x-2 p-3 rounded-lg border text-sm ${colorClass}`;
-        content.innerHTML = `<span class="font-bold text-lg leading-none">${icon}</span><span>${text}</span>`;
+        content.textContent = '';
+        const iconSpan = document.createElement('span');
+        iconSpan.className = 'font-bold text-lg leading-none';
+        iconSpan.textContent = icon;
+        const textSpan = document.createElement('span');
+        textSpan.textContent = text;
+        content.appendChild(iconSpan);
+        content.appendChild(textSpan);
     }
 
-    // Initial UI state and polling
-    if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', function() {
-            updateSyncUI();
-            setInterval(pollSyncStatus, 5000);
-        });
-    } else {
+    // Initial UI state and polling — guard against duplicate intervals on re-run
+    function startSyncPolling() {
         updateSyncUI();
-        setInterval(pollSyncStatus, 5000);
+        if (!window.syncStatusInterval) {
+            window.syncStatusInterval = setInterval(pollSyncStatus, 5000);
+        }
+    }
+
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', startSyncPolling);
+    } else {
+        startSyncPolling();
     }
 })();
 </script>

@@ -26,7 +26,7 @@ import threading
 import time
 import logging
 from enum import Enum
-from typing import Optional
+from typing import Callable, Optional
 import numpy as np
 from PIL import Image
 
@@ -108,13 +108,13 @@ class DisplaySyncManager:
         self._last_leader_frame_time: float = 0.0
         self._frame_lock = threading.Lock()
         self._leader_ip: Optional[str] = None
-        self._on_new_cycle: Optional[callable] = None       # called when leader starts new cycle
-        self._on_scroll_image: Optional[callable] = None   # called with Image when received
+        self._on_new_cycle: Optional[Callable[[], None]] = None       # called when leader starts new cycle
+        self._on_scroll_image: Optional[Callable[[Image.Image], None]] = None   # called with Image when received
         self._pending_scroll_image: Optional[Image.Image] = None  # image received before callback set
         self._img_server_sock = None                        # TCP server for scroll image transfer
 
         # Leader state additions
-        self._on_follower_connected: Optional[callable] = None  # called when follower connects
+        self._on_follower_connected: Optional[Callable[[], None]] = None  # called when follower connects
 
         self._error_message: Optional[str] = None
         self._running = False
@@ -305,7 +305,7 @@ class DisplaySyncManager:
         except Exception as exc:
             self.logger.debug("Sync: image send error: %s", exc)
 
-    def set_on_follower_connected(self, callback) -> None:
+    def set_on_follower_connected(self, callback: Callable[[], None]) -> None:
         """Leader: callback fired (in a thread) when a compatible follower first connects.
         Use this to push the current scroll image immediately.
         If a follower is already connected when this is called, fires right away
@@ -317,7 +317,7 @@ class DisplaySyncManager:
                 target=callback, daemon=True, name="sync-leader-img-push-late"
             ).start()
 
-    def set_on_scroll_image(self, callback) -> None:
+    def set_on_scroll_image(self, callback: Callable[[Image.Image], None]) -> None:
         """Follower: callback fired with the received Image when leader sends scroll image.
         If an image was received before this callback was registered (startup race),
         fires immediately with that cached image.
@@ -369,6 +369,13 @@ class DisplaySyncManager:
             data = header + arr.tobytes()
             if len(data) <= 65000:
                 self._send_sock.sendto(data, (self._peer_ip, self.port))
+            elif not getattr(self, '_oversized_frame_warned', False):
+                self._oversized_frame_warned = True
+                self.logger.warning(
+                    "Sync: frame too large for UDP (%d bytes, max 65000) — "
+                    "image %dx%d will not be sent; use TCP image sync instead",
+                    len(data), image.width, image.height,
+                )
         except Exception as exc:
             self.logger.debug("Sync: frame send error: %s", exc)
 
@@ -549,7 +556,7 @@ class DisplaySyncManager:
         """Follower: return the most recently received Vegas scroll position, or None."""
         return self._latest_scroll_x
 
-    def set_on_new_cycle(self, callback) -> None:
+    def set_on_new_cycle(self, callback: Callable[[], None]) -> None:
         """Follower: register a callback fired when the leader starts a new scroll cycle.
         Used to trigger a local start_new_cycle() so both Pis rebuild from same fresh data.
         """

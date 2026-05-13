@@ -798,7 +798,7 @@ class DisplayController:
         """
         if not (self.sync_manager and self.sync_manager.role == SyncRole.LEADER):
             return
-        # Throttle to 30fps — PNG encode/decode at 125fps is too heavy on Pi
+        # Throttle to ~90fps via _FOLLOWER_SEND_INTERVAL — raw RGB bytes, no encode/decode
         now = time.time()
         if now - getattr(self, '_last_follower_send', 0) < self._FOLLOWER_SEND_INTERVAL:
             return
