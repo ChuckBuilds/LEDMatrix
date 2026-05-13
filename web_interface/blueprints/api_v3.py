@@ -4277,8 +4277,13 @@ def _set_missing_booleans_to_false(config, schema_props, form_keys, prefix='', c
         elif prop_type == 'object' and 'properties' in prop_schema:
             # Recurse into nested objects
             if config_node is not None:
-                # Inside an array item — ensure nested dict exists in item
-                if prop_name not in node or not isinstance(node[prop_name], dict):
+                # Inside an array item — only recurse if the sub-object already exists.
+                # Never create optional sub-objects that weren't submitted; doing so
+                # produces e.g. logo:{} on feed items with no logo, which then fails
+                # schema validation when the object has required fields (id, path).
+                if prop_name not in node:
+                    continue
+                if not isinstance(node[prop_name], dict):
                     node[prop_name] = {}
                 _set_missing_booleans_to_false(
                     config, prop_schema['properties'], form_keys, full_path,
@@ -4418,10 +4423,22 @@ def _filter_config_by_schema(config, schema, prefix=''):
         prop_schema = schema_props[key]
 
         # Handle nested objects recursively
+        item_prefix = f"{prefix}.{key}" if prefix else key
         if isinstance(value, dict) and prop_schema.get('type') == 'object' and 'properties' in prop_schema:
-            filtered[key] = _filter_config_by_schema(value, prop_schema, f"{prefix}.{key}" if prefix else key)
+            filtered[key] = _filter_config_by_schema(value, prop_schema, item_prefix)
+        elif isinstance(value, list) and prop_schema.get('type') == 'array':
+            items_schema = prop_schema.get('items', {})
+            if isinstance(items_schema, dict) and items_schema.get('type') == 'object' and 'properties' in items_schema:
+                # Filter each item in the array so extra fields are stripped before
+                # schema validation (important when items has additionalProperties: false)
+                filtered[key] = [
+                    _filter_config_by_schema(item, items_schema, item_prefix) if isinstance(item, dict) else item
+                    for item in value
+                ]
+            else:
+                filtered[key] = value
         else:
-            # Keep the value as-is for non-object types
+            # Keep the value as-is for non-object/non-array types
             filtered[key] = value
 
     return filtered
