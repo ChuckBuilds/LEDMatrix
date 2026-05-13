@@ -202,8 +202,25 @@ class RenderPipeline:
             # Update scroll position
             self.scroll_helper.update_scroll_position()
 
-            # Check if cycle is complete
-            if self.scroll_helper.is_scroll_complete():
+            # Determine if the cycle is done.
+            #
+            # scroll_helper considers a cycle complete only after
+            # total_distance_scrolled >= total_scroll_width + display_width.
+            # That extra display_width of travel causes a "wrap-around" phase
+            # where scroll_position resets to ~0 and the first plugin's content
+            # re-enters from the right — the user sees this 2-3 s window as
+            # "a plugin partially displaying before the next one starts."
+            #
+            # We end the cycle as soon as total_distance_scrolled reaches
+            # total_scroll_width (the wrap-around point), before any second-pass
+            # content becomes visible.  scroll_helper.is_scroll_complete() is
+            # kept as a fallback for edge-cases where that threshold is skipped.
+            at_wrap_point = (
+                not self._cycle_complete and
+                self.scroll_helper.total_distance_scrolled >= self.scroll_helper.total_scroll_width
+            )
+
+            if at_wrap_point or self.scroll_helper.is_scroll_complete():
                 if not self._cycle_complete:
                     self._cycle_complete = True
                     self.stats['scroll_cycles'] += 1
@@ -211,6 +228,20 @@ class RenderPipeline:
                         "Scroll cycle complete after %.1fs",
                         time.time() - self._cycle_start_time
                     )
+                    # Push blank immediately so the hardware never shows
+                    # post-wrap content while the coordinator recomposes.
+                    try:
+                        from PIL import Image as _Image
+                        blank = _Image.new('RGB', (self.display_width, self.display_height))
+                        self.display_manager.image = blank
+                        self.display_manager.update_display()
+                    except (ImportError, OSError, RuntimeError, ValueError, TypeError, MemoryError) as exc:
+                        logger.error(
+                            "Failed to push blank frame at cycle end "
+                            "(display=%dx%d): %s",
+                            self.display_width, self.display_height, exc
+                        )
+                return True  # Cycle done; coordinator starts new cycle next frame
 
             # Get visible portion
             visible_frame = self.scroll_helper.get_visible_portion()

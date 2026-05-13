@@ -3,6 +3,7 @@ if os.getenv("EMULATOR", "false") == "true":
     from RGBMatrixEmulator import RGBMatrix, RGBMatrixOptions
 else:
     from rgbmatrix import RGBMatrix, RGBMatrixOptions
+from contextlib import contextmanager
 from PIL import Image, ImageDraw, ImageFont
 import time
 from typing import Dict, Any, List, Tuple
@@ -28,6 +29,8 @@ class DisplayManager:
         self.config = config or {}
         self._force_fallback = force_fallback
         self._suppress_test_pattern = suppress_test_pattern
+        # When True, update_display() and clear() skip hardware writes (used during off-screen content capture)
+        self._capture_mode_active = False
         # Snapshot settings for web preview integration (service writes, web reads)
         self._snapshot_path = "/tmp/led_matrix_preview.png"
         self._snapshot_min_interval_sec = 0.2  # max ~5 fps
@@ -255,6 +258,22 @@ class DisplayManager:
         except Exception as e:
             logger.error(f"Error drawing test pattern: {e}", exc_info=True)
 
+    @contextmanager
+    def capture_mode(self):
+        """Suppress hardware output during off-screen content capture.
+
+        Plugins call update_display() as part of their normal display() flow.
+        When fetching content for Vegas mode the render loop is still running,
+        so any incidental hardware write causes a visible flash on the matrix.
+        Entering this context prevents those writes without affecting the PIL
+        image buffer, which the adapter reads to extract content.
+        """
+        self._capture_mode_active = True
+        try:
+            yield
+        finally:
+            self._capture_mode_active = False
+
     def update_display(self):
         """Update the display using double buffering with proper sync."""
         try:
@@ -264,10 +283,13 @@ class DisplayManager:
                 # Still write a snapshot so the web UI can preview
                 self._write_snapshot_if_due()
                 return
-                
-            # Copy the current image to the offscreen canvas   
+
+            if self._capture_mode_active:
+                return  # Skip hardware write — content is being captured off-screen
+
+            # Copy the current image to the offscreen canvas
             self.offscreen_canvas.SetImage(self.image)
-            
+
             # Swap buffers immediately
             self.matrix.SwapOnVSync(self.offscreen_canvas)
             
@@ -304,21 +326,23 @@ class DisplayManager:
             # Create a new black image
             self.image = Image.new('RGB', (self.matrix.width, self.matrix.height))
             self.draw = ImageDraw.Draw(self.image)
-            
-            # Clear both canvases and the underlying matrix to ensure no artifacts
-            try:
-                self.offscreen_canvas.Clear()
-            except Exception:
-                pass
-            try:
-                self.current_canvas.Clear()
-            except Exception:
-                pass
-            try:
-                # Extra safety: clear the matrix front buffer as well
-                self.matrix.Clear()
-            except Exception:
-                pass
+
+            if not self._capture_mode_active:
+                # Clear both canvases and the underlying matrix to ensure no artifacts.
+                # Failures are non-fatal — the image buffer is already black above, so
+                # the next update_display() call will push clean content regardless.
+                try:
+                    self.offscreen_canvas.Clear()
+                except (RuntimeError, OSError) as e:
+                    logger.error("Failed to clear offscreen canvas: %s", e)
+                try:
+                    self.current_canvas.Clear()
+                except (RuntimeError, OSError) as e:
+                    logger.error("Failed to clear current canvas: %s", e)
+                try:
+                    self.matrix.Clear()
+                except (RuntimeError, OSError) as e:
+                    logger.error("Failed to clear matrix front buffer: %s", e)
             
             # Note: We do NOT call update_display() here to avoid black flashes.
             # The caller should call update_display() after drawing new content.
