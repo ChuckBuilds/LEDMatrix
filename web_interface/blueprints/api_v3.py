@@ -7599,35 +7599,41 @@ def _find_pixlet_binary(explicit_path: Optional[str] = None) -> Optional[str]:
     if name:
         bundled = bin_dir / name
         if bundled.exists():
-            if not os.access(str(bundled), os.X_OK):
+            if os.access(str(bundled), os.X_OK):
+                return str(bundled)
+            try:
                 bundled.chmod(0o755)
-            return str(bundled)
+                return str(bundled)
+            except OSError:
+                logger.warning("Could not make pixlet bundled binary executable (%s); falling back to PATH", bundled)
     return shutil.which("pixlet")
 
 
-def _standalone_render_starlark_app(app_id: str) -> Tuple[bool, Optional[str]]:
+def _standalone_render_starlark_app(app_id: str) -> Tuple[bool, int, Optional[str]]:
     """Render a Starlark app via pixlet directly (no plugin required).
 
     Reads the .star file and config from starlark-apps/{app_id}/, runs pixlet,
     and saves the output to cached_render.webp in the same directory.
     This is the web-service fallback when starlark-apps plugin is not loaded.
+
+    Returns (success, http_status_code, error_message).
     """
     manifest = _read_starlark_manifest()
     app_data = manifest.get('apps', {}).get(app_id)
     if not app_data:
-        return False, f"App not found: {app_id}"
+        return False, 404, f"App not found: {app_id}"
 
     app_dir = _STARLARK_APPS_DIR / app_id
     star_file = app_dir / app_data.get('star_file', f'{app_id}.star')
     if not star_file.exists():
-        return False, f"Star file not found: {star_file}"
+        return False, 404, f"Star file not found: {star_file}"
 
     full_config = api_v3.config_manager.load_config() if api_v3.config_manager else {}
     plugin_config = full_config.get('starlark-apps', {})
 
     pixlet_path = _find_pixlet_binary(plugin_config.get('pixlet_path'))
     if not pixlet_path:
-        return False, "Pixlet binary not found — install pixlet first"
+        return False, 503, "Pixlet binary not found — install pixlet first"
 
     magnify = plugin_config.get('magnify')
     if magnify is None:
@@ -7649,9 +7655,9 @@ def _standalone_render_starlark_app(app_id: str) -> Tuple[bool, Optional[str]]:
             with open(config_file) as f:
                 app_config = json.load(f)
         except json.JSONDecodeError as e:
-            return False, f"Invalid config.json for {app_id} ({config_file}): {e}"
+            return False, 400, f"Invalid config.json for {app_id} ({config_file}): {e}"
         except OSError as e:
-            return False, f"Cannot read config.json for {app_id} ({config_file}): {e}"
+            return False, 400, f"Cannot read config.json for {app_id} ({config_file}): {e}"
 
     INTERNAL_KEYS = {'render_interval', 'display_duration'}
     pixlet_config = {k: v for k, v in app_config.items() if k not in INTERNAL_KEYS}
@@ -7670,12 +7676,12 @@ def _standalone_render_starlark_app(app_id: str) -> Tuple[bool, Optional[str]]:
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=30, cwd=str(app_dir))
         if result.returncode == 0 and os.path.isfile(output_path):
-            return True, None
-        return False, f"Pixlet failed (exit {result.returncode}): {result.stderr.strip()}"
+            return True, 200, None
+        return False, 502, f"Pixlet failed (exit {result.returncode}): {result.stderr.strip()}"
     except subprocess.TimeoutExpired:
-        return False, "Render timed out after 30s"
+        return False, 504, "Render timed out after 30s"
     except Exception as e:
-        return False, f"Render error: {e}"
+        return False, 500, f"Render error: {e}"
 
 
 def _read_starlark_manifest() -> Dict[str, Any]:
@@ -8270,10 +8276,10 @@ def render_starlark_app(app_id):
             return jsonify({'status': 'error', 'message': 'Failed to render app'}), 500
 
         # Web-service context: plugin not loaded, call pixlet directly
-        success, error = _standalone_render_starlark_app(app_id)
+        success, status_code, error = _standalone_render_starlark_app(app_id)
         if success:
-            return jsonify({'status': 'success', 'message': 'App rendered successfully', 'frame_count': 0})
-        return jsonify({'status': 'error', 'message': error or 'Render failed', 'frame_count': 0}), 500
+            return jsonify({'status': 'success', 'message': 'App rendered successfully', 'frame_count': 0}), status_code
+        return jsonify({'status': 'error', 'message': error or 'Render failed', 'frame_count': 0}), status_code
 
     except Exception as e:
         logger.exception("[Starlark] render_starlark_app failed")
