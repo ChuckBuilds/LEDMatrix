@@ -7658,6 +7658,11 @@ def _standalone_render_starlark_app(app_id: str) -> Tuple[bool, int, Optional[st
             return False, 400, f"Invalid config.json for {app_id} ({config_file}): {e}"
         except OSError as e:
             return False, 400, f"Cannot read config.json for {app_id} ({config_file}): {e}"
+        if not isinstance(app_config, dict):
+            return False, 400, (
+                f"config.json for {app_id} must be a JSON object, "
+                f"got {type(app_config).__name__}"
+            )
 
     INTERNAL_KEYS = {'render_interval', 'display_duration'}
     pixlet_config = {k: v for k, v in app_config.items() if k not in INTERNAL_KEYS}
