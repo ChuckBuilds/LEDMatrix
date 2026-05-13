@@ -7577,6 +7577,126 @@ _STARLARK_APPS_DIR = PROJECT_ROOT / 'starlark-apps'
 _STARLARK_MANIFEST_FILE = _STARLARK_APPS_DIR / 'manifest.json'
 
 
+def _find_pixlet_binary(explicit_path: Optional[str] = None) -> Optional[str]:
+    """Find pixlet binary: explicit path → bundled binary → system PATH."""
+    import platform
+    if explicit_path and os.path.isfile(explicit_path) and os.access(explicit_path, os.X_OK):
+        return explicit_path
+    bin_dir = PROJECT_ROOT / "bin" / "pixlet"
+    system = platform.system().lower()
+    machine = platform.machine().lower()
+    if system == "linux":
+        if "aarch64" in machine or "arm64" in machine:
+            name = "pixlet-linux-arm64"
+        elif "x86_64" in machine or "amd64" in machine:
+            name = "pixlet-linux-amd64"
+        else:
+            name = None
+    elif system == "darwin":
+        name = "pixlet-darwin-arm64" if "arm64" in machine else "pixlet-darwin-amd64"
+    else:
+        name = None
+    if name:
+        bundled = bin_dir / name
+        if bundled.is_file():
+            if os.access(str(bundled), os.X_OK):
+                return str(bundled)
+            try:
+                bundled.chmod(0o755)
+            except OSError:
+                logger.warning("Could not make pixlet bundled binary executable (%s); falling back to PATH", bundled)
+            else:
+                if os.access(str(bundled), os.X_OK):
+                    return str(bundled)
+                logger.warning("Pixlet bundled binary still not executable after chmod (%s); falling back to PATH", bundled)
+    return shutil.which("pixlet")
+
+
+def _standalone_render_starlark_app(app_id: str) -> Tuple[bool, int, Optional[str]]:
+    """Render a Starlark app via pixlet directly (no plugin required).
+
+    Reads the .star file and config from starlark-apps/{app_id}/, runs pixlet,
+    and saves the output to cached_render.webp in the same directory.
+    This is the web-service fallback when starlark-apps plugin is not loaded.
+
+    Returns (success, http_status_code, error_message).
+    """
+    manifest = _read_starlark_manifest()
+    if not isinstance(manifest, dict):
+        return False, 400, "Invalid manifest shape: expected object with 'apps' mapping"
+    apps = manifest.get('apps', {})
+    if not isinstance(apps, dict):
+        return False, 400, "Invalid manifest shape: expected object with 'apps' mapping"
+    app_data = apps.get(app_id)
+    if not app_data:
+        return False, 404, f"App not found: {app_id}"
+
+    app_dir = _STARLARK_APPS_DIR / app_id
+    star_file = app_dir / app_data.get('star_file', f'{app_id}.star')
+    if not star_file.exists():
+        return False, 404, f"Star file not found: {star_file}"
+
+    full_config = api_v3.config_manager.load_config() if api_v3.config_manager else {}
+    plugin_config = full_config.get('starlark-apps', {})
+
+    pixlet_path = _find_pixlet_binary(plugin_config.get('pixlet_path'))
+    if not pixlet_path:
+        return False, 503, "Pixlet binary not found — install pixlet first"
+
+    magnify = plugin_config.get('magnify')
+    if magnify is None:
+        hw = full_config.get('display', {}).get('hardware', {})
+        cols = hw.get('cols', 64)
+        chain = hw.get('chain_length', 1)
+        rows = hw.get('rows', 32)
+        magnify = max(1, min(8, int(min((cols * chain) / 64, rows / 32))))
+    else:
+        try:
+            magnify = max(1, min(8, int(magnify)))
+        except (ValueError, TypeError):
+            magnify = 1
+
+    config_file = app_dir / 'config.json'
+    app_config: Dict[str, Any] = {}
+    if config_file.exists():
+        try:
+            with open(config_file) as f:
+                app_config = json.load(f)
+        except json.JSONDecodeError as e:
+            return False, 400, f"Invalid config.json for {app_id} ({config_file}): {e}"
+        except OSError as e:
+            return False, 400, f"Cannot read config.json for {app_id} ({config_file}): {e}"
+        if not isinstance(app_config, dict):
+            return False, 400, (
+                f"config.json for {app_id} must be a JSON object, "
+                f"got {type(app_config).__name__}"
+            )
+
+    INTERNAL_KEYS = {'render_interval', 'display_duration'}
+    pixlet_config = {k: v for k, v in app_config.items() if k not in INTERNAL_KEYS}
+
+    output_path = str(app_dir / 'cached_render.webp')
+    cmd = [pixlet_path, 'render', str(star_file)]
+    for key, value in pixlet_config.items():
+        if not re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', key):
+            continue
+        value_str = 'true' if value is True else 'false' if value is False else str(value)
+        if re.search(r'[`$|<>&;\x00]|\$\(', value_str):
+            continue
+        cmd.append(f'{key}={value_str}')
+    cmd.extend(['-o', output_path, '-m', str(magnify)])
+
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30, cwd=str(app_dir))
+        if result.returncode == 0 and os.path.isfile(output_path):
+            return True, 200, None
+        return False, 502, f"Pixlet failed (exit {result.returncode}): {result.stderr.strip()}"
+    except subprocess.TimeoutExpired:
+        return False, 504, "Render timed out after 30s"
+    except Exception as e:
+        return False, 500, f"Render error: {e}"
+
+
 def _read_starlark_manifest() -> Dict[str, Any]:
     """Read the starlark-apps manifest.json directly from disk."""
     try:
@@ -7696,24 +7816,11 @@ def get_starlark_status():
                 'display_info': magnify_info
             })
 
-        # Plugin not loaded - check Pixlet availability directly
-        import shutil
-        import platform
-
-        system = platform.system().lower()
-        machine = platform.machine().lower()
-        bin_dir = PROJECT_ROOT / 'bin' / 'pixlet'
-
-        pixlet_binary = None
-        if system == "linux":
-            if "aarch64" in machine or "arm64" in machine:
-                pixlet_binary = bin_dir / "pixlet-linux-arm64"
-            elif "x86_64" in machine or "amd64" in machine:
-                pixlet_binary = bin_dir / "pixlet-linux-amd64"
-        elif system == "darwin":
-            pixlet_binary = bin_dir / ("pixlet-darwin-arm64" if "arm64" in machine else "pixlet-darwin-amd64")
-
-        pixlet_available = (pixlet_binary and pixlet_binary.exists()) or shutil.which('pixlet') is not None
+        # Plugin not loaded - check Pixlet availability via shared resolver
+        # (respects user-configured pixlet_path, bundled binary, and system PATH)
+        full_config = api_v3.config_manager.load_config() if api_v3.config_manager else {}
+        pixlet_path = _find_pixlet_binary(full_config.get('starlark-apps', {}).get('pixlet_path'))
+        pixlet_available = pixlet_path is not None
 
         # Read app counts from manifest
         manifest = _read_starlark_manifest()
@@ -8166,19 +8273,26 @@ def toggle_starlark_app(app_id):
 def render_starlark_app(app_id):
     """Force render a Starlark app."""
     try:
+        is_valid, err = _validate_starlark_app_path(app_id)
+        if not is_valid:
+            return jsonify({'status': 'error', 'message': err}), 400
+
         starlark_plugin = _get_starlark_plugin()
-        if not starlark_plugin:
-            return jsonify({'status': 'error', 'message': 'Rendering requires the main LEDMatrix service (plugin not loaded in web service)'}), 503
-
-        app = starlark_plugin.apps.get(app_id)
-        if not app:
-            return jsonify({'status': 'error', 'message': f'App not found: {app_id}'}), 404
-
-        success = starlark_plugin._render_app(app, force=True)
-        if success:
-            return jsonify({'status': 'success', 'message': 'App rendered', 'frame_count': len(app.frames) if app.frames else 0})
-        else:
+        if starlark_plugin:
+            app = starlark_plugin.apps.get(app_id)
+            if not app:
+                return jsonify({'status': 'error', 'message': f'App not found: {app_id}'}), 404
+            success = starlark_plugin._render_app(app, force=True)
+            if success:
+                return jsonify({'status': 'success', 'message': 'App rendered',
+                                'frame_count': len(app.frames) if app.frames else 0})
             return jsonify({'status': 'error', 'message': 'Failed to render app'}), 500
+
+        # Web-service context: plugin not loaded, call pixlet directly
+        success, status_code, error = _standalone_render_starlark_app(app_id)
+        if success:
+            return jsonify({'status': 'success', 'message': 'App rendered successfully', 'frame_count': 0}), status_code
+        return jsonify({'status': 'error', 'message': error or 'Render failed', 'frame_count': 0}), status_code
 
     except Exception as e:
         logger.exception("[Starlark] render_starlark_app failed")

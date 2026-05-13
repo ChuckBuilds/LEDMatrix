@@ -226,13 +226,24 @@ def serve_plugin_asset(plugin_id, filename):
                 'message': 'Internal server error'
             }), 500
 
+# Prime psutil CPU measurement once at startup so interval=None returns a real value
+try:
+    import psutil as _psutil_prime
+    _psutil_prime.cpu_percent(interval=None)
+except ImportError:
+    pass
+
 # Cached AP mode check — avoids creating a WiFiManager per request
 _ap_mode_cache = {'value': False, 'timestamp': 0}
-_AP_MODE_CACHE_TTL = 5  # seconds
+_AP_MODE_CACHE_TTL = 30  # seconds — AP mode is user-initiated; 30s is fine
+
+# Cached ledmatrix service status for SSE stats stream
+_ledmatrix_service_cache = {'active': False, 'timestamp': 0}
+_LEDMATRIX_SERVICE_CACHE_TTL = 15  # seconds
 
 def is_ap_mode_active():
     """
-    Check if access point mode is currently active (cached, 5s TTL).
+    Check if access point mode is currently active (cached, 30s TTL).
     Uses a direct systemctl check instead of instantiating WiFiManager.
     """
     now = time.time()
@@ -444,10 +455,11 @@ def system_status_generator():
             # Try to import psutil for system stats
             try:
                 import psutil
-                cpu_percent = round(psutil.cpu_percent(interval=1), 1)
+                # interval=None is non-blocking; primed at module startup above
+                cpu_percent = round(psutil.cpu_percent(interval=None), 1)
                 memory = psutil.virtual_memory()
                 memory_used_percent = round(memory.percent, 1)
-                
+
                 # Try to get CPU temperature (Raspberry Pi specific)
                 cpu_temp = 0
                 try:
@@ -455,20 +467,23 @@ def system_status_generator():
                         cpu_temp = round(float(f.read()) / 1000.0, 1)
                 except (OSError, ValueError):
                     pass
-                    
+
             except ImportError:
                 cpu_percent = 0
                 memory_used_percent = 0
                 cpu_temp = 0
-            
-            # Check if display service is running
-            service_active = False
-            try:
-                result = subprocess.run(['systemctl', 'is-active', 'ledmatrix'], 
-                                      capture_output=True, text=True, timeout=2)
-                service_active = result.stdout.strip() == 'active'
-            except (subprocess.SubprocessError, OSError):
-                pass
+
+            # Check if display service is running (cached to avoid per-client subprocess forks)
+            now = time.time()
+            if (now - _ledmatrix_service_cache['timestamp']) >= _LEDMATRIX_SERVICE_CACHE_TTL:
+                try:
+                    result = subprocess.run(['systemctl', 'is-active', 'ledmatrix'],
+                                            capture_output=True, text=True, timeout=2)
+                    _ledmatrix_service_cache['active'] = result.stdout.strip() == 'active'
+                except (subprocess.SubprocessError, OSError):
+                    pass
+                _ledmatrix_service_cache['timestamp'] = now
+            service_active = _ledmatrix_service_cache['active']
             
             status = {
                 'timestamp': time.time(),
@@ -546,7 +561,7 @@ def display_preview_generator():
         except Exception as e:
             yield {'error': str(e)}
         
-        time.sleep(0.5)  # Check 2 times per second (reduced frequency for better performance)
+        time.sleep(1.0)  # Check once per second — halves PIL encode overhead vs 0.5s
 
 # Logs generator for SSE
 def logs_generator():

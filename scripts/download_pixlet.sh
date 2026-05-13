@@ -118,7 +118,7 @@ total_count=${#ARCHITECTURES[@]}
 
 for arch in "${!ARCHITECTURES[@]}"; do
     if download_binary "$arch" "${ARCHITECTURES[$arch]}"; then
-        ((success_count++))
+        success_count=$((success_count + 1))
     fi
 done
 
