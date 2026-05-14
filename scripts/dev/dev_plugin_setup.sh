@@ -203,9 +203,7 @@ link_github_plugin() {
         log_info "Repository already exists at $target_dir"
         if [[ -d "$target_dir/.git" ]]; then
             log_info "Updating repository..."
-            if cd "$target_dir"; then
-                git pull --rebase || true
-            fi
+            (cd "$target_dir" && git pull --rebase) || true
         fi
     else
         # Clone the repository

@@ -3,6 +3,7 @@ import logging
 import freetype
 import json
 import hashlib
+import urllib.parse
 import urllib.request
 import zipfile
 import tempfile
@@ -265,9 +266,12 @@ class FontManager:
                 logger.info(f"Using cached font: {cache_path}")
                 return str(cache_path)
 
-            # Download font
+            # Download font — restrict to http/https to prevent file:// reads
+            parsed = urllib.parse.urlparse(url)
+            if parsed.scheme not in ('http', 'https'):
+                raise ValueError(f"Font URL must use http or https, got: {parsed.scheme!r}")
             logger.info(f"Downloading font from {url}")
-            urllib.request.urlretrieve(url, cache_path)  # nosec B310 - URL from user's own config file on local device
+            urllib.request.urlretrieve(url, cache_path)  # nosec B310 - scheme validated above
 
             # Handle zip files
             if url.endswith('.zip'):

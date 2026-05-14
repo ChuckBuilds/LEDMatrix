@@ -1401,8 +1401,8 @@ class WiFiManager:
                     # Last resort: enable AP mode
                     try:
                         self.enable_ap_mode()
-                    except Exception:  # nosec B110 - last-resort recovery; if AP enable fails there's nothing left to try
-                        pass
+                    except Exception as ap_error:  # nosec B110 - last-resort; do not re-raise, but log for debugging
+                        logger.error("Last-resort AP mode enable failed in recovery path: %s", ap_error, exc_info=True)
             return False, str(e)
     
     def _restore_original_connection(self, connection_name: str, ssid: str) -> bool:

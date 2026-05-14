@@ -172,8 +172,8 @@ class SportsCore(ABC):
 
         try:
             fallbacks.append(Path.home() / ".ledmatrix" / "logos" / self.sport_key)
-        except Exception:  # nosec B110 - Path.home() raises RuntimeError for service users; fallback list continues
-            pass
+        except RuntimeError as e:
+            self.logger.debug("Could not resolve home directory (expected for service users): %s", e)
 
         fallbacks.append(Path(tempfile.gettempdir()) / "ledmatrix_logos" / self.sport_key)
 

@@ -245,7 +245,7 @@ class PluginExecutor:
                 timeout=timeout,
                 plugin_id=plugin_id
             )
-        except (PluginTimeoutError, PluginError, Exception) as e:
+        except Exception as e:  # covers PluginTimeoutError, PluginError, and unexpected errors
             self.logger.warning(
                 "Plugin %s %s failed, using default return: %s",
                 plugin_id,

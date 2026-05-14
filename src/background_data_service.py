@@ -549,13 +549,12 @@ class BackgroundDataService:
             if to_remove:
                 logger.info(f"Cleared {len(to_remove)} old completed requests")
     
-    def shutdown(self, wait: bool = True, timeout: int = 30):
+    def shutdown(self, wait: bool = True):
         """
         Shutdown the background data service.
-        
+
         Args:
             wait: Whether to wait for active requests to complete
-            timeout: Maximum time to wait for shutdown
         """
         logger.info("Shutting down BackgroundDataService...")
         
@@ -573,7 +572,7 @@ class BackgroundDataService:
     def __del__(self):
         """Cleanup when service is destroyed."""
         if not self._shutdown:
-            self.shutdown(wait=False, timeout=None)
+            self.shutdown(wait=False)
 
 # Global service instance
 _background_service: Optional[BackgroundDataService] = None

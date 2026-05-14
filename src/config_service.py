@@ -37,7 +37,7 @@ class ConfigVersion:
             config: Configuration dictionary
             version: Version number
             timestamp: When this version was created
-            checksum: MD5 checksum of the config
+            checksum: SHA-256 hex digest of the config (for change detection)
         """
         self.config: Dict[str, Any] = config
         self.version: int = version
