@@ -54,7 +54,7 @@ If the script reboots the Pi (which it recommends), network services may restart
    # Connect to your WiFi network (replace with your SSID and password)
    sudo nmcli device wifi connect "YourWiFiSSID" password "YourPassword"
    
-   # Or use the web interface at http://192.168.4.1:5001
+   # Or use the web interface at http://192.168.4.1:5000
    # Navigate to WiFi tab and connect to your network
    ```
 
@@ -177,9 +177,9 @@ sudo systemctl restart NetworkManager
 
 Even if SSH is unavailable, you can access the web interface:
 
-1. **Via AP Mode**: Connect to **LEDMatrix-Setup** network and visit `http://192.168.4.1:5001`
-2. **Via WiFi**: If WiFi is connected, visit `http://<pi-ip-address>:5001`
-3. **Via Ethernet**: Visit `http://<pi-ip-address>:5001`
+1. **Via AP Mode**: Connect to **LEDMatrix-Setup** network and visit `http://192.168.4.1:5000`
+2. **Via WiFi**: If WiFi is connected, visit `http://<pi-ip-address>:5000`
+3. **Via Ethernet**: Visit `http://<pi-ip-address>:5000`
 
 The web interface allows you to:
 - Configure WiFi connections

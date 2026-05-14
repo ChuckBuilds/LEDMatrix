@@ -329,7 +329,7 @@ const PluginAPI = {
      * @returns {Promise<Array>} List of available plugins
      */
     async getPluginStore() {
-        const response = await this.request('/plugins/store');
+        const response = await this.request('/plugins/store/list');
         return response.data || [];
     },
     

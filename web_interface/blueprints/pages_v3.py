@@ -2,6 +2,7 @@ from flask import Blueprint, render_template, request, redirect, url_for, flash,
 import json
 import logging
 from pathlib import Path
+from src.web_interface.secret_helpers import mask_secret_fields
 
 logger = logging.getLogger(__name__)
 
@@ -75,6 +76,8 @@ def load_partial(partial_name):
             return _load_logs_partial()
         elif partial_name == 'raw-json':
             return _load_raw_json_partial()
+        elif partial_name == 'backup-restore':
+            return _load_backup_restore_partial()
         elif partial_name == 'wifi':
             return _load_wifi_partial()
         elif partial_name == 'cache':
@@ -295,6 +298,18 @@ def _load_raw_json_partial():
     except Exception as e:
         return f"Error: {str(e)}", 500
 
+def _load_backup_restore_partial():
+    """Load backup & restore partial."""
+    try:
+        return render_template('v3/partials/backup_restore.html')
+    except Exception as e:
+        return f"Error: {str(e)}", 500
+
+@pages_v3.route('/setup')
+def captive_setup():
+    """Lightweight captive portal setup page — self-contained, no frameworks."""
+    return render_template('v3/captive_setup.html')
+
 def _load_wifi_partial():
     """Load WiFi setup partial"""
     try:
@@ -405,11 +420,17 @@ def _load_plugin_config_partial(plugin_id):
             except Exception as e:
                 print(f"Warning: Could not load manifest for {plugin_id}: {e}")
         
+        # Mask secret fields before rendering template (fail closed — never leak secrets)
+        schema_properties = schema.get('properties') if isinstance(schema, dict) else None
+        if not isinstance(schema_properties, dict):
+            return '<div class="text-red-500 p-4">Error loading plugin config securely: schema unavailable.</div>', 500
+        config = mask_secret_fields(config, schema_properties)
+
         # Determine enabled status
         enabled = config.get('enabled', True)
         if plugin_instance:
             enabled = plugin_instance.enabled
-        
+
         # Build plugin data for template
         plugin_data = {
             'id': plugin_id,

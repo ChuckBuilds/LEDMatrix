@@ -53,13 +53,13 @@ This method is best for plugins stored in separate Git repositories.
 
 ```bash
 # Link a plugin from GitHub (auto-detects URL)
-./dev_plugin_setup.sh link-github <plugin-name>
+./scripts/dev/dev_plugin_setup.sh link-github <plugin-name>
 
 # Example: Link hockey-scoreboard plugin
-./dev_plugin_setup.sh link-github hockey-scoreboard
+./scripts/dev/dev_plugin_setup.sh link-github hockey-scoreboard
 
 # With custom URL
-./dev_plugin_setup.sh link-github <plugin-name> https://github.com/user/repo.git
+./scripts/dev/dev_plugin_setup.sh link-github <plugin-name> https://github.com/user/repo.git
 ```
 
 The script will:
@@ -71,10 +71,10 @@ The script will:
 
 ```bash
 # Link a local plugin repository
-./dev_plugin_setup.sh link <plugin-name> <path-to-repo>
+./scripts/dev/dev_plugin_setup.sh link <plugin-name> <path-to-repo>
 
 # Example: Link a local plugin
-./dev_plugin_setup.sh link my-plugin ../ledmatrix-my-plugin
+./scripts/dev/dev_plugin_setup.sh link my-plugin ../ledmatrix-my-plugin
 ```
 
 ### Method 2: Manual Plugin Creation
@@ -321,7 +321,8 @@ Each plugin has its own section in `config/config.json`:
 
 ### Secrets Management
 
-Store sensitive data (API keys, tokens) in `config/config_secrets.json`:
+Store sensitive data (API keys, tokens) in `config/config_secrets.json`
+under the same plugin id you use in `config/config.json`:
 
 ```json
 {
@@ -331,18 +332,20 @@ Store sensitive data (API keys, tokens) in `config/config_secrets.json`:
 }
 ```
 
-Reference secrets in main config:
+At load time, the config manager deep-merges `config_secrets.json` into
+the main config (verified at `src/config_manager.py:162-172`). So in
+your plugin's code:
 
-```json
-{
-  "my-plugin": {
-    "enabled": true,
-    "config_secrets": {
-      "api_key": "my-plugin.api_key"
-    }
-  }
-}
+```python
+class MyPlugin(BasePlugin):
+    def __init__(self, plugin_id, config, display_manager, cache_manager, plugin_manager):
+        super().__init__(plugin_id, config, display_manager, cache_manager, plugin_manager)
+        self.api_key = config.get("api_key")  # already merged from secrets
 ```
+
+There is no separate `config_secrets` reference field — just put the
+secret value under the same plugin namespace and read it from the
+merged config.
 
 ### Plugin Discovery
 
@@ -355,7 +358,7 @@ Check discovered plugins:
 
 ```bash
 # Using dev_plugin_setup.sh
-./dev_plugin_setup.sh list
+./scripts/dev/dev_plugin_setup.sh list
 
 # Output shows:
 # ✓ plugin-name (symlink)
@@ -368,7 +371,7 @@ Check discovered plugins:
 Check plugin status and git information:
 
 ```bash
-./dev_plugin_setup.sh status
+./scripts/dev/dev_plugin_setup.sh status
 
 # Output shows:
 # ✓ plugin-name
@@ -391,13 +394,19 @@ cd ledmatrix-my-plugin
 
 # Link to LEDMatrix project
 cd /path/to/LEDMatrix
-./dev_plugin_setup.sh link my-plugin ../ledmatrix-my-plugin
+./scripts/dev/dev_plugin_setup.sh link my-plugin ../ledmatrix-my-plugin
 ```
 
 ### 2. Development Cycle
 
 1. **Edit plugin code** in linked repository
-2. **Test with emulator**: `python run.py --emulator`
+2. **Test with the dev preview server**:
+   `python3 scripts/dev_server.py` (then open `http://localhost:5001`).
+   Or run the full display in emulator mode with
+   `python3 run.py --emulator` (or equivalently
+   `EMULATOR=true python3 run.py`). The `-e`/`--emulator` CLI flag is
+   defined in `run.py:19-20` and sets the same `EMULATOR` environment
+   variable internally.
 3. **Check logs** for errors or warnings
 4. **Update configuration** in `config/config.json` if needed
 5. **Iterate** until plugin works correctly
@@ -406,30 +415,30 @@ cd /path/to/LEDMatrix
 
 ```bash
 # Deploy to Raspberry Pi
-rsync -avz plugins/my-plugin/ pi@raspberrypi:/path/to/LEDMatrix/plugins/my-plugin/
+rsync -avz plugins/my-plugin/ ledpi@your-pi-ip:/path/to/LEDMatrix/plugins/my-plugin/
 
 # Or if using git, pull on Pi
-ssh pi@raspberrypi "cd /path/to/LEDMatrix/plugins/my-plugin && git pull"
+ssh ledpi@your-pi-ip "cd /path/to/LEDMatrix/plugins/my-plugin && git pull"
 
 # Restart service
-ssh pi@raspberrypi "sudo systemctl restart ledmatrix"
+ssh ledpi@your-pi-ip "sudo systemctl restart ledmatrix"
 ```
 
 ### 4. Updating Plugins
 
 ```bash
 # Update single plugin from git
-./dev_plugin_setup.sh update my-plugin
+./scripts/dev/dev_plugin_setup.sh update my-plugin
 
 # Update all linked plugins
-./dev_plugin_setup.sh update
+./scripts/dev/dev_plugin_setup.sh update
 ```
 
 ### 5. Unlinking Plugins
 
 ```bash
 # Remove symlink (preserves repository)
-./dev_plugin_setup.sh unlink my-plugin
+./scripts/dev/dev_plugin_setup.sh unlink my-plugin
 ```
 
 ---
@@ -625,8 +634,8 @@ python run.py --emulator
 **Solutions**:
 1. Check symlink: `ls -la plugins/my-plugin`
 2. Verify target exists: `readlink -f plugins/my-plugin`
-3. Update plugin: `./dev_plugin_setup.sh update my-plugin`
-4. Re-link plugin if needed: `./dev_plugin_setup.sh unlink my-plugin && ./dev_plugin_setup.sh link my-plugin <path>`
+3. Update plugin: `./scripts/dev/dev_plugin_setup.sh update my-plugin`
+4. Re-link plugin if needed: `./scripts/dev/dev_plugin_setup.sh unlink my-plugin && ./scripts/dev/dev_plugin_setup.sh link my-plugin <path>`
 5. Check git status: `cd plugins/my-plugin && git status`
 
 ---
@@ -697,22 +706,22 @@ python run.py --emulator
 
 ```bash
 # Link plugin from GitHub
-./dev_plugin_setup.sh link-github <name>
+./scripts/dev/dev_plugin_setup.sh link-github <name>
 
 # Link local plugin
-./dev_plugin_setup.sh link <name> <path>
+./scripts/dev/dev_plugin_setup.sh link <name> <path>
 
 # List all plugins
-./dev_plugin_setup.sh list
+./scripts/dev/dev_plugin_setup.sh list
 
 # Check plugin status
-./dev_plugin_setup.sh status
+./scripts/dev/dev_plugin_setup.sh status
 
 # Update plugin(s)
-./dev_plugin_setup.sh update [name]
+./scripts/dev/dev_plugin_setup.sh update [name]
 
 # Unlink plugin
-./dev_plugin_setup.sh unlink <name>
+./scripts/dev/dev_plugin_setup.sh unlink <name>
 
 # Run with emulator
 python run.py --emulator

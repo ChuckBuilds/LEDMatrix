@@ -138,6 +138,27 @@ font = self.font_manager.resolve_font(
 
 ## For Plugin Developers
 
+> **Note**: plugins that ship their own fonts via a `"fonts"` block
+> in `manifest.json` are registered automatically during plugin load
+> (`src/plugin_system/plugin_manager.py` calls
+> `FontManager.register_plugin_fonts()`). The `plugin://…` source
+> URIs documented below are resolved relative to the plugin's
+> install directory.
+>
+> The **Fonts** tab in the web UI that lists detected
+> manager-registered fonts is still a **placeholder
+> implementation** — fonts that managers register through
+> `register_manager_font()` do not yet appear there. The
+> programmatic per-element override workflow described in
+> [Manual Font Overrides](#manual-font-overrides) below
+> (`set_override()` / `remove_override()` / the
+> `config/font_overrides.json` store) **does** work today and is
+> the supported way to override a font for an element until the
+> Fonts tab is wired up. If you can't wait and need a workaround
+> right now, you can also just load the font directly with PIL
+> (or `freetype-py` for BDF) inside your plugin's `manager.py`
+> and skip the override system entirely.
+
 ### Plugin Font Registration
 
 In your plugin's `manifest.json`:
@@ -359,5 +380,8 @@ self.font = self.font_manager.resolve_font(
 
 ## Example: Complete Manager Implementation
 
-See `test/font_manager_example.py` for a complete working example.
+For a working example of the font manager API in use, see
+`src/font_manager.py` itself and the bundled scoreboard base classes
+in `src/base_classes/` (e.g., `hockey.py`, `football.py`) which
+register and resolve fonts via the patterns documented above.
 

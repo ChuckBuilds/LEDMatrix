@@ -156,19 +156,33 @@ def _fetch_data(self):
 
 ### Adding Image Rendering
 
+There is no `draw_image()` helper on `DisplayManager`. To render an
+image, paste it directly onto the underlying PIL `Image`
+(`display_manager.image`) and then call `update_display()`:
+
 ```python
 def _render_content(self):
-    # Load and render image
-    image = Image.open("assets/logo.png")
-    self.display_manager.draw_image(image, x=0, y=0)
-    
+    # Load and paste image onto the display canvas
+    image = Image.open("assets/logo.png").convert("RGB")
+    self.display_manager.image.paste(image, (0, 0))
+
     # Draw text overlay
     self.display_manager.draw_text(
         "Text",
         x=10, y=20,
         color=(255, 255, 255)
     )
+
+    self.display_manager.update_display()
 ```
+
+For transparency, paste with a mask:
+
+```python
+icon = Image.open("assets/icon.png").convert("RGBA")
+self.display_manager.image.paste(icon, (5, 5), icon)
+```
+
 
 ### Adding Live Priority
 

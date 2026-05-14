@@ -1,29 +1,40 @@
 # NBA Logo Downloader
 
-This script downloads all NBA team logos from the ESPN API and saves them in the `assets/sports/nba_logos/` directory for use with the NBA leaderboard.
+This script downloads all NBA team logos from the ESPN API and saves
+them in the `assets/sports/nba_logos/` directory.
+
+> **Heads up:** the NBA leaderboard and basketball scoreboards now
+> live as plugins in the
+> [`ledmatrix-plugins`](https://github.com/ChuckBuilds/ledmatrix-plugins)
+> repo (`basketball-scoreboard`, `ledmatrix-leaderboard`). Those
+> plugins download the logos they need automatically on first display.
+> This standalone script is mainly useful when you want to pre-populate
+> the assets directory ahead of time, or for development/debugging.
+
+All commands below should be run from the LEDMatrix project root.
 
 ## Usage
 
 ### Basic Usage
 ```bash
-python download_nba_logos.py
+python3 scripts/download_nba_logos.py
 ```
 
 ### Force Re-download
 If you want to re-download all logos (even if they already exist):
 ```bash
-python download_nba_logos.py --force
+python3 scripts/download_nba_logos.py --force
 ```
 
 ### Quiet Mode
 Reduce logging output:
 ```bash
-python download_nba_logos.py --quiet
+python3 scripts/download_nba_logos.py --quiet
 ```
 
 ### Combined Options
 ```bash
-python download_nba_logos.py --force --quiet
+python3 scripts/download_nba_logos.py --force --quiet
 ```
 
 ## What It Does
@@ -82,12 +93,14 @@ assets/sports/nba_logos/
 └── WAS.png  # Washington Wizards
 ```
 
-## Integration with NBA Leaderboard
+## Integration with NBA plugins
 
-Once the logos are downloaded, the NBA leaderboard will:
-- ✅ Use local logos instantly (no download delays)
-- ✅ Display team logos in the scrolling leaderboard
-- ✅ Show proper team branding for all 30 NBA teams
+Once the logos are in `assets/sports/nba_logos/`, both the
+`basketball-scoreboard` and `ledmatrix-leaderboard` plugins will pick
+them up automatically and skip their own first-run download. This is
+useful if you want to deploy a Pi without internet access to ESPN, or
+if you want to preview the display on your dev machine without
+waiting for downloads.
 
 ## Troubleshooting
 
@@ -102,6 +115,6 @@ This is normal - some teams might have temporary API issues or the ESPN API migh
 
 ## Requirements
 
-- Python 3.7+
-- `requests` library (should be installed with the project)
+- Python 3.9+ (matches the project's overall minimum)
+- `requests` library (already in `requirements.txt`)
 - Write access to `assets/sports/nba_logos/` directory

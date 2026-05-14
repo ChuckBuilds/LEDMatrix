@@ -599,9 +599,13 @@ if [ ! -f "$PROJECT_ROOT_DIR/config/config_secrets.json" ]; then
         echo "⚠ Template config/config_secrets.template.json not found; creating a minimal secrets file"
         cat > "$PROJECT_ROOT_DIR/config/config_secrets.json" <<'EOF'
 {
-  "weather": {
-    "api_key": "YOUR_OPENWEATHERMAP_API_KEY"
-  }
+    "youtube": {
+        "api_key": "YOUR_YOUTUBE_API_KEY",
+        "channel_id": "YOUR_YOUTUBE_CHANNEL_ID"
+    },
+    "github": {
+        "api_token": "YOUR_GITHUB_PERSONAL_ACCESS_TOKEN"
+    }
 }
 EOF
         # Check if service runs as root and set ownership accordingly
@@ -1082,6 +1086,7 @@ SYSTEMCTL_PATH=$(which systemctl)
 REBOOT_PATH=$(which reboot)
 POWEROFF_PATH=$(which poweroff)
 BASH_PATH=$(which bash)
+JOURNALCTL_PATH=$(which journalctl 2>/dev/null || true)
 
 # Create sudoers content
 cat > /tmp/ledmatrix_web_sudoers << EOF
@@ -1097,10 +1102,23 @@ $ACTUAL_USER ALL=(ALL) NOPASSWD: $SYSTEMCTL_PATH restart ledmatrix.service
 $ACTUAL_USER ALL=(ALL) NOPASSWD: $SYSTEMCTL_PATH enable ledmatrix.service
 $ACTUAL_USER ALL=(ALL) NOPASSWD: $SYSTEMCTL_PATH disable ledmatrix.service
 $ACTUAL_USER ALL=(ALL) NOPASSWD: $SYSTEMCTL_PATH status ledmatrix.service
+$ACTUAL_USER ALL=(ALL) NOPASSWD: $SYSTEMCTL_PATH is-active ledmatrix
+$ACTUAL_USER ALL=(ALL) NOPASSWD: $SYSTEMCTL_PATH is-active ledmatrix.service
+$ACTUAL_USER ALL=(ALL) NOPASSWD: $SYSTEMCTL_PATH start ledmatrix-web.service
+$ACTUAL_USER ALL=(ALL) NOPASSWD: $SYSTEMCTL_PATH stop ledmatrix-web.service
+$ACTUAL_USER ALL=(ALL) NOPASSWD: $SYSTEMCTL_PATH restart ledmatrix-web.service
 $ACTUAL_USER ALL=(ALL) NOPASSWD: $PYTHON_PATH $PROJECT_ROOT_DIR/display_controller.py
 $ACTUAL_USER ALL=(ALL) NOPASSWD: $BASH_PATH $PROJECT_ROOT_DIR/start_display.sh
 $ACTUAL_USER ALL=(ALL) NOPASSWD: $BASH_PATH $PROJECT_ROOT_DIR/stop_display.sh
+$ACTUAL_USER ALL=(ALL) NOPASSWD: $BASH_PATH $PROJECT_ROOT_DIR/scripts/fix_perms/safe_plugin_rm.sh *
 EOF
+if [ -n "$JOURNALCTL_PATH" ]; then
+    cat >> /tmp/ledmatrix_web_sudoers << EOF
+$ACTUAL_USER ALL=(ALL) NOPASSWD: $JOURNALCTL_PATH -u ledmatrix.service *
+$ACTUAL_USER ALL=(ALL) NOPASSWD: $JOURNALCTL_PATH -u ledmatrix *
+$ACTUAL_USER ALL=(ALL) NOPASSWD: $JOURNALCTL_PATH -t ledmatrix *
+EOF
+fi
 
 if [ -f "$SUDOERS_FILE" ] && cmp -s /tmp/ledmatrix_web_sudoers "$SUDOERS_FILE"; then
     echo "Sudoers configuration already up to date"

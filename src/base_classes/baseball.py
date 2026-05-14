@@ -329,7 +329,7 @@ class Baseball(SportsCore):
             return
         
         series_summary = game.get("series_summary", "")
-        font = ImageFont.truetype("assets/fonts/4x6-font.ttf", 6)
+        font = self.fonts.get('detail', ImageFont.load_default())
         bbox = draw_overlay.textbbox((0, 0), series_summary, font=self.fonts['time'])
         height = bbox[3] - bbox[1]
         shots_y = (self.display_height - height) // 2

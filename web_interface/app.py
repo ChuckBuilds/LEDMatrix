@@ -1,5 +1,6 @@
 from flask import Flask, Blueprint, render_template, request, redirect, url_for, flash, jsonify, Response, send_from_directory
 import json
+import logging
 import os
 import sys
 import subprocess
@@ -11,6 +12,7 @@ from datetime import datetime, timedelta
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.config_manager import ConfigManager
+from src.exceptions import ConfigError
 from src.plugin_system.plugin_manager import PluginManager
 from src.plugin_system.store_manager import PluginStoreManager
 from src.plugin_system.saved_repositories import SavedRepositoriesManager
@@ -224,48 +226,73 @@ def serve_plugin_asset(plugin_id, filename):
                 'message': 'Internal server error'
             }), 500
 
-# Helper function to check if AP mode is active
+# Prime psutil CPU measurement once at startup so interval=None returns a real value
+try:
+    import psutil as _psutil_prime
+    _psutil_prime.cpu_percent(interval=None)
+except ImportError:
+    pass
+
+# Cached AP mode check — avoids creating a WiFiManager per request
+_ap_mode_cache = {'value': False, 'timestamp': 0}
+_AP_MODE_CACHE_TTL = 30  # seconds — AP mode is user-initiated; 30s is fine
+
+# Cached ledmatrix service status for SSE stats stream
+_ledmatrix_service_cache = {'active': False, 'timestamp': 0}
+_LEDMATRIX_SERVICE_CACHE_TTL = 15  # seconds
+
 def is_ap_mode_active():
     """
-    Check if access point mode is currently active.
-    
-    Returns:
-        bool: True if AP mode is active, False otherwise.
-              Returns False on error to avoid breaking normal operation.
+    Check if access point mode is currently active (cached, 30s TTL).
+    Uses a direct systemctl check instead of instantiating WiFiManager.
     """
+    now = time.time()
+    if (now - _ap_mode_cache['timestamp']) < _AP_MODE_CACHE_TTL:
+        return _ap_mode_cache['value']
     try:
-        wifi_manager = WiFiManager()
-        return wifi_manager._is_ap_mode_active()
-    except Exception as e:
-        # Log error but don't break normal operation
-        # Default to False so normal web interface works even if check fails
-        print(f"Warning: Could not check AP mode status: {e}")
-        return False
+        result = subprocess.run(
+            ['systemctl', 'is-active', 'hostapd'],
+            capture_output=True, text=True, timeout=2
+        )
+        active = result.stdout.strip() == 'active'
+        _ap_mode_cache['value'] = active
+        _ap_mode_cache['timestamp'] = now
+        return active
+    except (subprocess.SubprocessError, OSError) as e:
+        logging.getLogger('web_interface').error(f"AP mode check failed: {e}")
+        return _ap_mode_cache['value']
 
 # Captive portal detection endpoints
-# These help devices detect that a captive portal is active
+# When AP mode is active, return responses that TRIGGER the captive portal popup.
+# When not in AP mode, return normal "success" responses so connectivity checks pass.
 @app.route('/hotspot-detect.html')
 def hotspot_detect():
     """iOS/macOS captive portal detection endpoint"""
-    # Return simple HTML that redirects to setup page
+    if is_ap_mode_active():
+        # Non-"Success" title triggers iOS captive portal popup
+        return redirect(url_for('pages_v3.captive_setup'), code=302)
     return '<HTML><HEAD><TITLE>Success</TITLE></HEAD><BODY>Success</BODY></HTML>', 200
 
 @app.route('/generate_204')
 def generate_204():
     """Android captive portal detection endpoint"""
-    # Return 204 No Content - Android checks for this
+    if is_ap_mode_active():
+        # Android expects 204 = "internet works". Non-204 triggers portal popup.
+        return redirect(url_for('pages_v3.captive_setup'), code=302)
     return '', 204
 
 @app.route('/connecttest.txt')
 def connecttest_txt():
     """Windows captive portal detection endpoint"""
-    # Return simple text response
+    if is_ap_mode_active():
+        return redirect(url_for('pages_v3.captive_setup'), code=302)
     return 'Microsoft Connect Test', 200
 
 @app.route('/success.txt')
 def success_txt():
     """Firefox captive portal detection endpoint"""
-    # Return simple text response
+    if is_ap_mode_active():
+        return redirect(url_for('pages_v3.captive_setup'), code=302)
     return 'success', 200
 
 # Initialize logging
@@ -366,10 +393,9 @@ def captive_portal_redirect():
     path = request.path
     
     # List of paths that should NOT be redirected (allow normal operation)
-    # This ensures the full web interface works normally when in AP mode
     allowed_paths = [
-        '/v3',  # Main interface and all sub-paths
-        '/api/v3/',  # All API endpoints (plugins, config, wifi, stream, etc.)
+        '/v3',  # Main interface and all sub-paths (includes /v3/setup)
+        '/api/v3/',  # All API endpoints
         '/static/',  # Static files (CSS, JS, images)
         '/hotspot-detect.html',  # iOS/macOS detection
         '/generate_204',  # Android detection
@@ -377,17 +403,13 @@ def captive_portal_redirect():
         '/success.txt',  # Firefox detection
         '/favicon.ico',  # Favicon
     ]
-    
-    # Check if this path should be allowed
+
     for allowed_path in allowed_paths:
         if path.startswith(allowed_path):
-            return None  # Allow this request to proceed normally
-    
-    # For all other paths, redirect to main interface
-    # This ensures users see the WiFi setup page when they try to access any website
-    # The main interface (/v3) is already in allowed_paths, so it won't redirect
-    # Static files (/static/) and API calls (/api/v3/) are also allowed
-    return redirect(url_for('pages_v3.index'), code=302)
+            return None
+
+    # Redirect to lightweight captive portal setup page (not the full UI)
+    return redirect(url_for('pages_v3.captive_setup'), code=302)
 
 # Add security headers and caching to all responses
 @app.after_request
@@ -433,31 +455,35 @@ def system_status_generator():
             # Try to import psutil for system stats
             try:
                 import psutil
-                cpu_percent = round(psutil.cpu_percent(interval=1), 1)
+                # interval=None is non-blocking; primed at module startup above
+                cpu_percent = round(psutil.cpu_percent(interval=None), 1)
                 memory = psutil.virtual_memory()
                 memory_used_percent = round(memory.percent, 1)
-                
+
                 # Try to get CPU temperature (Raspberry Pi specific)
                 cpu_temp = 0
                 try:
                     with open('/sys/class/thermal/thermal_zone0/temp', 'r') as f:
                         cpu_temp = round(float(f.read()) / 1000.0, 1)
-                except:
+                except (OSError, ValueError):
                     pass
-                    
+
             except ImportError:
                 cpu_percent = 0
                 memory_used_percent = 0
                 cpu_temp = 0
-            
-            # Check if display service is running
-            service_active = False
-            try:
-                result = subprocess.run(['systemctl', 'is-active', 'ledmatrix'], 
-                                      capture_output=True, text=True, timeout=2)
-                service_active = result.stdout.strip() == 'active'
-            except:
-                pass
+
+            # Check if display service is running (cached to avoid per-client subprocess forks)
+            now = time.time()
+            if (now - _ledmatrix_service_cache['timestamp']) >= _LEDMATRIX_SERVICE_CACHE_TTL:
+                try:
+                    result = subprocess.run(['systemctl', 'is-active', 'ledmatrix'],
+                                            capture_output=True, text=True, timeout=2)
+                    _ledmatrix_service_cache['active'] = result.stdout.strip() == 'active'
+                except (subprocess.SubprocessError, OSError):
+                    pass
+                _ledmatrix_service_cache['timestamp'] = now
+            service_active = _ledmatrix_service_cache['active']
             
             status = {
                 'timestamp': time.time(),
@@ -492,7 +518,7 @@ def display_preview_generator():
         parallel = main_config.get('display', {}).get('hardware', {}).get('parallel', 1)
         width = cols * chain_length
         height = rows * parallel
-    except:
+    except (KeyError, TypeError, ValueError, ConfigError):
         width = 128
         height = 64
     
@@ -535,7 +561,7 @@ def display_preview_generator():
         except Exception as e:
             yield {'error': str(e)}
         
-        time.sleep(0.5)  # Check 2 times per second (reduced frequency for better performance)
+        time.sleep(1.0)  # Check once per second — halves PIL encode overhead vs 0.5s
 
 # Logs generator for SSE
 def logs_generator():
@@ -650,12 +676,71 @@ def _initialize_health_monitor():
     
     _health_monitor_initialized = True
 
-# Initialize health monitor on first request (using before_request for compatibility)
+_reconciliation_done = False
+_reconciliation_started = False
+import threading as _threading
+_reconciliation_lock = _threading.Lock()
+
+def _run_startup_reconciliation() -> None:
+    """Run state reconciliation in background to auto-repair missing plugins.
+
+    Reconciliation runs exactly once per process lifetime, regardless of
+    whether every inconsistency could be auto-fixed. Previously, a failed
+    auto-repair (e.g. a config entry referencing a plugin that no longer
+    exists in the registry) would reset ``_reconciliation_started`` to False,
+    causing the ``@app.before_request`` hook to re-trigger reconciliation on
+    every single HTTP request — an infinite install-retry loop that pegged
+    the CPU and flooded the log. Unresolved issues are now left in place for
+    the user to address via the UI; the reconciler itself also caches
+    per-plugin unrecoverable failures internally so repeated reconcile calls
+    stay cheap.
+    """
+    global _reconciliation_done
+    from src.logging_config import get_logger
+    _logger = get_logger('reconciliation')
+
+    try:
+        from src.plugin_system.state_reconciliation import StateReconciliation
+        reconciler = StateReconciliation(
+            state_manager=plugin_state_manager,
+            config_manager=config_manager,
+            plugin_manager=plugin_manager,
+            plugins_dir=plugins_dir,
+            store_manager=plugin_store_manager
+        )
+        result = reconciler.reconcile_state()
+        if result.inconsistencies_found:
+            _logger.info("[Reconciliation] %s", result.message)
+        if result.inconsistencies_fixed:
+            plugin_manager.discover_plugins()
+        if not result.reconciliation_successful:
+            _logger.warning(
+                "[Reconciliation] Finished with %d unresolved issue(s); "
+                "will not retry automatically. Use the Plugin Store or the "
+                "manual 'Reconcile' action to resolve.",
+                len(result.inconsistencies_manual),
+            )
+    except Exception as e:
+        _logger.error("[Reconciliation] Error: %s", e, exc_info=True)
+    finally:
+        # Always mark done — we do not want an unhandled exception (or an
+        # unresolved inconsistency) to cause the @before_request hook to
+        # retrigger reconciliation on every subsequent request.
+        _reconciliation_done = True
+
+# Initialize health monitor and run reconciliation on first request
 @app.before_request
 def check_health_monitor():
-    """Ensure health monitor is initialized on first request."""
+    """Ensure health monitor is initialized; launch reconciliation in background."""
+    global _reconciliation_started
     if not _health_monitor_initialized:
         _initialize_health_monitor()
+    with _reconciliation_lock:
+        if not _reconciliation_started:
+            _reconciliation_started = True
+            _threading.Thread(target=_run_startup_reconciliation, daemon=True).start()
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000, debug=True)
+    # threaded=True is Flask's default since 1.0 but stated explicitly so that
+    # long-lived /api/v3/stream/* SSE connections don't starve other requests.
+    app.run(host='0.0.0.0', port=5000, debug=True, threaded=True)

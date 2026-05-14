@@ -1,5 +1,11 @@
 # LEDMatrix Plugin System - Implementation Summary
 
+> **Status note:** this is a high-level summary written during the
+> initial plugin system rollout. Most of it is accurate, but a few
+> sections describe features that are aspirational or only partially
+> implemented (per-plugin virtual envs, resource limits, registry
+> manager). Drift from current reality is called out inline.
+
 This document provides a comprehensive overview of the plugin architecture implementation, consolidating details from multiple plugin-related implementation summaries.
 
 ## Executive Summary
@@ -14,15 +20,24 @@ The LEDMatrix plugin system transforms the project into a modular, extensible pl
 LEDMatrix/
 ├── src/plugin_system/
 │   ├── base_plugin.py          # Plugin interface contract
+│   ├── plugin_loader.py        # Discovery + dynamic import
 │   ├── plugin_manager.py       # Lifecycle management
-│   ├── store_manager.py        # GitHub integration
-│   └── registry_manager.py     # Plugin discovery
-├── plugins/                    # User-installed plugins
+│   ├── store_manager.py        # GitHub install / store integration
+│   ├── schema_manager.py       # Config schema validation
+│   ├── health_monitor.py       # Plugin health metrics
+│   ├── operation_queue.py      # Async install/update operations
+│   └── state_manager.py        # Persistent plugin state
+├── plugin-repos/               # Default plugin install location
 │   ├── football-scoreboard/
 │   ├── ledmatrix-music/
 │   └── ledmatrix-stocks/
 └── config/config.json          # Plugin configurations
 ```
+
+> Earlier drafts of this doc referenced `registry_manager.py`. It was
+> never created — discovery happens in `plugin_loader.py`. The earlier
+> default plugin location of `plugins/` has been replaced with
+> `plugin-repos/` (see `config/config.template.json:130`).
 
 ### Key Design Decisions
 
@@ -77,14 +92,26 @@ LEDMatrix/
 - **Fallback System**: Default icons when custom ones unavailable
 
 #### Dependency Management
-- **Requirements.txt**: Per-plugin dependencies
-- **Virtual Environments**: Isolated dependency management
-- **Version Pinning**: Explicit version constraints
+- **Requirements.txt**: Per-plugin dependencies, installed system-wide
+  via pip on first plugin load
+- **Version Pinning**: Standard pip version constraints in
+  `requirements.txt`
 
-#### Permission System
-- **File Access Control**: Configurable file system permissions
-- **Network Access**: Controlled API access
-- **Resource Limits**: CPU and memory constraints
+> Earlier plans called for per-plugin virtual environments. That isn't
+> implemented — plugin Python deps install into the system Python
+> environment (or whatever environment the LEDMatrix service is using).
+> Conflicting versions across plugins are not auto-resolved.
+
+#### Health monitoring
+- **Resource Monitor** (`src/plugin_system/resource_monitor.py`): tracks
+  CPU and memory metrics per plugin and warns about slow plugins
+- **Health Monitor** (`src/plugin_system/health_monitor.py`): tracks
+  plugin failures and last-success timestamps
+
+> Earlier plans called for hard CPU/memory limits and a sandboxed
+> permission system. Neither is implemented. Plugins run in the same
+> process as the display loop with full file-system and network access
+> — review third-party plugin code before installing.
 
 ## Plugin Development
 

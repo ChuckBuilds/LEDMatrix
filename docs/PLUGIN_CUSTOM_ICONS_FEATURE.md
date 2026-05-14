@@ -1,4 +1,12 @@
-# ✅ Plugin Custom Icons Feature - Complete
+# Plugin Custom Icons Feature
+
+> **Note:** this doc was originally written against the v2 web
+> interface. The v3 web interface now honors the same `icon` field
+> in `manifest.json` — the API passes it through at
+> `web_interface/blueprints/api_v3.py` and the three plugin-tab
+> render sites in `web_interface/templates/v3/base.html` read it
+> with a `fas fa-puzzle-piece` fallback. The guidance below still
+> applies; only the referenced template/helper names differ.
 
 ## What Was Implemented
 
@@ -304,7 +312,7 @@ Result: `[logo] Company Metrics` tab
 
 To test custom icons:
 
-1. **Open web interface** at `http://your-pi:5001`
+1. **Open web interface** at `http://your-pi-ip:5000`
 2. **Check installed plugins**:
    - Hello World should show 👋
    - Clock Simple should show 🕐

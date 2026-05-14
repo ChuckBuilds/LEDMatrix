@@ -4,8 +4,14 @@
 - `src/plugin_system/` — Plugin loader, manager, store manager, base plugin class
 - `web_interface/` — Flask web UI (blueprints, templates, static JS)
 - `config/config.json` — User plugin configuration (persists across plugin reinstalls)
-- `plugins/` — Installed plugins directory (gitignored)
-- `plugin-repos/` — Development symlinks to monorepo plugin dirs
+- `plugin-repos/` — **Default** plugin install directory used by the
+  Plugin Store, set by `plugin_system.plugins_directory` in
+  `config.json` (default per `config/config.template.json:130`).
+  Not gitignored.
+- `plugins/` — Legacy/dev plugin location. Gitignored (`plugins/*`).
+  Used by `scripts/dev/dev_plugin_setup.sh` for symlinks. The plugin
+  loader falls back to it when something isn't found in `plugin-repos/`
+  (`src/plugin_system/schema_manager.py:77`).
 
 ## Plugin System
 - Plugins inherit from `BasePlugin` in `src/plugin_system/base_plugin.py`

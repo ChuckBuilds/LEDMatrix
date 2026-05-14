@@ -24,6 +24,17 @@ All endpoints return JSON responses with a standard format:
 - [Cache](#cache)
 - [WiFi](#wifi)
 - [Streams](#streams)
+- [Logs](#logs)
+- [Error tracking](#error-tracking)
+- [Health](#health)
+- [Schedule (dim/power)](#schedule-dimpower)
+- [Plugin-specific endpoints](#plugin-specific-endpoints)
+- [Starlark Apps](#starlark-apps)
+
+> The API blueprint is mounted at `/api/v3` (`web_interface/app.py:144`).
+> SSE stream endpoints (`/api/v3/stream/*`) are defined directly on the
+> Flask app at `app.py:607-615`. There are about 92 routes total — see
+> `web_interface/blueprints/api_v3.py` for the canonical list.
 
 ---
 
@@ -1201,9 +1212,15 @@ Upload a custom font file.
 
 ### Delete Font
 
-**DELETE** `/api/v3/fonts/delete/<font_family>`
+**DELETE** `/api/v3/fonts/<font_family>`
 
 Delete an uploaded font.
+
+### Font Preview
+
+**GET** `/api/v3/fonts/preview?family=<font_family>&text=<sample>`
+
+Render a small preview image of a font for use in the web UI font picker.
 
 ---
 
@@ -1436,6 +1453,130 @@ Get recent log entries.
   }
 }
 ```
+
+---
+
+## Error tracking
+
+### Get Error Summary
+
+**GET** `/api/v3/errors/summary`
+
+Aggregated counts of recent errors across all plugins and core
+components, used by the web UI's error indicator.
+
+### Get Plugin Errors
+
+**GET** `/api/v3/errors/plugin/<plugin_id>`
+
+Recent errors for a specific plugin.
+
+### Clear Errors
+
+**POST** `/api/v3/errors/clear`
+
+Clear the in-memory error aggregator.
+
+---
+
+## Health
+
+### Health Check
+
+**GET** `/api/v3/health`
+
+Lightweight liveness check used by the WiFi monitor and external
+monitoring tools.
+
+---
+
+## Schedule (dim/power)
+
+### Get Dim Schedule
+
+**GET** `/api/v3/config/dim-schedule`
+
+Read the dim/power schedule that automatically reduces brightness or
+turns the display off at configured times.
+
+### Update Dim Schedule
+
+**POST** `/api/v3/config/dim-schedule`
+
+Update the dim schedule. Body matches the structure returned by GET.
+
+---
+
+## Plugin-specific endpoints
+
+A handful of endpoints belong to individual built-in or shipped plugins.
+
+### Calendar
+
+**GET** `/api/v3/plugins/calendar/list-calendars`
+
+List the calendars available on the authenticated Google account.
+Used by the calendar plugin's config UI.
+
+### Of The Day
+
+**POST** `/api/v3/plugins/of-the-day/json/upload`
+
+Upload a JSON data file for the Of-The-Day plugin's category data.
+
+**POST** `/api/v3/plugins/of-the-day/json/delete`
+
+Delete a previously uploaded Of-The-Day data file.
+
+### Plugin Static Assets
+
+**GET** `/api/v3/plugins/<plugin_id>/static/<path:file_path>`
+
+Serve a static asset (image, font, etc.) from a plugin's directory.
+Used internally by the web UI to render plugin previews and icons.
+
+---
+
+## Starlark Apps
+
+The Starlark plugin lets you run [Tronbyt](https://github.com/tronbyt/apps)
+Starlark apps on the matrix. These endpoints expose its UI.
+
+### Status
+
+**GET** `/api/v3/starlark/status`
+
+Returns whether the Pixlet binary is installed and the Starlark plugin
+is operational.
+
+### Install Pixlet
+
+**POST** `/api/v3/starlark/install-pixlet`
+
+Download and install the Pixlet binary on the Pi.
+
+### Apps
+
+**GET** `/api/v3/starlark/apps` — list installed Starlark apps
+**GET** `/api/v3/starlark/apps/<app_id>` — get app details
+**DELETE** `/api/v3/starlark/apps/<app_id>` — uninstall an app
+**GET** `/api/v3/starlark/apps/<app_id>/config` — get app config schema
+**PUT** `/api/v3/starlark/apps/<app_id>/config` — update app config
+**POST** `/api/v3/starlark/apps/<app_id>/render` — render app to a frame
+**POST** `/api/v3/starlark/apps/<app_id>/toggle` — enable/disable app
+
+### Repository (Tronbyt community apps)
+
+**GET** `/api/v3/starlark/repository/categories` — browse categories
+**GET** `/api/v3/starlark/repository/browse?category=<cat>` — browse apps
+**POST** `/api/v3/starlark/repository/install` — install an app from the
+community repository
+
+### Upload custom app
+
+**POST** `/api/v3/starlark/upload`
+
+Upload a custom Starlark `.star` file as a new app.
 
 ---
 

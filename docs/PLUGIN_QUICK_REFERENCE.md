@@ -2,14 +2,20 @@
 
 ## Overview
 
-Transform LEDMatrix into a modular, plugin-based system where users can create, share, and install custom displays via a GitHub-based store (similar to HACS for Home Assistant).
+LEDMatrix is a modular, plugin-based system where users create, share,
+and install custom displays via a GitHub-based store (similar in spirit
+to HACS for Home Assistant). This page is a quick reference; for the
+full design see [PLUGIN_ARCHITECTURE_SPEC.md](PLUGIN_ARCHITECTURE_SPEC.md)
+and [PLUGIN_DEVELOPMENT_GUIDE.md](PLUGIN_DEVELOPMENT_GUIDE.md).
 
 ## Key Decisions
 
-✅ **Gradual Migration**: Existing managers stay, plugins added alongside  
-✅ **Migration Required**: Breaking changes in v3.0, tools provided  
-✅ **GitHub Store**: Simple discovery, packages from repos  
-✅ **Plugin Location**: `./plugins/` directory  
+✅ **Plugin-First**: All display features (calendar excepted) are now plugins
+✅ **GitHub Store**: Discovery from `ledmatrix-plugins` registry plus
+   any GitHub URL
+✅ **Plugin Location**: configured by `plugin_system.plugins_directory`
+   in `config.json` (default `plugin-repos/`; the loader also searches
+   `plugins/` as a fallback)
 
 ## File Structure
 
@@ -19,15 +25,16 @@ LEDMatrix/
 │   └── plugin_system/
 │       ├── base_plugin.py          # Plugin interface
 │       ├── plugin_manager.py       # Load/unload plugins
+│       ├── plugin_loader.py        # Discovery + dynamic import
 │       └── store_manager.py        # Install from GitHub
-├── plugins/
+├── plugin-repos/                   # Default plugin install location
 │   ├── clock-simple/
 │   │   ├── manifest.json           # Metadata
 │   │   ├── manager.py              # Main plugin class
 │   │   ├── requirements.txt        # Dependencies
 │   │   ├── config_schema.json      # Validation
 │   │   └── README.md
-│   └── nhl-scores/
+│   └── hockey-scoreboard/
 │       └── ... (same structure)
 └── config/config.json               # Plugin configs
 ```
@@ -109,100 +116,45 @@ git push origin v1.0.0
 
 ### Web UI
 
-1. **Browse Store**: Plugin Store tab → Search/filter
-2. **Install**: Click "Install" button
-3. **Configure**: Plugin Manager → Click ⚙️ Configure
-4. **Enable/Disable**: Toggle switch
-5. **Reorder**: Drag and drop in rotation list
+1. **Browse Store**: Plugin Manager tab → Plugin Store section → Search/filter
+2. **Install**: Click **Install** in the plugin's row
+3. **Configure**: open the plugin's tab in the second nav row
+4. **Enable/Disable**: toggle switch in the **Installed Plugins** list
+5. **Reorder**: order is set by the position in `display_modes` /
+   plugin order; rearranging via drag-and-drop is not yet supported
 
-### API
+### REST API
 
-```python
-# Install plugin
-POST /api/plugins/install
-{"plugin_id": "my-plugin"}
-
-# Install from custom URL
-POST /api/plugins/install-from-url
-{"repo_url": "https://github.com/User/plugin"}
-
-# List installed
-GET /api/plugins/installed
-
-# Toggle
-POST /api/plugins/toggle
-{"plugin_id": "my-plugin", "enabled": true}
-```
-
-### Command Line
-
-```python
-from src.plugin_system.store_manager import PluginStoreManager
-
-store = PluginStoreManager()
-
-# Install
-store.install_plugin('nhl-scores')
-
-# Install from URL
-store.install_from_url('https://github.com/User/plugin')
-
-# Update
-store.update_plugin('nhl-scores')
-
-# Uninstall
-store.uninstall_plugin('nhl-scores')
-```
-
-## Migration Path
-
-### Phase 1: v2.0.0 (Plugin Infrastructure)
-- Plugin system alongside existing managers
-- 100% backward compatible
-- Web UI shows plugin store
-
-### Phase 2: v2.1.0 (Example Plugins)
-- Reference plugins created
-- Migration examples
-- Developer docs
-
-### Phase 3: v2.2.0 (Migration Tools)
-- Auto-migration script
-- Config converter
-- Testing tools
-
-### Phase 4: v2.5.0 (Deprecation)
-- Warnings on legacy managers
-- Migration guide
-- 95% backward compatible
-
-### Phase 5: v3.0.0 (Plugin-Only)
-- Legacy managers removed from core
-- Packaged as official plugins
-- **Breaking change - migration required**
-
-## Quick Migration
+The API is mounted at `/api/v3` (`web_interface/app.py:144`).
 
 ```bash
-# 1. Backup
-cp config/config.json config/config.json.backup
+# Install plugin from the registry
+curl -X POST http://your-pi-ip:5000/api/v3/plugins/install \
+  -H "Content-Type: application/json" \
+  -d '{"plugin_id": "hockey-scoreboard"}'
 
-# 2. Run migration
-python3 scripts/migrate_to_plugins.py
+# Install from custom URL
+curl -X POST http://your-pi-ip:5000/api/v3/plugins/install-from-url \
+  -H "Content-Type: application/json" \
+  -d '{"repo_url": "https://github.com/User/plugin"}'
 
-# 3. Review
-cat config/config.json.migrated
+# List installed
+curl http://your-pi-ip:5000/api/v3/plugins/installed
 
-# 4. Apply
-mv config/config.json.migrated config/config.json
-
-# 5. Restart
-sudo systemctl restart ledmatrix
+# Toggle
+curl -X POST http://your-pi-ip:5000/api/v3/plugins/toggle \
+  -H "Content-Type: application/json" \
+  -d '{"plugin_id": "hockey-scoreboard", "enabled": true}'
 ```
+
+See [REST_API_REFERENCE.md](REST_API_REFERENCE.md) for the full list.
 
 ## Plugin Registry Structure
 
-**ChuckBuilds/ledmatrix-plugin-registry/plugins.json**:
+The official registry lives at
+[`ChuckBuilds/ledmatrix-plugins`](https://github.com/ChuckBuilds/ledmatrix-plugins).
+The Plugin Store reads `plugins.json` at the root of that repo, which
+follows this shape:
 ```json
 {
   "plugins": [
@@ -245,42 +197,30 @@ sudo systemctl restart ledmatrix
 - ✅ Community handles custom displays
 - ✅ Easier to review changes
 
-## What's Missing?
+## Known Limitations
 
-This specification covers the technical architecture. Additional considerations:
+The plugin system is shipped and stable, but some things are still
+intentionally simple:
 
-1. **Sandboxing**: Current design has no isolation (future enhancement)
-2. **Resource Limits**: No CPU/memory limits per plugin (future)
-3. **Plugin Ratings**: Registry needs rating/review system
-4. **Auto-Updates**: Manual update only (could add auto-update)
-5. **Dependency Conflicts**: No automatic resolution
-6. **Version Pinning**: Limited version constraint checking
-7. **Plugin Testing**: No automated testing framework
-8. **Marketplace**: No paid plugins (all free/open source)
-
-## Next Steps
-
-1. ✅ Review this specification
-2. Start Phase 1 implementation
-3. Create first 3-4 example plugins
-4. Set up plugin registry repo
-5. Build web UI components
-6. Test on Pi hardware
-7. Release v2.0.0 alpha
-
-## Questions to Resolve
-
-Before implementing, consider:
-
-1. Should we support plugin dependencies (plugin A requires plugin B)?
-2. How to handle breaking changes in core display_manager API?
-3. Should plugins be able to add new web UI pages?
-4. What about plugins that need hardware beyond LED matrix?
-5. How to prevent malicious plugins?
-6. Should there be plugin quotas (max API calls, etc.)?
-7. How to handle plugin conflicts (two clocks competing)?
+1. **Sandboxing**: plugins run in the same process as the display loop;
+   there is no isolation. Review code before installing third-party
+   plugins.
+2. **Resource limits**: there's a resource monitor that warns about
+   slow plugins, but no hard CPU/memory caps.
+3. **Plugin ratings**: not yet — the Plugin Store shows version,
+   author, and category but no community rating system.
+4. **Auto-updates**: manual via the Plugin Manager tab; no automatic
+   background updates.
+5. **Dependency conflicts**: each plugin's `requirements.txt` is
+   installed via pip; conflicting versions across plugins are not
+   resolved automatically.
+6. **Plugin testing framework**: see
+   [HOW_TO_RUN_TESTS.md](HOW_TO_RUN_TESTS.md) and
+   [DEV_PREVIEW.md](DEV_PREVIEW.md) — there are tools, but no
+   mandatory test gate.
 
 ---
 
-**See PLUGIN_ARCHITECTURE_SPEC.md for full details**
+**See [PLUGIN_ARCHITECTURE_SPEC.md](PLUGIN_ARCHITECTURE_SPEC.md) for the
+full architectural specification.**
 

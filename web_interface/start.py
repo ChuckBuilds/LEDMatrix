@@ -120,7 +120,11 @@ def main():
     
     # Run the web server with error handling for client disconnections
     try:
-        app.run(host='0.0.0.0', port=5000, debug=False)
+        # threaded=True is Flask's default since 1.0, but set it explicitly
+        # so it's self-documenting: the two /api/v3/stream/* SSE endpoints
+        # hold long-lived connections and would starve other requests under
+        # a single-threaded server.
+        app.run(host='0.0.0.0', port=5000, debug=False, threaded=True)
     except (OSError, BrokenPipeError) as e:
         # Suppress non-critical socket errors (client disconnections)
         if isinstance(e, OSError) and e.errno in (113, 32, 104):  # No route to host, Broken pipe, Connection reset

@@ -215,3 +215,49 @@ def sanitize_plugin_config(config: dict) -> dict:
     
     return sanitized
 
+
+def dedup_unique_arrays(cfg: dict, schema_node: dict) -> None:
+    """Recursively deduplicate arrays with uniqueItems constraint.
+
+    Walks the JSON Schema tree alongside the config dict and removes
+    duplicate entries from any array whose schema specifies
+    ``uniqueItems: true``, preserving insertion order (first occurrence
+    kept).  Also recurses into:
+
+    - Object properties containing nested objects or arrays
+    - Array elements whose ``items`` schema is an object with its own
+      properties (so nested uniqueItems constraints are enforced)
+
+    This is intended to run **after** form-data normalisation but
+    **before** JSON Schema validation, to prevent spurious validation
+    failures when config merging introduces duplicates (e.g. a stock
+    symbol already present in the saved config is submitted again from
+    the web form).
+
+    Args:
+        cfg: The plugin configuration dict to mutate in-place.
+        schema_node: The corresponding JSON Schema node (must contain
+            a ``properties`` mapping at the current level).
+    """
+    props = schema_node.get('properties', {})
+    for key, prop_schema in props.items():
+        if key not in cfg:
+            continue
+        prop_type = prop_schema.get('type')
+        if prop_type == 'array' and isinstance(cfg[key], list):
+            # Deduplicate this array if uniqueItems is set
+            if prop_schema.get('uniqueItems'):
+                seen: list = []
+                for item in cfg[key]:
+                    if item not in seen:
+                        seen.append(item)
+                cfg[key] = seen
+            # Recurse into array elements if items schema is an object
+            items_schema = prop_schema.get('items', {})
+            if isinstance(items_schema, dict) and items_schema.get('type') == 'object':
+                for element in cfg[key]:
+                    if isinstance(element, dict):
+                        dedup_unique_arrays(element, items_schema)
+        elif prop_type == 'object' and isinstance(cfg[key], dict):
+            dedup_unique_arrays(cfg[key], prop_schema)
+

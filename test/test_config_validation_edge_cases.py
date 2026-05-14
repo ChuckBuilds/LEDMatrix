@@ -23,6 +23,7 @@ if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
 
 from src.config_manager import ConfigManager
+from src.exceptions import ConfigError
 from src.plugin_system.schema_manager import SchemaManager
 
 
@@ -30,35 +31,31 @@ class TestInvalidJson:
     """Test handling of invalid JSON in config files."""
 
     def test_invalid_json_syntax(self, tmp_path):
-        """Config with invalid JSON syntax should be handled gracefully."""
+        """Config with invalid JSON syntax should raise ConfigError."""
         config_file = tmp_path / "config.json"
         config_file.write_text("{ invalid json }")
 
-        with patch.object(ConfigManager, '_get_config_path', return_value=str(config_file)):
-            config_manager = ConfigManager(config_dir=str(tmp_path))
-            # Should not raise, should return empty or default config
-            config = config_manager.load_config()
-            assert isinstance(config, dict)
+        config_manager = ConfigManager(config_path=str(config_file))
+        with pytest.raises(ConfigError):
+            config_manager.load_config()
 
     def test_truncated_json(self, tmp_path):
-        """Config with truncated JSON should be handled gracefully."""
+        """Config with truncated JSON should raise ConfigError."""
         config_file = tmp_path / "config.json"
         config_file.write_text('{"plugin": {"enabled": true')  # Missing closing braces
 
-        with patch.object(ConfigManager, '_get_config_path', return_value=str(config_file)):
-            config_manager = ConfigManager(config_dir=str(tmp_path))
-            config = config_manager.load_config()
-            assert isinstance(config, dict)
+        config_manager = ConfigManager(config_path=str(config_file))
+        with pytest.raises(ConfigError):
+            config_manager.load_config()
 
     def test_empty_config_file(self, tmp_path):
-        """Empty config file should be handled gracefully."""
+        """Empty config file should raise ConfigError."""
         config_file = tmp_path / "config.json"
         config_file.write_text("")
 
-        with patch.object(ConfigManager, '_get_config_path', return_value=str(config_file)):
-            config_manager = ConfigManager(config_dir=str(tmp_path))
-            config = config_manager.load_config()
-            assert isinstance(config, dict)
+        config_manager = ConfigManager(config_path=str(config_file))
+        with pytest.raises(ConfigError):
+            config_manager.load_config()
 
 
 class TestTypeValidation:

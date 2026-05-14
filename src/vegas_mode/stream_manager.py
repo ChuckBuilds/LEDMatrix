@@ -199,6 +199,21 @@ class StreamManager:
 
         logger.debug("Plugin %s marked for update", plugin_id)
 
+    def has_pending_updates(self) -> bool:
+        """Check if any plugins have pending updates awaiting processing."""
+        with self._buffer_lock:
+            return len(self._pending_updates) > 0
+
+    def has_pending_updates_for_visible_segments(self) -> bool:
+        """Check if pending updates affect plugins currently in the active buffer."""
+        with self._buffer_lock:
+            if not self._pending_updates:
+                return False
+            active_ids = {
+                seg.plugin_id for seg in self._active_buffer if seg.images
+            }
+            return bool(active_ids & self._pending_updates.keys())
+
     def process_updates(self) -> None:
         """
         Process pending plugin updates.
@@ -217,6 +232,15 @@ class StreamManager:
         refreshed_segments = {}
         for plugin_id in updated_plugins:
             self.plugin_adapter.invalidate_cache(plugin_id)
+
+            # Clear the plugin's scroll_helper cache so the visual is rebuilt
+            # from fresh data (affects stocks, news, odds-ticker, etc.)
+            plugin = None
+            if hasattr(self.plugin_manager, 'plugins'):
+                plugin = self.plugin_manager.plugins.get(plugin_id)
+            if plugin:
+                self.plugin_adapter.invalidate_plugin_scroll_cache(plugin, plugin_id)
+
             segment = self._fetch_plugin_content(plugin_id)
             if segment:
                 refreshed_segments[plugin_id] = segment

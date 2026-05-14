@@ -1,0 +1,358 @@
+<div class="space-y-6" id="backup-restore-root">
+
+    <!-- Security warning -->
+    <div class="bg-red-50 border border-red-200 rounded-lg p-4">
+        <div class="flex">
+            <div class="flex-shrink-0">
+                <i class="fas fa-exclamation-triangle text-red-600"></i>
+            </div>
+            <div class="ml-3">
+                <h3 class="text-sm font-medium text-red-800">Backup files contain secrets in plaintext</h3>
+                <div class="mt-1 text-sm text-red-700">
+                    Your API keys (weather, Spotify, YouTube, GitHub, etc.) and any saved WiFi passwords
+                    are stored inside the backup ZIP as plain text. Treat the file like a password —
+                    store it somewhere private and delete it when you no longer need it.
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Export card -->
+    <div class="bg-white rounded-lg shadow p-6">
+        <div class="border-b border-gray-200 pb-4 mb-6">
+            <div class="flex items-center justify-between">
+                <div>
+                    <h2 class="text-lg font-semibold text-gray-900">Export backup</h2>
+                    <p class="mt-1 text-sm text-gray-600">
+                        Download a single ZIP with all of your settings so you can restore it later.
+                    </p>
+                </div>
+                <button onclick="exportBackup()" id="export-backup-btn"
+                        class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700">
+                    <i class="fas fa-download mr-2"></i>
+                    Download backup
+                </button>
+            </div>
+        </div>
+        <div id="export-preview" class="text-sm text-gray-600">
+            <div class="animate-pulse">Loading summary…</div>
+        </div>
+    </div>
+
+    <!-- Restore card -->
+    <div class="bg-white rounded-lg shadow p-6">
+        <div class="border-b border-gray-200 pb-4 mb-6">
+            <h2 class="text-lg font-semibold text-gray-900">Restore from backup</h2>
+            <p class="mt-1 text-sm text-gray-600">
+                Upload a backup ZIP exported from this or another LEDMatrix install.
+                You'll see a summary before anything is written to disk.
+            </p>
+        </div>
+
+        <div class="space-y-4">
+            <div>
+                <label class="block text-sm font-medium text-gray-700 mb-2">Backup file</label>
+                <input type="file" id="restore-file-input" accept=".zip"
+                       class="block w-full text-sm text-gray-700 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-medium file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100">
+            </div>
+
+            <div>
+                <button onclick="validateRestoreFile()" id="validate-restore-btn"
+                        class="inline-flex items-center px-3 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50">
+                    <i class="fas fa-check-circle mr-2"></i>
+                    Inspect file
+                </button>
+            </div>
+
+            <div id="restore-preview" class="hidden bg-gray-50 border border-gray-200 rounded-md p-4">
+                <h3 class="text-sm font-medium text-gray-900 mb-2">Backup contents</h3>
+                <dl id="restore-preview-body" class="text-sm text-gray-700 space-y-1"></dl>
+
+                <h3 class="text-sm font-medium text-gray-900 mt-4 mb-2">Choose what to restore</h3>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-2 text-sm text-gray-700">
+                    <label class="flex items-center gap-2"><input type="checkbox" id="opt-config" checked> <span>Main configuration</span></label>
+                    <label class="flex items-center gap-2"><input type="checkbox" id="opt-secrets" checked> <span>API keys (secrets)</span></label>
+                    <label class="flex items-center gap-2"><input type="checkbox" id="opt-wifi" checked> <span>WiFi configuration</span></label>
+                    <label class="flex items-center gap-2"><input type="checkbox" id="opt-fonts" checked> <span>User-uploaded fonts</span></label>
+                    <label class="flex items-center gap-2"><input type="checkbox" id="opt-plugin-uploads" checked> <span>Plugin image uploads</span></label>
+                    <label class="flex items-center gap-2"><input type="checkbox" id="opt-reinstall" checked> <span>Reinstall missing plugins</span></label>
+                </div>
+
+                <div class="mt-4 flex gap-2">
+                    <button onclick="runRestore()" id="run-restore-btn"
+                            class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-green-600 hover:bg-green-700">
+                        <i class="fas fa-upload mr-2"></i>
+                        Restore now
+                    </button>
+                    <button onclick="clearRestore()"
+                            class="inline-flex items-center px-3 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50">
+                        Cancel
+                    </button>
+                </div>
+            </div>
+
+            <div id="restore-result" class="hidden"></div>
+        </div>
+    </div>
+
+    <!-- History card -->
+    <div class="bg-white rounded-lg shadow p-6">
+        <div class="border-b border-gray-200 pb-4 mb-6">
+            <div class="flex items-center justify-between">
+                <div>
+                    <h2 class="text-lg font-semibold text-gray-900">Backup history</h2>
+                    <p class="mt-1 text-sm text-gray-600">Previously exported backups stored on this device.</p>
+                </div>
+                <button onclick="loadBackupList()"
+                        class="inline-flex items-center px-3 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50">
+                    <i class="fas fa-sync-alt mr-2"></i>
+                    Refresh
+                </button>
+            </div>
+        </div>
+        <div id="backup-history" class="text-sm text-gray-600">Loading…</div>
+    </div>
+
+</div>
+
+<script>
+(function () {
+    let inspectedFile = null;
+
+    function notify(message, kind) {
+        if (typeof showNotification === 'function') {
+            showNotification(message, kind || 'info');
+        } else {
+            console.log('[backup]', kind || 'info', message);
+        }
+    }
+
+    function formatSize(bytes) {
+        if (!bytes) return '0 B';
+        const units = ['B', 'KB', 'MB', 'GB'];
+        let i = 0, size = bytes;
+        while (size >= 1024 && i < units.length - 1) { size /= 1024; i++; }
+        return size.toFixed(i === 0 ? 0 : 1) + ' ' + units[i];
+    }
+
+    function escapeHtml(value) {
+        return String(value == null ? '' : value).replace(/[&<>"']/g, function (c) {
+            return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c];
+        });
+    }
+
+    async function loadPreview() {
+        const el = document.getElementById('export-preview');
+        try {
+            const res = await fetch('/api/v3/backup/preview');
+            const payload = await res.json();
+            if (payload.status !== 'success') throw new Error(payload.message || 'Preview failed');
+            const d = payload.data || {};
+            el.innerHTML = `
+                <ul class="list-disc pl-5 space-y-1">
+                    <li>Main config: <strong>${d.has_config ? 'yes' : 'no'}</strong></li>
+                    <li>Secrets: <strong>${d.has_secrets ? 'yes' : 'no'}</strong></li>
+                    <li>WiFi config: <strong>${d.has_wifi ? 'yes' : 'no'}</strong></li>
+                    <li>User fonts: <strong>${(d.user_fonts || []).length}</strong> ${d.user_fonts && d.user_fonts.length ? '(' + d.user_fonts.map(escapeHtml).join(', ') + ')' : ''}</li>
+                    <li>Plugin image uploads: <strong>${d.plugin_uploads || 0}</strong> file(s)</li>
+                    <li>Installed plugins: <strong>${(d.plugins || []).length}</strong></li>
+                </ul>`;
+        } catch (err) {
+            el.textContent = 'Could not load preview: ' + err.message;
+        }
+    }
+
+    async function loadBackupList() {
+        const el = document.getElementById('backup-history');
+        el.textContent = 'Loading…';
+        try {
+            const res = await fetch('/api/v3/backup/list');
+            const payload = await res.json();
+            if (payload.status !== 'success') throw new Error(payload.message || 'List failed');
+            const entries = payload.data || [];
+            if (!entries.length) {
+                el.innerHTML = '<p>No backups have been created yet.</p>';
+                return;
+            }
+            el.innerHTML = `
+                <table class="min-w-full divide-y divide-gray-200">
+                    <thead>
+                        <tr>
+                            <th class="text-left py-2">Filename</th>
+                            <th class="text-left py-2">Size</th>
+                            <th class="text-left py-2">Created</th>
+                            <th></th>
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y divide-gray-100">
+                        ${entries.map(e => `
+                            <tr>
+                                <td class="py-2 font-mono text-xs">${escapeHtml(e.filename)}</td>
+                                <td class="py-2">${formatSize(e.size)}</td>
+                                <td class="py-2">${escapeHtml(e.created_at)}</td>
+                                <td class="py-2 text-right space-x-2">
+                                    <a href="/api/v3/backup/download/${encodeURIComponent(e.filename)}"
+                                       class="text-blue-600 hover:underline">Download</a>
+                                    <button data-filename="${escapeHtml(e.filename)}"
+                                            class="text-red-600 hover:underline backup-delete-btn">Delete</button>
+                                </td>
+                            </tr>
+                        `).join('')}
+                    </tbody>
+                </table>`;
+            el.querySelectorAll('.backup-delete-btn').forEach(btn => {
+                btn.addEventListener('click', () => deleteBackup(btn.dataset.filename));
+            });
+        } catch (err) {
+            el.textContent = 'Could not load backups: ' + err.message;
+        }
+    }
+
+    async function exportBackup() {
+        const btn = document.getElementById('export-backup-btn');
+        btn.disabled = true;
+        btn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>Creating…';
+        try {
+            const res = await fetch('/api/v3/backup/export', { method: 'POST' });
+            const payload = await res.json();
+            if (payload.status !== 'success') throw new Error(payload.message || 'Export failed');
+            notify('Backup created: ' + payload.filename, 'success');
+            // Trigger browser download immediately.
+            window.location.href = '/api/v3/backup/download/' + encodeURIComponent(payload.filename);
+            await loadBackupList();
+        } catch (err) {
+            notify('Export failed: ' + err.message, 'error');
+        } finally {
+            btn.disabled = false;
+            btn.innerHTML = '<i class="fas fa-download mr-2"></i>Download backup';
+        }
+    }
+
+    async function deleteBackup(filename) {
+        if (!confirm('Delete ' + filename + '?')) return;
+        try {
+            const res = await fetch('/api/v3/backup/' + encodeURIComponent(filename), { method: 'DELETE' });
+            const payload = await res.json();
+            if (payload.status !== 'success') throw new Error(payload.message || 'Delete failed');
+            notify('Backup deleted', 'success');
+            await loadBackupList();
+        } catch (err) {
+            notify('Delete failed: ' + err.message, 'error');
+        }
+    }
+
+    async function validateRestoreFile() {
+        const input = document.getElementById('restore-file-input');
+        if (!input.files || !input.files[0]) {
+            notify('Choose a backup file first', 'error');
+            return;
+        }
+        const file = input.files[0];
+        const fd = new FormData();
+        fd.append('backup_file', file);
+        try {
+            const res = await fetch('/api/v3/backup/validate', { method: 'POST', body: fd });
+            const payload = await res.json();
+            if (payload.status !== 'success') throw new Error(payload.message || 'Validation failed');
+            inspectedFile = file;
+            renderRestorePreview(payload.data);
+        } catch (err) {
+            notify('Invalid backup: ' + err.message, 'error');
+        }
+    }
+
+    function renderRestorePreview(manifest) {
+        const wrap = document.getElementById('restore-preview');
+        const body = document.getElementById('restore-preview-body');
+        const detected = manifest.detected_contents || [];
+        const plugins = manifest.plugins || [];
+        body.innerHTML = `
+            <div><strong>Created:</strong> ${escapeHtml(manifest.created_at || 'unknown')}</div>
+            <div><strong>Source host:</strong> ${escapeHtml(manifest.hostname || 'unknown')}</div>
+            <div><strong>LEDMatrix version:</strong> ${escapeHtml(manifest.ledmatrix_version || 'unknown')}</div>
+            <div><strong>Includes:</strong> ${detected.length ? detected.map(escapeHtml).join(', ') : '(nothing detected)'}</div>
+            <div><strong>Plugins referenced:</strong> ${plugins.length ? plugins.map(p => escapeHtml(p.plugin_id)).join(', ') : 'none'}</div>
+        `;
+        wrap.classList.remove('hidden');
+    }
+
+    function clearRestore() {
+        inspectedFile = null;
+        document.getElementById('restore-preview').classList.add('hidden');
+        document.getElementById('restore-result').classList.add('hidden');
+        document.getElementById('restore-file-input').value = '';
+    }
+
+    async function runRestore() {
+        if (!inspectedFile) {
+            notify('Inspect the file before restoring', 'error');
+            return;
+        }
+        if (!confirm('Restore from this backup? Current configuration will be overwritten.')) return;
+
+        const options = {
+            restore_config: document.getElementById('opt-config').checked,
+            restore_secrets: document.getElementById('opt-secrets').checked,
+            restore_wifi: document.getElementById('opt-wifi').checked,
+            restore_fonts: document.getElementById('opt-fonts').checked,
+            restore_plugin_uploads: document.getElementById('opt-plugin-uploads').checked,
+            reinstall_plugins: document.getElementById('opt-reinstall').checked,
+        };
+        const fd = new FormData();
+        fd.append('backup_file', inspectedFile);
+        fd.append('options', JSON.stringify(options));
+
+        const btn = document.getElementById('run-restore-btn');
+        btn.disabled = true;
+        btn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>Restoring…';
+        try {
+            const res = await fetch('/api/v3/backup/restore', { method: 'POST', body: fd });
+            const payload = await res.json();
+            if (payload.status !== 'success') {
+                const msgs = (payload.data?.errors || []).join('; ');
+                throw new Error(payload.message || msgs || 'Restore had errors');
+            }
+            const data = payload.data || {};
+            const hasPartial = (data.plugins_failed || []).length > 0 || (data.errors || []).length > 0;
+            const result = document.getElementById('restore-result');
+            result.className = (hasPartial
+                ? 'bg-yellow-50 border-yellow-200 text-yellow-800'
+                : 'bg-green-50 border-green-200 text-green-800') + ' border rounded-md p-4';
+            result.classList.remove('hidden');
+            result.innerHTML = `
+                <h3 class="font-medium mb-2">${hasPartial ? 'Restore complete with warnings' : 'Restore complete'}</h3>
+                <div><strong>Restored:</strong> ${(data.restored || []).map(escapeHtml).join(', ') || 'none'}</div>
+                <div><strong>Skipped:</strong> ${(data.skipped || []).map(escapeHtml).join(', ') || 'none'}</div>
+                <div><strong>Plugins installed:</strong> ${(data.plugins_installed || []).map(escapeHtml).join(', ') || 'none'}</div>
+                <div><strong>Plugins failed:</strong> ${(data.plugins_failed || []).map(p => escapeHtml(p.plugin_id + ' (' + p.error + ')')).join(', ') || 'none'}</div>
+                <div><strong>Errors:</strong> ${(data.errors || []).map(escapeHtml).join('; ') || 'none'}</div>
+                ${((data.restored || []).length || (data.plugins_installed || []).length) ? '<p class="mt-2">Restart the display service to apply all changes.</p>' : ''}
+            `;
+            notify(hasPartial ? 'Restore complete with warnings' : 'Restore complete', hasPartial ? 'warning' : 'success');
+        } catch (err) {
+            notify('Restore failed: ' + err.message, 'error');
+        } finally {
+            btn.disabled = false;
+            btn.innerHTML = '<i class="fas fa-upload mr-2"></i>Restore now';
+        }
+    }
+
+    // Expose handlers to inline onclick attributes.
+    window.exportBackup = exportBackup;
+    window.loadBackupList = loadBackupList;
+    window.validateRestoreFile = validateRestoreFile;
+    window.clearRestore = clearRestore;
+    window.runRestore = runRestore;
+
+    // Clear inspection state whenever the user picks a new file.
+    document.getElementById('restore-file-input').addEventListener('change', function () {
+        inspectedFile = null;
+        document.getElementById('restore-preview').classList.add('hidden');
+        document.getElementById('restore-result').classList.add('hidden');
+    });
+
+    // Initial load.
+    loadPreview();
+    loadBackupList();
+})();
+</script>

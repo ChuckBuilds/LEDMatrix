@@ -12,7 +12,7 @@ The LEDMatrix Plugin Store allows you to discover, install, and manage display p
 ```bash
 # Web UI: Plugin Store → Search → Click Install
 # API:
-curl -X POST http://your-pi-ip:5050/api/plugins/install \
+curl -X POST http://your-pi-ip:5000/api/v3/plugins/install \
   -H "Content-Type: application/json" \
   -d '{"plugin_id": "clock-simple"}'
 ```
@@ -21,7 +21,7 @@ curl -X POST http://your-pi-ip:5050/api/plugins/install \
 ```bash
 # Web UI: Plugin Store → "Install from URL" → Paste URL
 # API:
-curl -X POST http://your-pi-ip:5050/api/plugins/install-from-url \
+curl -X POST http://your-pi-ip:5000/api/v3/plugins/install-from-url \
   -H "Content-Type: application/json" \
   -d '{"repo_url": "https://github.com/user/ledmatrix-plugin"}'
 ```
@@ -29,20 +29,20 @@ curl -X POST http://your-pi-ip:5050/api/plugins/install-from-url \
 ### Manage Plugins
 ```bash
 # List installed
-curl "http://your-pi-ip:5050/api/plugins/installed"
+curl "http://your-pi-ip:5000/api/v3/plugins/installed"
 
 # Enable/disable
-curl -X POST http://your-pi-ip:5050/api/plugins/toggle \
+curl -X POST http://your-pi-ip:5000/api/v3/plugins/toggle \
   -H "Content-Type: application/json" \
   -d '{"plugin_id": "clock-simple", "enabled": true}'
 
 # Update
-curl -X POST http://your-pi-ip:5050/api/plugins/update \
+curl -X POST http://your-pi-ip:5000/api/v3/plugins/update \
   -H "Content-Type: application/json" \
   -d '{"plugin_id": "clock-simple"}'
 
 # Uninstall
-curl -X POST http://your-pi-ip:5050/api/plugins/uninstall \
+curl -X POST http://your-pi-ip:5000/api/v3/plugins/uninstall \
   -H "Content-Type: application/json" \
   -d '{"plugin_id": "clock-simple"}'
 ```
@@ -56,7 +56,7 @@ curl -X POST http://your-pi-ip:5050/api/plugins/uninstall \
 The official plugin store contains curated, verified plugins that have been reviewed by maintainers.
 
 **Via Web Interface:**
-1. Open the web interface at http://your-pi-ip:5050
+1. Open the web interface at http://your-pi-ip:5000
 2. Navigate to the "Plugin Store" tab
 3. Browse or search for plugins
 4. Click "Install" on the desired plugin
@@ -65,7 +65,7 @@ The official plugin store contains curated, verified plugins that have been revi
 
 **Via REST API:**
 ```bash
-curl -X POST http://your-pi-ip:5050/api/plugins/install \
+curl -X POST http://your-pi-ip:5000/api/v3/plugins/install \
   -H "Content-Type: application/json" \
   -d '{"plugin_id": "clock-simple"}'
 ```
@@ -101,7 +101,7 @@ Install any plugin directly from a GitHub repository, even if it's not in the of
 
 **Via REST API:**
 ```bash
-curl -X POST http://your-pi-ip:5050/api/plugins/install-from-url \
+curl -X POST http://your-pi-ip:5000/api/v3/plugins/install-from-url \
   -H "Content-Type: application/json" \
   -d '{"repo_url": "https://github.com/user/ledmatrix-my-plugin"}'
 ```
@@ -131,13 +131,13 @@ else:
 **Via REST API:**
 ```bash
 # Search by query
-curl "http://your-pi-ip:5050/api/plugins/store/search?q=hockey"
+curl "http://your-pi-ip:5000/api/v3/plugins/store/search?q=hockey"
 
 # Filter by category
-curl "http://your-pi-ip:5050/api/plugins/store/search?category=sports"
+curl "http://your-pi-ip:5000/api/v3/plugins/store/search?category=sports"
 
 # Filter by tags
-curl "http://your-pi-ip:5050/api/plugins/store/search?tags=nhl&tags=hockey"
+curl "http://your-pi-ip:5000/api/v3/plugins/store/search?tags=nhl&tags=hockey"
 ```
 
 **Via Python:**
@@ -168,7 +168,7 @@ results = store.search_plugins(tags=["nhl", "hockey"])
 
 **Via REST API:**
 ```bash
-curl "http://your-pi-ip:5050/api/plugins/installed"
+curl "http://your-pi-ip:5000/api/v3/plugins/installed"
 ```
 
 **Via Python:**
@@ -192,7 +192,7 @@ for plugin_id in installed:
 
 **Via REST API:**
 ```bash
-curl -X POST http://your-pi-ip:5050/api/plugins/toggle \
+curl -X POST http://your-pi-ip:5000/api/v3/plugins/toggle \
   -H "Content-Type: application/json" \
   -d '{"plugin_id": "clock-simple", "enabled": true}'
 ```
@@ -207,7 +207,7 @@ curl -X POST http://your-pi-ip:5050/api/plugins/toggle \
 
 **Via REST API:**
 ```bash
-curl -X POST http://your-pi-ip:5050/api/plugins/update \
+curl -X POST http://your-pi-ip:5000/api/v3/plugins/update \
   -H "Content-Type: application/json" \
   -d '{"plugin_id": "clock-simple"}'
 ```
@@ -230,7 +230,7 @@ success = store.update_plugin('clock-simple')
 
 **Via REST API:**
 ```bash
-curl -X POST http://your-pi-ip:5050/api/plugins/uninstall \
+curl -X POST http://your-pi-ip:5000/api/v3/plugins/uninstall \
   -H "Content-Type: application/json" \
   -d '{"plugin_id": "clock-simple"}'
 ```
@@ -351,15 +351,15 @@ All API endpoints return JSON with this structure:
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| GET | `/api/plugins/store/list` | List all plugins in store |
-| GET | `/api/plugins/store/search` | Search for plugins |
-| GET | `/api/plugins/installed` | List installed plugins |
-| POST | `/api/plugins/install` | Install from registry |
-| POST | `/api/plugins/install-from-url` | Install from GitHub URL |
-| POST | `/api/plugins/uninstall` | Uninstall plugin |
-| POST | `/api/plugins/update` | Update plugin |
-| POST | `/api/plugins/toggle` | Enable/disable plugin |
-| POST | `/api/plugins/config` | Update plugin config |
+| GET | `/api/v3/plugins/store/list` | List all plugins in store |
+| GET | `/api/v3/plugins/store/search` | Search for plugins |
+| GET | `/api/v3/plugins/installed` | List installed plugins |
+| POST | `/api/v3/plugins/install` | Install from registry |
+| POST | `/api/v3/plugins/install-from-url` | Install from GitHub URL |
+| POST | `/api/v3/plugins/uninstall` | Uninstall plugin |
+| POST | `/api/v3/plugins/update` | Update plugin |
+| POST | `/api/v3/plugins/toggle` | Enable/disable plugin |
+| POST | `/api/v3/plugins/config` | Update plugin config |
 
 ---
 
@@ -369,7 +369,7 @@ All API endpoints return JSON with this structure:
 
 ```bash
 # Install
-curl -X POST http://192.168.1.100:5050/api/plugins/install \
+curl -X POST http://192.168.1.100:5000/api/v3/plugins/install \
   -H "Content-Type: application/json" \
   -d '{"plugin_id": "clock-simple"}'
 
@@ -390,12 +390,12 @@ sudo systemctl restart ledmatrix
 
 ```bash
 # Install your own plugin during development
-curl -X POST http://192.168.1.100:5050/api/plugins/install-from-url \
+curl -X POST http://192.168.1.100:5000/api/v3/plugins/install-from-url \
   -H "Content-Type: application/json" \
   -d '{"repo_url": "https://github.com/myusername/ledmatrix-my-custom-plugin"}'
 
 # Enable it
-curl -X POST http://192.168.1.100:5050/api/plugins/toggle \
+curl -X POST http://192.168.1.100:5000/api/v3/plugins/toggle \
   -H "Content-Type: application/json" \
   -d '{"plugin_id": "my-custom-plugin", "enabled": true}'
 

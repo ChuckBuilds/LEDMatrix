@@ -52,6 +52,10 @@ class RenderPipeline:
         self.config = config
         self.display_manager = display_manager
         self.stream_manager = stream_manager
+        self.sync_manager = None        # Optional DisplaySyncManager — set by coordinator
+        self.sync_follower_left = True  # True = follower is LEFT of leader (default)
+        self._sync_send_interval = 1.0 / 90  # raw bytes are cheap; 90fps > follower render rate
+        self._last_sync_send = 0.0
 
         # Display dimensions (handle both property and method access patterns)
         self.display_width = (
@@ -202,8 +206,26 @@ class RenderPipeline:
             # Update scroll position
             self.scroll_helper.update_scroll_position()
 
-            # Check if cycle is complete
-            if self.scroll_helper.is_scroll_complete():
+            # Determine if the cycle is done.
+            #
+            # scroll_helper considers a cycle complete only after
+            # total_distance_scrolled >= total_scroll_width + display_width.
+            # That extra display_width of travel causes a "wrap-around" phase
+            # where scroll_position resets to ~0 and the first plugin's content
+            # re-enters from the right — the user sees this 2-3 s of re-entry
+            # as "a plugin partially displaying before the next one starts."
+            #
+            # We end the cycle as soon as total_distance_scrolled reaches
+            # total_scroll_width (the wrap-around point), before any second-pass
+            # content becomes visible.  The scroll_helper's own is_scroll_complete()
+            # check is kept as a fallback for any edge-cases where that threshold
+            # is never hit.
+            at_wrap_point = (
+                not self._cycle_complete and
+                self.scroll_helper.total_distance_scrolled >= self.scroll_helper.total_scroll_width
+            )
+
+            if at_wrap_point or self.scroll_helper.is_scroll_complete():
                 if not self._cycle_complete:
                     self._cycle_complete = True
                     self.stats['scroll_cycles'] += 1
@@ -211,6 +233,17 @@ class RenderPipeline:
                         "Scroll cycle complete after %.1fs",
                         time.time() - self._cycle_start_time
                     )
+                    # Push blank immediately so the hardware never shows any
+                    # post-wrap content while the coordinator recomposes the
+                    # next cycle (~100 ms).
+                    try:
+                        from PIL import Image as _Image
+                        blank = _Image.new('RGB', (self.display_width, self.display_height))
+                        self.display_manager.image = blank
+                        self.display_manager.update_display()
+                    except Exception:
+                        logger.exception("Failed to write blank frame to display at cycle end")
+                return True  # Cycle done; coordinator starts new cycle next frame
 
             # Get visible portion
             visible_frame = self.scroll_helper.get_visible_portion()
@@ -220,6 +253,15 @@ class RenderPipeline:
             # Render to display
             self.display_manager.image = visible_frame
             self.display_manager.update_display()
+
+            # Multi-display sync: send scroll position to follower.
+            # The follower renders from its own cached_array (kept identical to the
+            # leader's via TCP image transfer at each new_cycle) at scroll_x ± display_width.
+            if self.sync_manager:
+                now = time.time()
+                if now - self._last_sync_send >= self._sync_send_interval:
+                    self._last_sync_send = now
+                    self.sync_manager.send_scroll_x(self.scroll_helper.scroll_position)
 
             # Update scrolling state
             self.display_manager.set_scrolling_state(True)
@@ -260,6 +302,14 @@ class RenderPipeline:
         if self._cycle_complete:
             return True
 
+        # When multi-display sync is active, defer mid-cycle hot swaps until the
+        # cycle ends naturally. Hot swaps block the render loop for 15-30ms while
+        # the image is rebuilt, causing a freeze+jump that the follower perceives
+        # as a speed-up. Deferring to cycle boundaries keeps transitions clean.
+        # Staging buffer content is still pre-loaded; it just applies at cycle end.
+        if self.sync_manager is not None:
+            return False
+
         # Check if we need more content in the buffer
         buffer_status = self.stream_manager.get_buffer_status()
         if buffer_status['staging_count'] > 0:
@@ -278,14 +328,37 @@ class RenderPipeline:
             True if swap occurred
         """
         try:
+            # Snapshot position before swap so we can reposition after.
+            # The new image has completely different content — if scroll_position
+            # is left unchanged it lands at an arbitrary mid-content point in the
+            # new image, causing a visible jump on both displays.
+            old_width = self.scroll_helper.total_scroll_width
+            old_pos = self.scroll_helper.scroll_position
+
             # Process any pending updates
             self.stream_manager.process_updates()
             self.stream_manager.swap_buffers()
 
             # Recompose with updated content
             if self.compose_scroll_content():
+                # Map scroll position proportionally into the new image width so
+                # we resume at the same relative progress through the content.
+                # This keeps the visual tempo consistent and avoids the jump that
+                # occurred when old scroll_position landed arbitrarily in new image.
+                new_width = self.scroll_helper.total_scroll_width
+                if old_width > 0 and new_width > 0:
+                    ratio = (old_pos % old_width) / old_width
+                    self.scroll_helper.scroll_position = ratio * new_width
+                else:
+                    self.scroll_helper.scroll_position = 0.0
+
                 self.stats['hot_swaps'] += 1
-                logger.debug("Hot-swap completed")
+                logger.debug(
+                    "Hot-swap completed: scroll repositioned %.0f→%.0f (%.1f%% of new %dpx image)",
+                    old_pos, self.scroll_helper.scroll_position,
+                    (self.scroll_helper.scroll_position / new_width * 100) if new_width else 0,
+                    new_width,
+                )
                 return True
 
             return False
@@ -320,7 +393,29 @@ class RenderPipeline:
             return False
 
         # Compose new scroll content
-        return self.compose_scroll_content()
+        result = self.compose_scroll_content()
+
+        if result and self.sync_manager:
+            # When sync is active, start the leader at display_width instead of 0.
+            # This skips the initial black gap so the leader immediately shows content.
+            # The follower starts at position 0 (the gap) which looks like a clean
+            # blank transition rather than near-end content wrapping around.
+            self.scroll_helper.scroll_position = float(self.display_width)
+
+        if result and self.sync_manager:
+            # Signal follower that a new cycle started (triggers its own rebuild)
+            self.sync_manager.send_new_cycle()
+            # Push the actual scroll image over TCP so follower has identical pixels.
+            # Done in a background thread to not block the render loop (~15ms transfer).
+            if self.scroll_helper.cached_image is not None:
+                import threading as _t
+                _t.Thread(
+                    target=self.sync_manager.send_scroll_image,
+                    args=(self.scroll_helper.cached_image,),
+                    daemon=True, name="sync-image-push"
+                ).start()
+
+        return result
 
     def get_current_scroll_info(self) -> Dict[str, Any]:
         """Get current scroll state information."""

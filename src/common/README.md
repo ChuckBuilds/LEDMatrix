@@ -71,6 +71,17 @@ General-purpose utility functions:
 - Boolean parsing
 - Logger creation (deprecated - use `src.logging_config.get_logger()`)
 
+## Permission Utilities (`permission_utils.py`)
+
+Helpers for ensuring directory permissions and ownership are correct
+when running as a service (used by `CacheManager` to set up its
+persistent cache directory).
+
+## CLI Helpers (`cli.py`)
+
+Shared CLI argument parsing helpers used by `scripts/dev/*` and other
+command-line entry points.
+
 ## Best Practices
 
 1. **Use centralized logging**: Import from `src.logging_config` instead of creating loggers directly

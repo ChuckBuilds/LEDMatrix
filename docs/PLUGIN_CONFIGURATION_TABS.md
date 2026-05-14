@@ -1,5 +1,15 @@
 # Plugin Configuration Tabs
 
+> **Status note:** this doc was written during the rollout of the
+> per-plugin configuration tab feature. The feature itself is shipped
+> and working in the current v3 web interface, but a few file paths
+> in the "Implementation Details" section below still reference the
+> pre-v3 file layout (`web_interface_v2.py`, `templates/index_v2.html`).
+> The current implementation lives in `web_interface/app.py`,
+> `web_interface/blueprints/api_v3.py`, and `web_interface/templates/v3/`.
+> The user-facing description (Overview, Features, Form Generation
+> Process) is still accurate.
+
 ## Overview
 
 Each installed plugin now gets its own dedicated configuration tab in the web interface. This provides a clean, organized way to configure plugins without cluttering the main Plugins management tab.
@@ -29,10 +39,14 @@ Each installed plugin now gets its own dedicated configuration tab in the web in
 3. Click **Save Configuration**
 4. Restart the display service to apply changes
 
-### Plugin Management vs Configuration
+### Plugin Manager vs Per-Plugin Configuration
 
-- **Plugins Tab**: Used for plugin management (install, enable/disable, update, uninstall)
-- **Plugin-Specific Tabs**: Used for configuring plugin behavior and settings
+- **Plugin Manager tab** (second nav row): used for browsing the
+  Plugin Store, installing plugins, toggling installed plugins on/off,
+  and updating/uninstalling them
+- **Per-plugin tabs** (one per installed plugin, also in the second
+  nav row): used for configuring that specific plugin's behavior and
+  settings via a form auto-generated from its `config_schema.json`
 
 ## For Plugin Developers
 
@@ -194,12 +208,12 @@ Renders as: Dropdown select
 
 ### Form Generation Process
 
-1. Web UI loads installed plugins via `/api/plugins/installed`
+1. Web UI loads installed plugins via `/api/v3/plugins/installed`
 2. For each plugin, the backend loads its `config_schema.json`
 3. Frontend generates a tab button with plugin name
 4. Frontend generates a form based on the JSON Schema
 5. Current config values from `config.json` are populated
-6. When saved, each field is sent to `/api/plugins/config` endpoint
+6. When saved, each field is sent to `/api/v3/plugins/config` endpoint
 
 ## Implementation Details
 
@@ -207,7 +221,7 @@ Renders as: Dropdown select
 
 **File**: `web_interface_v2.py`
 
-- Modified `/api/plugins/installed` endpoint to include `config_schema_data`
+- Modified `/api/v3/plugins/installed` endpoint to include `config_schema_data`
 - Loads each plugin's `config_schema.json` if it exists
 - Returns schema data along with plugin info
 
@@ -227,7 +241,7 @@ New Functions:
 ```
 Page Load
   → refreshPlugins()
-    → /api/plugins/installed
+    → /api/v3/plugins/installed
       → Returns plugins with config_schema_data
     → generatePluginTabs()
       → Creates tab buttons
@@ -241,7 +255,7 @@ User Saves
   → savePluginConfiguration()
     → Reads form data
     → Converts types per schema
-    → Sends to /api/plugins/config
+    → Sends to /api/v3/plugins/config
       → Updates config.json
     → Shows success notification
 ```

@@ -77,10 +77,12 @@ sudo chmod -R 755 /root/.cache
 
 The web interface handles dependency installation correctly in the service context:
 
-1. Access the web interface (usually http://ledpi:8080)
-2. Navigate to Plugin Store or Plugin Management
-3. Install plugins through the web UI
-4. The system will automatically handle dependencies
+1. Access the web interface (`http://ledpi:5000` or `http://your-pi-ip:5000`)
+2. Open the **Plugin Manager** tab (use the **Plugin Store** section to
+   find the plugin, or **Install from GitHub**)
+3. Install the plugin through the web UI
+4. The system automatically handles dependency installation in the
+   service context (which has the right permissions)
 
 ## Prevention
 

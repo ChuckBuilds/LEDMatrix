@@ -21,13 +21,15 @@ The LEDMatrix WiFi system provides automatic network configuration with intellig
 
 **If not connected to WiFi:**
 1. Wait 90 seconds after boot (AP mode activation grace period)
-2. Connect to WiFi network: **LEDMatrix-Setup** (open network)
-3. Open browser to: `http://192.168.4.1:5050`
-4. Navigate to the WiFi tab
+2. Connect to WiFi network **LEDMatrix-Setup** (default password
+   `ledmatrix123` — change it in `config/wifi_config.json` if you want
+   an open network or a different password)
+3. Open browser to: `http://192.168.4.1:5000`
+4. Open the **WiFi** tab
 5. Scan, select your network, and connect
 
 **If already connected:**
-1. Open browser to: `http://your-pi-ip:5050`
+1. Open browser to: `http://your-pi-ip:5000`
 2. Navigate to the WiFi tab
 3. Configure as needed
 
@@ -76,7 +78,7 @@ WiFi settings are stored in `config/wifi_config.json`:
 ```json
 {
   "ap_ssid": "LEDMatrix-Setup",
-  "ap_password": "",
+  "ap_password": "ledmatrix123",
   "ap_channel": 7,
   "auto_enable_ap_mode": true,
   "saved_networks": [
@@ -93,10 +95,10 @@ WiFi settings are stored in `config/wifi_config.json`:
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `ap_ssid` | `LEDMatrix-Setup` | Network name for AP mode |
-| `ap_password` | `` (empty) | AP password (empty = open network) |
-| `ap_channel` | `7` | WiFi channel (use 1, 6, or 11 for non-overlapping) |
-| `auto_enable_ap_mode` | `true` | Automatically enable AP mode when disconnected |
+| `ap_ssid` | `LEDMatrix-Setup` | Network name broadcast in AP mode |
+| `ap_password` | `ledmatrix123` | AP password. Set to `""` to make the network open (no password). |
+| `ap_channel` | `7` | WiFi channel (1, 6, or 11 are non-overlapping) |
+| `auto_enable_ap_mode` | `true` | Automatically enable AP mode when both WiFi and Ethernet are disconnected |
 | `saved_networks` | `[]` | Array of saved WiFi credentials |
 
 ### Auto-Enable AP Mode Behavior
@@ -130,10 +132,10 @@ WiFi settings are stored in `config/wifi_config.json`:
 **Via API:**
 ```bash
 # Scan for networks
-curl "http://your-pi-ip:5050/api/wifi/scan"
+curl "http://your-pi-ip:5000/api/v3/wifi/scan"
 
 # Connect to network
-curl -X POST http://your-pi-ip:5050/api/wifi/connect \
+curl -X POST http://your-pi-ip:5000/api/v3/wifi/connect \
   -H "Content-Type: application/json" \
   -d '{"ssid": "YourNetwork", "password": "your-password"}'
 ```
@@ -147,10 +149,10 @@ curl -X POST http://your-pi-ip:5050/api/wifi/connect \
 **Via API:**
 ```bash
 # Enable AP mode
-curl -X POST http://your-pi-ip:5050/api/wifi/ap/enable
+curl -X POST http://your-pi-ip:5000/api/v3/wifi/ap/enable
 
 # Disable AP mode
-curl -X POST http://your-pi-ip:5050/api/wifi/ap/disable
+curl -X POST http://your-pi-ip:5000/api/v3/wifi/ap/disable
 ```
 
 **Note:** Manual enable still requires both WiFi and Ethernet to be disconnected.
@@ -211,16 +213,17 @@ The system checks connections in this order:
 
 ### AP Mode Settings
 
-- **SSID**: LEDMatrix-Setup (configurable)
-- **Network**: Open (no password by default)
+- **SSID**: `LEDMatrix-Setup` (configurable via `ap_ssid`)
+- **Network**: WPA2, default password `ledmatrix123` (configurable via
+  `ap_password` — set to `""` for an open network)
 - **IP Address**: 192.168.4.1
-- **DHCP Range**: 192.168.4.2 - 192.168.4.20
-- **Channel**: 7 (configurable)
+- **DHCP Range**: 192.168.4.2 – 192.168.4.20
+- **Channel**: 7 (configurable via `ap_channel`)
 
 ### Accessing Services in AP Mode
 
 When AP mode is active:
-- Web Interface: `http://192.168.4.1:5050`
+- Web Interface: `http://192.168.4.1:5000`
 - SSH: `ssh ledpi@192.168.4.1`
 - Captive portal may automatically redirect browsers
 
@@ -237,7 +240,9 @@ When AP mode is active:
 }
 ```
 
-**Note:** The default is an open network for easy initial setup. For deployments in public areas, consider adding a password.
+**Note:** The default password is `ledmatrix123` for easy initial
+setup. Change it for any deployment in a public area, or set
+`ap_password` to `""` if you specifically want an open network.
 
 **2. Use Non-Overlapping WiFi Channels:**
 - Channels 1, 6, 11 are non-overlapping (2.4GHz)
@@ -398,7 +403,7 @@ Interface should exist
 
 **Check 4: Try Manual Enable**
 - Use web interface: WiFi tab → Enable AP Mode
-- Or via API: `curl -X POST http://localhost:5050/api/wifi/ap/enable`
+- Or via API: `curl -X POST http://localhost:5000/api/v3/wifi/ap/enable`
 
 ### Cannot Connect to WiFi Network
 
@@ -551,36 +556,36 @@ The WiFi setup feature exposes the following API endpoints:
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| GET | `/api/wifi/status` | Get current WiFi connection status |
-| GET | `/api/wifi/scan` | Scan for available WiFi networks |
-| POST | `/api/wifi/connect` | Connect to a WiFi network |
-| POST | `/api/wifi/ap/enable` | Enable access point mode |
-| POST | `/api/wifi/ap/disable` | Disable access point mode |
-| GET | `/api/wifi/ap/auto-enable` | Get auto-enable setting |
-| POST | `/api/wifi/ap/auto-enable` | Set auto-enable setting |
+| GET | `/api/v3/wifi/status` | Get current WiFi connection status |
+| GET | `/api/v3/wifi/scan` | Scan for available WiFi networks |
+| POST | `/api/v3/wifi/connect` | Connect to a WiFi network |
+| POST | `/api/v3/wifi/ap/enable` | Enable access point mode |
+| POST | `/api/v3/wifi/ap/disable` | Disable access point mode |
+| GET | `/api/v3/wifi/ap/auto-enable` | Get auto-enable setting |
+| POST | `/api/v3/wifi/ap/auto-enable` | Set auto-enable setting |
 
 ### Example Usage
 
 ```bash
 # Get WiFi status
-curl "http://your-pi-ip:5050/api/wifi/status"
+curl "http://your-pi-ip:5000/api/v3/wifi/status"
 
 # Scan for networks
-curl "http://your-pi-ip:5050/api/wifi/scan"
+curl "http://your-pi-ip:5000/api/v3/wifi/scan"
 
 # Connect to network
-curl -X POST http://your-pi-ip:5050/api/wifi/connect \
+curl -X POST http://your-pi-ip:5000/api/v3/wifi/connect \
   -H "Content-Type: application/json" \
   -d '{"ssid": "MyNetwork", "password": "mypassword"}'
 
 # Enable AP mode
-curl -X POST http://your-pi-ip:5050/api/wifi/ap/enable
+curl -X POST http://your-pi-ip:5000/api/v3/wifi/ap/enable
 
 # Check auto-enable setting
-curl "http://your-pi-ip:5050/api/wifi/ap/auto-enable"
+curl "http://your-pi-ip:5000/api/v3/wifi/ap/auto-enable"
 
 # Set auto-enable
-curl -X POST http://your-pi-ip:5050/api/wifi/ap/auto-enable \
+curl -X POST http://your-pi-ip:5000/api/v3/wifi/ap/auto-enable \
   -H "Content-Type: application/json" \
   -d '{"auto_enable_ap_mode": true}'
 ```

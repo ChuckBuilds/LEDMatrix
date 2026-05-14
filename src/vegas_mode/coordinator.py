@@ -90,6 +90,12 @@ class VegasModeCoordinator:
         self._interrupt_check: Optional[Callable[[], bool]] = None
         self._interrupt_check_interval: int = 10  # Check every N frames
 
+        # Plugin update callback — fired from a background thread inside the loop
+        # so the main loop's _tick_plugin_updates() finds nothing due when Vegas
+        # returns, eliminating the inter-iteration frozen-frame gap.
+        self._update_callback: Optional[Callable[[], None]] = None
+        self._update_tick_running: bool = False
+
         # Config update tracking
         self._config_version = 0
         self._pending_config_update = False
@@ -131,6 +137,25 @@ class VegasModeCoordinator:
         """Check if Vegas mode is currently running."""
         return self._is_active
 
+    def set_sync_manager(self, sync_manager, follower_position: str = "left") -> None:
+        """
+        Attach a DisplaySyncManager so Vegas mode sends the follower's portion
+        of the ticker to the second display on every rendered frame.
+
+        Args:
+            sync_manager:       DisplaySyncManager instance, or None to disable sync
+            follower_position:  "left" (default) or "right" — physical position of
+                                the follower display relative to the leader
+        """
+        if self.render_pipeline:
+            # Don't expose a standalone (no-op) manager to the pipeline — treat it as None
+            if sync_manager is not None and hasattr(sync_manager, 'role'):
+                from src.common.sync_manager import SyncRole
+                if sync_manager.role == SyncRole.STANDALONE:
+                    sync_manager = None
+            self.render_pipeline.sync_manager = sync_manager
+            self.render_pipeline.sync_follower_left = (follower_position == "left")
+
     def set_live_priority_checker(self, checker: Callable[[], Optional[str]]) -> None:
         """
         Set the callback for checking live priority content.
@@ -157,6 +182,20 @@ class VegasModeCoordinator:
         """
         self._interrupt_check = checker
         self._interrupt_check_interval = max(1, check_interval)
+
+    def set_update_callback(self, callback: Callable[[], None]) -> None:
+        """
+        Set a callback for running plugin updates from inside the Vegas loop.
+
+        Fired in a daemon background thread every ~4 s so plugin data stays
+        fresh without blocking the render loop.  The main loop's
+        _tick_plugin_updates() then finds all intervals already satisfied and
+        returns immediately, collapsing the inter-iteration gap to <1 ms.
+
+        Args:
+            callback: Callable with no arguments (typically _tick_plugin_updates)
+        """
+        self._update_callback = callback
 
     def start(self) -> bool:
         """
@@ -359,14 +398,44 @@ class VegasModeCoordinator:
                     # Log but don't let interrupt check errors stop Vegas
                     logger.exception("Interrupt check failed")
 
+            # Fire plugin update tick in a background thread every ~4 s.
+            # Running it here (rather than only between iterations) means the
+            # main loop's _tick_plugin_updates() finds all intervals already
+            # satisfied on return, so the inter-iteration gap is <1 ms and the
+            # display never shows a frozen frame between iterations.
+            _UPDATE_TICK_FRAMES = max(1, int(self.vegas_config.target_fps * 4))  # every 4 s regardless of FPS
+            if (self._update_callback and
+                    frame_count % _UPDATE_TICK_FRAMES == 0 and
+                    not self._update_tick_running):
+                self._update_tick_running = True
+                def _run_tick(cb=self._update_callback):
+                    try:
+                        cb()
+                    finally:
+                        self._update_tick_running = False
+                threading.Thread(
+                    target=_run_tick, daemon=True, name="vegas-plugin-tick"
+                ).start()
+
             # Check elapsed time
             elapsed = time.time() - start_time
             if elapsed >= duration:
                 break
 
-            # Check for cycle completion
-            if self.render_pipeline.is_cycle_complete():
-                break
+            # NOTE: do NOT break on is_cycle_complete() here.
+            # When multi-display sync is active, breaking exits run_iteration()
+            # which causes a 2-3s delay before start_new_cycle() is called on
+            # the next run_iteration(). During that gap the scroll advances into
+            # the pre-roll zone, then start_new_cycle() resets it — producing a
+            # second visible jump on the follower display ~2.5s after the first.
+            #
+            # Instead, run_frame() handles cycle completion directly (it calls
+            # start_new_cycle() in the very next frame, 8ms later), collapsing
+            # the two events into a single clean transition.
+            #
+            # Without sync, the iteration now runs to its full duration and may
+            # cycle content multiple times within one iteration — acceptable for
+            # a continuous ticker.
 
         logger.info("Vegas iteration completed after %.1fs", time.time() - start_time)
         return True
@@ -574,6 +643,11 @@ class VegasModeCoordinator:
 
                 if self._check_live_priority():
                     logger.info("Static pause interrupted by live priority")
+                    return False
+
+                # Yield immediately if multi-display follower mode becomes active
+                if self._interrupt_check and self._interrupt_check():
+                    logger.info("Static pause interrupted by sync follower mode")
                     return False
 
                 # Sleep in small increments to remain responsive

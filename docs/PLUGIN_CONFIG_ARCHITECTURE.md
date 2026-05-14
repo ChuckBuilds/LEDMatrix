@@ -31,7 +31,7 @@
 ┌─────────────────────────────────────────────────────────────────┐
 │                      Flask Backend                               │
 │  ┌───────────────────────────────────────────────────────┐     │
-│  │         /api/plugins/installed                         │     │
+│  │         /api/v3/plugins/installed                         │     │
 │  │  • Discover plugins in plugins/ directory              │     │
 │  │  • Load manifest.json for each plugin                  │     │
 │  │  • Load config_schema.json if exists                   │     │
@@ -40,7 +40,7 @@
 │  └───────────────────────────────────────────────────────┘     │
 │                                                                   │
 │  ┌───────────────────────────────────────────────────────┐     │
-│  │         /api/plugins/config                            │     │
+│  │         /api/v3/plugins/config                            │     │
 │  │  • Receive key-value pair                              │     │
 │  │  • Update config.json                                  │     │
 │  │  • Return success/error                                │     │
@@ -88,7 +88,7 @@ DOMContentLoaded Event
 refreshPlugins()
          │
          ▼
-GET /api/plugins/installed
+GET /api/v3/plugins/installed
          │
          ├─→ For each plugin directory:
          │   ├─→ Read manifest.json
@@ -146,7 +146,7 @@ savePluginConfiguration(pluginId)
          │   │   • array: split(',')
          │   │   • string: as-is
          │   │
-         │   └─→ POST /api/plugins/config
+         │   └─→ POST /api/v3/plugins/config
          │       {
          │         plugin_id: "hello-world",
          │         key: "message",
@@ -174,7 +174,7 @@ Refresh Plugins
 Window Load
   └── DOMContentLoaded
       └── refreshPlugins()
-          ├── fetch('/api/plugins/installed')
+          ├── fetch('/api/v3/plugins/installed')
           ├── renderInstalledPlugins(plugins)
           └── generatePluginTabs(plugins)
               └── For each plugin:
@@ -198,19 +198,19 @@ User Interactions
   │   ├── Process form data
   │   ├── Convert types per schema
   │   └── For each field:
-  │       └── POST /api/plugins/config
+  │       └── POST /api/v3/plugins/config
   │
   └── resetPluginConfig(pluginId)
       ├── Get schema defaults
       └── For each field:
-          └── POST /api/plugins/config
+          └── POST /api/v3/plugins/config
 ```
 
 ### Backend (Python)
 
 ```
 Flask Routes
-  ├── /api/plugins/installed (GET)
+  ├── /api/v3/plugins/installed (GET)
   │   └── api_plugins_installed()
   │       ├── PluginManager.discover_plugins()
   │       ├── For each plugin:
@@ -219,7 +219,7 @@ Flask Routes
   │       │   └── Load config from config.json
   │       └── Return JSON response
   │
-  └── /api/plugins/config (POST)
+  └── /api/v3/plugins/config (POST)
       └── api_plugin_config()
           ├── Parse request JSON
           ├── Load current config
@@ -279,7 +279,7 @@ LEDMatrix/
 ### 3. Individual Config Updates
 
 **Why**: Simplifies backend API  
-**How**: Each field saved separately via `/api/plugins/config`  
+**How**: Each field saved separately via `/api/v3/plugins/config`  
 **Benefit**: Atomic updates, easier error handling
 
 ### 4. Type Conversion in Frontend
