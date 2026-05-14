@@ -211,7 +211,8 @@ class DisplaySyncManager:
                 f"leader is {local_cols}x{local_rows}. "
                 f"rows and cols must match between displays."
             )
-            self.logger.error("Sync: %s", self._error_message)
+            if prev_state != LeaderState.INCOMPATIBLE:
+                self.logger.error("Sync: %s", self._error_message)
 
         if self._leader_state != prev_state:
             self.write_status_file()
@@ -265,12 +266,12 @@ class DisplaySyncManager:
                         )
                         conn.close()
                         continue
-                    data = b""
+                    data = bytearray()
                     while len(data) < length:
                         chunk = conn.recv(min(65536, length - len(data)))
                         if not chunk:
                             break
-                        data += chunk
+                        data.extend(chunk)
                     img = Image.open(io.BytesIO(data))
                     _MAX_W, _MAX_H = 100_000, 256  # generous for any real scroll image
                     if img.width > _MAX_W or img.height > _MAX_H:
