@@ -213,7 +213,7 @@ class MLBAPIDataSource(DataSource):
             response.raise_for_status()
             
             data = response.json()
-            self.logger.debug(f"Fetched standings from MLB API")
+            self.logger.debug("Fetched standings from MLB API")
             return data
             
         except Exception as e:
@@ -292,7 +292,7 @@ class SoccerAPIDataSource(DataSource):
             response.raise_for_status()
             
             data = response.json()
-            self.logger.debug(f"Fetched standings from soccer API")
+            self.logger.debug("Fetched standings from soccer API")
             return data
             
         except Exception as e:

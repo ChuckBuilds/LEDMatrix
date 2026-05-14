@@ -1314,7 +1314,7 @@ class WiFiManager:
             # This ensures a clean switch between networks
             if original_ssid and original_ssid != ssid:
                 logger.info(f"Switching networks: disconnecting from {original_ssid} before connecting to {ssid}")
-                self._show_led_message(f"Switching networks...", duration=3)
+                self._show_led_message("Switching networks...", duration=3)
                 # Skip AP mode check since we're about to connect to a new network
                 disconnect_success, disconnect_msg = self.disconnect_from_network(skip_ap_check=True)
                 if disconnect_success:
@@ -1370,7 +1370,7 @@ class WiFiManager:
                         ap_success, ap_msg = self.enable_ap_mode()
                         if ap_success:
                             logger.info("AP mode enabled as failsafe")
-                            return False, f"Connection failed and restoration failed. AP mode enabled."
+                            return False, "Connection failed and restoration failed. AP mode enabled."
                         else:
                             logger.error(f"Failed to enable AP mode: {ap_msg}")
                             return False, f"Connection failed, restoration failed, and AP mode failed: {ap_msg}"
@@ -1382,7 +1382,7 @@ class WiFiManager:
                     ap_success, ap_msg = self.enable_ap_mode()
                     if ap_success:
                         logger.info("AP mode enabled as failsafe")
-                        return False, f"Connection failed. AP mode enabled."
+                        return False, "Connection failed. AP mode enabled."
                     else:
                         return False, f"Connection failed and AP mode failed: {ap_msg}"
                 
@@ -1797,7 +1797,7 @@ class WiFiManager:
                                 logger.info("WiFi radio enabled and verified successfully")
                                 return True
                             elif attempt < max_retries - 1:
-                                logger.warning(f"WiFi radio enable command succeeded but not verified, will retry...")
+                                logger.warning("WiFi radio enable command succeeded but not verified, will retry...")
                                 time.sleep(1)
                                 continue
                         else:
