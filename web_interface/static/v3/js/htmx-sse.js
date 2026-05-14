@@ -1,3 +1,4 @@
+/* global htmx */
 /*
 Server Sent Events Extension
 ============================

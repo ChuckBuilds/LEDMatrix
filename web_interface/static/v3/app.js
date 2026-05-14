@@ -1,3 +1,4 @@
+/* global showNotification */
 // LED Matrix v3 JavaScript
 // Additional helpers for HTMX and Alpine.js integration
 
@@ -57,7 +58,7 @@ window.reconnectSSE = function() {
         window.statsSource = new EventSource('/api/v3/stream/stats');
         window.statsSource.onmessage = function(event) {
             const data = JSON.parse(event.data);
-            updateSystemStats(data);
+            if (typeof updateSystemStats === 'function') updateSystemStats(data);
         };
     }
 

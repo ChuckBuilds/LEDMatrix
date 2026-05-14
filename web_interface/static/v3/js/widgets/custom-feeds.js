@@ -142,7 +142,7 @@
                 fileInput.dataset.index = String(index);
                 fileInput.addEventListener('change', function(e) {
                     const idx = parseInt(e.target.dataset.index || '0', 10);
-                    handleCustomFeedLogoUpload(e, fieldId, idx, pluginId, fullKey);
+                    window.handleCustomFeedLogoUpload(e, fieldId, idx, pluginId, fullKey);
                 });
                 
                 const uploadButton = document.createElement('button');
@@ -207,7 +207,7 @@
                 removeButton.type = 'button';
                 removeButton.className = 'text-red-600 hover:text-red-800 px-2 py-1';
                 removeButton.addEventListener('click', function() {
-                    removeCustomFeedRow(this);
+                    window.removeCustomFeedRow(this);
                 });
                 const removeIcon = document.createElement('i');
                 removeIcon.className = 'fas fa-trash';
@@ -290,7 +290,7 @@
         fileInput.dataset.index = String(newIndex);
         fileInput.addEventListener('change', function(e) {
             const idx = parseInt(e.target.dataset.index || '0', 10);
-            handleCustomFeedLogoUpload(e, fieldId, idx, pluginId, fullKey);
+            window.handleCustomFeedLogoUpload(e, fieldId, idx, pluginId, fullKey);
         });
         
         const uploadButton = document.createElement('button');
@@ -449,7 +449,7 @@
                     fileInput.dataset.index = String(index);
                     fileInput.addEventListener('change', function(e) {
                         const idx = parseInt(e.target.dataset.index || '0', 10);
-                        handleCustomFeedLogoUpload(e, fieldId, idx, pluginId, fullKey);
+                        window.handleCustomFeedLogoUpload(e, fieldId, idx, pluginId, fullKey);
                     });
                     
                     // Create upload button

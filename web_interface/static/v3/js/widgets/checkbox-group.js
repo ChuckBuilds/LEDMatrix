@@ -75,7 +75,7 @@
             });
             
             // Update hidden input
-            updateCheckboxGroupData(fieldId);
+            window.updateCheckboxGroupData(fieldId);
         },
         
         handlers: {
