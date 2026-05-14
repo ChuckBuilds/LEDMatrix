@@ -380,8 +380,8 @@
                         <!-- Plugin order list will be populated by JavaScript -->
                         <p class="text-sm text-gray-500 italic">Loading plugins...</p>
                     </div>
-                    <input type="hidden" id="vegas_plugin_order_value" name="vegas_plugin_order" value="{{ main_config.display.get('vegas_scroll', {}).get('plugin_order', [])|tojson }}">
-                    <input type="hidden" id="vegas_excluded_plugins_value" name="vegas_excluded_plugins" value="{{ main_config.display.get('vegas_scroll', {}).get('excluded_plugins', [])|tojson }}">
+                    <input type="hidden" id="vegas_plugin_order_value" name="vegas_plugin_order" value='{{ main_config.display.get("vegas_scroll", {}).get("plugin_order", [])|tojson }}'>
+                    <input type="hidden" id="vegas_excluded_plugins_value" name="vegas_excluded_plugins" value='{{ main_config.display.get("vegas_scroll", {}).get("excluded_plugins", [])|tojson }}'>
                 </div>
             </div>
         </div>
