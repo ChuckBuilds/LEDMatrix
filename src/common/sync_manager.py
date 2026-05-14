@@ -137,7 +137,7 @@ class DisplaySyncManager:
 
     def _start_leader(self) -> None:
         # Receive socket: listens for hello + heartbeat from follower
-        self._recv_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self._recv_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)  # nosec B104
         self._recv_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self._recv_sock.bind(("", self.port))  # nosec B104 — intentional: must receive UDP broadcast on all interfaces
         self._recv_sock.settimeout(1.0)
@@ -436,7 +436,7 @@ class DisplaySyncManager:
             target=self._follower_watchdog, daemon=True, name="sync-follower-watchdog"
         ).start()
         # TCP server: receives scroll images from leader (port + 1)
-        self._img_server_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self._img_server_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)  # nosec B104
         self._img_server_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self._img_server_sock.bind(("", self.port + 1))  # nosec B104 — intentional: TCP server must accept connections on all interfaces
         self._img_server_sock.listen(1)
