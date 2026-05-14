@@ -16,7 +16,7 @@ from src.logging_config import get_logger
 from src.error_aggregator import record_error
 
 
-class TimeoutError(Exception):
+class PluginTimeoutError(Exception):
     """Raised when a plugin operation times out."""
     pass
 
@@ -57,7 +57,7 @@ class PluginExecutor:
             Result of operation
             
         Raises:
-            TimeoutError: If operation times out
+            PluginTimeoutError: If operation times out
             PluginError: If operation raises an exception
         """
         timeout = timeout or self.default_timeout
@@ -81,7 +81,7 @@ class PluginExecutor:
         if not result_container['completed']:
             error_msg = f"{plugin_context} operation timed out after {timeout}s"
             self.logger.error(error_msg)
-            timeout_error = TimeoutError(error_msg)
+            timeout_error = PluginTimeoutError(error_msg)
             record_error(timeout_error, plugin_id=plugin_id, operation="timeout")
             raise timeout_error
 
@@ -128,7 +128,7 @@ class PluginExecutor:
                 )
             
             return True
-        except TimeoutError:
+        except PluginTimeoutError:
             self.logger.error("Plugin %s update() timed out", plugin_id)
             return False
         except PluginError:
@@ -204,7 +204,7 @@ class PluginExecutor:
             # For backward compatibility: if plugin returns None or something else, treat as success
             self.logger.debug(f"Plugin {plugin_id} display() returned non-boolean: {result}, treating as True")
             return True
-        except TimeoutError:
+        except PluginTimeoutError:
             self.logger.error("Plugin %s display() timed out", plugin_id)
             return False
         except PluginError:
@@ -247,7 +247,7 @@ class PluginExecutor:
                 timeout=timeout,
                 plugin_id=plugin_id
             )
-        except (TimeoutError, PluginError, Exception) as e:
+        except (PluginTimeoutError, PluginError, Exception) as e:
             self.logger.warning(
                 "Plugin %s %s failed, using default return: %s",
                 plugin_id,
