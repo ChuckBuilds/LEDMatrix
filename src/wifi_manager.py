@@ -937,7 +937,7 @@ class WiFiManager:
             pass
         try:
             import urllib.request as _ureq
-            _ureq.urlopen("http://connectivity-check.ubuntu.com/", timeout=timeout)
+            _ureq.urlopen("http://connectivity-check.ubuntu.com/", timeout=timeout)  # nosec B310 - hardcoded URL, no user input
             logger.debug("Internet connectivity confirmed via HTTP check")
             return True
         except OSError:
