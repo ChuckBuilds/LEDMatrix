@@ -6,8 +6,6 @@ Tests schema loading, validation, default extraction, and caching.
 
 import pytest
 import json
-from pathlib import Path
-from unittest.mock import MagicMock, patch, mock_open
 from jsonschema import ValidationError
 from src.plugin_system.schema_manager import SchemaManager
 

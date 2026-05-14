@@ -5,12 +5,10 @@ Integration tests for plugin operations (install, update, uninstall).
 import unittest
 import tempfile
 import shutil
-import json
 from pathlib import Path
-from unittest.mock import Mock, patch
 
 from src.plugin_system.operation_queue import PluginOperationQueue
-from src.plugin_system.operation_types import OperationType, OperationStatus
+from src.plugin_system.operation_types import OperationType
 from src.plugin_system.state_manager import PluginStateManager
 from src.plugin_system.operation_history import OperationHistory
 

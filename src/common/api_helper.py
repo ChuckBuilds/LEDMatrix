@@ -5,13 +5,10 @@ Handles HTTP requests, caching, and ESPN API integration for LED matrix plugins.
 Extracted from LEDMatrix core to provide reusable functionality for plugins.
 """
 
-import json
 import logging
 import time
-from datetime import datetime, timedelta
-from pathlib import Path
-from typing import Any, Dict, List, Optional, Union
-from urllib.parse import urlencode
+from datetime import datetime
+from typing import Any, Dict, Optional
 
 import requests
 from requests.adapters import HTTPAdapter

@@ -16,7 +16,7 @@ import math
 import os
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, List, Optional, Tuple
 
 from PIL import Image, ImageDraw, ImageFont
 
@@ -236,7 +236,6 @@ class VisualTestDisplayManager:
         Replicated from DisplayManager._draw_bdf_text().
         """
         try:
-            import freetype
             if isinstance(color, list):
                 color = tuple(color)
             face = font if font else self.calendar_font

@@ -6,7 +6,7 @@ Extracted from LEDMatrix core to provide reusable functionality for plugins.
 """
 
 import logging
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, Optional, Tuple
 
 from PIL import Image, ImageDraw, ImageFont
 

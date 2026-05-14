@@ -5,9 +5,7 @@ Tests plugin directory discovery, module loading, and class instantiation.
 """
 
 import pytest
-import sys
-from pathlib import Path
-from unittest.mock import MagicMock, patch, Mock, mock_open
+from unittest.mock import MagicMock, patch
 from src.plugin_system.plugin_loader import PluginLoader
 from src.exceptions import PluginError
 

@@ -6,10 +6,9 @@ Tests Flask routes, request/response handling, and API functionality.
 
 import pytest
 import json
-import os
 import sys
 from pathlib import Path
-from unittest.mock import MagicMock, patch, Mock
+from unittest.mock import MagicMock, patch
 
 # Add project root to path
 project_root = Path(__file__).parent.parent
@@ -288,7 +287,6 @@ class TestDisplayAPI:
     @patch('web_interface.blueprints.api_v3._ensure_cache_manager')
     def test_stop_on_demand_display(self, mock_ensure_cache, client):
         """Test stopping on-demand display."""
-        from web_interface.blueprints.api_v3 import api_v3
         
         # Mock the cache manager returned by _ensure_cache_manager
         mock_cache_manager = MagicMock()
@@ -440,7 +438,6 @@ class TestPluginsAPI:
     
     def test_get_plugin_schema(self, client):
         """Test getting plugin configuration schema."""
-        from web_interface.blueprints.api_v3 import api_v3
         
         response = client.get('/api/v3/plugins/schema?plugin_id=weather')
         
@@ -477,7 +474,6 @@ class TestPluginsAPI:
     
     def test_get_operation_history(self, client):
         """Test getting operation history."""
-        from web_interface.blueprints.api_v3 import api_v3
         
         response = client.get('/api/v3/plugins/operation/history')
         
@@ -487,7 +483,6 @@ class TestPluginsAPI:
     
     def test_get_plugin_state(self, client):
         """Test getting plugin state."""
-        from web_interface.blueprints.api_v3 import api_v3
         
         response = client.get('/api/v3/plugins/state')
         

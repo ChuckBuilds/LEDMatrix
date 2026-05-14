@@ -1,16 +1,10 @@
-import pytest
 import logging
 import json
-import tempfile
-from pathlib import Path
-from src.exceptions import CacheError, ConfigError, PluginError, DisplayError, LEDMatrixError
+from src.exceptions import CacheError, ConfigError, PluginError, DisplayError
 from src.common.error_handler import (
     handle_file_operation,
     handle_json_operation,
-    safe_execute,
-    retry_on_failure,
-    log_and_continue,
-    log_and_raise
+    safe_execute
 )
 
 class TestCustomExceptions:

@@ -15,7 +15,6 @@ Usage: python tools/validate_python.py <python_file>
 import ast
 import sys
 import os
-from pathlib import Path
 
 def validate_file(filepath: str) -> bool:
     """Validate a Python file for common issues."""

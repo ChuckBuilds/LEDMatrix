@@ -7,10 +7,7 @@ where Recent/Upcoming managers consume data from the background service cache.
 """
 
 import time
-import logging
 from typing import Dict, Optional, Any, Callable
-from datetime import datetime
-import pytz
 
 
 class BackgroundCacheMixin:

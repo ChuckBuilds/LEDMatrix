@@ -11,7 +11,7 @@ import time
 import logging
 import requests
 import json
-from typing import Dict, Any, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont
 from requests.adapters import HTTPAdapter

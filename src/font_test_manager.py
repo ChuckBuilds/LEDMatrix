@@ -1,7 +1,6 @@
 import os
-import time
 import freetype
-from PIL import Image, ImageDraw, ImageFont
+from PIL import ImageDraw, ImageFont
 import logging
 from typing import Dict, Any
 from src.display_manager import DisplayManager
@@ -73,7 +72,6 @@ class FontTestManager:
     
     def update(self):
         """No update needed for static display."""
-        pass
     
     def display(self, force_clear: bool = False):
         """Display the font with sample text."""

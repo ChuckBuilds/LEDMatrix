@@ -7,9 +7,6 @@ Tests configuration loading, migration, secrets handling, and validation.
 import pytest
 import json
 import os
-import tempfile
-from pathlib import Path
-from unittest.mock import Mock, patch, mock_open
 from src.config_manager import ConfigManager
 
 

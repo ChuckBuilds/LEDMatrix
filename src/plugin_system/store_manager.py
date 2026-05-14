@@ -23,7 +23,6 @@ import logging
 from src.common.permission_utils import sudo_remove_directory
 
 try:
-    import jsonschema
     from jsonschema import Draft7Validator, ValidationError
     JSONSCHEMA_AVAILABLE = True
 except ImportError:

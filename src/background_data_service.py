@@ -14,19 +14,15 @@ Key Features:
 - Memory-efficient data storage
 """
 
-import os
 import time
 import logging
 import threading
 import requests
-from typing import Dict, Any, Optional, List, Callable, Union
-from datetime import datetime, timedelta
+from typing import Dict, Any, Optional, Callable
 from dataclasses import dataclass, field
 from enum import Enum
-import json
 import queue
-from concurrent.futures import ThreadPoolExecutor, Future
-import weakref
+from concurrent.futures import ThreadPoolExecutor
 from src.cache_manager import CacheManager
 # Configure logging
 logger = logging.getLogger(__name__)

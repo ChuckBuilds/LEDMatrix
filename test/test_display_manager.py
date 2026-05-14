@@ -1,7 +1,6 @@
 import pytest
-import time
-from unittest.mock import MagicMock, patch, ANY
-from PIL import Image, ImageDraw
+from unittest.mock import MagicMock, patch
+from PIL import ImageDraw
 from src.display_manager import DisplayManager
 
 @pytest.fixture

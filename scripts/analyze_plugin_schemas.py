@@ -9,9 +9,8 @@ Analyze all plugin config schemas to identify issues:
 """
 
 import json
-import os
 from pathlib import Path
-from typing import Dict, List, Set, Any
+from typing import Dict, List, Any
 import jsonschema
 from jsonschema import Draft7Validator
 

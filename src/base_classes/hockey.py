@@ -1,6 +1,4 @@
 import logging
-import time
-from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
 from PIL import Image, ImageDraw, ImageFont

@@ -5,7 +5,6 @@ Manages saved GitHub repository URLs for easy plugin discovery and installation.
 """
 
 import json
-import os
 import logging
 from pathlib import Path
 from typing import List, Dict, Optional

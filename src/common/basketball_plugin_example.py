@@ -5,11 +5,9 @@ This example shows how to refactor the basketball plugin to use the
 ledmatrix-common package for cleaner, more maintainable code.
 """
 
-import logging
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from PIL import Image, ImageDraw
 
 # Import common helpers
 from src.common import (

@@ -7,9 +7,7 @@ Supports both unittest and pytest.
 """
 
 import sys
-import os
 import argparse
-import subprocess
 from pathlib import Path
 from typing import Optional
 
@@ -198,17 +196,14 @@ def main():
     if runner == 'auto':
         # Try pytest first, fall back to unittest
         try:
-            import pytest
             runner = 'pytest'
         except ImportError:
             runner = 'unittest'
     
     # Run tests
     if runner == 'pytest':
-        import importlib.util
         return run_pytest_tests(test_files, args.verbose, args.coverage)
     else:
-        import importlib.util
         return run_unittest_tests(test_files, args.verbose)
 
 

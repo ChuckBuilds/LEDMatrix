@@ -1,4 +1,4 @@
-from flask import Flask, Blueprint, render_template, request, redirect, url_for, flash, jsonify, Response, send_from_directory
+from flask import Flask, request, redirect, url_for, jsonify, Response, send_from_directory
 import json
 import logging
 import os
@@ -21,7 +21,6 @@ from src.plugin_system.operation_queue import PluginOperationQueue
 from src.plugin_system.state_manager import PluginStateManager
 from src.plugin_system.operation_history import OperationHistory
 from src.plugin_system.health_monitor import PluginHealthMonitor
-from src.wifi_manager import WiFiManager
 
 # Create Flask app
 app = Flask(__name__)
@@ -51,10 +50,8 @@ try:
 except ImportError:
     # flask-limiter not installed, rate limiting disabled
     limiter = None
-    pass
 
 # Import cache functions from separate module to avoid circular imports
-from web_interface.cache import get_cached, set_cached, invalidate_cache
 
 # Initialize plugin managers - read plugins directory from config
 config = config_manager.load_config()
@@ -304,7 +301,6 @@ try:
 except ImportError:
     # Logging config not available, use default
     log_api_request = None
-    pass
 
 # Request timing and logging middleware
 @app.before_request
@@ -546,7 +542,7 @@ def display_preview_generator():
                             }
                             last_modified = current_modified
                             yield preview_data
-                    except Exception as read_err:
+                    except Exception:
                         # File might be being written, skip this update
                         pass
             else:

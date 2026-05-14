@@ -3,7 +3,6 @@ Input validation utilities for the web interface.
 Provides validation functions for user inputs to prevent XSS, invalid data, and security issues.
 """
 import re
-import os
 from typing import Optional, Tuple, List
 from urllib.parse import urlparse
 from pathlib import Path

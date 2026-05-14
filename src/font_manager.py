@@ -6,12 +6,10 @@ import hashlib
 import urllib.request
 import zipfile
 import tempfile
-import shutil
 import time
 from pathlib import Path
 from PIL import ImageFont
 from typing import Dict, Tuple, Optional, Union, Any, List
-from functools import lru_cache
 
 logger = logging.getLogger(__name__)
 

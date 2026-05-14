@@ -8,7 +8,7 @@ Extracted from LEDMatrix core to provide reusable functionality for plugins.
 import logging
 import re
 from datetime import datetime, timezone
-from typing import Optional, Tuple, Union
+from typing import Union
 import pytz
 
 

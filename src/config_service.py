@@ -12,11 +12,10 @@ This service wraps ConfigManager and adds:
 """
 
 import json
-import os
 import time
 import threading
 from pathlib import Path
-from typing import Dict, Any, Optional, List, Callable, Set
+from typing import Dict, Any, Optional, List, Callable
 from datetime import datetime
 from collections import defaultdict
 import logging

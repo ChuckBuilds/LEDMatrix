@@ -8,12 +8,12 @@ Detects and fixes inconsistencies between:
 - State manager state
 """
 
-from typing import Dict, Any, List, Optional, Set
+from typing import Dict, Any, List, Set
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 
-from src.plugin_system.state_manager import PluginStateManager, PluginState, PluginStateStatus
+from src.plugin_system.state_manager import PluginStateManager
 from src.logging_config import get_logger
 
 

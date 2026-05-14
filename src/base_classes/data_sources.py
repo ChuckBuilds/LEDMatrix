@@ -6,11 +6,10 @@ to support different APIs and data providers.
 """
 
 from abc import ABC, abstractmethod
-from typing import Dict, Any, Optional, List
+from typing import Dict, List
 import requests
 import logging
-from datetime import datetime, timedelta
-import time
+from datetime import datetime
 
 class DataSource(ABC):
     """Abstract base class for data sources."""
@@ -35,17 +34,14 @@ class DataSource(ABC):
     @abstractmethod
     def fetch_live_games(self, sport: str, league: str) -> List[Dict]:
         """Fetch live games for a sport/league."""
-        pass
     
     @abstractmethod
     def fetch_schedule(self, sport: str, league: str, date_range: tuple) -> List[Dict]:
         """Fetch schedule for a sport/league within date range."""
-        pass
     
     @abstractmethod
     def fetch_standings(self, sport: str, league: str) -> Dict:
         """Fetch standings for a sport/league."""
-        pass
     
     def get_headers(self) -> Dict[str, str]:
         """Get headers for API requests."""

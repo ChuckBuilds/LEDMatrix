@@ -5,7 +5,6 @@ Verifies that the visual display manager actually renders pixels,
 loads fonts, and can save snapshots.
 """
 
-import pytest
 from PIL import Image
 
 from src.plugin_system.testing import VisualTestDisplayManager

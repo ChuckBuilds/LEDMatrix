@@ -6,8 +6,7 @@ Fails fast with clear error messages to prevent runtime issues.
 """
 
 import os
-import logging
-from typing import Dict, Any, List, Optional, Tuple
+from typing import Any, List, Optional, Tuple
 from pathlib import Path
 from src.exceptions import ConfigError, PluginError, CacheError
 from src.logging_config import get_logger

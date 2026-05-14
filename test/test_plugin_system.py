@@ -1,12 +1,8 @@
-import pytest
-import os
-import sys
 import time
-from unittest.mock import MagicMock, patch, ANY, call
+from unittest.mock import MagicMock, patch
 from pathlib import Path
 from src.plugin_system.plugin_manager import PluginManager
 from src.plugin_system.plugin_state import PluginState
-from src.exceptions import PluginError
 
 class TestPluginManager:
     """Test PluginManager functionality."""
@@ -90,7 +86,6 @@ class TestPluginLoader:
         """Test dependency checking logic."""
         # This would test _check_dependencies_installed and _install_plugin_dependencies
         # which requires mocking subprocess calls and file operations
-        pass
 
 
 class TestPluginExecutor:

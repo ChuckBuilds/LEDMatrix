@@ -6,7 +6,7 @@ plugin ordering, exclusions, scroll speed, and display settings.
 """
 
 import logging
-from typing import Dict, Any, List, Set, Optional
+from typing import Dict, Any, List, Set
 from dataclasses import dataclass, field
 
 logger = logging.getLogger(__name__)

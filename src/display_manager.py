@@ -6,7 +6,7 @@ else:
 from contextlib import contextmanager
 from PIL import Image, ImageDraw, ImageFont
 import time
-from typing import Dict, Any, List, Tuple
+from typing import Dict, Any, List
 import logging
 import math
 import freetype

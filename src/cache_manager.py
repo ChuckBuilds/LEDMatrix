@@ -7,7 +7,6 @@ from typing import Any, Dict, List, Optional
 import logging
 import threading
 import tempfile
-from pathlib import Path
 from src.exceptions import CacheError
 from src.cache.memory_cache import MemoryCache
 from src.cache.disk_cache import DiskCache
@@ -111,7 +110,7 @@ class CacheManager:
                     if os.access(system_cache_dir, os.W_OK):
                         self.logger.info(f"Using system cache directory: {system_cache_dir}")
                         return system_cache_dir
-                except (OSError, IOError, PermissionError) as perm_error:
+                except (OSError, IOError, PermissionError):
                     # Permission errors are expected when running as non-root
                     self.logger.debug(f"Could not create system cache directory (permission denied): {system_cache_dir}")
         except (OSError, IOError, PermissionError) as e:

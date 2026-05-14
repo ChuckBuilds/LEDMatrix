@@ -6,9 +6,8 @@ error isolation, and performance monitoring.
 """
 
 import time
-import signal
-from typing import Any, Optional, Dict, Callable
-from threading import Thread, Event
+from typing import Any, Optional, Callable
+from threading import Thread
 import logging
 
 from src.exceptions import PluginError
@@ -18,7 +17,6 @@ from src.error_aggregator import record_error
 
 class PluginTimeoutError(Exception):
     """Raised when a plugin operation times out."""
-    pass
 
 
 class PluginExecutor:

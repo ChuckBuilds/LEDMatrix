@@ -7,7 +7,7 @@ fields and data structures.
 """
 
 from abc import ABC, abstractmethod
-from typing import Dict, Any, Optional, List
+from typing import Dict, Optional
 import logging
 from datetime import datetime
 import pytz
@@ -21,12 +21,10 @@ class APIDataExtractor(ABC):
     @abstractmethod
     def extract_game_details(self, game_event: Dict) -> Optional[Dict]:
         """Extract common game details from raw API data."""
-        pass
     
     @abstractmethod
     def get_sport_specific_fields(self, game_event: Dict) -> Dict:
         """Extract sport-specific fields (downs, innings, periods, etc.)."""
-        pass
     
     def _extract_common_details(self, game_event: Dict) -> tuple[Dict | None, Dict | None, Dict | None, Dict | None, Dict | None]:
         """Extract common game details that work across all sports."""

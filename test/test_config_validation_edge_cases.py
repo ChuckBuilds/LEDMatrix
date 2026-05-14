@@ -10,11 +10,7 @@ Tests scenarios that commonly cause user configuration errors:
 """
 
 import pytest
-import json
 from pathlib import Path
-from unittest.mock import Mock, patch, MagicMock
-import tempfile
-import os
 
 # Add project root to path
 import sys

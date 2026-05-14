@@ -7,7 +7,6 @@ version of BackgroundCacheMixin that works for weather, stocks, news, etc.
 """
 
 import time
-import logging
 from typing import Dict, Optional, Any, Callable
 
 

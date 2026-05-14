@@ -6,7 +6,6 @@ import sys
 import os
 import logging
 import json
-from typing import Dict, Any
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')

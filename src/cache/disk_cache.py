@@ -13,7 +13,6 @@ import threading
 from typing import Dict, Any, Optional, Protocol
 from datetime import datetime
 
-from src.exceptions import CacheError
 
 
 class CacheStrategyProtocol(Protocol):
@@ -210,7 +209,7 @@ class DiskCache:
                             # If direct write also fails, try fallback location
                             self.logger.warning("Direct write failed for key '%s' to %s: %s", key, cache_path, write_error)
                             raise  # Re-raise to trigger fallback logic
-                except (IOError, OSError, PermissionError) as e:
+                except (IOError, OSError, PermissionError):
                     # Attempt one-time fallback write to user's home cache directory
                     try:
                         # Try user's home cache directory as fallback

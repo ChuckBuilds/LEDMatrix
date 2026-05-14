@@ -11,13 +11,10 @@ Follows LEDMatrix configuration management patterns:
 - Maintainable: Changes to odds logic affect all plugins
 """
 
-import time
 import logging
 import requests
 import json
-from datetime import datetime, timedelta, timezone
 from typing import Dict, Any, Optional, List
-import pytz
 
 
 class BaseOddsManager:

@@ -6,9 +6,8 @@ Handles custom layouts, element positioning, and display composition.
 import json
 import os
 import logging
-from typing import Dict, List, Any, Tuple
+from typing import Dict, List, Any
 from datetime import datetime
-from PIL import Image, ImageDraw, ImageFont
 
 logger = logging.getLogger(__name__)
 

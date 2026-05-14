@@ -1,7 +1,5 @@
-import pytest
 import time
-from unittest.mock import MagicMock, patch, ANY
-from src.display_controller import DisplayController
+from unittest.mock import MagicMock, patch
 
 class TestDisplayControllerInitialization:
     """Test DisplayController initialization and setup."""
@@ -25,7 +23,6 @@ class TestDisplayControllerInitialization:
         # Manually trigger the plugin loading logic that happens in __init__
         # Since we're using a fixture that mocks __init__ partially, we need to verify 
         # the interactions or simulate the loading if we want to test that specific logic
-        pass 
         # Note: Testing __init__ logic is tricky with the fixture. 
         # We rely on the fixture to give us a usable controller.
 

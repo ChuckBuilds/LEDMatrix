@@ -6,7 +6,6 @@ This script simulates the leaderboard manager's data fetching process.
 import sys
 import os
 import logging
-from typing import Dict, Any
 
 # Add the src directory to Python path so we can import the leaderboard manager
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'src'))
