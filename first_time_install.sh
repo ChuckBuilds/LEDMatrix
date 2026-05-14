@@ -1475,7 +1475,7 @@ echo "WiFi Connection Status:"
 if command -v nmcli >/dev/null 2>&1; then
     WIFI_STATUS=$(nmcli -t -f DEVICE,TYPE,STATE device status 2>/dev/null | grep -i wifi || echo "")
     if [ -n "$WIFI_STATUS" ]; then
-        echo "$WIFI_STATUS" | while IFS=':' read -r _ type state; do
+        echo "$WIFI_STATUS" | while IFS=':' read -r _ _ state; do
             if [ "$state" = "connected" ]; then
                 SSID=$(nmcli -t -f active,ssid device wifi 2>/dev/null | grep "^yes:" | cut -d: -f2 | head -1)
                 if [ -n "$SSID" ]; then

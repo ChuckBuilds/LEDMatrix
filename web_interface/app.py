@@ -742,4 +742,4 @@ if __name__ == '__main__':
     # long-lived /api/v3/stream/* SSE connections don't starve other requests.
     # Debug mode is off by default; opt in with FLASK_DEBUG=1 in the environment.
     _debug = _os.environ.get('FLASK_DEBUG', '0') == '1'
-    app.run(host='0.0.0.0', port=5000, debug=_debug, threaded=True)
+    app.run(host='0.0.0.0', port=5000, debug=_debug, threaded=True)  # nosec B104 - intentional; local network device

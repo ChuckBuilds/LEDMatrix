@@ -23,7 +23,7 @@ def check(label, fn):
 
 
 def main():
-    from PIL import Image, ImageDraw, ImageFont, ImageFilter
+    from PIL import Image, ImageDraw, ImageFont
     import PIL
 
     print(f"Pillow {PIL.__version__} on Python {sys.version.split()[0]}\n")
