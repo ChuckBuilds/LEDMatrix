@@ -49,9 +49,9 @@
                            name="chain_length"
                            value="{{ main_config.display.hardware.chain_length or 2 }}"
                            min="1"
-                           max="32"
+                           max="8"
                            class="form-control">
-                    <p class="mt-1 text-sm text-gray-600">Number of LED panels chained together (e.g. 2 for 128×32, 5 for 320×32)</p>
+                    <p class="mt-1 text-sm text-gray-600">Number of LED panels chained together</p>
                 </div>
 
                 <div class="form-group">
@@ -386,6 +386,68 @@
             </div>
         </div>
 
+        <!-- Multi-Display Sync Settings -->
+        <div class="bg-gray-50 rounded-lg p-4 mt-6">
+            <div class="flex items-center justify-between mb-4">
+                <div>
+                    <h3 class="text-md font-medium text-gray-900">
+                        <i class="fas fa-clone mr-2"></i>Multi-Display Sync
+                    </h3>
+                    <p class="mt-1 text-sm text-gray-600">
+                        Extend scrolling content across two LED matrix display units over WiFi.
+                        Both displays must have identical rows and cols. Chain length may differ.
+                    </p>
+                </div>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div class="form-group">
+                    <label for="sync_role" class="block text-sm font-medium text-gray-700">Role</label>
+                    <select id="sync_role" name="sync_role" class="form-control" onchange="updateSyncUI()">
+                        <option value="standalone" {% if main_config.get('sync', {}).get('role', 'standalone') == 'standalone' %}selected{% endif %}>Standalone (disabled)</option>
+                        <option value="leader"     {% if main_config.get('sync', {}).get('role', 'standalone') == 'leader'     %}selected{% endif %}>Leader (drives scroll)</option>
+                        <option value="follower"   {% if main_config.get('sync', {}).get('role', 'standalone') == 'follower'   %}selected{% endif %}>Follower (receives frames)</option>
+                    </select>
+                    <p class="mt-1 text-sm text-gray-600">Set Leader on one Pi, Follower on the other. Restart required after changing.</p>
+                </div>
+
+                <div class="form-group">
+                    <label for="sync_port" class="block text-sm font-medium text-gray-700">UDP Port</label>
+                    <input type="number"
+                           id="sync_port"
+                           name="sync_port"
+                           value="{{ main_config.get('sync', {}).get('port', 5765) }}"
+                           min="1024"
+                           max="65535"
+                           class="form-control">
+                    <p class="mt-1 text-sm text-gray-600">
+                        Must match on both Pis. If ufw is active:
+                        <code class="text-xs bg-gray-200 px-1 rounded">sudo ufw allow {{ main_config.get('sync', {}).get('port', 5765) }}/udp</code>
+                    </p>
+                </div>
+
+                <div class="form-group" id="sync_position_group" style="display:none">
+                    <label for="sync_follower_position" class="block text-sm font-medium text-gray-700">Position</label>
+                    <select id="sync_follower_position" name="sync_follower_position" class="form-control">
+                        <option value="left"  {% if main_config.get('sync', {}).get('follower_position', 'left') == 'left'  %}selected{% endif %}>Left of leader</option>
+                        <option value="right" {% if main_config.get('sync', {}).get('follower_position', 'left') == 'right' %}selected{% endif %}>Right of leader</option>
+                    </select>
+                    <p class="mt-1 text-sm text-gray-600">Which side of the leader display this unit sits on.</p>
+                </div>
+            </div>
+
+            <!-- Live status indicator (populated by JS) -->
+            <div id="sync_status_bar" class="mt-4 hidden">
+                <div id="sync_status_content" class="flex items-start space-x-2 p-3 rounded-lg border text-sm"></div>
+            </div>
+
+            <!-- Incompatibility detail (shown when error) -->
+            <div id="sync_error_detail" class="mt-2 hidden">
+                <p class="text-xs text-yellow-700 bg-yellow-50 border border-yellow-200 rounded p-2" id="sync_error_text"></p>
+                <p class="text-xs text-gray-500 mt-1">rows and cols must match between displays. chain_length may differ.</p>
+            </div>
+        </div>
+
         <!-- Submit Button -->
         <div class="flex justify-end">
             <button type="submit"
@@ -641,6 +703,113 @@ if (typeof window.fixInvalidNumberInputs !== 'function') {
         document.addEventListener('DOMContentLoaded', initPluginOrderList);
     } else {
         initPluginOrderList();
+    }
+})();
+
+// Multi-Display Sync UI
+(function() {
+    function updateSyncUI() {
+        const role = document.getElementById('sync_role').value;
+        const bar = document.getElementById('sync_status_bar');
+        const posGroup = document.getElementById('sync_position_group');
+        if (role === 'standalone') {
+            bar.classList.add('hidden');
+            document.getElementById('sync_error_detail').classList.add('hidden');
+            posGroup.style.display = 'none';
+        } else {
+            bar.classList.remove('hidden');
+            posGroup.style.display = role === 'follower' ? '' : 'none';
+            pollSyncStatus();
+        }
+    }
+    window.updateSyncUI = updateSyncUI;
+
+    function pollSyncStatus() {
+        const role = document.getElementById('sync_role') && document.getElementById('sync_role').value;
+        if (!role || role === 'standalone') return;
+
+        fetch('/api/v3/sync/status')
+            .then(r => r.json())
+            .then(resp => {
+                const d = resp.data || {};
+                renderSyncStatus(d);
+            })
+            .catch(() => {
+                renderSyncStatus({state: 'unknown'});
+            });
+    }
+
+    function renderSyncStatus(d) {
+        const content = document.getElementById('sync_status_content');
+        const errorDetail = document.getElementById('sync_error_detail');
+        const errorText = document.getElementById('sync_error_text');
+        if (!content) return;
+
+        const state = d.state || 'unknown';
+        const role  = d.role  || 'unknown';
+
+        let icon, colorClass, text;
+
+        if (state === 'connected' || state === 'follower') {
+            icon = '●';
+            colorClass = 'bg-green-50 border-green-200 text-green-800';
+            const peer = d.peer_ip || d.leader_ip || 'peer';
+            text = role === 'leader'
+                ? `Follower connected — ${peer} (chain ${d.peer_chain || '?'})`
+                : `Receiving from leader — ${peer}`;
+            errorDetail.classList.add('hidden');
+
+        } else if (state === 'incompatible') {
+            icon = '⚠';
+            colorClass = 'bg-yellow-50 border-yellow-200 text-yellow-800';
+            text = `Follower connected but incompatible panels`;
+            if (d.error) {
+                errorText.textContent = d.error;
+                errorDetail.classList.remove('hidden');
+            }
+
+        } else if (state === 'no_peer' || state === 'standalone') {
+            icon = '○';
+            colorClass = 'bg-gray-50 border-gray-200 text-gray-600';
+            text = role === 'leader' ? 'No follower detected' : 'Searching for leader…';
+            errorDetail.classList.add('hidden');
+
+        } else if (state === 'starting') {
+            icon = '○';
+            colorClass = 'bg-gray-50 border-gray-200 text-gray-500';
+            text = 'Display process starting…';
+            errorDetail.classList.add('hidden');
+
+        } else {
+            icon = '✕';
+            colorClass = 'bg-red-50 border-red-200 text-red-700';
+            text = 'Sync status unavailable';
+            errorDetail.classList.add('hidden');
+        }
+
+        content.className = `flex items-start space-x-2 p-3 rounded-lg border text-sm ${colorClass}`;
+        content.textContent = '';
+        const iconSpan = document.createElement('span');
+        iconSpan.className = 'font-bold text-lg leading-none';
+        iconSpan.textContent = icon;
+        const textSpan = document.createElement('span');
+        textSpan.textContent = text;
+        content.appendChild(iconSpan);
+        content.appendChild(textSpan);
+    }
+
+    // Initial UI state and polling — guard against duplicate intervals on re-run
+    function startSyncPolling() {
+        updateSyncUI();
+        if (!window.syncStatusInterval) {
+            window.syncStatusInterval = setInterval(pollSyncStatus, 5000);
+        }
+    }
+
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', startSyncPolling);
+    } else {
+        startSyncPolling();
     }
 })();
 </script>

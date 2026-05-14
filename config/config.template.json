@@ -126,6 +126,11 @@
             "buffer_ahead": 2
         }
     },
+    "sync": {
+        "role": "standalone",
+        "port": 5765,
+        "follower_position": "left"
+    },
     "plugin_system": {
         "plugins_directory": "plugin-repos",
         "auto_discover": true,

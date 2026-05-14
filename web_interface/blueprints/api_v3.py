@@ -2,30 +2,20 @@ from flask import Blueprint, request, jsonify, Response, send_from_directory
 import json
 import os
 import re
-import shutil
-import socket
 import sys
 import subprocess
 import time
 import hashlib
 import uuid
 import logging
-import threading
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
-from typing import Optional, Tuple, Dict, Any, Type
 
 logger = logging.getLogger(__name__)
-
-SUDO_BIN = shutil.which("sudo") or "/usr/bin/sudo"
-SYSTEMCTL_BIN = shutil.which("systemctl") or "/usr/bin/systemctl"
-REBOOT_BIN = shutil.which("reboot") or "/usr/sbin/reboot"
-POWEROFF_BIN = shutil.which("poweroff") or "/usr/sbin/poweroff"
 
 # Import new infrastructure
 from src.web_interface.api_helpers import success_response, error_response, validate_request_json
 from src.web_interface.errors import ErrorCode
-from src.exceptions import ConfigError
 from src.plugin_system.operation_types import OperationType
 from src.web_interface.logging_config import log_plugin_operation, log_config_change
 from src.web_interface.validators import (
@@ -33,36 +23,6 @@ from src.web_interface.validators import (
     validate_numeric_range, validate_string_length, sanitize_plugin_config
 )
 from src.error_aggregator import get_error_aggregator
-from src.web_interface.secret_helpers import (
-    find_secret_fields,
-    mask_all_secret_values,
-    mask_secret_fields,
-    remove_empty_secrets,
-    separate_secrets,
-)
-
-_SECRET_KEY_PATTERN = re.compile(
-    r'(api_key|api_secret|password|secret|token|auth_key|credential)',
-    re.IGNORECASE,
-)
-
-def _conservative_mask_config(config, _parent_key=None):
-    """Mask string values whose keys look like secrets (no schema available)."""
-    if isinstance(config, list):
-        return [
-            _conservative_mask_config(item, _parent_key) if isinstance(item, (dict, list))
-            else ('' if isinstance(item, str) and item and _parent_key and _SECRET_KEY_PATTERN.search(_parent_key) else item)
-            for item in config
-        ]
-    result = dict(config)
-    for key, value in result.items():
-        if isinstance(value, dict):
-            result[key] = _conservative_mask_config(value)
-        elif isinstance(value, list):
-            result[key] = _conservative_mask_config(value, key)
-        elif isinstance(value, str) and value and _SECRET_KEY_PATTERN.search(key):
-            result[key] = ''
-    return result
 
 # Will be initialized when blueprint is registered
 config_manager = None
@@ -74,6 +34,7 @@ schema_manager = None
 operation_queue = None
 plugin_state_manager = None
 operation_history = None
+sync_manager = None  # Optional DisplaySyncManager instance (set by app.py if available)
 
 # Get project root directory (web_interface/../..)
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -224,7 +185,7 @@ def _ensure_display_service_running():
     if status.get('active'):
         status['started'] = False
         return status
-    result = _run_systemctl_command([SUDO_BIN, SYSTEMCTL_BIN, 'start', 'ledmatrix.service'])
+    result = _run_systemctl_command(['sudo', 'systemctl', 'start', 'ledmatrix'])
     service_status = _get_display_service_status()
     result['started'] = result.get('returncode') == 0
     result['active'] = service_status.get('active')
@@ -233,7 +194,7 @@ def _ensure_display_service_running():
 
 def _stop_display_service():
     """Stop the ledmatrix display service."""
-    result = _run_systemctl_command([SUDO_BIN, SYSTEMCTL_BIN, 'stop', 'ledmatrix.service'])
+    result = _run_systemctl_command(['sudo', 'systemctl', 'stop', 'ledmatrix'])
     status = _get_display_service_status()
     result['active'] = status.get('active')
     result['status'] = status
@@ -249,8 +210,7 @@ def get_main_config():
         config = api_v3.config_manager.load_config()
         return jsonify({'status': 'success', 'data': config})
     except Exception as e:
-        logger.exception("[MainConfig] get_main_config failed")
-        return jsonify({'status': 'error', 'message': 'Failed to load configuration'}), 500
+        return jsonify({'status': 'error', 'message': str(e)}), 500
 
 @api_v3.route('/config/schedule', methods=['GET'])
 def get_schedule_config():
@@ -439,21 +399,25 @@ def save_schedule_config():
 
         return success_response(message='Schedule configuration saved successfully')
     except Exception as e:
-        logger.exception("[ScheduleConfig] Failed to save schedule configuration")
+        import logging
+        import traceback
+        error_msg = f"Error saving schedule config: {str(e)}\n{traceback.format_exc()}"
+        logging.error(error_msg)
         return error_response(
             ErrorCode.CONFIG_SAVE_FAILED,
-            "Error saving schedule configuration",
-            details="Internal server error - check server logs",
+            f"Error saving schedule configuration: {str(e)}",
+            details=traceback.format_exc(),
             status_code=500
         )
 
 @api_v3.route('/config/dim-schedule', methods=['GET'])
 def get_dim_schedule_config():
     """Get current dim schedule configuration"""
+    import logging
     import json
 
     if not api_v3.config_manager:
-        logger.error("[DIM SCHEDULE] Config manager not initialized")
+        logging.error("[DIM SCHEDULE] Config manager not initialized")
         return error_response(
             ErrorCode.CONFIG_LOAD_FAILED,
             'Config manager not initialized',
@@ -472,18 +436,32 @@ def get_dim_schedule_config():
         })
 
         return success_response(data=dim_schedule_config)
-    except ConfigError as e:
-        logger.error(f"[DIM SCHEDULE] Config error: {e}", exc_info=True)
+    except FileNotFoundError as e:
+        logging.error(f"[DIM SCHEDULE] Config file not found: {e}", exc_info=True)
         return error_response(
             ErrorCode.CONFIG_LOAD_FAILED,
-            "Configuration file not found or invalid",
+            "Configuration file not found",
+            status_code=500
+        )
+    except json.JSONDecodeError as e:
+        logging.error(f"[DIM SCHEDULE] Invalid JSON in config file: {e}", exc_info=True)
+        return error_response(
+            ErrorCode.CONFIG_LOAD_FAILED,
+            "Configuration file contains invalid JSON",
+            status_code=500
+        )
+    except (IOError, OSError) as e:
+        logging.error(f"[DIM SCHEDULE] Error reading config file: {e}", exc_info=True)
+        return error_response(
+            ErrorCode.CONFIG_LOAD_FAILED,
+            f"Error reading configuration file: {str(e)}",
             status_code=500
         )
     except Exception as e:
-        logger.error(f"[DIM SCHEDULE] Unexpected error loading config: {e}", exc_info=True)
+        logging.error(f"[DIM SCHEDULE] Unexpected error loading config: {e}", exc_info=True)
         return error_response(
             ErrorCode.CONFIG_LOAD_FAILED,
-            "Unexpected error loading dim schedule configuration",
+            f"Unexpected error loading dim schedule configuration: {str(e)}",
             status_code=500
         )
 
@@ -642,11 +620,14 @@ def save_dim_schedule_config():
 
         return success_response(message='Dim schedule configuration saved successfully')
     except Exception as e:
-        logger.exception("[DimScheduleConfig] Failed to save dim schedule configuration")
+        import logging
+        import traceback
+        error_msg = f"Error saving dim schedule config: {str(e)}\n{traceback.format_exc()}"
+        logging.error(error_msg)
         return error_response(
             ErrorCode.CONFIG_SAVE_FAILED,
-            "Error saving dim schedule configuration",
-            details="Internal server error - check server logs",
+            f"Error saving dim schedule configuration: {str(e)}",
+            details=traceback.format_exc(),
             status_code=500
         )
 
@@ -671,6 +652,11 @@ def save_main_config():
 
         if not data:
             return jsonify({'status': 'error', 'message': 'No data provided'}), 400
+
+        import logging
+        logging.error(f"DEBUG: save_main_config received data: {data}")
+        logging.error(f"DEBUG: Content-Type header: {request.content_type}")
+        logging.error(f"DEBUG: Headers: {dict(request.headers)}")
 
         # Merge with existing config (similar to original implementation)
         current_config = api_v3.config_manager.load_config()
@@ -748,39 +734,6 @@ def save_main_config():
                 except (ValueError, TypeError):
                     return jsonify({'status': 'error', 'message': f"Invalid multiplexing value '{data['multiplexing']}'. Must be an integer from 0 to 22."}), 400
 
-            # Validate integer display hardware fields (bounds check)
-            _int_field_limits = {
-                'rows':                    (8, 128),
-                'cols':                    (16, 128),
-                'chain_length':            (1, 32),
-                'parallel':                (1, 4),
-                'brightness':              (1, 100),
-                'scan_mode':               (0, 1),
-                'pwm_bits':                (1, 11),
-                'pwm_dither_bits':         (0, 2),
-                'pwm_lsb_nanoseconds':     (50, 500),
-                'limit_refresh_rate_hz':   (0, 1000),
-                'gpio_slowdown':           (0, 5),
-                'max_dynamic_duration_seconds': (1, 3600),
-            }
-            for field, (lo, hi) in _int_field_limits.items():
-                if field in data:
-                    raw = data[field]
-                    if isinstance(raw, bool):
-                        return jsonify({'status': 'error', 'message': f"Invalid {field} value '{raw}'. Must be an integer."}), 400
-                    if isinstance(raw, float):
-                        return jsonify({'status': 'error', 'message': f"Invalid {field} value '{raw}'. Must be an integer, not a float."}), 400
-                    if isinstance(raw, int):
-                        val = raw
-                    elif isinstance(raw, str):
-                        if not re.fullmatch(r'-?\d+', raw):
-                            return jsonify({'status': 'error', 'message': f"Invalid {field} value '{raw}'. Must be an integer."}), 400
-                        val = int(raw)
-                    else:
-                        return jsonify({'status': 'error', 'message': f"Invalid {field} value '{raw}'. Must be an integer."}), 400
-                    if val < lo or val > hi:
-                        return jsonify({'status': 'error', 'message': f"Invalid {field} value {val}. Must be between {lo} and {hi}."}), 400
-
             # Handle hardware settings
             for field in ['rows', 'cols', 'chain_length', 'parallel', 'brightness', 'hardware_mapping', 'scan_mode',
                          'pwm_bits', 'pwm_dither_bits', 'pwm_lsb_nanoseconds', 'limit_refresh_rate_hz',
@@ -808,7 +761,7 @@ def save_main_config():
             if 'max_dynamic_duration_seconds' in data:
                 if 'dynamic_duration' not in current_config['display']:
                     current_config['display']['dynamic_duration'] = {}
-                current_config['display']['dynamic_duration']['max_duration_seconds'] = int(data['max_dynamic_duration_seconds'])  # Already validated by _int_field_limits
+                current_config['display']['dynamic_duration']['max_duration_seconds'] = int(data['max_dynamic_duration_seconds'])
 
         # Handle Vegas scroll mode settings
         vegas_fields = ['vegas_scroll_enabled', 'vegas_scroll_speed', 'vegas_separator_width',
@@ -878,6 +831,32 @@ def save_main_config():
                 except (json.JSONDecodeError, TypeError, ValueError):
                     vegas_config['excluded_plugins'] = []
 
+        # Handle multi-display sync settings
+        sync_fields = ["sync_role", "sync_port", "sync_follower_position"]
+        if any(k in data for k in sync_fields):
+            if 'sync' not in current_config:
+                current_config['sync'] = {}
+            SYNC_ROLE_ALLOWED = {'standalone', 'leader', 'follower'}
+            if 'sync_role' in data:
+                role_val = str(data['sync_role']).lower()
+                if role_val not in SYNC_ROLE_ALLOWED:
+                    return jsonify({'status': 'error', 'message': f"Invalid sync role '{role_val}'. Must be one of: standalone, leader, follower"}), 400
+                current_config['sync']['role'] = role_val
+            if 'sync_port' in data:
+                try:
+                    port_val = int(data['sync_port'])
+                    if not (1024 <= port_val <= 65535):
+                        return jsonify({'status': 'error', 'message': "sync_port must be between 1024 and 65535"}), 400
+                    current_config['sync']['port'] = port_val
+                except (ValueError, TypeError):
+                    return jsonify({'status': 'error', 'message': "sync_port must be an integer"}), 400
+
+            if "sync_follower_position" in data:
+                pos_val = str(data["sync_follower_position"]).lower()
+                if pos_val not in {"left", "right"}:
+                    return jsonify({"status": "error", "message": "sync_follower_position must be left or right"}), 400
+                current_config["sync"]["follower_position"] = pos_val
+
         # Handle display durations
         duration_fields = [k for k in data.keys() if k.endswith('_duration') or k in ['default_duration', 'transition_duration']]
         if duration_fields:
@@ -913,6 +892,18 @@ def save_main_config():
                         plugins_dir = PROJECT_ROOT / plugins_dir_name
                 schema_path = plugins_dir / plugin_id / 'config_schema.json'
 
+                def find_secret_fields(properties, prefix=''):
+                    """Recursively find fields marked with x-secret: true"""
+                    fields = set()
+                    for field_name, field_props in properties.items():
+                        full_path = f"{prefix}.{field_name}" if prefix else field_name
+                        if field_props.get('x-secret', False):
+                            fields.add(full_path)
+                        # Check nested objects
+                        if field_props.get('type') == 'object' and 'properties' in field_props:
+                            fields.update(find_secret_fields(field_props['properties'], full_path))
+                    return fields
+
                 if schema_path.exists():
                     try:
                         with open(schema_path, 'r', encoding='utf-8') as f:
@@ -920,7 +911,26 @@ def save_main_config():
                             if 'properties' in schema:
                                 secret_fields = find_secret_fields(schema['properties'])
                     except Exception as e:
-                        logger.warning(f"Error reading schema for secret detection: {e}")
+                        print(f"Error reading schema for secret detection: {e}")
+
+                # Separate secrets from regular config (same logic as save_plugin_config)
+                def separate_secrets(config, secrets_set, prefix=''):
+                    """Recursively separate secret fields from regular config"""
+                    regular = {}
+                    secrets = {}
+                    for key, value in config.items():
+                        full_path = f"{prefix}.{key}" if prefix else key
+                        if isinstance(value, dict):
+                            nested_regular, nested_secrets = separate_secrets(value, secrets_set, full_path)
+                            if nested_regular:
+                                regular[key] = nested_regular
+                            if nested_secrets:
+                                secrets[key] = nested_secrets
+                        elif full_path in secrets_set:
+                            secrets[key] = value
+                        else:
+                            regular[key] = value
+                    return regular, secrets
 
                 regular_config, secrets_config = separate_secrets(plugin_config, secret_fields)
 
@@ -939,7 +949,7 @@ def save_main_config():
                         if 'enabled' not in regular_config:
                             regular_config['enabled'] = True
                     except Exception as e:
-                        logger.warning(f"Error preserving enabled state for {plugin_id}: {e}")
+                        print(f"Error preserving enabled state for {plugin_id}: {e}")
                         # Default to True on error to avoid disabling plugins
                         regular_config['enabled'] = True
 
@@ -974,7 +984,7 @@ def save_main_config():
                                 plugin_instance.on_config_change(plugin_full_config)
                 except Exception as hook_err:
                     # Don't fail the save if hook fails
-                    logger.warning(f"on_config_change failed for {plugin_id}: {hook_err}")
+                    print(f"Warning: on_config_change failed for {plugin_id}: {hook_err}")
 
         # Remove processed plugin keys from data (they're already in current_config)
         for key in plugin_keys_to_remove:
@@ -990,8 +1000,13 @@ def save_main_config():
                        'auto_load_enabled', 'development_mode',
                        'plugins_directory']:
                 continue
-            # Skip display settings that are already handled above (they're in nested structure)
+            # Skip fields that are already handled above in their own named sections.
+            # Without this, every form field name lands as a top-level config key too.
             if key in display_fields:
+                continue
+            if key in sync_fields:
+                continue
+            if key in vegas_fields:
                 continue
             # For any remaining keys (including plugin keys), use deep merge to preserve existing settings
             if key in current_config and isinstance(current_config[key], dict) and isinstance(data[key], dict):
@@ -1018,11 +1033,14 @@ def save_main_config():
 
         return success_response(message='Configuration saved successfully')
     except Exception as e:
-        logger.exception("[Config] Failed to save configuration")
+        import logging
+        import traceback
+        error_msg = f"Error saving config: {str(e)}\n{traceback.format_exc()}"
+        logging.error(error_msg)
         return error_response(
             ErrorCode.CONFIG_SAVE_FAILED,
-            "Error saving configuration",
-            details="Internal server error - check server logs",
+            f"Error saving configuration: {e}",
+            details=traceback.format_exc(),
             status_code=500
         )
 
@@ -1034,11 +1052,9 @@ def get_secrets_config():
             return jsonify({'status': 'error', 'message': 'Config manager not initialized'}), 500
 
         config = api_v3.config_manager.get_raw_file_content('secrets')
-        masked = mask_all_secret_values(config)
-        return jsonify({'status': 'success', 'data': masked})
+        return jsonify({'status': 'success', 'data': config})
     except Exception as e:
-        logger.exception("[SecretsConfig] Failed to load secrets configuration")
-        return jsonify({'status': 'error', 'message': 'Failed to load secrets configuration'}), 500
+        return jsonify({'status': 'error', 'message': str(e)}), 500
 
 @api_v3.route('/config/raw/main', methods=['POST'])
 def save_raw_main_config():
@@ -1059,19 +1075,32 @@ def save_raw_main_config():
     except json.JSONDecodeError as e:
         return jsonify({'status': 'error', 'message': f'Invalid JSON: {str(e)}'}), 400
     except Exception as e:
-        logger.exception("[RawConfig] Failed to save raw main config")
+        import logging
+        import traceback
+        from src.exceptions import ConfigError
+
+        # Log the full error for debugging
+        error_msg = f"Error saving raw main config: {str(e)}\n{traceback.format_exc()}"
+        logging.error(error_msg)
+
+        # Extract more specific error message if it's a ConfigError
         if isinstance(e, ConfigError):
+            error_message = str(e)
+            if hasattr(e, 'config_path') and e.config_path:
+                error_message = f"{error_message} (config_path: {e.config_path})"
             return error_response(
                 ErrorCode.CONFIG_SAVE_FAILED,
-                "Error saving raw main configuration",
-                details="Internal server error - check server logs",
+                error_message,
+                details=traceback.format_exc(),
+                context={'config_path': e.config_path} if hasattr(e, 'config_path') and e.config_path else None,
                 status_code=500
             )
         else:
+            error_message = str(e) if str(e) else "An unexpected error occurred while saving the configuration"
             return error_response(
                 ErrorCode.UNKNOWN_ERROR,
-                "An unexpected error occurred while saving the configuration",
-                details="Internal server error - check server logs",
+                error_message,
+                details=traceback.format_exc(),
                 status_code=500
             )
 
@@ -1097,305 +1126,24 @@ def save_raw_secrets_config():
     except json.JSONDecodeError as e:
         return jsonify({'status': 'error', 'message': f'Invalid JSON: {str(e)}'}), 400
     except Exception as e:
-        logger.exception("[RawSecrets] Failed to save raw secrets config")
+        import logging
+        import traceback
+        from src.exceptions import ConfigError
+
+        # Log the full error for debugging
+        error_msg = f"Error saving raw secrets config: {str(e)}\n{traceback.format_exc()}"
+        logging.error(error_msg)
+
+        # Extract more specific error message if it's a ConfigError
         if isinstance(e, ConfigError):
-            return error_response(
-                ErrorCode.CONFIG_SAVE_FAILED,
-                "Error saving raw secrets configuration",
-                details="Internal server error - check server logs",
-                status_code=500
-            )
+            # ConfigError has a message attribute and may have context
+            error_message = str(e)
+            if hasattr(e, 'config_path') and e.config_path:
+                error_message = f"{error_message} (config_path: {e.config_path})"
         else:
-            return error_response(
-                ErrorCode.UNKNOWN_ERROR,
-                "An unexpected error occurred while saving the configuration",
-                details="Internal server error - check server logs",
-                status_code=500
-            )
+            error_message = str(e) if str(e) else "An unexpected error occurred while saving the configuration"
 
-
-# ---------------------------------------------------------------------------
-# Backup & Restore
-# ---------------------------------------------------------------------------
-
-_BACKUP_FILENAME_RE = re.compile(r'^ledmatrix-backup-[A-Za-z0-9_-]+-\d{8}_\d{6}\.zip$')
-
-
-def _backup_exports_dir() -> Path:
-    """Directory where user-downloadable backup ZIPs are stored."""
-    d = PROJECT_ROOT / 'config' / 'backups' / 'exports'
-    d.mkdir(parents=True, exist_ok=True)
-    return d
-
-
-def _is_safe_backup_filename(name: str) -> bool:
-    """Allow-list filter for backup filenames used in download/delete."""
-    return bool(_BACKUP_FILENAME_RE.match(name))
-
-
-@api_v3.route('/backup/preview', methods=['GET'])
-def backup_preview():
-    """Return a summary of what a new backup would include."""
-    try:
-        from src import backup_manager
-        preview = backup_manager.preview_backup_contents(PROJECT_ROOT)
-        return jsonify({'status': 'success', 'data': preview})
-    except Exception:
-        logger.exception("[Backup] preview failed")
-        return jsonify({'status': 'error', 'message': 'Failed to compute backup preview'}), 500
-
-
-@api_v3.route('/backup/export', methods=['POST'])
-def backup_export():
-    """Create a new backup ZIP and return its filename."""
-    try:
-        from src import backup_manager
-        zip_path = backup_manager.create_backup(PROJECT_ROOT, output_dir=_backup_exports_dir())
-        return jsonify({
-            'status': 'success',
-            'filename': zip_path.name,
-            'size': zip_path.stat().st_size,
-            'created_at': datetime.now(timezone.utc).isoformat(),
-        })
-    except Exception:
-        logger.exception("[Backup] export failed")
-        return jsonify({'status': 'error', 'message': 'Failed to create backup'}), 500
-
-
-@api_v3.route('/backup/list', methods=['GET'])
-def backup_list():
-    """List backup ZIPs currently stored on disk."""
-    try:
-        exports = _backup_exports_dir()
-        entries = []
-        for path in sorted(exports.glob('ledmatrix-backup-*.zip'), reverse=True):
-            if not _is_safe_backup_filename(path.name):
-                continue
-            stat = path.stat()
-            entries.append({
-                'filename': path.name,
-                'size': stat.st_size,
-                'created_at': datetime.fromtimestamp(stat.st_mtime, timezone.utc).isoformat(),
-            })
-        return jsonify({'status': 'success', 'data': entries})
-    except Exception:
-        logger.exception("[Backup] list failed")
-        return jsonify({'status': 'error', 'message': 'Failed to list backups'}), 500
-
-
-@api_v3.route('/backup/download/<path:filename>', methods=['GET'])
-def backup_download(filename):
-    """Stream a previously-created backup ZIP to the browser."""
-    try:
-        if not _is_safe_backup_filename(filename):
-            return jsonify({'status': 'error', 'message': 'Invalid backup filename'}), 400
-        exports = _backup_exports_dir()
-        target = exports / filename
-        if not target.exists():
-            return jsonify({'status': 'error', 'message': 'Backup not found'}), 404
-        return send_from_directory(
-            str(exports),
-            filename,
-            as_attachment=True,
-            mimetype='application/zip',
-        )
-    except Exception:
-        logger.exception("[Backup] download failed")
-        return jsonify({'status': 'error', 'message': 'Failed to download backup'}), 500
-
-
-@api_v3.route('/backup/<path:filename>', methods=['DELETE'])
-def backup_delete(filename):
-    """Delete a stored backup ZIP."""
-    try:
-        if not _is_safe_backup_filename(filename):
-            return jsonify({'status': 'error', 'message': 'Invalid backup filename'}), 400
-        target = _backup_exports_dir() / filename
-        if not target.exists():
-            return jsonify({'status': 'error', 'message': 'Backup not found'}), 404
-        target.unlink()
-        return jsonify({'status': 'success', 'message': f'Deleted {filename}'})
-    except Exception:
-        logger.exception("[Backup] delete failed")
-        return jsonify({'status': 'error', 'message': 'Failed to delete backup'}), 500
-
-
-def _save_uploaded_backup_to_temp() -> Tuple[Optional[Path], Optional[Tuple[Response, int]]]:
-    """Shared upload handler for validate/restore endpoints. Returns
-    ``(temp_path, None)`` on success or ``(None, error_response)`` on failure.
-    The caller is responsible for deleting the returned temp file."""
-    import tempfile as _tempfile
-    if 'backup_file' not in request.files:
-        return None, (jsonify({'status': 'error', 'message': 'No backup file provided'}), 400)
-    upload = request.files['backup_file']
-    if not upload.filename:
-        return None, (jsonify({'status': 'error', 'message': 'No file selected'}), 400)
-    is_valid, err = validate_file_upload(
-        upload.filename,
-        max_size_mb=200,
-        allowed_extensions=['.zip'],
-    )
-    if not is_valid:
-        return None, (jsonify({'status': 'error', 'message': err}), 400)
-    fd, tmp_name = _tempfile.mkstemp(prefix='ledmatrix_upload_', suffix='.zip')
-    os.close(fd)
-    tmp_path = Path(tmp_name)
-    max_bytes = 200 * 1024 * 1024
-    try:
-        written = 0
-        with open(tmp_path, 'wb') as fh:
-            while True:
-                chunk = upload.stream.read(65536)
-                if not chunk:
-                    break
-                written += len(chunk)
-                if written > max_bytes:
-                    fh.close()
-                    tmp_path.unlink(missing_ok=True)
-                    return None, (jsonify({'status': 'error', 'message': 'Backup file exceeds 200 MB limit'}), 413)
-                fh.write(chunk)
-    except Exception:
-        tmp_path.unlink(missing_ok=True)
-        logger.exception("[Backup] Failed to save uploaded backup")
-        return None, (jsonify({'status': 'error', 'message': 'Failed to read uploaded file'}), 500)
-    return tmp_path, None
-
-
-@api_v3.route('/backup/validate', methods=['POST'])
-def backup_validate():
-    """Inspect an uploaded backup without applying it."""
-    tmp_path, err = _save_uploaded_backup_to_temp()
-    if err is not None:
-        return err
-    try:
-        from src import backup_manager
-        ok, error, manifest = backup_manager.validate_backup(tmp_path)
-        if not ok:
-            return jsonify({'status': 'error', 'message': error}), 400
-        return jsonify({'status': 'success', 'data': manifest})
-    except Exception:
-        logger.exception("[Backup] validate failed")
-        return jsonify({'status': 'error', 'message': 'Failed to validate backup'}), 500
-    finally:
-        try:
-            tmp_path.unlink(missing_ok=True)
-        except OSError:
-            pass
-
-
-@api_v3.route('/backup/restore', methods=['POST'])
-def backup_restore():
-    """
-    Restore an uploaded backup into the running installation.
-
-    The request is multipart/form-data with:
-      - ``backup_file``: the ZIP upload
-      - ``options``: JSON string with RestoreOptions fields (all boolean)
-    """
-    tmp_path, err = _save_uploaded_backup_to_temp()
-    if err is not None:
-        return err
-    try:
-        from src import backup_manager
-
-        # Parse options (all optional; default is "restore everything").
-        raw_opts = request.form.get('options') or '{}'
-        try:
-            opts_dict = json.loads(raw_opts)
-        except json.JSONDecodeError:
-            return jsonify({'status': 'error', 'message': 'Invalid options JSON'}), 400
-        if not isinstance(opts_dict, dict):
-            return jsonify({'status': 'error', 'message': 'options must be an object'}), 400
-
-        opts = backup_manager.RestoreOptions(
-            restore_config=_coerce_to_bool(opts_dict.get('restore_config', True)),
-            restore_secrets=_coerce_to_bool(opts_dict.get('restore_secrets', True)),
-            restore_wifi=_coerce_to_bool(opts_dict.get('restore_wifi', True)),
-            restore_fonts=_coerce_to_bool(opts_dict.get('restore_fonts', True)),
-            restore_plugin_uploads=_coerce_to_bool(opts_dict.get('restore_plugin_uploads', True)),
-            reinstall_plugins=_coerce_to_bool(opts_dict.get('reinstall_plugins', True)),
-        )
-
-        # Snapshot current config through the atomic manager so the pre-restore
-        # state is recoverable via the existing rollback_config() path.
-        if api_v3.config_manager and opts.restore_config:
-            try:
-                current = api_v3.config_manager.load_config()
-                snapshot_ok, snapshot_err = _save_config_atomic(api_v3.config_manager, current, create_backup=True)
-                if not snapshot_ok:
-                    logger.warning("[Backup] Pre-restore snapshot failed: %s (continuing)", snapshot_err)
-            except Exception:
-                logger.warning("[Backup] Pre-restore snapshot failed (continuing)", exc_info=True)
-
-        result = backup_manager.restore_backup(tmp_path, PROJECT_ROOT, opts)
-
-        # Reinstall plugins via the store manager, one at a time.
-        if opts.reinstall_plugins and api_v3.plugin_store_manager and result.plugins_to_install:
-            installed_names = set()
-            if api_v3.plugin_manager:
-                try:
-                    existing = api_v3.plugin_manager.get_all_plugin_info() or []
-                    installed_names = {p.get('id') for p in existing if p.get('id')}
-                except Exception:
-                    installed_names = set()
-            for entry in result.plugins_to_install:
-                plugin_id = entry.get('plugin_id')
-                if not plugin_id:
-                    continue
-                if plugin_id in installed_names:
-                    result.plugins_installed.append(plugin_id)
-                    continue
-                try:
-                    ok = api_v3.plugin_store_manager.install_plugin(plugin_id)
-                    if ok:
-                        if api_v3.schema_manager:
-                            api_v3.schema_manager.invalidate_cache(plugin_id)
-                        if api_v3.plugin_manager:
-                            api_v3.plugin_manager.discover_plugins()
-                            api_v3.plugin_manager.load_plugin(plugin_id)
-                        if api_v3.plugin_state_manager:
-                            api_v3.plugin_state_manager.set_plugin_installed(plugin_id)
-                        result.plugins_installed.append(plugin_id)
-                    else:
-                        result.plugins_failed.append({'plugin_id': plugin_id, 'error': 'install returned False'})
-                except Exception as install_err:
-                    logger.exception("[Backup] plugin reinstall failed for %s", plugin_id)
-                    result.plugins_failed.append({'plugin_id': plugin_id, 'error': str(install_err)})
-
-        # Clear font catalog cache so restored fonts show up.
-        if any(r.startswith("fonts") for r in result.restored):
-            try:
-                from web_interface.cache import delete_cached
-                delete_cached('fonts_catalog')
-            except Exception:
-                logger.warning("[Backup] Failed to clear font cache", exc_info=True)
-
-        # Reload config_manager state so the UI picks up the new values
-        # without a full service restart.
-        if api_v3.config_manager and opts.restore_config:
-            try:
-                api_v3.config_manager.load_config(force_reload=True)
-            except TypeError:
-                try:
-                    api_v3.config_manager.load_config()
-                except Exception:
-                    logger.warning("[Backup] Could not reload config after restore", exc_info=True)
-            except Exception:
-                logger.warning("[Backup] Could not reload config after restore", exc_info=True)
-
-        return jsonify({
-            'status': 'success' if result.success else 'partial',
-            'data': result.to_dict(),
-        })
-    except Exception:
-        logger.exception("[Backup] restore failed")
-        return jsonify({'status': 'error', 'message': 'Failed to restore backup'}), 500
-    finally:
-        try:
-            tmp_path.unlink(missing_ok=True)
-        except OSError:
-            pass
-
+        return jsonify({'status': 'error', 'message': error_message}), 500
 
 @api_v3.route('/system/status', methods=['GET'])
 def get_system_status():
@@ -1482,8 +1230,7 @@ def get_system_status():
 
         return jsonify({'status': 'success', 'data': status})
     except Exception as e:
-        logger.exception("[System] get_system_status failed")
-        return jsonify({'status': 'error', 'message': 'Failed to get system status'}), 500
+        return jsonify({'status': 'error', 'message': str(e)}), 500
 
 @api_v3.route('/health', methods=['GET'])
 def get_health():
@@ -1582,10 +1329,9 @@ def get_health():
 
         return jsonify({'status': 'success', 'data': health_status})
     except Exception as e:
-        logger.exception("[System] get_health failed")
         return jsonify({
             'status': 'error',
-            'message': 'Failed to get health status',
+            'message': str(e),
             'data': {'status': 'unhealthy'}
         }), 500
 
@@ -1630,73 +1376,7 @@ def get_system_version():
         version = get_git_version()
         return jsonify({'status': 'success', 'data': {'version': version}})
     except Exception as e:
-        logger.exception("[System] get_system_version failed")
-        return jsonify({'status': 'error', 'message': 'Failed to get system version'}), 500
-
-_update_check_cache: Dict = {}
-_UPDATE_CHECK_TTL = 300  # 5 minutes
-_update_check_lock = threading.Lock()
-
-@api_v3.route('/system/check-update', methods=['GET'])
-def check_for_update():
-    """Check if a newer version is available on the remote."""
-    now = time.time()
-    project_dir = str(PROJECT_ROOT)
-    with _update_check_lock:
-        if _update_check_cache.get('ts', 0) + _UPDATE_CHECK_TTL > now:
-            return jsonify(_update_check_cache['data'])
-
-        try:
-            fetch_result = subprocess.run(
-                ['git', 'fetch', 'origin', 'main'],
-                capture_output=True, text=True, timeout=15, cwd=project_dir
-            )
-            if fetch_result.returncode != 0:
-                raise RuntimeError(f"git fetch failed: {fetch_result.stderr.strip()}")
-
-            local_result = subprocess.run(
-                ['git', 'rev-parse', 'HEAD'],
-                capture_output=True, text=True, timeout=5, cwd=project_dir
-            )
-            if local_result.returncode != 0:
-                raise RuntimeError(f"git rev-parse HEAD failed: {local_result.stderr.strip()}")
-            local_sha = local_result.stdout.strip()
-
-            remote_result = subprocess.run(
-                ['git', 'rev-parse', 'origin/main'],
-                capture_output=True, text=True, timeout=5, cwd=project_dir
-            )
-            if remote_result.returncode != 0:
-                raise RuntimeError(f"git rev-parse origin/main failed: {remote_result.stderr.strip()}")
-            remote_sha = remote_result.stdout.strip()
-
-            if local_sha == remote_sha:
-                data = {'status': 'success', 'update_available': False,
-                        'local_sha': local_sha[:8], 'remote_sha': remote_sha[:8]}
-            else:
-                log_result = subprocess.run(
-                    ['git', 'log', 'HEAD..origin/main', '--oneline'],
-                    capture_output=True, text=True, timeout=5, cwd=project_dir
-                )
-                if log_result.returncode != 0:
-                    raise RuntimeError(f"git log failed: {log_result.stderr.strip()}")
-                lines = [commit_line for commit_line in log_result.stdout.strip().split('\n') if commit_line]
-                commits_behind = len(lines)
-                data = {
-                    'status': 'success',
-                    'update_available': commits_behind > 0,
-                    'local_sha': local_sha[:8],
-                    'remote_sha': remote_sha[:8],
-                    'commits_behind': commits_behind,
-                    'latest_message': lines[0].split(' ', 1)[1] if lines else '',
-                }
-        except Exception as e:
-            logger.warning("[System] check-update failed: %s", e)
-            data = {'status': 'error', 'update_available': False, 'message': str(e)}
-
-        _update_check_cache['ts'] = now
-        _update_check_cache['data'] = data
-    return jsonify(data)
+        return jsonify({'status': 'error', 'message': str(e)}), 500
 
 @api_v3.route('/system/action', methods=['POST'])
 def execute_system_action():
@@ -1722,34 +1402,33 @@ def execute_system_action():
             if mode:
                 # For on-demand modes, we would need to integrate with the display controller
                 # For now, just start the display service
-                result = subprocess.run([SUDO_BIN, SYSTEMCTL_BIN, 'start', 'ledmatrix.service'],
-                                     capture_output=True, text=True, timeout=15)
+                result = subprocess.run(['sudo', 'systemctl', 'start', 'ledmatrix'],
+                                     capture_output=True, text=True)
                 return jsonify({
                     'status': 'success' if result.returncode == 0 else 'error',
-                    'message': f'Started display in {mode} mode' if result.returncode == 0
-                               else f'Failed to start display in {mode} mode: {result.stderr.strip() or "check sudo systemctl status ledmatrix.service"}',
+                    'message': f'Started display in {mode} mode',
                     'returncode': result.returncode,
                     'stdout': result.stdout,
                     'stderr': result.stderr
                 })
             else:
-                result = subprocess.run([SUDO_BIN, SYSTEMCTL_BIN, 'start', 'ledmatrix.service'],
-                                     capture_output=True, text=True, timeout=15)
+                result = subprocess.run(['sudo', 'systemctl', 'start', 'ledmatrix'],
+                                     capture_output=True, text=True)
         elif action == 'stop_display':
-            result = subprocess.run([SUDO_BIN, SYSTEMCTL_BIN, 'stop', 'ledmatrix.service'],
-                                 capture_output=True, text=True, timeout=15)
+            result = subprocess.run(['sudo', 'systemctl', 'stop', 'ledmatrix'],
+                                 capture_output=True, text=True)
         elif action == 'enable_autostart':
-            result = subprocess.run([SUDO_BIN, SYSTEMCTL_BIN, 'enable', 'ledmatrix.service'],
-                                 capture_output=True, text=True, timeout=15)
+            result = subprocess.run(['sudo', 'systemctl', 'enable', 'ledmatrix'],
+                                 capture_output=True, text=True)
         elif action == 'disable_autostart':
-            result = subprocess.run([SUDO_BIN, SYSTEMCTL_BIN, 'disable', 'ledmatrix.service'],
-                                 capture_output=True, text=True, timeout=15)
+            result = subprocess.run(['sudo', 'systemctl', 'disable', 'ledmatrix'],
+                                 capture_output=True, text=True)
         elif action == 'reboot_system':
-            result = subprocess.run([SUDO_BIN, REBOOT_BIN],
-                                 capture_output=True, text=True, timeout=10)
+            result = subprocess.run(['sudo', 'reboot'],
+                                 capture_output=True, text=True)
         elif action == 'shutdown_system':
-            result = subprocess.run([SUDO_BIN, POWEROFF_BIN],
-                                 capture_output=True, text=True, timeout=10)
+            result = subprocess.run(['sudo', 'poweroff'],
+                                 capture_output=True, text=True)
         elif action == 'git_pull':
             # Use PROJECT_ROOT instead of hardcoded path
             project_dir = str(PROJECT_ROOT)
@@ -1791,13 +1470,13 @@ def execute_system_action():
                         cwd=project_dir
                     )
                     if stash_result.returncode == 0:
-                        logger.info("[System] Stashed local changes: %s", stash_result.stdout)
+                        print(f"Stashed local changes: {stash_result.stdout}")
                         stash_info = " Local changes were stashed."
                     else:
                         # If stash fails, log but continue with pull
-                        logger.warning("[System] Stash failed: %s", stash_result.stderr)
+                        print(f"Stash failed: {stash_result.stderr}")
                 except subprocess.TimeoutExpired:
-                    logger.warning("[System] Stash operation timed out, proceeding with pull")
+                    print("Stash operation timed out, proceeding with pull")
 
             # Perform the git pull
             result = subprocess.run(
@@ -1807,10 +1486,6 @@ def execute_system_action():
                 timeout=60,
                 cwd=project_dir
             )
-
-            # Invalidate update-check cache so the banner hides immediately
-            with _update_check_lock:
-                _update_check_cache.clear()
 
             # Return custom response for git_pull
             if result.returncode == 0:
@@ -1830,11 +1505,12 @@ def execute_system_action():
                 'stderr': result.stderr
             })
         elif action == 'restart_display_service':
-            result = subprocess.run([SUDO_BIN, SYSTEMCTL_BIN, 'restart', 'ledmatrix.service'],
-                                 capture_output=True, text=True, timeout=15)
+            result = subprocess.run(['sudo', 'systemctl', 'restart', 'ledmatrix'],
+                                 capture_output=True, text=True)
         elif action == 'restart_web_service':
-            result = subprocess.run([SUDO_BIN, SYSTEMCTL_BIN, 'restart', 'ledmatrix-web.service'],
-                                 capture_output=True, text=True, timeout=15)
+            # Try to restart the web service (assuming it's ledmatrix-web.service)
+            result = subprocess.run(['sudo', 'systemctl', 'restart', 'ledmatrix-web'],
+                                 capture_output=True, text=True)
         else:
             return jsonify({'status': 'error', 'message': f'Unknown action: {action}'}), 400
 
@@ -1846,16 +1522,12 @@ def execute_system_action():
             'stderr': result.stderr
         })
 
-    except subprocess.TimeoutExpired:
-        if action == 'start_display' and mode:
-            msg = f'Failed to start display in {mode} mode: timed out'
-        else:
-            msg = f'Action {action} timed out'
-        logger.warning("[System] execute_system_action timed out: action=%s", action)
-        return jsonify({'status': 'error', 'message': msg, 'returncode': -1, 'stdout': '', 'stderr': 'timeout'}), 500
     except Exception as e:
-        logger.exception("[System] execute_system_action failed")
-        return jsonify({'status': 'error', 'message': 'Failed to execute system action'}), 500
+        import traceback
+        error_details = traceback.format_exc()
+        print(f"Error in execute_system_action: {str(e)}")
+        print(error_details)
+        return jsonify({'status': 'error', 'message': str(e), 'details': error_details}), 500
 
 @api_v3.route('/display/current', methods=['GET'])
 def get_display_current():
@@ -1906,8 +1578,7 @@ def get_display_current():
         }
         return jsonify({'status': 'success', 'data': display_data})
     except Exception as e:
-        logger.exception("[Display] get_current_display failed")
-        return jsonify({'status': 'error', 'message': 'Failed to get current display'}), 500
+        return jsonify({'status': 'error', 'message': str(e)}), 500
 
 @api_v3.route('/display/on-demand/status', methods=['GET'])
 def get_on_demand_status():
@@ -1930,8 +1601,11 @@ def get_on_demand_status():
             }
         })
     except Exception as exc:
-        logger.exception("[Display] get_on_demand_status failed")
-        return jsonify({'status': 'error', 'message': 'Failed to get on-demand display status'}), 500
+        import traceback
+        error_details = traceback.format_exc()
+        print(f"Error in get_on_demand_status: {exc}")
+        print(error_details)
+        return jsonify({'status': 'error', 'message': str(exc)}), 500
 
 @api_v3.route('/display/on-demand/start', methods=['POST'])
 def start_on_demand_display():
@@ -1996,11 +1670,11 @@ def start_on_demand_display():
         # Stop the display service first to ensure clean state when we will restart it
         if service_was_running and start_service:
             import time as time_module
-            logger.info("[Display] Stopping display service before starting on-demand mode")
+            print("Stopping display service before starting on-demand mode...")
             _stop_display_service()
             # Wait a brief moment for the service to fully stop
             time_module.sleep(1.5)
-            logger.info("[Display] Display service stopped, now starting with on-demand request")
+            print("Display service stopped, now starting with on-demand request...")
 
         if not service_status.get('active') and not start_service:
             return jsonify({
@@ -2033,8 +1707,11 @@ def start_on_demand_display():
         }
         return jsonify({'status': 'success', 'data': response_data})
     except Exception as exc:
-        logger.exception("[Display] start_on_demand_display failed")
-        return jsonify({'status': 'error', 'message': 'Failed to start on-demand display'}), 500
+        import traceback
+        error_details = traceback.format_exc()
+        print(f"Error in start_on_demand_display: {exc}")
+        print(error_details)
+        return jsonify({'status': 'error', 'message': str(exc)}), 500
 
 @api_v3.route('/display/on-demand/stop', methods=['POST'])
 def stop_on_demand_display():
@@ -2069,8 +1746,11 @@ def stop_on_demand_display():
             }
         })
     except Exception as exc:
-        logger.exception("[Display] stop_on_demand_display failed")
-        return jsonify({'status': 'error', 'message': 'Failed to stop on-demand display'}), 500
+        import traceback
+        error_details = traceback.format_exc()
+        print(f"Error in stop_on_demand_display: {exc}")
+        print(error_details)
+        return jsonify({'status': 'error', 'message': str(exc)}), 500
 
 @api_v3.route('/plugins/installed', methods=['GET'])
 def get_installed_plugins():
@@ -2082,23 +1762,9 @@ def get_installed_plugins():
         import json
         from pathlib import Path
 
-        # Re-discover plugins only if the plugins directory has actually
-        # changed since our last scan, or if the caller explicitly asked
-        # for a refresh. The previous unconditional ``discover_plugins()``
-        # call (plus a per-plugin manifest re-read) made this endpoint
-        # O(plugins) in disk I/O on every page refresh, which on an SD-card
-        # Pi4 with ~15 plugins was pegging the CPU and blocking the UI
-        # "connecting to display" spinner for minutes.
-        force_refresh = request.args.get('refresh', '').lower() in ('1', 'true', 'yes')
-        plugins_dir_path = Path(api_v3.plugin_manager.plugins_dir)
-        try:
-            current_mtime = plugins_dir_path.stat().st_mtime if plugins_dir_path.exists() else 0
-        except OSError:
-            current_mtime = 0
-        last_mtime = getattr(api_v3, '_installed_plugins_dir_mtime', None)
-        if force_refresh or last_mtime != current_mtime:
-            api_v3.plugin_manager.discover_plugins()
-            api_v3._installed_plugins_dir_mtime = current_mtime
+        # Re-discover plugins to ensure we have the latest list
+        # This handles cases where plugins are added/removed after app startup
+        api_v3.plugin_manager.discover_plugins()
 
         # Get all installed plugin info from the plugin manager
         all_plugin_info = api_v3.plugin_manager.get_all_plugin_info()
@@ -2111,10 +1777,17 @@ def get_installed_plugins():
         for plugin_info in all_plugin_info:
             plugin_id = plugin_info.get('id')
 
-            # Note: we intentionally do NOT re-read manifest.json here.
-            # discover_plugins() above already reparses manifests on change;
-            # re-reading on every request added ~1 syscall+json.loads per
-            # plugin per request for no benefit.
+            # Re-read manifest from disk to ensure we have the latest metadata
+            manifest_path = Path(api_v3.plugin_manager.plugins_dir) / plugin_id / "manifest.json"
+            if manifest_path.exists():
+                try:
+                    with open(manifest_path, 'r', encoding='utf-8') as f:
+                        fresh_manifest = json.load(f)
+                    # Update plugin_info with fresh manifest data
+                    plugin_info.update(fresh_manifest)
+                except Exception as e:
+                    # If we can't read the fresh manifest, use the cached one
+                    print(f"Warning: Could not read fresh manifest for {plugin_id}: {e}")
 
             # Get enabled status from config (source of truth)
             # Read from config file first, fall back to plugin instance if config doesn't have the key
@@ -2199,7 +1872,6 @@ def get_installed_plugins():
                 'category': plugin_info.get('category', 'General'),
                 'description': plugin_info.get('description', 'No description available'),
                 'tags': plugin_info.get('tags', []),
-                'icon': plugin_info.get('icon', 'fas fa-puzzle-piece'),
                 'enabled': enabled,
                 'verified': verified,
                 'loaded': plugin_info.get('loaded', False),
@@ -2212,59 +1884,13 @@ def get_installed_plugins():
                 'vegas_content_type': vegas_content_type
             })
 
-        # Append virtual entries for installed Starlark apps
-        starlark_plugin = _get_starlark_plugin()
-        if starlark_plugin and hasattr(starlark_plugin, 'apps'):
-            for app_id, app in starlark_plugin.apps.items():
-                plugins.append({
-                    'id': f'starlark:{app_id}',
-                    'name': app.manifest.get('name', app_id),
-                    'version': 'starlark',
-                    'author': app.manifest.get('author', 'Tronbyte Community'),
-                    'category': 'Starlark App',
-                    'description': app.manifest.get('summary', 'Starlark app'),
-                    'tags': ['starlark'],
-                    'enabled': app.is_enabled(),
-                    'verified': False,
-                    'loaded': True,
-                    'last_updated': None,
-                    'last_commit': None,
-                    'last_commit_message': None,
-                    'branch': None,
-                    'web_ui_actions': [],
-                    'vegas_mode': 'fixed',
-                    'vegas_content_type': 'multi',
-                    'is_starlark_app': True,
-                })
-        else:
-            # Standalone: read from manifest on disk
-            manifest = _read_starlark_manifest()
-            for app_id, app_data in manifest.get('apps', {}).items():
-                plugins.append({
-                    'id': f'starlark:{app_id}',
-                    'name': app_data.get('name', app_id),
-                    'version': 'starlark',
-                    'author': 'Tronbyte Community',
-                    'category': 'Starlark App',
-                    'description': 'Starlark app',
-                    'tags': ['starlark'],
-                    'enabled': app_data.get('enabled', True),
-                    'verified': False,
-                    'loaded': False,
-                    'last_updated': None,
-                    'last_commit': None,
-                    'last_commit_message': None,
-                    'branch': None,
-                    'web_ui_actions': [],
-                    'vegas_mode': 'fixed',
-                    'vegas_content_type': 'multi',
-                    'is_starlark_app': True,
-                })
-
         return jsonify({'status': 'success', 'data': {'plugins': plugins}})
     except Exception as e:
-        logger.exception("[PluginStore] get_installed_plugins failed")
-        return jsonify({'status': 'error', 'message': 'Failed to get installed plugins'}), 500
+        import traceback
+        error_details = traceback.format_exc()
+        print(f"Error in get_installed_plugins: {str(e)}")
+        print(error_details)
+        return jsonify({'status': 'error', 'message': str(e), 'details': error_details}), 500
 
 @api_v3.route('/plugins/health', methods=['GET'])
 def get_plugin_health():
@@ -2289,8 +1915,11 @@ def get_plugin_health():
             'data': health_summaries
         })
     except Exception as e:
-        logger.exception("[PluginHealth] get_plugin_health failed")
-        return jsonify({'status': 'error', 'message': 'Failed to get plugin health'}), 500
+        import traceback
+        error_details = traceback.format_exc()
+        print(f"Error in get_plugin_health: {str(e)}")
+        print(error_details)
+        return jsonify({'status': 'error', 'message': str(e)}), 500
 
 @api_v3.route('/plugins/health/<plugin_id>', methods=['GET'])
 def get_plugin_health_single(plugin_id):
@@ -2314,8 +1943,11 @@ def get_plugin_health_single(plugin_id):
             'data': health_summary
         })
     except Exception as e:
-        logger.exception("[PluginHealth] get_plugin_health_single failed")
-        return jsonify({'status': 'error', 'message': 'Failed to get plugin health'}), 500
+        import traceback
+        error_details = traceback.format_exc()
+        print(f"Error in get_plugin_health_single: {str(e)}")
+        print(error_details)
+        return jsonify({'status': 'error', 'message': str(e)}), 500
 
 @api_v3.route('/plugins/health/<plugin_id>/reset', methods=['POST'])
 def reset_plugin_health(plugin_id):
@@ -2339,8 +1971,11 @@ def reset_plugin_health(plugin_id):
             'message': f'Health state reset for plugin {plugin_id}'
         })
     except Exception as e:
-        logger.exception("[PluginHealth] reset_plugin_health failed")
-        return jsonify({'status': 'error', 'message': 'Failed to reset plugin health'}), 500
+        import traceback
+        error_details = traceback.format_exc()
+        print(f"Error in reset_plugin_health: {str(e)}")
+        print(error_details)
+        return jsonify({'status': 'error', 'message': str(e)}), 500
 
 @api_v3.route('/plugins/metrics', methods=['GET'])
 def get_plugin_metrics():
@@ -2365,8 +2000,11 @@ def get_plugin_metrics():
             'data': metrics_summaries
         })
     except Exception as e:
-        logger.exception("[PluginMetrics] get_plugin_metrics failed")
-        return jsonify({'status': 'error', 'message': 'Failed to get plugin metrics'}), 500
+        import traceback
+        error_details = traceback.format_exc()
+        print(f"Error in get_plugin_metrics: {str(e)}")
+        print(error_details)
+        return jsonify({'status': 'error', 'message': str(e)}), 500
 
 @api_v3.route('/plugins/metrics/<plugin_id>', methods=['GET'])
 def get_plugin_metrics_single(plugin_id):
@@ -2390,8 +2028,11 @@ def get_plugin_metrics_single(plugin_id):
             'data': metrics_summary
         })
     except Exception as e:
-        logger.exception("[PluginMetrics] get_plugin_metrics_single failed")
-        return jsonify({'status': 'error', 'message': 'Failed to get plugin metrics'}), 500
+        import traceback
+        error_details = traceback.format_exc()
+        print(f"Error in get_plugin_metrics_single: {str(e)}")
+        print(error_details)
+        return jsonify({'status': 'error', 'message': str(e)}), 500
 
 @api_v3.route('/plugins/metrics/<plugin_id>/reset', methods=['POST'])
 def reset_plugin_metrics(plugin_id):
@@ -2415,8 +2056,11 @@ def reset_plugin_metrics(plugin_id):
             'message': f'Metrics reset for plugin {plugin_id}'
         })
     except Exception as e:
-        logger.exception("[PluginMetrics] reset_plugin_metrics failed")
-        return jsonify({'status': 'error', 'message': 'Failed to reset plugin metrics'}), 500
+        import traceback
+        error_details = traceback.format_exc()
+        print(f"Error in reset_plugin_metrics: {str(e)}")
+        print(error_details)
+        return jsonify({'status': 'error', 'message': str(e)}), 500
 
 @api_v3.route('/plugins/limits/<plugin_id>', methods=['GET', 'POST'])
 def manage_plugin_limits(plugin_id):
@@ -2470,8 +2114,11 @@ def manage_plugin_limits(plugin_id):
                 'message': f'Resource limits updated for plugin {plugin_id}'
             })
     except Exception as e:
-        logger.exception("[PluginLimits] manage_plugin_limits failed")
-        return jsonify({'status': 'error', 'message': 'Failed to manage plugin limits'}), 500
+        import traceback
+        error_details = traceback.format_exc()
+        print(f"Error in manage_plugin_limits: {str(e)}")
+        print(error_details)
+        return jsonify({'status': 'error', 'message': str(e)}), 500
 
 @api_v3.route('/plugins/toggle', methods=['POST'])
 def toggle_plugin():
@@ -2511,28 +2158,6 @@ def toggle_plugin():
                 config = api_v3.config_manager.load_config()
                 current_enabled = config.get(plugin_id, {}).get('enabled', False)
                 enabled = not current_enabled
-
-        # Handle starlark app toggle (starlark:<app_id> prefix)
-        if plugin_id.startswith('starlark:'):
-            starlark_app_id = plugin_id[len('starlark:'):]
-            starlark_plugin = _get_starlark_plugin()
-            if starlark_plugin and starlark_app_id in starlark_plugin.apps:
-                app = starlark_plugin.apps[starlark_app_id]
-                app.manifest['enabled'] = enabled
-                # Use safe manifest update to prevent race conditions
-                def update_fn(manifest):
-                    manifest['apps'][starlark_app_id]['enabled'] = enabled
-                starlark_plugin._update_manifest_safe(update_fn)
-            else:
-                # Standalone: update manifest directly
-                manifest = _read_starlark_manifest()
-                app_data = manifest.get('apps', {}).get(starlark_app_id)
-                if not app_data:
-                    return jsonify({'status': 'error', 'message': f'Starlark app not found: {starlark_app_id}'}), 404
-                app_data['enabled'] = enabled
-                if not _write_starlark_manifest(manifest):
-                    return jsonify({'status': 'error', 'message': 'Failed to save manifest'}), 500
-            return jsonify({'status': 'success', 'message': f"Starlark app {'enabled' if enabled else 'disabled'}", 'enabled': enabled})
 
         # Check if plugin exists in manifests (discovered but may not be loaded)
         if plugin_id not in api_v3.plugin_manager.plugin_manifests:
@@ -2581,13 +2206,13 @@ def toggle_plugin():
                         plugin.on_disable()
             except Exception as lifecycle_error:
                 # Log the error but don't fail the toggle - config is already saved
-                logger.warning(f"Lifecycle method error for {plugin_id}: {lifecycle_error}", exc_info=True)
+                import logging
+                logging.warning(f"Lifecycle method error for {plugin_id}: {lifecycle_error}", exc_info=True)
 
         return success_response(
             message=f"Plugin {plugin_id} {'enabled' if enabled else 'disabled'} successfully"
         )
     except Exception as e:
-        logger.exception("[PluginToggle] Unhandled exception")
         from src.web_interface.errors import WebInterfaceError
         error = WebInterfaceError.from_exception(e, ErrorCode.PLUGIN_OPERATION_CONFLICT)
         if api_v3.operation_history:
@@ -2627,7 +2252,6 @@ def get_operation_status(operation_id):
 
         return success_response(data=operation.to_dict())
     except Exception as e:
-        logger.exception("[System] Unhandled exception")
         from src.web_interface.errors import WebInterfaceError
         error = WebInterfaceError.from_exception(e, ErrorCode.SYSTEM_ERROR)
         return error_response(
@@ -2661,7 +2285,6 @@ def get_operation_history() -> Response:
             operation_type=operation_type
         )
     except (AttributeError, RuntimeError) as e:
-        logger.exception("[System] Unhandled exception")
         from src.web_interface.errors import WebInterfaceError
         error = WebInterfaceError.from_exception(e, ErrorCode.SYSTEM_ERROR)
         return error_response(error.error_code, error.message, details=error.details, status_code=500)
@@ -2681,7 +2304,6 @@ def clear_operation_history() -> Response:
     try:
         api_v3.operation_history.clear_history()
     except (OSError, RuntimeError) as e:
-        logger.exception("[System] Unhandled exception")
         from src.web_interface.errors import WebInterfaceError
         error = WebInterfaceError.from_exception(e, ErrorCode.SYSTEM_ERROR)
         return error_response(error.error_code, error.message, details=error.details, status_code=500)
@@ -2720,7 +2342,6 @@ def get_plugin_state():
                 for plugin_id, state in all_states.items()
             })
     except Exception as e:
-        logger.exception("[System] Unhandled exception")
         from src.web_interface.errors import WebInterfaceError
         error = WebInterfaceError.from_exception(e, ErrorCode.SYSTEM_ERROR)
         return error_response(
@@ -2744,30 +2365,14 @@ def reconcile_plugin_state():
 
         from src.plugin_system.state_reconciliation import StateReconciliation
 
-        # Pass the store manager so auto-repair of missing-on-disk plugins
-        # can actually run. Previously this endpoint silently degraded to
-        # MANUAL_FIX_REQUIRED because store_manager was omitted.
         reconciler = StateReconciliation(
             state_manager=api_v3.plugin_state_manager,
             config_manager=api_v3.config_manager,
             plugin_manager=api_v3.plugin_manager,
-            plugins_dir=Path(api_v3.plugin_manager.plugins_dir),
-            store_manager=api_v3.plugin_store_manager,
+            plugins_dir=Path(api_v3.plugin_manager.plugins_dir)
         )
 
-        # Allow the caller to force a retry of previously-unrecoverable
-        # plugins (e.g. after the registry has been updated or a typo fixed).
-        # Non-object JSON bodies (e.g. a bare string or array) must fall
-        # through to the default False instead of raising AttributeError,
-        # and string booleans like "false" must coerce correctly — hence
-        # the isinstance guard plus _coerce_to_bool.
-        force = False
-        if request.is_json:
-            payload = request.get_json(silent=True)
-            if isinstance(payload, dict):
-                force = _coerce_to_bool(payload.get('force', False))
-
-        result = reconciler.reconcile_state(force=force)
+        result = reconciler.reconcile_state()
 
         return success_response(
             data={
@@ -2803,7 +2408,6 @@ def reconcile_plugin_state():
             message=result.message
         )
     except Exception as e:
-        logger.exception("[System] Unhandled exception")
         from src.web_interface.errors import WebInterfaceError
         error = WebInterfaceError.from_exception(e, ErrorCode.SYSTEM_ERROR)
         return error_response(
@@ -2846,7 +2450,8 @@ def get_plugin_config():
                 plugin_config = schema_mgr.merge_with_defaults(plugin_config, defaults)
             except Exception as e:
                 # Log but don't fail - defaults merge is best effort
-                logger.warning(f"Could not merge defaults for {plugin_id}: {e}")
+                import logging
+                logging.warning(f"Could not merge defaults for {plugin_id}: {e}")
 
         # Special handling for of-the-day plugin: populate uploaded_files and categories from disk
         if plugin_id == 'of-the-day' or plugin_id == 'ledmatrix-of-the-day':
@@ -2911,7 +2516,7 @@ def get_plugin_config():
                                 categories_from_files[category_name]['data_file'] = f'of_the_day/{filename}'
 
                         except Exception as e:
-                            logger.warning("[OfTheDay] Could not read %s: %s", json_file, e)
+                            print(f"Warning: Could not read {json_file}: {e}")
                             continue
 
                     # Update plugin_config with scanned files
@@ -2952,24 +2557,8 @@ def get_plugin_config():
                 'display_duration': 30
             }
 
-        # Mask secret fields before returning to prevent exposing API keys
-        schema_mgr = api_v3.schema_manager
-        schema_for_mask = None
-        if schema_mgr:
-            try:
-                schema_for_mask = schema_mgr.load_schema(plugin_id, use_cache=True)
-            except Exception as e:
-                logger.error("[PluginConfig] Error loading schema for %s: %s", plugin_id, e, exc_info=True)
-
-        if schema_for_mask and 'properties' in schema_for_mask:
-            plugin_config = mask_secret_fields(plugin_config, schema_for_mask['properties'])
-        else:
-            logger.warning("[PluginConfig] Schema unavailable for %s, applying conservative masking", plugin_id)
-            plugin_config = _conservative_mask_config(plugin_config)
-
         return success_response(data=plugin_config)
     except Exception as e:
-        logger.exception("[PluginConfig] Unhandled exception")
         from src.web_interface.errors import WebInterfaceError
         error = WebInterfaceError.from_exception(e, ErrorCode.CONFIG_LOAD_FAILED)
         return error_response(
@@ -2992,17 +2581,17 @@ def update_plugin():
             data, error = validate_request_json(['plugin_id'])
             if error:
                 # Log what we received for debugging
-                logger.debug("[PluginUpdate] JSON validation failed. Content-Type: %s", content_type)
-                logger.debug("[PluginUpdate] Request data: %s", request.data)
-                logger.debug("[PluginUpdate] Request form: %s", request.form.to_dict())
+                print(f"[UPDATE] JSON validation failed. Content-Type: {content_type}")
+                print(f"[UPDATE] Request data: {request.data}")
+                print(f"[UPDATE] Request form: {request.form.to_dict()}")
                 return error
         else:
             # Form data or query string
             plugin_id = request.args.get('plugin_id') or request.form.get('plugin_id')
             if not plugin_id:
-                logger.debug("[PluginUpdate] Missing plugin_id. Content-Type: %s", content_type)
-                logger.debug("[PluginUpdate] Query args: %s", request.args.to_dict())
-                logger.debug("[PluginUpdate] Form data: %s", request.form.to_dict())
+                print(f"[UPDATE] Missing plugin_id. Content-Type: {content_type}")
+                print(f"[UPDATE] Query args: {request.args.to_dict()}")
+                print(f"[UPDATE] Form data: {request.form.to_dict()}")
                 return error_response(
                     ErrorCode.INVALID_INPUT,
                     'plugin_id required',
@@ -3035,7 +2624,7 @@ def update_plugin():
                     manifest = json.load(f)
                     current_last_updated = manifest.get('last_updated')
             except Exception as e:
-                logger.warning("[PluginUpdate] Could not read local manifest for %s: %s", plugin_id, e)
+                print(f"Warning: Could not read local manifest for {plugin_id}: {e}")
 
         if api_v3.plugin_store_manager:
             git_info_before = api_v3.plugin_store_manager._get_local_git_info(plugin_dir)
@@ -3050,16 +2639,16 @@ def update_plugin():
             git_info = api_v3.plugin_store_manager._get_local_git_info(plugin_path_dir)
             is_git_repo = git_info is not None
             if is_git_repo:
-                logger.info("[PluginUpdate] Plugin %s is a git repository, will update via git pull", plugin_id)
+                print(f"[UPDATE] Plugin {plugin_id} is a git repository, will update via git pull")
         
         remote_info = api_v3.plugin_store_manager.get_plugin_info(plugin_id, fetch_latest_from_github=True)
         remote_commit = remote_info.get('last_commit_sha') if remote_info else None
         remote_branch = remote_info.get('branch') if remote_info else None
 
         # Update the plugin
-        logger.info("[PluginUpdate] Attempting to update plugin %s", plugin_id)
+        print(f"[UPDATE] Attempting to update plugin {plugin_id}...")
         success = api_v3.plugin_store_manager.update_plugin(plugin_id)
-        logger.info("[PluginUpdate] Update result for %s: %s", plugin_id, success)
+        print(f"[UPDATE] Update result for {plugin_id}: {success}")
 
         if success:
             updated_last_updated = current_last_updated
@@ -3070,7 +2659,7 @@ def update_plugin():
                         manifest = json.load(f)
                         updated_last_updated = manifest.get('last_updated', current_last_updated)
             except Exception as e:
-                logger.warning("[PluginUpdate] Could not read updated manifest for %s: %s", plugin_id, e)
+                print(f"Warning: Could not read updated manifest for {plugin_id}: {e}")
 
             updated_commit = None
             updated_branch = remote_branch or current_branch
@@ -3162,8 +2751,11 @@ def update_plugin():
                     }
                 )
 
-            logger.error("[PluginUpdate] Update failed for %s: %s", plugin_id, error_msg)
-
+            import traceback
+            error_details = traceback.format_exc()
+            print(f"[UPDATE] Update failed for {plugin_id}: {error_msg}")
+            print(f"[UPDATE] Traceback: {error_details}")
+            
             return error_response(
                 ErrorCode.PLUGIN_UPDATE_FAILED,
                 error_msg,
@@ -3171,8 +2763,11 @@ def update_plugin():
             )
 
     except Exception as e:
-        logger.exception("[PluginUpdate] Exception in update_plugin endpoint")
-
+        import traceback
+        error_details = traceback.format_exc()
+        print(f"[UPDATE] Exception in update_plugin endpoint: {str(e)}")
+        print(f"[UPDATE] Traceback: {error_details}")
+        
         from src.web_interface.errors import WebInterfaceError
         error = WebInterfaceError.from_exception(e, ErrorCode.PLUGIN_UPDATE_FAILED)
         if api_v3.operation_history:
@@ -3189,181 +2784,6 @@ def update_plugin():
             context=error.context,
             status_code=500
         )
-
-def _snapshot_plugin_config(plugin_id: str):
-    """Capture the plugin's current config and secrets entries for rollback.
-
-    Returns a tuple ``(main_entry, secrets_entry)`` where each element is
-    the plugin's dict from the respective file, or ``None`` if the plugin
-    was not present there. Used by the transactional uninstall path so we
-    can restore state if file removal fails after config cleanup has
-    already succeeded.
-    """
-    main_entry = None
-    secrets_entry = None
-    # Narrow exception list: filesystem errors (FileNotFoundError is a
-    # subclass of OSError, IOError is an alias for OSError in Python 3)
-    # and ConfigError, which is what ``get_raw_file_content`` wraps all
-    # load failures in. Programmer errors (TypeError, AttributeError,
-    # etc.) are intentionally NOT caught — they should surface loudly.
-    try:
-        main_config = api_v3.config_manager.get_raw_file_content('main')
-        if plugin_id in main_config:
-            import copy as _copy
-            main_entry = _copy.deepcopy(main_config[plugin_id])
-    except (OSError, ConfigError) as e:
-        logger.warning("[PluginUninstall] Could not snapshot main config for %s: %s", plugin_id, e)
-    try:
-        import os as _os
-        if _os.path.exists(api_v3.config_manager.secrets_path):
-            secrets_config = api_v3.config_manager.get_raw_file_content('secrets')
-            if plugin_id in secrets_config:
-                import copy as _copy
-                secrets_entry = _copy.deepcopy(secrets_config[plugin_id])
-    except (OSError, ConfigError) as e:
-        logger.warning("[PluginUninstall] Could not snapshot secrets for %s: %s", plugin_id, e)
-    return (main_entry, secrets_entry)
-
-
-def _restore_plugin_config(plugin_id: str, snapshot) -> None:
-    """Best-effort restoration of a snapshot taken by ``_snapshot_plugin_config``.
-
-    Called on the unhappy path when ``cleanup_plugin_config`` already
-    succeeded but the subsequent file removal failed. If the restore
-    itself fails, we log loudly — the caller still sees the original
-    uninstall error and the user can reconcile manually.
-    """
-    main_entry, secrets_entry = snapshot
-    if main_entry is not None:
-        try:
-            main_config = api_v3.config_manager.get_raw_file_content('main')
-            main_config[plugin_id] = main_entry
-            api_v3.config_manager.save_raw_file_content('main', main_config)
-            logger.warning("[PluginUninstall] Restored main config entry for %s after uninstall failure", plugin_id)
-        except Exception as e:
-            logger.error(
-                "[PluginUninstall] FAILED to restore main config entry for %s after uninstall failure: %s",
-                plugin_id, e, exc_info=True,
-            )
-    if secrets_entry is not None:
-        try:
-            import os as _os
-            if _os.path.exists(api_v3.config_manager.secrets_path):
-                secrets_config = api_v3.config_manager.get_raw_file_content('secrets')
-            else:
-                secrets_config = {}
-            secrets_config[plugin_id] = secrets_entry
-            api_v3.config_manager.save_raw_file_content('secrets', secrets_config)
-            logger.warning("[PluginUninstall] Restored secrets entry for %s after uninstall failure", plugin_id)
-        except Exception as e:
-            logger.error(
-                "[PluginUninstall] FAILED to restore secrets entry for %s after uninstall failure: %s",
-                plugin_id, e, exc_info=True,
-            )
-
-
-def _do_transactional_uninstall(plugin_id: str, preserve_config: bool) -> None:
-    """Run the full uninstall as a best-effort transaction.
-
-    Order:
-      1. Mark tombstone (so any reconciler racing with us cannot resurrect
-         the plugin mid-flight).
-      2. Snapshot existing config + secrets entries (for rollback).
-      3. Run ``cleanup_plugin_config``. If this raises, re-raise — files
-         have NOT been touched, so aborting here leaves a fully consistent
-         state: plugin is still installed and still in config.
-      4. Unload the plugin from the running plugin manager.
-      5. Call ``store_manager.uninstall_plugin``. If it returns False or
-         raises, RESTORE the snapshot (so config matches disk) and then
-         propagate the failure.
-      6. Invalidate schema cache and remove from the state manager only
-         after the file removal succeeds.
-
-    Raises on any failure so the caller can return an error to the user.
-    """
-    if hasattr(api_v3.plugin_store_manager, 'mark_recently_uninstalled'):
-        api_v3.plugin_store_manager.mark_recently_uninstalled(plugin_id)
-
-    snapshot = _snapshot_plugin_config(plugin_id) if not preserve_config else (None, None)
-
-    # Step 1: config cleanup. If this fails, bail out early — the plugin
-    # files on disk are still intact and the caller will get a clear
-    # error.
-    if not preserve_config:
-        try:
-            api_v3.config_manager.cleanup_plugin_config(plugin_id, remove_secrets=True)
-        except Exception as cleanup_err:
-            logger.error(
-                "[PluginUninstall] Config cleanup failed for %s; aborting uninstall (files untouched): %s",
-                plugin_id, cleanup_err, exc_info=True,
-            )
-            raise
-
-    # Remember whether the plugin was loaded *before* we touched runtime
-    # state — we need this so we can reload it on rollback if file
-    # removal fails after we've already unloaded it.
-    was_loaded = bool(
-        api_v3.plugin_manager and plugin_id in api_v3.plugin_manager.plugins
-    )
-
-    def _rollback(reason_err):
-        """Undo both the config cleanup AND the unload."""
-        if not preserve_config:
-            _restore_plugin_config(plugin_id, snapshot)
-        if was_loaded and api_v3.plugin_manager:
-            try:
-                api_v3.plugin_manager.load_plugin(plugin_id)
-            except Exception as reload_err:
-                logger.error(
-                    "[PluginUninstall] FAILED to reload %s after uninstall rollback: %s",
-                    plugin_id, reload_err, exc_info=True,
-                )
-
-    # Step 2: unload if loaded. Also part of the rollback boundary — if
-    # unload itself raises, restore config and surface the error.
-    if was_loaded:
-        try:
-            api_v3.plugin_manager.unload_plugin(plugin_id)
-        except Exception as unload_err:
-            logger.error(
-                "[PluginUninstall] unload_plugin raised for %s; restoring config snapshot: %s",
-                plugin_id, unload_err, exc_info=True,
-            )
-            if not preserve_config:
-                _restore_plugin_config(plugin_id, snapshot)
-            # Plugin was never successfully unloaded, so no reload is
-            # needed here — runtime state is still what it was before.
-            raise
-
-    # Step 3: remove files. If this fails, roll back the config cleanup
-    # AND reload the plugin so the user doesn't end up with an orphaned
-    # install (files on disk + no config entry + plugin no longer
-    # loaded at runtime).
-    try:
-        success = api_v3.plugin_store_manager.uninstall_plugin(plugin_id)
-    except Exception as uninstall_err:
-        logger.error(
-            "[PluginUninstall] uninstall_plugin raised for %s; rolling back: %s",
-            plugin_id, uninstall_err, exc_info=True,
-        )
-        _rollback(uninstall_err)
-        raise
-
-    if not success:
-        logger.error(
-            "[PluginUninstall] uninstall_plugin returned False for %s; rolling back",
-            plugin_id,
-        )
-        _rollback(None)
-        raise RuntimeError(f"Failed to uninstall plugin {plugin_id}")
-
-    # Past this point the filesystem and config are both in the
-    # "uninstalled" state. Clean up the cheap in-memory bookkeeping.
-    if api_v3.schema_manager:
-        api_v3.schema_manager.invalidate_cache(plugin_id)
-    if api_v3.plugin_state_manager:
-        api_v3.plugin_state_manager.remove_plugin_state(plugin_id)
-
 
 @api_v3.route('/plugins/uninstall', methods=['POST'])
 def uninstall_plugin():
@@ -3387,28 +2807,49 @@ def uninstall_plugin():
         # Use operation queue if available
         if api_v3.operation_queue:
             def uninstall_callback(operation):
-                """Callback to execute plugin uninstallation transactionally."""
-                try:
-                    _do_transactional_uninstall(plugin_id, preserve_config)
-                except Exception as err:
-                    error_msg = f'Failed to uninstall plugin {plugin_id}: {err}'
+                """Callback to execute plugin uninstallation."""
+                # Unload the plugin first if it's loaded
+                if api_v3.plugin_manager and plugin_id in api_v3.plugin_manager.plugins:
+                    api_v3.plugin_manager.unload_plugin(plugin_id)
+
+                # Uninstall the plugin
+                success = api_v3.plugin_store_manager.uninstall_plugin(plugin_id)
+
+                if not success:
+                    error_msg = f'Failed to uninstall plugin {plugin_id}'
                     if api_v3.operation_history:
                         api_v3.operation_history.record_operation(
                             "uninstall",
                             plugin_id=plugin_id,
                             status="failed",
-                            error=error_msg,
+                            error=error_msg
                         )
-                    # Re-raise so the operation_queue marks this op as failed.
-                    raise
+                    raise Exception(error_msg)
 
+                # Invalidate schema cache
+                if api_v3.schema_manager:
+                    api_v3.schema_manager.invalidate_cache(plugin_id)
+
+                # Clean up plugin configuration if not preserving
+                if not preserve_config:
+                    try:
+                        api_v3.config_manager.cleanup_plugin_config(plugin_id, remove_secrets=True)
+                    except Exception as cleanup_err:
+                        print(f"Warning: Failed to cleanup config for {plugin_id}: {cleanup_err}")
+
+                # Remove from state manager
+                if api_v3.plugin_state_manager:
+                    api_v3.plugin_state_manager.remove_plugin_state(plugin_id)
+
+                # Record in history
                 if api_v3.operation_history:
                     api_v3.operation_history.record_operation(
                         "uninstall",
                         plugin_id=plugin_id,
                         status="success",
-                        details={"preserve_config": preserve_config},
+                        details={"preserve_config": preserve_config}
                     )
+
                 return {'success': True, 'message': f'Plugin {plugin_id} uninstalled successfully'}
 
             # Enqueue operation
@@ -3423,34 +2864,56 @@ def uninstall_plugin():
                 message=f'Plugin {plugin_id} uninstallation queued'
             )
         else:
-            # Fallback to direct uninstall — same transactional helper.
-            try:
-                _do_transactional_uninstall(plugin_id, preserve_config)
-            except Exception as err:
+            # Fallback to direct uninstall
+            # Unload the plugin first if it's loaded
+            if api_v3.plugin_manager and plugin_id in api_v3.plugin_manager.plugins:
+                api_v3.plugin_manager.unload_plugin(plugin_id)
+
+            # Uninstall the plugin
+            success = api_v3.plugin_store_manager.uninstall_plugin(plugin_id)
+
+            if success:
+                # Invalidate schema cache
+                if api_v3.schema_manager:
+                    api_v3.schema_manager.invalidate_cache(plugin_id)
+
+                # Clean up plugin configuration if not preserving
+                if not preserve_config:
+                    try:
+                        api_v3.config_manager.cleanup_plugin_config(plugin_id, remove_secrets=True)
+                    except Exception as cleanup_err:
+                        print(f"Warning: Failed to cleanup config for {plugin_id}: {cleanup_err}")
+
+                # Remove from state manager
+                if api_v3.plugin_state_manager:
+                    api_v3.plugin_state_manager.remove_plugin_state(plugin_id)
+
+                # Record in history
+                if api_v3.operation_history:
+                    api_v3.operation_history.record_operation(
+                        "uninstall",
+                        plugin_id=plugin_id,
+                        status="success",
+                        details={"preserve_config": preserve_config}
+                    )
+
+                return success_response(message=f'Plugin {plugin_id} uninstalled successfully')
+            else:
                 if api_v3.operation_history:
                     api_v3.operation_history.record_operation(
                         "uninstall",
                         plugin_id=plugin_id,
                         status="failed",
-                        error=f'Failed to uninstall plugin {plugin_id}: {err}',
+                        error=f'Failed to uninstall plugin {plugin_id}'
                     )
+
                 return error_response(
                     ErrorCode.PLUGIN_UNINSTALL_FAILED,
-                    f'Failed to uninstall plugin {plugin_id}: {err}',
-                    status_code=500,
+                    f'Failed to uninstall plugin {plugin_id}',
+                    status_code=500
                 )
-
-            if api_v3.operation_history:
-                api_v3.operation_history.record_operation(
-                    "uninstall",
-                    plugin_id=plugin_id,
-                    status="success",
-                    details={"preserve_config": preserve_config},
-                )
-            return success_response(message=f'Plugin {plugin_id} uninstalled successfully')
 
     except Exception as e:
-        logger.exception("[PluginUninstall] Unhandled exception")
         from src.web_interface.errors import WebInterfaceError
         error = WebInterfaceError.from_exception(e, ErrorCode.PLUGIN_UNINSTALL_FAILED)
         if api_v3.operation_history:
@@ -3486,7 +2949,7 @@ def install_plugin():
         # Log the plugins directory being used for debugging
         plugins_dir = api_v3.plugin_store_manager.plugins_dir
         branch_info = f" (branch: {branch})" if branch else ""
-        logger.info("[PluginInstall] Installing plugin %s%s to directory: %s", plugin_id, branch_info, plugins_dir)
+        print(f"Installing plugin {plugin_id}{branch_info} to directory: {plugins_dir}", flush=True)
 
         # Use operation queue if available
         if api_v3.operation_queue:
@@ -3599,8 +3062,11 @@ def install_plugin():
                 )
 
     except Exception as e:
-        logger.exception("[PluginInstall] install_plugin failed")
-        return jsonify({'status': 'error', 'message': 'Failed to install plugin'}), 500
+        import traceback
+        error_details = traceback.format_exc()
+        print(f"Error in install_plugin: {str(e)}")
+        print(error_details)
+        return jsonify({'status': 'error', 'message': str(e)}), 500
 
 @api_v3.route('/plugins/install-from-url', methods=['POST'])
 def install_plugin_from_url():
@@ -3654,8 +3120,11 @@ def install_plugin_from_url():
             }), 500
 
     except Exception as e:
-        logger.exception("[PluginInstall] install_plugin_from_url failed")
-        return jsonify({'status': 'error', 'message': 'Failed to install plugin from URL'}), 500
+        import traceback
+        error_details = traceback.format_exc()
+        print(f"Error in install_plugin_from_url: {str(e)}")
+        print(error_details)
+        return jsonify({'status': 'error', 'message': str(e)}), 500
 
 @api_v3.route('/plugins/registry-from-url', methods=['POST'])
 def get_registry_from_url():
@@ -3686,8 +3155,11 @@ def get_registry_from_url():
             }), 400
 
     except Exception as e:
-        logger.exception("[PluginStore] get_registry_from_url failed")
-        return jsonify({'status': 'error', 'message': 'Failed to fetch registry from URL'}), 500
+        import traceback
+        error_details = traceback.format_exc()
+        print(f"Error in get_registry_from_url: {str(e)}")
+        print(error_details)
+        return jsonify({'status': 'error', 'message': str(e)}), 500
 
 @api_v3.route('/plugins/saved-repositories', methods=['GET'])
 def get_saved_repositories():
@@ -3699,8 +3171,11 @@ def get_saved_repositories():
         repositories = api_v3.saved_repositories_manager.get_all()
         return jsonify({'status': 'success', 'data': {'repositories': repositories}})
     except Exception as e:
-        logger.exception("[PluginStore] get_saved_repositories failed")
-        return jsonify({'status': 'error', 'message': 'Failed to get saved repositories'}), 500
+        import traceback
+        error_details = traceback.format_exc()
+        print(f"Error in get_saved_repositories: {str(e)}")
+        print(error_details)
+        return jsonify({'status': 'error', 'message': str(e)}), 500
 
 @api_v3.route('/plugins/saved-repositories', methods=['POST'])
 def add_saved_repository():
@@ -3730,8 +3205,11 @@ def add_saved_repository():
                 'message': 'Repository already exists or failed to save'
             }), 400
     except Exception as e:
-        logger.exception("[PluginStore] add_saved_repository failed")
-        return jsonify({'status': 'error', 'message': 'Failed to add repository'}), 500
+        import traceback
+        error_details = traceback.format_exc()
+        print(f"Error in add_saved_repository: {str(e)}")
+        print(error_details)
+        return jsonify({'status': 'error', 'message': str(e)}), 500
 
 @api_v3.route('/plugins/saved-repositories', methods=['DELETE'])
 def remove_saved_repository():
@@ -3760,8 +3238,11 @@ def remove_saved_repository():
                 'message': 'Repository not found'
             }), 404
     except Exception as e:
-        logger.exception("[PluginStore] remove_saved_repository failed")
-        return jsonify({'status': 'error', 'message': 'Failed to remove repository'}), 500
+        import traceback
+        error_details = traceback.format_exc()
+        print(f"Error in remove_saved_repository: {str(e)}")
+        print(error_details)
+        return jsonify({'status': 'error', 'message': str(e)}), 500
 
 @api_v3.route('/plugins/store/list', methods=['GET'])
 def list_plugin_store():
@@ -3813,8 +3294,11 @@ def list_plugin_store():
 
         return jsonify({'status': 'success', 'data': {'plugins': formatted_plugins}})
     except Exception as e:
-        logger.exception("[PluginStore] list_plugin_store failed")
-        return jsonify({'status': 'error', 'message': 'Failed to list plugin store'}), 500
+        import traceback
+        error_details = traceback.format_exc()
+        print(f"Error in list_plugin_store: {str(e)}")
+        print(error_details)
+        return jsonify({'status': 'error', 'message': str(e)}), 500
 
 @api_v3.route('/plugins/store/github-status', methods=['GET'])
 def get_github_auth_status():
@@ -3864,8 +3348,11 @@ def get_github_auth_status():
                 }
             })
     except Exception as e:
-        logger.exception("[PluginStore] get_github_auth_status failed")
-        return jsonify({'status': 'error', 'message': 'Failed to get GitHub auth status'}), 500
+        import traceback
+        error_details = traceback.format_exc()
+        print(f"Error in get_github_auth_status: {str(e)}")
+        print(error_details)
+        return jsonify({'status': 'error', 'message': str(e)}), 500
 
 @api_v3.route('/plugins/store/refresh', methods=['POST'])
 def refresh_plugin_store():
@@ -3891,8 +3378,11 @@ def refresh_plugin_store():
             'plugin_count': plugin_count
         })
     except Exception as e:
-        logger.exception("[PluginStore] refresh_plugin_store failed")
-        return jsonify({'status': 'error', 'message': 'Failed to refresh plugin store'}), 500
+        import traceback
+        error_details = traceback.format_exc()
+        print(f"Error in refresh_plugin_store: {str(e)}")
+        print(error_details)
+        return jsonify({'status': 'error', 'message': str(e)}), 500
 
 def deep_merge(base_dict, update_dict):
     """
@@ -3958,14 +3448,9 @@ def _get_schema_property(schema, key_path):
     """
     Get the schema property for a given key path (supports dot notation).
 
-    Handles schema keys that themselves contain dots (e.g., "eng.1" in soccer
-    league configs) by trying progressively longer segment combinations when an
-    exact match for the current segment is not found.
-
     Args:
         schema: The JSON schema dict
         key_path: Dot-separated path like "customization.time_text.font"
-                  or "leagues.eng.1.favorite_teams" where "eng.1" is one key.
 
     Returns:
         The property schema dict or None if not found
@@ -3975,27 +3460,21 @@ def _get_schema_property(schema, key_path):
 
     parts = key_path.split('.')
     current = schema['properties']
-    i = 0
 
-    while i < len(parts):
-        # Try progressively longer candidate keys starting at position i,
-        # longest first, to greedily match dotted property names (e.g. "eng.1").
-        matched = False
-        for j in range(len(parts), i, -1):
-            candidate = '.'.join(parts[i:j])
-            if candidate in current:
-                prop = current[candidate]
-                if j == len(parts):
-                    return prop  # Consumed all remaining parts — done
-                # Navigate deeper if this is an object with properties
-                if isinstance(prop, dict) and 'properties' in prop:
-                    current = prop['properties']
-                    i = j
-                    matched = True
-                    break
-                else:
-                    return None  # Can't navigate deeper
-        if not matched:
+    for i, part in enumerate(parts):
+        if part not in current:
+            return None
+
+        prop = current[part]
+
+        # If this is the last part, return the property
+        if i == len(parts) - 1:
+            return prop
+
+        # If this is an object with properties, navigate deeper
+        if isinstance(prop, dict) and 'properties' in prop:
+            current = prop['properties']
+        else:
             return None
 
     return None
@@ -4167,68 +3646,35 @@ def _parse_form_value_with_schema(value, key_path, schema):
     return value
 
 
-MAX_LIST_EXPANSION = 1000
-
-
 def _set_nested_value(config, key_path, value):
     """
     Set a value in a nested dict using dot notation path.
     Handles existing nested dicts correctly by merging instead of replacing.
 
-    Handles config keys that themselves contain dots (e.g., "eng.1" in soccer
-    league configs) by trying progressively longer segment combinations against
-    existing dict keys before falling back to single-segment creation.
-
     Args:
         config: The config dict to modify
-        key_path: Dot-separated path (e.g., "customization.period_text.font"
-                  or "leagues.eng.1.favorite_teams" where "eng.1" is one key)
+        key_path: Dot-separated path (e.g., "customization.period_text.font")
         value: The value to set (or _SKIP_FIELD to skip setting)
     """
     # Skip setting if value is the sentinel
     if value is _SKIP_FIELD:
         return
-
+    
     parts = key_path.split('.')
     current = config
-    i = 0
 
-    # Navigate/create intermediate dicts, greedily matching dotted keys.
-    # We stop before the final part so we can set it as the leaf value.
-    while i < len(parts) - 1:
-        if not isinstance(current, dict):
-            raise TypeError(
-                f"Unexpected type {type(current).__name__!r} at path segment {parts[i]!r} in key_path {key_path!r}"
-            )
-        # Try progressively longer candidate keys (longest first) to match
-        # dict keys that contain dots themselves (e.g. "eng.1").
-        # Never consume the very last part (that's the leaf value key).
-        matched = False
-        for j in range(len(parts) - 1, i, -1):
-            candidate = '.'.join(parts[i:j])
-            if candidate in current and isinstance(current[candidate], dict):
-                current = current[candidate]
-                i = j
-                matched = True
-                break
-        if not matched:
-            # No existing dotted key matched; use single segment and create if needed
-            part = parts[i]
-            if part not in current:
-                current[part] = {}
-            elif not isinstance(current[part], dict):
-                current[part] = {}
-            current = current[part]
-            i += 1
+    # Navigate/create intermediate dicts
+    for i, part in enumerate(parts[:-1]):
+        if part not in current:
+            current[part] = {}
+        elif not isinstance(current[part], dict):
+            # If the existing value is not a dict, replace it with a dict
+            current[part] = {}
+        current = current[part]
 
-    # The remaining parts form the final key (may itself be dotted, e.g. "eng.1")
-    if not isinstance(current, dict):
-        raise TypeError(
-            f"Cannot set key at end of key_path {key_path!r}: expected dict, got {type(current).__name__!r}"
-        )
-    final_key = '.'.join(parts[i:])
-    if value is not None or final_key not in current:
-        current[final_key] = value
+    # Set the final value (don't overwrite with empty dict if value is None and we want to preserve structure)
+    if value is not None or parts[-1] not in current:
+        current[parts[-1]] = value
 
 
 def _set_missing_booleans_to_false(config, schema_props, form_keys, prefix='', config_node=None):
@@ -4277,13 +3723,8 @@ def _set_missing_booleans_to_false(config, schema_props, form_keys, prefix='', c
         elif prop_type == 'object' and 'properties' in prop_schema:
             # Recurse into nested objects
             if config_node is not None:
-                # Inside an array item — only recurse if the sub-object already exists.
-                # Never create optional sub-objects that weren't submitted; doing so
-                # produces e.g. logo:{} on feed items with no logo, which then fails
-                # schema validation when the object has required fields (id, path).
-                if prop_name not in node:
-                    continue
-                if not isinstance(node[prop_name], dict):
+                # Inside an array item — ensure nested dict exists in item
+                if prop_name not in node or not isinstance(node[prop_name], dict):
                     node[prop_name] = {}
                 _set_missing_booleans_to_false(
                     config, prop_schema['properties'], form_keys, full_path,
@@ -4423,22 +3864,10 @@ def _filter_config_by_schema(config, schema, prefix=''):
         prop_schema = schema_props[key]
 
         # Handle nested objects recursively
-        item_prefix = f"{prefix}.{key}" if prefix else key
         if isinstance(value, dict) and prop_schema.get('type') == 'object' and 'properties' in prop_schema:
-            filtered[key] = _filter_config_by_schema(value, prop_schema, item_prefix)
-        elif isinstance(value, list) and prop_schema.get('type') == 'array':
-            items_schema = prop_schema.get('items', {})
-            if isinstance(items_schema, dict) and items_schema.get('type') == 'object' and 'properties' in items_schema:
-                # Filter each item in the array so extra fields are stripped before
-                # schema validation (important when items has additionalProperties: false)
-                filtered[key] = [
-                    _filter_config_by_schema(item, items_schema, item_prefix) if isinstance(item, dict) else item
-                    for item in value
-                ]
-            else:
-                filtered[key] = value
+            filtered[key] = _filter_config_by_schema(value, prop_schema, f"{prefix}.{key}" if prefix else key)
         else:
-            # Keep the value as-is for non-object/non-array types
+            # Keep the value as-is for non-object types
             filtered[key] = value
 
     return filtered
@@ -4597,100 +4026,225 @@ def save_plugin_config():
             
             # Post-process: Fix array fields that might have been incorrectly structured
             # This handles cases where array fields are stored as dicts (e.g., from indexed form fields)
-            def fix_array_structures(config_dict, schema_props):
-                """Recursively fix array structures (convert dicts with numeric keys to arrays, fix length issues).
-                config_dict is always the dict at the current nesting level."""
+            def fix_array_structures(config_dict, schema_props, prefix=''):
+                """Recursively fix array structures (convert dicts with numeric keys to arrays, fix length issues)"""
                 for prop_key, prop_schema in schema_props.items():
                     prop_type = prop_schema.get('type')
 
                     if prop_type == 'array':
-                        if prop_key in config_dict:
-                            current_value = config_dict[prop_key]
-                            # If it's a dict with numeric string keys, convert to array
-                            if isinstance(current_value, dict) and not isinstance(current_value, list):
-                                try:
-                                    keys = list(current_value.keys())
-                                    if keys and all(str(k).isdigit() for k in keys):
-                                        sorted_keys = sorted(keys, key=lambda x: int(str(x)))
-                                        array_value = [current_value[k] for k in sorted_keys]
-                                        # Convert array elements to correct types based on schema
-                                        items_schema = prop_schema.get('items', {})
-                                        item_type = items_schema.get('type')
-                                        if item_type in ('number', 'integer'):
-                                            converted_array = []
-                                            for v in array_value:
-                                                if isinstance(v, str):
-                                                    try:
-                                                        if item_type == 'integer':
-                                                            converted_array.append(int(v))
-                                                        else:
-                                                            converted_array.append(float(v))
-                                                    except (ValueError, TypeError):
+                        # Navigate to the field location
+                        if prefix:
+                            parent_parts = prefix.split('.')
+                            parent = config_dict
+                            for part in parent_parts:
+                                if isinstance(parent, dict) and part in parent:
+                                    parent = parent[part]
+                                else:
+                                    parent = None
+                                    break
+
+                            if parent is not None and isinstance(parent, dict) and prop_key in parent:
+                                current_value = parent[prop_key]
+                                # If it's a dict with numeric string keys, convert to array
+                                if isinstance(current_value, dict) and not isinstance(current_value, list):
+                                    try:
+                                        # Check if all keys are numeric strings (array indices)
+                                        keys = [k for k in current_value.keys()]
+                                        if all(k.isdigit() for k in keys):
+                                            # Convert to sorted array by index
+                                            sorted_keys = sorted(keys, key=int)
+                                            array_value = [current_value[k] for k in sorted_keys]
+                                            # Convert array elements to correct types based on schema
+                                            items_schema = prop_schema.get('items', {})
+                                            item_type = items_schema.get('type')
+                                            if item_type in ('number', 'integer'):
+                                                converted_array = []
+                                                for v in array_value:
+                                                    if isinstance(v, str):
+                                                        try:
+                                                            if item_type == 'integer':
+                                                                converted_array.append(int(v))
+                                                            else:
+                                                                converted_array.append(float(v))
+                                                        except (ValueError, TypeError):
+                                                            converted_array.append(v)
+                                                    else:
                                                         converted_array.append(v)
-                                                else:
+                                                array_value = converted_array
+                                            parent[prop_key] = array_value
+                                            current_value = array_value  # Update for length check below
+                                    except (ValueError, KeyError, TypeError):
+                                        # Conversion failed, check if we should use default
+                                        pass
+
+                                # If it's an array, ensure correct types and check minItems
+                                if isinstance(current_value, list):
+                                    # First, ensure array elements are correct types
+                                    items_schema = prop_schema.get('items', {})
+                                    item_type = items_schema.get('type')
+                                    if item_type in ('number', 'integer'):
+                                        converted_array = []
+                                        for v in current_value:
+                                            if isinstance(v, str):
+                                                try:
+                                                    if item_type == 'integer':
+                                                        converted_array.append(int(v))
+                                                    else:
+                                                        converted_array.append(float(v))
+                                                except (ValueError, TypeError):
                                                     converted_array.append(v)
-                                            array_value = converted_array
-                                        config_dict[prop_key] = array_value
-                                        current_value = array_value  # Update for length check below
-                                except (ValueError, KeyError, TypeError) as e:
-                                    logger.debug(f"Failed to convert {prop_key} to array: {e}")
-
-                            # If it's an array, ensure correct types and check minItems
-                            if isinstance(current_value, list):
-                                # First, ensure array elements are correct types
-                                items_schema = prop_schema.get('items', {})
-                                item_type = items_schema.get('type')
-                                if item_type in ('number', 'integer'):
-                                    converted_array = []
-                                    for v in current_value:
-                                        if isinstance(v, str):
-                                            try:
-                                                if item_type == 'integer':
-                                                    converted_array.append(int(v))
-                                                else:
-                                                    converted_array.append(float(v))
-                                            except (ValueError, TypeError):
+                                            else:
                                                 converted_array.append(v)
-                                        else:
-                                            converted_array.append(v)
-                                    config_dict[prop_key] = converted_array
-                                    current_value = converted_array
+                                        parent[prop_key] = converted_array
+                                        current_value = converted_array
 
-                                # Then check minItems
-                                min_items = prop_schema.get('minItems')
-                                if min_items is not None and len(current_value) < min_items:
-                                    default = prop_schema.get('default')
-                                    if default and isinstance(default, list) and len(default) >= min_items:
-                                        config_dict[prop_key] = default
+                                    # Then check minItems
+                                    min_items = prop_schema.get('minItems')
+                                    if min_items is not None and len(current_value) < min_items:
+                                        # Use default if available, otherwise keep as-is (validation will catch it)
+                                        default = prop_schema.get('default')
+                                        if default and isinstance(default, list) and len(default) >= min_items:
+                                            parent[prop_key] = default
+                        else:
+                            # Top-level field
+                            if prop_key in config_dict:
+                                current_value = config_dict[prop_key]
+                                # If it's a dict with numeric string keys, convert to array
+                                if isinstance(current_value, dict) and not isinstance(current_value, list):
+                                    try:
+                                        keys = list(current_value.keys())
+                                        if keys and all(str(k).isdigit() for k in keys):
+                                            sorted_keys = sorted(keys, key=lambda x: int(str(x)))
+                                            array_value = [current_value[k] for k in sorted_keys]
+                                            # Convert array elements to correct types based on schema
+                                            items_schema = prop_schema.get('items', {})
+                                            item_type = items_schema.get('type')
+                                            if item_type in ('number', 'integer'):
+                                                converted_array = []
+                                                for v in array_value:
+                                                    if isinstance(v, str):
+                                                        try:
+                                                            if item_type == 'integer':
+                                                                converted_array.append(int(v))
+                                                            else:
+                                                                converted_array.append(float(v))
+                                                        except (ValueError, TypeError):
+                                                            converted_array.append(v)
+                                                    else:
+                                                        converted_array.append(v)
+                                                array_value = converted_array
+                                            config_dict[prop_key] = array_value
+                                            current_value = array_value  # Update for length check below
+                                    except (ValueError, KeyError, TypeError) as e:
+                                        logger.debug(f"Failed to convert {prop_key} to array: {e}")
+                                        pass
+
+                                # If it's an array, ensure correct types and check minItems
+                                if isinstance(current_value, list):
+                                    # First, ensure array elements are correct types
+                                    items_schema = prop_schema.get('items', {})
+                                    item_type = items_schema.get('type')
+                                    if item_type in ('number', 'integer'):
+                                        converted_array = []
+                                        for v in current_value:
+                                            if isinstance(v, str):
+                                                try:
+                                                    if item_type == 'integer':
+                                                        converted_array.append(int(v))
+                                                    else:
+                                                        converted_array.append(float(v))
+                                                except (ValueError, TypeError):
+                                                    converted_array.append(v)
+                                            else:
+                                                converted_array.append(v)
+                                        config_dict[prop_key] = converted_array
+                                        current_value = converted_array
+
+                                    # Then check minItems
+                                    min_items = prop_schema.get('minItems')
+                                    if min_items is not None and len(current_value) < min_items:
+                                        default = prop_schema.get('default')
+                                        if default and isinstance(default, list) and len(default) >= min_items:
+                                            config_dict[prop_key] = default
 
                     # Recurse into nested objects
                     elif prop_type == 'object' and 'properties' in prop_schema:
-                        nested_dict = config_dict.get(prop_key)
+                        nested_prefix = f"{prefix}.{prop_key}" if prefix else prop_key
+                        if prefix:
+                            parent_parts = prefix.split('.')
+                            parent = config_dict
+                            for part in parent_parts:
+                                if isinstance(parent, dict) and part in parent:
+                                    parent = parent[part]
+                                else:
+                                    parent = None
+                                    break
+                            nested_dict = parent.get(prop_key) if parent is not None and isinstance(parent, dict) else None
+                        else:
+                            nested_dict = config_dict.get(prop_key)
 
                         if isinstance(nested_dict, dict):
-                            fix_array_structures(nested_dict, prop_schema['properties'])
+                            fix_array_structures(nested_dict, prop_schema['properties'], nested_prefix)
 
             # Also ensure array fields that are None get converted to empty arrays
-            def ensure_array_defaults(config_dict, schema_props):
-                """Recursively ensure array fields have defaults if None.
-                config_dict is always the dict at the current nesting level."""
+            def ensure_array_defaults(config_dict, schema_props, prefix=''):
+                """Recursively ensure array fields have defaults if None"""
                 for prop_key, prop_schema in schema_props.items():
                     prop_type = prop_schema.get('type')
 
                     if prop_type == 'array':
-                        if prop_key not in config_dict or config_dict[prop_key] is None:
-                            default = prop_schema.get('default', [])
-                            config_dict[prop_key] = default if default else []
+                        if prefix:
+                            parent_parts = prefix.split('.')
+                            parent = config_dict
+                            for part in parent_parts:
+                                if isinstance(parent, dict) and part in parent:
+                                    parent = parent[part]
+                                else:
+                                    parent = None
+                                    break
+
+                            if parent is not None and isinstance(parent, dict):
+                                if prop_key not in parent or parent[prop_key] is None:
+                                    default = prop_schema.get('default', [])
+                                    parent[prop_key] = default if default else []
+                        else:
+                            if prop_key not in config_dict or config_dict[prop_key] is None:
+                                default = prop_schema.get('default', [])
+                                config_dict[prop_key] = default if default else []
 
                     elif prop_type == 'object' and 'properties' in prop_schema:
-                        nested_dict = config_dict.get(prop_key)
+                        nested_prefix = f"{prefix}.{prop_key}" if prefix else prop_key
+                        if prefix:
+                            parent_parts = prefix.split('.')
+                            parent = config_dict
+                            for part in parent_parts:
+                                if isinstance(parent, dict) and part in parent:
+                                    parent = parent[part]
+                                else:
+                                    parent = None
+                                    break
+                            nested_dict = parent.get(prop_key) if parent is not None and isinstance(parent, dict) else None
+                        else:
+                            nested_dict = config_dict.get(prop_key)
 
                         if nested_dict is None:
-                            config_dict[prop_key] = {}
-                            nested_dict = config_dict[prop_key]
+                            if prefix:
+                                parent_parts = prefix.split('.')
+                                parent = config_dict
+                                for part in parent_parts:
+                                    if part not in parent:
+                                        parent[part] = {}
+                                    parent = parent[part]
+                                if prop_key not in parent:
+                                    parent[prop_key] = {}
+                                nested_dict = parent[prop_key]
+                            else:
+                                if prop_key not in config_dict:
+                                    config_dict[prop_key] = {}
+                                nested_dict = config_dict[prop_key]
 
                         if isinstance(nested_dict, dict):
-                            ensure_array_defaults(nested_dict, prop_schema['properties'])
+                            ensure_array_defaults(nested_dict, prop_schema['properties'], nested_prefix)
 
             if schema and 'properties' in schema:
                 # First, fix any dict structures that should be arrays
@@ -4755,12 +4309,27 @@ def save_plugin_config():
                 if 'enabled' not in plugin_config:
                     plugin_config['enabled'] = True
             except Exception as e:
-                logger.warning("[PluginConfig] Error preserving enabled state: %s", e)
+                print(f"Error preserving enabled state: {e}")
                 # Default to True on error to avoid disabling plugins
                 plugin_config['enabled'] = True
 
         # Find secret fields (supports nested schemas)
         secret_fields = set()
+
+        def find_secret_fields(properties, prefix=''):
+            """Recursively find fields marked with x-secret: true"""
+            fields = set()
+            if not isinstance(properties, dict):
+                return fields
+            for field_name, field_props in properties.items():
+                full_path = f"{prefix}.{field_name}" if prefix else field_name
+                if isinstance(field_props, dict) and field_props.get('x-secret', False):
+                    fields.add(full_path)
+                # Check nested objects
+                if isinstance(field_props, dict) and field_props.get('type') == 'object' and 'properties' in field_props:
+                    fields.update(find_secret_fields(field_props['properties'], full_path))
+            return fields
+
         if schema and 'properties' in schema:
             secret_fields = find_secret_fields(schema['properties'])
 
@@ -5004,13 +4573,6 @@ def save_plugin_config():
             seed_value = plugin_config['rotation_settings']['random_seed']
             logger.debug(f"After normalization, random_seed value: {repr(seed_value)}, type: {type(seed_value)}")
 
-        # Deduplicate arrays where schema specifies uniqueItems: true
-        # This prevents validation failures when form merging introduces duplicates
-        # (e.g., existing config has ['AAPL','FNMA'] and form adds 'FNMA' again)
-        if schema:
-            from src.web_interface.validators import dedup_unique_arrays
-            dedup_unique_arrays(plugin_config, schema)
-
         # Validate configuration against schema before saving
         if schema:
             # Log what we're validating for debugging
@@ -5038,17 +4600,22 @@ def save_plugin_config():
             if not is_valid:
                 # Log validation errors for debugging
                 logger.error(f"Config validation failed for {plugin_id}")
-                logger.error(
-                    "[PluginConfig] Validation errors: %s | config keys: %s | schema keys: %s",
-                    validation_errors,
-                    list(plugin_config.keys()),
-                    list(enhanced_schema.get('properties', {}).keys()),
-                )
+                logger.error(f"Validation errors: {validation_errors}")
+                logger.error(f"Config that failed: {plugin_config}")
+                logger.error(f"Schema properties: {list(enhanced_schema.get('properties', {}).keys())}")
+
+                # Also print to console for immediate visibility
+                import json
+                print(f"[ERROR] Config validation failed for {plugin_id}")
+                print(f"[ERROR] Validation errors: {validation_errors}")
+                print(f"[ERROR] Config keys: {list(plugin_config.keys())}")
+                print(f"[ERROR] Schema property keys: {list(enhanced_schema.get('properties', {}).keys())}")
+
+                # Log raw form data if this was a form submission
                 if 'application/json' not in (request.content_type or ''):
-                    logger.error(
-                        "[PluginConfig] Form field keys: %s",
-                        list(request.form.keys()),
-                    )
+                    form_data = request.form.to_dict()
+                    print(f"[ERROR] Raw form data: {json.dumps({k: str(v)[:200] for k, v in form_data.items()}, indent=2)}")
+                    print(f"[ERROR] Parsed config: {json.dumps(plugin_config, indent=2, default=str)}")
                 return error_response(
                     ErrorCode.CONFIG_VALIDATION_FAILED,
                     'Configuration validation failed',
@@ -5068,11 +4635,29 @@ def save_plugin_config():
                 )
 
         # Separate secrets from regular config (handles nested configs)
-        regular_config, secrets_config = separate_secrets(plugin_config, secret_fields)
+        def separate_secrets(config, secrets_set, prefix=''):
+            """Recursively separate secret fields from regular config"""
+            regular = {}
+            secrets = {}
 
-        # Filter empty-string secret values to avoid overwriting existing secrets
-        # (GET endpoint masks secrets to '', POST sends them back as '')
-        secrets_config = remove_empty_secrets(secrets_config)
+            for key, value in config.items():
+                full_path = f"{prefix}.{key}" if prefix else key
+
+                if isinstance(value, dict):
+                    # Recursively handle nested dicts
+                    nested_regular, nested_secrets = separate_secrets(value, secrets_set, full_path)
+                    if nested_regular:
+                        regular[key] = nested_regular
+                    if nested_secrets:
+                        secrets[key] = nested_secrets
+                elif full_path in secrets_set:
+                    secrets[key] = value
+                else:
+                    regular[key] = value
+
+            return regular, secrets
+
+        regular_config, secrets_config = separate_secrets(plugin_config, secret_fields)
 
         # Get current configs
         current_config = api_v3.config_manager.load_config()
@@ -5084,15 +4669,15 @@ def save_plugin_config():
 
         # Debug logging for live_priority before merge
         if plugin_id == 'football-scoreboard':
-            logger.debug("[PluginConfig] Before merge - current NFL live_priority: %s", current_config[plugin_id].get('nfl', {}).get('live_priority'))
-            logger.debug("[PluginConfig] Before merge - regular_config NFL live_priority: %s", regular_config.get('nfl', {}).get('live_priority'))
+            print(f"[DEBUG] Before merge - current NFL live_priority: {current_config[plugin_id].get('nfl', {}).get('live_priority')}")
+            print(f"[DEBUG] Before merge - regular_config NFL live_priority: {regular_config.get('nfl', {}).get('live_priority')}")
 
         current_config[plugin_id] = deep_merge(current_config[plugin_id], regular_config)
 
         # Debug logging for live_priority after merge
         if plugin_id == 'football-scoreboard':
-            logger.debug("[PluginConfig] After merge - NFL live_priority: %s", current_config[plugin_id].get('nfl', {}).get('live_priority'))
-            logger.debug("[PluginConfig] After merge - NCAA FB live_priority: %s", current_config[plugin_id].get('ncaa_fb', {}).get('live_priority'))
+            print(f"[DEBUG] After merge - NFL live_priority: {current_config[plugin_id].get('nfl', {}).get('live_priority')}")
+            print(f"[DEBUG] After merge - NCAA FB live_priority: {current_config[plugin_id].get('ncaa_fb', {}).get('live_priority')}")
 
         # Deep merge plugin secrets in secrets config
         if secrets_config:
@@ -5175,10 +4760,11 @@ def save_plugin_config():
                                 plugin_instance.on_disable()
                     except Exception as lifecycle_error:
                         # Log the error but don't fail the save - config is already saved
-                        logger.warning(f"Lifecycle method error for {plugin_id}: {lifecycle_error}", exc_info=True)
+                        import logging
+                        logging.warning(f"Lifecycle method error for {plugin_id}: {lifecycle_error}", exc_info=True)
         except Exception as hook_err:
             # Do not fail the save if hook fails; just log
-            logger.warning("[PluginConfig] on_config_change failed for %s: %s", plugin_id, hook_err)
+            print(f"Warning: on_config_change failed for {plugin_id}: {hook_err}")
 
         secret_count = len(secrets_config)
         message = f'Plugin {plugin_id} configuration saved successfully'
@@ -5187,7 +4773,6 @@ def save_plugin_config():
 
         return success_response(message=message)
     except Exception as e:
-        logger.exception("[PluginConfig] Unhandled exception")
         from src.web_interface.errors import WebInterfaceError
         error = WebInterfaceError.from_exception(e, ErrorCode.CONFIG_SAVE_FAILED)
         if api_v3.operation_history:
@@ -5247,8 +4832,11 @@ def get_plugin_schema():
 
         return jsonify({'status': 'success', 'data': {'schema': default_schema}})
     except Exception as e:
-        logger.exception("[PluginSchema] get_plugin_schema failed")
-        return jsonify({'status': 'error', 'message': 'Failed to get plugin schema'}), 500
+        import traceback
+        error_details = traceback.format_exc()
+        print(f"Error in get_plugin_schema: {str(e)}")
+        print(error_details)
+        return jsonify({'status': 'error', 'message': str(e)}), 500
 
 @api_v3.route('/plugins/config/reset', methods=['POST'])
 def reset_plugin_config():
@@ -5280,10 +4868,41 @@ def reset_plugin_config():
         schema = schema_mgr.load_schema(plugin_id, use_cache=True)
         secret_fields = set()
 
+        def find_secret_fields(properties, prefix=''):
+            """Recursively find fields marked with x-secret: true"""
+            fields = set()
+            if not isinstance(properties, dict):
+                return fields
+            for field_name, field_props in properties.items():
+                full_path = f"{prefix}.{field_name}" if prefix else field_name
+                if isinstance(field_props, dict) and field_props.get('x-secret', False):
+                    fields.add(full_path)
+                if isinstance(field_props, dict) and field_props.get('type') == 'object' and 'properties' in field_props:
+                    fields.update(find_secret_fields(field_props['properties'], full_path))
+            return fields
+
         if schema and 'properties' in schema:
             secret_fields = find_secret_fields(schema['properties'])
 
         # Separate defaults into regular and secret configs
+        def separate_secrets(config, secrets_set, prefix=''):
+            """Recursively separate secret fields from regular config"""
+            regular = {}
+            secrets = {}
+            for key, value in config.items():
+                full_path = f"{prefix}.{key}" if prefix else key
+                if isinstance(value, dict):
+                    nested_regular, nested_secrets = separate_secrets(value, secrets_set, full_path)
+                    if nested_regular:
+                        regular[key] = nested_regular
+                    if nested_secrets:
+                        secrets[key] = nested_secrets
+                elif full_path in secrets_set:
+                    secrets[key] = value
+                else:
+                    regular[key] = value
+            return regular, secrets
+
         default_regular, default_secrets = separate_secrets(defaults, secret_fields)
 
         # Update main config with defaults
@@ -5319,7 +4938,7 @@ def reset_plugin_config():
                     if hasattr(plugin_instance, 'on_config_change'):
                         plugin_instance.on_config_change(plugin_full_config)
         except Exception as hook_err:
-            logger.warning("[PluginConfig] on_config_change failed for %s: %s", plugin_id, hook_err)
+            print(f"Warning: on_config_change failed for {plugin_id}: {hook_err}")
 
         return jsonify({
             'status': 'success',
@@ -5327,8 +4946,11 @@ def reset_plugin_config():
             'data': {'config': defaults}
         })
     except Exception as e:
-        logger.exception("[PluginConfig] reset_plugin_config failed")
-        return jsonify({'status': 'error', 'message': 'Failed to reset plugin config'}), 500
+        import traceback
+        error_details = traceback.format_exc()
+        print(f"Error in reset_plugin_config: {str(e)}")
+        print(error_details)
+        return jsonify({'status': 'error', 'message': str(e)}), 500
 
 @api_v3.route('/plugins/action', methods=['POST'])
 def execute_plugin_action():
@@ -5338,6 +4960,8 @@ def execute_plugin_action():
         try:
             data = request.get_json(force=True) or {}
         except Exception as e:
+            import logging
+            logger = logging.getLogger(__name__)
             logger.error(f"Error parsing JSON in execute_plugin_action: {e}")
             return jsonify({
                 'status': 'error', 
@@ -5439,7 +5063,7 @@ sys.exit(proc.returncode)
 
                 try:
                     result = subprocess.run(
-                        [sys.executable, wrapper_path],
+                        ['python3', wrapper_path],
                         capture_output=True,
                         text=True,
                         timeout=120,
@@ -5500,7 +5124,7 @@ sys.exit(proc.returncode)
 
                     try:
                         result = subprocess.run(
-                            [sys.executable, wrapper_path],
+                            ['python3', wrapper_path],
                             capture_output=True,
                             text=True,
                             timeout=120,
@@ -5543,6 +5167,7 @@ sys.exit(proc.returncode)
                     # For OAuth flows, we might need to import the script as a module
                     if action_def.get('oauth_flow'):
                         # Import script as module to get auth URL
+                        import sys
                         import importlib.util
 
                         spec = importlib.util.spec_from_file_location("plugin_action", script_file)
@@ -5584,15 +5209,18 @@ sys.exit(proc.returncode)
                                     'message': 'Could not generate authorization URL'
                                 }), 400
                         except Exception as e:
-                            logger.exception("[PluginAction] Error executing action step")
+                            import traceback
+                            error_details = traceback.format_exc()
+                            print(f"Error executing action step 1: {e}")
+                            print(error_details)
                             return jsonify({
                                 'status': 'error',
-                                'message': 'Failed to execute plugin action'
+                                'message': f'Error executing action: {str(e)}'
                             }), 500
                     else:
                         # Simple script execution
                         result = subprocess.run(
-                            [sys.executable, str(script_file)],
+                            ['python3', str(script_file)],
                             capture_output=True,
                             text=True,
                             timeout=60,
@@ -5636,8 +5264,11 @@ sys.exit(proc.returncode)
     except subprocess.TimeoutExpired:
         return jsonify({'status': 'error', 'message': 'Action timed out'}), 408
     except Exception as e:
-        logger.exception("[PluginAction] execute_plugin_action failed")
-        return jsonify({'status': 'error', 'message': 'Failed to execute plugin action'}), 500
+        import traceback
+        error_details = traceback.format_exc()
+        print(f"Error in execute_plugin_action: {str(e)}")
+        print(error_details)
+        return jsonify({'status': 'error', 'message': str(e)}), 500
 
 @api_v3.route('/plugins/authenticate/spotify', methods=['POST'])
 def authenticate_spotify():
@@ -5700,7 +5331,7 @@ sys.exit(proc.returncode)
 
             try:
                 result = subprocess.run(
-                    [sys.executable, wrapper_path],
+                    ['python3', wrapper_path],
                     capture_output=True,
                     text=True,
                     timeout=120,
@@ -5727,6 +5358,7 @@ sys.exit(proc.returncode)
         else:
             # Step 1: Get authorization URL
             # Import the script's functions directly to get the auth URL
+            import sys
             import importlib.util
 
             # Load the authentication script as a module
@@ -5766,15 +5398,21 @@ sys.exit(proc.returncode)
                     'auth_url': auth_url
                 })
             except Exception as e:
-                logger.exception("[PluginAction] Error getting Spotify auth URL")
+                import traceback
+                error_details = traceback.format_exc()
+                print(f"Error getting Spotify auth URL: {e}")
+                print(error_details)
                 return jsonify({
                     'status': 'error',
-                    'message': 'Could not generate authorization URL'
+                    'message': f'Error generating authorization URL: {str(e)}'
                 }), 500
 
     except Exception as e:
-        logger.exception("[PluginAction] authenticate_spotify failed")
-        return jsonify({'status': 'error', 'message': 'Failed to authenticate with Spotify'}), 500
+        import traceback
+        error_details = traceback.format_exc()
+        print(f"Error in authenticate_spotify: {str(e)}")
+        print(error_details)
+        return jsonify({'status': 'error', 'message': str(e)}), 500
 
 @api_v3.route('/plugins/authenticate/ytm', methods=['POST'])
 def authenticate_ytm():
@@ -5800,7 +5438,7 @@ def authenticate_ytm():
 
         # Run the authentication script
         result = subprocess.run(
-            [sys.executable, str(auth_script)],
+            ['python3', str(auth_script)],
             capture_output=True,
             text=True,
             timeout=60,
@@ -5823,8 +5461,11 @@ def authenticate_ytm():
     except subprocess.TimeoutExpired:
         return jsonify({'status': 'error', 'message': 'Authentication timed out'}), 408
     except Exception as e:
-        logger.exception("[PluginAction] authenticate_ytm failed")
-        return jsonify({'status': 'error', 'message': 'Failed to authenticate with YouTube Music'}), 500
+        import traceback
+        error_details = traceback.format_exc()
+        print(f"Error in authenticate_ytm: {str(e)}")
+        print(error_details)
+        return jsonify({'status': 'error', 'message': str(e)}), 500
 
 @api_v3.route('/fonts/catalog', methods=['GET'])
 def get_fonts_catalog():
@@ -5919,8 +5560,7 @@ def get_fonts_catalog():
 
         return jsonify({'status': 'success', 'data': {'catalog': catalog}})
     except Exception as e:
-        logger.exception("[Fonts] get_fonts_catalog failed")
-        return jsonify({'status': 'error', 'message': 'Failed to get font catalog'}), 500
+        return jsonify({'status': 'error', 'message': str(e)}), 500
 
 @api_v3.route('/fonts/tokens', methods=['GET'])
 def get_font_tokens():
@@ -5938,8 +5578,7 @@ def get_font_tokens():
         }
         return jsonify({'status': 'success', 'data': {'tokens': tokens}})
     except Exception as e:
-        logger.exception("[Fonts] get_font_tokens failed")
-        return jsonify({'status': 'error', 'message': 'Failed to get font tokens'}), 500
+        return jsonify({'status': 'error', 'message': str(e)}), 500
 
 @api_v3.route('/fonts/overrides', methods=['GET'])
 def get_fonts_overrides():
@@ -5950,8 +5589,7 @@ def get_fonts_overrides():
         overrides = {}
         return jsonify({'status': 'success', 'data': {'overrides': overrides}})
     except Exception as e:
-        logger.exception("[Fonts] get_fonts_overrides failed")
-        return jsonify({'status': 'error', 'message': 'Failed to get font overrides'}), 500
+        return jsonify({'status': 'error', 'message': str(e)}), 500
 
 @api_v3.route('/fonts/overrides', methods=['POST'])
 def save_fonts_overrides():
@@ -5964,8 +5602,7 @@ def save_fonts_overrides():
         # This would integrate with the actual font system
         return jsonify({'status': 'success', 'message': 'Font overrides saved'})
     except Exception as e:
-        logger.exception("[Fonts] save_fonts_overrides failed")
-        return jsonify({'status': 'error', 'message': 'Failed to save font overrides'}), 500
+        return jsonify({'status': 'error', 'message': str(e)}), 500
 
 @api_v3.route('/fonts/overrides/<element_key>', methods=['DELETE'])
 def delete_font_override(element_key):
@@ -5974,8 +5611,7 @@ def delete_font_override(element_key):
         # This would integrate with the actual font system
         return jsonify({'status': 'success', 'message': f'Font override for {element_key} deleted'})
     except Exception as e:
-        logger.exception("[Fonts] delete_font_override failed")
-        return jsonify({'status': 'error', 'message': 'Failed to delete font override'}), 500
+        return jsonify({'status': 'error', 'message': str(e)}), 500
 
 @api_v3.route('/fonts/upload', methods=['POST'])
 def upload_font():
@@ -6039,8 +5675,7 @@ def upload_font():
             'path': f'assets/fonts/{safe_filename}'
         })
     except Exception as e:
-        logger.exception("[Fonts] upload_font failed")
-        return jsonify({'status': 'error', 'message': 'Failed to upload font'}), 500
+        return jsonify({'status': 'error', 'message': str(e)}), 500
 
 
 @api_v3.route('/fonts/preview', methods=['GET'])
@@ -6184,8 +5819,7 @@ def get_font_preview() -> tuple[Response, int] | Response:
             }
         })
     except Exception as e:
-        logger.exception("[Fonts] get_font_preview failed")
-        return jsonify({'status': 'error', 'message': 'Failed to generate font preview'}), 500
+        return jsonify({'status': 'error', 'message': str(e)}), 500
 
 
 @api_v3.route('/fonts/<font_family>', methods=['DELETE'])
@@ -6272,8 +5906,7 @@ def delete_font(font_family: str) -> tuple[Response, int] | Response:
             'message': f'Font {deleted_filename} deleted successfully'
         })
     except Exception as e:
-        logger.exception("[Fonts] delete_font failed")
-        return jsonify({'status': 'error', 'message': 'Failed to delete font'}), 500
+        return jsonify({'status': 'error', 'message': str(e)}), 500
 
 
 @api_v3.route('/plugins/assets/upload', methods=['POST'])
@@ -6420,8 +6053,8 @@ def upload_plugin_asset():
         })
 
     except Exception as e:
-        logger.exception("[PluginAssets] upload_plugin_asset failed")
-        return jsonify({'status': 'error', 'message': 'Failed to upload plugin asset'}), 500
+        import traceback
+        return jsonify({'status': 'error', 'message': str(e), 'traceback': traceback.format_exc()}), 500
 
 @api_v3.route('/plugins/of-the-day/json/upload', methods=['POST'])
 def upload_of_the_day_json():
@@ -6492,22 +6125,22 @@ def upload_of_the_day_json():
             if not isinstance(json_data, dict):
                 return jsonify({
                     'status': 'error',
-                    'message': f'JSON in {file.filename} must be an object with day numbers (1-366) as keys'
+                    'message': f'JSON in {file.filename} must be an object with day numbers (1-365) as keys'
                 }), 400
 
             # Check if keys are valid day numbers
             for key in json_data.keys():
                 try:
                     day_num = int(key)
-                    if day_num < 1 or day_num > 366:
+                    if day_num < 1 or day_num > 365:
                         return jsonify({
                             'status': 'error',
-                            'message': f'Day number {day_num} in {file.filename} is out of range (must be 1-366)'
+                            'message': f'Day number {day_num} in {file.filename} is out of range (must be 1-365)'
                         }), 400
                 except ValueError:
                     return jsonify({
                         'status': 'error',
-                        'message': f'Invalid key "{key}" in {file.filename}: must be a day number (1-366)'
+                        'message': f'Invalid key "{key}" in {file.filename}: must be a day number (1-365)'
                     }), 400
 
             # Generate safe filename from original (preserve user's filename)
@@ -6545,7 +6178,7 @@ def upload_of_the_day_json():
                 from scripts.update_config import add_category_to_config
                 add_category_to_config(category_name, f'of_the_day/{safe_filename}', display_name)
             except Exception as e:
-                logger.warning("[OfTheDay] Could not update config: %s", e)
+                print(f"Warning: Could not update config: {e}")
                 # Continue anyway - file is uploaded
 
             # Generate file ID (use category name as ID for simplicity)
@@ -6570,8 +6203,8 @@ def upload_of_the_day_json():
         })
 
     except Exception as e:
-        logger.exception("[OfTheDay] upload_of_the_day_json failed")
-        return jsonify({'status': 'error', 'message': 'Failed to upload JSON files'}), 500
+        import traceback
+        return jsonify({'status': 'error', 'message': str(e), 'traceback': traceback.format_exc()}), 500
 
 @api_v3.route('/plugins/of-the-day/json/delete', methods=['POST'])
 def delete_of_the_day_json():
@@ -6609,7 +6242,7 @@ def delete_of_the_day_json():
             from scripts.update_config import remove_category_from_config
             remove_category_from_config(file_id)
         except Exception as e:
-            logger.warning("[OfTheDay] Could not update config: %s", e)
+            print(f"Warning: Could not update config: {e}")
 
         return jsonify({
             'status': 'success',
@@ -6617,8 +6250,8 @@ def delete_of_the_day_json():
         })
 
     except Exception as e:
-        logger.exception("[OfTheDay] delete_of_the_day_json failed")
-        return jsonify({'status': 'error', 'message': 'Failed to delete JSON file'}), 500
+        import traceback
+        return jsonify({'status': 'error', 'message': str(e), 'traceback': traceback.format_exc()}), 500
 
 @api_v3.route('/plugins/<plugin_id>/static/<path:file_path>', methods=['GET'])
 def serve_plugin_static(plugin_id, file_path):
@@ -6638,9 +6271,7 @@ def serve_plugin_static(plugin_id, file_path):
         requested_file = (plugin_dir / file_path).resolve()
 
         # Security check: ensure file is within plugin directory
-        try:
-            requested_file.relative_to(plugin_dir)
-        except ValueError:
+        if not str(requested_file).startswith(str(plugin_dir)):
             return jsonify({'status': 'error', 'message': 'Invalid file path'}), 403
 
         # Check if file exists
@@ -6665,8 +6296,8 @@ def serve_plugin_static(plugin_id, file_path):
         return Response(content, mimetype=content_type)
 
     except Exception as e:
-        logger.exception("[PluginAssets] serve_plugin_static failed")
-        return jsonify({'status': 'error', 'message': 'Failed to serve static file'}), 500
+        import traceback
+        return jsonify({'status': 'error', 'message': str(e), 'traceback': traceback.format_exc()}), 500
 
 
 @api_v3.route('/plugins/calendar/upload-credentials', methods=['POST'])
@@ -6747,180 +6378,11 @@ def upload_calendar_credentials():
         })
 
     except Exception as e:
-        logger.exception("[PluginConfig] upload_calendar_credentials failed")
-        return jsonify({'status': 'error', 'message': 'Failed to upload calendar credentials'}), 500
-
-def _load_calendar_plugin_dir():
-    """Resolve the calendar plugin's on-disk directory without requiring a running instance.
-
-    The web service and display service are separate processes — the web
-    process discovers plugins but does not instantiate them, so
-    plugin_manager.get_plugin('calendar') is typically None here.
-    """
-    plugin_id = 'calendar'
-    if api_v3.plugin_manager:
-        plugin_dir = api_v3.plugin_manager.get_plugin_directory(plugin_id)
-        if plugin_dir and Path(plugin_dir).exists():
-            return Path(plugin_dir)
-    fallback = PROJECT_ROOT / 'plugins' / plugin_id
-    return fallback if fallback.exists() else None
-
-
-_GOOGLE_API_TIMEOUT_SECONDS = 15
-
-
-def _load_calendar_credentials(token_path):
-    """Load OAuth credentials from the plugin's token file.
-
-    The calendar plugin historically persists credentials with pickle
-    (``token.pickle``). pickle.load is only applied to this specific file,
-    which is owned by the same user as the web service, chmod 0600, and
-    located inside the plugin install directory — it is not user-supplied
-    input. We still constrain the unpickle to a reasonable size to reduce
-    blast radius. New installs may use a JSON token (``token.json``)
-    written via google-auth's safe serializer; prefer that when present.
-    """
-    json_path = token_path.with_suffix('.json')
-    if json_path.exists():
-        from google.oauth2.credentials import Credentials
-        return Credentials.from_authorized_user_file(str(json_path))
-
-    # Fall back to the pickle token the plugin writes today.
-    # nosemgrep: python.lang.security.audit.avoid-pickle.avoid-pickle
-    import pickle  # noqa: S403
-    try:
-        size = token_path.stat().st_size
-    except OSError as e:
-        raise RuntimeError(f'Cannot stat token file: {e}') from e
-    if size > 64 * 1024:
-        raise RuntimeError('Token file is unexpectedly large; refusing to load.')
-    with open(token_path, 'rb') as f:
-        return pickle.load(f)  # noqa: S301  # trusted file, owner-only perms
-
-
-def _list_google_calendars_from_disk():
-    """List calendars using the plugin's stored OAuth token.
-
-    Returns (calendars, error_message). calendars is a list of raw Google
-    calendarList items on success; on failure calendars is None and
-    error_message describes the problem.
-
-    Refreshed credentials are intentionally not persisted back to disk
-    from this request path — the display service owns token.pickle and
-    concurrent writes across processes could corrupt it. If refresh is
-    needed, it happens only in memory for the duration of this request.
-    """
-    try:
-        import google_auth_httplib2
-        import httplib2
-        from google.auth.transport.requests import Request
-        from googleapiclient.discovery import build
-    except ImportError:
-        return None, 'Google API libraries not installed on this host.'
-
-    plugin_dir = _load_calendar_plugin_dir()
-    if plugin_dir is None:
-        return None, 'Calendar plugin directory not found.'
-
-    token_path = plugin_dir / 'token.pickle'
-    if not token_path.exists() and not (plugin_dir / 'token.json').exists():
-        return None, 'Not authenticated yet — complete the Google authentication step first.'
-
-    try:
-        creds = _load_calendar_credentials(token_path)
-    except Exception as e:
-        logger.exception('list_calendar_calendars: failed to load stored credentials')
-        return None, f'Failed to load stored authentication: {e}'
-
-    if not creds or not getattr(creds, 'valid', False):
-        if creds and getattr(creds, 'expired', False) and getattr(creds, 'refresh_token', None):
-            try:
-                # In-memory refresh only; do not write back to shared token file.
-                creds.refresh(Request(timeout=_GOOGLE_API_TIMEOUT_SECONDS))
-            except (socket.timeout, TimeoutError) as e:
-                logger.warning('list_calendar_calendars: token refresh timed out: %s', e)
-                return None, 'Token refresh timed out. Please try again.'
-            except Exception as e:
-                logger.exception('list_calendar_calendars: token refresh failed')
-                return None, f'Stored authentication expired and refresh failed: {e}. Re-run the Google authentication step.'
-        else:
-            return None, 'Stored authentication is invalid. Re-run the Google authentication step.'
-
-    try:
-        # Build an Http with an explicit socket timeout so API calls cannot
-        # hang the Flask worker on flaky connectivity.
-        authed_http = google_auth_httplib2.AuthorizedHttp(
-            creds, http=httplib2.Http(timeout=_GOOGLE_API_TIMEOUT_SECONDS)
-        )
-        service = build('calendar', 'v3', http=authed_http, cache_discovery=False)
-        items = []
-        page_token = None
-        while True:
-            response = service.calendarList().list(pageToken=page_token).execute(
-                num_retries=1
-            )
-            items.extend(response.get('items', []))
-            page_token = response.get('nextPageToken')
-            if not page_token:
-                break
-        return items, None
-    except (socket.timeout, TimeoutError) as e:
-        logger.warning('list_calendar_calendars: Google API call timed out: %s', e)
-        return None, 'Google Calendar request timed out. Please try again.'
-    except Exception as e:
-        logger.exception('list_calendar_calendars: Google API call failed')
-        return None, f'Google Calendar API call failed: {e}'
-
-
-@api_v3.route('/plugins/calendar/list-calendars', methods=['GET'])
-def list_calendar_calendars():
-    """Return Google Calendars accessible with the currently authenticated credentials.
-
-    Reads credentials from the plugin directory directly so this works from the
-    web process (which does not instantiate plugins).
-    """
-    # Prefer a live plugin instance if one happens to exist (e.g. local dev where
-    # web and display share a process); otherwise fall back to on-disk credentials.
-    plugin = api_v3.plugin_manager.get_plugin('calendar') if api_v3.plugin_manager else None
-
-    try:
-        if plugin is not None and hasattr(plugin, 'get_calendars'):
-            raw = plugin.get_calendars()
-        else:
-            raw, err = _list_google_calendars_from_disk()
-            if raw is None:
-                return jsonify({'status': 'error', 'message': err}), 400
-        import collections.abc
-        if not isinstance(raw, (list, tuple)):
-            logger.error('list_calendar_calendars: get_calendars() returned non-sequence type %r', type(raw))
-            return jsonify({'status': 'error', 'message': 'Unable to load calendars from the plugin. Please check plugin configuration and try again.'}), 500
-        calendars = []
-        for cal in raw:
-            if not isinstance(cal, collections.abc.Mapping):
-                logger.warning('list_calendar_calendars: skipping malformed calendar entry (type=%r): %r', type(cal), cal)
-                continue
-            cal_id = cal.get('id') or cal.get('calendarId', '')
-            if not isinstance(cal_id, str):
-                cal_id = str(cal_id) if cal_id else ''
-            if not cal_id:
-                logger.warning('list_calendar_calendars: skipping calendar entry with empty id: %r', cal)
-                continue
-            summary = cal.get('summary', '')
-            if not isinstance(summary, str):
-                summary = str(summary) if summary else ''
-            calendars.append({
-                'id': cal_id,
-                'summary': summary,
-                'primary': bool(cal.get('primary', False)),
-            })
-        return jsonify({'status': 'success', 'calendars': calendars})
-    except (ValueError, TypeError, KeyError):
-        logger.exception('list_calendar_calendars: error normalising calendar data for plugin=calendar')
-        return jsonify({'status': 'error', 'message': 'Unable to load calendars from the plugin. Please check plugin configuration and try again.'}), 500
-    except Exception:
-        logger.exception('list_calendar_calendars: unexpected error for plugin=calendar')
-        return jsonify({'status': 'error', 'message': 'Unable to load calendars from the plugin. Please check plugin configuration and try again.'}), 500
-
+        import traceback
+        error_details = traceback.format_exc()
+        print(f"Error in upload_calendar_credentials: {str(e)}")
+        print(error_details)
+        return jsonify({'status': 'error', 'message': str(e)}), 500
 
 @api_v3.route('/plugins/assets/delete', methods=['POST'])
 def delete_plugin_asset():
@@ -6962,8 +6424,8 @@ def delete_plugin_asset():
         return jsonify({'status': 'success', 'message': 'Image deleted successfully'})
 
     except Exception as e:
-        logger.exception("[PluginAssets] delete_plugin_asset failed")
-        return jsonify({'status': 'error', 'message': 'Failed to delete plugin asset'}), 500
+        import traceback
+        return jsonify({'status': 'error', 'message': str(e), 'traceback': traceback.format_exc()}), 500
 
 @api_v3.route('/plugins/assets/list', methods=['GET'])
 def list_plugin_assets():
@@ -6990,8 +6452,8 @@ def list_plugin_assets():
         return jsonify({'status': 'success', 'data': {'assets': assets}})
 
     except Exception as e:
-        logger.exception("[PluginAssets] list_plugin_assets failed")
-        return jsonify({'status': 'error', 'message': 'Failed to list plugin assets'}), 500
+        import traceback
+        return jsonify({'status': 'error', 'message': str(e), 'traceback': traceback.format_exc()}), 500
 
 @api_v3.route('/logs', methods=['GET'])
 def get_logs():
@@ -7025,11 +6487,47 @@ def get_logs():
             'message': 'Timeout while fetching logs'
         }), 500
     except Exception as e:
-        logger.exception("[Logs] get_logs failed")
         return jsonify({
             'status': 'error',
-            'message': 'Failed to fetch logs'
+            'message': f'Error fetching logs: {str(e)}'
         }), 500
+
+# Multi-Display Sync Endpoints
+@api_v3.route('/sync/status', methods=['GET'])
+def get_sync_status():
+    """Return live multi-display sync status written by the display process."""
+    import os as _os
+    status_file = "/tmp/led_matrix_sync_status.json"
+    # Also surface config so the UI can show the configured role even before
+    # the display process has written a status file.
+    cfg_role = "standalone"
+    cfg_port = 5765
+    if api_v3.config_manager:
+        try:
+            cfg = api_v3.config_manager.load_config().get("sync", {})
+            cfg_role = cfg.get("role", "standalone")
+            cfg_port = int(cfg.get("port", 5765))
+        except Exception:
+            pass
+
+    if _os.path.exists(status_file):
+        try:
+            with open(status_file) as f:
+                live = json.load(f)
+            return jsonify({"status": "success", "data": live})
+        except Exception:
+            pass
+
+    # Status file not yet written — return config-only placeholder
+    return jsonify({
+        "status": "success",
+        "data": {
+            "role": cfg_role,
+            "port": cfg_port,
+            "state": "starting",
+        }
+    })
+
 
 # WiFi Management Endpoints
 @api_v3.route('/wifi/status', methods=['GET'])
@@ -7056,25 +6554,31 @@ def get_wifi_status():
             }
         })
     except Exception as e:
-        logger.exception("[WiFi] get_wifi_status failed")
         return jsonify({
             'status': 'error',
-            'message': 'Failed to get WiFi status'
+            'message': f'Error getting WiFi status: {str(e)}'
         }), 500
 
 @api_v3.route('/wifi/scan', methods=['GET'])
 def scan_wifi_networks():
-    """Scan for available WiFi networks.
+    """Scan for available WiFi networks
 
-    When AP mode is active, returns cached scan results to avoid
-    disconnecting the user from the setup network.
+    If AP mode is active, it will be temporarily disabled during scanning
+    and automatically re-enabled afterward. Users connected to the AP will
+    be briefly disconnected during this process.
     """
     try:
         from src.wifi_manager import WiFiManager
 
         wifi_manager = WiFiManager()
-        networks, was_cached = wifi_manager.scan_networks()
 
+        # Check if AP mode is active before scanning (for user notification)
+        ap_was_active = wifi_manager._is_ap_mode_active()
+
+        # Perform the scan (this will handle AP mode disabling/enabling internally)
+        networks = wifi_manager.scan_networks()
+
+        # Convert to dict format
         networks_data = [
             {
                 'ssid': net.ssid,
@@ -7087,14 +6591,16 @@ def scan_wifi_networks():
 
         response_data = {
             'status': 'success',
-            'data': networks_data,
-            'cached': was_cached,
+            'data': networks_data
         }
 
-        if was_cached and networks_data:
-            response_data['message'] = f'Found {len(networks_data)} cached networks.'
-        elif was_cached and not networks_data:
-            response_data['message'] = 'No cached networks available. Enter your network name manually.'
+        # Inform user if AP mode was temporarily disabled
+        if ap_was_active:
+            response_data['message'] = (
+                f'Found {len(networks_data)} networks. '
+                'Note: AP mode was temporarily disabled during scanning and has been re-enabled. '
+                'If you were connected to the setup network, you may need to reconnect.'
+            )
 
         return jsonify(response_data)
     except Exception as e:
@@ -7163,20 +6669,18 @@ def connect_wifi():
                 'message': message
             })
         else:
-            # Propagate structured error type so the captive portal UI can show
-            # "Wrong password — try again" instead of a generic failure message.
-            error_type = "wrong_password" if (message or "").startswith("wrong_password:") else "connection_failed"
-            clean_message = (message or "").removeprefix("wrong_password:").lstrip() or "Failed to connect to network"
             return jsonify({
                 'status': 'error',
-                'message': clean_message,
-                'error_type': error_type
+                'message': message or 'Failed to connect to network'
             }), 400
     except Exception as e:
-        logger.exception("[WiFi] Failed connecting to WiFi network")
+        import logging
+        import traceback
+        logger = logging.getLogger(__name__)
+        logger.error(f"Error connecting to WiFi: {e}\n{traceback.format_exc()}")
         return jsonify({
             'status': 'error',
-            'message': 'Failed connecting to WiFi network'
+            'message': f'Error connecting to WiFi: {str(e)}'
         }), 500
 
 @api_v3.route('/wifi/disconnect', methods=['POST'])
@@ -7199,10 +6703,13 @@ def disconnect_wifi():
                 'message': message or 'Failed to disconnect from network'
             }), 400
     except Exception as e:
-        logger.exception("[WiFi] Failed disconnecting from WiFi network")
+        import logging
+        import traceback
+        logger = logging.getLogger(__name__)
+        logger.error(f"Error disconnecting from WiFi: {e}\n{traceback.format_exc()}")
         return jsonify({
             'status': 'error',
-            'message': 'Failed disconnecting from WiFi network'
+            'message': f'Error disconnecting from WiFi: {str(e)}'
         }), 500
 
 @api_v3.route('/wifi/ap/enable', methods=['POST'])
@@ -7225,10 +6732,9 @@ def enable_ap_mode():
                 'message': message
             }), 400
     except Exception as e:
-        logger.exception("[WiFi] enable_ap_mode failed")
         return jsonify({
             'status': 'error',
-            'message': 'Failed to enable AP mode'
+            'message': f'Error enabling AP mode: {str(e)}'
         }), 500
 
 @api_v3.route('/wifi/ap/disable', methods=['POST'])
@@ -7251,10 +6757,9 @@ def disable_ap_mode():
                 'message': message
             }), 400
     except Exception as e:
-        logger.exception("[WiFi] disable_ap_mode failed")
         return jsonify({
             'status': 'error',
-            'message': 'Failed to disable AP mode'
+            'message': f'Error disabling AP mode: {str(e)}'
         }), 500
 
 @api_v3.route('/wifi/ap/auto-enable', methods=['GET'])
@@ -7273,10 +6778,9 @@ def get_auto_enable_ap_mode():
             }
         })
     except Exception as e:
-        logger.exception("[WiFi] get_auto_enable_ap_mode failed")
         return jsonify({
             'status': 'error',
-            'message': 'Failed to get auto-enable setting'
+            'message': f'Error getting auto-enable setting: {str(e)}'
         }), 500
 
 @api_v3.route('/wifi/ap/auto-enable', methods=['POST'])
@@ -7306,10 +6810,9 @@ def set_auto_enable_ap_mode():
             }
         })
     except Exception as e:
-        logger.exception("[WiFi] set_auto_enable_ap_mode failed")
         return jsonify({
             'status': 'error',
-            'message': 'Failed to set auto-enable'
+            'message': f'Error setting auto-enable: {str(e)}'
         }), 500
 
 @api_v3.route('/cache/list', methods=['GET'])
@@ -7333,8 +6836,11 @@ def list_cache_files():
             }
         })
     except Exception as e:
-        logger.exception("[Cache] list_cache_files failed")
-        return jsonify({'status': 'error', 'message': 'Failed to list cache files'}), 500
+        import traceback
+        error_details = traceback.format_exc()
+        print(f"Error in list_cache_files: {str(e)}")
+        print(error_details)
+        return jsonify({'status': 'error', 'message': str(e)}), 500
 
 @api_v3.route('/cache/delete', methods=['POST'])
 def delete_cache_file():
@@ -7359,8 +6865,11 @@ def delete_cache_file():
             'message': f'Cache file for key "{cache_key}" deleted successfully'
         })
     except Exception as e:
-        logger.exception("[Cache] delete_cache_file failed")
-        return jsonify({'status': 'error', 'message': 'Failed to delete cache file'}), 500
+        import traceback
+        error_details = traceback.format_exc()
+        print(f"Error in delete_cache_file: {str(e)}")
+        print(error_details)
+        return jsonify({'status': 'error', 'message': str(e)}), 500
 
 
 # =============================================================================
@@ -7464,1024 +6973,3 @@ def clear_old_errors():
             details=str(e),
             status_code=500
         )
-
-
-# ─── Starlark Apps API ──────────────────────────────────────────────────────
-
-def _get_tronbyte_repository_class() -> Type[Any]:
-    """Import TronbyteRepository from plugin-repos directory."""
-    import importlib.util
-    import importlib
-
-    module_path = PROJECT_ROOT / 'plugin-repos' / 'starlark-apps' / 'tronbyte_repository.py'
-    if not module_path.exists():
-        raise ImportError(f"TronbyteRepository module not found at {module_path}")
-
-    # If already imported, return cached class
-    if "tronbyte_repository" in sys.modules:
-        return sys.modules["tronbyte_repository"].TronbyteRepository
-
-    spec = importlib.util.spec_from_file_location("tronbyte_repository", str(module_path))
-    if spec is None:
-        raise ImportError(f"Failed to create module spec for tronbyte_repository at {module_path}")
-
-    module = importlib.util.module_from_spec(spec)
-    if module is None:
-        raise ImportError("Failed to create module from spec for tronbyte_repository")
-
-    sys.modules["tronbyte_repository"] = module
-    spec.loader.exec_module(module)
-    return module.TronbyteRepository
-
-
-def _get_pixlet_renderer_class() -> Type[Any]:
-    """Import PixletRenderer from plugin-repos directory."""
-    import importlib.util
-    import importlib
-
-    module_path = PROJECT_ROOT / 'plugin-repos' / 'starlark-apps' / 'pixlet_renderer.py'
-    if not module_path.exists():
-        raise ImportError(f"PixletRenderer module not found at {module_path}")
-
-    # If already imported, return cached class
-    if "pixlet_renderer" in sys.modules:
-        return sys.modules["pixlet_renderer"].PixletRenderer
-
-    spec = importlib.util.spec_from_file_location("pixlet_renderer", str(module_path))
-    if spec is None:
-        raise ImportError(f"Failed to create module spec for pixlet_renderer at {module_path}")
-
-    module = importlib.util.module_from_spec(spec)
-    if module is None:
-        raise ImportError("Failed to create module from spec for pixlet_renderer")
-
-    sys.modules["pixlet_renderer"] = module
-    spec.loader.exec_module(module)
-    return module.PixletRenderer
-
-
-def _validate_and_sanitize_app_id(app_id: Optional[str], fallback_source: Optional[str] = None) -> Tuple[Optional[str], Optional[str]]:
-    """Validate and sanitize app_id to a safe slug."""
-    if not app_id and fallback_source:
-        app_id = fallback_source
-    if not app_id:
-        return None, "app_id is required"
-    if '..' in app_id or '/' in app_id or '\\' in app_id:
-        return None, "app_id contains invalid characters"
-
-    sanitized = re.sub(r'[^a-z0-9_]', '_', app_id.lower()).strip('_')
-    if not sanitized:
-        sanitized = f"app_{hashlib.sha256(app_id.encode()).hexdigest()[:12]}"
-    if sanitized[0].isdigit():
-        sanitized = f"app_{sanitized}"
-    return sanitized, None
-
-
-def _validate_timing_value(value: Any, field_name: str, min_val: int = 1, max_val: int = 86400) -> Tuple[Optional[int], Optional[str]]:
-    """Validate and coerce timing values."""
-    if value is None:
-        return None, None
-    try:
-        int_value = int(value)
-    except (ValueError, TypeError):
-        return None, f"{field_name} must be an integer"
-    if int_value < min_val:
-        return None, f"{field_name} must be at least {min_val}"
-    if int_value > max_val:
-        return None, f"{field_name} must be at most {max_val}"
-    return int_value, None
-
-
-def _get_starlark_plugin() -> Optional[Any]:
-    """Get the starlark-apps plugin instance, or None."""
-    if not api_v3.plugin_manager:
-        return None
-    return api_v3.plugin_manager.get_plugin('starlark-apps')
-
-
-def _validate_starlark_app_path(app_id: str) -> Tuple[bool, Optional[str]]:
-    """
-    Validate app_id for path traversal attacks before filesystem access.
-
-    Args:
-        app_id: App identifier from user input
-
-    Returns:
-        Tuple of (is_valid, error_message)
-    """
-    # Check for path traversal characters
-    if '..' in app_id or '/' in app_id or '\\' in app_id:
-        return False, f"Invalid app_id: contains path traversal characters"
-
-    # Construct and resolve the path
-    try:
-        app_path = (_STARLARK_APPS_DIR / app_id).resolve()
-        base_path = _STARLARK_APPS_DIR.resolve()
-
-        # Verify the resolved path is within the base directory
-        try:
-            app_path.relative_to(base_path)
-            return True, None
-        except ValueError:
-            return False, f"Invalid app_id: path traversal attempt"
-    except Exception as e:
-        logger.warning(f"Path validation error for app_id '{app_id}': {e}")
-        return False, f"Invalid app_id"
-
-
-# Starlark standalone helpers for web service (plugin not loaded)
-_STARLARK_APPS_DIR = PROJECT_ROOT / 'starlark-apps'
-_STARLARK_MANIFEST_FILE = _STARLARK_APPS_DIR / 'manifest.json'
-
-
-def _find_pixlet_binary(explicit_path: Optional[str] = None) -> Optional[str]:
-    """Find pixlet binary: explicit path → bundled binary → system PATH."""
-    import platform
-    if explicit_path and os.path.isfile(explicit_path) and os.access(explicit_path, os.X_OK):
-        return explicit_path
-    bin_dir = PROJECT_ROOT / "bin" / "pixlet"
-    system = platform.system().lower()
-    machine = platform.machine().lower()
-    if system == "linux":
-        if "aarch64" in machine or "arm64" in machine:
-            name = "pixlet-linux-arm64"
-        elif "x86_64" in machine or "amd64" in machine:
-            name = "pixlet-linux-amd64"
-        else:
-            name = None
-    elif system == "darwin":
-        name = "pixlet-darwin-arm64" if "arm64" in machine else "pixlet-darwin-amd64"
-    else:
-        name = None
-    if name:
-        bundled = bin_dir / name
-        if bundled.is_file():
-            if os.access(str(bundled), os.X_OK):
-                return str(bundled)
-            try:
-                bundled.chmod(0o755)
-            except OSError:
-                logger.warning("Could not make pixlet bundled binary executable (%s); falling back to PATH", bundled)
-            else:
-                if os.access(str(bundled), os.X_OK):
-                    return str(bundled)
-                logger.warning("Pixlet bundled binary still not executable after chmod (%s); falling back to PATH", bundled)
-    return shutil.which("pixlet")
-
-
-def _standalone_render_starlark_app(app_id: str) -> Tuple[bool, int, Optional[str]]:
-    """Render a Starlark app via pixlet directly (no plugin required).
-
-    Reads the .star file and config from starlark-apps/{app_id}/, runs pixlet,
-    and saves the output to cached_render.webp in the same directory.
-    This is the web-service fallback when starlark-apps plugin is not loaded.
-
-    Returns (success, http_status_code, error_message).
-    """
-    manifest = _read_starlark_manifest()
-    if not isinstance(manifest, dict):
-        return False, 400, "Invalid manifest shape: expected object with 'apps' mapping"
-    apps = manifest.get('apps', {})
-    if not isinstance(apps, dict):
-        return False, 400, "Invalid manifest shape: expected object with 'apps' mapping"
-    app_data = apps.get(app_id)
-    if not app_data:
-        return False, 404, f"App not found: {app_id}"
-
-    app_dir = _STARLARK_APPS_DIR / app_id
-    star_file = app_dir / app_data.get('star_file', f'{app_id}.star')
-    if not star_file.exists():
-        return False, 404, f"Star file not found: {star_file}"
-
-    full_config = api_v3.config_manager.load_config() if api_v3.config_manager else {}
-    plugin_config = full_config.get('starlark-apps', {})
-
-    pixlet_path = _find_pixlet_binary(plugin_config.get('pixlet_path'))
-    if not pixlet_path:
-        return False, 503, "Pixlet binary not found — install pixlet first"
-
-    magnify = plugin_config.get('magnify')
-    if magnify is None:
-        hw = full_config.get('display', {}).get('hardware', {})
-        cols = hw.get('cols', 64)
-        chain = hw.get('chain_length', 1)
-        rows = hw.get('rows', 32)
-        magnify = max(1, min(8, int(min((cols * chain) / 64, rows / 32))))
-    else:
-        try:
-            magnify = max(1, min(8, int(magnify)))
-        except (ValueError, TypeError):
-            magnify = 1
-
-    config_file = app_dir / 'config.json'
-    app_config: Dict[str, Any] = {}
-    if config_file.exists():
-        try:
-            with open(config_file) as f:
-                app_config = json.load(f)
-        except json.JSONDecodeError as e:
-            return False, 400, f"Invalid config.json for {app_id} ({config_file}): {e}"
-        except OSError as e:
-            return False, 400, f"Cannot read config.json for {app_id} ({config_file}): {e}"
-        if not isinstance(app_config, dict):
-            return False, 400, (
-                f"config.json for {app_id} must be a JSON object, "
-                f"got {type(app_config).__name__}"
-            )
-
-    INTERNAL_KEYS = {'render_interval', 'display_duration'}
-    pixlet_config = {k: v for k, v in app_config.items() if k not in INTERNAL_KEYS}
-
-    output_path = str(app_dir / 'cached_render.webp')
-    cmd = [pixlet_path, 'render', str(star_file)]
-    for key, value in pixlet_config.items():
-        if not re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', key):
-            continue
-        value_str = 'true' if value is True else 'false' if value is False else str(value)
-        if re.search(r'[`$|<>&;\x00]|\$\(', value_str):
-            continue
-        cmd.append(f'{key}={value_str}')
-    cmd.extend(['-o', output_path, '-m', str(magnify)])
-
-    try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30, cwd=str(app_dir))
-        if result.returncode == 0 and os.path.isfile(output_path):
-            return True, 200, None
-        return False, 502, f"Pixlet failed (exit {result.returncode}): {result.stderr.strip()}"
-    except subprocess.TimeoutExpired:
-        return False, 504, "Render timed out after 30s"
-    except Exception as e:
-        return False, 500, f"Render error: {e}"
-
-
-def _read_starlark_manifest() -> Dict[str, Any]:
-    """Read the starlark-apps manifest.json directly from disk."""
-    try:
-        if _STARLARK_MANIFEST_FILE.exists():
-            with open(_STARLARK_MANIFEST_FILE, 'r') as f:
-                return json.load(f)
-    except (json.JSONDecodeError, OSError) as e:
-        logger.error(f"Error reading starlark manifest: {e}")
-    return {'apps': {}}
-
-
-def _write_starlark_manifest(manifest: Dict[str, Any]) -> bool:
-    """Write the starlark-apps manifest.json to disk with atomic write."""
-    temp_file = None
-    try:
-        _STARLARK_APPS_DIR.mkdir(parents=True, exist_ok=True)
-
-        # Atomic write pattern: write to temp file, then rename
-        temp_file = _STARLARK_MANIFEST_FILE.with_suffix('.tmp')
-        with open(temp_file, 'w') as f:
-            json.dump(manifest, f, indent=2)
-            f.flush()
-            os.fsync(f.fileno())  # Ensure data is written to disk
-
-        # Atomic rename (overwrites destination)
-        temp_file.replace(_STARLARK_MANIFEST_FILE)
-        return True
-    except OSError as e:
-        logger.error(f"Error writing starlark manifest: {e}")
-        # Clean up temp file if it exists
-        if temp_file and temp_file.exists():
-            try:
-                temp_file.unlink()
-            except Exception:
-                pass
-        return False
-
-
-def _install_star_file(app_id: str, star_file_path: str, metadata: Dict[str, Any], assets_dir: Optional[str] = None) -> bool:
-    """Install a .star file and update the manifest (standalone, no plugin needed)."""
-    import shutil
-    import json
-    app_dir = _STARLARK_APPS_DIR / app_id
-    app_dir.mkdir(parents=True, exist_ok=True)
-    dest = app_dir / f"{app_id}.star"
-    shutil.copy2(star_file_path, str(dest))
-
-    # Copy asset directories if provided (images/, sources/, etc.)
-    if assets_dir and Path(assets_dir).exists():
-        assets_path = Path(assets_dir)
-        for item in assets_path.iterdir():
-            if item.is_dir():
-                # Copy entire directory (e.g., images/, sources/)
-                dest_dir = app_dir / item.name
-                if dest_dir.exists():
-                    shutil.rmtree(dest_dir)
-                shutil.copytree(item, dest_dir)
-                logger.debug(f"Copied assets directory: {item.name}")
-        logger.info(f"Installed assets for {app_id}")
-
-    # Try to extract schema using PixletRenderer
-    schema = None
-    try:
-        PixletRenderer = _get_pixlet_renderer_class()
-        pixlet = PixletRenderer()
-        if pixlet.is_available():
-            _, schema, _ = pixlet.extract_schema(str(dest))
-            if schema:
-                schema_path = app_dir / "schema.json"
-                with open(schema_path, 'w') as f:
-                    json.dump(schema, f, indent=2)
-                logger.info(f"Extracted schema for {app_id}")
-    except Exception as e:
-        logger.warning(f"Failed to extract schema for {app_id}: {e}")
-
-    # Create default config — pre-populate with schema defaults
-    default_config = {}
-    if schema:
-        fields = schema.get('fields') or schema.get('schema') or []
-        for field in fields:
-            if isinstance(field, dict) and 'id' in field and 'default' in field:
-                default_config[field['id']] = field['default']
-
-    # Create config.json file
-    config_path = app_dir / "config.json"
-    with open(config_path, 'w') as f:
-        json.dump(default_config, f, indent=2)
-
-    manifest = _read_starlark_manifest()
-    manifest.setdefault('apps', {})[app_id] = {
-        'name': metadata.get('name', app_id),
-        'enabled': True,
-        'render_interval': metadata.get('render_interval', 300),
-        'display_duration': metadata.get('display_duration', 15),
-        'config': metadata.get('config', {}),
-        'star_file': str(dest),
-    }
-    return _write_starlark_manifest(manifest)
-
-
-@api_v3.route('/starlark/status', methods=['GET'])
-def get_starlark_status():
-    """Get Starlark plugin status and Pixlet availability."""
-    try:
-        starlark_plugin = _get_starlark_plugin()
-        if starlark_plugin:
-            info = starlark_plugin.get_info()
-            magnify_info = starlark_plugin.get_magnify_recommendation()
-            return jsonify({
-                'status': 'success',
-                'pixlet_available': info.get('pixlet_available', False),
-                'pixlet_version': info.get('pixlet_version'),
-                'installed_apps': info.get('installed_apps', 0),
-                'enabled_apps': info.get('enabled_apps', 0),
-                'current_app': info.get('current_app'),
-                'plugin_enabled': starlark_plugin.enabled,
-                'display_info': magnify_info
-            })
-
-        # Plugin not loaded - check Pixlet availability via shared resolver
-        # (respects user-configured pixlet_path, bundled binary, and system PATH)
-        full_config = api_v3.config_manager.load_config() if api_v3.config_manager else {}
-        pixlet_path = _find_pixlet_binary(full_config.get('starlark-apps', {}).get('pixlet_path'))
-        pixlet_available = pixlet_path is not None
-
-        # Read app counts from manifest
-        manifest = _read_starlark_manifest()
-        apps = manifest.get('apps', {})
-        installed_count = len(apps)
-        enabled_count = sum(1 for a in apps.values() if a.get('enabled', True))
-
-        return jsonify({
-            'status': 'success',
-            'pixlet_available': pixlet_available,
-            'pixlet_version': None,
-            'installed_apps': installed_count,
-            'enabled_apps': enabled_count,
-            'plugin_enabled': True,
-            'plugin_loaded': False,
-            'display_info': {}
-        })
-
-    except Exception as e:
-        logger.exception("[Starlark] get_starlark_status failed")
-        return jsonify({'status': 'error', 'message': 'Failed to get Starlark status'}), 500
-
-
-@api_v3.route('/starlark/apps', methods=['GET'])
-def get_starlark_apps():
-    """List all installed Starlark apps."""
-    try:
-        starlark_plugin = _get_starlark_plugin()
-        if starlark_plugin:
-            apps_list = []
-            for app_id, app_instance in starlark_plugin.apps.items():
-                apps_list.append({
-                    'id': app_id,
-                    'name': app_instance.manifest.get('name', app_id),
-                    'enabled': app_instance.is_enabled(),
-                    'has_frames': app_instance.frames is not None,
-                    'render_interval': app_instance.get_render_interval(),
-                    'display_duration': app_instance.get_display_duration(),
-                    'config': app_instance.config,
-                    'has_schema': app_instance.schema is not None,
-                    'last_render_time': app_instance.last_render_time
-                })
-            return jsonify({'status': 'success', 'apps': apps_list, 'count': len(apps_list)})
-
-        # Standalone: read manifest from disk
-        manifest = _read_starlark_manifest()
-        apps_list = []
-        for app_id, app_data in manifest.get('apps', {}).items():
-            apps_list.append({
-                'id': app_id,
-                'name': app_data.get('name', app_id),
-                'enabled': app_data.get('enabled', True),
-                'has_frames': False,
-                'render_interval': app_data.get('render_interval', 300),
-                'display_duration': app_data.get('display_duration', 15),
-                'config': app_data.get('config', {}),
-                'has_schema': False,
-                'last_render_time': None
-            })
-        return jsonify({'status': 'success', 'apps': apps_list, 'count': len(apps_list)})
-
-    except Exception as e:
-        logger.exception("[Starlark] get_starlark_apps failed")
-        return jsonify({'status': 'error', 'message': 'Failed to get Starlark apps'}), 500
-
-
-@api_v3.route('/starlark/apps/<app_id>', methods=['GET'])
-def get_starlark_app(app_id):
-    """Get details for a specific Starlark app."""
-    try:
-        # Validate app_id before any filesystem access
-        is_valid, error_msg = _validate_starlark_app_path(app_id)
-        if not is_valid:
-            return jsonify({'status': 'error', 'message': error_msg}), 400
-
-        starlark_plugin = _get_starlark_plugin()
-        if starlark_plugin:
-            app = starlark_plugin.apps.get(app_id)
-            if not app:
-                return jsonify({'status': 'error', 'message': f'App not found: {app_id}'}), 404
-            return jsonify({
-                'status': 'success',
-                'app': {
-                    'id': app_id,
-                    'name': app.manifest.get('name', app_id),
-                    'enabled': app.is_enabled(),
-                    'config': app.config,
-                    'schema': app.schema,
-                    'render_interval': app.get_render_interval(),
-                    'display_duration': app.get_display_duration(),
-                    'has_frames': app.frames is not None,
-                    'frame_count': len(app.frames) if app.frames else 0,
-                    'last_render_time': app.last_render_time,
-                }
-            })
-
-        # Standalone: read from manifest
-        manifest = _read_starlark_manifest()
-        app_data = manifest.get('apps', {}).get(app_id)
-        if not app_data:
-            return jsonify({'status': 'error', 'message': f'App not found: {app_id}'}), 404
-
-        # Load schema from schema.json if it exists (path already validated above)
-        schema = None
-        schema_file = _STARLARK_APPS_DIR / app_id / 'schema.json'
-        if schema_file.exists():
-            try:
-                with open(schema_file, 'r') as f:
-                    schema = json.load(f)
-            except (OSError, json.JSONDecodeError) as e:
-                logger.warning(f"Failed to load schema for {app_id}: {e}")
-
-        return jsonify({
-            'status': 'success',
-            'app': {
-                'id': app_id,
-                'name': app_data.get('name', app_id),
-                'enabled': app_data.get('enabled', True),
-                'config': app_data.get('config', {}),
-                'schema': schema,
-                'render_interval': app_data.get('render_interval', 300),
-                'display_duration': app_data.get('display_duration', 15),
-                'has_frames': False,
-                'frame_count': 0,
-                'last_render_time': None,
-            }
-        })
-
-    except Exception as e:
-        logger.exception("[Starlark] get_starlark_app failed")
-        return jsonify({'status': 'error', 'message': 'Failed to get Starlark app'}), 500
-
-
-@api_v3.route('/starlark/upload', methods=['POST'])
-def upload_starlark_app():
-    """Upload and install a new Starlark app."""
-    try:
-        if 'file' not in request.files:
-            return jsonify({'status': 'error', 'message': 'No file uploaded'}), 400
-
-        file = request.files['file']
-        if not file.filename or not file.filename.endswith('.star'):
-            return jsonify({'status': 'error', 'message': 'File must have .star extension'}), 400
-
-        # Check file size (limit to 5MB for .star files)
-        file.seek(0, 2)  # Seek to end
-        file_size = file.tell()
-        file.seek(0)  # Reset to beginning
-        MAX_STAR_SIZE = 5 * 1024 * 1024  # 5MB
-        if file_size > MAX_STAR_SIZE:
-            return jsonify({'status': 'error', 'message': f'File too large (max 5MB, got {file_size/1024/1024:.1f}MB)'}), 400
-
-        app_name = request.form.get('name')
-        app_id_input = request.form.get('app_id')
-        filename_base = file.filename.replace('.star', '') if file.filename else None
-        app_id, app_id_error = _validate_and_sanitize_app_id(app_id_input, fallback_source=filename_base)
-        if app_id_error:
-            return jsonify({'status': 'error', 'message': f'Invalid app_id: {app_id_error}'}), 400
-
-        render_interval_input = request.form.get('render_interval')
-        render_interval = 300
-        if render_interval_input is not None:
-            render_interval, err = _validate_timing_value(render_interval_input, 'render_interval')
-            if err:
-                return jsonify({'status': 'error', 'message': err}), 400
-            render_interval = render_interval or 300
-
-        display_duration_input = request.form.get('display_duration')
-        display_duration = 15
-        if display_duration_input is not None:
-            display_duration, err = _validate_timing_value(display_duration_input, 'display_duration')
-            if err:
-                return jsonify({'status': 'error', 'message': err}), 400
-            display_duration = display_duration or 15
-
-        import tempfile
-        with tempfile.NamedTemporaryFile(delete=False, suffix='.star') as tmp:
-            file.save(tmp.name)
-            temp_path = tmp.name
-
-        try:
-            metadata = {'name': app_name or app_id, 'render_interval': render_interval, 'display_duration': display_duration}
-            starlark_plugin = _get_starlark_plugin()
-            if starlark_plugin:
-                success = starlark_plugin.install_app(app_id, temp_path, metadata)
-            else:
-                success = _install_star_file(app_id, temp_path, metadata)
-            if success:
-                return jsonify({'status': 'success', 'message': f'App installed: {app_id}', 'app_id': app_id})
-            else:
-                return jsonify({'status': 'error', 'message': 'Failed to install app'}), 500
-        finally:
-            try:
-                os.unlink(temp_path)
-            except OSError:
-                pass
-
-    except (OSError, IOError) as err:
-        logger.exception("[Starlark] File error uploading starlark app: %s", err)
-        return jsonify({'status': 'error', 'message': f'File error during upload: {err}'}), 500
-    except ImportError as err:
-        logger.exception("[Starlark] Module load error uploading starlark app: %s", err)
-        return jsonify({'status': 'error', 'message': f'Failed to load app module: {err}'}), 500
-    except Exception as err:
-        logger.exception("[Starlark] Unexpected error uploading starlark app: %s", err)
-        return jsonify({'status': 'error', 'message': 'Failed to upload app'}), 500
-
-
-@api_v3.route('/starlark/apps/<app_id>', methods=['DELETE'])
-def uninstall_starlark_app(app_id):
-    """Uninstall a Starlark app."""
-    try:
-        # Validate app_id before any filesystem access
-        is_valid, error_msg = _validate_starlark_app_path(app_id)
-        if not is_valid:
-            return jsonify({'status': 'error', 'message': error_msg}), 400
-
-        starlark_plugin = _get_starlark_plugin()
-        if starlark_plugin:
-            success = starlark_plugin.uninstall_app(app_id)
-        else:
-            # Standalone: remove app dir and manifest entry (path already validated)
-            import shutil
-            app_dir = _STARLARK_APPS_DIR / app_id
-
-            if app_dir.exists():
-                shutil.rmtree(app_dir)
-            manifest = _read_starlark_manifest()
-            manifest.get('apps', {}).pop(app_id, None)
-            success = _write_starlark_manifest(manifest)
-
-        if success:
-            return jsonify({'status': 'success', 'message': f'App uninstalled: {app_id}'})
-        else:
-            return jsonify({'status': 'error', 'message': 'Failed to uninstall app'}), 500
-
-    except Exception as e:
-        logger.exception("[Starlark] uninstall_starlark_app failed")
-        return jsonify({'status': 'error', 'message': 'Failed to uninstall Starlark app'}), 500
-
-
-@api_v3.route('/starlark/apps/<app_id>/config', methods=['GET'])
-def get_starlark_app_config(app_id):
-    """Get configuration for a Starlark app."""
-    try:
-        # Validate app_id before any filesystem access
-        is_valid, error_msg = _validate_starlark_app_path(app_id)
-        if not is_valid:
-            return jsonify({'status': 'error', 'message': error_msg}), 400
-
-        starlark_plugin = _get_starlark_plugin()
-        if starlark_plugin:
-            app = starlark_plugin.apps.get(app_id)
-            if not app:
-                return jsonify({'status': 'error', 'message': f'App not found: {app_id}'}), 404
-            return jsonify({'status': 'success', 'config': app.config, 'schema': app.schema})
-
-        # Standalone: read from config.json file (path already validated)
-        app_dir = _STARLARK_APPS_DIR / app_id
-        config_file = app_dir / "config.json"
-
-        if not app_dir.exists():
-            return jsonify({'status': 'error', 'message': f'App not found: {app_id}'}), 404
-
-        config = {}
-        if config_file.exists():
-            try:
-                with open(config_file, 'r') as f:
-                    config = json.load(f)
-            except (OSError, json.JSONDecodeError) as e:
-                logger.warning(f"Failed to load config for {app_id}: {e}")
-
-        # Load schema from schema.json
-        schema = None
-        schema_file = app_dir / "schema.json"
-        if schema_file.exists():
-            try:
-                with open(schema_file, 'r') as f:
-                    schema = json.load(f)
-            except Exception as e:
-                logger.warning(f"Failed to load schema for {app_id}: {e}")
-
-        return jsonify({'status': 'success', 'config': config, 'schema': schema})
-
-    except Exception as e:
-        logger.exception("[Starlark] get_starlark_app_config failed")
-        return jsonify({'status': 'error', 'message': 'Failed to get Starlark app config'}), 500
-
-
-@api_v3.route('/starlark/apps/<app_id>/config', methods=['PUT'])
-def update_starlark_app_config(app_id):
-    """Update configuration for a Starlark app."""
-    try:
-        # Validate app_id before any filesystem access
-        is_valid, error_msg = _validate_starlark_app_path(app_id)
-        if not is_valid:
-            return jsonify({'status': 'error', 'message': error_msg}), 400
-
-        data = request.get_json()
-        if not data:
-            return jsonify({'status': 'error', 'message': 'No configuration provided'}), 400
-
-        if 'render_interval' in data:
-            val, err = _validate_timing_value(data['render_interval'], 'render_interval')
-            if err:
-                return jsonify({'status': 'error', 'message': err}), 400
-            data['render_interval'] = val
-
-        if 'display_duration' in data:
-            val, err = _validate_timing_value(data['display_duration'], 'display_duration')
-            if err:
-                return jsonify({'status': 'error', 'message': err}), 400
-            data['display_duration'] = val
-
-        starlark_plugin = _get_starlark_plugin()
-        if starlark_plugin:
-            app = starlark_plugin.apps.get(app_id)
-            if not app:
-                return jsonify({'status': 'error', 'message': f'App not found: {app_id}'}), 404
-
-            # Extract timing keys from data before updating config (they belong in manifest, not config)
-            render_interval = data.pop('render_interval', None)
-            display_duration = data.pop('display_duration', None)
-
-            # Update config with non-timing fields only
-            app.config.update(data)
-
-            # Update manifest with timing fields
-            timing_changed = False
-            if render_interval is not None:
-                app.manifest['render_interval'] = render_interval
-                timing_changed = True
-            if display_duration is not None:
-                app.manifest['display_duration'] = display_duration
-                timing_changed = True
-            if app.save_config():
-                # Persist manifest if timing changed (same pattern as toggle endpoint)
-                if timing_changed:
-                    try:
-                        # Use safe manifest update to prevent race conditions
-                        timing_updates = {}
-                        if render_interval is not None:
-                            timing_updates['render_interval'] = render_interval
-                        if display_duration is not None:
-                            timing_updates['display_duration'] = display_duration
-
-                        def update_fn(manifest):
-                            manifest['apps'][app_id].update(timing_updates)
-                        starlark_plugin._update_manifest_safe(update_fn)
-                    except Exception as e:
-                        logger.warning(f"Failed to persist timing to manifest for {app_id}: {e}")
-                starlark_plugin._render_app(app, force=True)
-                return jsonify({'status': 'success', 'message': 'Configuration updated', 'config': app.config})
-            else:
-                return jsonify({'status': 'error', 'message': 'Failed to save configuration'}), 500
-
-        # Standalone: update both config.json and manifest
-        manifest = _read_starlark_manifest()
-        app_data = manifest.get('apps', {}).get(app_id)
-        if not app_data:
-            return jsonify({'status': 'error', 'message': f'App not found: {app_id}'}), 404
-
-        # Extract timing keys (they go in manifest, not config.json)
-        render_interval = data.pop('render_interval', None)
-        display_duration = data.pop('display_duration', None)
-
-        # Update manifest with timing values
-        if render_interval is not None:
-            app_data['render_interval'] = render_interval
-        if display_duration is not None:
-            app_data['display_duration'] = display_duration
-
-        # Load current config from config.json
-        app_dir = _STARLARK_APPS_DIR / app_id
-        config_file = app_dir / "config.json"
-        current_config = {}
-        if config_file.exists():
-            try:
-                with open(config_file, 'r') as f:
-                    current_config = json.load(f)
-            except Exception as e:
-                logger.warning(f"Failed to load config for {app_id}: {e}")
-
-        # Update config with new values (excluding timing keys)
-        current_config.update(data)
-
-        # Write updated config to config.json
-        try:
-            with open(config_file, 'w') as f:
-                json.dump(current_config, f, indent=2)
-        except Exception as e:
-            logger.error(f"Failed to save config.json for {app_id}: {e}")
-            return jsonify({'status': 'error', 'message': f'Failed to save configuration: {e}'}), 500
-
-        # Also update manifest for backward compatibility
-        app_data.setdefault('config', {}).update(data)
-
-        if _write_starlark_manifest(manifest):
-            return jsonify({'status': 'success', 'message': 'Configuration updated', 'config': current_config})
-        else:
-            return jsonify({'status': 'error', 'message': 'Failed to save manifest'}), 500
-
-    except Exception as e:
-        logger.exception("[Starlark] update_starlark_app_config failed")
-        return jsonify({'status': 'error', 'message': 'Failed to update Starlark app config'}), 500
-
-
-@api_v3.route('/starlark/apps/<app_id>/toggle', methods=['POST'])
-def toggle_starlark_app(app_id):
-    """Enable or disable a Starlark app."""
-    try:
-        data = request.get_json() or {}
-
-        starlark_plugin = _get_starlark_plugin()
-        if starlark_plugin:
-            app = starlark_plugin.apps.get(app_id)
-            if not app:
-                return jsonify({'status': 'error', 'message': f'App not found: {app_id}'}), 404
-            enabled = data.get('enabled')
-            if enabled is None:
-                enabled = not app.is_enabled()
-            app.manifest['enabled'] = enabled
-            # Use safe manifest update to prevent race conditions
-            def update_fn(manifest):
-                manifest['apps'][app_id]['enabled'] = enabled
-            starlark_plugin._update_manifest_safe(update_fn)
-            return jsonify({'status': 'success', 'message': f"App {'enabled' if enabled else 'disabled'}", 'enabled': enabled})
-
-        # Standalone: update manifest directly
-        manifest = _read_starlark_manifest()
-        app_data = manifest.get('apps', {}).get(app_id)
-        if not app_data:
-            return jsonify({'status': 'error', 'message': f'App not found: {app_id}'}), 404
-
-        enabled = data.get('enabled')
-        if enabled is None:
-            enabled = not app_data.get('enabled', True)
-        app_data['enabled'] = enabled
-        if _write_starlark_manifest(manifest):
-            return jsonify({'status': 'success', 'message': f"App {'enabled' if enabled else 'disabled'}", 'enabled': enabled})
-        else:
-            return jsonify({'status': 'error', 'message': 'Failed to save'}), 500
-
-    except Exception as e:
-        logger.exception("[Starlark] toggle_starlark_app failed")
-        return jsonify({'status': 'error', 'message': 'Failed to toggle Starlark app'}), 500
-
-
-@api_v3.route('/starlark/apps/<app_id>/render', methods=['POST'])
-def render_starlark_app(app_id):
-    """Force render a Starlark app."""
-    try:
-        is_valid, err = _validate_starlark_app_path(app_id)
-        if not is_valid:
-            return jsonify({'status': 'error', 'message': err}), 400
-
-        starlark_plugin = _get_starlark_plugin()
-        if starlark_plugin:
-            app = starlark_plugin.apps.get(app_id)
-            if not app:
-                return jsonify({'status': 'error', 'message': f'App not found: {app_id}'}), 404
-            success = starlark_plugin._render_app(app, force=True)
-            if success:
-                return jsonify({'status': 'success', 'message': 'App rendered',
-                                'frame_count': len(app.frames) if app.frames else 0})
-            return jsonify({'status': 'error', 'message': 'Failed to render app'}), 500
-
-        # Web-service context: plugin not loaded, call pixlet directly
-        success, status_code, error = _standalone_render_starlark_app(app_id)
-        if success:
-            return jsonify({'status': 'success', 'message': 'App rendered successfully', 'frame_count': 0}), status_code
-        return jsonify({'status': 'error', 'message': error or 'Render failed', 'frame_count': 0}), status_code
-
-    except Exception as e:
-        logger.exception("[Starlark] render_starlark_app failed")
-        return jsonify({'status': 'error', 'message': 'Failed to render Starlark app'}), 500
-
-
-@api_v3.route('/starlark/repository/browse', methods=['GET'])
-def browse_tronbyte_repository():
-    """Browse all apps in the Tronbyte repository (bulk cached fetch).
-
-    Returns ALL apps with metadata, categories, and authors.
-    Filtering/sorting/pagination is handled client-side.
-    Results are cached server-side for 2 hours.
-    """
-    try:
-        TronbyteRepository = _get_tronbyte_repository_class()
-
-        config = api_v3.config_manager.load_config() if api_v3.config_manager else {}
-        github_token = config.get('github_token')
-        repo = TronbyteRepository(github_token=github_token)
-
-        result = repo.list_all_apps_cached()
-
-        rate_limit = repo.get_rate_limit_info()
-
-        return jsonify({
-            'status': 'success',
-            'apps': result['apps'],
-            'categories': result['categories'],
-            'authors': result['authors'],
-            'count': result['count'],
-            'cached': result['cached'],
-            'rate_limit': rate_limit,
-        })
-
-    except Exception as e:
-        logger.exception("[Starlark] browse_tronbyte_repository failed")
-        return jsonify({'status': 'error', 'message': 'Failed to browse repository'}), 500
-
-
-@api_v3.route('/starlark/repository/install', methods=['POST'])
-def install_from_tronbyte_repository():
-    """Install an app from the Tronbyte repository."""
-    try:
-        data = request.get_json()
-        if not data or 'app_id' not in data:
-            return jsonify({'status': 'error', 'message': 'app_id is required'}), 400
-
-        app_id, app_id_error = _validate_and_sanitize_app_id(data['app_id'])
-        if app_id_error:
-            return jsonify({'status': 'error', 'message': f'Invalid app_id: {app_id_error}'}), 400
-
-        TronbyteRepository = _get_tronbyte_repository_class()
-        import tempfile
-
-        config = api_v3.config_manager.load_config() if api_v3.config_manager else {}
-        github_token = config.get('github_token')
-        repo = TronbyteRepository(github_token=github_token)
-
-        success, metadata, error = repo.get_app_metadata(data['app_id'])
-        if not success:
-            return jsonify({'status': 'error', 'message': f'Failed to fetch app metadata: {error}'}), 404
-
-        with tempfile.NamedTemporaryFile(delete=False, suffix='.star') as tmp:
-            temp_path = tmp.name
-
-        try:
-            # Pass filename from metadata (e.g., "analog_clock.star" for analogclock app)
-            # Note: manifest uses 'fileName' (camelCase), not 'filename'
-            filename = metadata.get('fileName') if metadata else None
-            success, error = repo.download_star_file(data['app_id'], Path(temp_path), filename=filename)
-            if not success:
-                return jsonify({'status': 'error', 'message': f'Failed to download app: {error}'}), 500
-
-            # Download assets (images, sources, etc.) to a temp directory
-            import tempfile
-            temp_assets_dir = tempfile.mkdtemp()
-            try:
-                success_assets, error_assets = repo.download_app_assets(data['app_id'], Path(temp_assets_dir))
-                # Asset download is non-critical - log warning but continue if it fails
-                if not success_assets:
-                    logger.warning(f"Failed to download assets for {data['app_id']}: {error_assets}")
-
-                render_interval = data.get('render_interval', 300)
-                ri, err = _validate_timing_value(render_interval, 'render_interval')
-                if err:
-                    return jsonify({'status': 'error', 'message': err}), 400
-                render_interval = ri or 300
-
-                display_duration = data.get('display_duration', 15)
-                dd, err = _validate_timing_value(display_duration, 'display_duration')
-                if err:
-                    return jsonify({'status': 'error', 'message': err}), 400
-                display_duration = dd or 15
-
-                install_metadata = {
-                    'name': metadata.get('name', app_id) if metadata else app_id,
-                    'render_interval': render_interval,
-                    'display_duration': display_duration
-                }
-
-                starlark_plugin = _get_starlark_plugin()
-                if starlark_plugin:
-                    success = starlark_plugin.install_app(app_id, temp_path, install_metadata, assets_dir=temp_assets_dir)
-                else:
-                    success = _install_star_file(app_id, temp_path, install_metadata, assets_dir=temp_assets_dir)
-            finally:
-                # Clean up temp assets directory
-                import shutil
-                try:
-                    shutil.rmtree(temp_assets_dir)
-                except OSError:
-                    pass
-
-            if success:
-                return jsonify({'status': 'success', 'message': f'App installed: {metadata.get("name", app_id) if metadata else app_id}', 'app_id': app_id})
-            else:
-                return jsonify({'status': 'error', 'message': 'Failed to install app'}), 500
-        finally:
-            try:
-                os.unlink(temp_path)
-            except OSError:
-                pass
-
-    except Exception as e:
-        logger.exception("[Starlark] install_from_tronbyte_repository failed")
-        return jsonify({'status': 'error', 'message': 'Failed to install from repository'}), 500
-
-
-@api_v3.route('/starlark/repository/categories', methods=['GET'])
-def get_tronbyte_categories():
-    """Get list of available app categories (uses bulk cache)."""
-    try:
-        TronbyteRepository = _get_tronbyte_repository_class()
-        config = api_v3.config_manager.load_config() if api_v3.config_manager else {}
-        repo = TronbyteRepository(github_token=config.get('github_token'))
-
-        result = repo.list_all_apps_cached()
-
-        return jsonify({'status': 'success', 'categories': result['categories']})
-
-    except Exception as e:
-        logger.exception("[Starlark] get_tronbyte_categories failed")
-        return jsonify({'status': 'error', 'message': 'Failed to fetch categories'}), 500
-
-
-@api_v3.route('/starlark/install-pixlet', methods=['POST'])
-def install_pixlet():
-    """Download and install Pixlet binary."""
-    try:
-        script_path = PROJECT_ROOT / 'scripts' / 'download_pixlet.sh'
-        if not script_path.exists():
-            return jsonify({'status': 'error', 'message': 'Installation script not found'}), 404
-
-        os.chmod(script_path, 0o755)
-
-        result = subprocess.run(
-            [str(script_path)],
-            cwd=str(PROJECT_ROOT),
-            capture_output=True,
-            text=True,
-            timeout=300
-        )
-
-        if result.returncode == 0:
-            logger.info("Pixlet downloaded successfully")
-            return jsonify({'status': 'success', 'message': 'Pixlet installed successfully!', 'output': result.stdout})
-        else:
-            return jsonify({'status': 'error', 'message': f'Failed to download Pixlet: {result.stderr}'}), 500
-
-    except subprocess.TimeoutExpired:
-        return jsonify({'status': 'error', 'message': 'Download timed out'}), 500
-    except Exception as e:
-        logger.exception("[Starlark] install_pixlet failed")
-        return jsonify({'status': 'error', 'message': 'Failed to install Pixlet'}), 500
