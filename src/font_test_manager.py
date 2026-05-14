@@ -79,10 +79,6 @@ class FontTestManager:
             # Clear the display
             self.display_manager.clear()
             
-            # Get display dimensions
-            width = self.display_manager.matrix.width
-            height = self.display_manager.matrix.height
-            
             # Draw font name at the top
             self.display_manager.draw_text(self.current_config['display_name'], y=2, color=(255, 255, 255))
             

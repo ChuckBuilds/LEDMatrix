@@ -58,8 +58,6 @@ class DisplayManager:
         
     def _setup_matrix(self):
         """Initialize the RGB matrix with configuration settings."""
-        setup_start = time.time()
-        
         try:
             # Allow callers (e.g., web UI) to force non-hardware fallback mode
             if getattr(self, '_force_fallback', False):

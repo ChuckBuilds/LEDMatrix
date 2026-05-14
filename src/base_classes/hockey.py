@@ -77,8 +77,6 @@ class Hockey(SportsCore):
                 away_shots = round(home_team_saves / home_team_saves_per)
             if away_team_saves_per > 0:
                 home_shots = round(away_team_saves / away_team_saves_per)
-            status_short = status["type"].get("shortDetail", "")
-
             if situation and status["type"]["state"] == "in":
                 # Detect scoring events from status detail
                 # status_detail = status["type"].get("detail", "")

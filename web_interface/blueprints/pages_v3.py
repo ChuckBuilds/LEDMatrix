@@ -37,8 +37,6 @@ def index():
         secrets_config_json = "{}"
         main_config_data = {}
         secrets_config_data = {}
-        main_config_path = ""
-        secrets_config_path = ""
 
     return render_template('v3/index.html',
                            schedule_config=schedule_config,

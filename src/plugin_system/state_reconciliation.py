@@ -285,7 +285,6 @@ class StateReconciliation:
         
         config = config_state.get(plugin_id, {})
         disk = disk_state.get(plugin_id, {})
-        manager = manager_state.get(plugin_id, {})
         state_mgr = state_manager_state.get(plugin_id, {})
         
         # Check: Plugin exists on disk but not in config

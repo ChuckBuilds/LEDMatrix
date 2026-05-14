@@ -1728,7 +1728,7 @@ class PluginStoreManager:
         
         try:
             self.logger.info(f"Installing dependencies for {plugin_path.name}")
-            result = subprocess.run(
+            subprocess.run(
                 ['pip3', 'install', '--break-system-packages', '-r', str(requirements_file)],
                 check=True,
                 capture_output=True,

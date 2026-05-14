@@ -223,7 +223,7 @@ class BackgroundDataService:
             self.stats['cache_misses'] += 1
         
         # Submit to executor
-        future = self.executor.submit(self._fetch_data_worker, request)
+        self.executor.submit(self._fetch_data_worker, request)
         
         logger.info(f"Submitted background fetch request {request_id} for {sport} {year}")
         return request_id

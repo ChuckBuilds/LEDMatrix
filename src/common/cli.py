@@ -63,12 +63,12 @@ def test_utilities(display_width: int, display_height: int):
         
         # Test GameHelper
         print("Testing GameHelper...")
-        game_helper = GameHelper()
+        GameHelper()
         print("GameHelper initialized")
-        
+
         # Test ConfigHelper
         print("Testing ConfigHelper...")
-        config_helper = ConfigHelper()
+        ConfigHelper()
         print("ConfigHelper initialized")
         
         print("All tests passed!")

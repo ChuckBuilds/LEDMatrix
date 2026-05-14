@@ -697,8 +697,6 @@ class FontManager:
             fonts_dir = Path("assets/fonts")
             ensure_directory_permissions(fonts_dir, get_assets_dir_mode())
 
-            target_path = os.path.join(fonts_dir, f"{family_name}.{font_file_path.rsplit('.', 1)[-1]}")
-
             # Add to catalog
             self.font_catalog[family_name] = font_file_path
             self.clear_cache()
@@ -744,11 +742,11 @@ class FontManager:
 
             if font_path.endswith('.bdf'):
                 # Try to load BDF font
-                face = freetype.Face(font_path)
+                freetype.Face(font_path)
                 return {"valid": True, "type": "bdf", "family": "unknown"}
             elif font_path.endswith('.ttf'):
                 # Try to load TTF font
-                font = ImageFont.truetype(font_path, 12)
+                ImageFont.truetype(font_path, 12)
                 return {"valid": True, "type": "ttf", "family": "unknown"}
             else:
                 return {"valid": False, "error": "Unsupported font format"}
