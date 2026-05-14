@@ -1,4 +1,5 @@
 from flask import Blueprint, render_template, flash
+from markupsafe import escape
 import json
 import logging
 from pathlib import Path
@@ -95,7 +96,7 @@ def load_plugin_config_partial(plugin_id):
     try:
         return _load_plugin_config_partial(plugin_id)
     except Exception as e:
-        return f'<div class="text-red-500 p-4">Error loading plugin config: {str(e)}</div>', 500
+        return f'<div class="text-red-500 p-4">Error loading plugin config: {escape(str(e))}</div>', 500
 
 def _load_overview_partial():
     """Load overview partial with system stats"""
@@ -352,7 +353,7 @@ def _load_plugin_config_partial(plugin_id):
             plugin_info = pages_v3.plugin_manager.get_plugin_info(plugin_id)
         
         if not plugin_info:
-            return f'<div class="text-red-500 p-4">Plugin "{plugin_id}" not found</div>', 404
+            return f'<div class="text-red-500 p-4">Plugin "{escape(plugin_id)}" not found</div>', 404
         
         # Get plugin instance (may be None if not loaded)
         plugin_instance = pages_v3.plugin_manager.get_plugin(plugin_id)
@@ -454,7 +455,7 @@ def _load_plugin_config_partial(plugin_id):
     except Exception as e:
         import traceback
         traceback.print_exc()
-        return f'<div class="text-red-500 p-4">Error loading plugin config: {str(e)}</div>', 500
+        return f'<div class="text-red-500 p-4">Error loading plugin config: {escape(str(e))}</div>', 500
 
 
 def _load_starlark_config_partial(app_id):
