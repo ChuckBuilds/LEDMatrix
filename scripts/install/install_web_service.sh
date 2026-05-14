@@ -14,9 +14,6 @@ else
     ACTUAL_USER=$(whoami)
 fi
 
-# Get the home directory of the actual user
-USER_HOME=$(eval echo ~$ACTUAL_USER)
-
 # Determine the Project Root Directory (parent of scripts/install/)
 PROJECT_ROOT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 

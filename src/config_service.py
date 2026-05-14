@@ -114,9 +114,9 @@ class ConfigService:
             self._start_file_watching()
     
     def _calculate_checksum(self, config: Dict[str, Any]) -> str:
-        """Calculate MD5 checksum of configuration."""
+        """Calculate checksum of configuration for change detection."""
         config_str = json.dumps(config, sort_keys=True)
-        return hashlib.md5(config_str.encode()).hexdigest()
+        return hashlib.sha256(config_str.encode()).hexdigest()
     
     def _load_config(self) -> bool:
         """

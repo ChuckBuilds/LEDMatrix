@@ -34,16 +34,16 @@ This document outlines the transformation of the LEDMatrix project into a modula
 
 ## Table of Contents
 
-1. [Current Architecture Analysis](#current-architecture-analysis)
-2. [Plugin System Design](#plugin-system-design)
-3. [Plugin Store & Discovery](#plugin-store--discovery)
-4. [Web UI Transformation](#web-ui-transformation)
-5. [Migration Strategy](#migration-strategy)
-6. [Plugin Developer Guidelines](#plugin-developer-guidelines)
-7. [Technical Implementation Details](#technical-implementation-details)
-8. [Best Practices & Standards](#best-practices--standards)
-9. [Security Considerations](#security-considerations)
-10. [Implementation Roadmap](#implementation-roadmap)
+1. [Current Architecture Analysis](#1-current-architecture-analysis)
+2. [Plugin System Design](#2-plugin-system-design)
+3. [Plugin Store & Discovery](#3-plugin-store--discovery)
+4. [Web UI Transformation](#4-web-ui-transformation)
+5. [Migration Strategy](#5-migration-strategy)
+6. [Plugin Developer Guidelines](#6-plugin-developer-guidelines)
+7. [Technical Implementation Details](#7-technical-implementation-details)
+8. [Best Practices & Standards](#8-best-practices--standards)
+9. [Security Considerations](#9-security-considerations)
+10. [Implementation Roadmap](#10-implementation-roadmap)
 
 ---
 

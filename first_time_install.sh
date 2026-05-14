@@ -259,8 +259,6 @@ else
 fi
 
 echo ""
-CLEAR='
-'
 CURRENT_STEP="Install system dependencies"
 echo "Step 1: Installing system dependencies..."
 echo "----------------------------------------"
@@ -671,8 +669,6 @@ if [ -f "$PROJECT_ROOT_DIR/requirements.txt" ]; then
         echo "[$PACKAGE_NUM/$TOTAL_PACKAGES] Installing: $line"
         
         # Check if package is already installed (basic check - may not catch all cases)
-        PACKAGE_NAME=$(echo "$line" | sed -E 's/[<>=!].*$//' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
-        
         # Try installing with verbose output and timeout (if available)
         # Use --no-cache-dir to avoid cache issues, --verbose for diagnostics
         INSTALL_OUTPUT=$(mktemp)
@@ -1479,7 +1475,7 @@ echo "WiFi Connection Status:"
 if command -v nmcli >/dev/null 2>&1; then
     WIFI_STATUS=$(nmcli -t -f DEVICE,TYPE,STATE device status 2>/dev/null | grep -i wifi || echo "")
     if [ -n "$WIFI_STATUS" ]; then
-        echo "$WIFI_STATUS" | while IFS=':' read -r device type state; do
+        echo "$WIFI_STATUS" | while IFS=':' read -r _ type state; do
             if [ "$state" = "connected" ]; then
                 SSID=$(nmcli -t -f active,ssid device wifi 2>/dev/null | grep "^yes:" | cut -d: -f2 | head -1)
                 if [ -n "$SSID" ]; then

@@ -7,12 +7,6 @@ echo "Fixing LEDMatrix assets directory permissions..."
 
 # Get the real user (not root when running with sudo)
 REAL_USER=${SUDO_USER:-$USER}
-# Resolve the home directory of the real user robustly
-if command -v getent >/dev/null 2>&1; then
-    REAL_HOME=$(getent passwd "$REAL_USER" | cut -d: -f6)
-else
-    REAL_HOME=$(eval echo ~"$REAL_USER")
-fi
 REAL_GROUP=$(id -gn "$REAL_USER")
 
 # Get the project directory
