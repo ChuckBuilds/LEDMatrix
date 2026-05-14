@@ -31,7 +31,52 @@
             </div>
             <div id="installed-plugins-content" class="block">
                 <div id="installed-plugins-grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-6">
-                    <!-- Plugins will be loaded here -->
+                    <!-- Skeleton cards shown while installed plugins load -->
+                    <div class="installed-skeleton plugin-card animate-pulse">
+                        <div class="flex items-start justify-between mb-4">
+                            <div class="flex-1 min-w-0 space-y-2">
+                                <div class="h-4 bg-gray-200 rounded w-3/4"></div>
+                                <div class="h-3 bg-gray-200 rounded w-1/2"></div>
+                                <div class="h-3 bg-gray-200 rounded w-2/3"></div>
+                            </div>
+                            <div class="h-6 w-10 bg-gray-200 rounded-full ml-4 flex-shrink-0"></div>
+                        </div>
+                        <div class="space-y-2 mb-4">
+                            <div class="h-3 bg-gray-200 rounded w-full"></div>
+                            <div class="h-3 bg-gray-200 rounded w-5/6"></div>
+                        </div>
+                        <div class="h-8 bg-gray-200 rounded w-full mt-auto"></div>
+                    </div>
+                    <div class="installed-skeleton plugin-card animate-pulse hidden md:block">
+                        <div class="flex items-start justify-between mb-4">
+                            <div class="flex-1 min-w-0 space-y-2">
+                                <div class="h-4 bg-gray-200 rounded w-2/3"></div>
+                                <div class="h-3 bg-gray-200 rounded w-1/3"></div>
+                                <div class="h-3 bg-gray-200 rounded w-1/2"></div>
+                            </div>
+                            <div class="h-6 w-10 bg-gray-200 rounded-full ml-4 flex-shrink-0"></div>
+                        </div>
+                        <div class="space-y-2 mb-4">
+                            <div class="h-3 bg-gray-200 rounded w-full"></div>
+                            <div class="h-3 bg-gray-200 rounded w-4/5"></div>
+                        </div>
+                        <div class="h-8 bg-gray-200 rounded w-full mt-auto"></div>
+                    </div>
+                    <div class="installed-skeleton plugin-card animate-pulse hidden lg:block">
+                        <div class="flex items-start justify-between mb-4">
+                            <div class="flex-1 min-w-0 space-y-2">
+                                <div class="h-4 bg-gray-200 rounded w-4/5"></div>
+                                <div class="h-3 bg-gray-200 rounded w-2/5"></div>
+                                <div class="h-3 bg-gray-200 rounded w-3/5"></div>
+                            </div>
+                            <div class="h-6 w-10 bg-gray-200 rounded-full ml-4 flex-shrink-0"></div>
+                        </div>
+                        <div class="space-y-2 mb-4">
+                            <div class="h-3 bg-gray-200 rounded w-full"></div>
+                            <div class="h-3 bg-gray-200 rounded w-3/4"></div>
+                        </div>
+                        <div class="h-8 bg-gray-200 rounded w-full mt-auto"></div>
+                    </div>
                 </div>
             </div>
         </div>
@@ -203,14 +248,30 @@
             </div>
 
             <div id="plugin-store-grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-6">
-                <!-- Loading skeleton -->
+                <!-- Loading skeleton — hidden by showStoreLoading(false) when data arrives -->
                 <div class="store-loading col-span-full">
-                    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-4">
-                        <div class="bg-gray-200 rounded-lg p-4 h-48 animate-pulse"></div>
-                        <div class="bg-gray-200 rounded-lg p-4 h-48 animate-pulse"></div>
-                        <div class="bg-gray-200 rounded-lg p-4 h-48 animate-pulse"></div>
-                        <div class="bg-gray-200 rounded-lg p-4 h-48 animate-pulse"></div>
-                        <div class="bg-gray-200 rounded-lg p-4 h-48 animate-pulse"></div>
+                    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-6">
+                        {% for _ in range(10) %}
+                        <div class="plugin-card animate-pulse">
+                            <div class="flex items-start justify-between mb-4">
+                                <div class="flex-1 min-w-0 space-y-2">
+                                    <div class="h-4 bg-gray-200 rounded w-3/4"></div>
+                                    <div class="h-3 bg-gray-200 rounded w-1/2"></div>
+                                </div>
+                                <div class="h-5 w-14 bg-gray-200 rounded-full ml-3 flex-shrink-0"></div>
+                            </div>
+                            <div class="space-y-2 mb-4">
+                                <div class="h-3 bg-gray-200 rounded w-full"></div>
+                                <div class="h-3 bg-gray-200 rounded w-5/6"></div>
+                                <div class="h-3 bg-gray-200 rounded w-4/6"></div>
+                            </div>
+                            <div class="flex gap-2 mt-auto">
+                                <div class="h-3 bg-gray-200 rounded w-12"></div>
+                                <div class="h-3 bg-gray-200 rounded w-16"></div>
+                            </div>
+                            <div class="h-8 bg-gray-200 rounded w-full mt-3"></div>
+                        </div>
+                        {% endfor %}
                     </div>
                 </div>
             </div>

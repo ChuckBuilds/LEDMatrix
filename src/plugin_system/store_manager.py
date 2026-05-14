@@ -1850,58 +1850,72 @@ class PluginStoreManager:
                 return cached[1]
 
         try:
-            sha_result = subprocess.run(
-                ['git', '-C', str(plugin_path), 'rev-parse', 'HEAD'],
+            # .git may be a file (worktree / submodule) containing "gitdir: <path>".
+            # Resolve it to the actual git directory before reading any files.
+            try:
+                if git_dir.is_file():
+                    pointer = git_dir.read_text(encoding='utf-8', errors='replace').strip()
+                    if pointer.startswith('gitdir:'):
+                        resolved = (plugin_path / pointer[len('gitdir:'):].strip()).resolve()
+                        if resolved.is_dir():
+                            git_dir = resolved
+                        else:
+                            return None
+                    else:
+                        return None
+            except (OSError, NotADirectoryError):
+                return None
+
+            # Read branch directly from .git/HEAD (no subprocess).
+            branch = ''
+            try:
+                head_text = (git_dir / 'HEAD').read_text(encoding='utf-8', errors='replace').strip()
+                if head_text.startswith('ref: refs/heads/'):
+                    branch = head_text[len('ref: refs/heads/'):]
+                elif head_text.startswith('ref: '):
+                    branch = head_text[len('ref: '):]
+                # else: detached HEAD — branch stays ''
+            except (OSError, NotADirectoryError):
+                pass
+
+            # Remote URL from .git/config — parse [remote "origin"] url line.
+            remote_url = None
+            try:
+                config_text = (git_dir / 'config').read_text(encoding='utf-8', errors='replace')
+                in_origin = False
+                for line in config_text.splitlines():
+                    stripped = line.strip()
+                    if stripped == '[remote "origin"]':
+                        in_origin = True
+                    elif stripped.startswith('['):
+                        in_origin = False
+                    elif in_origin and stripped.startswith('url') and '=' in stripped:
+                        remote_url = stripped.split('=', 1)[1].strip()
+                        break
+            except (OSError, NotADirectoryError):
+                pass
+
+            # Single subprocess: SHA + commit date in one call.
+            log_result = subprocess.run(
+                ['git', '-C', str(plugin_path), 'log', '-1', '--format=%H%n%cI', 'HEAD'],
                 capture_output=True,
                 text=True,
                 timeout=10,
                 check=True
             )
-            sha = sha_result.stdout.strip()
-
-            branch_result = subprocess.run(
-                ['git', '-C', str(plugin_path), 'rev-parse', '--abbrev-ref', 'HEAD'],
-                capture_output=True,
-                text=True,
-                timeout=10,
-                check=True
-            )
-            branch = branch_result.stdout.strip()
-
-            if branch == 'HEAD':
-                branch = ''
-
-            # Get remote URL
-            remote_url_result = subprocess.run(
-                ['git', '-C', str(plugin_path), 'config', '--get', 'remote.origin.url'],
-                capture_output=True,
-                text=True,
-                timeout=10,
-                check=False
-            )
-            remote_url = remote_url_result.stdout.strip() if remote_url_result.returncode == 0 else None
-
-            # Get commit date in ISO format
-            date_result = subprocess.run(
-                ['git', '-C', str(plugin_path), 'log', '-1', '--format=%cI', 'HEAD'],
-                capture_output=True,
-                text=True,
-                timeout=10,
-                check=True
-            )
-            commit_date_iso = date_result.stdout.strip()
+            lines = log_result.stdout.strip().splitlines()
+            sha = lines[0] if lines else ''
+            commit_date_iso = lines[1] if len(lines) > 1 else ''
 
             result = {
                 'sha': sha,
                 'short_sha': sha[:7] if sha else '',
-                'branch': branch
+                'branch': branch,
             }
-            
-            # Add remote URL if available
+
             if remote_url:
                 result['remote_url'] = remote_url
 
-            # Add commit date if available
             if commit_date_iso:
                 result['date_iso'] = commit_date_iso
                 result['date'] = self._iso_to_date(commit_date_iso)
