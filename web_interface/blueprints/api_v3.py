@@ -1772,9 +1772,7 @@ def get_installed_plugins():
         # Load config once before the loop (not per-plugin)
         full_config = api_v3.config_manager.load_config() if api_v3.config_manager else {}
 
-        # Format for the web interface
-        plugins = []
-        for plugin_info in all_plugin_info:
+        def _build_plugin_entry(plugin_info):
             plugin_id = plugin_info.get('id')
 
             # Re-read manifest from disk to ensure we have the latest metadata
@@ -1782,51 +1780,38 @@ def get_installed_plugins():
             if manifest_path.exists():
                 try:
                     with open(manifest_path, 'r', encoding='utf-8') as f:
-                        fresh_manifest = json.load(f)
-                    # Update plugin_info with fresh manifest data
-                    plugin_info.update(fresh_manifest)
+                        plugin_info.update(json.load(f))
                 except Exception as e:
-                    # If we can't read the fresh manifest, use the cached one
-                    print(f"Warning: Could not read fresh manifest for {plugin_id}: {e}")
+                    logger.debug("Could not read fresh manifest for %s: %s", plugin_id, e)
 
-            # Get enabled status from config (source of truth)
-            # Read from config file first, fall back to plugin instance if config doesn't have the key
+            # Enabled status: config is source of truth, fall back to instance
             enabled = None
-            if api_v3.config_manager:
-                plugin_config = full_config.get(plugin_id, {})
-                # Check if 'enabled' key exists in config (even if False)
-                if 'enabled' in plugin_config:
-                    enabled = bool(plugin_config['enabled'])
+            plugin_config = full_config.get(plugin_id, {})
+            if 'enabled' in plugin_config:
+                enabled = bool(plugin_config['enabled'])
 
-            # Fallback to plugin instance if config doesn't have enabled key
+            # Single get_plugin() call shared for both enabled fallback and Vegas mode
+            plugin_instance = api_v3.plugin_manager.get_plugin(plugin_id)
             if enabled is None:
-                plugin_instance = api_v3.plugin_manager.get_plugin(plugin_id)
-                if plugin_instance:
-                    enabled = plugin_instance.enabled
-                else:
-                    # Default to True if no config key and plugin not loaded (matches BasePlugin default)
-                    enabled = True
+                enabled = plugin_instance.enabled if plugin_instance else True
 
-            # Get verified status from store registry (no GitHub API calls needed)
+            # Verified from registry (no network call)
             store_info = api_v3.plugin_store_manager.get_registry_info(plugin_id)
             verified = store_info.get('verified', False) if store_info else False
 
-            # Get local git info for installed plugin (actual installed commit)
+            # Local git info (single subprocess on cache miss, zero on hit)
             plugin_path = Path(api_v3.plugin_manager.plugins_dir) / plugin_id
             local_git_info = api_v3.plugin_store_manager._get_local_git_info(plugin_path) if plugin_path.exists() else None
 
-            # Use local git info if available (actual installed commit), otherwise fall back to manifest/store info
             if local_git_info:
-                last_commit = local_git_info.get('short_sha') or local_git_info.get('sha', '')[:7] if local_git_info.get('sha') else None
+                sha = local_git_info.get('sha', '')
+                last_commit = local_git_info.get('short_sha') or (sha[:7] if sha else None)
                 branch = local_git_info.get('branch')
-                # Use commit date from git if available
                 last_updated = local_git_info.get('date_iso') or local_git_info.get('date')
             else:
-                # Fall back to manifest/store info if no local git info
                 last_updated = plugin_info.get('last_updated')
                 last_commit = plugin_info.get('last_commit') or plugin_info.get('last_commit_sha')
                 branch = plugin_info.get('branch')
-
                 if store_info:
                     last_updated = last_updated or store_info.get('last_updated') or store_info.get('last_updated_iso')
                     last_commit = last_commit or store_info.get('last_commit') or store_info.get('last_commit_sha')
@@ -1836,35 +1821,26 @@ def get_installed_plugins():
             if store_info and not last_commit_message:
                 last_commit_message = store_info.get('last_commit_message')
 
-            # Get web_ui_actions from manifest if available
-            web_ui_actions = plugin_info.get('web_ui_actions', [])
-
-            # Get Vegas display mode info from plugin instance
+            # Vegas mode from instance, overridden by explicit config value
             vegas_mode = None
             vegas_content_type = None
-            plugin_instance = api_v3.plugin_manager.get_plugin(plugin_id)
             if plugin_instance:
                 try:
-                    # Try to get the display mode enum
                     if hasattr(plugin_instance, 'get_vegas_display_mode'):
                         mode = plugin_instance.get_vegas_display_mode()
                         vegas_mode = mode.value if hasattr(mode, 'value') else str(mode)
                 except (AttributeError, TypeError, ValueError) as e:
                     logger.debug("[%s] Failed to get vegas_display_mode: %s", plugin_id, e)
                 try:
-                    # Get legacy content type as fallback
                     if hasattr(plugin_instance, 'get_vegas_content_type'):
                         vegas_content_type = plugin_instance.get_vegas_content_type()
                 except (AttributeError, TypeError, ValueError) as e:
                     logger.debug("[%s] Failed to get vegas_content_type: %s", plugin_id, e)
 
-            # Also check plugin config for explicit vegas_mode setting
-            if api_v3.config_manager:
-                plugin_cfg = full_config.get(plugin_id, {})
-                if 'vegas_mode' in plugin_cfg:
-                    vegas_mode = plugin_cfg['vegas_mode']
+            if 'vegas_mode' in plugin_config:
+                vegas_mode = plugin_config['vegas_mode']
 
-            plugins.append({
+            return {
                 'id': plugin_id,
                 'name': plugin_info.get('name', plugin_id),
                 'version': plugin_info.get('version', ''),
@@ -1879,10 +1855,15 @@ def get_installed_plugins():
                 'last_commit': last_commit,
                 'last_commit_message': last_commit_message,
                 'branch': branch,
-                'web_ui_actions': web_ui_actions,
+                'web_ui_actions': plugin_info.get('web_ui_actions', []),
                 'vegas_mode': vegas_mode,
-                'vegas_content_type': vegas_content_type
-            })
+                'vegas_content_type': vegas_content_type,
+            }
+
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=8) as executor:
+            results = list(executor.map(_build_plugin_entry, all_plugin_info))
+        plugins = [r for r in results if r is not None]
 
         return jsonify({'status': 'success', 'data': {'plugins': plugins}})
     except Exception as e:

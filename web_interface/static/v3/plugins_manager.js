@@ -1223,13 +1223,21 @@ function initializePlugins() {
     // during a re-swap, fetch fresh data including GitHub commit/version info.
     const isReswapWarm = !!window.pluginManager._reswap && !storeCacheExpired();
     window.pluginManager._reswap = false;
-    // Await the installed-plugins fetch so window.installedPlugins is populated before
-    // searchPluginStore renders Installed/Reinstall badges against it.
-    loadInstalledPlugins().catch(err => {
-        console.error('[PluginStore] loadInstalledPlugins failed:', err);
-    }).finally(() => {
-        searchPluginStore(!isReswapWarm);
-    });
+
+    // Fire both requests in parallel so the store doesn't wait for installed plugins.
+    // The store renders install/update badges using window.installedPlugins || [] so
+    // it works with an empty list. When installed plugins finish loading we do a
+    // lightweight re-render from the already-cached store data to refresh the badges.
+    searchPluginStore(!isReswapWarm);
+    loadInstalledPlugins()
+        .catch(err => console.error('[PluginStore] loadInstalledPlugins failed:', err))
+        .then(() => {
+            // Re-render store from cache to update install/update/reinstall badges now
+            // that window.installedPlugins is populated. No network call — instant.
+            if (typeof applyStoreFiltersAndSort === 'function') {
+                applyStoreFiltersAndSort(true);
+            }
+        });
 
     // Setup search functionality (with guard against duplicate listeners)
     const searchInput = document.getElementById('plugin-search');
@@ -1417,6 +1425,9 @@ function renderInstalledPlugins(plugins) {
             }
         }
     }
+
+    // Remove skeleton cards before rendering real content
+    container.querySelectorAll('.installed-skeleton').forEach(el => el.remove());
 
     if (plugins.length === 0) {
         container.innerHTML = `
