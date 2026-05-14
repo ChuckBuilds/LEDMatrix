@@ -139,7 +139,7 @@ class DisplaySyncManager:
         # Receive socket: listens for hello + heartbeat from follower
         self._recv_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self._recv_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        self._recv_sock.bind(("", self.port))
+        self._recv_sock.bind(("", self.port))  # nosec B104 — intentional: must receive UDP broadcast on all interfaces
         self._recv_sock.settimeout(1.0)
 
         # Send socket: unicast frames + hello_ack to follower
@@ -418,7 +418,7 @@ class DisplaySyncManager:
         # Receive socket: listens for frames + hello_ack from leader
         self._recv_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self._recv_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        self._recv_sock.bind(("", self.port))
+        self._recv_sock.bind(("", self.port))  # nosec B104 — intentional: must receive UDP broadcast on all interfaces
         self._recv_sock.settimeout(0.1)
 
         # Send socket: broadcasts hello + heartbeat
@@ -438,7 +438,7 @@ class DisplaySyncManager:
         # TCP server: receives scroll images from leader (port + 1)
         self._img_server_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self._img_server_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        self._img_server_sock.bind(("", self.port + 1))
+        self._img_server_sock.bind(("", self.port + 1))  # nosec B104 — intentional: TCP server must accept connections on all interfaces
         self._img_server_sock.listen(1)
         self._img_server_sock.settimeout(1.0)
         threading.Thread(

@@ -822,9 +822,9 @@ class DisplayController:
         #    scroll plugins). Works with zero plugin code changes.
         if follower_frame is None:
             try:
-                sh = getattr(plugin_instance, 'scroll_helper', None)
-                if sh is not None:
-                    follower_frame = sh.get_portion_at(sh.scroll_position + offset)
+                scroll_h = getattr(plugin_instance, 'scroll_helper', None)
+                if scroll_h is not None:
+                    follower_frame = scroll_h.get_portion_at(scroll_h.scroll_position + offset)
             except Exception:
                 pass
 
