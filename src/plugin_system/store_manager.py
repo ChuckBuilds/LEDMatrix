@@ -1850,15 +1850,33 @@ class PluginStoreManager:
                 return cached[1]
 
         try:
-            # Read branch and remote URL directly from git files — no subprocess needed.
-            # HEAD contains either a ref ("ref: refs/heads/main") or a bare SHA (detached).
-            head_text = (git_dir / 'HEAD').read_text(encoding='utf-8', errors='replace').strip()
-            if head_text.startswith('ref: refs/heads/'):
-                branch = head_text[len('ref: refs/heads/'):]
-            elif head_text.startswith('ref: '):
-                branch = head_text[len('ref: '):]
-            else:
-                branch = ''  # detached HEAD
+            # .git may be a file (worktree / submodule) containing "gitdir: <path>".
+            # Resolve it to the actual git directory before reading any files.
+            try:
+                if git_dir.is_file():
+                    pointer = git_dir.read_text(encoding='utf-8', errors='replace').strip()
+                    if pointer.startswith('gitdir:'):
+                        resolved = (plugin_path / pointer[len('gitdir:'):].strip()).resolve()
+                        if resolved.is_dir():
+                            git_dir = resolved
+                        else:
+                            return None
+                    else:
+                        return None
+            except (OSError, NotADirectoryError):
+                return None
+
+            # Read branch directly from .git/HEAD (no subprocess).
+            branch = ''
+            try:
+                head_text = (git_dir / 'HEAD').read_text(encoding='utf-8', errors='replace').strip()
+                if head_text.startswith('ref: refs/heads/'):
+                    branch = head_text[len('ref: refs/heads/'):]
+                elif head_text.startswith('ref: '):
+                    branch = head_text[len('ref: '):]
+                # else: detached HEAD — branch stays ''
+            except (OSError, NotADirectoryError):
+                pass
 
             # Remote URL from .git/config — parse [remote "origin"] url line.
             remote_url = None
@@ -1871,10 +1889,10 @@ class PluginStoreManager:
                         in_origin = True
                     elif stripped.startswith('['):
                         in_origin = False
-                    elif in_origin and stripped.startswith('url'):
+                    elif in_origin and stripped.startswith('url') and '=' in stripped:
                         remote_url = stripped.split('=', 1)[1].strip()
                         break
-            except OSError:
+            except (OSError, NotADirectoryError):
                 pass
 
             # Single subprocess: SHA + commit date in one call.

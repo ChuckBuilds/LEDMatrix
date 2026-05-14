@@ -1774,14 +1774,25 @@ def get_installed_plugins():
 
         def _build_plugin_entry(plugin_info):
             plugin_id = plugin_info.get('id')
+            try:
+                return _build_plugin_entry_inner(plugin_info, plugin_id)
+            except Exception:
+                logger.exception("Error building plugin entry for %s — skipping", plugin_id)
+                return None
 
+        def _build_plugin_entry_inner(plugin_info, plugin_id):
             # Re-read manifest from disk to ensure we have the latest metadata
             manifest_path = Path(api_v3.plugin_manager.plugins_dir) / plugin_id / "manifest.json"
             if manifest_path.exists():
                 try:
                     with open(manifest_path, 'r', encoding='utf-8') as f:
-                        plugin_info.update(json.load(f))
-                except Exception as e:
+                        fresh_manifest = json.load(f)
+                    if isinstance(fresh_manifest, dict):
+                        plugin_info.update(fresh_manifest)
+                    else:
+                        logger.debug("Manifest for %s is not a dict (%s) — skipping merge",
+                                     plugin_id, type(fresh_manifest).__name__)
+                except (FileNotFoundError, PermissionError, json.JSONDecodeError) as e:
                     logger.debug("Could not read fresh manifest for %s: %s", plugin_id, e)
 
             # Enabled status: config is source of truth, fall back to instance
