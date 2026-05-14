@@ -395,7 +395,7 @@ def _load_plugin_config_partial(plugin_id):
                                             config['images'] = config.get('images', []) + new_images
                             except Exception as e:
                                 print(f"Warning: Could not load metadata for {plugin_id}: {e}")
-            except Exception:
+            except Exception:  # nosec B110 - metadata pre-load is optional; schema loads fully below
                 pass  # Will load schema properly below
         
         # Get plugin schema

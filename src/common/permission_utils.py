@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 
 # System directories that should never have their permissions modified
 # These directories have special system-level permissions that must be preserved
-PROTECTED_SYSTEM_DIRECTORIES = {
+PROTECTED_SYSTEM_DIRECTORIES = {  # nosec B108 - these are checked to PREVENT permission changes, not to use as temp paths
     '/tmp',
     '/var/tmp',
     '/dev',

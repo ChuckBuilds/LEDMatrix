@@ -324,7 +324,7 @@ def after_request_logging(response):
                 duration_ms=duration_ms,
                 ip_address=ip_address
             )
-        except Exception:
+        except Exception:  # nosec B110 - request logging must never interrupt a live HTTP response
             pass  # Don't break response if logging fails
     return response
 
@@ -502,7 +502,7 @@ def display_preview_generator():
     from PIL import Image
     import io
     
-    snapshot_path = "/tmp/led_matrix_preview.png"
+    snapshot_path = "/tmp/led_matrix_preview.png"  # nosec B108 - fixed path matches display_manager; only read here
     last_modified = None
     
     # Get display dimensions from config
@@ -542,7 +542,7 @@ def display_preview_generator():
                             }
                             last_modified = current_modified
                             yield preview_data
-                    except Exception:
+                    except Exception:  # nosec B110 - SSE preview file may be mid-write; transient error, skip this update
                         # File might be being written, skip this update
                         pass
             else:

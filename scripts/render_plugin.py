@@ -81,7 +81,7 @@ def main() -> int:
                         help='Plugin config as JSON string')
     parser.add_argument('--mock-data', '-m', default=None,
                         help='Path to JSON file with mock cache data')
-    parser.add_argument('--output', '-o', default='/tmp/plugin_render.png',
+    parser.add_argument('--output', '-o', default='/tmp/plugin_render.png',  # nosec B108 - dev script default; user can override
                         help='Output PNG path (default: /tmp/plugin_render.png)')
     parser.add_argument('--width', type=int, default=128, help='Display width (default: 128)')
     parser.add_argument('--height', type=int, default=32, help='Display height (default: 32)')

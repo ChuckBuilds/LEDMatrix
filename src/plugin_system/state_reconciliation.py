@@ -234,7 +234,7 @@ class StateReconciliation:
                                     'version': manifest.get('version'),
                                     'name': manifest.get('name')
                                 }
-                            except Exception:
+                            except Exception:  # nosec B110 - corrupt/unreadable manifest; skip this plugin, outer except logs
                                 pass
         except Exception as e:
             self.logger.warning(f"Error reading disk state: {e}")

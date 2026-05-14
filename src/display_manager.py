@@ -32,7 +32,7 @@ class DisplayManager:
         # When True, update_display() and clear() skip hardware writes (used during off-screen content capture)
         self._capture_mode_active = False
         # Snapshot settings for web preview integration (service writes, web reads)
-        self._snapshot_path = "/tmp/led_matrix_preview.png"
+        self._snapshot_path = "/tmp/led_matrix_preview.png"  # nosec B108 - fixed path intentional; web UI reads same path
         self._snapshot_min_interval_sec = 0.2  # max ~5 fps
         self._last_snapshot_ts = 0.0
         
@@ -150,7 +150,7 @@ class DisplayManager:
                 self.draw.rectangle([0, 0, fallback_width - 1, fallback_height - 1], outline=(255, 0, 0))
                 self.draw.line([0, 0, fallback_width - 1, fallback_height - 1], fill=(0, 255, 0))
                 self.draw.text((2, max(0, (fallback_height // 2) - 4)), "Simulation", fill=(0, 128, 255))
-            except Exception:
+            except Exception:  # nosec B110 - best-effort fallback visualization; drawing errors must not crash startup
                 # Best-effort; ignore drawing errors in fallback
                 pass
             logger.error(f"Matrix initialization failed, using fallback mode with size {fallback_width}x{fallback_height}. Error: {e}")
@@ -894,7 +894,7 @@ class DisplayManager:
             # Never modify /tmp permissions - it has special system permissions (1777)
             # that must not be changed or it breaks apt and other system tools
             parent_dir = snapshot_path_obj.parent
-            if parent_dir and str(parent_dir) != '/tmp':
+            if parent_dir and str(parent_dir) != '/tmp':  # nosec B108 - guard to skip /tmp for permission ops
                 ensure_directory_permissions(parent_dir, get_assets_dir_mode())
             # Write atomically: temp then replace
             tmp_path = f"{self._snapshot_path}.tmp"

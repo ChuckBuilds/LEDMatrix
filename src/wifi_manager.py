@@ -689,7 +689,7 @@ class WiFiManager:
     # Helpers
     # ---------------------------------------------------------------------------
 
-    _IP_FORWARD_SAVE_PATH = Path("/tmp/ledmatrix_ip_forward_saved")
+    _IP_FORWARD_SAVE_PATH = Path("/tmp/ledmatrix_ip_forward_saved")  # nosec B108 - process-specific named file; device is single-user RPi
 
     def _validate_ap_config(self) -> Tuple[str, int]:
         """Return a sanitized (ssid, channel) pair from config, falling back to defaults."""
@@ -890,14 +890,14 @@ class WiFiManager:
         """
         try:
             content = f"# LEDMatrix captive portal: resolve all hostnames to AP\naddress=/#/{ap_ip}\n"
-            with open("/tmp/ledmatrix-nm-dnsmasq.conf", "w") as f:
+            with open("/tmp/ledmatrix-nm-dnsmasq.conf", "w") as f:  # nosec B108 - named file matches sudoers allowlist; single-user device
                 f.write(content)
             subprocess.run(
                 ["sudo", "mkdir", "-p", str(NM_DNSMASQ_SHARED_DIR)],
                 capture_output=True, timeout=5
             )
             subprocess.run(
-                ["sudo", "cp", "/tmp/ledmatrix-nm-dnsmasq.conf", str(NM_DNSMASQ_SHARED_CONF)],
+                ["sudo", "cp", "/tmp/ledmatrix-nm-dnsmasq.conf", str(NM_DNSMASQ_SHARED_CONF)],  # nosec B108
                 capture_output=True, timeout=5
             )
             logger.info(f"Wrote NM dnsmasq captive-portal config: {NM_DNSMASQ_SHARED_CONF}")
@@ -1401,7 +1401,7 @@ class WiFiManager:
                     # Last resort: enable AP mode
                     try:
                         self.enable_ap_mode()
-                    except Exception:
+                    except Exception:  # nosec B110 - last-resort recovery; if AP enable fails there's nothing left to try
                         pass
             return False, str(e)
     
@@ -2324,12 +2324,12 @@ ignore_broadcast_ssid=0
 """
 
             # Write config (requires sudo)
-            with open("/tmp/hostapd.conf", 'w') as f:
+            with open("/tmp/hostapd.conf", 'w') as f:  # nosec B108 - named file matches sudoers allowlist; single-user device
                 f.write(config_content)
 
             # Copy to final location with sudo
             subprocess.run(
-                ["sudo", "cp", "/tmp/hostapd.conf", str(HOSTAPD_CONFIG_PATH)],
+                ["sudo", "cp", "/tmp/hostapd.conf", str(HOSTAPD_CONFIG_PATH)],  # nosec B108
                 timeout=10
             )
 
@@ -2394,12 +2394,12 @@ address=/detectportal.firefox.com/192.168.4.1
 """
 
             # Write config (requires sudo)
-            with open("/tmp/dnsmasq.conf", 'w') as f:
+            with open("/tmp/dnsmasq.conf", 'w') as f:  # nosec B108 - named file matches sudoers allowlist; single-user device
                 f.write(config_content)
 
             # Copy to final location with sudo
             subprocess.run(
-                ["sudo", "cp", "/tmp/dnsmasq.conf", str(DNSMASQ_CONFIG_PATH)],
+                ["sudo", "cp", "/tmp/dnsmasq.conf", str(DNSMASQ_CONFIG_PATH)],  # nosec B108
                 timeout=10
             )
 
