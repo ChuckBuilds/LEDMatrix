@@ -199,7 +199,7 @@
      */
     function clearAll() {
         const ids = [...activeNotifications];
-        ids.forEach(id => removeNotification(id, true));
+        ids.forEach(id => { removeNotification(id, true); });
     }
 
     // Register the widget

@@ -364,7 +364,6 @@
             // Re-index remaining rows
             const rows = tbody.querySelectorAll('.custom-feed-row');
             rows.forEach((r, index) => {
-                const oldIndex = r.getAttribute('data-index');
                 r.setAttribute('data-index', index);
                 // Update all input names with new index
                 r.querySelectorAll('input, button').forEach(input => {

@@ -45,7 +45,7 @@ document.body.addEventListener('htmx:afterRequest', function(event) {
             if (data.message) {
                 showNotification(data.message, data.status || 'info');
             }
-        } catch (e) {
+        } catch {
             // Not JSON, ignore
         }
     }
@@ -65,8 +65,7 @@ window.reconnectSSE = function() {
     if (window.displaySource) {
         window.displaySource.close();
         window.displaySource = new EventSource('/api/v3/stream/display');
-        window.displaySource.onmessage = function(event) {
-            const data = JSON.parse(event.data);
+        window.displaySource.onmessage = function() {
             // Handle display updates
         };
     }

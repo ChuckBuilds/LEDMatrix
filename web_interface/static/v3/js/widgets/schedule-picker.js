@@ -174,7 +174,6 @@
             const xOptions = config['x-options'] || config['x_options'] || {};
             const showModeToggle = xOptions.showModeToggle !== false;
             const showEnableToggle = xOptions.showEnableToggle !== false;
-            const compactMode = xOptions.compactMode === true;
 
             const schedule = normalizeSchedule(value);
 
