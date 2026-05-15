@@ -100,6 +100,17 @@ class DisplayManager:
                 options.pwm_dither_bits = hardware_config.get('pwm_dither_bits')
             if 'inverse_colors' in hardware_config:
                 options.inverse_colors = hardware_config.get('inverse_colors')
+            # Pi 5 only: 0=PIO/RP1 coprocessor (default, less CPU),
+            # 1=RIO/Registered IO (faster; gpio_slowdown effect is inverted in this mode)
+            if 'rp1_rio' in runtime_config:
+                if hasattr(options, 'rp1_rio'):
+                    options.rp1_rio = runtime_config.get('rp1_rio')
+                else:
+                    logger.warning(
+                        "rp1_rio is set in config but the current RGBMatrixOptions "
+                        "implementation does not support it (RGBMatrixEmulator or older "
+                        "library version) — value will be ignored"
+                    )
             
             logger.info(f"Initializing RGB Matrix with settings: rows={options.rows}, cols={options.cols}, chain_length={options.chain_length}, parallel={options.parallel}, hardware_mapping={options.hardware_mapping}")
             

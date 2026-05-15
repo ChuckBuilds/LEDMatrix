@@ -112,7 +112,8 @@
             "limit_refresh_rate_hz": 100
         },
         "runtime": {
-            "gpio_slowdown": 3
+            "gpio_slowdown": 3,
+            "rp1_rio": 0
         },
         "display_durations": {},
         "use_short_date_format": true,
