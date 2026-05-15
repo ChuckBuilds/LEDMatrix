@@ -7,7 +7,8 @@
 
 [Unit]
 Description=LED Matrix Web Interface Service
-After=network.target
+After=network-online.target
+Wants=network-online.target
 
 [Service]
 Type=simple
