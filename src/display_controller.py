@@ -823,7 +823,7 @@ class DisplayController:
                 scroll_h = getattr(plugin_instance, 'scroll_helper', None)
                 if scroll_h is not None:
                     follower_frame = scroll_h.get_portion_at(scroll_h.scroll_position + offset)
-            except Exception:
+            except Exception:  # nosec B110 - scroll_helper.get_portion_at is optional; skip on error
                 pass
 
         # 3. Mirror fallback — static plugins (clock, weather) show same frame

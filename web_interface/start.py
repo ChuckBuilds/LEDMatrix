@@ -41,7 +41,7 @@ def get_local_ips():
                 ip = ip.strip()
                 if ip and not ip.startswith("127.") and ip != "192.168.4.1":
                     ips.append(ip)
-    except Exception:
+    except Exception:  # nosec B110 - hostname -I output parsing; non-critical startup info
         pass
     
     # Fallback: try socket method

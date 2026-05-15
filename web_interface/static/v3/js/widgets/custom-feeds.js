@@ -331,7 +331,7 @@
         removeButton.type = 'button';
         removeButton.className = 'text-red-600 hover:text-red-800 px-2 py-1';
         removeButton.addEventListener('click', function() {
-            removeCustomFeedRow(this);
+            window.removeCustomFeedRow(this);
         });
         const removeIcon = document.createElement('i');
         removeIcon.className = 'fas fa-trash';

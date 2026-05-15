@@ -747,7 +747,7 @@ class DisplayManager:
             try:
                 self.image = Image.new('RGB', (self.width, self.height))
                 self.draw = ImageDraw.Draw(self.image)
-            except Exception:
+            except Exception:  # nosec B110 - best-effort canvas reset during cleanup; non-critical
                 pass
         # Reset the singleton state when cleaning up
         DisplayManager._instance = None

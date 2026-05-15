@@ -1,5 +1,5 @@
 requests>=2.33.0
-urllib3>=1.26.0
+urllib3>=2.2.2
 Pillow>=12.2.0
 pytz>=2022.1
 numpy>=1.24.0
