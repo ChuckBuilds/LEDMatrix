@@ -31,7 +31,8 @@ echo "Generating service file with dynamic paths..."
 WEB_SERVICE_FILE_CONTENT=$(cat <<EOF
 [Unit]
 Description=LED Matrix Web Interface Service
-After=network.target
+After=network-online.target
+Wants=network-online.target
 
 [Service]
 Type=simple
