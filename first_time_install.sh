@@ -795,7 +795,7 @@ else
         # Try to initialize submodule if .gitmodules exists
         if [ -f "$PROJECT_ROOT_DIR/.gitmodules" ] && grep -q "rpi-rgb-led-matrix" "$PROJECT_ROOT_DIR/.gitmodules"; then
             echo "Initializing rpi-rgb-led-matrix submodule..."
-            if ! git submodule update --init --remote --recursive rpi-rgb-led-matrix-master 2>&1; then
+            if ! git submodule update --init --recursive rpi-rgb-led-matrix-master 2>&1; then
                 echo "⚠ Submodule init failed, cloning directly from GitHub..."
                 git clone https://github.com/hzeller/rpi-rgb-led-matrix.git rpi-rgb-led-matrix-master
             fi
@@ -814,7 +814,7 @@ else
             cd "$PROJECT_ROOT_DIR"
             rm -rf rpi-rgb-led-matrix-master
             if [ -f "$PROJECT_ROOT_DIR/.gitmodules" ] && grep -q "rpi-rgb-led-matrix" "$PROJECT_ROOT_DIR/.gitmodules"; then
-                git submodule update --init --remote --recursive rpi-rgb-led-matrix-master
+                git submodule update --init --recursive rpi-rgb-led-matrix-master
             else
                 git clone https://github.com/hzeller/rpi-rgb-led-matrix.git rpi-rgb-led-matrix-master
             fi
