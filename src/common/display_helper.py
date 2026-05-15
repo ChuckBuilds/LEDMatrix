@@ -235,8 +235,6 @@ class DisplayHelper:
             PIL Image with no data message
         """
         img = self.create_base_image((0, 0, 0))
-        draw = ImageDraw.Draw(img)
-        
         font = ImageFont.load_default()
         self._draw_centered_text(message, font, (0, 0, 0), (150, 150, 150))
         

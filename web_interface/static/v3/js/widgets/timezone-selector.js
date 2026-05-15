@@ -212,7 +212,7 @@
             const parts = formatter.formatToParts(now);
             const offsetPart = parts.find(p => p.type === 'timeZoneName');
             return offsetPart ? offsetPart.value : '';
-        } catch (e) {
+        } catch {
             return '';
         }
     }
