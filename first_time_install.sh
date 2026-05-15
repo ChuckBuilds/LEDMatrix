@@ -271,7 +271,7 @@ apt_update
 
 # Install required system packages
 echo "Installing Python packages and dependencies..."
-apt_install python3-pip python3-venv python3-dev python3-pil python3-pil.imagetk build-essential python3-setuptools python3-wheel cython3 scons cmake ninja-build
+apt_install python3-pip python3-venv python-dev-is-python3 python3-pil python3-pil.imagetk build-essential python3-setuptools python3-wheel cmake ninja-build
 
 # Install additional system dependencies that might be needed
 echo "Installing additional system dependencies..."
@@ -821,20 +821,13 @@ else
         fi
         
         pushd "$PROJECT_ROOT_DIR/rpi-rgb-led-matrix-master" >/dev/null
-        echo "Building rpi-rgb-led-matrix Python bindings..."
-        # Build the library first, then Python bindings
-        # The build-python target depends on the library being built
-        if ! make build-python; then
-            echo "✗ Failed to build rpi-rgb-led-matrix Python bindings"
-            echo "  Make sure you have the required build tools installed:"
-            echo "  sudo apt install -y build-essential python3-dev cython3 scons"
-            popd >/dev/null
-            exit 1
-        fi
-        cd bindings/python
-        echo "Installing rpi-rgb-led-matrix Python package via pip..."
+        echo "Installing rpi-rgb-led-matrix Python package (scikit-build-core + cmake)..."
+        echo "  Build deps required: python-dev-is-python3 cmake"
+        echo "  This compiles C++ — may take 2-5 minutes on Pi 4/5..."
         if ! python3 -m pip install --break-system-packages .; then
             echo "✗ Failed to install rpi-rgb-led-matrix Python package"
+            echo "  Ensure build tools are installed:"
+            echo "  sudo apt install -y python-dev-is-python3 cmake build-essential"
             popd >/dev/null
             exit 1
         fi
