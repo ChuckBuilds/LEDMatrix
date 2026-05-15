@@ -8,7 +8,6 @@ Tests import the production function from src.web_interface.validators
 to ensure they exercise the real code path.
 """
 
-import pytest
 
 from src.web_interface.validators import dedup_unique_arrays as _dedup_unique_arrays
 

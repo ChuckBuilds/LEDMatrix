@@ -1,6 +1,7 @@
+/* global showNotification */
 /**
  * Frontend error handling utilities.
- * 
+ *
  * Provides user-friendly error formatting and display with enhanced UI.
  */
 

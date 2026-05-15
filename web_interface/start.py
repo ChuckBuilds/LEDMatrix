@@ -25,7 +25,7 @@ def get_local_ips():
         )
         if result.returncode == 0 and result.stdout.strip() == "active":
             ips.append("192.168.4.1 (AP Mode)")
-    except Exception:
+    except Exception:  # nosec B110 - AP mode IP detection is non-critical startup info; systemctl may not exist
         pass
     
     # Get IPs from hostname -I
@@ -111,7 +111,7 @@ def main():
         print("Access the interface at:")
         for ip in ips:
             if "AP Mode" in ip:
-                print(f"  - http://192.168.4.1:5000 (AP Mode - connect to LEDMatrix-Setup WiFi)")
+                print("  - http://192.168.4.1:5000 (AP Mode - connect to LEDMatrix-Setup WiFi)")
             else:
                 print(f"  - http://{ip}:5000")
     else:

@@ -8,12 +8,12 @@ Detects and fixes inconsistencies between:
 - State manager state
 """
 
-from typing import Dict, Any, List, Optional, Set
+from typing import Dict, Any, List, Set
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 
-from src.plugin_system.state_manager import PluginStateManager, PluginState, PluginStateStatus
+from src.plugin_system.state_manager import PluginStateManager
 from src.logging_config import get_logger
 
 
@@ -234,7 +234,7 @@ class StateReconciliation:
                                     'version': manifest.get('version'),
                                     'name': manifest.get('name')
                                 }
-                            except Exception:
+                            except Exception:  # nosec B110 - corrupt/unreadable manifest; skip this plugin, outer except logs
                                 pass
         except Exception as e:
             self.logger.warning(f"Error reading disk state: {e}")
@@ -285,7 +285,6 @@ class StateReconciliation:
         
         config = config_state.get(plugin_id, {})
         disk = disk_state.get(plugin_id, {})
-        manager = manager_state.get(plugin_id, {})
         state_mgr = state_manager_state.get(plugin_id, {})
         
         # Check: Plugin exists on disk but not in config

@@ -6,10 +6,7 @@ Tests layout creation, management, rendering, and element positioning.
 
 import pytest
 import json
-import tempfile
-from pathlib import Path
-from unittest.mock import MagicMock, patch, Mock
-from datetime import datetime
+from unittest.mock import MagicMock
 from src.layout_manager import LayoutManager
 
 

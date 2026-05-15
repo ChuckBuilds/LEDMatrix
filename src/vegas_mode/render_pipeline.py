@@ -11,11 +11,10 @@ import threading
 from collections import deque
 from typing import Optional, List, Any, Dict, Deque, TYPE_CHECKING
 from PIL import Image
-import numpy as np
 
 from src.common.scroll_helper import ScrollHelper
 from src.vegas_mode.config import VegasModeConfig
-from src.vegas_mode.stream_manager import StreamManager, ContentSegment
+from src.vegas_mode.stream_manager import StreamManager
 
 if TYPE_CHECKING:
     pass

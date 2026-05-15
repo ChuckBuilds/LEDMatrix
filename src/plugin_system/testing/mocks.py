@@ -6,7 +6,6 @@ and plugin_manager for use in plugin unit tests.
 """
 
 from typing import Dict, Any, Optional
-from unittest.mock import MagicMock
 from PIL import Image
 
 

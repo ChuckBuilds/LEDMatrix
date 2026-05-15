@@ -15,8 +15,7 @@ Tests various failure modes that can occur during plugin loading:
 import pytest
 import json
 from pathlib import Path
-from unittest.mock import Mock, patch, MagicMock
-import tempfile
+from unittest.mock import patch, MagicMock
 import sys
 
 # Add project root to path
@@ -25,9 +24,7 @@ if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
 
 from src.plugin_system.plugin_manager import PluginManager
-from src.plugin_system.plugin_loader import PluginLoader
 from src.plugin_system.plugin_state import PluginState
-from src.exceptions import PluginError
 
 
 @pytest.fixture

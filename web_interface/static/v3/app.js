@@ -1,3 +1,4 @@
+/* global showNotification, updateSystemStats */
 // LED Matrix v3 JavaScript
 // Additional helpers for HTMX and Alpine.js integration
 
@@ -44,7 +45,7 @@ document.body.addEventListener('htmx:afterRequest', function(event) {
             if (data.message) {
                 showNotification(data.message, data.status || 'info');
             }
-        } catch (e) {
+        } catch {
             // Not JSON, ignore
         }
     }
@@ -57,15 +58,14 @@ window.reconnectSSE = function() {
         window.statsSource = new EventSource('/api/v3/stream/stats');
         window.statsSource.onmessage = function(event) {
             const data = JSON.parse(event.data);
-            updateSystemStats(data);
+            if (typeof updateSystemStats === 'function') updateSystemStats(data);
         };
     }
 
     if (window.displaySource) {
         window.displaySource.close();
         window.displaySource = new EventSource('/api/v3/stream/display');
-        window.displaySource.onmessage = function(event) {
-            const data = JSON.parse(event.data);
+        window.displaySource.onmessage = function() {
             // Handle display updates
         };
     }

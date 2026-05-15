@@ -5,7 +5,6 @@ Provides common fixtures for mocking core components and test setup.
 """
 
 import pytest
-import os
 import sys
 from pathlib import Path
 from unittest.mock import Mock, MagicMock

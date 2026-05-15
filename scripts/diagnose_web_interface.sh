@@ -41,7 +41,7 @@ if [ -f "$PROJECT_DIR/config/config.json" ]; then
     echo -e "${GREEN}✓ Config file found${NC}"
     
     # Check web_display_autostart setting
-    AUTOSTART=$(cat "$PROJECT_DIR/config/config.json" | grep -o '"web_display_autostart"[[:space:]]*:[[:space:]]*[a-z]*' | grep -o '[a-z]*$')
+    AUTOSTART=$(grep -o '"web_display_autostart"[[:space:]]*:[[:space:]]*[a-z]*' "$PROJECT_DIR/config/config.json" | grep -o '[a-z]*$')
     
     if [ "$AUTOSTART" == "true" ]; then
         echo -e "${GREEN}✓ web_display_autostart: true${NC}"

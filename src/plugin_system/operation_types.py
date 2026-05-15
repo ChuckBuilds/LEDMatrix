@@ -7,7 +7,7 @@ and their associated data structures.
 
 from enum import Enum
 from dataclasses import dataclass, field
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional
 from datetime import datetime
 import uuid
 

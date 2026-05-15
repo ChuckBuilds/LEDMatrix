@@ -3,8 +3,6 @@
 Check what imports are actually in the app.py file on the Pi
 """
 
-import sys
-import os
 from pathlib import Path
 
 # Read the app.py file and check the import lines

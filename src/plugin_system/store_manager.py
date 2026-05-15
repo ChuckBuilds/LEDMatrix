@@ -23,7 +23,6 @@ import logging
 from src.common.permission_utils import sudo_remove_directory
 
 try:
-    import jsonschema
     from jsonschema import Draft7Validator, ValidationError
     JSONSCHEMA_AVAILABLE = True
 except ImportError:
@@ -433,9 +432,9 @@ class PluginStoreManager:
                             return stale
                         if not self.github_token:
                             self.logger.warning(
-                                f"GitHub API rate limit likely exceeded (403). "
-                                f"Add a GitHub personal access token to config/config_secrets.json "
-                                f"under 'github.api_token' to increase rate limits from 60 to 5000/hour."
+                                "GitHub API rate limit likely exceeded (403). "
+                                "Add a GitHub personal access token to config/config_secrets.json "
+                                "under 'github.api_token' to increase rate limits from 60 to 5000/hour."
                             )
                         else:
                             self.logger.warning(
@@ -1078,7 +1077,7 @@ class PluginStoreManager:
                 # Get the actual plugin ID from manifest (source of truth)
                 manifest_plugin_id = manifest.get('id')
                 if not manifest_plugin_id:
-                    self.logger.error(f"Plugin manifest missing 'id' field")
+                    self.logger.error("Plugin manifest missing 'id' field")
                     self._safe_remove_directory(plugin_path)
                     return False
                 
@@ -1729,7 +1728,7 @@ class PluginStoreManager:
         
         try:
             self.logger.info(f"Installing dependencies for {plugin_path.name}")
-            result = subprocess.run(
+            subprocess.run(
                 ['pip3', 'install', '--break-system-packages', '-r', str(requirements_file)],
                 check=True,
                 capture_output=True,
@@ -2404,7 +2403,7 @@ class PluginStoreManager:
             if not plugin_info_remote:
                 self.logger.warning(f"Plugin {plugin_id} not found in registry and not a git repository; cannot update automatically")
                 if not repo_url:
-                    self.logger.warning(f"Plugin may have been installed via ZIP download. Try reinstalling from GitHub URL to enable updates.")
+                    self.logger.warning("Plugin may have been installed via ZIP download. Try reinstalling from GitHub URL to enable updates.")
                 return False
 
             repo_url = plugin_info_remote.get('repo')

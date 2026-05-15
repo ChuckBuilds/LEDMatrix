@@ -5,7 +5,7 @@ Tests text rendering, font loading, and text positioning utilities.
 """
 
 import pytest
-from unittest.mock import MagicMock, patch, Mock
+from unittest.mock import MagicMock, patch
 from PIL import Image, ImageDraw, ImageFont
 from src.common.text_helper import TextHelper
 

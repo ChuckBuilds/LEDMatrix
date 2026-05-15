@@ -6,10 +6,8 @@ Extracted from LEDMatrix core to provide reusable functionality for plugins.
 """
 
 import logging
-import os
 from pathlib import Path
 from typing import Dict, List, Optional, Union
-from urllib.parse import urlparse
 
 import requests
 from PIL import Image

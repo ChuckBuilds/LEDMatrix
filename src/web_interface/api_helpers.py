@@ -5,11 +5,11 @@ Provides consistent API response formatting across all endpoints.
 """
 
 import time
-from typing import Any, Optional, Dict, Tuple, Union
+from typing import Any, Optional, Dict, Tuple
 from flask import jsonify, request
 
 from src.web_interface.error_handler import create_error_response, create_success_response
-from src.web_interface.errors import ErrorCode, ErrorCategory
+from src.web_interface.errors import ErrorCode
 
 
 def success_response(

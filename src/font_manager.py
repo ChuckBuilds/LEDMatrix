@@ -3,15 +3,14 @@ import logging
 import freetype
 import json
 import hashlib
+import urllib.parse
 import urllib.request
 import zipfile
 import tempfile
-import shutil
 import time
 from pathlib import Path
 from PIL import ImageFont
 from typing import Dict, Tuple, Optional, Union, Any, List
-from functools import lru_cache
 
 logger = logging.getLogger(__name__)
 
@@ -267,9 +266,12 @@ class FontManager:
                 logger.info(f"Using cached font: {cache_path}")
                 return str(cache_path)
 
-            # Download font
+            # Download font — restrict to http/https to prevent file:// reads
+            parsed = urllib.parse.urlparse(url)
+            if parsed.scheme not in ('http', 'https'):
+                raise ValueError(f"Font URL must use http or https, got: {parsed.scheme!r}")
             logger.info(f"Downloading font from {url}")
-            urllib.request.urlretrieve(url, cache_path)
+            urllib.request.urlretrieve(url, cache_path)  # nosec B310 - scheme validated above
 
             # Handle zip files
             if url.endswith('.zip'):
@@ -699,8 +701,6 @@ class FontManager:
             fonts_dir = Path("assets/fonts")
             ensure_directory_permissions(fonts_dir, get_assets_dir_mode())
 
-            target_path = os.path.join(fonts_dir, f"{family_name}.{font_file_path.rsplit('.', 1)[-1]}")
-
             # Add to catalog
             self.font_catalog[family_name] = font_file_path
             self.clear_cache()
@@ -746,11 +746,11 @@ class FontManager:
 
             if font_path.endswith('.bdf'):
                 # Try to load BDF font
-                face = freetype.Face(font_path)
+                freetype.Face(font_path)
                 return {"valid": True, "type": "bdf", "family": "unknown"}
             elif font_path.endswith('.ttf'):
                 # Try to load TTF font
-                font = ImageFont.truetype(font_path, 12)
+                ImageFont.truetype(font_path, 12)
                 return {"valid": True, "type": "ttf", "family": "unknown"}
             else:
                 return {"valid": False, "error": "Unsupported font format"}

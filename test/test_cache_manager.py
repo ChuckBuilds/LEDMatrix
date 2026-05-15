@@ -6,10 +6,7 @@ Tests cache functionality including memory cache, disk cache, strategy, and metr
 
 import pytest
 import time
-import json
-import tempfile
-from pathlib import Path
-from unittest.mock import Mock, MagicMock, patch
+from unittest.mock import patch
 from src.cache_manager import CacheManager
 from src.cache.memory_cache import MemoryCache
 from src.cache.disk_cache import DiskCache

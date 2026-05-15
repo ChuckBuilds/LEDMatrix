@@ -20,7 +20,6 @@ except ImportError:
 
 class ResourceLimitExceeded(Exception):
     """Raised when a plugin exceeds its resource limits."""
-    pass
 
 
 @dataclass
@@ -228,7 +227,7 @@ class PluginResourceMonitor:
             
         except ResourceLimitExceeded:
             raise
-        except Exception as e:
+        except Exception:
             # Still record execution time even on error
             execution_time = time.time() - start_time
             with self._lock:

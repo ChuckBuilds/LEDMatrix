@@ -1,7 +1,5 @@
 import pytest
-import os
-from unittest.mock import MagicMock, patch, mock_open
-from pathlib import Path
+from unittest.mock import patch
 from src.font_manager import FontManager
 
 @pytest.fixture

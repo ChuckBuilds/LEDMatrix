@@ -5,7 +5,7 @@ import time
 from abc import ABC, abstractmethod
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 import pytz
 import requests
@@ -172,8 +172,8 @@ class SportsCore(ABC):
 
         try:
             fallbacks.append(Path.home() / ".ledmatrix" / "logos" / self.sport_key)
-        except Exception:
-            pass
+        except RuntimeError as e:
+            self.logger.debug("Could not resolve home directory (expected for service users): %s", e)
 
         fallbacks.append(Path(tempfile.gettempdir()) / "ledmatrix_logos" / self.sport_key)
 
@@ -416,7 +416,6 @@ class SportsCore(ABC):
                 league=self.league,
                 event_id=game['id'],
                 update_interval_seconds=update_interval,
-                is_live=is_live
             )
             
             if odds_data:

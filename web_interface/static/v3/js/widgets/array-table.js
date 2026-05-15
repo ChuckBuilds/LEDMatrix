@@ -179,7 +179,7 @@
         const removeButton = document.createElement('button');
         removeButton.type = 'button';
         removeButton.className = 'text-red-600 hover:text-red-800 px-2 py-1';
-        removeButton.onclick = function() { removeArrayTableRow(this); };
+        removeButton.onclick = function() { window.removeArrayTableRow(this); };
         const removeIcon = document.createElement('i');
         removeIcon.className = 'fas fa-trash';
         removeButton.appendChild(removeIcon);

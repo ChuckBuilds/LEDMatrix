@@ -1,7 +1,7 @@
-import pytest
 import time
-from unittest.mock import MagicMock, patch, ANY
-from src.display_controller import DisplayController
+from datetime import datetime
+from unittest.mock import MagicMock, patch
+import pytest
 
 class TestDisplayControllerInitialization:
     """Test DisplayController initialization and setup."""
@@ -15,19 +15,12 @@ class TestDisplayControllerInitialization:
         assert test_display_controller.plugin_manager is not None
         assert test_display_controller.available_modes == []
 
+    @pytest.mark.skip(reason="No assertions; init logic is covered by test_init_success and fixture setup")
     def test_plugin_discovery_and_loading(self, test_display_controller):
         """Test plugin discovery and loading during initialization."""
-        # Mock plugin manager behavior
         pm = test_display_controller.plugin_manager
         pm.discover_plugins.return_value = ["plugin1", "plugin2"]
         pm.get_plugin.return_value = MagicMock()
-        
-        # Manually trigger the plugin loading logic that happens in __init__
-        # Since we're using a fixture that mocks __init__ partially, we need to verify 
-        # the interactions or simulate the loading if we want to test that specific logic
-        pass 
-        # Note: Testing __init__ logic is tricky with the fixture. 
-        # We rely on the fixture to give us a usable controller.
 
 
 class TestDisplayControllerModeRotation:
@@ -251,5 +244,3 @@ class TestDisplayControllerSchedule:
             with patch.object(controller.config_service, 'get_config', return_value=schedule_config):
                 controller._check_schedule()
                 assert controller.is_display_active is False
-            
-from datetime import datetime

@@ -16,11 +16,8 @@ YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
 # Check if running as root or with sudo
-if [ "$EUID" -ne 0 ]; then 
+if [ "$EUID" -ne 0 ]; then
     echo -e "${YELLOW}Warning: Some checks require sudo. Running what we can...${NC}"
-    SUDO=""
-else
-    SUDO=""
 fi
 
 PROJECT_DIR="${HOME}/LEDMatrix"

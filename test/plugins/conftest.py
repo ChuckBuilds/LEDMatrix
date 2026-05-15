@@ -8,7 +8,7 @@ import sys
 import json
 from pathlib import Path
 from unittest.mock import MagicMock, Mock
-from typing import Any, Dict, Generator, Optional
+from typing import Any, Dict
 
 # Add project root to path
 project_root = Path(__file__).parent.parent.parent

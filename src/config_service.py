@@ -12,11 +12,10 @@ This service wraps ConfigManager and adds:
 """
 
 import json
-import os
 import time
 import threading
 from pathlib import Path
-from typing import Dict, Any, Optional, List, Callable, Set
+from typing import Dict, Any, Optional, List, Callable
 from datetime import datetime
 from collections import defaultdict
 import logging
@@ -38,7 +37,7 @@ class ConfigVersion:
             config: Configuration dictionary
             version: Version number
             timestamp: When this version was created
-            checksum: MD5 checksum of the config
+            checksum: SHA-256 hex digest of the config (for change detection)
         """
         self.config: Dict[str, Any] = config
         self.version: int = version
@@ -114,9 +113,9 @@ class ConfigService:
             self._start_file_watching()
     
     def _calculate_checksum(self, config: Dict[str, Any]) -> str:
-        """Calculate MD5 checksum of configuration."""
+        """Calculate checksum of configuration for change detection."""
         config_str = json.dumps(config, sort_keys=True)
-        return hashlib.md5(config_str.encode()).hexdigest()
+        return hashlib.sha256(config_str.encode()).hexdigest()
     
     def _load_config(self) -> bool:
         """

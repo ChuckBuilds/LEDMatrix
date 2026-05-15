@@ -37,7 +37,7 @@ import time
 import re
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
 
@@ -689,7 +689,7 @@ class WiFiManager:
     # Helpers
     # ---------------------------------------------------------------------------
 
-    _IP_FORWARD_SAVE_PATH = Path("/tmp/ledmatrix_ip_forward_saved")
+    _IP_FORWARD_SAVE_PATH = Path("/tmp/ledmatrix_ip_forward_saved")  # nosec B108 - process-specific named file; device is single-user RPi
 
     def _validate_ap_config(self) -> Tuple[str, int]:
         """Return a sanitized (ssid, channel) pair from config, falling back to defaults."""
@@ -890,14 +890,14 @@ class WiFiManager:
         """
         try:
             content = f"# LEDMatrix captive portal: resolve all hostnames to AP\naddress=/#/{ap_ip}\n"
-            with open("/tmp/ledmatrix-nm-dnsmasq.conf", "w") as f:
+            with open("/tmp/ledmatrix-nm-dnsmasq.conf", "w") as f:  # nosec B108 - named file matches sudoers allowlist; single-user device
                 f.write(content)
             subprocess.run(
                 ["sudo", "mkdir", "-p", str(NM_DNSMASQ_SHARED_DIR)],
                 capture_output=True, timeout=5
             )
             subprocess.run(
-                ["sudo", "cp", "/tmp/ledmatrix-nm-dnsmasq.conf", str(NM_DNSMASQ_SHARED_CONF)],
+                ["sudo", "cp", "/tmp/ledmatrix-nm-dnsmasq.conf", str(NM_DNSMASQ_SHARED_CONF)],  # nosec B108
                 capture_output=True, timeout=5
             )
             logger.info(f"Wrote NM dnsmasq captive-portal config: {NM_DNSMASQ_SHARED_CONF}")
@@ -937,7 +937,7 @@ class WiFiManager:
             pass
         try:
             import urllib.request as _ureq
-            _ureq.urlopen("http://connectivity-check.ubuntu.com/", timeout=timeout)
+            _ureq.urlopen("http://connectivity-check.ubuntu.com/", timeout=timeout)  # nosec B310 - hardcoded URL, no user input
             logger.debug("Internet connectivity confirmed via HTTP check")
             return True
         except OSError:
@@ -1314,7 +1314,7 @@ class WiFiManager:
             # This ensures a clean switch between networks
             if original_ssid and original_ssid != ssid:
                 logger.info(f"Switching networks: disconnecting from {original_ssid} before connecting to {ssid}")
-                self._show_led_message(f"Switching networks...", duration=3)
+                self._show_led_message("Switching networks...", duration=3)
                 # Skip AP mode check since we're about to connect to a new network
                 disconnect_success, disconnect_msg = self.disconnect_from_network(skip_ap_check=True)
                 if disconnect_success:
@@ -1370,7 +1370,7 @@ class WiFiManager:
                         ap_success, ap_msg = self.enable_ap_mode()
                         if ap_success:
                             logger.info("AP mode enabled as failsafe")
-                            return False, f"Connection failed and restoration failed. AP mode enabled."
+                            return False, "Connection failed and restoration failed. AP mode enabled."
                         else:
                             logger.error(f"Failed to enable AP mode: {ap_msg}")
                             return False, f"Connection failed, restoration failed, and AP mode failed: {ap_msg}"
@@ -1382,7 +1382,7 @@ class WiFiManager:
                     ap_success, ap_msg = self.enable_ap_mode()
                     if ap_success:
                         logger.info("AP mode enabled as failsafe")
-                        return False, f"Connection failed. AP mode enabled."
+                        return False, "Connection failed. AP mode enabled."
                     else:
                         return False, f"Connection failed and AP mode failed: {ap_msg}"
                 
@@ -1401,8 +1401,8 @@ class WiFiManager:
                     # Last resort: enable AP mode
                     try:
                         self.enable_ap_mode()
-                    except Exception:
-                        pass
+                    except Exception as ap_error:  # nosec B110 - last-resort; do not re-raise, but log for debugging
+                        logger.error("Last-resort AP mode enable failed in recovery path: %s", ap_error, exc_info=True)
             return False, str(e)
     
     def _restore_original_connection(self, connection_name: str, ssid: str) -> bool:
@@ -1797,7 +1797,7 @@ class WiFiManager:
                                 logger.info("WiFi radio enabled and verified successfully")
                                 return True
                             elif attempt < max_retries - 1:
-                                logger.warning(f"WiFi radio enable command succeeded but not verified, will retry...")
+                                logger.warning("WiFi radio enable command succeeded but not verified, will retry...")
                                 time.sleep(1)
                                 continue
                         else:
@@ -2324,12 +2324,12 @@ ignore_broadcast_ssid=0
 """
 
             # Write config (requires sudo)
-            with open("/tmp/hostapd.conf", 'w') as f:
+            with open("/tmp/hostapd.conf", 'w') as f:  # nosec B108 - named file matches sudoers allowlist; single-user device
                 f.write(config_content)
 
             # Copy to final location with sudo
             subprocess.run(
-                ["sudo", "cp", "/tmp/hostapd.conf", str(HOSTAPD_CONFIG_PATH)],
+                ["sudo", "cp", "/tmp/hostapd.conf", str(HOSTAPD_CONFIG_PATH)],  # nosec B108
                 timeout=10
             )
 
@@ -2394,12 +2394,12 @@ address=/detectportal.firefox.com/192.168.4.1
 """
 
             # Write config (requires sudo)
-            with open("/tmp/dnsmasq.conf", 'w') as f:
+            with open("/tmp/dnsmasq.conf", 'w') as f:  # nosec B108 - named file matches sudoers allowlist; single-user device
                 f.write(config_content)
 
             # Copy to final location with sudo
             subprocess.run(
-                ["sudo", "cp", "/tmp/dnsmasq.conf", str(DNSMASQ_CONFIG_PATH)],
+                ["sudo", "cp", "/tmp/dnsmasq.conf", str(DNSMASQ_CONFIG_PATH)],  # nosec B108
                 timeout=10
             )
 

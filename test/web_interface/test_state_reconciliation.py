@@ -7,7 +7,7 @@ import tempfile
 import shutil
 import json
 from pathlib import Path
-from unittest.mock import Mock, MagicMock, patch
+from unittest.mock import Mock, patch
 
 from src.plugin_system.state_reconciliation import (
     StateReconciliation,
@@ -15,7 +15,7 @@ from src.plugin_system.state_reconciliation import (
     FixAction,
     ReconciliationResult
 )
-from src.plugin_system.state_manager import PluginStateManager, PluginState, PluginStateStatus
+from src.plugin_system.state_manager import PluginStateManager, PluginStateStatus
 
 
 class TestStateReconciliation(unittest.TestCase):

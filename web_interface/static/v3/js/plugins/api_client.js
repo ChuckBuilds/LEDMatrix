@@ -40,7 +40,7 @@ const RequestThrottler = {
         // Create throttled request with abort support
         let abortController = null;
         const promise = new Promise((resolve, reject) => {
-            const timeoutId = setTimeout(async () => {
+            setTimeout(async () => {
                 try {
                     const result = await fn();
                     // Cache successful GET requests

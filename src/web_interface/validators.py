@@ -3,7 +3,6 @@ Input validation utilities for the web interface.
 Provides validation functions for user inputs to prevent XSS, invalid data, and security issues.
 """
 import re
-import os
 from typing import Optional, Tuple, List
 from urllib.parse import urlparse
 from pathlib import Path
@@ -56,7 +55,7 @@ def validate_image_url(url: str) -> Tuple[bool, Optional[str]]:
         parsed = urlparse(url)
         allowed_protocols = ['http', 'https']
         if parsed.scheme not in allowed_protocols:
-            return False, f"Only http:// and https:// protocols are allowed"
+            return False, "Only http:// and https:// protocols are allowed"
         return True, None
     except Exception as e:
         return False, f"Invalid URL format: {str(e)}"

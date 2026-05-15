@@ -111,7 +111,7 @@ def main():
             # Ensure PYTHONPATH is set correctly if web_interface.py has relative imports to src
             # The WorkingDirectory in systemd service should handle this for web_interface.py
             print(f"Launching web interface v3: {sys.executable} {WEB_INTERFACE_SCRIPT}")
-            os.execvp(sys.executable, [sys.executable, WEB_INTERFACE_SCRIPT])
+            os.execvp(sys.executable, [sys.executable, WEB_INTERFACE_SCRIPT])  # nosec B606 - both args are fixed constants
         except Exception as e:
             print(f"Failed to exec web interface: {e}")
             sys.exit(1) # Failed to start

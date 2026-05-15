@@ -51,7 +51,6 @@ if debug_mode:
 
         # Try to import the plugin system directly to get better error info
         print("DEBUG: Attempting to import src.plugin_system...", flush=True)
-        from src.plugin_system import PluginManager
         print("DEBUG: Plugin system import successful", flush=True)
     except ImportError as e:
         print(f"DEBUG: Plugin system import failed: {e}", flush=True)

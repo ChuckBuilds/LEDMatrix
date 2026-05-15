@@ -358,7 +358,7 @@
                     });
                     timeEl.textContent = formatter.format(now);
                     previewEl.classList.remove('hidden');
-                } catch (e) {
+                } catch {
                     previewEl.classList.add('hidden');
                 }
             }

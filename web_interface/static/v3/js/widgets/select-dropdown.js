@@ -69,7 +69,6 @@
             const enumValues = config.enum || xOptions.options || [];
             const placeholder = xOptions.placeholder || 'Select...';
             const labels = xOptions.labels || {};
-            const icons = xOptions.icons || {};
             const disabled = xOptions.disabled === true;
             const required = xOptions.required === true;
 

@@ -14,7 +14,7 @@ Supports three display modes:
 import logging
 import threading
 import time
-from typing import Optional, List, Dict, Any, Deque, Tuple, TYPE_CHECKING
+from typing import Optional, List, Dict, Any, Deque, TYPE_CHECKING
 from collections import deque
 from dataclasses import dataclass, field
 from PIL import Image
@@ -24,7 +24,6 @@ from src.vegas_mode.plugin_adapter import PluginAdapter
 from src.plugin_system.base_plugin import VegasDisplayMode
 
 if TYPE_CHECKING:
-    from src.plugin_system.base_plugin import BasePlugin
     from src.plugin_system.plugin_manager import PluginManager
 
 logger = logging.getLogger(__name__)

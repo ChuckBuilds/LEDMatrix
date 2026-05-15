@@ -1,6 +1,4 @@
 import time
-import logging
-import sys
 import os
 import json
 from pathlib import Path
@@ -815,8 +813,8 @@ class DisplayController:
         # 1. Explicit hook — plugin opted in with get_offset_frame()
         try:
             follower_frame = plugin_instance.get_offset_frame(offset)
-        except Exception:
-            pass
+        except AttributeError:
+            pass  # Most plugins don't implement get_offset_frame; that's expected
 
         # 2. Auto-detect — plugin has a scroll_helper (standard pattern for all
         #    scroll plugins). Works with zero plugin code changes.

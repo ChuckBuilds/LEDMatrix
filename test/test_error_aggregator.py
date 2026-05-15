@@ -9,11 +9,8 @@ Tests:
 - Thread safety
 """
 
-import pytest
-import time
 from datetime import datetime, timedelta
 from pathlib import Path
-from unittest.mock import Mock, patch
 import threading
 import sys
 
@@ -29,7 +26,7 @@ from src.error_aggregator import (
     get_error_aggregator,
     record_error
 )
-from src.exceptions import PluginError, ConfigError
+from src.exceptions import PluginError
 
 
 class TestErrorRecording:

@@ -6,9 +6,7 @@ Provides common test functionality for all plugins.
 
 import pytest
 import json
-from pathlib import Path
 from typing import Dict, Any
-from unittest.mock import MagicMock
 
 from src.plugin_system.plugin_loader import PluginLoader
 from src.plugin_system.base_plugin import BasePlugin

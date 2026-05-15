@@ -13,7 +13,6 @@ import threading
 from typing import Dict, Any, Optional, Protocol
 from datetime import datetime
 
-from src.exceptions import CacheError
 
 
 class CacheStrategyProtocol(Protocol):
@@ -184,7 +183,7 @@ class DiskCache:
                             os.replace(tmp_path, cache_path)
                             # Set proper permissions: 660 (rw-rw----) for group-readable cache files
                             try:
-                                os.chmod(cache_path, 0o660)
+                                os.chmod(cache_path, 0o660)  # nosec B103 - intentional; web UI and service share a group
                             except OSError:
                                 pass  # Non-critical if chmod fails
                         finally:
@@ -202,7 +201,7 @@ class DiskCache:
                                 os.fsync(cache_file.fileno())
                             # Set proper permissions: 660 (rw-rw----) for group-readable cache files
                             try:
-                                os.chmod(cache_path, 0o660)
+                                os.chmod(cache_path, 0o660)  # nosec B103 - intentional; web UI and service share a group
                             except OSError:
                                 pass  # Non-critical if chmod fails
                             self.logger.debug("Wrote cache for %s directly (non-atomic)", key)
@@ -210,7 +209,7 @@ class DiskCache:
                             # If direct write also fails, try fallback location
                             self.logger.warning("Direct write failed for key '%s' to %s: %s", key, cache_path, write_error)
                             raise  # Re-raise to trigger fallback logic
-                except (IOError, OSError, PermissionError) as e:
+                except (IOError, OSError, PermissionError):
                     # Attempt one-time fallback write to user's home cache directory
                     try:
                         # Try user's home cache directory as fallback
@@ -228,7 +227,7 @@ class DiskCache:
                                 json.dump(data, tmp_file, indent=4, cls=DateTimeEncoder)
                             # Set proper permissions: 660 (rw-rw----) for group-readable cache files
                             try:
-                                os.chmod(fallback_path, 0o660)
+                                os.chmod(fallback_path, 0o660)  # nosec B103 - intentional; web UI and service share a group
                             except OSError:
                                 pass  # Non-critical if chmod fails
                             self.logger.debug("Cache wrote to fallback location: %s", fallback_path)

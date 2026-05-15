@@ -14,19 +14,15 @@ Key Features:
 - Memory-efficient data storage
 """
 
-import os
 import time
 import logging
 import threading
 import requests
-from typing import Dict, Any, Optional, List, Callable, Union
-from datetime import datetime, timedelta
+from typing import Dict, Any, Optional, Callable
 from dataclasses import dataclass, field
 from enum import Enum
-import json
 import queue
-from concurrent.futures import ThreadPoolExecutor, Future
-import weakref
+from concurrent.futures import ThreadPoolExecutor
 from src.cache_manager import CacheManager
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -227,7 +223,7 @@ class BackgroundDataService:
             self.stats['cache_misses'] += 1
         
         # Submit to executor
-        future = self.executor.submit(self._fetch_data_worker, request)
+        self.executor.submit(self._fetch_data_worker, request)
         
         logger.info(f"Submitted background fetch request {request_id} for {sport} {year}")
         return request_id
@@ -553,13 +549,12 @@ class BackgroundDataService:
             if to_remove:
                 logger.info(f"Cleared {len(to_remove)} old completed requests")
     
-    def shutdown(self, wait: bool = True, timeout: int = 30):
+    def shutdown(self, wait: bool = True):
         """
         Shutdown the background data service.
-        
+
         Args:
             wait: Whether to wait for active requests to complete
-            timeout: Maximum time to wait for shutdown
         """
         logger.info("Shutting down BackgroundDataService...")
         
@@ -570,24 +565,14 @@ class BackgroundDataService:
             for request_id in list(self.active_requests.keys()):
                 self.cancel_request(request_id)
         
-        # Shutdown executor with compatibility for older Python versions
-        try:
-            # Try with timeout parameter (Python 3.9+)
-            self.executor.shutdown(wait=wait, timeout=timeout)
-        except TypeError:
-            # Fallback for older Python versions that don't support timeout
-            if wait and timeout:
-                # For older versions, we can't specify timeout, so just wait
-                self.executor.shutdown(wait=True)
-            else:
-                self.executor.shutdown(wait=wait)
+        self.executor.shutdown(wait=wait)
         
         logger.info("BackgroundDataService shutdown complete")
     
     def __del__(self):
         """Cleanup when service is destroyed."""
         if not self._shutdown:
-            self.shutdown(wait=False, timeout=None)
+            self.shutdown(wait=False)
 
 # Global service instance
 _background_service: Optional[BackgroundDataService] = None

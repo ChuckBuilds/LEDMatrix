@@ -5,7 +5,6 @@ Provides decorators and helpers for consistent error handling across API endpoin
 """
 
 import functools
-import traceback
 from typing import Callable, Any, Optional
 from flask import jsonify
 

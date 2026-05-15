@@ -1,4 +1,4 @@
-from flask import Flask, Blueprint, render_template, request, redirect, url_for, flash, jsonify, Response, send_from_directory
+from flask import Flask, request, redirect, url_for, jsonify, Response, send_from_directory
 import json
 import logging
 import os
@@ -21,7 +21,6 @@ from src.plugin_system.operation_queue import PluginOperationQueue
 from src.plugin_system.state_manager import PluginStateManager
 from src.plugin_system.operation_history import OperationHistory
 from src.plugin_system.health_monitor import PluginHealthMonitor
-from src.wifi_manager import WiFiManager
 
 # Create Flask app
 app = Flask(__name__)
@@ -51,10 +50,8 @@ try:
 except ImportError:
     # flask-limiter not installed, rate limiting disabled
     limiter = None
-    pass
 
 # Import cache functions from separate module to avoid circular imports
-from web_interface.cache import get_cached, set_cached, invalidate_cache
 
 # Initialize plugin managers - read plugins directory from config
 config = config_manager.load_config()
@@ -304,7 +301,6 @@ try:
 except ImportError:
     # Logging config not available, use default
     log_api_request = None
-    pass
 
 # Request timing and logging middleware
 @app.before_request
@@ -328,7 +324,7 @@ def after_request_logging(response):
                 duration_ms=duration_ms,
                 ip_address=ip_address
             )
-        except Exception:
+        except Exception:  # nosec B110 - request logging must never interrupt a live HTTP response
             pass  # Don't break response if logging fails
     return response
 
@@ -506,7 +502,7 @@ def display_preview_generator():
     from PIL import Image
     import io
     
-    snapshot_path = "/tmp/led_matrix_preview.png"
+    snapshot_path = "/tmp/led_matrix_preview.png"  # nosec B108 - fixed path matches display_manager; only read here
     last_modified = None
     
     # Get display dimensions from config
@@ -546,7 +542,7 @@ def display_preview_generator():
                             }
                             last_modified = current_modified
                             yield preview_data
-                    except Exception as read_err:
+                    except Exception:  # nosec B110 - SSE preview file may be mid-write; transient error, skip this update
                         # File might be being written, skip this update
                         pass
             else:
@@ -741,6 +737,9 @@ def check_health_monitor():
             _threading.Thread(target=_run_startup_reconciliation, daemon=True).start()
 
 if __name__ == '__main__':
+    import os as _os
     # threaded=True is Flask's default since 1.0 but stated explicitly so that
     # long-lived /api/v3/stream/* SSE connections don't starve other requests.
-    app.run(host='0.0.0.0', port=5000, debug=True, threaded=True)
+    # Debug mode is off by default; opt in with FLASK_DEBUG=1 in the environment.
+    _debug = _os.environ.get('FLASK_DEBUG', '0') == '1'
+    app.run(host='0.0.0.0', port=5000, debug=_debug, threaded=True)  # nosec B104 - intentional; local network device

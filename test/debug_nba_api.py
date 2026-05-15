@@ -3,7 +3,6 @@
 Diagnostic script to examine NBA API data structure and identify the missing 'id' field issue.
 """
 import requests
-import json
 import logging
 from typing import Dict, Any
 

@@ -1,10 +1,8 @@
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional
 from src.display_manager import DisplayManager
 from src.cache_manager import CacheManager
-from datetime import datetime, timezone, timedelta
 import logging
 from PIL import Image, ImageDraw, ImageFont
-import time
 from src.base_classes.data_sources import ESPNDataSource
 from src.base_classes.sports import SportsCore, SportsLive
 

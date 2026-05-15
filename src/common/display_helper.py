@@ -6,7 +6,7 @@ Extracted from LEDMatrix core to provide reusable functionality for plugins.
 """
 
 import logging
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, Optional, Tuple
 
 from PIL import Image, ImageDraw, ImageFont
 
@@ -166,8 +166,7 @@ class DisplayHelper:
         img = self.create_base_image(background_color)
         draw = ImageDraw.Draw(img)
         
-        # Calculate text position (start off-screen to the right)
-        text_width = draw.textlength(text, font=font)
+        # Start text off-screen to the right
         x_position = self.display_width
         
         # Draw text
@@ -216,8 +215,7 @@ class DisplayHelper:
             PIL Image with error message
         """
         img = self.create_base_image((50, 0, 0))  # Dark red background
-        draw = ImageDraw.Draw(img)
-        
+
         # Use default font
         font = ImageFont.load_default()
         

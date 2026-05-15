@@ -1,3 +1,4 @@
+/* global htmx */
 htmx.defineExtension('json-enc', {
     onEvent: function (name, evt) {
         if (name === "htmx:configRequest") {

@@ -1,11 +1,6 @@
-import time
 import pytest
-import threading
 import json
-import os
-import shutil
-from pathlib import Path
-from unittest.mock import Mock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 from src.config_service import ConfigService
 from src.config_manager import ConfigManager
 

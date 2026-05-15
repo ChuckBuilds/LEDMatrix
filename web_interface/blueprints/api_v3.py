@@ -1,4 +1,4 @@
-from flask import Blueprint, request, jsonify, Response, send_from_directory
+from flask import Blueprint, request, jsonify, Response
 import json
 import os
 import re
@@ -17,10 +17,8 @@ logger = logging.getLogger(__name__)
 from src.web_interface.api_helpers import success_response, error_response, validate_request_json
 from src.web_interface.errors import ErrorCode
 from src.plugin_system.operation_types import OperationType
-from src.web_interface.logging_config import log_plugin_operation, log_config_change
 from src.web_interface.validators import (
-    validate_image_url, validate_file_upload, validate_mime_type,
-    validate_numeric_range, validate_string_length, sanitize_plugin_config
+    validate_file_upload
 )
 from src.error_aggregator import get_error_aggregator
 
@@ -4129,7 +4127,6 @@ def save_plugin_config():
                                             current_value = array_value  # Update for length check below
                                     except (ValueError, KeyError, TypeError) as e:
                                         logger.debug(f"Failed to convert {prop_key} to array: {e}")
-                                        pass
 
                                 # If it's an array, ensure correct types and check minItems
                                 if isinstance(current_value, list):
