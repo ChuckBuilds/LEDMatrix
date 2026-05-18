@@ -1,4 +1,6 @@
+import json
 import os
+import tempfile
 if os.getenv("EMULATOR", "false") == "true":
     from RGBMatrixEmulator import RGBMatrix, RGBMatrixOptions
 else:
@@ -175,14 +177,28 @@ class DisplayManager:
             # Do not raise here; allow fallback mode so web preview and non-hardware environments work
 
         # Write hardware status file so the web UI can surface init failures
+        _hw_status = {"ok": self.matrix is not None, "error": _init_error_str}
+        _status_path = "/tmp/led_matrix_hw_status.json"  # nosec B108
         try:
-            import json as _json
-            _hw_status = {"ok": self.matrix is not None, "error": _init_error_str}
-            _status_path = "/tmp/led_matrix_hw_status.json"  # nosec B108
-            with open(_status_path, "w") as _f:
-                _json.dump(_hw_status, _f)
+            if os.path.islink(_status_path):
+                logger.warning("Skipping hardware status write: %s is a symlink", _status_path)
+            else:
+                _fd, _tmp_path = tempfile.mkstemp(dir="/tmp", prefix=".led_hw_")  # nosec B108
+                try:
+                    with os.fdopen(_fd, "w") as _f:
+                        json.dump(_hw_status, _f)
+                        _f.flush()
+                        os.fsync(_f.fileno())
+                    os.chmod(_tmp_path, 0o600)
+                    os.replace(_tmp_path, _status_path)
+                except Exception:
+                    try:
+                        os.unlink(_tmp_path)
+                    except OSError:
+                        pass
+                    raise
         except Exception:
-            pass
+            logger.error("Failed to write hardware status file", exc_info=True)
 
     @property
     def width(self):
@@ -764,8 +780,8 @@ class DisplayManager:
             try:
                 self.image = Image.new('RGB', (self.width, self.height))
                 self.draw = ImageDraw.Draw(self.image)
-            except Exception:  # nosec B110 - best-effort canvas reset during cleanup; non-critical
-                pass
+            except (OSError, RuntimeError, ValueError, MemoryError):
+                logger.debug("Canvas reset during cleanup failed", exc_info=True)
         # Reset the singleton state when cleaning up
         DisplayManager._instance = None
         DisplayManager._initialized = False

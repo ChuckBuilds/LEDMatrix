@@ -1545,8 +1545,12 @@ def get_hardware_status():
         return jsonify({"status": "success", "data": hw_data})
     except FileNotFoundError:
         return jsonify({"status": "success", "data": {"ok": None, "error": "Display service not yet started"}})
-    except Exception as e:
-        return jsonify({"status": "error", "message": str(e)}), 500
+    except (json.JSONDecodeError, PermissionError):
+        logger.error("Failed to read hardware status file", exc_info=True)
+        return jsonify({"status": "error", "message": "Unable to read hardware status"}), 500
+    except Exception:
+        logger.error("Unexpected error reading hardware status", exc_info=True)
+        return jsonify({"status": "error", "message": "Unable to read hardware status"}), 500
 
 @api_v3.route('/display/current', methods=['GET'])
 def get_display_current():
