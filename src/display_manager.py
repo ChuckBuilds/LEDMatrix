@@ -1,4 +1,6 @@
+import json
 import os
+import tempfile
 if os.getenv("EMULATOR", "false") == "true":
     from RGBMatrixEmulator import RGBMatrix, RGBMatrixOptions
 else:
@@ -58,6 +60,7 @@ class DisplayManager:
         
     def _setup_matrix(self):
         """Initialize the RGB matrix with configuration settings."""
+        _init_error_str = None
         try:
             # Allow callers (e.g., web UI) to force non-hardware fallback mode
             if getattr(self, '_force_fallback', False):
@@ -87,7 +90,7 @@ class DisplayManager:
             options.disable_hardware_pulsing = hardware_config.get('disable_hardware_pulsing', False)
             options.show_refresh_rate = hardware_config.get('show_refresh_rate', False)
             options.limit_refresh_rate_hz = hardware_config.get('limit_refresh_rate_hz', 90)
-            options.gpio_slowdown = runtime_config.get('gpio_slowdown', 2)
+            options.gpio_slowdown = runtime_config.get('gpio_slowdown', 3)
             
             # Disable internal privilege dropping - we manage this via systemd or remain root
             # This prevents the library from dropping to 'daemon' user which breaks file permissions
@@ -141,6 +144,7 @@ class DisplayManager:
                 self._draw_test_pattern()
             
         except Exception as e:
+            _init_error_str = str(e)
             logger.error(f"Failed to initialize RGB Matrix: {e}", exc_info=True)
             # Create a fallback image for web preview using configured dimensions when available
             self.matrix = None
@@ -164,8 +168,37 @@ class DisplayManager:
             except Exception:  # nosec B110 - best-effort fallback visualization; drawing errors must not crash startup
                 # Best-effort; ignore drawing errors in fallback
                 pass
-            logger.error(f"Matrix initialization failed, using fallback mode with size {fallback_width}x{fallback_height}. Error: {e}")
+            logger.error(
+                f"Matrix initialization failed — running in fallback/simulation mode "
+                f"(size {fallback_width}x{fallback_height}). Error: {e}. "
+                "On Raspberry Pi 5: ensure rpi-rgb-led-matrix was built from the latest "
+                "submodule (re-run first_time_install.sh). gpio_slowdown of 2–3 is typical for Pi 5 PIO mode."
+            )
             # Do not raise here; allow fallback mode so web preview and non-hardware environments work
+
+        # Write hardware status file so the web UI can surface init failures
+        _hw_status = {"ok": self.matrix is not None, "error": _init_error_str}
+        _status_path = "/tmp/led_matrix_hw_status.json"  # nosec B108
+        try:
+            if os.path.islink(_status_path):
+                logger.warning("Skipping hardware status write: %s is a symlink", _status_path)
+            else:
+                _fd, _tmp_path = tempfile.mkstemp(dir="/tmp", prefix=".led_hw_")  # nosec B108
+                try:
+                    with os.fdopen(_fd, "w") as _f:
+                        json.dump(_hw_status, _f)
+                        _f.flush()
+                        os.fsync(_f.fileno())
+                    os.chmod(_tmp_path, 0o600)
+                    os.replace(_tmp_path, _status_path)
+                except Exception:
+                    try:
+                        os.unlink(_tmp_path)
+                    except OSError:
+                        pass
+                    raise
+        except Exception:
+            logger.error("Failed to write hardware status file", exc_info=True)
 
     @property
     def width(self):
@@ -747,8 +780,8 @@ class DisplayManager:
             try:
                 self.image = Image.new('RGB', (self.width, self.height))
                 self.draw = ImageDraw.Draw(self.image)
-            except Exception:  # nosec B110 - best-effort canvas reset during cleanup; non-critical
-                pass
+            except (OSError, RuntimeError, ValueError, MemoryError):
+                logger.debug("Canvas reset during cleanup failed", exc_info=True)
         # Reset the singleton state when cleaning up
         DisplayManager._instance = None
         DisplayManager._initialized = False
