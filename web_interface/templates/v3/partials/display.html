@@ -186,8 +186,8 @@
                         RP1 Backend <span class="text-xs text-gray-400 font-normal">(Pi 5 only)</span>
                     </label>
                     <select id="rp1_rio" name="rp1_rio" class="form-control">
-                        <option value="0" {% if main_config.display.get('runtime', {}).get('rp1_rio', 0) == 0 %}selected{% endif %}>0 &mdash; PIO (default, low CPU)</option>
-                        <option value="1" {% if main_config.display.get('runtime', {}).get('rp1_rio', 0) == 1 %}selected{% endif %}>1 &mdash; RIO (higher throughput; slowdown inverted)</option>
+                        <option value="0" {% if main_config.display.get('runtime', {}).get('rp1_rio', 0)|int == 0 %}selected{% endif %}>0 &mdash; PIO (default, low CPU)</option>
+                        <option value="1" {% if main_config.display.get('runtime', {}).get('rp1_rio', 0)|int == 1 %}selected{% endif %}>1 &mdash; RIO (higher throughput; slowdown inverted)</option>
                     </select>
                     <p class="mt-1 text-sm text-gray-600">Pi 5 RP1 coprocessor mode. Ignored on Pi 3/4.</p>
                 </div>
