@@ -170,7 +170,7 @@ class DisplayManager:
                 f"Matrix initialization failed — running in fallback/simulation mode "
                 f"(size {fallback_width}x{fallback_height}). Error: {e}. "
                 "On Raspberry Pi 5: ensure rpi-rgb-led-matrix was built from the latest "
-                "submodule (re-run first_time_install.sh) and that gpio_slowdown is 4 or higher."
+                "submodule (re-run first_time_install.sh). gpio_slowdown of 2–3 is typical for Pi 5 PIO mode."
             )
             # Do not raise here; allow fallback mode so web preview and non-hardware environments work
 

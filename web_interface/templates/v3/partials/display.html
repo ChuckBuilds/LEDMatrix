@@ -18,7 +18,7 @@
         <p class="text-sm text-yellow-700 mt-2">
             On Raspberry Pi 5: ensure the library was rebuilt from the latest submodule
             (<code class="bg-yellow-100 px-1 rounded">first_time_install.sh</code>)
-            and set <strong>GPIO Slowdown to 4 or higher</strong> below.
+            and try adjusting <strong>GPIO Slowdown</strong> (start at 3, reduce if the display looks dim or choppy).
             Check the <a href="/v3/logs" class="underline font-medium">Logs tab</a> for the full error.
         </p>
     </div>
@@ -178,7 +178,7 @@
                            min="0"
                            max="10"
                            class="form-control">
-                    <p class="mt-1 text-sm text-gray-600">Pi 3: 3 &middot; Pi 4: 4 &middot; Pi 5: 4&ndash;5 (in RIO mode, lower values may work better)</p>
+                    <p class="mt-1 text-sm text-gray-600">Pi 3: 1&ndash;2 &middot; Pi 4: 2&ndash;4 &middot; Pi 5 PIO: 1&ndash;3. Increase if display shows garbage; in RIO mode higher values may improve performance.</p>
                 </div>
 
                 <div class="form-group">
