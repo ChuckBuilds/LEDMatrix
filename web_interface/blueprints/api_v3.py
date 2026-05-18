@@ -699,7 +699,7 @@ def save_main_config():
 
         # Handle display settings
         display_fields = ['rows', 'cols', 'chain_length', 'parallel', 'brightness', 'hardware_mapping',
-                         'gpio_slowdown', 'scan_mode', 'disable_hardware_pulsing', 'inverse_colors', 'show_refresh_rate',
+                         'gpio_slowdown', 'rp1_rio', 'scan_mode', 'disable_hardware_pulsing', 'inverse_colors', 'show_refresh_rate',
                          'pwm_bits', 'pwm_dither_bits', 'pwm_lsb_nanoseconds', 'limit_refresh_rate_hz', 'use_short_date_format',
                          'max_dynamic_duration_seconds', 'led_rgb_sequence', 'multiplexing', 'panel_type']
 
@@ -747,6 +747,14 @@ def save_main_config():
             # Handle runtime settings
             if 'gpio_slowdown' in data:
                 current_config['display']['runtime']['gpio_slowdown'] = int(data['gpio_slowdown'])
+            if 'rp1_rio' in data:
+                try:
+                    rp1_val = int(data['rp1_rio'])
+                    if rp1_val not in (0, 1):
+                        return jsonify({'status': 'error', 'message': "rp1_rio must be 0 (PIO) or 1 (RIO)"}), 400
+                    current_config['display']['runtime']['rp1_rio'] = rp1_val
+                except (ValueError, TypeError):
+                    return jsonify({'status': 'error', 'message': "rp1_rio must be 0 or 1"}), 400
 
             # Handle checkboxes - coerce to bool to ensure proper JSON types
             for checkbox in ['disable_hardware_pulsing', 'inverse_colors', 'show_refresh_rate']:
@@ -1526,6 +1534,19 @@ def execute_system_action():
         print(f"Error in execute_system_action: {str(e)}")
         print(error_details)
         return jsonify({'status': 'error', 'message': str(e), 'details': error_details}), 500
+
+@api_v3.route('/hardware/status', methods=['GET'])
+def get_hardware_status():
+    """Return LED matrix hardware initialization status written by display_manager at startup."""
+    status_path = "/tmp/led_matrix_hw_status.json"  # nosec B108
+    try:
+        with open(status_path) as f:
+            hw_data = json.load(f)
+        return jsonify({"status": "success", "data": hw_data})
+    except FileNotFoundError:
+        return jsonify({"status": "success", "data": {"ok": None, "error": "Display service not yet started"}})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
 
 @api_v3.route('/display/current', methods=['GET'])
 def get_display_current():

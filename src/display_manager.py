@@ -58,6 +58,7 @@ class DisplayManager:
         
     def _setup_matrix(self):
         """Initialize the RGB matrix with configuration settings."""
+        _init_error_str = None
         try:
             # Allow callers (e.g., web UI) to force non-hardware fallback mode
             if getattr(self, '_force_fallback', False):
@@ -87,7 +88,7 @@ class DisplayManager:
             options.disable_hardware_pulsing = hardware_config.get('disable_hardware_pulsing', False)
             options.show_refresh_rate = hardware_config.get('show_refresh_rate', False)
             options.limit_refresh_rate_hz = hardware_config.get('limit_refresh_rate_hz', 90)
-            options.gpio_slowdown = runtime_config.get('gpio_slowdown', 2)
+            options.gpio_slowdown = runtime_config.get('gpio_slowdown', 3)
             
             # Disable internal privilege dropping - we manage this via systemd or remain root
             # This prevents the library from dropping to 'daemon' user which breaks file permissions
@@ -141,6 +142,7 @@ class DisplayManager:
                 self._draw_test_pattern()
             
         except Exception as e:
+            _init_error_str = str(e)
             logger.error(f"Failed to initialize RGB Matrix: {e}", exc_info=True)
             # Create a fallback image for web preview using configured dimensions when available
             self.matrix = None
@@ -164,8 +166,23 @@ class DisplayManager:
             except Exception:  # nosec B110 - best-effort fallback visualization; drawing errors must not crash startup
                 # Best-effort; ignore drawing errors in fallback
                 pass
-            logger.error(f"Matrix initialization failed, using fallback mode with size {fallback_width}x{fallback_height}. Error: {e}")
+            logger.error(
+                f"Matrix initialization failed — running in fallback/simulation mode "
+                f"(size {fallback_width}x{fallback_height}). Error: {e}. "
+                "On Raspberry Pi 5: ensure rpi-rgb-led-matrix was built from the latest "
+                "submodule (re-run first_time_install.sh) and that gpio_slowdown is 4 or higher."
+            )
             # Do not raise here; allow fallback mode so web preview and non-hardware environments work
+
+        # Write hardware status file so the web UI can surface init failures
+        try:
+            import json as _json
+            _hw_status = {"ok": self.matrix is not None, "error": _init_error_str}
+            _status_path = "/tmp/led_matrix_hw_status.json"  # nosec B108
+            with open(_status_path, "w") as _f:
+                _json.dump(_hw_status, _f)
+        except Exception:
+            pass
 
     @property
     def width(self):

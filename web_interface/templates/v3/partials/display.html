@@ -4,6 +4,25 @@
         <p class="mt-1 text-sm text-gray-600">Configure LED matrix hardware settings and display options.</p>
     </div>
 
+    <!-- Hardware status banner: shown when display service is in fallback/simulation mode -->
+    <div x-data="{ show: false, errorMsg: '' }"
+         x-init="fetch('/api/v3/hardware/status').then(r => r.json()).then(d => {
+             const hw = (d && d.data) || {};
+             if (hw.ok === false) { show = true; errorMsg = hw.error || 'Unknown error'; }
+         }).catch(() => {})"
+         x-show="show"
+         style="display:none"
+         class="bg-yellow-50 border border-yellow-300 rounded-lg p-4 mb-6">
+        <p class="font-semibold text-yellow-800"><i class="fas fa-exclamation-triangle mr-2"></i>LED matrix running in simulation mode</p>
+        <p class="text-sm text-yellow-700 mt-1">Hardware initialization failed: <span x-text="errorMsg" class="font-mono text-xs break-all"></span></p>
+        <p class="text-sm text-yellow-700 mt-2">
+            On Raspberry Pi 5: ensure the library was rebuilt from the latest submodule
+            (<code class="bg-yellow-100 px-1 rounded">first_time_install.sh</code>)
+            and set <strong>GPIO Slowdown to 4 or higher</strong> below.
+            Check the <a href="/v3/logs" class="underline font-medium">Logs tab</a> for the full error.
+        </p>
+    </div>
+
     <form hx-post="/api/v3/config/main"
           hx-ext="json-enc"
           hx-headers='{"Content-Type": "application/json"}'
@@ -149,7 +168,7 @@
                 </div>
             </div>
 
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <div class="form-group">
                     <label for="gpio_slowdown" class="block text-sm font-medium text-gray-700">GPIO Slowdown</label>
                     <input type="number"
@@ -157,9 +176,20 @@
                            name="gpio_slowdown"
                            value="{{ main_config.display.runtime.gpio_slowdown or 3 }}"
                            min="0"
-                           max="5"
+                           max="10"
                            class="form-control">
-                    <p class="mt-1 text-sm text-gray-600">GPIO slowdown factor (0-5)</p>
+                    <p class="mt-1 text-sm text-gray-600">Pi 3: 3 &middot; Pi 4: 4 &middot; Pi 5: 4&ndash;5 (in RIO mode, lower values may work better)</p>
+                </div>
+
+                <div class="form-group">
+                    <label for="rp1_rio" class="block text-sm font-medium text-gray-700">
+                        RP1 Backend <span class="text-xs text-gray-400 font-normal">(Pi 5 only)</span>
+                    </label>
+                    <select id="rp1_rio" name="rp1_rio" class="form-control">
+                        <option value="0" {% if main_config.display.get('runtime', {}).get('rp1_rio', 0) == 0 %}selected{% endif %}>0 &mdash; PIO (default, low CPU)</option>
+                        <option value="1" {% if main_config.display.get('runtime', {}).get('rp1_rio', 0) == 1 %}selected{% endif %}>1 &mdash; RIO (higher throughput; slowdown inverted)</option>
+                    </select>
+                    <p class="mt-1 text-sm text-gray-600">Pi 5 RP1 coprocessor mode. Ignored on Pi 3/4.</p>
                 </div>
 
                 <div class="form-group">
