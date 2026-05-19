@@ -1,43 +1,43 @@
 {
     "web_display_autostart": true,
     "schedule": {
-        "enabled": true,
+        "enabled": false,
         "mode": "per-day",
         "start_time": "07:00",
         "end_time": "23:00",
         "days": {
             "monday": {
-                "enabled": true,
+                "enabled": false,
                 "start_time": "07:00",
                 "end_time": "23:00"
             },
             "tuesday": {
-                "enabled": true,
+                "enabled": false,
                 "start_time": "07:00",
                 "end_time": "23:00"
             },
             "wednesday": {
-                "enabled": true,
+                "enabled": false,
                 "start_time": "07:00",
                 "end_time": "23:00"
             },
             "thursday": {
-                "enabled": true,
+                "enabled": false,
                 "start_time": "07:00",
                 "end_time": "23:00"
             },
             "friday": {
-                "enabled": true,
+                "enabled": false,
                 "start_time": "07:00",
                 "end_time": "23:00"
             },
             "saturday": {
-                "enabled": true,
+                "enabled": false,
                 "start_time": "07:00",
                 "end_time": "23:00"
             },
             "sunday": {
-                "enabled": true,
+                "enabled": false,
                 "start_time": "07:00",
                 "end_time": "23:00"
             }
@@ -51,46 +51,46 @@
         "end_time": "07:00",
         "days": {
             "monday": {
-                "enabled": true,
+                "enabled": false,
                 "start_time": "20:00",
                 "end_time": "07:00"
             },
             "tuesday": {
-                "enabled": true,
+                "enabled": false,
                 "start_time": "20:00",
                 "end_time": "07:00"
             },
             "wednesday": {
-                "enabled": true,
+                "enabled": false,
                 "start_time": "20:00",
                 "end_time": "07:00"
             },
             "thursday": {
-                "enabled": true,
+                "enabled": false,
                 "start_time": "20:00",
                 "end_time": "07:00"
             },
             "friday": {
-                "enabled": true,
+                "enabled": false,
                 "start_time": "20:00",
                 "end_time": "07:00"
             },
             "saturday": {
-                "enabled": true,
+                "enabled": false,
                 "start_time": "20:00",
                 "end_time": "07:00"
             },
             "sunday": {
-                "enabled": true,
+                "enabled": false,
                 "start_time": "20:00",
                 "end_time": "07:00"
             }
         }
     },
-    "timezone": "America/Chicago",
+    "timezone": "America/New_York",
     "location": {
-        "city": "Dallas",
-        "state": "Texas",
+        "city": "Tampa",
+        "state": "Florida",
         "country": "US"
     },
     "display": {
