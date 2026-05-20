@@ -10,6 +10,7 @@ import json
 import stat
 import subprocess
 import shutil
+import threading
 import zipfile
 import tempfile
 import requests
@@ -100,6 +101,10 @@ class PluginStoreManager:
         # handlers. Bumping the cached-entry timestamp on failure serves
         # the stale payload cheaply until the backoff expires.
         self._failure_backoff_seconds = 60
+        # Prevents concurrent callers from each firing a network request when
+        # the registry cache expires. Only one thread fetches; others wait and
+        # then get the result from the warm cache (double-checked locking).
+        self._registry_fetch_lock = threading.Lock()
 
         # Ensure plugins directory exists
         self.plugins_dir.mkdir(exist_ok=True)
@@ -575,41 +580,50 @@ class PluginStoreManager:
             (current_time - self.registry_cache_time) < self.registry_cache_timeout):
             return self.registry_cache
 
-        try:
-            self.logger.info(f"Fetching plugin registry from {self.REGISTRY_URL}")
-            response = self._http_get_with_retries(self.REGISTRY_URL, timeout=10)
-            response.raise_for_status()
-            self.registry_cache = response.json()
-            self.registry_cache_time = current_time
-            self.logger.info(f"Fetched registry with {len(self.registry_cache.get('plugins', []))} plugins")
-            return self.registry_cache
-        except requests.RequestException as e:
-            self.logger.error(f"Error fetching registry: {e}")
-            if raise_on_failure:
-                raise
-            # Prefer stale cache over an empty list so the plugin list UI
-            # keeps working on a flaky connection (e.g. Pi on WiFi). Bump
-            # registry_cache_time into a short backoff window so the next
-            # request serves the stale payload cheaply instead of
-            # re-hitting the network on every request (matches the
-            # pattern used by github_cache / commit_info_cache).
-            if self.registry_cache:
-                self.logger.warning("Falling back to stale registry cache")
-                self.registry_cache_time = (
-                    time.time() + self._failure_backoff_seconds - self.registry_cache_timeout
-                )
+        with self._registry_fetch_lock:
+            # Re-check inside the lock — a concurrent caller that was waiting
+            # may have already populated the cache while we blocked.
+            current_time = time.time()
+            if (self.registry_cache and self.registry_cache_time and
+                    not force_refresh and
+                    (current_time - self.registry_cache_time) < self.registry_cache_timeout):
                 return self.registry_cache
-            return {"plugins": []}
-        except json.JSONDecodeError as e:
-            self.logger.error(f"Error parsing registry JSON: {e}")
-            if raise_on_failure:
-                raise
-            if self.registry_cache:
-                self.registry_cache_time = (
-                    time.time() + self._failure_backoff_seconds - self.registry_cache_timeout
-                )
+
+            try:
+                self.logger.info(f"Fetching plugin registry from {self.REGISTRY_URL}")
+                response = self._http_get_with_retries(self.REGISTRY_URL, timeout=10)
+                response.raise_for_status()
+                self.registry_cache = response.json()
+                self.registry_cache_time = current_time
+                self.logger.info(f"Fetched registry with {len(self.registry_cache.get('plugins', []))} plugins")
                 return self.registry_cache
-            return {"plugins": []}
+            except requests.RequestException as e:
+                self.logger.error(f"Error fetching registry: {e}")
+                if raise_on_failure:
+                    raise
+                # Prefer stale cache over an empty list so the plugin list UI
+                # keeps working on a flaky connection (e.g. Pi on WiFi). Bump
+                # registry_cache_time into a short backoff window so the next
+                # request serves the stale payload cheaply instead of
+                # re-hitting the network on every request (matches the
+                # pattern used by github_cache / commit_info_cache).
+                if self.registry_cache:
+                    self.logger.warning("Falling back to stale registry cache")
+                    self.registry_cache_time = (
+                        time.time() + self._failure_backoff_seconds - self.registry_cache_timeout
+                    )
+                    return self.registry_cache
+                return {"plugins": []}
+            except json.JSONDecodeError as e:
+                self.logger.error(f"Error parsing registry JSON: {e}")
+                if raise_on_failure:
+                    raise
+                if self.registry_cache:
+                    self.registry_cache_time = (
+                        time.time() + self._failure_backoff_seconds - self.registry_cache_timeout
+                    )
+                    return self.registry_cache
+                return {"plugins": []}
     
     def search_plugins(self, query: str = "", category: str = "", tags: List[str] = None, fetch_commit_info: bool = True, include_saved_repos: bool = True, saved_repositories_manager = None) -> List[Dict]:
         """

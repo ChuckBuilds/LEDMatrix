@@ -1384,6 +1384,52 @@ def get_system_version():
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
+_update_check_cache: Dict[str, Any] = {'result': None, 'ts': 0.0}
+_UPDATE_CHECK_TTL = 300  # 5 minutes — avoids a git fetch on every page load
+
+@api_v3.route('/system/check-update', methods=['GET'])
+def check_for_update():
+    """Check whether a newer LEDMatrix commit is available on origin/main."""
+    now = time.time()
+    if _update_check_cache['result'] and now - _update_check_cache['ts'] < _UPDATE_CHECK_TTL:
+        return jsonify(_update_check_cache['result'])
+
+    _safe: Dict[str, Any] = {'update_available': False, 'remote_sha': 'unknown', 'commits_behind': 0}
+    try:
+        cwd = str(PROJECT_ROOT)
+        subprocess.run(
+            ['git', 'fetch', 'origin', 'main', '--quiet'],
+            capture_output=True, timeout=10, cwd=cwd,
+        )
+        local = subprocess.run(
+            ['git', 'rev-parse', 'HEAD'],
+            capture_output=True, text=True, timeout=5, cwd=cwd,
+        ).stdout.strip()
+        remote = subprocess.run(
+            ['git', 'rev-parse', 'origin/main'],
+            capture_output=True, text=True, timeout=5, cwd=cwd,
+        ).stdout.strip()
+
+        if not local or not remote:
+            return jsonify(_safe)
+
+        if local == remote:
+            result: Dict[str, Any] = {'update_available': False, 'remote_sha': remote, 'commits_behind': 0}
+        else:
+            count_str = subprocess.run(
+                ['git', 'rev-list', 'HEAD..origin/main', '--count'],
+                capture_output=True, text=True, timeout=5, cwd=cwd,
+            ).stdout.strip()
+            count = int(count_str) if count_str.isdigit() else 0
+            result = {'update_available': count > 0, 'remote_sha': remote, 'commits_behind': count}
+
+        _update_check_cache['result'] = result
+        _update_check_cache['ts'] = now
+        return jsonify(result)
+    except Exception as e:
+        logger.debug("check-update: %s", e)
+        return jsonify(_safe)
+
 @api_v3.route('/system/action', methods=['POST'])
 def execute_system_action():
     """Execute system actions (start/stop/reboot/etc)"""
@@ -2432,6 +2478,19 @@ def reconcile_plugin_state():
             context=error.context,
             status_code=500
         )
+
+@api_v3.route('/plugins/reconciliation-status', methods=['GET'])
+def get_reconciliation_status():
+    """Return the result of the last startup reconciliation from /tmp status file."""
+    _recon_path = "/tmp/ledmatrix_reconciliation.json"
+    try:
+        with open(_recon_path) as _f:
+            data = json.load(_f)
+        return jsonify({'status': 'success', 'data': data})
+    except FileNotFoundError:
+        return jsonify({'status': 'success', 'data': {'done': False, 'unresolved': []}})
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)}), 500
 
 @api_v3.route('/plugins/config', methods=['GET'])
 def get_plugin_config():
