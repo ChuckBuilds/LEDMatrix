@@ -127,10 +127,15 @@ The system supports live, recent, and upcoming game information for multiple spo
 | This project can be finnicky! RGB LED Matrix displays are not built the same or to a high-quality standard. We have seen many displays arrive dead or partially working in our discord. Please purchase from a reputable vendor. |
 
 ### Raspberry Pi
-- Raspberry Pi Zero's don't have enough processing power for this project and the Pi 5 is unsupported due to new GPIO output.
-- **Raspberry Pi 3B or 4 (NOT RPi 5!)**  
+- Raspberry Pi Zero's don't have enough processing power for this project.
+- **Raspberry Pi 3B, 4, or 5**
   [Amazon Affiliate Link – Raspberry Pi 4 4GB RAM](https://amzn.to/4dJixuX)
   [Amazon Affiliate Link – Raspberry Pi 4 8GB RAM](https://amzn.to/4qbqY7F)
+  - **Pi 5 users**: the installer automatically detects Pi 5 and builds the `rpi-rgb-led-matrix` library with RP1 support. If you previously installed on a Pi 4 and migrated the SD card, or if you see `mmap` errors in the logs, force a fresh library build:
+    ```bash
+    sudo RPI_RGB_FORCE_REBUILD=1 ./first_time_install.sh
+    ```
+  - Pi 5 config: leave `rp1_rio` at `0` (PIO mode, default) and set `gpio_slowdown` to `1` or `2`.
 
 
 ### RGB Matrix Bonnet / HAT
@@ -582,7 +587,7 @@ These settings control runtime behavior and GPIO timing:
   - **Critical setting**: Must match your Raspberry Pi model for stability
   - **Raspberry Pi 3**: Use 3
   - **Raspberry Pi 4**: Use 4
-  - **Raspberry Pi 5**: Use 5 (or higher if needed)
+  - **Raspberry Pi 5**: Use 1–2 in PIO mode (`rp1_rio: 0`, the default); start with `1` and increase if you see flickering
   - **Raspberry Pi Zero/1**: Use 1-2
   - Incorrect values can cause display corruption, flickering, or system instability
   - If you experience issues, try adjusting this value up or down by 1
