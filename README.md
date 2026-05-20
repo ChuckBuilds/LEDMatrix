@@ -1,5 +1,10 @@
 # LEDMatrix
+[![License](https://img.shields.io/badge/license-GPL--3.0-green)](LICENSE)
+[![Discord](https://img.shields.io/badge/Discord-community-5865F2?logo=discord&logoColor=white)](https://discord.gg/RdrC37rEag)
+[![GitHub Stars](https://img.shields.io/github/stars/ChuckBuilds/ledmatrix?style=flat&color=yellow)](https://github.com/ChuckBuilds/ledmatrix)
 [![Codacy Badge](https://app.codacy.com/project/badge/Grade/77fc9b446a5948e5b0aed7a7aaeb1bab)](https://app.codacy.com/gh/ChuckBuilds/LEDMatrix/dashboard?utm_source=gh&utm_medium=referral&utm_content=&utm_campaign=Badge_grade)
+
+
 ## Welcome to LEDMatrix! 
 Welcome to the LEDMatrix Project! This open-source project enables you to run an information-rich display on a Raspberry Pi connected to an LED RGB Matrix panel. Whether you want to see your calendar, weather forecasts, sports scores, stock prices, or any other information at a glance, LEDMatrix brings it all together.
 
