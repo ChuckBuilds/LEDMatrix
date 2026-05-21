@@ -5,6 +5,7 @@ import re
 import stat
 import sys
 import subprocess
+import tempfile
 import time
 import hashlib
 import uuid
@@ -2491,7 +2492,7 @@ def reconcile_plugin_state():
 @api_v3.route('/plugins/reconciliation-status', methods=['GET'])
 def get_reconciliation_status():
     """Return the result of the last startup reconciliation from /tmp status file."""
-    _recon_path = "/tmp/ledmatrix_reconciliation.json"
+    _recon_path = os.path.join(tempfile.gettempdir(), "ledmatrix_reconciliation.json")
     try:
         st = os.lstat(_recon_path)
     except FileNotFoundError:

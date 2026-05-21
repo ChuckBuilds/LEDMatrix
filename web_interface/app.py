@@ -734,11 +734,11 @@ def _run_startup_reconciliation() -> None:
                 for inc in result.inconsistencies_manual
             ],
         }
-        _recon_path = "/tmp/ledmatrix_reconciliation.json"
+        _recon_path = _os.path.join(_tempfile.gettempdir(), "ledmatrix_reconciliation.json")
         _tmp = None
         try:
             if not _os.path.islink(_recon_path):
-                _fd, _tmp = _tempfile.mkstemp(dir="/tmp", prefix=".led_recon_")
+                _fd, _tmp = _tempfile.mkstemp(dir=_tempfile.gettempdir(), prefix=".led_recon_")
                 with _os.fdopen(_fd, "w") as _f:
                     _json.dump(_recon_status, _f)
                 _os.replace(_tmp, _recon_path)
