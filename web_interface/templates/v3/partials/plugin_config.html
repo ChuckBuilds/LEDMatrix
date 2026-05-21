@@ -9,7 +9,8 @@
     {% set field_id = (plugin_id ~ '-' ~ full_key)|replace('.', '-')|replace('_', '-') %}
     {% set label = prop.title if prop.title else key|replace('_', ' ')|title %}
     {% set description = prop.description if prop.description else '' %}
-    {% set field_type = prop.type if prop.type is string else (prop.type[0] if prop.type is iterable else 'string') %}
+    {% set _pt = prop.get('type') %}
+    {% set field_type = _pt if (_pt is string) else ((_pt | first) if (_pt and _pt is iterable and _pt is not string) else 'string') %}
     
     {# Handle nested objects - check for widget first #}
     {% if field_type == 'object' %}

@@ -2,14 +2,17 @@ from flask import Blueprint, request, jsonify, Response
 import json
 import os
 import re
+import stat
 import sys
 import subprocess
+import tempfile
 import time
 import hashlib
 import uuid
 import logging
 from datetime import datetime
 from pathlib import Path
+from typing import Dict, Any
 
 logger = logging.getLogger(__name__)
 
@@ -1384,6 +1387,59 @@ def get_system_version():
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
+_update_check_cache: Dict[str, Any] = {'result': None, 'ts': 0.0}
+_UPDATE_CHECK_TTL = 300  # 5 minutes — avoids a git fetch on every page load
+
+@api_v3.route('/system/check-update', methods=['GET'])
+def check_for_update():
+    """Check whether a newer LEDMatrix commit is available on origin/main."""
+    now = time.time()
+    if _update_check_cache['result'] and now - _update_check_cache['ts'] < _UPDATE_CHECK_TTL:
+        return jsonify(_update_check_cache['result'])
+
+    _safe: Dict[str, Any] = {'update_available': False, 'remote_sha': 'unknown', 'commits_behind': 0}
+    try:
+        cwd = str(PROJECT_ROOT)
+        fetch_result = subprocess.run(
+            ['git', 'fetch', 'origin', 'main', '--quiet'],
+            capture_output=True, timeout=10, cwd=cwd,
+        )
+        if fetch_result.returncode != 0:
+            logger.warning("check-update: git fetch failed (rc=%d): %s",
+                           fetch_result.returncode,
+                           fetch_result.stderr.decode(errors='replace').strip())
+            _update_check_cache['result'] = _safe
+            _update_check_cache['ts'] = now
+            return jsonify(_safe)
+        local = subprocess.run(
+            ['git', 'rev-parse', 'HEAD'],
+            capture_output=True, text=True, timeout=5, cwd=cwd,
+        ).stdout.strip()
+        remote = subprocess.run(
+            ['git', 'rev-parse', 'origin/main'],
+            capture_output=True, text=True, timeout=5, cwd=cwd,
+        ).stdout.strip()
+
+        if not local or not remote:
+            return jsonify(_safe)
+
+        if local == remote:
+            result: Dict[str, Any] = {'update_available': False, 'remote_sha': remote, 'commits_behind': 0}
+        else:
+            count_str = subprocess.run(
+                ['git', 'rev-list', 'HEAD..origin/main', '--count'],
+                capture_output=True, text=True, timeout=5, cwd=cwd,
+            ).stdout.strip()
+            count = int(count_str) if count_str.isdigit() else 0
+            result = {'update_available': count > 0, 'remote_sha': remote, 'commits_behind': count}
+
+        _update_check_cache['result'] = result
+        _update_check_cache['ts'] = now
+        return jsonify(result)
+    except Exception as e:
+        logger.warning("check-update failed: %s", e)
+        return jsonify(_safe)
+
 @api_v3.route('/system/action', methods=['POST'])
 def execute_system_action():
     """Execute system actions (start/stop/reboot/etc)"""
@@ -2432,6 +2488,28 @@ def reconcile_plugin_state():
             context=error.context,
             status_code=500
         )
+
+@api_v3.route('/plugins/reconciliation-status', methods=['GET'])
+def get_reconciliation_status():
+    """Return the result of the last startup reconciliation from /tmp status file."""
+    _recon_path = os.path.join(tempfile.gettempdir(), "ledmatrix_reconciliation.json")
+    try:
+        st = os.lstat(_recon_path)
+    except FileNotFoundError:
+        return jsonify({'status': 'success', 'data': {'done': False, 'unresolved': []}})
+    if stat.S_ISLNK(st.st_mode) or not stat.S_ISREG(st.st_mode):
+        logger.warning("[Reconciliation] Status file is not a regular file: %s", _recon_path)
+        return jsonify({'status': 'success', 'data': {'done': False, 'unresolved': []}})
+    try:
+        with open(_recon_path) as _f:
+            data = json.load(_f)
+        return jsonify({'status': 'success', 'data': data})
+    except json.JSONDecodeError:
+        logger.exception("[Reconciliation] Failed to parse status file: %s", _recon_path)
+        return jsonify({'status': 'success', 'data': {'done': False, 'unresolved': []}})
+    except PermissionError:
+        logger.exception("[Reconciliation] Permission denied reading status file: %s", _recon_path)
+        return jsonify({'status': 'success', 'data': {'done': False, 'unresolved': []}})
 
 @api_v3.route('/plugins/config', methods=['GET'])
 def get_plugin_config():

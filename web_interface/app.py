@@ -716,6 +716,41 @@ def _run_startup_reconciliation() -> None:
                 "manual 'Reconcile' action to resolve.",
                 len(result.inconsistencies_manual),
             )
+
+        # Write status file so the web UI can surface unresolved issues as a
+        # banner without the user having to read journalctl. Mirrors the
+        # hw_status pattern (/tmp/led_matrix_hw_status.json).
+        import json as _json, tempfile as _tempfile, os as _os
+        _recon_status = {
+            "done": True,
+            "successful": result.reconciliation_successful,
+            "fixed_count": len(result.inconsistencies_fixed),
+            "unresolved": [
+                {
+                    "plugin_id": inc.plugin_id,
+                    "type": inc.inconsistency_type.value,
+                    "description": inc.description,
+                }
+                for inc in result.inconsistencies_manual
+            ],
+        }
+        _recon_path = _os.path.join(_tempfile.gettempdir(), "ledmatrix_reconciliation.json")
+        _tmp = None
+        try:
+            if not _os.path.islink(_recon_path):
+                _fd, _tmp = _tempfile.mkstemp(dir=_tempfile.gettempdir(), prefix=".led_recon_")
+                with _os.fdopen(_fd, "w") as _f:
+                    _json.dump(_recon_status, _f)
+                _os.replace(_tmp, _recon_path)
+                _tmp = None  # Rename succeeded; nothing to clean up
+        except (OSError, ValueError, TypeError) as _e:
+            _logger.warning("[Reconciliation] Could not write status file: %s", _e)
+        finally:
+            if _tmp is not None and _os.path.exists(_tmp):
+                try:
+                    _os.unlink(_tmp)
+                except OSError:
+                    pass
     except Exception as e:
         _logger.error("[Reconciliation] Error: %s", e, exc_info=True)
     finally:
