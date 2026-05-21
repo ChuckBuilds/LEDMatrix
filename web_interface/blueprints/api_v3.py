@@ -1404,6 +1404,11 @@ def check_for_update():
             capture_output=True, timeout=10, cwd=cwd,
         )
         if fetch_result.returncode != 0:
+            logger.warning("check-update: git fetch failed (rc=%d): %s",
+                           fetch_result.returncode,
+                           fetch_result.stderr.decode(errors='replace').strip())
+            _update_check_cache['result'] = _safe
+            _update_check_cache['ts'] = now
             return jsonify(_safe)
         local = subprocess.run(
             ['git', 'rev-parse', 'HEAD'],
@@ -2493,17 +2498,17 @@ def get_reconciliation_status():
         return jsonify({'status': 'success', 'data': {'done': False, 'unresolved': []}})
     if stat.S_ISLNK(st.st_mode) or not stat.S_ISREG(st.st_mode):
         logger.warning("[Reconciliation] Status file is not a regular file: %s", _recon_path)
-        return jsonify({'status': 'error', 'message': 'Status file unavailable'}), 500
+        return jsonify({'status': 'success', 'data': {'done': False, 'unresolved': []}})
     try:
         with open(_recon_path) as _f:
             data = json.load(_f)
         return jsonify({'status': 'success', 'data': data})
     except json.JSONDecodeError:
         logger.exception("[Reconciliation] Failed to parse status file: %s", _recon_path)
-        return jsonify({'status': 'error', 'message': 'Status file unavailable'}), 500
+        return jsonify({'status': 'success', 'data': {'done': False, 'unresolved': []}})
     except PermissionError:
         logger.exception("[Reconciliation] Permission denied reading status file: %s", _recon_path)
-        return jsonify({'status': 'error', 'message': 'Status file unavailable'}), 500
+        return jsonify({'status': 'success', 'data': {'done': False, 'unresolved': []}})
 
 @api_v3.route('/plugins/config', methods=['GET'])
 def get_plugin_config():
