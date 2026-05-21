@@ -735,14 +735,22 @@ def _run_startup_reconciliation() -> None:
             ],
         }
         _recon_path = "/tmp/ledmatrix_reconciliation.json"
+        _tmp = None
         try:
             if not _os.path.islink(_recon_path):
                 _fd, _tmp = _tempfile.mkstemp(dir="/tmp", prefix=".led_recon_")
                 with _os.fdopen(_fd, "w") as _f:
                     _json.dump(_recon_status, _f)
                 _os.replace(_tmp, _recon_path)
-        except Exception as _e:
+                _tmp = None  # Rename succeeded; nothing to clean up
+        except (OSError, ValueError, TypeError) as _e:
             _logger.warning("[Reconciliation] Could not write status file: %s", _e)
+        finally:
+            if _tmp is not None and _os.path.exists(_tmp):
+                try:
+                    _os.unlink(_tmp)
+                except OSError:
+                    pass
     except Exception as e:
         _logger.error("[Reconciliation] Error: %s", e, exc_info=True)
     finally:

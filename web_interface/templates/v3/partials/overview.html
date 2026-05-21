@@ -14,36 +14,49 @@
 <script>
 (function () {
     var DISMISS_KEY = 'ledmatrix-recon-dismissed';
-    fetch('/api/v3/plugins/reconciliation-status')
-        .then(function (r) { return r.json(); })
-        .then(function (resp) {
-            var d = resp.data || {};
-            if (!d.done || !d.unresolved || d.unresolved.length === 0) return;
-            var key = d.unresolved.map(function (i) { return i.plugin_id; }).sort().join(',');
-            if (sessionStorage.getItem(DISMISS_KEY) === key) return;
-            var ids = d.unresolved.map(function (i) { return i.plugin_id; }).join(', ');
-            document.getElementById('reconciliation-banner-text').textContent =
-                'Stale plugin config entries found: ' + ids +
-                '. Remove them from config.json or reinstall via the Plugin Store.';
-            var banner = document.getElementById('reconciliation-banner');
-            banner.style.setProperty('display', 'flex', 'important');
-        })
-        .catch(function () {});
+    var _recon_timer = null;
+
+    function checkReconciliation() {
+        fetch('/api/v3/plugins/reconciliation-status')
+            .then(function (r) { return r.json(); })
+            .then(function (resp) {
+                var d = resp.data || {};
+                if (!d.done) {
+                    // Reconciliation still running — poll again shortly
+                    _recon_timer = setTimeout(checkReconciliation, 2000);
+                    return;
+                }
+                _recon_timer = null;
+                if (!d.unresolved || d.unresolved.length === 0) return;
+                var key = d.unresolved.map(function (i) { return i.plugin_id; }).sort().join(',');
+                if (sessionStorage.getItem(DISMISS_KEY) === key) return;
+                var ids = d.unresolved.map(function (i) { return i.plugin_id; }).join(', ');
+                document.getElementById('reconciliation-banner-text').textContent =
+                    'Stale plugin config entries found: ' + ids +
+                    '. Remove them from config.json or reinstall via the Plugin Store.';
+                var banner = document.getElementById('reconciliation-banner');
+                banner.dataset.dismissKey = key;
+                banner.style.setProperty('display', 'flex', 'important');
+            })
+            .catch(function () {});
+    }
+    checkReconciliation();
 
     window.dismissReconciliationBanner = function () {
         var banner = document.getElementById('reconciliation-banner');
         banner.style.setProperty('display', 'none', 'important');
-        try {
-            fetch('/api/v3/plugins/reconciliation-status')
-                .then(function (r) { return r.json(); })
-                .then(function (resp) {
-                    var d = resp.data || {};
-                    if (d.unresolved && d.unresolved.length) {
-                        var key = d.unresolved.map(function (i) { return i.plugin_id; }).sort().join(',');
-                        sessionStorage.setItem(DISMISS_KEY, key);
-                    }
-                });
-        } catch (e) {}
+        if (_recon_timer !== null) {
+            clearTimeout(_recon_timer);
+            _recon_timer = null;
+        }
+        // Persist dismissal immediately so the banner won't reappear on reload
+        // even if the background sync fetch below fails.
+        var key = banner.dataset.dismissKey;
+        if (key) {
+            try { sessionStorage.setItem(DISMISS_KEY, key); } catch (e) {}
+        }
+        // Background sync only — do not rely on this for DISMISS_KEY or hiding.
+        fetch('/api/v3/plugins/reconciliation-status').catch(function () {});
     };
 }());
 </script>

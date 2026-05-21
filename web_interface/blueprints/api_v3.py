@@ -2,6 +2,7 @@ from flask import Blueprint, request, jsonify, Response
 import json
 import os
 import re
+import stat
 import sys
 import subprocess
 import time
@@ -10,6 +11,7 @@ import uuid
 import logging
 from datetime import datetime
 from pathlib import Path
+from typing import Dict, Any
 
 logger = logging.getLogger(__name__)
 
@@ -1397,10 +1399,12 @@ def check_for_update():
     _safe: Dict[str, Any] = {'update_available': False, 'remote_sha': 'unknown', 'commits_behind': 0}
     try:
         cwd = str(PROJECT_ROOT)
-        subprocess.run(
+        fetch_result = subprocess.run(
             ['git', 'fetch', 'origin', 'main', '--quiet'],
             capture_output=True, timeout=10, cwd=cwd,
         )
+        if fetch_result.returncode != 0:
+            return jsonify(_safe)
         local = subprocess.run(
             ['git', 'rev-parse', 'HEAD'],
             capture_output=True, text=True, timeout=5, cwd=cwd,
@@ -1427,7 +1431,7 @@ def check_for_update():
         _update_check_cache['ts'] = now
         return jsonify(result)
     except Exception as e:
-        logger.debug("check-update: %s", e)
+        logger.warning("check-update failed: %s", e)
         return jsonify(_safe)
 
 @api_v3.route('/system/action', methods=['POST'])
@@ -2484,13 +2488,22 @@ def get_reconciliation_status():
     """Return the result of the last startup reconciliation from /tmp status file."""
     _recon_path = "/tmp/ledmatrix_reconciliation.json"
     try:
+        st = os.lstat(_recon_path)
+    except FileNotFoundError:
+        return jsonify({'status': 'success', 'data': {'done': False, 'unresolved': []}})
+    if stat.S_ISLNK(st.st_mode) or not stat.S_ISREG(st.st_mode):
+        logger.warning("[Reconciliation] Status file is not a regular file: %s", _recon_path)
+        return jsonify({'status': 'error', 'message': 'Status file unavailable'}), 500
+    try:
         with open(_recon_path) as _f:
             data = json.load(_f)
         return jsonify({'status': 'success', 'data': data})
-    except FileNotFoundError:
-        return jsonify({'status': 'success', 'data': {'done': False, 'unresolved': []}})
-    except Exception as e:
-        return jsonify({'status': 'error', 'message': str(e)}), 500
+    except json.JSONDecodeError:
+        logger.exception("[Reconciliation] Failed to parse status file: %s", _recon_path)
+        return jsonify({'status': 'error', 'message': 'Status file unavailable'}), 500
+    except PermissionError:
+        logger.exception("[Reconciliation] Permission denied reading status file: %s", _recon_path)
+        return jsonify({'status': 'error', 'message': 'Status file unavailable'}), 500
 
 @api_v3.route('/plugins/config', methods=['GET'])
 def get_plugin_config():
