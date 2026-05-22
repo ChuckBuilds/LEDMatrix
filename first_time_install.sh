@@ -36,7 +36,15 @@ if [ -r /proc/device-tree/model ]; then
     DEVICE_MODEL=$(tr -d '\0' </proc/device-tree/model)
     echo "Detected device: $DEVICE_MODEL"
 else
+    DEVICE_MODEL=""
     echo "⚠ Could not detect Raspberry Pi model (continuing anyway)"
+fi
+
+# Detect Pi 5 for hardware-specific install decisions (RP1 library verification)
+IS_PI5=0
+if echo "${DEVICE_MODEL:-}" | grep -qi "Raspberry Pi 5"; then
+    IS_PI5=1
+    echo "Raspberry Pi 5 detected — will verify RP1 library support."
 fi
 
 # Check OS version - must be Raspberry Pi OS Lite (Trixie)
@@ -783,9 +791,28 @@ CURRENT_STEP="Build and install rpi-rgb-led-matrix"
 echo "Step 6: Building and installing rpi-rgb-led-matrix..."
 echo "-----------------------------------------------------"
 
-# If already installed and not forcing rebuild, skip expensive build
+# On Pi 5, also check that the installed library has rp1_rio support.
+# A library built before Pi 5 support was added imports fine but maps to the
+# Pi 3 peripheral bus address (0x3f000000) instead of the RP1 chip at runtime.
+_HAS_RP1=0
+if python3 -c 'from rgbmatrix import RGBMatrixOptions; assert hasattr(RGBMatrixOptions(), "rp1_rio")' >/dev/null 2>&1; then
+    _HAS_RP1=1
+fi
+
+_SKIP_BUILD=0
 if python3 -c 'from rgbmatrix import RGBMatrix, RGBMatrixOptions' >/dev/null 2>&1 && [ "${RPI_RGB_FORCE_REBUILD:-0}" != "1" ]; then
-    echo "rgbmatrix Python package already available; skipping build (set RPI_RGB_FORCE_REBUILD=1 to force rebuild)."
+    if [ "$IS_PI5" = "1" ] && [ "$_HAS_RP1" = "0" ]; then
+        echo "⚠ Pi 5 detected: installed rgbmatrix lacks rp1_rio support (older build)."
+        echo "  Forcing rebuild to get Pi 5 RP1 support..."
+    else
+        _SKIP_BUILD=1
+    fi
+fi
+
+if [ "$_SKIP_BUILD" = "1" ]; then
+    _skip_suffix=""
+    if [ "$IS_PI5" = "1" ]; then _skip_suffix=" with Pi 5 RP1 support"; fi
+    echo "rgbmatrix already installed${_skip_suffix}; skipping build (set RPI_RGB_FORCE_REBUILD=1 to force rebuild)."
 else
     # Ensure rpi-rgb-led-matrix submodule is initialized
     if [ ! -d "$PROJECT_ROOT_DIR/rpi-rgb-led-matrix-master" ]; then
@@ -852,6 +879,17 @@ except Exception as e:
 PY
     then
         echo "✓ rpi-rgb-led-matrix installed and verified"
+        # Pi 5: confirm the freshly-built library has rp1_rio support
+        if [ "$IS_PI5" = "1" ]; then
+            if python3 -c 'from rgbmatrix import RGBMatrixOptions; assert hasattr(RGBMatrixOptions(), "rp1_rio")' >/dev/null 2>&1; then
+                echo "✓ Pi 5 RP1 (rp1_rio) support confirmed"
+            else
+                echo "⚠ rp1_rio not found after rebuild — the submodule may be an older version."
+                echo "  Try updating the submodule and rebuilding:"
+                echo "    git submodule update --remote rpi-rgb-led-matrix-master"
+                echo "    sudo RPI_RGB_FORCE_REBUILD=1 ./first_time_install.sh"
+            fi
+        fi
     else
         echo "✗ rpi-rgb-led-matrix import test failed"
         exit 1

@@ -110,9 +110,10 @@ class DisplayManager:
                     options.rp1_rio = runtime_config.get('rp1_rio')
                 else:
                     logger.warning(
-                        "rp1_rio is set in config but the current RGBMatrixOptions "
-                        "implementation does not support it (RGBMatrixEmulator or older "
-                        "library version) — value will be ignored"
+                        "rp1_rio is set in config but the installed rgbmatrix library does "
+                        "not support it — the library was likely built without Pi 5 RP1 "
+                        "support (mmap to 0x3f000000 instead of RP1 chip). "
+                        "Fix: sudo RPI_RGB_FORCE_REBUILD=1 ./first_time_install.sh"
                     )
             
             logger.info(f"Initializing RGB Matrix with settings: rows={options.rows}, cols={options.cols}, chain_length={options.chain_length}, parallel={options.parallel}, hardware_mapping={options.hardware_mapping}")
