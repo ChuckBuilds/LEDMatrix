@@ -810,7 +810,9 @@ if python3 -c 'from rgbmatrix import RGBMatrix, RGBMatrixOptions' >/dev/null 2>&
 fi
 
 if [ "$_SKIP_BUILD" = "1" ]; then
-    echo "rgbmatrix already installed${IS_PI5:+ with Pi 5 RP1 support}; skipping build (set RPI_RGB_FORCE_REBUILD=1 to force rebuild)."
+    _skip_suffix=""
+    if [ "$IS_PI5" = "1" ]; then _skip_suffix=" with Pi 5 RP1 support"; fi
+    echo "rgbmatrix already installed${_skip_suffix}; skipping build (set RPI_RGB_FORCE_REBUILD=1 to force rebuild)."
 else
     # Ensure rpi-rgb-led-matrix submodule is initialized
     if [ ! -d "$PROJECT_ROOT_DIR/rpi-rgb-led-matrix-master" ]; then
