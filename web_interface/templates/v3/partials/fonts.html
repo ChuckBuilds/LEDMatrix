@@ -843,6 +843,14 @@ async function updateFontPreview() {
         return;
     }
 
+    // BDF bitmap fonts cannot be rendered server-side — skip the API call
+    if (family.toLowerCase().endsWith('.bdf')) {
+        previewImage.style.display = 'none';
+        loadingText.style.display = 'block';
+        loadingText.textContent = 'Preview not available for BDF bitmap fonts';
+        return;
+    }
+
     // Show loading state
     loadingText.textContent = 'Loading preview...';
     loadingText.style.display = 'block';
