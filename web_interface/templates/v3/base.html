@@ -448,7 +448,7 @@
         }
 
         // Fallback if HTMX doesn't load within 5 seconds
-        setTimeout(() => {
+        var _pluginsFallbackTimer = setTimeout(() => {
             if (typeof htmx === 'undefined') {
                 console.warn('HTMX not loaded after 5 seconds, using direct fetch for plugins');
                 // Load plugins tab content directly regardless of active tab,
@@ -456,6 +456,7 @@
                 loadPluginsDirect();
             }
         }, 5000);
+        window.addEventListener('htmx:ready', function() { clearTimeout(_pluginsFallbackTimer); }, { once: true });
     </script>
     <!-- Alpine.js app function - defined early so it's available when Alpine initializes -->
     <script>
@@ -1079,7 +1080,7 @@
                 });
                 
                 // Also try direct load if HTMX doesn't load within 5 seconds
-                setTimeout(() => {
+                var _overviewFallbackTimer = setTimeout(() => {
                     if (typeof htmx === 'undefined') {
                         console.warn('HTMX not loaded after 5 seconds, using direct fetch for content');
                         const appElement = document.querySelector('[x-data="app()"]');
@@ -1091,6 +1092,7 @@
                         }
                     }
                 }, 5000);
+                window.addEventListener('htmx:ready', function() { clearTimeout(_overviewFallbackTimer); }, { once: true });
             </script>
 
             <!-- General tab -->
