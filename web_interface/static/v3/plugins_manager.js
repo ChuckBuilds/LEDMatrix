@@ -7473,13 +7473,14 @@ setTimeout(function() {
         console.log('installed-plugins-grid not found yet, will retry via event listeners');
     }
 
-    // Also try to attach install button handler after a delay (fallback)
+    // Also try to attach install button handler after a delay (fallback).
+    // Only run if the install button element is already in the DOM (i.e. the
+    // plugins partial has been loaded); otherwise the htmx:afterSettle listener
+    // below handles it when the tab is first visited.
     setTimeout(() => {
-        if (typeof window.attachInstallButtonHandler === 'function') {
-            console.log('[FALLBACK] Attempting to attach install button handler...');
+        if (typeof window.attachInstallButtonHandler === 'function' &&
+            document.getElementById('install-plugin-from-url')) {
             window.attachInstallButtonHandler();
-        } else {
-            console.warn('[FALLBACK] attachInstallButtonHandler not available on window');
         }
     }, 500);
 }, 200);
