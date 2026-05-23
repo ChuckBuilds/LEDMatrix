@@ -1603,10 +1603,10 @@ def get_hardware_status():
         return jsonify({"status": "success", "data": {"ok": None, "error": "Display service not yet started"}})
     except PermissionError:
         logger.warning("Permission denied reading hardware status file; display service may be running as a different user")
-        return jsonify({"status": "success", "data": {"ok": None, "error": "Hardware status temporarily unavailable"}})
+        return jsonify({"status": "success", "data": {"ok": False, "error": "Hardware status temporarily unavailable"}})
     except json.JSONDecodeError:
         logger.error("Failed to parse hardware status file", exc_info=True)
-        return jsonify({"status": "success", "data": {"ok": None, "error": "Hardware status file corrupted"}})
+        return jsonify({"status": "success", "data": {"ok": False, "error": "Hardware status file corrupted"}})
     except Exception:
         logger.error("Unexpected error reading hardware status", exc_info=True)
         return jsonify({"status": "error", "message": "Unable to read hardware status"}), 500
@@ -7099,7 +7099,7 @@ def backup_preview():
         return jsonify({'status': 'success', 'data': data})
     except Exception as e:
         logger.error("backup_preview failed: %s", e, exc_info=True)
-        return jsonify({'status': 'error', 'message': str(e)}), 500
+        return jsonify({'status': 'error', 'message': 'An internal error occurred; see logs for details'}), 500
 
 
 @api_v3.route('/backup/list', methods=['GET'])
@@ -7120,7 +7120,7 @@ def backup_list():
         return jsonify({'status': 'success', 'data': entries})
     except Exception as e:
         logger.error("backup_list failed: %s", e, exc_info=True)
-        return jsonify({'status': 'error', 'message': str(e)}), 500
+        return jsonify({'status': 'error', 'message': 'An internal error occurred; see logs for details'}), 500
 
 
 @api_v3.route('/backup/export', methods=['POST'])
@@ -7132,7 +7132,7 @@ def backup_export():
         return jsonify({'status': 'success', 'filename': zip_path.name})
     except Exception as e:
         logger.error("backup_export failed: %s", e, exc_info=True)
-        return jsonify({'status': 'error', 'message': str(e)}), 500
+        return jsonify({'status': 'error', 'message': 'An internal error occurred; see logs for details'}), 500
 
 
 @api_v3.route('/backup/validate', methods=['POST'])
@@ -7158,7 +7158,7 @@ def backup_validate():
         return jsonify({'status': 'success', 'data': manifest})
     except Exception as e:
         logger.error("backup_validate failed: %s", e, exc_info=True)
-        return jsonify({'status': 'error', 'message': str(e)}), 500
+        return jsonify({'status': 'error', 'message': 'An internal error occurred; see logs for details'}), 500
 
 
 @api_v3.route('/backup/restore', methods=['POST'])
@@ -7218,7 +7218,7 @@ def backup_restore():
         return jsonify({'status': 'success', 'data': data})
     except Exception as e:
         logger.error("backup_restore failed: %s", e, exc_info=True)
-        return jsonify({'status': 'error', 'message': str(e)}), 500
+        return jsonify({'status': 'error', 'message': 'An internal error occurred; see logs for details'}), 500
 
 
 @api_v3.route('/backup/download/<path:filename>', methods=['GET'])
@@ -7241,4 +7241,5 @@ def backup_delete(filename):
         path.unlink()
         return jsonify({'status': 'success'})
     except OSError as e:
-        return jsonify({'status': 'error', 'message': str(e)}), 500
+        logger.error("backup_delete failed: %s", e, exc_info=True)
+        return jsonify({'status': 'error', 'message': 'An internal error occurred; see logs for details'}), 500

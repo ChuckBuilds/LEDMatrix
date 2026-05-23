@@ -136,6 +136,7 @@
                                 setTimeout(function() {
                                     if (typeof htmx !== 'undefined') {
                                         console.log('HTMX loaded from fallback');
+                                        window.dispatchEvent(new Event('htmx:ready'));
                                         // Load extensions after core loads
                                         loadScript(sseSrc, isAPMode ? 'https://unpkg.com/htmx.org/dist/ext/sse.js' : '/static/v3/js/htmx-sse.js');
                                         loadScript(jsonEncSrc, isAPMode ? 'https://unpkg.com/htmx.org/dist/ext/json-enc.js' : '/static/v3/js/htmx-json-enc.js');
@@ -1839,11 +1840,18 @@
                             htmx.trigger(contentEl, 'revealed');
                         }
                     } else {
-                        // HTMX is still loading asynchronously — retry once it signals ready
+                        // HTMX is still loading asynchronously — retry when it signals ready,
+                        // or fall back to direct fetch if it fails to load entirely.
                         const self = this;
-                        window.addEventListener('htmx:ready', function retry() {
-                            self.loadTabContent(tab);
-                        }, { once: true });
+                        function onReady() { window.removeEventListener('htmx-load-failed', onFailed); self.loadTabContent(tab); }
+                        function onFailed() {
+                            window.removeEventListener('htmx:ready', onReady);
+                            if (tab === 'overview' && typeof loadOverviewDirect === 'function') loadOverviewDirect();
+                            else if (tab === 'wifi' && typeof loadWifiDirect === 'function') loadWifiDirect();
+                            else if (tab === 'plugins' && typeof loadPluginsDirect === 'function') loadPluginsDirect();
+                        }
+                        window.addEventListener('htmx:ready', onReady, { once: true });
+                        window.addEventListener('htmx-load-failed', onFailed, { once: true });
                     }
                 },
 
