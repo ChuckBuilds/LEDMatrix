@@ -176,7 +176,7 @@ class PluginLoader:
                 # system level (e.g. installed via dnf/apt without a pip RECORD file).
                 # pip can't replace it, but it IS installed — write the marker so we
                 # don't retry on every restart.
-                if "uninstall-no-record-file" in stderr and "error" not in stderr.lower().replace("uninstall-no-record-file", ""):
+                if "uninstall-no-record-file" in stderr:
                     self.logger.warning(
                         "Dependencies for %s include system-managed packages (no pip RECORD). "
                         "Assuming they are satisfied: %s",
