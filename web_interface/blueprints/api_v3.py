@@ -1385,7 +1385,8 @@ def get_system_version():
         version = get_git_version()
         return jsonify({'status': 'success', 'data': {'version': version}})
     except Exception as e:
-        return jsonify({'status': 'error', 'message': str(e)}), 500
+        logger.error("get_system_version failed: %s", e, exc_info=True)
+        return jsonify({'status': 'error', 'message': 'Unable to retrieve version'}), 500
 
 _update_check_cache: Dict[str, Any] = {'result': None, 'ts': 0.0}
 _UPDATE_CHECK_TTL = 300  # 5 minutes — avoids a git fetch on every page load
@@ -1585,11 +1586,8 @@ def execute_system_action():
         })
 
     except Exception as e:
-        import traceback
-        error_details = traceback.format_exc()
-        print(f"Error in execute_system_action: {str(e)}")
-        print(error_details)
-        return jsonify({'status': 'error', 'message': str(e), 'details': error_details}), 500
+        logger.error("execute_system_action failed: %s", e, exc_info=True)
+        return jsonify({'status': 'error', 'message': 'Action failed; see logs for details'}), 500
 
 @api_v3.route('/hardware/status', methods=['GET'])
 def get_hardware_status():
