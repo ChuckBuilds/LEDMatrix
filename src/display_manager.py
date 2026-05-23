@@ -190,7 +190,7 @@ class DisplayManager:
                         json.dump(_hw_status, _f)
                         _f.flush()
                         os.fsync(_f.fileno())
-                    os.chmod(_tmp_path, 0o600)
+                    os.chmod(_tmp_path, 0o644)
                     os.replace(_tmp_path, _status_path)
                 except Exception:
                     try:

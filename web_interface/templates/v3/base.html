@@ -152,6 +152,7 @@
                         }
                     } else {
                         console.log('HTMX loaded successfully');
+                        window.dispatchEvent(new Event('htmx:ready'));
                         // Load extensions after core loads
                         loadScript(sseSrc, isAPMode ? 'https://unpkg.com/htmx.org/dist/ext/sse.js' : '/static/v3/js/htmx-sse.js');
                         loadScript(jsonEncSrc, isAPMode ? 'https://unpkg.com/htmx.org/dist/ext/json-enc.js' : '/static/v3/js/htmx-json-enc.js');
@@ -1836,13 +1837,11 @@
                             htmx.trigger(contentEl, 'revealed');
                         }
                     } else {
-                        // HTMX not available, use direct fetch
-                        console.warn('HTMX not available, using direct fetch for tab:', tab);
-                        if (tab === 'overview' && typeof loadOverviewDirect === 'function') {
-                            loadOverviewDirect();
-                        } else if (tab === 'wifi' && typeof loadWifiDirect === 'function') {
-                            loadWifiDirect();
-                        }
+                        // HTMX is still loading asynchronously — retry once it signals ready
+                        const self = this;
+                        window.addEventListener('htmx:ready', function retry() {
+                            self.loadTabContent(tab);
+                        }, { once: true });
                     }
                 },
 
