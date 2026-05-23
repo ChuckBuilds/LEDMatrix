@@ -7154,7 +7154,8 @@ def backup_validate():
             except OSError:
                 pass
         if not ok:
-            return jsonify({'status': 'error', 'message': err_msg}), 400
+            logger.warning("Backup validation failed: %s", err_msg)
+            return jsonify({'status': 'error', 'message': 'Invalid or corrupted backup file'}), 400
         return jsonify({'status': 'success', 'data': manifest})
     except Exception as e:
         logger.error("backup_validate failed: %s", e, exc_info=True)
@@ -7224,22 +7225,30 @@ def backup_restore():
 @api_v3.route('/backup/download/<path:filename>', methods=['GET'])
 def backup_download(filename):
     """Stream a backup ZIP to the browser."""
-    from flask import send_file
-    path = _safe_backup_path(filename)
-    if path is None or not path.exists():
+    from flask import send_from_directory
+    if _safe_backup_path(filename) is None:
         return jsonify({'status': 'error', 'message': 'Backup not found'}), 404
-    return send_file(path, as_attachment=True, download_name=path.name)
+    try:
+        # send_from_directory uses werkzeug safe_join internally — CodeQL-recognized sanitizer.
+        return send_from_directory(_BACKUP_EXPORT_DIR, filename, as_attachment=True)
+    except FileNotFoundError:
+        return jsonify({'status': 'error', 'message': 'Backup not found'}), 404
 
 
 @api_v3.route('/backup/<path:filename>', methods=['DELETE'])
 def backup_delete(filename):
     """Delete a stored backup ZIP."""
-    path = _safe_backup_path(filename)
-    if path is None or not path.exists():
+    safe = _safe_backup_path(filename)
+    if safe is None:
         return jsonify({'status': 'error', 'message': 'Backup not found'}), 404
+    # Enumerate the export directory and match by name so the unlink target is
+    # a filesystem-derived path rather than one constructed from user input.
     try:
-        path.unlink()
-        return jsonify({'status': 'success'})
+        for entry in _BACKUP_EXPORT_DIR.iterdir():
+            if entry.is_file() and entry.name == safe.name:
+                entry.unlink()
+                return jsonify({'status': 'success'})
     except OSError as e:
         logger.error("backup_delete failed: %s", e, exc_info=True)
         return jsonify({'status': 'error', 'message': 'An internal error occurred; see logs for details'}), 500
+    return jsonify({'status': 'error', 'message': 'Backup not found'}), 404
