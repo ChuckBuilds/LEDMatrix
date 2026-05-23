@@ -51,8 +51,10 @@
         sanitizeValue(value) {
             // Base implementation - widgets should override for specific needs
             if (typeof value === 'string') {
-                // Basic XSS prevention
-                return value.replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '');
+                // Strip all HTML tags via the DOM parser to prevent XSS
+                const div = document.createElement('div');
+                div.textContent = value;
+                return div.textContent;
             }
             return value;
         }

@@ -1442,9 +1442,14 @@ function renderInstalledPlugins(plugins) {
         return;
     }
 
-    // Helper function to escape attributes for use in HTML
+    // Helper function to escape values for use in HTML attributes
     const escapeAttr = (text) => {
-        return (text || '').replace(/'/g, "\\'").replace(/"/g, '&quot;');
+        return (text || '')
+            .replace(/&/g, '&amp;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;');
     };
 
     // Helper function to escape for JavaScript strings (use JSON.stringify for proper escaping)
@@ -4507,6 +4512,8 @@ function syncFormToJson() {
     // Deep merge with existing config to preserve nested structures
     function deepMerge(target, source) {
         for (const key in source) {
+            if (key === '__proto__' || key === 'constructor' || key === 'prototype') continue;
+            if (!Object.prototype.hasOwnProperty.call(source, key)) continue;
             if (source[key] && typeof source[key] === 'object' && !Array.isArray(source[key])) {
                 if (!target[key] || typeof target[key] !== 'object' || Array.isArray(target[key])) {
                     target[key] = {};

@@ -84,10 +84,11 @@ def load_partial(partial_name):
         elif partial_name == 'operation-history':
             return _load_operation_history_partial()
         else:
-            return f"Partial '{partial_name}' not found", 404
+            return f"Partial '{escape(partial_name)}' not found", 404
 
     except Exception as e:
-        return f"Error loading partial '{partial_name}': {str(e)}", 500
+        logger.error("Error loading partial %s", partial_name, exc_info=True)
+        return "Error loading partial", 500
 
 
 @pages_v3.route('/partials/plugin-config/<plugin_id>')
@@ -95,8 +96,9 @@ def load_plugin_config_partial(plugin_id):
     """Load plugin configuration partial via HTMX - server-side rendered form"""
     try:
         return _load_plugin_config_partial(plugin_id)
-    except Exception as e:
-        return f'<div class="text-red-500 p-4">Error loading plugin config: {escape(str(e))}</div>', 500
+    except Exception:
+        logger.error("Error loading plugin config partial for %s", plugin_id, exc_info=True)
+        return '<div class="text-red-500 p-4">Error loading plugin config; see logs for details</div>', 500
 
 def _load_overview_partial():
     """Load overview partial with system stats"""
@@ -107,7 +109,8 @@ def _load_overview_partial():
             return render_template('v3/partials/overview.html',
                                  main_config=main_config)
     except Exception as e:
-        return f"Error: {str(e)}", 500
+        logger.error("Error loading partial", exc_info=True)
+        return "Error loading partial", 500
 
 def _load_general_partial():
     """Load general settings partial"""
@@ -117,7 +120,8 @@ def _load_general_partial():
             return render_template('v3/partials/general.html',
                                  main_config=main_config)
     except Exception as e:
-        return f"Error: {str(e)}", 500
+        logger.error("Error loading partial", exc_info=True)
+        return "Error loading partial", 500
 
 def _load_display_partial():
     """Load display settings partial"""
@@ -127,7 +131,8 @@ def _load_display_partial():
             return render_template('v3/partials/display.html',
                                  main_config=main_config)
     except Exception as e:
-        return f"Error: {str(e)}", 500
+        logger.error("Error loading partial", exc_info=True)
+        return "Error loading partial", 500
 
 def _load_durations_partial():
     """Load display durations partial"""
@@ -137,7 +142,8 @@ def _load_durations_partial():
             return render_template('v3/partials/durations.html',
                                  main_config=main_config)
     except Exception as e:
-        return f"Error: {str(e)}", 500
+        logger.error("Error loading partial", exc_info=True)
+        return "Error loading partial", 500
 
 def _load_schedule_partial():
     """Load schedule settings partial"""
@@ -153,7 +159,8 @@ def _load_schedule_partial():
                                  dim_schedule_config=dim_schedule_config,
                                  normal_brightness=normal_brightness)
     except Exception as e:
-        return f"Error: {str(e)}", 500
+        logger.error("Error loading partial", exc_info=True)
+        return "Error loading partial", 500
 
 
 def _load_weather_partial():
@@ -164,7 +171,8 @@ def _load_weather_partial():
             return render_template('v3/partials/weather.html',
                                  main_config=main_config)
     except Exception as e:
-        return f"Error: {str(e)}", 500
+        logger.error("Error loading partial", exc_info=True)
+        return "Error loading partial", 500
 
 def _load_stocks_partial():
     """Load stocks configuration partial"""
@@ -174,7 +182,8 @@ def _load_stocks_partial():
             return render_template('v3/partials/stocks.html',
                                  main_config=main_config)
     except Exception as e:
-        return f"Error: {str(e)}", 500
+        logger.error("Error loading partial", exc_info=True)
+        return "Error loading partial", 500
 
 def _load_plugins_partial():
     """Load plugins management partial"""
@@ -208,7 +217,7 @@ def _load_plugins_partial():
                             plugin_info.update(fresh_manifest)
                         except Exception as e:
                             # If we can't read the fresh manifest, use the cached one
-                            print(f"Warning: Could not read fresh manifest for {plugin_id}: {e}")
+                            logger.warning("Could not read fresh manifest for {plugin_id}")
 
                     # Get enabled status from config (source of truth)
                     # Read from config file first, fall back to plugin instance if config doesn't have the key
@@ -256,12 +265,13 @@ def _load_plugins_partial():
                         'branch': branch
                     })
             except Exception as e:
-                print(f"Error loading plugin data: {e}")
+                logger.error("Error loading plugin data", exc_info=True)
 
         return render_template('v3/partials/plugins.html',
                              plugins=plugins_data)
     except Exception as e:
-        return f"Error: {str(e)}", 500
+        logger.error("Error loading partial", exc_info=True)
+        return "Error loading partial", 500
 
 def _load_fonts_partial():
     """Load fonts management partial"""
@@ -271,14 +281,16 @@ def _load_fonts_partial():
         return render_template('v3/partials/fonts.html',
                              fonts=fonts_data)
     except Exception as e:
-        return f"Error: {str(e)}", 500
+        logger.error("Error loading partial", exc_info=True)
+        return "Error loading partial", 500
 
 def _load_logs_partial():
     """Load logs viewer partial"""
     try:
         return render_template('v3/partials/logs.html')
     except Exception as e:
-        return f"Error: {str(e)}", 500
+        logger.error("Error loading partial", exc_info=True)
+        return "Error loading partial", 500
 
 def _load_raw_json_partial():
     """Load raw JSON editor partial"""
@@ -295,14 +307,16 @@ def _load_raw_json_partial():
                                  main_config_path=pages_v3.config_manager.get_config_path(),
                                  secrets_config_path=pages_v3.config_manager.get_secrets_path())
     except Exception as e:
-        return f"Error: {str(e)}", 500
+        logger.error("Error loading partial", exc_info=True)
+        return "Error loading partial", 500
 
 def _load_backup_restore_partial():
     """Load backup & restore partial."""
     try:
         return render_template('v3/partials/backup_restore.html')
     except Exception as e:
-        return f"Error: {str(e)}", 500
+        logger.error("Error loading partial", exc_info=True)
+        return "Error loading partial", 500
 
 @pages_v3.route('/setup')
 def captive_setup():
@@ -314,21 +328,24 @@ def _load_wifi_partial():
     try:
         return render_template('v3/partials/wifi.html')
     except Exception as e:
-        return f"Error: {str(e)}", 500
+        logger.error("Error loading partial", exc_info=True)
+        return "Error loading partial", 500
 
 def _load_cache_partial():
     """Load cache management partial"""
     try:
         return render_template('v3/partials/cache.html')
     except Exception as e:
-        return f"Error: {str(e)}", 500
+        logger.error("Error loading partial", exc_info=True)
+        return "Error loading partial", 500
 
 def _load_operation_history_partial():
     """Load operation history partial"""
     try:
         return render_template('v3/partials/operation_history.html')
     except Exception as e:
-        return f"Error: {str(e)}", 500
+        logger.error("Error loading partial", exc_info=True)
+        return "Error loading partial", 500
 
 
 def _load_plugin_config_partial(plugin_id):
@@ -336,6 +353,11 @@ def _load_plugin_config_partial(plugin_id):
     Load plugin configuration partial - server-side rendered form.
     This replaces the client-side generateConfigForm() JavaScript.
     """
+    import re as _re
+    # Reject plugin IDs containing path-traversal characters before any filesystem use
+    if not _re.match(r'^[a-zA-Z0-9_\-.:]+$', plugin_id or ''):
+        return '<div class="text-red-500 p-4">Invalid plugin ID</div>', 400
+
     try:
         if not pages_v3.plugin_manager:
             return '<div class="text-red-500 p-4">Plugin manager not available</div>', 500
@@ -394,7 +416,7 @@ def _load_plugin_config_partial(plugin_id):
                                         if new_images:
                                             config['images'] = config.get('images', []) + new_images
                             except Exception as e:
-                                print(f"Warning: Could not load metadata for {plugin_id}: {e}")
+                                logger.warning("Could not load metadata for {plugin_id}")
             except Exception as e:  # nosec B110 - metadata pre-load is optional; schema loads fully below
                 logger.debug("Metadata pre-load skipped for plugin %s: %s", plugin_id, e)
         
@@ -406,7 +428,7 @@ def _load_plugin_config_partial(plugin_id):
                 with open(schema_path, 'r', encoding='utf-8') as f:
                     schema = json.load(f)
             except Exception as e:
-                print(f"Warning: Could not load schema for {plugin_id}: {e}")
+                logger.warning("Could not load schema for {plugin_id}")
         
         # Get web UI actions from plugin manifest
         web_ui_actions = []
@@ -417,7 +439,7 @@ def _load_plugin_config_partial(plugin_id):
                     manifest = json.load(f)
                     web_ui_actions = manifest.get('web_ui_actions', [])
             except Exception as e:
-                print(f"Warning: Could not load manifest for {plugin_id}: {e}")
+                logger.warning("Could not load manifest for {plugin_id}")
         
         # Mask secret fields before rendering template (fail closed — never leak secrets)
         schema_properties = schema.get('properties') if isinstance(schema, dict) else None
@@ -453,9 +475,8 @@ def _load_plugin_config_partial(plugin_id):
         )
         
     except Exception as e:
-        import traceback
-        traceback.print_exc()
-        return f'<div class="text-red-500 p-4">Error loading plugin config: {escape(str(e))}</div>', 500
+        logger.error("Error loading plugin config partial for %s", plugin_id, exc_info=True)
+        return '<div class="text-red-500 p-4">Error loading plugin config; see logs for details</div>', 500
 
 
 def _load_starlark_config_partial(app_id):
