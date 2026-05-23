@@ -349,6 +349,20 @@
                             }
                         }
                     });
+
+                    // Set data-loaded on tab containers after HTMX settles their content,
+                    // preventing repeated re-fetches on every tab switch.
+                    // Scoped to elements with hx-trigger="revealed" (tab containers only) so
+                    // modals and plugin config panels that legitimately reload are unaffected.
+                    document.body.addEventListener('htmx:afterSettle', function(event) {
+                        if (event.detail && event.detail.target) {
+                            var target = event.detail.target;
+                            var trigger = target.getAttribute('hx-trigger') || '';
+                            if (trigger.includes('revealed')) {
+                                target.setAttribute('data-loaded', 'true');
+                            }
+                        }
+                    });
                 } else {
                     if (document.readyState === 'loading') {
                         document.addEventListener('DOMContentLoaded', setupScriptExecution);
@@ -411,6 +425,9 @@
                     .then(html => {
                         clearTimeout(timeout);
                         content.innerHTML = html;
+                        if (typeof htmx !== 'undefined') {
+                            htmx.process(content);
+                        }
                         // Trigger full initialization chain
                         if (window.pluginManager) {
                             window.pluginManager.initialized = false;
@@ -1030,6 +1047,9 @@
                             .then(html => {
                                 overviewContent.innerHTML = html;
                                 overviewContent.setAttribute('data-loaded', 'true');
+                                if (typeof htmx !== 'undefined') {
+                                    htmx.process(overviewContent);
+                                }
                                 // Re-initialize Alpine.js for the new content
                                 if (window.Alpine) {
                                     window.Alpine.initTree(overviewContent);

@@ -7484,6 +7484,16 @@ setTimeout(function() {
     }, 500);
 }, 200);
 
+// Re-run install button wiring after HTMX settles the plugins tab content.
+// Guard with element check so it only fires when the plugins partial is in the DOM,
+// preventing spurious warnings on other tab loads.
+document.addEventListener('htmx:afterSettle', function() {
+    if (document.getElementById('install-plugin-from-url') &&
+        typeof window.attachInstallButtonHandler === 'function') {
+        window.attachInstallButtonHandler();
+    }
+});
+
 // ─── Starlark Apps Integration ──────────────────────────────────────────────
 
 (function() {
