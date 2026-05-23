@@ -171,10 +171,24 @@ class PluginLoader:
                 self.logger.info("Dependencies installed successfully for %s", plugin_id)
                 return True
             else:
+                stderr = result.stderr or ""
+                # uninstall-no-record-file means the package is already present at the
+                # system level (e.g. installed via dnf/apt without a pip RECORD file).
+                # pip can't replace it, but it IS installed — write the marker so we
+                # don't retry on every restart.
+                if "uninstall-no-record-file" in stderr and "error" not in stderr.lower().replace("uninstall-no-record-file", ""):
+                    self.logger.warning(
+                        "Dependencies for %s include system-managed packages (no pip RECORD). "
+                        "Assuming they are satisfied: %s",
+                        plugin_id, stderr.strip()
+                    )
+                    marker_path.touch()
+                    ensure_file_permissions(marker_path, get_plugin_file_mode())
+                    return True
                 self.logger.warning(
                     "Dependency installation returned non-zero exit code for %s: %s",
                     plugin_id,
-                    result.stderr
+                    stderr
                 )
                 return False
         except subprocess.TimeoutExpired:
