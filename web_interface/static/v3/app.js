@@ -51,7 +51,8 @@ document.body.addEventListener('htmx:afterRequest', function(event) {
     }
 });
 
-// SSE reconnection helper — closes and reopens both SSE streams.
+// SSE reconnection helper — closes and reopens both SSE streams,
+// reattaching the open/error handlers defined in base.html.
 window.reconnectSSE = function() {
     if (window.statsSource) {
         window.statsSource.close();
@@ -60,6 +61,8 @@ window.reconnectSSE = function() {
             const data = JSON.parse(event.data);
             if (typeof updateSystemStats === 'function') updateSystemStats(data);
         };
+        if (window._statsOpenHandler) window.statsSource.addEventListener('open', window._statsOpenHandler);
+        if (window._statsErrorHandler) window.statsSource.addEventListener('error', window._statsErrorHandler);
     }
 
     if (window.displaySource) {
@@ -69,6 +72,7 @@ window.reconnectSSE = function() {
             const data = JSON.parse(event.data);
             if (typeof updateDisplayPreview === 'function') updateDisplayPreview(data);
         };
+        if (window._displayErrorHandler) window.displaySource.addEventListener('error', window._displayErrorHandler);
     }
 };
 

@@ -445,14 +445,23 @@ class _StreamBroadcaster:
         for data in self._generator_factory():
             with self._lock:
                 if not self._clients:
-                    continue
-                dead = set()
+                    # No subscribers — exit so the thread doesn't spin indefinitely.
+                    # subscribe() will restart it when a new client arrives.
+                    break
                 for q in self._clients:
                     try:
                         q.put_nowait(data)
                     except queue.Full:
-                        dead.add(q)
-                self._clients -= dead
+                        # Client is reading too slowly; drop the oldest item and
+                        # deliver the latest so the queue never stalls the client.
+                        try:
+                            q.get_nowait()
+                        except queue.Empty:
+                            pass
+                        try:
+                            q.put_nowait(data)
+                        except queue.Full:
+                            pass
 
 # System status generator for SSE
 def system_status_generator():

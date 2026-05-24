@@ -1406,23 +1406,28 @@
         }
 
         var _statsErrorCount = 0;
-        window.statsSource.addEventListener('open', function() {
+
+        // Named on window so reconnectSSE() in app.js can reattach them after
+        // replacing the EventSource instances.
+        window._statsOpenHandler = function() {
             _statsErrorCount = 0;
             _setConnectionStatus(true, false);
-        });
-
-        window.statsSource.addEventListener('error', function() {
+        };
+        window._statsErrorHandler = function() {
             _statsErrorCount++;
             // EventSource readyState 0 = CONNECTING (auto-retrying), 2 = CLOSED
             var reconnecting = window.statsSource.readyState === EventSource.CONNECTING;
             _setConnectionStatus(false, reconnecting && _statsErrorCount <= 3);
-        });
-
-        window.displaySource.addEventListener('error', function() {
+        };
+        window._displayErrorHandler = function() {
             // Display stream errors don't change the status badge but log to console
             // so failures aren't completely silent.
             console.warn('LEDMatrix: display preview stream error (readyState=' + window.displaySource.readyState + ')');
-        });
+        };
+
+        window.statsSource.addEventListener('open', window._statsOpenHandler);
+        window.statsSource.addEventListener('error', window._statsErrorHandler);
+        window.displaySource.addEventListener('error', window._displayErrorHandler);
 
         function updateSystemStats(data) {
             // Update CPU in header
