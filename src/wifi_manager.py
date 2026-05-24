@@ -694,7 +694,7 @@ class WiFiManager:
     # Helpers
     # ---------------------------------------------------------------------------
 
-    _IP_FORWARD_SAVE_PATH = Path("/tmp/ledmatrix_ip_forward_saved")
+    _IP_FORWARD_SAVE_PATH = Path("/tmp/ledmatrix_ip_forward_saved")  # nosec B108 - process-specific named file; device is single-user RPi
     # Written when AP mode is manually force-enabled; prevents daemon auto-disable
     _FORCE_AP_FLAG_PATH = Path("/tmp/ledmatrix_force_ap_active")  # nosec B108 - process-specific named file; device is single-user RPi
 

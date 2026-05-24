@@ -6680,7 +6680,8 @@ def enable_ap_mode():
         from src.wifi_manager import WiFiManager
 
         wifi_manager = WiFiManager()
-        force = bool((request.get_json(silent=True) or {}).get('force', False))
+        _force_raw = (request.get_json(silent=True) or {}).get('force', False)
+        force = _force_raw is True or (isinstance(_force_raw, str) and _force_raw.lower() in ('true', '1'))
         success, message = wifi_manager.enable_ap_mode(force=force)
 
         if success:
