@@ -51,7 +51,7 @@ document.body.addEventListener('htmx:afterRequest', function(event) {
     }
 });
 
-// SSE reconnection helper
+// SSE reconnection helper — closes and reopens both SSE streams.
 window.reconnectSSE = function() {
     if (window.statsSource) {
         window.statsSource.close();
@@ -65,8 +65,9 @@ window.reconnectSSE = function() {
     if (window.displaySource) {
         window.displaySource.close();
         window.displaySource = new EventSource('/api/v3/stream/display');
-        window.displaySource.onmessage = function() {
-            // Handle display updates
+        window.displaySource.onmessage = function(event) {
+            const data = JSON.parse(event.data);
+            if (typeof updateDisplayPreview === 'function') updateDisplayPreview(data);
         };
     }
 };
