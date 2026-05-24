@@ -1039,12 +1039,10 @@ def save_main_config():
 
         return success_response(message='Configuration saved successfully')
     except Exception as e:
-        import logging
         logger.error("Error saving config", exc_info=True)
         return error_response(
             ErrorCode.CONFIG_SAVE_FAILED,
-            f"Error saving configuration: {e}",
-
+            "An error occurred; see logs for details",
             status_code=500
         )
 

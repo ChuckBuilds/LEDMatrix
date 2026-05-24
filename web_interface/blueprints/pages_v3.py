@@ -219,7 +219,7 @@ def _load_plugins_partial():
                             plugin_info.update(fresh_manifest)
                         except Exception as e:
                             # If we can't read the fresh manifest, use the cached one
-                            logger.warning("Could not read fresh manifest for {plugin_id}")
+                            logger.warning("Could not read fresh manifest for plugin: %s", plugin_id)
 
                     # Get enabled status from config (source of truth)
                     # Read from config file first, fall back to plugin instance if config doesn't have the key
