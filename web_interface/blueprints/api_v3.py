@@ -7048,7 +7048,7 @@ _BACKUP_EXPORT_DIR = PROJECT_ROOT / "config" / "backups" / "exports"
 def _safe_backup_path(filename: str) -> Path:
     """Resolve a filename to an absolute path inside the export dir,
     rejecting any traversal attempts. Returns None if unsafe."""
-    if not filename or '/' in filename or '\\' in filename or filename.startswith('.'):
+    if not filename or not re.match(r'^[a-zA-Z0-9][a-zA-Z0-9._-]{0,200}\.zip$', filename):
         return None
     path = (_BACKUP_EXPORT_DIR / filename).resolve()
     try:
@@ -7124,7 +7124,18 @@ def backup_validate():
         if not ok:
             logger.warning("Backup validation failed: %s", err_msg)
             return jsonify({'status': 'error', 'message': 'Invalid or corrupted backup file'}), 400
-        return jsonify({'status': 'success', 'data': manifest})
+        safe_manifest = {
+            'schema_version': manifest.get('schema_version'),
+            'created_at': manifest.get('created_at'),
+            'ledmatrix_version': manifest.get('ledmatrix_version'),
+            'hostname': manifest.get('hostname'),
+            'contents': manifest.get('contents', []),
+            'detected_contents': manifest.get('detected_contents', []),
+            'plugins': manifest.get('plugins', []),
+            'total_uncompressed': manifest.get('total_uncompressed'),
+            'file_count': manifest.get('file_count'),
+        }
+        return jsonify({'status': 'success', 'data': safe_manifest})
     except Exception as e:
         logger.error("backup_validate failed: %s", e, exc_info=True)
         return jsonify({'status': 'error', 'message': 'An internal error occurred; see logs for details'}), 500

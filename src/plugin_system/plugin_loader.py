@@ -146,9 +146,20 @@ class PluginLoader:
         requirements_file = plugin_dir / "requirements.txt"
         if not requirements_file.exists():
             return True  # No dependencies needed
-        
+
+        # Resolve and validate plugin_dir before constructing derived paths from it
+        try:
+            plugin_dir_resolved = plugin_dir.resolve(strict=True)
+        except OSError:
+            self.logger.error("Plugin directory does not exist: %s", plugin_dir)
+            return False
+        marker_path = plugin_dir_resolved / ".dependencies_installed"
+        try:
+            marker_path.relative_to(plugin_dir_resolved)
+        except ValueError:
+            return False
+
         # Check if already installed
-        marker_path = plugin_dir / ".dependencies_installed"
         if marker_path.exists():
             self.logger.debug("Dependencies already installed for %s", plugin_id)
             return True
