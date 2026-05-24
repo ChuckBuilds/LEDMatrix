@@ -2,6 +2,8 @@ from flask import Blueprint, render_template, flash
 from markupsafe import escape
 import json
 import logging
+import os
+import re
 from pathlib import Path
 from src.web_interface.secret_helpers import mask_secret_fields
 
@@ -353,9 +355,9 @@ def _load_plugin_config_partial(plugin_id):
     Load plugin configuration partial - server-side rendered form.
     This replaces the client-side generateConfigForm() JavaScript.
     """
-    import re as _re
-    # Reject plugin IDs containing path-traversal characters before any filesystem use
-    if not _re.match(r'^[a-zA-Z0-9_\-.:]+$', plugin_id or ''):
+    # Sanitize with basename (CodeQL-recognized sanitizer) then regex-validate format
+    plugin_id = os.path.basename(plugin_id or '')
+    if not re.match(r'^[a-zA-Z0-9][a-zA-Z0-9._\-:]*$', plugin_id):
         return '<div class="text-red-500 p-4">Invalid plugin ID</div>', 400
 
     try:
@@ -486,8 +488,9 @@ def _load_plugin_config_partial(plugin_id):
 
 def _load_starlark_config_partial(app_id):
     """Load configuration partial for a Starlark app."""
-    import re as _re2
-    if not _re2.match(r'^[a-zA-Z0-9_\-]+$', app_id or ''):
+    # Sanitize with basename (CodeQL-recognized sanitizer) then regex-validate format
+    app_id = os.path.basename(app_id or '')
+    if not re.match(r'^[a-zA-Z0-9][a-zA-Z0-9_\-]*$', app_id):
         return '<div class="text-red-500 p-4">Invalid app ID</div>', 400
 
     try:

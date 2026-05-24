@@ -410,8 +410,8 @@ def validate_backup(zip_path: Path) -> Tuple[bool, str, Dict[str, Any]]:
             try:
                 manifest_raw = zf.read(MANIFEST_NAME).decode("utf-8")
                 manifest = json.loads(manifest_raw)
-            except (OSError, UnicodeDecodeError, json.JSONDecodeError) as e:
-                return False, f"Invalid manifest.json: {e}", {}
+            except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+                return False, "Invalid manifest.json", {}
 
             if not isinstance(manifest, dict) or "schema_version" not in manifest:
                 return False, "Invalid manifest structure", {}
@@ -456,8 +456,8 @@ def validate_backup(zip_path: Path) -> Tuple[bool, str, Dict[str, Any]]:
             return True, "", result_manifest
     except zipfile.BadZipFile:
         return False, "File is not a valid ZIP archive", {}
-    except OSError as e:
-        return False, f"Could not read backup: {e}", {}
+    except OSError:
+        return False, "Could not read backup", {}
 
 
 # ---------------------------------------------------------------------------

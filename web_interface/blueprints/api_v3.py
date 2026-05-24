@@ -6939,6 +6939,8 @@ _BACKUP_EXPORT_DIR = PROJECT_ROOT / "config" / "backups" / "exports"
 def _safe_backup_path(filename: str) -> Path:
     """Resolve a filename to an absolute path inside the export dir,
     rejecting any traversal attempts. Returns None if unsafe."""
+    # Use basename first (CodeQL-recognized sanitizer) then validate format
+    filename = os.path.basename(filename or '')
     if not filename or not re.match(r'^[a-zA-Z0-9][a-zA-Z0-9._-]{0,200}\.zip$', filename):
         return None
     path = (_BACKUP_EXPORT_DIR / filename).resolve()

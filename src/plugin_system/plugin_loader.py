@@ -8,6 +8,7 @@ Extracted from PluginManager to improve separation of concerns.
 import json
 import importlib
 import importlib.util
+import os
 import sys
 import subprocess
 import threading
@@ -68,6 +69,11 @@ class PluginLoader:
         Returns:
             Path to plugin directory or None if not found
         """
+        # Sanitize plugin_id — os.path.basename is a CodeQL-recognized path sanitizer
+        plugin_id = os.path.basename(plugin_id or '')
+        if not plugin_id:
+            return None
+
         # Strategy 1: Use mapping from discovery
         if plugin_directories and plugin_id in plugin_directories:
             plugin_dir = plugin_directories[plugin_id]
@@ -145,6 +151,9 @@ class PluginLoader:
         Returns:
             True if dependencies installed or not needed, False on error
         """
+        plugin_id = os.path.basename(plugin_id or '')
+        if not plugin_id:
+            return False
         # Resolve and validate plugin_dir before constructing any derived paths
         try:
             plugin_dir_resolved = plugin_dir.resolve(strict=True)
@@ -371,6 +380,9 @@ class PluginLoader:
         Returns:
             Loaded module or None on error
         """
+        plugin_id = os.path.basename(plugin_id or '')
+        if not plugin_id:
+            raise PluginError("Invalid plugin ID")
         try:
             plugin_dir_resolved = plugin_dir.resolve(strict=True)
         except OSError:
