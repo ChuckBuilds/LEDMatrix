@@ -150,6 +150,18 @@ class WiFiManager:
         logger.info(f"WiFi Manager initialized - nmcli: {self.has_nmcli}, iwlist: {self.has_iwlist}, "
                    f"hostapd: {self.has_hostapd}, dnsmasq: {self.has_dnsmasq}, "
                    f"interface: {self._wifi_interface}, trixie: {self._is_trixie}")
+
+        # Once per process: remove a stale force-AP flag left by a prior crash.
+        # Guard with a class-level flag so the nmcli AP-state check only runs
+        # once even though WiFiManager is instantiated per-request.
+        if not WiFiManager._startup_cleanup_done:
+            WiFiManager._startup_cleanup_done = True
+            if self._FORCE_AP_FLAG_PATH.exists() and not self._is_ap_mode_active():
+                try:
+                    self._FORCE_AP_FLAG_PATH.unlink(missing_ok=True)
+                    logger.debug("Removed stale force-AP flag on startup (AP not active)")
+                except OSError as exc:
+                    logger.warning(f"Could not remove stale force-AP flag: {exc}")
     
     def _show_led_message(self, message: str, duration: int = 5):
         """
@@ -474,7 +486,10 @@ class WiFiManager:
                 if result.returncode == 0:
                     for line in result.stdout.strip().split('\n'):
                         if '/' in line:
-                            ip_address = line.split('/')[0].strip()
+                            # nmcli -t output is "IP4.ADDRESS[1]:x.x.x.x/prefix";
+                            # bare "x.x.x.x/prefix" is also accepted defensively.
+                            _, sep, rest = line.partition(':')
+                            ip_address = (rest if sep else line).split('/')[0].strip()
                             break
                 
                 # Final fallback: Get signal strength by matching SSID in WiFi list
@@ -500,6 +515,13 @@ class WiFiManager:
             
             # Check if AP mode is active
             ap_active = self._is_ap_mode_active()
+            # wlan0 shows as "connected" in AP mode; clear client-station fields so
+            # callers don't mistake the AP for an outbound WiFi connection.
+            if ap_active and wifi_connected:
+                wifi_connected = False
+                ssid = None
+                ip_address = None
+                logger.debug(f"{wlan_device} is in AP mode — overriding wifi_connected to False")
             
             return WiFiStatus(
                 connected=wifi_connected,
@@ -690,6 +712,10 @@ class WiFiManager:
     # ---------------------------------------------------------------------------
 
     _IP_FORWARD_SAVE_PATH = Path("/tmp/ledmatrix_ip_forward_saved")  # nosec B108 - process-specific named file; device is single-user RPi
+    # Written when AP mode is manually force-enabled; prevents daemon auto-disable
+    _FORCE_AP_FLAG_PATH = Path("/tmp/ledmatrix_force_ap_active")  # nosec B108 - process-specific named file; device is single-user RPi
+    # Ensures the startup stale-flag cleanup runs once per process, not per instantiation
+    _startup_cleanup_done: bool = False
 
     def _validate_ap_config(self) -> Tuple[str, int]:
         """Return a sanitized (ssid, channel) pair from config, falling back to defaults."""
@@ -1367,7 +1393,7 @@ class WiFiManager:
                         logger.error(f"Failed to restore original connection: {original_ssid}")
                         # Trigger AP mode as last resort
                         self._show_led_message("Enabling AP mode...", duration=5)
-                        ap_success, ap_msg = self.enable_ap_mode()
+                        ap_success, ap_msg = self.enable_ap_mode(force=True)
                         if ap_success:
                             logger.info("AP mode enabled as failsafe")
                             return False, "Connection failed and restoration failed. AP mode enabled."
@@ -1379,7 +1405,7 @@ class WiFiManager:
                 elif not success:
                     logger.warning(f"Connection to {ssid} failed and no original connection to restore")
                     self._show_led_message("Enabling AP mode...", duration=5)
-                    ap_success, ap_msg = self.enable_ap_mode()
+                    ap_success, ap_msg = self.enable_ap_mode(force=True)
                     if ap_success:
                         logger.info("AP mode enabled as failsafe")
                         return False, "Connection failed. AP mode enabled."
@@ -1400,7 +1426,7 @@ class WiFiManager:
                     logger.error(f"Failed to restore after exception: {restore_error}")
                     # Last resort: enable AP mode
                     try:
-                        self.enable_ap_mode()
+                        self.enable_ap_mode(force=True)
                     except Exception as ap_error:  # nosec B110 - last-resort; do not re-raise, but log for debugging
                         logger.error("Last-resort AP mode enable failed in recovery path: %s", ap_error, exc_info=True)
             return False, str(e)
@@ -1464,26 +1490,29 @@ class WiFiManager:
             # Show LED message
             self._show_led_message(f"Connecting to {ssid}...", duration=10)
             
-            # First, check if connection already exists and try to activate it
-            # NetworkManager connection names might not match SSID exactly, so search by SSID
-            check_result = subprocess.run(
-                ["nmcli", "-t", "-f", "NAME,802-11-wireless.ssid", "connection", "show"],
-                capture_output=True,
-                text=True,
-                timeout=5
+            # Find existing NM connection for this SSID.
+            # 802-11-wireless.ssid is not a valid column in 'nmcli connection show',
+            # so list all wifi connections then query each one's SSID individually.
+            list_result = subprocess.run(  # nosec B603 B607 - fixed args, no user input
+                ["nmcli", "-t", "-f", "NAME,TYPE", "connection", "show"],
+                capture_output=True, text=True, timeout=5
             )
-            
             existing_conn_name = None
-            if check_result.returncode == 0:
-                for line in check_result.stdout.strip().split('\n'):
-                    if ':' in line:
-                        parts = line.split(':')
-                        if len(parts) >= 2:
-                            conn_name = parts[0].strip()
-                            conn_ssid = parts[1].strip() if len(parts) > 1 else ""
-                            if conn_ssid == ssid:
-                                existing_conn_name = conn_name
-                                break
+            if list_result.returncode == 0:
+                for line in list_result.stdout.strip().split('\n'):
+                    if ':' not in line:
+                        continue
+                    parts = line.split(':')
+                    if len(parts) < 2 or parts[1].strip() != '802-11-wireless':
+                        continue
+                    conn_name = parts[0].strip()
+                    ssid_r = subprocess.run(  # nosec B603 B607 - conn_name from nmcli output, not user input
+                        ["nmcli", "-g", "802-11-wireless.ssid", "connection", "show", conn_name],
+                        capture_output=True, text=True, timeout=5
+                    )
+                    if ssid_r.returncode == 0 and ssid_r.stdout.strip() == ssid:
+                        existing_conn_name = conn_name
+                        break
             
             # Also try direct lookup by SSID (in case connection name matches SSID)
             if not existing_conn_name:
@@ -1855,7 +1884,7 @@ class WiFiManager:
         logger.warning(f"Failed to enable WiFi radio after {max_retries} attempts")
         return False
     
-    def enable_ap_mode(self) -> Tuple[bool, str]:
+    def enable_ap_mode(self, force: bool = False) -> Tuple[bool, str]:
         """
         Enable access point mode
         
@@ -1877,20 +1906,29 @@ class WiFiManager:
             if not self._ensure_wifi_radio_enabled():
                 return False, "WiFi radio is disabled and could not be enabled"
             
-            # Check if WiFi is connected
+            # Check if WiFi is connected (skip when force=True)
             status = self.get_wifi_status()
-            if status.connected:
+            if not force and status.connected:
                 return False, "Cannot enable AP mode while WiFi is connected"
             
-            # Check if Ethernet is connected
-            if self._is_ethernet_connected():
+            # Check if Ethernet is connected (skip when force=True)
+            if not force and self._is_ethernet_connected():
                 return False, "Cannot enable AP mode while Ethernet is connected"
             
+            if force:
+                logger.debug(f"enable_ap_mode: force=True — WiFi/Ethernet guards bypassed; will create {self._FORCE_AP_FLAG_PATH}")
+
             # Try hostapd/dnsmasq first (captive portal mode)
             if self.has_hostapd and self.has_dnsmasq:
                 result = self._enable_ap_mode_hostapd()
                 if result[0]:
                     self._ap_enabled_at = time.time()
+                    if force:
+                        try:
+                            self._FORCE_AP_FLAG_PATH.touch()
+                            logger.debug(f"Force-AP flag created: {self._FORCE_AP_FLAG_PATH}")
+                        except OSError as exc:
+                            logger.warning(f"Failed to create force-AP flag {self._FORCE_AP_FLAG_PATH}: {exc}")
                     return result
 
             # Fallback to nmcli hotspot (simpler, no captive portal)
@@ -1900,6 +1938,12 @@ class WiFiManager:
                 result = self._enable_ap_mode_nmcli_hotspot()
                 if result[0]:
                     self._ap_enabled_at = time.time()
+                    if force:
+                        try:
+                            self._FORCE_AP_FLAG_PATH.touch()
+                            logger.debug(f"Force-AP flag created: {self._FORCE_AP_FLAG_PATH}")
+                        except OSError as exc:
+                            logger.warning(f"Failed to create force-AP flag {self._FORCE_AP_FLAG_PATH}: {exc}")
                 return result
 
             return False, "No WiFi tools available (nmcli, hostapd, or dnsmasq required)"
@@ -2091,8 +2135,14 @@ class WiFiManager:
                 self._clear_led_message()
                 return False, "AP started but captive-portal redirect setup failed"
 
-            # Verify the AP is actually running
-            status = self._get_ap_status_nmcli()
+            # Verify the AP is actually running (retry up to 5x with 2s delay for NM async activation)
+            status = {}
+            for _attempt in range(5):
+                status = self._get_ap_status_nmcli()
+                if status.get('active'):
+                    break
+                logger.debug(f"AP verification attempt {_attempt + 1}/5 not yet active, waiting 2s")
+                time.sleep(2)
             if status.get('active'):
                 ip = status.get('ip', '192.168.4.1')
                 logger.info(f"AP mode confirmed active at {ip} (open network, no password)")
@@ -2290,6 +2340,7 @@ class WiFiManager:
                         logger.warning("WiFi radio may be disabled after nmcli AP cleanup")
 
                 self._ap_enabled_at = None
+                self._FORCE_AP_FLAG_PATH.unlink(missing_ok=True)
                 logger.info("AP mode disabled successfully")
                 return True, "AP mode disabled"
             except Exception as e:
@@ -2478,22 +2529,29 @@ address=/detectportal.firefox.com/192.168.4.1
                 else:
                     logger.warning(f"Failed to enable AP mode: {message}")
             elif not should_have_ap and ap_active:
-                # Should not have AP but do - disable AP mode
-                # Always disable if WiFi or Ethernet connects, regardless of auto_enable setting
-                if status.connected or ethernet_connected:
+                # Should not have AP but do - check if it was manually force-enabled
+                force_active = self._FORCE_AP_FLAG_PATH.exists()
+                if status.connected:
+                    # WiFi connected: always disable AP (user successfully configured WiFi)
                     success, message = self.disable_ap_mode()
                     if success:
-                        if status.connected:
-                            logger.info("Auto-disabled AP mode (WiFi connected)")
-                        elif ethernet_connected:
-                            logger.info("Auto-disabled AP mode (Ethernet connected)")
-                        self._disconnected_checks = 0  # Reset counter
+                        logger.info("Auto-disabled AP mode (WiFi connected)")
+                        self._disconnected_checks = 0
                         return True
                     else:
                         logger.warning(f"Failed to auto-disable AP mode: {message}")
+                elif ethernet_connected and not force_active:
+                    # Ethernet connected, AP not manually forced: auto-disable
+                    success, message = self.disable_ap_mode()
+                    if success:
+                        logger.info("Auto-disabled AP mode (Ethernet connected)")
+                        self._disconnected_checks = 0
+                        return True
+                    else:
+                        logger.warning(f"Failed to auto-disable AP mode: {message}")
+                elif ethernet_connected and force_active:
+                    logger.debug("AP mode is force-active; Ethernet connected but auto-disable suppressed")
                 elif not auto_enable:
-                    # AP is active but auto_enable is disabled - this means it was manually enabled
-                    # Don't disable it automatically, let it stay active
                     logger.debug("AP mode is active (manually enabled), keeping active")
 
             # Idle-timeout check: disable AP if no client has connected within the window.
