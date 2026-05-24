@@ -67,8 +67,9 @@ def main():
         print("   📍 Will run on: http://0.0.0.0:5000")
         print("   ⏹️  Press Ctrl+C to stop")
 
-        # Run the app (this should start the server)
-        app.run(host='0.0.0.0', port=5000, debug=True)
+        # Run the app (debug mode controlled by env var to satisfy security scanners)
+        _debug = os.environ.get('LEDMATRIX_FLASK_DEBUG', '0') == '1'
+        app.run(host='0.0.0.0', port=5000, debug=_debug)
 
     except KeyboardInterrupt:
         print("\n   ⏹️  Server stopped by user")

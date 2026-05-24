@@ -402,9 +402,7 @@ def save_schedule_config():
         return success_response(message='Schedule configuration saved successfully')
     except Exception as e:
         import logging
-        import traceback
-        error_msg = f"Error saving schedule config: {str(e)}\n{traceback.format_exc()}"
-        logging.error(error_msg)
+        logger.error("Error saving schedule config", exc_info=True)
         return error_response(
             ErrorCode.CONFIG_SAVE_FAILED,
             "An error occurred; see logs for details",
@@ -623,9 +621,7 @@ def save_dim_schedule_config():
         return success_response(message='Dim schedule configuration saved successfully')
     except Exception as e:
         import logging
-        import traceback
-        error_msg = f"Error saving dim schedule config: {str(e)}\n{traceback.format_exc()}"
-        logging.error(error_msg)
+        logger.error("Error saving dim schedule config", exc_info=True)
         return error_response(
             ErrorCode.CONFIG_SAVE_FAILED,
             "An error occurred; see logs for details",
@@ -921,7 +917,7 @@ def save_main_config():
                             if 'properties' in schema:
                                 secret_fields = find_secret_fields(schema['properties'])
                     except Exception as e:
-                        print(f"Error reading schema for secret detection: {e}")
+                        logger.debug("Error reading schema for secret detection: %s", e)
 
                 # Separate secrets from regular config (same logic as save_plugin_config)
                 def separate_secrets(config, secrets_set, prefix=''):
@@ -959,7 +955,7 @@ def save_main_config():
                         if 'enabled' not in regular_config:
                             regular_config['enabled'] = True
                     except Exception as e:
-                        print(f"Error preserving enabled state for {plugin_id}: {e}")
+                        logger.debug("Error preserving enabled state: %s", e)
                         # Default to True on error to avoid disabling plugins
                         regular_config['enabled'] = True
 
@@ -994,7 +990,7 @@ def save_main_config():
                                 plugin_instance.on_config_change(plugin_full_config)
                 except Exception as hook_err:
                     # Don't fail the save if hook fails
-                    print(f"Warning: on_config_change failed for {plugin_id}: {hook_err}")
+                    logger.warning("on_config_change failed: %s", hook_err)
 
         # Remove processed plugin keys from data (they're already in current_config)
         for key in plugin_keys_to_remove:
@@ -1044,9 +1040,7 @@ def save_main_config():
         return success_response(message='Configuration saved successfully')
     except Exception as e:
         import logging
-        import traceback
-        error_msg = f"Error saving config: {str(e)}\n{traceback.format_exc()}"
-        logging.error(error_msg)
+        logger.error("Error saving config", exc_info=True)
         return error_response(
             ErrorCode.CONFIG_SAVE_FAILED,
             f"Error saving configuration: {e}",
@@ -1087,13 +1081,8 @@ def save_raw_main_config():
         logger.error('Invalid JSON', exc_info=True)
         return jsonify({'status': 'error', 'message': 'Invalid JSON in request body'}), 400
     except Exception as e:
-        import logging
-        import traceback
         from src.exceptions import ConfigError
-
-        # Log the full error for debugging
-        error_msg = f"Error saving raw main config: {str(e)}\n{traceback.format_exc()}"
-        logging.error(error_msg)
+        logger.error("Error saving raw main config", exc_info=True)
 
         # Extract more specific error message if it's a ConfigError
         if isinstance(e, ConfigError):
@@ -1139,13 +1128,8 @@ def save_raw_secrets_config():
         logger.error('Invalid JSON', exc_info=True)
         return jsonify({'status': 'error', 'message': 'Invalid JSON in request body'}), 400
     except Exception as e:
-        import logging
-        import traceback
         from src.exceptions import ConfigError
-
-        # Log the full error for debugging
-        error_msg = f"Error saving raw secrets config: {str(e)}\n{traceback.format_exc()}"
-        logging.error(error_msg)
+        logger.error("Error saving raw secrets config", exc_info=True)
 
         # Extract more specific error message if it's a ConfigError
         if isinstance(e, ConfigError):
@@ -1365,7 +1349,9 @@ def get_git_version(project_dir=None):
         )
 
         if result.returncode == 0:
-            return result.stdout.strip()
+            version_str = result.stdout.strip()
+            if re.match(r'^[a-zA-Z0-9._\-]+$', version_str):
+                return version_str
 
         # Fallback to short commit hash
         result = subprocess.run(
@@ -1377,7 +1363,9 @@ def get_git_version(project_dir=None):
         )
 
         if result.returncode == 0:
-            return result.stdout.strip()
+            version_str = result.stdout.strip()
+            if re.match(r'^[a-zA-Z0-9._\-]+$', version_str):
+                return version_str
 
         return 'Unknown'
     except Exception:
@@ -1472,12 +1460,10 @@ def execute_system_action():
                 # For now, just start the display service
                 result = subprocess.run(['sudo', 'systemctl', 'start', 'ledmatrix'],
                                      capture_output=True, text=True)
+                logger.info("start_display (%s) returned code %d", mode, result.returncode)
                 return jsonify({
                     'status': 'success' if result.returncode == 0 else 'error',
-                    'message': f'Started display in {mode} mode',
-                    'returncode': result.returncode,
-                    'stdout': result.stdout,
-                    'stderr': result.stderr
+                    'message': 'Display started' if result.returncode == 0 else 'Failed to start display',
                 })
             else:
                 result = subprocess.run(['sudo', 'systemctl', 'start', 'ledmatrix'],
@@ -1538,13 +1524,12 @@ def execute_system_action():
                         cwd=project_dir
                     )
                     if stash_result.returncode == 0:
-                        print(f"Stashed local changes: {stash_result.stdout}")
+                        logger.debug("git stash: stashed local changes before pull")
                         stash_info = " Local changes were stashed."
                     else:
-                        # If stash fails, log but continue with pull
-                        print(f"Stash failed: {stash_result.stderr}")
+                        logger.warning("git stash failed before pull (returncode=%d)", stash_result.returncode)
                 except subprocess.TimeoutExpired:
-                    print("Stash operation timed out, proceeding with pull")
+                    logger.warning("git stash timed out, proceeding with pull")
 
             # Perform the git pull
             result = subprocess.run(
@@ -1563,14 +1548,12 @@ def execute_system_action():
                 if result.stdout and "Already up to date" not in result.stdout:
                     pull_message = f"Code updated successfully.{stash_info}"
             else:
-                pull_message = f"Update failed: {result.stderr or 'Unknown error'}"
+                logger.warning("git pull failed (returncode=%d): %s", result.returncode, result.stderr)
+                pull_message = "Update failed; check logs for details"
 
             return jsonify({
                 'status': 'success' if result.returncode == 0 else 'error',
                 'message': pull_message,
-                'returncode': result.returncode,
-                'stdout': result.stdout,
-                'stderr': result.stderr
             })
         elif action == 'restart_display_service':
             result = subprocess.run(['sudo', 'systemctl', 'restart', 'ledmatrix'],
@@ -1580,14 +1563,12 @@ def execute_system_action():
             result = subprocess.run(['sudo', 'systemctl', 'restart', 'ledmatrix-web'],
                                  capture_output=True, text=True)
         else:
-            return jsonify({'status': 'error', 'message': f'Unknown action: {action}'}), 400
+            return jsonify({'status': 'error', 'message': 'Unknown action'}), 400
 
+        logger.info("system action '%s' returncode=%d", action, result.returncode)
         return jsonify({
             'status': 'success' if result.returncode == 0 else 'error',
-            'message': f'Action {action} completed',
-            'returncode': result.returncode,
-            'stdout': result.stdout,
-            'stderr': result.stderr
+            'message': 'Action completed' if result.returncode == 0 else 'Action failed; check logs for details',
         })
 
     except Exception as e:
@@ -1687,8 +1668,6 @@ def get_on_demand_status():
             }
         })
     except Exception as exc:
-        import traceback
-        error_details = traceback.format_exc()
         logger.error('Error in get_on_demand_status', exc_info=True)
         return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details'}), 500
 
@@ -1755,11 +1734,11 @@ def start_on_demand_display():
         # Stop the display service first to ensure clean state when we will restart it
         if service_was_running and start_service:
             import time as time_module
-            print("Stopping display service before starting on-demand mode...")
+            logger.debug("Stopping display service before starting on-demand mode")
             _stop_display_service()
             # Wait a brief moment for the service to fully stop
             time_module.sleep(1.5)
-            print("Display service stopped, now starting with on-demand request...")
+            logger.debug("Display service stopped, now starting with on-demand request")
 
         if not service_status.get('active') and not start_service:
             return jsonify({
@@ -1792,8 +1771,6 @@ def start_on_demand_display():
         }
         return jsonify({'status': 'success', 'data': response_data})
     except Exception as exc:
-        import traceback
-        error_details = traceback.format_exc()
         logger.error('Error in start_on_demand_display', exc_info=True)
         return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details'}), 500
 
@@ -1830,8 +1807,6 @@ def stop_on_demand_display():
             }
         })
     except Exception as exc:
-        import traceback
-        error_details = traceback.format_exc()
         logger.error('Error in stop_on_demand_display', exc_info=True)
         return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details'}), 500
 
@@ -1961,8 +1936,6 @@ def get_installed_plugins():
 
         return jsonify({'status': 'success', 'data': {'plugins': plugins}})
     except Exception as e:
-        import traceback
-        error_details = traceback.format_exc()
         logger.error('Error in get_installed_plugins', exc_info=True)
         return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details'}), 500
 
@@ -1989,8 +1962,6 @@ def get_plugin_health():
             'data': health_summaries
         })
     except Exception as e:
-        import traceback
-        error_details = traceback.format_exc()
         logger.error('Error in get_plugin_health', exc_info=True)
         return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details'}), 500
 
@@ -2016,8 +1987,6 @@ def get_plugin_health_single(plugin_id):
             'data': health_summary
         })
     except Exception as e:
-        import traceback
-        error_details = traceback.format_exc()
         logger.error('Error in get_plugin_health_single', exc_info=True)
         return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details'}), 500
 
@@ -2043,8 +2012,6 @@ def reset_plugin_health(plugin_id):
             'message': f'Health state reset for plugin {plugin_id}'
         })
     except Exception as e:
-        import traceback
-        error_details = traceback.format_exc()
         logger.error('Error in reset_plugin_health', exc_info=True)
         return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details'}), 500
 
@@ -2071,8 +2038,6 @@ def get_plugin_metrics():
             'data': metrics_summaries
         })
     except Exception as e:
-        import traceback
-        error_details = traceback.format_exc()
         logger.error('Error in get_plugin_metrics', exc_info=True)
         return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details'}), 500
 
@@ -2098,8 +2063,6 @@ def get_plugin_metrics_single(plugin_id):
             'data': metrics_summary
         })
     except Exception as e:
-        import traceback
-        error_details = traceback.format_exc()
         logger.error('Error in get_plugin_metrics_single', exc_info=True)
         return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details'}), 500
 
@@ -2125,8 +2088,6 @@ def reset_plugin_metrics(plugin_id):
             'message': f'Metrics reset for plugin {plugin_id}'
         })
     except Exception as e:
-        import traceback
-        error_details = traceback.format_exc()
         logger.error('Error in reset_plugin_metrics', exc_info=True)
         return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details'}), 500
 
@@ -2182,8 +2143,6 @@ def manage_plugin_limits(plugin_id):
                 'message': f'Resource limits updated for plugin {plugin_id}'
             })
     except Exception as e:
-        import traceback
-        error_details = traceback.format_exc()
         logger.error('Error in manage_plugin_limits', exc_info=True)
         return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details'}), 500
 
@@ -2228,7 +2187,7 @@ def toggle_plugin():
 
         # Check if plugin exists in manifests (discovered but may not be loaded)
         if plugin_id not in api_v3.plugin_manager.plugin_manifests:
-            return jsonify({'status': 'error', 'message': f'Plugin {plugin_id} not found'}), 404
+            return jsonify({'status': 'error', 'message': 'Plugin not found'}), 404
 
         # Update config (this is what the display controller reads)
         config = api_v3.config_manager.load_config()
@@ -2605,7 +2564,7 @@ def get_plugin_config():
                                 categories_from_files[category_name]['data_file'] = f'of_the_day/{filename}'
 
                         except Exception as e:
-                            print(f"Warning: Could not read {json_file}: {e}")
+                            logger.debug("Could not read json file: %s", e)
                             continue
 
                     # Update plugin_config with scanned files
@@ -2708,7 +2667,7 @@ def update_plugin():
                     manifest = json.load(f)
                     current_last_updated = manifest.get('last_updated')
             except Exception as e:
-                print(f"Warning: Could not read local manifest for {plugin_id}: {e}")
+                logger.debug("Could not read local manifest for plugin: %s", e)
 
         if api_v3.plugin_store_manager:
             git_info_before = api_v3.plugin_store_manager._get_local_git_info(plugin_dir)
@@ -2723,16 +2682,14 @@ def update_plugin():
             git_info = api_v3.plugin_store_manager._get_local_git_info(plugin_path_dir)
             is_git_repo = git_info is not None
             if is_git_repo:
-                print(f"[UPDATE] Plugin {plugin_id} is a git repository, will update via git pull")
-        
+                logger.debug("Plugin is a git repository, will update via git pull")
+
         remote_info = api_v3.plugin_store_manager.get_plugin_info(plugin_id, fetch_latest_from_github=True)
         remote_commit = remote_info.get('last_commit_sha') if remote_info else None
         remote_branch = remote_info.get('branch') if remote_info else None
 
         # Update the plugin
-        print(f"[UPDATE] Attempting to update plugin {plugin_id}...")
         success = api_v3.plugin_store_manager.update_plugin(plugin_id)
-        print(f"[UPDATE] Update result for {plugin_id}: {success}")
 
         if success:
             updated_last_updated = current_last_updated
@@ -2743,7 +2700,7 @@ def update_plugin():
                         manifest = json.load(f)
                         updated_last_updated = manifest.get('last_updated', current_last_updated)
             except Exception as e:
-                print(f"Warning: Could not read updated manifest for {plugin_id}: {e}")
+                logger.debug("Could not read updated manifest after update: %s", e)
 
             updated_commit = None
             updated_branch = remote_branch or current_branch
@@ -2805,52 +2762,41 @@ def update_plugin():
                 message=message
             )
         else:
-            error_msg = f'Failed to update plugin {plugin_id}'
             plugin_path_dir = Path(api_v3.plugin_store_manager.plugins_dir) / plugin_id
             if not plugin_path_dir.exists():
-                error_msg += ': Plugin not found'
+                client_msg = 'Plugin update failed: plugin not found'
             else:
-                # Check if it's a git repo (could be installed from URL, not in registry)
                 git_info = api_v3.plugin_store_manager._get_local_git_info(plugin_path_dir)
-                if git_info:
-                    # It's a git repo, so update should have worked - provide generic error
-                    error_msg += ': Update failed (check logs for details)'
-                else:
-                    # Not a git repo, check if it's in registry
+                if not git_info:
                     plugin_info = api_v3.plugin_store_manager.get_plugin_info(plugin_id)
                     if not plugin_info:
-                        error_msg += ': Plugin not found in registry and not a git repository'
+                        client_msg = 'Plugin update failed: not found in registry'
                     else:
-                        error_msg += ': Update failed (check logs for details)'
+                        client_msg = 'Plugin update failed; check logs for details'
+                else:
+                    client_msg = 'Plugin update failed; check logs for details'
+            logger.error("update_plugin failed for plugin_id=%s: %s", plugin_id, client_msg)
 
             if api_v3.operation_history:
                 api_v3.operation_history.record_operation(
                     "update",
                     plugin_id=plugin_id,
                     status="failed",
-                    error=error_msg,
+                    error=client_msg,
                     details={
                         "previous_commit": current_commit[:7] if current_commit else None,
                         "branch": current_branch
                     }
                 )
 
-            import traceback
-            error_details = traceback.format_exc()
-            print(f"[UPDATE] Update failed for {plugin_id}: {error_msg}")
-            print(f"[UPDATE] Traceback: {error_details}")
-            
             return error_response(
                 ErrorCode.PLUGIN_UPDATE_FAILED,
-                error_msg,
+                client_msg,
                 status_code=500
             )
 
     except Exception as e:
-        import traceback
-        error_details = traceback.format_exc()
         logger.error("Unhandled exception in update endpoint", exc_info=True)
-        print(f"[UPDATE] Traceback: {error_details}")
         
         from src.web_interface.errors import WebInterfaceError
         error = WebInterfaceError.from_exception(e, ErrorCode.PLUGIN_UPDATE_FAILED)
@@ -2919,7 +2865,7 @@ def uninstall_plugin():
                     try:
                         api_v3.config_manager.cleanup_plugin_config(plugin_id, remove_secrets=True)
                     except Exception as cleanup_err:
-                        print(f"Warning: Failed to cleanup config for {plugin_id}: {cleanup_err}")
+                        logger.warning("Failed to cleanup config after uninstall: %s", cleanup_err)
 
                 # Remove from state manager
                 if api_v3.plugin_state_manager:
@@ -2934,7 +2880,7 @@ def uninstall_plugin():
                         details={"preserve_config": preserve_config}
                     )
 
-                return {'success': True, 'message': f'Plugin {plugin_id} uninstalled successfully'}
+                return {'success': True, 'message': 'Plugin uninstalled successfully'}
 
             # Enqueue operation
             operation_id = api_v3.operation_queue.enqueue_operation(
@@ -2945,7 +2891,7 @@ def uninstall_plugin():
 
             return success_response(
                 data={'operation_id': operation_id},
-                message=f'Plugin {plugin_id} uninstallation queued'
+                message='Plugin uninstallation queued'
             )
         else:
             # Fallback to direct uninstall
@@ -2966,7 +2912,7 @@ def uninstall_plugin():
                     try:
                         api_v3.config_manager.cleanup_plugin_config(plugin_id, remove_secrets=True)
                     except Exception as cleanup_err:
-                        print(f"Warning: Failed to cleanup config for {plugin_id}: {cleanup_err}")
+                        logger.warning("Failed to cleanup config after uninstall: %s", cleanup_err)
 
                 # Remove from state manager
                 if api_v3.plugin_state_manager:
@@ -2981,19 +2927,19 @@ def uninstall_plugin():
                         details={"preserve_config": preserve_config}
                     )
 
-                return success_response(message=f'Plugin {plugin_id} uninstalled successfully')
+                return success_response(message='Plugin uninstalled successfully')
             else:
                 if api_v3.operation_history:
                     api_v3.operation_history.record_operation(
                         "uninstall",
                         plugin_id=plugin_id,
                         status="failed",
-                        error=f'Failed to uninstall plugin {plugin_id}'
+                        error='Plugin uninstall failed'
                     )
 
                 return error_response(
                     ErrorCode.PLUGIN_UNINSTALL_FAILED,
-                    f'Failed to uninstall plugin {plugin_id}',
+                    'Plugin uninstall failed',
                     status_code=500
                 )
 
@@ -3033,7 +2979,7 @@ def install_plugin():
         # Log the plugins directory being used for debugging
         plugins_dir = api_v3.plugin_store_manager.plugins_dir
         branch_info = f" (branch: {branch})" if branch else ""
-        print(f"Installing plugin {plugin_id}{branch_info} to directory: {plugins_dir}", flush=True)
+        logger.info("Installing plugin to directory: %s", plugins_dir)
 
         # Use operation queue if available
         if api_v3.operation_queue:
@@ -3121,7 +3067,7 @@ def install_plugin():
                     )
 
                 branch_msg = f" (branch: {branch})" if branch else ""
-                return success_response(message=f'Plugin {plugin_id} installed successfully{branch_msg}')
+                return success_response(message=f'Plugin installed successfully{branch_msg}')
             else:
                 error_msg = f'Failed to install plugin {plugin_id}'
                 if branch:
@@ -3146,8 +3092,6 @@ def install_plugin():
                 )
 
     except Exception as e:
-        import traceback
-        error_details = traceback.format_exc()
         logger.error('Error in install_plugin', exc_info=True)
         return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details'}), 500
 
@@ -3203,8 +3147,6 @@ def install_plugin_from_url():
             }), 500
 
     except Exception as e:
-        import traceback
-        error_details = traceback.format_exc()
         logger.error('Error in install_plugin_from_url', exc_info=True)
         return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details'}), 500
 
@@ -3237,8 +3179,6 @@ def get_registry_from_url():
             }), 400
 
     except Exception as e:
-        import traceback
-        error_details = traceback.format_exc()
         logger.error('Error in get_registry_from_url', exc_info=True)
         return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details'}), 500
 
@@ -3252,8 +3192,6 @@ def get_saved_repositories():
         repositories = api_v3.saved_repositories_manager.get_all()
         return jsonify({'status': 'success', 'data': {'repositories': repositories}})
     except Exception as e:
-        import traceback
-        error_details = traceback.format_exc()
         logger.error('Error in get_saved_repositories', exc_info=True)
         return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details'}), 500
 
@@ -3285,8 +3223,6 @@ def add_saved_repository():
                 'message': 'Repository already exists or failed to save'
             }), 400
     except Exception as e:
-        import traceback
-        error_details = traceback.format_exc()
         logger.error('Error in add_saved_repository', exc_info=True)
         return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details'}), 500
 
@@ -3317,8 +3253,6 @@ def remove_saved_repository():
                 'message': 'Repository not found'
             }), 404
     except Exception as e:
-        import traceback
-        error_details = traceback.format_exc()
         logger.error('Error in remove_saved_repository', exc_info=True)
         return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details'}), 500
 
@@ -3372,8 +3306,6 @@ def list_plugin_store():
 
         return jsonify({'status': 'success', 'data': {'plugins': formatted_plugins}})
     except Exception as e:
-        import traceback
-        error_details = traceback.format_exc()
         logger.error('Error in list_plugin_store', exc_info=True)
         return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details'}), 500
 
@@ -3425,8 +3357,6 @@ def get_github_auth_status():
                 }
             })
     except Exception as e:
-        import traceback
-        error_details = traceback.format_exc()
         logger.error('Error in get_github_auth_status', exc_info=True)
         return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details'}), 500
 
@@ -3454,8 +3384,6 @@ def refresh_plugin_store():
             'plugin_count': plugin_count
         })
     except Exception as e:
-        import traceback
-        error_details = traceback.format_exc()
         logger.error('Error in refresh_plugin_store', exc_info=True)
         return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details'}), 500
 
@@ -4383,7 +4311,7 @@ def save_plugin_config():
                 if 'enabled' not in plugin_config:
                     plugin_config['enabled'] = True
             except Exception as e:
-                print(f"Error preserving enabled state: {e}")
+                logger.debug("Error preserving enabled state: %s", e)
                 # Default to True on error to avoid disabling plugins
                 plugin_config['enabled'] = True
 
@@ -4680,16 +4608,11 @@ def save_plugin_config():
 
                 # Also print to console for immediate visibility
                 import json
-                print(f"[ERROR] Config validation failed for {plugin_id}")
-                print(f"[ERROR] Validation errors: {validation_errors}")
-                print(f"[ERROR] Config keys: {list(plugin_config.keys())}")
-                print(f"[ERROR] Schema property keys: {list(enhanced_schema.get('properties', {}).keys())}")
+                logger.warning("Config validation failed for plugin (see debug logs)")
 
                 # Log raw form data if this was a form submission
                 if 'application/json' not in (request.content_type or ''):
                     form_data = request.form.to_dict()
-                    print(f"[ERROR] Raw form data: {json.dumps({k: str(v)[:200] for k, v in form_data.items()}, indent=2)}")
-                    print(f"[ERROR] Parsed config: {json.dumps(plugin_config, indent=2, default=str)}")
                 return error_response(
                     ErrorCode.CONFIG_VALIDATION_FAILED,
                     'Configuration validation failed',
@@ -4828,7 +4751,7 @@ def save_plugin_config():
                         logging.warning(f"Lifecycle method error for {plugin_id}: {lifecycle_error}", exc_info=True)
         except Exception as hook_err:
             # Do not fail the save if hook fails; just log
-            print(f"Warning: on_config_change failed for {plugin_id}: {hook_err}")
+            logger.warning("on_config_change failed: %s", hook_err)
 
         secret_count = len(secrets_config)
         message = f'Plugin {plugin_id} configuration saved successfully'
@@ -4896,8 +4819,6 @@ def get_plugin_schema():
 
         return jsonify({'status': 'success', 'data': {'schema': default_schema}})
     except Exception as e:
-        import traceback
-        error_details = traceback.format_exc()
         logger.error('Error in get_plugin_schema', exc_info=True)
         return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details'}), 500
 
@@ -5001,7 +4922,7 @@ def reset_plugin_config():
                     if hasattr(plugin_instance, 'on_config_change'):
                         plugin_instance.on_config_change(plugin_full_config)
         except Exception as hook_err:
-            print(f"Warning: on_config_change failed for {plugin_id}: {hook_err}")
+            logger.warning("on_config_change failed: %s", hook_err)
 
         return jsonify({
             'status': 'success',
@@ -5009,8 +4930,6 @@ def reset_plugin_config():
             'data': {'config': defaults}
         })
     except Exception as e:
-        import traceback
-        error_details = traceback.format_exc()
         logger.error('Error in reset_plugin_config', exc_info=True)
         return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details'}), 500
 
@@ -5048,7 +4967,7 @@ def execute_plugin_action():
             plugin_dir = PROJECT_ROOT / 'plugins' / plugin_id
 
         if not plugin_dir or not Path(plugin_dir).exists():
-            return jsonify({'status': 'error', 'message': f'Plugin {plugin_id} not found'}), 404
+            return jsonify({'status': 'error', 'message': 'Plugin not found'}), 404
 
         # Load manifest to get action definition
         manifest_path = Path(plugin_dir) / 'manifest.json'
@@ -5269,9 +5188,7 @@ sys.exit(proc.returncode)
                                     'message': 'Could not generate authorization URL'
                                 }), 400
                         except Exception as e:
-                            import traceback
-                            error_details = traceback.format_exc()
-                            print(f"Error executing action step 1: {e}")
+                            logger.error("Error executing action step 1", exc_info=True)
                             return jsonify({
                                 'status': 'error',
                                 'message': 'An error occurred; see logs for details'
@@ -5323,8 +5240,6 @@ sys.exit(proc.returncode)
     except subprocess.TimeoutExpired:
         return jsonify({'status': 'error', 'message': 'Action timed out'}), 408
     except Exception as e:
-        import traceback
-        error_details = traceback.format_exc()
         logger.error('Error in execute_plugin_action', exc_info=True)
         return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details'}), 500
 
@@ -5343,7 +5258,7 @@ def authenticate_spotify():
             plugin_dir = PROJECT_ROOT / 'plugins' / plugin_id
 
         if not plugin_dir or not Path(plugin_dir).exists():
-            return jsonify({'status': 'error', 'message': f'Plugin {plugin_id} not found'}), 404
+            return jsonify({'status': 'error', 'message': 'Plugin not found'}), 404
 
         auth_script = Path(plugin_dir) / 'authenticate_spotify.py'
         if not auth_script.exists():
@@ -5456,17 +5371,13 @@ sys.exit(proc.returncode)
                     'auth_url': auth_url
                 })
             except Exception as e:
-                import traceback
-                error_details = traceback.format_exc()
-                print(f"Error getting Spotify auth URL: {e}")
+                logger.error("Error getting Spotify auth URL", exc_info=True)
                 return jsonify({
                     'status': 'error',
                     'message': 'An error occurred; see logs for details'
                 }), 500
 
     except Exception as e:
-        import traceback
-        error_details = traceback.format_exc()
         logger.error('Error in authenticate_spotify', exc_info=True)
         return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details'}), 500
 
@@ -5482,7 +5393,7 @@ def authenticate_ytm():
             plugin_dir = PROJECT_ROOT / 'plugins' / plugin_id
 
         if not plugin_dir or not Path(plugin_dir).exists():
-            return jsonify({'status': 'error', 'message': f'Plugin {plugin_id} not found'}), 404
+            return jsonify({'status': 'error', 'message': 'Plugin not found'}), 404
 
         auth_script = Path(plugin_dir) / 'authenticate_ytm.py'
         if not auth_script.exists():
@@ -5517,8 +5428,6 @@ def authenticate_ytm():
     except subprocess.TimeoutExpired:
         return jsonify({'status': 'error', 'message': 'Authentication timed out'}), 408
     except Exception as e:
-        import traceback
-        error_details = traceback.format_exc()
         logger.error('Error in authenticate_ytm', exc_info=True)
         return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details'}), 500
 
@@ -6115,7 +6024,6 @@ def upload_plugin_asset():
         })
 
     except Exception as e:
-        import traceback
         logger.error('Unhandled exception', exc_info=True)
         return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details'}), 500
 
@@ -6138,7 +6046,7 @@ def upload_of_the_day_json():
             plugin_dir = PROJECT_ROOT / 'plugins' / plugin_id
 
         if not plugin_dir or not Path(plugin_dir).exists():
-            return jsonify({'status': 'error', 'message': f'Plugin {plugin_id} not found'}), 404
+            return jsonify({'status': 'error', 'message': 'Plugin not found'}), 404
 
         # Setup of_the_day directory
         data_dir = Path(plugin_dir) / 'of_the_day'
@@ -6241,7 +6149,7 @@ def upload_of_the_day_json():
                 from scripts.update_config import add_category_to_config
                 add_category_to_config(category_name, f'of_the_day/{safe_filename}', display_name)
             except Exception as e:
-                print(f"Warning: Could not update config: {e}")
+                logger.warning("Could not update config: %s", e)
                 # Continue anyway - file is uploaded
 
             # Generate file ID (use category name as ID for simplicity)
@@ -6266,7 +6174,6 @@ def upload_of_the_day_json():
         })
 
     except Exception as e:
-        import traceback
         logger.error('Unhandled exception', exc_info=True)
         return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details'}), 500
 
@@ -6288,7 +6195,7 @@ def delete_of_the_day_json():
             plugin_dir = PROJECT_ROOT / 'plugins' / plugin_id
 
         if not plugin_dir or not Path(plugin_dir).exists():
-            return jsonify({'status': 'error', 'message': f'Plugin {plugin_id} not found'}), 404
+            return jsonify({'status': 'error', 'message': 'Plugin not found'}), 404
 
         data_dir = Path(plugin_dir) / 'of_the_day'
         filename = f"{file_id}.json"
@@ -6306,7 +6213,7 @@ def delete_of_the_day_json():
             from scripts.update_config import remove_category_from_config
             remove_category_from_config(file_id)
         except Exception as e:
-            print(f"Warning: Could not update config: {e}")
+            logger.warning("Could not update config: %s", e)
 
         return jsonify({
             'status': 'success',
@@ -6314,7 +6221,6 @@ def delete_of_the_day_json():
         })
 
     except Exception as e:
-        import traceback
         logger.error('Unhandled exception', exc_info=True)
         return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details'}), 500
 
@@ -6329,7 +6235,7 @@ def serve_plugin_static(plugin_id, file_path):
             plugin_dir = PROJECT_ROOT / 'plugins' / plugin_id
 
         if not plugin_dir or not Path(plugin_dir).exists():
-            return jsonify({'status': 'error', 'message': f'Plugin {plugin_id} not found'}), 404
+            return jsonify({'status': 'error', 'message': 'Plugin not found'}), 404
 
         # Resolve file path (prevent directory traversal)
         plugin_dir = Path(plugin_dir).resolve()
@@ -6361,7 +6267,6 @@ def serve_plugin_static(plugin_id, file_path):
         return Response(content, mimetype=content_type)
 
     except Exception as e:
-        import traceback
         logger.error('Unhandled exception', exc_info=True)
         return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details'}), 500
 
@@ -6420,7 +6325,7 @@ def upload_calendar_credentials():
             plugin_dir = PROJECT_ROOT / 'plugins' / plugin_id
 
         if not plugin_dir or not Path(plugin_dir).exists():
-            return jsonify({'status': 'error', 'message': f'Plugin {plugin_id} not found'}), 404
+            return jsonify({'status': 'error', 'message': 'Plugin not found'}), 404
 
         # Save file to plugin directory
         credentials_path = Path(plugin_dir) / 'credentials.json'
@@ -6444,8 +6349,6 @@ def upload_calendar_credentials():
         })
 
     except Exception as e:
-        import traceback
-        error_details = traceback.format_exc()
         logger.error('Error in upload_calendar_credentials', exc_info=True)
         return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details'}), 500
 
@@ -6489,7 +6392,6 @@ def delete_plugin_asset():
         return jsonify({'status': 'success', 'message': 'Image deleted successfully'})
 
     except Exception as e:
-        import traceback
         logger.error('Unhandled exception', exc_info=True)
         return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details'}), 500
 
@@ -6518,7 +6420,6 @@ def list_plugin_assets():
         return jsonify({'status': 'success', 'data': {'assets': assets}})
 
     except Exception as e:
-        import traceback
         logger.error('Unhandled exception', exc_info=True)
         return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details'}), 500
 
@@ -6742,10 +6643,7 @@ def connect_wifi():
                 'message': message or 'Failed to connect to network'
             }), 400
     except Exception as e:
-        import logging
-        import traceback
-        logger = logging.getLogger(__name__)
-        logger.error(f"Error connecting to WiFi: {e}\n{traceback.format_exc()}")
+        logger.error("Error connecting to WiFi", exc_info=True)
         return jsonify({
             'status': 'error',
             'message': 'An error occurred; see logs for details'
@@ -6771,10 +6669,7 @@ def disconnect_wifi():
                 'message': message or 'Failed to disconnect from network'
             }), 400
     except Exception as e:
-        import logging
-        import traceback
-        logger = logging.getLogger(__name__)
-        logger.error(f"Error disconnecting from WiFi: {e}\n{traceback.format_exc()}")
+        logger.error("Error disconnecting from WiFi", exc_info=True)
         return jsonify({
             'status': 'error',
             'message': 'An error occurred; see logs for details'
@@ -6904,8 +6799,6 @@ def list_cache_files():
             }
         })
     except Exception as e:
-        import traceback
-        error_details = traceback.format_exc()
         logger.error('Error in list_cache_files', exc_info=True)
         return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details'}), 500
 
@@ -6932,8 +6825,6 @@ def delete_cache_file():
             'message': f'Cache file for key "{cache_key}" deleted successfully'
         })
     except Exception as e:
-        import traceback
-        error_details = traceback.format_exc()
         logger.error('Error in delete_cache_file', exc_info=True)
         return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details'}), 500
 
@@ -6975,7 +6866,7 @@ def get_plugin_errors(plugin_id):
     try:
         aggregator = get_error_aggregator()
         health = aggregator.get_plugin_health(plugin_id)
-        return success_response(data=health, message=f"Plugin {plugin_id} health retrieved")
+        return success_response(data=health, message="Plugin health retrieved")
     except Exception as e:
         logger.error(f"Error getting plugin health for {plugin_id}: {e}", exc_info=True)
         return error_response(

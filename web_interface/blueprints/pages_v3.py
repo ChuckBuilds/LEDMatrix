@@ -84,7 +84,7 @@ def load_partial(partial_name):
         elif partial_name == 'operation-history':
             return _load_operation_history_partial()
         else:
-            return f"Partial '{escape(partial_name)}' not found", 404
+            return "Partial not found", 404
 
     except Exception as e:
         logger.error("Error loading partial %s", partial_name, exc_info=True)
@@ -366,80 +366,85 @@ def _load_plugin_config_partial(plugin_id):
         if plugin_id.startswith('starlark:'):
             return _load_starlark_config_partial(plugin_id[len('starlark:'):])
 
+        # Resolve and validate all plugin paths against the plugins base directory
+        _plugins_base = Path(pages_v3.plugin_manager.plugins_dir).resolve()
+        _plugin_dir = (_plugins_base / plugin_id).resolve()
+        try:
+            _plugin_dir.relative_to(_plugins_base)
+        except ValueError:
+            return '<div class="text-red-500 p-4">Invalid plugin ID</div>', 400
+
         # Try to get plugin info first
         plugin_info = pages_v3.plugin_manager.get_plugin_info(plugin_id)
-        
+
         # If not found, re-discover plugins (handles plugins added after startup)
         if not plugin_info:
             pages_v3.plugin_manager.discover_plugins()
             plugin_info = pages_v3.plugin_manager.get_plugin_info(plugin_id)
-        
+
         if not plugin_info:
-            return f'<div class="text-red-500 p-4">Plugin "{escape(plugin_id)}" not found</div>', 404
-        
+            return '<div class="text-red-500 p-4">Plugin not found</div>', 404
+
         # Get plugin instance (may be None if not loaded)
         plugin_instance = pages_v3.plugin_manager.get_plugin(plugin_id)
-        
+
         # Get plugin configuration from config file
         config = {}
         if pages_v3.config_manager:
             full_config = pages_v3.config_manager.load_config()
             config = full_config.get(plugin_id, {})
-        
+
         # Load uploaded images from metadata file if images field exists in schema
-        # This ensures uploaded images appear even if config hasn't been saved yet
-        schema_path_temp = Path(pages_v3.plugin_manager.plugins_dir) / plugin_id / "config_schema.json"
+        schema_path_temp = _plugin_dir / "config_schema.json"
         if schema_path_temp.exists():
             try:
                 with open(schema_path_temp, 'r', encoding='utf-8') as f:
                     temp_schema = json.load(f)
-                    # Check if schema has an images field with x-widget: file-upload
                     if (temp_schema.get('properties', {}).get('images', {}).get('x-widget') == 'file-upload' or
                         temp_schema.get('properties', {}).get('images', {}).get('x_widget') == 'file-upload'):
-                        # Load metadata file
-                        # Get PROJECT_ROOT relative to this file
-                        project_root = Path(__file__).parent.parent.parent
-                        metadata_file = project_root / 'assets' / 'plugins' / plugin_id / 'uploads' / '.metadata.json'
-                        if metadata_file.exists():
+                        _assets_base = (Path(__file__).parent.parent.parent / 'assets' / 'plugins').resolve()
+                        metadata_file = (_assets_base / plugin_id / 'uploads' / '.metadata.json').resolve()
+                        try:
+                            metadata_file.relative_to(_assets_base)
+                        except ValueError:
+                            metadata_file = None
+                        if metadata_file and metadata_file.exists():
                             try:
                                 with open(metadata_file, 'r', encoding='utf-8') as mf:
                                     metadata = json.load(mf)
-                                    # Convert metadata dict to list of image objects
                                     images_from_metadata = list(metadata.values())
-                                    # Only use metadata images if config doesn't have images or config images is empty
                                     if not config.get('images') or len(config.get('images', [])) == 0:
                                         config['images'] = images_from_metadata
                                     else:
-                                        # Merge: add metadata images that aren't already in config
                                         config_image_ids = {img.get('id') for img in config.get('images', []) if img.get('id')}
                                         new_images = [img for img in images_from_metadata if img.get('id') not in config_image_ids]
                                         if new_images:
                                             config['images'] = config.get('images', []) + new_images
                             except Exception as e:
-                                logger.warning("Could not load metadata for {plugin_id}")
+                                logger.warning("Could not load plugin upload metadata: %s", e)
             except Exception as e:  # nosec B110 - metadata pre-load is optional; schema loads fully below
                 logger.debug("Metadata pre-load skipped for plugin %s: %s", plugin_id, e)
-        
+
         # Get plugin schema
         schema = {}
-        schema_path = Path(pages_v3.plugin_manager.plugins_dir) / plugin_id / "config_schema.json"
+        schema_path = _plugin_dir / "config_schema.json"
         if schema_path.exists():
             try:
                 with open(schema_path, 'r', encoding='utf-8') as f:
                     schema = json.load(f)
             except Exception as e:
-                logger.warning("Could not load schema for {plugin_id}")
-        
+                logger.warning("Could not load schema for plugin: %s", e)
+
         # Get web UI actions from plugin manifest
         web_ui_actions = []
-        manifest_path = Path(pages_v3.plugin_manager.plugins_dir) / plugin_id / "manifest.json"
+        manifest_path = _plugin_dir / "manifest.json"
         if manifest_path.exists():
             try:
                 with open(manifest_path, 'r', encoding='utf-8') as f:
                     manifest = json.load(f)
                     web_ui_actions = manifest.get('web_ui_actions', [])
             except Exception as e:
-                logger.warning("Could not load manifest for {plugin_id}")
+                logger.warning("Could not load manifest for plugin: %s", e)
         
         # Mask secret fields before rendering template (fail closed — never leak secrets)
         schema_properties = schema.get('properties') if isinstance(schema, dict) else None
@@ -481,13 +486,17 @@ def _load_plugin_config_partial(plugin_id):
 
 def _load_starlark_config_partial(app_id):
     """Load configuration partial for a Starlark app."""
+    import re as _re2
+    if not _re2.match(r'^[a-zA-Z0-9_\-]+$', app_id or ''):
+        return '<div class="text-red-500 p-4">Invalid app ID</div>', 400
+
     try:
         starlark_plugin = pages_v3.plugin_manager.get_plugin('starlark-apps') if pages_v3.plugin_manager else None
 
         if starlark_plugin and hasattr(starlark_plugin, 'apps'):
             app = starlark_plugin.apps.get(app_id)
             if not app:
-                return f'<div class="text-red-500 p-4">Starlark app not found: {app_id}</div>', 404
+                return '<div class="text-red-500 p-4">Starlark app not found</div>', 404
             return render_template(
                 'v3/partials/starlark_config.html',
                 app_id=app_id,
@@ -503,36 +512,45 @@ def _load_starlark_config_partial(app_id):
             )
 
         # Standalone: read from manifest file
-        manifest_file = Path(__file__).resolve().parent.parent.parent / 'starlark-apps' / 'manifest.json'
+        starlark_base = (Path(__file__).resolve().parent.parent.parent / 'starlark-apps').resolve()
+        manifest_file = starlark_base / 'manifest.json'
         if not manifest_file.exists():
-            return f'<div class="text-red-500 p-4">Starlark app not found: {app_id}</div>', 404
+            return '<div class="text-red-500 p-4">Starlark app not found</div>', 404
 
         with open(manifest_file, 'r') as f:
             manifest = json.load(f)
 
         app_data = manifest.get('apps', {}).get(app_id)
         if not app_data:
-            return f'<div class="text-red-500 p-4">Starlark app not found: {app_id}</div>', 404
+            return '<div class="text-red-500 p-4">Starlark app not found</div>', 404
 
-        # Load schema from schema.json if it exists
+        # Load schema from schema.json if it exists — validate path stays within starlark_base
         schema = None
-        schema_file = Path(__file__).resolve().parent.parent.parent / 'starlark-apps' / app_id / 'schema.json'
-        if schema_file.exists():
+        schema_file = (starlark_base / app_id / 'schema.json').resolve()
+        try:
+            schema_file.relative_to(starlark_base)
+        except ValueError:
+            schema_file = None
+        if schema_file and schema_file.exists():
             try:
                 with open(schema_file, 'r') as f:
                     schema = json.load(f)
             except (OSError, json.JSONDecodeError) as e:
-                logger.warning(f"[Pages V3] Could not load schema for {app_id}: {e}", exc_info=True)
+                logger.warning("Could not load starlark schema for app: %s", e)
 
-        # Load config from config.json if it exists
+        # Load config from config.json if it exists — validate path stays within starlark_base
         config = {}
-        config_file = Path(__file__).resolve().parent.parent.parent / 'starlark-apps' / app_id / 'config.json'
-        if config_file.exists():
+        config_file = (starlark_base / app_id / 'config.json').resolve()
+        try:
+            config_file.relative_to(starlark_base)
+        except ValueError:
+            config_file = None
+        if config_file and config_file.exists():
             try:
                 with open(config_file, 'r') as f:
                     config = json.load(f)
             except (OSError, json.JSONDecodeError) as e:
-                logger.warning(f"[Pages V3] Could not load config for {app_id}: {e}", exc_info=True)
+                logger.warning("Could not load starlark config for app: %s", e)
 
         return render_template(
             'v3/partials/starlark_config.html',
@@ -549,5 +567,5 @@ def _load_starlark_config_partial(app_id):
         )
 
     except Exception as e:
-        logger.exception(f"[Pages V3] Error loading starlark config for {app_id}")
-        return f'<div class="text-red-500 p-4">Error loading starlark config: {str(e)}</div>', 500
+        logger.error("[Pages V3] Error loading starlark config for app", exc_info=True)
+        return '<div class="text-red-500 p-4">Error loading starlark config; see logs for details</div>', 500
