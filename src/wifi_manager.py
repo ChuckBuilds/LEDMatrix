@@ -1474,7 +1474,7 @@ class WiFiManager:
             # Find existing NM connection for this SSID.
             # 802-11-wireless.ssid is not a valid column in 'nmcli connection show',
             # so list all wifi connections then query each one's SSID individually.
-            list_result = subprocess.run(
+            list_result = subprocess.run(  # nosec B603 B607 - fixed args, no user input
                 ["nmcli", "-t", "-f", "NAME,TYPE", "connection", "show"],
                 capture_output=True, text=True, timeout=5
             )
@@ -1487,7 +1487,7 @@ class WiFiManager:
                     if len(parts) < 2 or parts[1].strip() != '802-11-wireless':
                         continue
                     conn_name = parts[0].strip()
-                    ssid_r = subprocess.run(
+                    ssid_r = subprocess.run(  # nosec B603 B607 - conn_name from nmcli output, not user input
                         ["nmcli", "-g", "802-11-wireless.ssid", "connection", "show", conn_name],
                         capture_output=True, text=True, timeout=5
                     )
