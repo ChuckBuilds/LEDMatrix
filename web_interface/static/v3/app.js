@@ -1,4 +1,4 @@
-/* global showNotification, updateSystemStats, htmx */
+/* global showNotification, updateSystemStats, updateDisplayPreview, htmx */
 // LED Matrix v3 JavaScript
 // Additional helpers for HTMX and Alpine.js integration
 
