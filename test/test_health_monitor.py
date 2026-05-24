@@ -280,9 +280,11 @@ class TestGetRecoverySuggestions:
 class TestMonitorLifecycle:
     def test_start_monitoring(self, monitor):
         monitor.start_monitoring()
-        assert monitor._monitor_thread is not None
-        assert monitor._monitor_thread.is_alive()
-        monitor.stop_monitoring()
+        try:
+            assert monitor._monitor_thread is not None
+            assert monitor._monitor_thread.is_alive()
+        finally:
+            monitor.stop_monitoring()
 
     def test_stop_monitoring(self, monitor):
         monitor.start_monitoring()
@@ -292,10 +294,12 @@ class TestMonitorLifecycle:
 
     def test_double_start_no_duplicate_threads(self, monitor):
         monitor.start_monitoring()
-        thread1 = monitor._monitor_thread
-        monitor.start_monitoring()  # should be idempotent
-        assert monitor._monitor_thread is thread1
-        monitor.stop_monitoring()
+        try:
+            thread1 = monitor._monitor_thread
+            monitor.start_monitoring()  # should be idempotent
+            assert monitor._monitor_thread is thread1
+        finally:
+            monitor.stop_monitoring()
 
     def test_register_health_check(self, monitor):
         callback = MagicMock()

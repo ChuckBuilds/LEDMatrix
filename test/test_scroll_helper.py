@@ -224,7 +224,7 @@ class TestCalculateDynamicDuration:
         assert result >= 60
 
     def test_respects_max_duration(self, helper):
-        helper.create_scrolling_image([_make_image(width=50000)])
+        helper.create_scrolling_image([_make_image(width=5000)])
         helper.min_duration = 10
         helper.max_duration = 60
         helper.scroll_speed = 1.0  # very slow → very long time
