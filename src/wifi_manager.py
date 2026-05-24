@@ -150,6 +150,18 @@ class WiFiManager:
         logger.info(f"WiFi Manager initialized - nmcli: {self.has_nmcli}, iwlist: {self.has_iwlist}, "
                    f"hostapd: {self.has_hostapd}, dnsmasq: {self.has_dnsmasq}, "
                    f"interface: {self._wifi_interface}, trixie: {self._is_trixie}")
+
+        # Once per process: remove a stale force-AP flag left by a prior crash.
+        # Guard with a class-level flag so the nmcli AP-state check only runs
+        # once even though WiFiManager is instantiated per-request.
+        if not WiFiManager._startup_cleanup_done:
+            WiFiManager._startup_cleanup_done = True
+            if self._FORCE_AP_FLAG_PATH.exists() and not self._is_ap_mode_active():
+                try:
+                    self._FORCE_AP_FLAG_PATH.unlink(missing_ok=True)
+                    logger.debug("Removed stale force-AP flag on startup (AP not active)")
+                except OSError as exc:
+                    logger.warning(f"Could not remove stale force-AP flag: {exc}")
     
     def _show_led_message(self, message: str, duration: int = 5):
         """
@@ -474,7 +486,10 @@ class WiFiManager:
                 if result.returncode == 0:
                     for line in result.stdout.strip().split('\n'):
                         if '/' in line:
-                            ip_address = line.split(':', 1)[1].split('/')[0].strip()
+                            # nmcli -t output is "IP4.ADDRESS[1]:x.x.x.x/prefix";
+                            # bare "x.x.x.x/prefix" is also accepted defensively.
+                            _, sep, rest = line.partition(':')
+                            ip_address = (rest if sep else line).split('/')[0].strip()
                             break
                 
                 # Final fallback: Get signal strength by matching SSID in WiFi list
@@ -500,6 +515,8 @@ class WiFiManager:
             
             # Check if AP mode is active
             ap_active = self._is_ap_mode_active()
+            # wlan0 shows as "connected" in AP mode; clear client-station fields so
+            # callers don't mistake the AP for an outbound WiFi connection.
             if ap_active and wifi_connected:
                 wifi_connected = False
                 ssid = None
@@ -697,6 +714,8 @@ class WiFiManager:
     _IP_FORWARD_SAVE_PATH = Path("/tmp/ledmatrix_ip_forward_saved")  # nosec B108 - process-specific named file; device is single-user RPi
     # Written when AP mode is manually force-enabled; prevents daemon auto-disable
     _FORCE_AP_FLAG_PATH = Path("/tmp/ledmatrix_force_ap_active")  # nosec B108 - process-specific named file; device is single-user RPi
+    # Ensures the startup stale-flag cleanup runs once per process, not per instantiation
+    _startup_cleanup_done: bool = False
 
     def _validate_ap_config(self) -> Tuple[str, int]:
         """Return a sanitized (ssid, channel) pair from config, falling back to defaults."""
@@ -1896,6 +1915,9 @@ class WiFiManager:
             if not force and self._is_ethernet_connected():
                 return False, "Cannot enable AP mode while Ethernet is connected"
             
+            if force:
+                logger.debug(f"enable_ap_mode: force=True — WiFi/Ethernet guards bypassed; will create {self._FORCE_AP_FLAG_PATH}")
+
             # Try hostapd/dnsmasq first (captive portal mode)
             if self.has_hostapd and self.has_dnsmasq:
                 result = self._enable_ap_mode_hostapd()
@@ -1904,8 +1926,9 @@ class WiFiManager:
                     if force:
                         try:
                             self._FORCE_AP_FLAG_PATH.touch()
-                        except OSError:
-                            pass
+                            logger.debug(f"Force-AP flag created: {self._FORCE_AP_FLAG_PATH}")
+                        except OSError as exc:
+                            logger.warning(f"Failed to create force-AP flag {self._FORCE_AP_FLAG_PATH}: {exc}")
                     return result
 
             # Fallback to nmcli hotspot (simpler, no captive portal)
@@ -1918,8 +1941,9 @@ class WiFiManager:
                     if force:
                         try:
                             self._FORCE_AP_FLAG_PATH.touch()
-                        except OSError:
-                            pass
+                            logger.debug(f"Force-AP flag created: {self._FORCE_AP_FLAG_PATH}")
+                        except OSError as exc:
+                            logger.warning(f"Failed to create force-AP flag {self._FORCE_AP_FLAG_PATH}: {exc}")
                 return result
 
             return False, "No WiFi tools available (nmcli, hostapd, or dnsmasq required)"
