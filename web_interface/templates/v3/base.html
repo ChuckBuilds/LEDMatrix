@@ -136,6 +136,7 @@
                                 setTimeout(function() {
                                     if (typeof htmx !== 'undefined') {
                                         console.log('HTMX loaded from fallback');
+                                        window.dispatchEvent(new Event('htmx:ready'));
                                         // Load extensions after core loads
                                         loadScript(sseSrc, isAPMode ? 'https://unpkg.com/htmx.org/dist/ext/sse.js' : '/static/v3/js/htmx-sse.js');
                                         loadScript(jsonEncSrc, isAPMode ? 'https://unpkg.com/htmx.org/dist/ext/json-enc.js' : '/static/v3/js/htmx-json-enc.js');
@@ -152,6 +153,7 @@
                         }
                     } else {
                         console.log('HTMX loaded successfully');
+                        window.dispatchEvent(new Event('htmx:ready'));
                         // Load extensions after core loads
                         loadScript(sseSrc, isAPMode ? 'https://unpkg.com/htmx.org/dist/ext/sse.js' : '/static/v3/js/htmx-sse.js');
                         loadScript(jsonEncSrc, isAPMode ? 'https://unpkg.com/htmx.org/dist/ext/json-enc.js' : '/static/v3/js/htmx-json-enc.js');
@@ -349,6 +351,20 @@
                             }
                         }
                     });
+
+                    // Set data-loaded on tab containers after HTMX settles their content,
+                    // preventing repeated re-fetches on every tab switch.
+                    // Scoped to elements with hx-trigger="revealed" (tab containers only) so
+                    // modals and plugin config panels that legitimately reload are unaffected.
+                    document.body.addEventListener('htmx:afterSettle', function(event) {
+                        if (event.detail && event.detail.target) {
+                            var target = event.detail.target;
+                            var trigger = target.getAttribute('hx-trigger') || '';
+                            if (trigger.includes('revealed')) {
+                                target.setAttribute('data-loaded', 'true');
+                            }
+                        }
+                    });
                 } else {
                     if (document.readyState === 'loading') {
                         document.addEventListener('DOMContentLoaded', setupScriptExecution);
@@ -411,6 +427,9 @@
                     .then(html => {
                         clearTimeout(timeout);
                         content.innerHTML = html;
+                        if (typeof htmx !== 'undefined') {
+                            htmx.process(content);
+                        }
                         // Trigger full initialization chain
                         if (window.pluginManager) {
                             window.pluginManager.initialized = false;
@@ -430,7 +449,7 @@
         }
 
         // Fallback if HTMX doesn't load within 5 seconds
-        setTimeout(() => {
+        var _pluginsFallbackTimer = setTimeout(() => {
             if (typeof htmx === 'undefined') {
                 console.warn('HTMX not loaded after 5 seconds, using direct fetch for plugins');
                 // Load plugins tab content directly regardless of active tab,
@@ -438,6 +457,7 @@
                 loadPluginsDirect();
             }
         }, 5000);
+        window.addEventListener('htmx:ready', function() { clearTimeout(_pluginsFallbackTimer); }, { once: true });
     </script>
     <!-- Alpine.js app function - defined early so it's available when Alpine initializes -->
     <script>
@@ -1030,6 +1050,9 @@
                             .then(html => {
                                 overviewContent.innerHTML = html;
                                 overviewContent.setAttribute('data-loaded', 'true');
+                                if (typeof htmx !== 'undefined') {
+                                    htmx.process(overviewContent);
+                                }
                                 // Re-initialize Alpine.js for the new content
                                 if (window.Alpine) {
                                     window.Alpine.initTree(overviewContent);
@@ -1058,7 +1081,7 @@
                 });
                 
                 // Also try direct load if HTMX doesn't load within 5 seconds
-                setTimeout(() => {
+                var _overviewFallbackTimer = setTimeout(() => {
                     if (typeof htmx === 'undefined') {
                         console.warn('HTMX not loaded after 5 seconds, using direct fetch for content');
                         const appElement = document.querySelector('[x-data="app()"]');
@@ -1070,6 +1093,7 @@
                         }
                     }
                 }, 5000);
+                window.addEventListener('htmx:ready', function() { clearTimeout(_overviewFallbackTimer); }, { once: true });
             </script>
 
             <!-- General tab -->
@@ -1816,13 +1840,18 @@
                             htmx.trigger(contentEl, 'revealed');
                         }
                     } else {
-                        // HTMX not available, use direct fetch
-                        console.warn('HTMX not available, using direct fetch for tab:', tab);
-                        if (tab === 'overview' && typeof loadOverviewDirect === 'function') {
-                            loadOverviewDirect();
-                        } else if (tab === 'wifi' && typeof loadWifiDirect === 'function') {
-                            loadWifiDirect();
+                        // HTMX is still loading asynchronously — retry when it signals ready,
+                        // or fall back to direct fetch if it fails to load entirely.
+                        const self = this;
+                        function onReady() { window.removeEventListener('htmx-load-failed', onFailed); self.loadTabContent(tab); }
+                        function onFailed() {
+                            window.removeEventListener('htmx:ready', onReady);
+                            if (tab === 'overview' && typeof loadOverviewDirect === 'function') loadOverviewDirect();
+                            else if (tab === 'wifi' && typeof loadWifiDirect === 'function') loadWifiDirect();
+                            else if (tab === 'plugins' && typeof loadPluginsDirect === 'function') loadPluginsDirect();
                         }
+                        window.addEventListener('htmx:ready', onReady, { once: true });
+                        window.addEventListener('htmx-load-failed', onFailed, { once: true });
                     }
                 },
 

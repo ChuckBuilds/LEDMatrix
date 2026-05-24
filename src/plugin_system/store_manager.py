@@ -21,6 +21,8 @@ from pathlib import Path
 from typing import List, Dict, Optional, Any, Tuple
 import logging
 
+from urllib.parse import urlparse
+
 from src.common.permission_utils import sudo_remove_directory
 
 try:
@@ -356,7 +358,8 @@ class PluginStoreManager:
         # Extract owner/repo from URL
         try:
             # Handle different URL formats
-            if 'github.com' in repo_url:
+            _parsed_url = urlparse(repo_url)
+            if _parsed_url.hostname in ('github.com', 'www.github.com'):
                 parts = repo_url.strip('/').split('/')
                 if len(parts) >= 2:
                     owner = parts[-2]
@@ -518,9 +521,10 @@ class PluginStoreManager:
             # Try to find plugins.json in common locations
             # First try root directory
             registry_urls = []
-            
+
             # Extract owner/repo from URL
-            if 'github.com' in repo_url:
+            _parsed_repo_url = urlparse(repo_url)
+            if _parsed_repo_url.hostname in ('github.com', 'www.github.com'):
                 parts = repo_url.split('/')
                 if len(parts) >= 2:
                     owner = parts[-2]
@@ -775,7 +779,8 @@ class PluginStoreManager:
         try:
             # Convert repo URL to raw content URL
             # https://github.com/user/repo -> https://raw.githubusercontent.com/user/repo/branch/manifest.json
-            if 'github.com' in repo_url:
+            _parsed_manifest_url = urlparse(repo_url)
+            if _parsed_manifest_url.hostname in ('github.com', 'www.github.com'):
                 # Handle different URL formats
                 repo_url = repo_url.rstrip('/')
                 if repo_url.endswith('.git'):

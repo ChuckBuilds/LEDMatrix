@@ -204,24 +204,12 @@ def serve_plugin_asset(plugin_id, filename):
         # Use send_from_directory to serve the file
         return send_from_directory(str(assets_dir), filename, mimetype=content_type)
         
-    except Exception as e:
-        # Log the exception with full traceback server-side
-        import traceback
+    except Exception:
         app.logger.exception('Error serving plugin asset file')
-        
-        # Return generic error message to client (avoid leaking internal details)
-        # Only include detailed error information when in debug mode
-        if app.debug:
-            return jsonify({
-                'status': 'error',
-                'message': str(e),
-                'traceback': traceback.format_exc()
-            }), 500
-        else:
-            return jsonify({
-                'status': 'error',
-                'message': 'Internal server error'
-            }), 500
+        return jsonify({
+            'status': 'error',
+            'message': 'Internal server error'
+        }), 500
 
 # Prime psutil CPU measurement once at startup so interval=None returns a real value
 try:
@@ -342,35 +330,25 @@ def not_found_error(error):
 @app.errorhandler(500)
 def internal_error(error):
     """Handle 500 errors."""
-    import traceback
-    error_details = traceback.format_exc()
-    
-    # Log the error
     import logging
     logger = logging.getLogger('web_interface')
-    logger.error(f"Internal server error: {error}", exc_info=True)
-    
-    # Return user-friendly error (hide internal details in production)
+    logger.error("Internal server error", exc_info=True)
     return jsonify({
         'status': 'error',
         'error_code': 'INTERNAL_ERROR',
-        'message': 'An internal error occurred',
-        'details': error_details if app.debug else None
+        'message': 'An internal error occurred; see logs for details',
     }), 500
 
 @app.errorhandler(Exception)
 def handle_exception(error):
     """Handle all unhandled exceptions."""
-    import traceback
     import logging
     logger = logging.getLogger('web_interface')
-    logger.error(f"Unhandled exception: {error}", exc_info=True)
-    
+    logger.error("Unhandled exception", exc_info=True)
     return jsonify({
         'status': 'error',
         'error_code': 'UNKNOWN_ERROR',
-        'message': str(error) if app.debug else 'An error occurred',
-        'details': traceback.format_exc() if app.debug else None
+        'message': 'An error occurred; see logs for details',
     }), 500
 
 # Captive portal redirect middleware
@@ -492,7 +470,8 @@ def system_status_generator():
             }
             yield status
         except Exception as e:
-            yield {'error': str(e)}
+            app.logger.error("SSE generator error", exc_info=True)
+            yield {'error': 'An error occurred; see server logs'}
         time.sleep(10)  # Update every 10 seconds (reduced frequency for better performance)
 
 # Display preview generator for SSE
@@ -555,7 +534,8 @@ def display_preview_generator():
                 }
                 
         except Exception as e:
-            yield {'error': str(e)}
+            app.logger.error("SSE generator error", exc_info=True)
+            yield {'error': 'An error occurred; see server logs'}
         
         time.sleep(1.0)  # Check once per second — halves PIL encode overhead vs 0.5s
 
@@ -598,17 +578,19 @@ def logs_generator():
             except subprocess.TimeoutExpired:
                 # Timeout - just skip this update
                 pass
-            except Exception as e:
+            except Exception:
+                app.logger.error("Error running journalctl", exc_info=True)
                 error_data = {
                     'timestamp': time.time(),
-                    'logs': f'Error running journalctl: {str(e)}'
+                    'logs': 'Error running journalctl; see server logs'
                 }
                 yield error_data
 
-        except Exception as e:
+        except Exception:
+            app.logger.error("Unexpected error in logs generator", exc_info=True)
             error_data = {
                 'timestamp': time.time(),
-                'logs': f'Unexpected error in logs generator: {str(e)}'
+                'logs': 'Unexpected error in logs generator; see server logs'
             }
             yield error_data
 

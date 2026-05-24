@@ -1442,9 +1442,14 @@ function renderInstalledPlugins(plugins) {
         return;
     }
 
-    // Helper function to escape attributes for use in HTML
+    // Helper function to escape values for use in HTML attributes
     const escapeAttr = (text) => {
-        return (text || '').replace(/'/g, "\\'").replace(/"/g, '&quot;');
+        return (text || '')
+            .replace(/&/g, '&amp;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;');
     };
 
     // Helper function to escape for JavaScript strings (use JSON.stringify for proper escaping)
@@ -4507,6 +4512,8 @@ function syncFormToJson() {
     // Deep merge with existing config to preserve nested structures
     function deepMerge(target, source) {
         for (const key in source) {
+            if (key === '__proto__' || key === 'constructor' || key === 'prototype') continue;
+            if (!Object.prototype.hasOwnProperty.call(source, key)) continue;
             if (source[key] && typeof source[key] === 'object' && !Array.isArray(source[key])) {
                 if (!target[key] || typeof target[key] !== 'object' || Array.isArray(target[key])) {
                     target[key] = {};
@@ -7473,16 +7480,27 @@ setTimeout(function() {
         console.log('installed-plugins-grid not found yet, will retry via event listeners');
     }
 
-    // Also try to attach install button handler after a delay (fallback)
+    // Also try to attach install button handler after a delay (fallback).
+    // Only run if the install button element is already in the DOM (i.e. the
+    // plugins partial has been loaded); otherwise the htmx:afterSettle listener
+    // below handles it when the tab is first visited.
     setTimeout(() => {
-        if (typeof window.attachInstallButtonHandler === 'function') {
-            console.log('[FALLBACK] Attempting to attach install button handler...');
+        if (typeof window.attachInstallButtonHandler === 'function' &&
+            document.getElementById('install-plugin-from-url')) {
             window.attachInstallButtonHandler();
-        } else {
-            console.warn('[FALLBACK] attachInstallButtonHandler not available on window');
         }
     }, 500);
 }, 200);
+
+// Re-run install button wiring after HTMX settles the plugins tab content.
+// Guard with element check so it only fires when the plugins partial is in the DOM,
+// preventing spurious warnings on other tab loads.
+document.addEventListener('htmx:afterSettle', function() {
+    if (document.getElementById('install-plugin-from-url') &&
+        typeof window.attachInstallButtonHandler === 'function') {
+        window.attachInstallButtonHandler();
+    }
+});
 
 // ─── Starlark Apps Integration ──────────────────────────────────────────────
 

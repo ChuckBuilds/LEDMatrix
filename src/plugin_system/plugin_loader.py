@@ -8,6 +8,7 @@ Extracted from PluginManager to improve separation of concerns.
 import json
 import importlib
 import importlib.util
+import os
 import sys
 import subprocess
 import threading
@@ -68,6 +69,11 @@ class PluginLoader:
         Returns:
             Path to plugin directory or None if not found
         """
+        # Sanitize plugin_id — os.path.basename is a CodeQL-recognized path sanitizer
+        plugin_id = os.path.basename(plugin_id or '')
+        if not plugin_id:
+            return None
+
         # Strategy 1: Use mapping from discovery
         if plugin_directories and plugin_id in plugin_directories:
             plugin_dir = plugin_directories[plugin_id]
@@ -75,14 +81,16 @@ class PluginLoader:
                 self.logger.debug("Using plugin directory from discovery mapping: %s", plugin_dir)
                 return plugin_dir
         
-        # Strategy 2: Direct paths
-        plugin_dir = plugins_dir / plugin_id
-        if plugin_dir.exists():
-            return plugin_dir
-        
-        plugin_dir = plugins_dir / f"ledmatrix-{plugin_id}"
-        if plugin_dir.exists():
-            return plugin_dir
+        # Strategy 2: Direct paths — resolve and validate they stay within plugins_dir
+        plugins_dir_resolved = plugins_dir.resolve()
+        for _candidate_name in (plugin_id, f"ledmatrix-{plugin_id}"):
+            _candidate = (plugins_dir_resolved / _candidate_name).resolve()
+            try:
+                _candidate.relative_to(plugins_dir_resolved)
+            except ValueError:
+                continue
+            if _candidate.exists():
+                return _candidate
         
         # Strategy 3: Case-insensitive search
         normalized_id = plugin_id.lower()
@@ -143,12 +151,21 @@ class PluginLoader:
         Returns:
             True if dependencies installed or not needed, False on error
         """
-        requirements_file = plugin_dir / "requirements.txt"
+        plugin_id = os.path.basename(plugin_id or '')
+        if not plugin_id:
+            return False
+        # Resolve and validate plugin_dir before constructing any derived paths
+        try:
+            plugin_dir_resolved = plugin_dir.resolve(strict=True)
+        except OSError:
+            self.logger.error("Plugin directory does not exist: %s", plugin_dir)
+            return False
+        requirements_file = plugin_dir_resolved / "requirements.txt"
         if not requirements_file.exists():
             return True  # No dependencies needed
-        
+        marker_path = plugin_dir_resolved / ".dependencies_installed"
+
         # Check if already installed
-        marker_path = plugin_dir / ".dependencies_installed"
         if marker_path.exists():
             self.logger.debug("Dependencies already installed for %s", plugin_id)
             return True
@@ -171,10 +188,24 @@ class PluginLoader:
                 self.logger.info("Dependencies installed successfully for %s", plugin_id)
                 return True
             else:
+                stderr = result.stderr or ""
+                # uninstall-no-record-file means the package is already present at the
+                # system level (e.g. installed via dnf/apt without a pip RECORD file).
+                # pip can't replace it, but it IS installed — write the marker so we
+                # don't retry on every restart.
+                if "uninstall-no-record-file" in stderr:
+                    self.logger.warning(
+                        "Dependencies for %s include system-managed packages (no pip RECORD). "
+                        "Assuming they are satisfied: %s",
+                        plugin_id, stderr.strip()
+                    )
+                    marker_path.touch()
+                    ensure_file_permissions(marker_path, get_plugin_file_mode())
+                    return True
                 self.logger.warning(
                     "Dependency installation returned non-zero exit code for %s: %s",
                     plugin_id,
-                    result.stderr
+                    stderr
                 )
                 return False
         except subprocess.TimeoutExpired:
@@ -349,9 +380,20 @@ class PluginLoader:
         Returns:
             Loaded module or None on error
         """
-        entry_file = plugin_dir / entry_point
+        plugin_id = os.path.basename(plugin_id or '')
+        if not plugin_id:
+            raise PluginError("Invalid plugin ID")
+        try:
+            plugin_dir_resolved = plugin_dir.resolve(strict=True)
+        except OSError:
+            raise PluginError("Plugin directory not found", plugin_id=plugin_id)
+        entry_file = (plugin_dir_resolved / entry_point).resolve()
+        try:
+            entry_file.relative_to(plugin_dir_resolved)
+        except ValueError:
+            raise PluginError("Invalid entry point path", plugin_id=plugin_id)
         if not entry_file.exists():
-            error_msg = f"Entry point file not found: {entry_file} for plugin {plugin_id}"
+            error_msg = f"Entry point file not found for plugin {plugin_id}"
             self.logger.error(error_msg)
             raise PluginError(error_msg, plugin_id=plugin_id, context={'entry_file': str(entry_file)})
 
