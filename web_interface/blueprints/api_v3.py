@@ -6542,7 +6542,7 @@ def scan_wifi_networks():
         ap_was_active = wifi_manager._is_ap_mode_active()
 
         # Perform the scan (this will handle AP mode disabling/enabling internally)
-        networks = wifi_manager.scan_networks()
+        networks, _was_cached = wifi_manager.scan_networks()
 
         # Convert to dict format
         networks_data = [
@@ -6680,7 +6680,8 @@ def enable_ap_mode():
         from src.wifi_manager import WiFiManager
 
         wifi_manager = WiFiManager()
-        success, message = wifi_manager.enable_ap_mode()
+        force = bool((request.get_json(silent=True) or {}).get('force', False))
+        success, message = wifi_manager.enable_ap_mode(force=force)
 
         if success:
             return jsonify({
