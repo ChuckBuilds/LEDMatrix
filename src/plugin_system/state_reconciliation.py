@@ -185,13 +185,19 @@ class StateReconciliation:
                 message=f"Reconciliation failed: {str(e)}"
             )
     
-    # Top-level config keys that are NOT plugins
+    # Top-level config keys that are NOT plugins.
+    # Includes both config.json structural keys and config_secrets.json top-level
+    # keys (load_config() deep-merges secrets in, so secrets keys appear here too).
     _SYSTEM_CONFIG_KEYS = frozenset({
         'web_display_autostart', 'timezone', 'location', 'display',
         'plugin_system', 'vegas_scroll_speed', 'vegas_separator_width',
         'vegas_target_fps', 'vegas_buffer_ahead', 'vegas_plugin_order',
         'vegas_excluded_plugins', 'vegas_scroll_enabled', 'logging',
         'dim_schedule', 'network', 'system', 'schedule',
+        # Multi-display sync config (config.json structural key)
+        'sync',
+        # Secrets file top-level keys (merged in by load_config)
+        'github', 'youtube',
     })
 
     def _get_config_state(self) -> Dict[str, Dict[str, Any]]:
