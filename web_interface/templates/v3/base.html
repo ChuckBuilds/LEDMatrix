@@ -1370,34 +1370,64 @@
 
     <!-- SSE connection for real-time updates -->
     <script>
-        // Connect to SSE streams
-        const statsSource = new EventSource('/api/v3/stream/stats');
-        const displaySource = new EventSource('/api/v3/stream/display');
+        // Assign to window so reconnectSSE() in app.js can reach them.
+        window.statsSource = new EventSource('/api/v3/stream/stats');
+        window.displaySource = new EventSource('/api/v3/stream/display');
 
-        statsSource.onmessage = function(event) {
+        window.statsSource.onmessage = function(event) {
             const data = JSON.parse(event.data);
             updateSystemStats(data);
         };
 
-        displaySource.onmessage = function(event) {
+        window.displaySource.onmessage = function(event) {
             const data = JSON.parse(event.data);
             updateDisplayPreview(data);
         };
 
-        // Connection status
-        statsSource.addEventListener('open', function() {
-            document.getElementById('connection-status').innerHTML = `
-                <div class="w-2 h-2 bg-green-500 rounded-full"></div>
-                <span class="text-gray-600">Connected</span>
-            `;
-        });
+        function _setConnectionStatus(connected, reconnecting) {
+            const el = document.getElementById('connection-status');
+            if (!el) return;
+            if (connected) {
+                el.innerHTML = `
+                    <div class="w-2 h-2 bg-green-500 rounded-full"></div>
+                    <span class="text-gray-600">Connected</span>
+                `;
+            } else if (reconnecting) {
+                el.innerHTML = `
+                    <div class="w-2 h-2 bg-yellow-500 rounded-full animate-pulse"></div>
+                    <span class="text-gray-600">Reconnecting…</span>
+                `;
+            } else {
+                el.innerHTML = `
+                    <div class="w-2 h-2 bg-red-500 rounded-full"></div>
+                    <span class="text-gray-600" title="Connection lost — try refreshing the page">Disconnected</span>
+                `;
+            }
+        }
 
-        statsSource.addEventListener('error', function() {
-            document.getElementById('connection-status').innerHTML = `
-                <div class="w-2 h-2 bg-red-500 rounded-full"></div>
-                <span class="text-gray-600">Disconnected</span>
-            `;
-        });
+        var _statsErrorCount = 0;
+
+        // Named on window so reconnectSSE() in app.js can reattach them after
+        // replacing the EventSource instances.
+        window._statsOpenHandler = function() {
+            _statsErrorCount = 0;
+            _setConnectionStatus(true, false);
+        };
+        window._statsErrorHandler = function() {
+            _statsErrorCount++;
+            // EventSource readyState 0 = CONNECTING (auto-retrying), 2 = CLOSED
+            var reconnecting = window.statsSource.readyState === EventSource.CONNECTING;
+            _setConnectionStatus(false, reconnecting && _statsErrorCount <= 3);
+        };
+        window._displayErrorHandler = function() {
+            // Display stream errors don't change the status badge but log to console
+            // so failures aren't completely silent.
+            console.warn('LEDMatrix: display preview stream error (readyState=' + window.displaySource.readyState + ')');
+        };
+
+        window.statsSource.addEventListener('open', window._statsOpenHandler);
+        window.statsSource.addEventListener('error', window._statsErrorHandler);
+        window.displaySource.addEventListener('error', window._displayErrorHandler);
 
         function updateSystemStats(data) {
             // Update CPU in header

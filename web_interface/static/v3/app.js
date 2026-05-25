@@ -1,4 +1,4 @@
-/* global showNotification, updateSystemStats, htmx */
+/* global showNotification, updateSystemStats, updateDisplayPreview, htmx */
 // LED Matrix v3 JavaScript
 // Additional helpers for HTMX and Alpine.js integration
 
@@ -51,7 +51,8 @@ document.body.addEventListener('htmx:afterRequest', function(event) {
     }
 });
 
-// SSE reconnection helper
+// SSE reconnection helper — closes and reopens both SSE streams,
+// reattaching the open/error handlers defined in base.html.
 window.reconnectSSE = function() {
     if (window.statsSource) {
         window.statsSource.close();
@@ -60,14 +61,18 @@ window.reconnectSSE = function() {
             const data = JSON.parse(event.data);
             if (typeof updateSystemStats === 'function') updateSystemStats(data);
         };
+        if (window._statsOpenHandler) window.statsSource.addEventListener('open', window._statsOpenHandler);
+        if (window._statsErrorHandler) window.statsSource.addEventListener('error', window._statsErrorHandler);
     }
 
     if (window.displaySource) {
         window.displaySource.close();
         window.displaySource = new EventSource('/api/v3/stream/display');
-        window.displaySource.onmessage = function() {
-            // Handle display updates
+        window.displaySource.onmessage = function(event) {
+            const data = JSON.parse(event.data);
+            if (typeof updateDisplayPreview === 'function') updateDisplayPreview(data);
         };
+        if (window._displayErrorHandler) window.displaySource.addEventListener('error', window._displayErrorHandler);
     }
 };
 
