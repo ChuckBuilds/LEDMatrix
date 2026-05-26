@@ -3446,6 +3446,23 @@ function generateFieldHtml(key, prop, value, prefix = '') {
             html += `<option value="${option}" ${selected}>${option}</option>`;
         });
         html += `</select>`;
+    } else if (prop['x-widget'] === 'json-file-manager') {
+        // Reusable JSON file manager widget (no CDN, keyboard shortcuts, configurable actions)
+        const widgetConfig = prop['x-widget-config'] || {};
+        const pluginId = currentPluginConfig?.pluginId || window.currentPluginConfig?.pluginId || '';
+        const safeFieldId = (fullKey || 'file_manager').replace(/[^a-zA-Z0-9_-]/g, '_');
+
+        html += `<div id="${safeFieldId}_jfm_mount"></div>`;
+
+        setTimeout(() => {
+            const mount = document.getElementById(`${safeFieldId}_jfm_mount`);
+            if (!mount) return;
+            if (typeof JsonFileManager !== 'undefined') {
+                new JsonFileManager(mount, widgetConfig, pluginId);
+            } else {
+                mount.innerHTML = '<p style="color:#dc2626;font-size:.875rem;">json-file-manager widget not loaded. Check base.html includes json-file-manager.js.</p>';
+            }
+        }, 150);
     } else if (prop['x-widget'] === 'custom-html') {
         // Custom HTML widget - load HTML from plugin directory
         const htmlFile = prop['x-html-file'];
