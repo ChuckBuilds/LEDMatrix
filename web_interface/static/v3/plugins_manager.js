@@ -3457,9 +3457,14 @@ function generateFieldHtml(key, prop, value, prefix = '') {
         setTimeout(() => {
             const mount = document.getElementById(`${safeFieldId}_jfm_mount`);
             if (!mount) return;
+            // Destroy any previous instance for this field to avoid duplicate keydown handlers
+            window.__jfmInstances = window.__jfmInstances || {};
+            const prev = window.__jfmInstances[safeFieldId];
+            if (prev?._destroy) prev._destroy();
             if (typeof JsonFileManager !== 'undefined') {
-                new JsonFileManager(mount, widgetConfig, pluginId);
+                window.__jfmInstances[safeFieldId] = new JsonFileManager(mount, widgetConfig, pluginId);
             } else {
+                window.__jfmInstances[safeFieldId] = null;
                 mount.innerHTML = '<p style="color:#dc2626;font-size:.875rem;">json-file-manager widget not loaded. Check base.html includes json-file-manager.js.</p>';
             }
         }, 150);

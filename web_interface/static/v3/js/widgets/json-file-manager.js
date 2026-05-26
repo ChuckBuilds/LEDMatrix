@@ -87,8 +87,8 @@
       ${this.dirLabel ? `<code class="jfm-dir">${this._esc(this.dirLabel)}</code>` : ''}
     </div>
     <div class="jfm-header-right">
-      ${hasCreate ? `<button class="jfm-btn jfm-btn-primary jfm-btn-sm" data-jfm="open-create">+ New File</button>` : ''}
-      <button class="jfm-btn jfm-btn-ghost jfm-btn-sm" data-jfm="refresh" title="Refresh file list">&#8635;</button>
+      ${hasCreate ? `<button type="button" class="jfm-btn jfm-btn-primary jfm-btn-sm" data-jfm="open-create">+ New File</button>` : ''}
+      <button type="button" class="jfm-btn jfm-btn-ghost jfm-btn-sm" data-jfm="refresh" title="Refresh file list">&#8635;</button>
     </div>
   </div>
 
@@ -113,9 +113,9 @@
       <div class="jfm-modal-head">
         <span id="${u}-edit-title" class="jfm-modal-title">Edit file</span>
         <div class="jfm-modal-tools">
-          <button class="jfm-btn jfm-btn-ghost jfm-btn-sm" data-jfm="fmt">Format</button>
-          <button class="jfm-btn jfm-btn-ghost jfm-btn-sm" data-jfm="validate">Validate</button>
-          <button class="jfm-close-btn" data-jfm="close-edit" aria-label="Close">&times;</button>
+          <button type="button" class="jfm-btn jfm-btn-ghost jfm-btn-sm" data-jfm="fmt">Format</button>
+          <button type="button" class="jfm-btn jfm-btn-ghost jfm-btn-sm" data-jfm="validate">Validate</button>
+          <button type="button" class="jfm-close-btn" data-jfm="close-edit" aria-label="Close">&times;</button>
         </div>
       </div>
       <div id="${u}-edit-err" class="jfm-err-bar" hidden></div>
@@ -125,8 +125,8 @@
                 aria-label="JSON editor"></textarea>
       <div class="jfm-modal-foot">
         <span id="${u}-charcount" class="jfm-stat"></span>
-        <button class="jfm-btn jfm-btn-ghost" data-jfm="close-edit">Cancel</button>
-        <button class="jfm-btn jfm-btn-primary" data-jfm="save" id="${u}-save-btn">Save</button>
+        <button type="button" class="jfm-btn jfm-btn-ghost" data-jfm="close-edit">Cancel</button>
+        <button type="button" class="jfm-btn jfm-btn-primary" data-jfm="save" id="${u}-save-btn">Save</button>
       </div>
     </div>
   </div>
@@ -137,15 +137,15 @@
     <div class="jfm-modal-box">
       <div class="jfm-modal-head">
         <span class="jfm-modal-title">Delete file</span>
-        <button class="jfm-close-btn" data-jfm="close-del" aria-label="Close">&times;</button>
+        <button type="button" class="jfm-close-btn" data-jfm="close-del" aria-label="Close">&times;</button>
       </div>
       <div class="jfm-modal-body">
         <p>Delete <strong id="${u}-del-name"></strong>?</p>
         <p class="jfm-muted">This permanently removes the file and its entry from the plugin configuration.</p>
       </div>
       <div class="jfm-modal-foot">
-        <button class="jfm-btn jfm-btn-ghost" data-jfm="close-del">Cancel</button>
-        <button class="jfm-btn jfm-btn-danger" data-jfm="confirm-del" id="${u}-del-btn">Delete</button>
+        <button type="button" class="jfm-btn jfm-btn-ghost" data-jfm="close-del">Cancel</button>
+        <button type="button" class="jfm-btn jfm-btn-danger" data-jfm="confirm-del" id="${u}-del-btn">Delete</button>
       </div>
     </div>
   </div>` : ''}
@@ -156,7 +156,7 @@
     <div class="jfm-modal-box">
       <div class="jfm-modal-head">
         <span class="jfm-modal-title">Create new file</span>
-        <button class="jfm-close-btn" data-jfm="close-create" aria-label="Close">&times;</button>
+        <button type="button" class="jfm-close-btn" data-jfm="close-create" aria-label="Close">&times;</button>
       </div>
       <div class="jfm-modal-body">
         ${this.createFields.map(f => `
@@ -169,8 +169,8 @@
         </div>`).join('')}
       </div>
       <div class="jfm-modal-foot">
-        <button class="jfm-btn jfm-btn-ghost" data-jfm="close-create">Cancel</button>
-        <button class="jfm-btn jfm-btn-primary" data-jfm="do-create" id="${u}-create-btn">Create</button>
+        <button type="button" class="jfm-btn jfm-btn-ghost" data-jfm="close-create">Cancel</button>
+        <button type="button" class="jfm-btn jfm-btn-primary" data-jfm="do-create" id="${u}-create-btn">Create</button>
       </div>
     </div>
   </div>` : ''}
@@ -474,8 +474,8 @@
     <span>&#128337; ${this._fmtDate(f.modified)}</span>
   </div>
   <div class="jfm-card-actions">
-    ${hasEdit ? `<button class="jfm-btn jfm-btn-sm" data-jfm="edit-file">&#9998; Edit</button>` : ''}
-    ${hasDelete ? `<button class="jfm-btn jfm-btn-danger jfm-btn-sm jfm-del" data-jfm="del-file" title="Delete file">&#128465;</button>` : ''}
+    ${hasEdit ? `<button type="button" class="jfm-btn jfm-btn-sm" data-jfm="edit-file">&#9998; Edit</button>` : ''}
+    ${hasDelete ? `<button type="button" class="jfm-btn jfm-btn-danger jfm-btn-sm jfm-del" data-jfm="del-file" title="Delete file">&#128465;</button>` : ''}
   </div>
 </div>`;
         }
@@ -552,6 +552,7 @@
                 this._loadList();
             } catch (err) {
                 this._showErr('Save failed: ' + err.message);
+            } finally {
                 this._idle(btn, 'Save');
             }
         }
@@ -582,6 +583,7 @@
                 this._loadList();
             } catch (err) {
                 this._notify('Delete failed: ' + err.message, 'error');
+            } finally {
                 this._idle(btn, 'Delete');
             }
         }
@@ -608,28 +610,22 @@
             for (const f of this.createFields) {
                 const el  = document.getElementById(`${this._uid}-cf-${f.key}`);
                 const val = (el?.value || '').trim();
-                if (!val) {
+                // display_name may be blank — auto-derived from category_name below
+                if (!val && f.key !== 'display_name') {
                     this._notify(`"${f.label}" is required`, 'error');
                     el?.focus();
                     return;
                 }
-                if (f.pattern && !new RegExp(f.pattern).test(val)) {
+                if (f.pattern && val && !new RegExp(f.pattern).test(val)) {
                     this._notify(`"${f.label}" format is invalid`, 'error');
                     el?.focus();
                     return;
                 }
-                params[f.key] = val;
+                if (val) params[f.key] = val;
             }
-            // Auto-derive display_name from category_name if left blank
-            const nameField = this.createFields.find(f => f.key === 'display_name');
-            if (nameField) {
-                const el = document.getElementById(`${this._uid}-cf-display_name`);
-                if (el && !el.value.trim()) {
-                    const catEl = document.getElementById(`${this._uid}-cf-category_name`);
-                    if (catEl?.value) {
-                        params.display_name = catEl.value.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
-                    }
-                }
+            // Auto-derive display_name from category_name when left blank
+            if (!params.display_name && params.category_name) {
+                params.display_name = params.category_name.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
             }
             const btn = document.getElementById(`${this._uid}-create-btn`);
             this._busy(btn, 'Creating…');
@@ -641,6 +637,7 @@
                 this._loadList();
             } catch (err) {
                 this._notify('Create failed: ' + err.message, 'error');
+            } finally {
                 this._idle(btn, 'Create');
             }
         }
