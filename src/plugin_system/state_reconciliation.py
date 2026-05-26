@@ -376,12 +376,18 @@ class StateReconciliation:
                 # so that manual config edits (or the state left behind after an
                 # uninstall+reinstall cycle) don't silently override the user's intent.
                 config_enabled = inconsistency.expected_state.get('enabled')
-                self.state_manager.set_plugin_enabled(inconsistency.plugin_id, config_enabled)
-                self.logger.info(
-                    f"Fixed: Synced state manager enabled={config_enabled} for "
-                    f"{inconsistency.plugin_id} to match config"
-                )
-                return True
+                success = self.state_manager.set_plugin_enabled(inconsistency.plugin_id, config_enabled)
+                if success:
+                    self.logger.info(
+                        f"Fixed: Synced state manager enabled={config_enabled} for "
+                        f"{inconsistency.plugin_id} to match config"
+                    )
+                else:
+                    self.logger.warning(
+                        f"Failed to sync state manager enabled={config_enabled} for "
+                        f"{inconsistency.plugin_id}"
+                    )
+                return success
             
         except Exception as e:
             self.logger.error(f"Error fixing inconsistency: {e}", exc_info=True)
