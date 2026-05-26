@@ -3,6 +3,7 @@ import json
 import logging
 import os
 import queue
+import shutil
 import sys
 import subprocess
 import threading
@@ -23,6 +24,9 @@ from src.plugin_system.operation_queue import PluginOperationQueue
 from src.plugin_system.state_manager import PluginStateManager
 from src.plugin_system.operation_history import OperationHistory
 from src.plugin_system.health_monitor import PluginHealthMonitor
+
+_JOURNALCTL = shutil.which('journalctl')
+_SYSTEMCTL = shutil.which('systemctl')
 
 # Create Flask app
 app = Flask(__name__)
@@ -492,12 +496,13 @@ def system_status_generator():
             # Check if display service is running (cached to avoid per-client subprocess forks)
             now = time.time()
             if (now - _ledmatrix_service_cache['timestamp']) >= _LEDMATRIX_SERVICE_CACHE_TTL:
-                try:
-                    result = subprocess.run(['systemctl', 'is-active', 'ledmatrix'],
-                                            capture_output=True, text=True, timeout=2)
-                    _ledmatrix_service_cache['active'] = result.stdout.strip() == 'active'
-                except (subprocess.SubprocessError, OSError):
-                    pass
+                if _SYSTEMCTL:
+                    try:
+                        result = subprocess.run([_SYSTEMCTL, 'is-active', 'ledmatrix'],
+                                                capture_output=True, text=True, timeout=2)
+                        _ledmatrix_service_cache['active'] = result.stdout.strip() == 'active'
+                    except (subprocess.SubprocessError, OSError) as e:
+                        app.logger.warning("systemctl status check failed: %s", e)
                 _ledmatrix_service_cache['timestamp'] = now
             service_active = _ledmatrix_service_cache['active']
             
@@ -589,8 +594,13 @@ def logs_generator():
             # Get recent logs from journalctl (simplified version)
             # Note: User should be in systemd-journal group to read logs without sudo
             try:
+                if not _JOURNALCTL:
+                    yield {'timestamp': time.time(), 'logs': 'journalctl not found; cannot read logs'}
+                    time.sleep(60)
+                    continue
                 result = subprocess.run(
-                    ['journalctl', '-u', 'ledmatrix.service', '-n', '50', '--no-pager'],
+                    [_JOURNALCTL, '-u', 'ledmatrix.service', '-u', 'ledmatrix-web.service',
+                     '-n', '50', '--no-pager', '--output=short-iso'],
                     capture_output=True, text=True, timeout=5
                 )
 
@@ -606,7 +616,7 @@ def logs_generator():
                         # No logs available
                         logs_data = {
                             'timestamp': time.time(),
-                            'logs': 'No logs available from ledmatrix service'
+                            'logs': 'No logs available from ledmatrix or ledmatrix-web service'
                         }
                         yield logs_data
                 else:

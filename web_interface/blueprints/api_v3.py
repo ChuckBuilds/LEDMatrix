@@ -4,6 +4,7 @@ import os
 import re
 import stat
 import sys
+import shutil
 import subprocess
 import tempfile
 import time
@@ -24,6 +25,9 @@ from src.web_interface.validators import (
     validate_file_upload
 )
 from src.error_aggregator import get_error_aggregator
+
+_SUDO = shutil.which('sudo')
+_JOURNALCTL = shutil.which('journalctl')
 
 # Will be initialized when blueprint is registered
 config_manager = None
@@ -1456,31 +1460,41 @@ def execute_system_action():
             if mode:
                 # For on-demand modes, we would need to integrate with the display controller
                 # For now, just start the display service
-                result = subprocess.run(['sudo', 'systemctl', 'start', 'ledmatrix'],
-                                     capture_output=True, text=True)
+                try:
+                    result = subprocess.run(['sudo', 'systemctl', 'start', 'ledmatrix'],
+                                         capture_output=True, text=True, timeout=10)
+                except subprocess.TimeoutExpired as e:
+                    logger.error("start_display (%s) timed out: %s", mode, e)
+                    return jsonify({'status': 'error', 'message': 'Command timed out', 'returncode': -1, 'stderr': 'timeout'})
                 logger.info("start_display (%s) returned code %d", mode, result.returncode)
-                return jsonify({
+                if result.returncode != 0 and result.stderr:
+                    logger.error("start_display (%s) stderr: %s", mode, result.stderr.strip())
+                resp = {
                     'status': 'success' if result.returncode == 0 else 'error',
                     'message': 'Display started' if result.returncode == 0 else 'Failed to start display',
-                })
+                }
+                if result.returncode != 0:
+                    resp['returncode'] = result.returncode
+                    resp['stderr'] = result.stderr.strip()
+                return jsonify(resp)
             else:
                 result = subprocess.run(['sudo', 'systemctl', 'start', 'ledmatrix'],
-                                     capture_output=True, text=True)
+                                     capture_output=True, text=True, timeout=10)
         elif action == 'stop_display':
             result = subprocess.run(['sudo', 'systemctl', 'stop', 'ledmatrix'],
-                                 capture_output=True, text=True)
+                                 capture_output=True, text=True, timeout=10)
         elif action == 'enable_autostart':
             result = subprocess.run(['sudo', 'systemctl', 'enable', 'ledmatrix'],
-                                 capture_output=True, text=True)
+                                 capture_output=True, text=True, timeout=10)
         elif action == 'disable_autostart':
             result = subprocess.run(['sudo', 'systemctl', 'disable', 'ledmatrix'],
-                                 capture_output=True, text=True)
+                                 capture_output=True, text=True, timeout=10)
         elif action == 'reboot_system':
             result = subprocess.run(['sudo', 'reboot'],
-                                 capture_output=True, text=True)
+                                 capture_output=True, text=True, timeout=10)
         elif action == 'shutdown_system':
             result = subprocess.run(['sudo', 'poweroff'],
-                                 capture_output=True, text=True)
+                                 capture_output=True, text=True, timeout=10)
         elif action == 'git_pull':
             # Use PROJECT_ROOT instead of hardcoded path
             project_dir = str(PROJECT_ROOT)
@@ -1555,20 +1569,29 @@ def execute_system_action():
             })
         elif action == 'restart_display_service':
             result = subprocess.run(['sudo', 'systemctl', 'restart', 'ledmatrix'],
-                                 capture_output=True, text=True)
+                                 capture_output=True, text=True, timeout=10)
         elif action == 'restart_web_service':
             # Try to restart the web service (assuming it's ledmatrix-web.service)
             result = subprocess.run(['sudo', 'systemctl', 'restart', 'ledmatrix-web'],
-                                 capture_output=True, text=True)
+                                 capture_output=True, text=True, timeout=10)
         else:
             return jsonify({'status': 'error', 'message': 'Unknown action'}), 400
 
         logger.info("system action '%s' returncode=%d", action, result.returncode)
-        return jsonify({
+        if result.returncode != 0 and result.stderr:
+            logger.error("system action '%s' stderr: %s", action, result.stderr.strip())
+        resp = {
             'status': 'success' if result.returncode == 0 else 'error',
             'message': 'Action completed' if result.returncode == 0 else 'Action failed; check logs for details',
-        })
+        }
+        if result.returncode != 0:
+            resp['returncode'] = result.returncode
+            resp['stderr'] = result.stderr.strip()
+        return jsonify(resp)
 
+    except subprocess.TimeoutExpired as e:
+        logger.error("system action '%s' timed out: %s", action, e)
+        return jsonify({'status': 'error', 'message': 'Command timed out', 'returncode': -1, 'stderr': 'timeout'})
     except Exception as e:
         logger.error("execute_system_action failed: %s", e, exc_info=True)
         return jsonify({'status': 'error', 'message': 'Action failed; see logs for details'}), 500
@@ -6425,9 +6448,14 @@ def list_plugin_assets():
 def get_logs():
     """Get system logs from journalctl"""
     try:
+        if not _JOURNALCTL:
+            return jsonify({'status': 'error', 'message': 'journalctl not found on this system'}), 503
         # Get recent logs from journalctl
+        _cmd = ([_SUDO, _JOURNALCTL] if _SUDO else [_JOURNALCTL]) + [
+            '-u', 'ledmatrix.service', '-u', 'ledmatrix-web.service',
+            '-n', '100', '--no-pager', '--output=short-iso']
         result = subprocess.run(
-            ['sudo', 'journalctl', '-u', 'ledmatrix.service', '-n', '100', '--no-pager'],
+            _cmd,
             capture_output=True,
             text=True,
             timeout=5
@@ -6438,7 +6466,7 @@ def get_logs():
             return jsonify({
                 'status': 'success',
                 'data': {
-                    'logs': logs_text if logs_text else 'No logs available from ledmatrix service'
+                    'logs': logs_text if logs_text else 'No logs available from ledmatrix or ledmatrix-web service'
                 }
             })
         else:
