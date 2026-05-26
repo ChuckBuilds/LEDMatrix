@@ -616,7 +616,7 @@
                     el?.focus();
                     return;
                 }
-                if (f.pattern && val && !new RegExp(f.pattern).test(val)) {
+                if (f.pattern && val && el && el.validity.patternMismatch) {
                     this._notify(`"${f.label}" format is invalid`, 'error');
                     el?.focus();
                     return;
