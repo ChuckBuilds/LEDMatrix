@@ -51,7 +51,7 @@
             this.toggleKey  = config.toggle_key || null;
 
             // Unique prefix for all DOM IDs in this instance
-            this._uid = 'jfm_' + Math.random().toString(36).slice(2, 9);
+            this._uid = 'jfm_' + Array.from(crypto.getRandomValues(new Uint8Array(4)), b => b.toString(16).padStart(2, '0')).join('');
 
             // Mutable state
             this._editFile   = null;
@@ -399,7 +399,7 @@
         // ── API helper ───────────────────────────────────────────────────────
 
         async _api(actionKey, params) {
-            const actionId = this.actions[actionKey];
+            const actionId = Object.prototype.hasOwnProperty.call(this.actions, actionKey) ? this.actions[actionKey] : undefined;
             if (!actionId) throw new Error(`Action "${actionKey}" not configured`);
             const body = { plugin_id: this.pluginId, action_id: actionId };
             if (params !== undefined) body.params = params;
@@ -449,7 +449,6 @@
         }
 
         _card(f) {
-            const u           = this._uid;
             const enabled     = f.enabled !== false;
             const displayName = this._esc(f.display_name || f.filename);
             const filename    = this._esc(f.filename);
@@ -723,15 +722,20 @@
 
         _busy(btn, label) {
             if (!btn) return;
-            btn._jfmOriginal = btn.innerHTML;
+            btn._jfmOrigText = btn.textContent;
             btn.disabled = true;
-            btn.innerHTML = `<span class="jfm-spin"></span> ${this._esc(label)}`;
+            btn.textContent = '';
+            const spin = document.createElement('span');
+            spin.className = 'jfm-spin';
+            btn.appendChild(spin);
+            btn.appendChild(document.createTextNode(' ' + label));
         }
 
         _idle(btn, label) {
             if (!btn) return;
             btn.disabled = false;
-            btn.innerHTML = btn._jfmOriginal || this._esc(label);
+            btn.textContent = btn._jfmOrigText !== undefined ? btn._jfmOrigText : label;
+            delete btn._jfmOrigText;
         }
 
         _esc(str) {
