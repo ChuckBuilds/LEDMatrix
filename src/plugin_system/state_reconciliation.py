@@ -340,15 +340,15 @@ class StateReconciliation:
         # Check: Enabled state mismatch
         config_enabled = config.get('enabled', False)
         state_mgr_enabled = state_mgr.get('enabled')
-        
+
         if state_mgr_enabled is not None and config_enabled != state_mgr_enabled:
             inconsistencies.append(Inconsistency(
                 plugin_id=plugin_id,
                 inconsistency_type=InconsistencyType.PLUGIN_ENABLED_MISMATCH,
                 description=f"Plugin {plugin_id} enabled state mismatch: config={config_enabled}, state_manager={state_mgr_enabled}",
                 fix_action=FixAction.AUTO_FIX,
-                current_state={'enabled': config_enabled},
-                expected_state={'enabled': state_mgr_enabled},
+                current_state={'enabled': state_mgr_enabled},
+                expected_state={'enabled': config_enabled},
                 can_auto_fix=True
             ))
         
@@ -371,15 +371,23 @@ class StateReconciliation:
                 return self._auto_repair_missing_plugin(inconsistency.plugin_id)
 
             elif inconsistency.inconsistency_type == InconsistencyType.PLUGIN_ENABLED_MISMATCH:
-                # Sync enabled state from state manager to config
-                expected_enabled = inconsistency.expected_state.get('enabled')
-                config = self.config_manager.load_config()
-                if inconsistency.plugin_id not in config:
-                    config[inconsistency.plugin_id] = {}
-                config[inconsistency.plugin_id]['enabled'] = expected_enabled
-                self.config_manager.save_config(config)
-                self.logger.info(f"Fixed: Synced enabled state for {inconsistency.plugin_id}")
-                return True
+                # config.json is the user-editable source of truth for enabled state.
+                # Bring the state manager in sync with config rather than the reverse,
+                # so that manual config edits (or the state left behind after an
+                # uninstall+reinstall cycle) don't silently override the user's intent.
+                config_enabled = inconsistency.expected_state.get('enabled')
+                success = self.state_manager.set_plugin_enabled(inconsistency.plugin_id, config_enabled)
+                if success:
+                    self.logger.info(
+                        f"Fixed: Synced state manager enabled={config_enabled} for "
+                        f"{inconsistency.plugin_id} to match config"
+                    )
+                else:
+                    self.logger.warning(
+                        f"Failed to sync state manager enabled={config_enabled} for "
+                        f"{inconsistency.plugin_id}"
+                    )
+                return success
             
         except Exception as e:
             self.logger.error(f"Error fixing inconsistency: {e}", exc_info=True)
