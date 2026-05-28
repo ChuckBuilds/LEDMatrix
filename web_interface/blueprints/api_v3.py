@@ -2687,6 +2687,16 @@ def update_plugin():
                 with open(manifest_path, 'r', encoding='utf-8') as f:
                     manifest = json.load(f)
                     current_last_updated = manifest.get('last_updated')
+                if manifest.get('local_only'):
+                    logger.debug("Skipping update for local-only plugin: %s", plugin_id)
+                    if api_v3.operation_history:
+                        api_v3.operation_history.record_operation(
+                            "update",
+                            plugin_id=plugin_id,
+                            status="skipped",
+                            details={"reason": "local_only"}
+                        )
+                    return success_response(message=f'Plugin {plugin_id} is managed locally and does not receive registry updates')
             except Exception as e:
                 logger.debug("Could not read local manifest for plugin: %s", e)
 
