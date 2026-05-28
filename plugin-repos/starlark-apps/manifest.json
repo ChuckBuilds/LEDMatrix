@@ -22,5 +22,6 @@
     "Pillow>=10.0.0",
     "PyYAML>=6.0",
     "requests>=2.31.0"
-  ]
+  ],
+  "local_only": true
 }
