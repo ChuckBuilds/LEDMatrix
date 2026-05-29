@@ -5,6 +5,7 @@ Handles plugin discovery, installation, updates, and uninstallation
 from both the official registry and custom GitHub repositories.
 """
 
+import hashlib
 import os
 import json
 import stat
@@ -1755,6 +1756,12 @@ class PluginStoreManager:
                 timeout=300
             )
             self.logger.info(f"Dependencies installed successfully for {plugin_path.name}")
+            # Write hash marker so plugin_loader skips redundant pip run on next startup
+            try:
+                current_hash = hashlib.sha256(requirements_file.read_bytes()).hexdigest()
+                (plugin_path / ".dependencies_installed").write_text(current_hash, encoding='utf-8')
+            except OSError as marker_err:
+                self.logger.debug("Could not write dependency marker for %s: %s", plugin_path.name, marker_err)
             return True
             
         except subprocess.CalledProcessError as e:

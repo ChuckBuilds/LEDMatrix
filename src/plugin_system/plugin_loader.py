@@ -5,6 +5,7 @@ Handles plugin module imports, dependency installation, and class instantiation.
 Extracted from PluginManager to improve separation of concerns.
 """
 
+import hashlib
 import json
 import importlib
 import importlib.util
@@ -164,11 +165,15 @@ class PluginLoader:
         if not requirements_file.exists():
             return True  # No dependencies needed
         marker_path = plugin_dir_resolved / ".dependencies_installed"
+        current_hash = hashlib.sha256(requirements_file.read_bytes()).hexdigest()
 
-        # Check if already installed
+        # Skip if requirements.txt hasn't changed since last install
         if marker_path.exists():
-            self.logger.debug("Dependencies already installed for %s", plugin_id)
-            return True
+            stored_hash = marker_path.read_text(encoding='utf-8').strip()
+            if stored_hash == current_hash:
+                self.logger.debug("Dependencies already installed for %s (requirements unchanged)", plugin_id)
+                return True
+            self.logger.info("Requirements changed for %s, reinstalling dependencies", plugin_id)
         
         try:
             self.logger.info("Installing dependencies for plugin %s...", plugin_id)
@@ -181,9 +186,7 @@ class PluginLoader:
             )
             
             if result.returncode == 0:
-                # Mark as installed
-                marker_path.touch()
-                # Set proper file permissions after creating marker
+                marker_path.write_text(current_hash, encoding='utf-8')
                 ensure_file_permissions(marker_path, get_plugin_file_mode())
                 self.logger.info("Dependencies installed successfully for %s", plugin_id)
                 return True
@@ -199,7 +202,7 @@ class PluginLoader:
                         "Assuming they are satisfied: %s",
                         plugin_id, stderr.strip()
                     )
-                    marker_path.touch()
+                    marker_path.write_text(current_hash, encoding='utf-8')
                     ensure_file_permissions(marker_path, get_plugin_file_mode())
                     return True
                 self.logger.warning(
